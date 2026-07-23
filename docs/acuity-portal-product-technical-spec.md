@@ -1,0 +1,529 @@
+# Acuity Portal Product and Technical Specification
+
+**Repository:** `acuity_product`
+**Release:** Full production
+**Release date:** Thursday, August 6, 2026
+**Team:** Two people working daily
+**Status:** Ready for ticket approval
+
+## Problem Statement
+
+Medical-practice staff receive patient work through calls, voicemails, texts, and the AI receptionist. The work is fragmented across communication channels, individual memory, and disconnected follow-up processes. Staff cannot reliably see what still needs action, who owns it, what has already happened, or whether a patient need reached an outcome.
+
+The result is avoidable administrative work and a persistent risk that a patient callback, scheduling request, message, or escalation falls through the cracks.
+
+The product must make unresolved patient work durable without turning every communication into queue noise. It must automate task creation when the need is clear, keep humans responsible for ambiguous or consequential decisions, and preserve the complete communication evidence around each task.
+
+## Solution
+
+Acuity Portal is the operating workspace for patient work and discussion.
+
+The existing AI receptionist remains in place. It either completes the caller's request, creates an asynchronous follow-up task, or transfers the caller to an available human. A live transfer does not create a task by itself. After an answered call, staff records `Resolved on call` or creates a follow-up task. Voicemails, meaningful unanswered calls, new inbound texts, and manual staff actions may also create tasks.
+
+**Task is the primary product object.** A task contains one accountable piece of patient work. Calls, voicemails, recordings, transcripts, texts, notes, assignments, and status changes form its activity timeline. Opening a task also shows the practice/location's complete engagement history for the same normalized phone number while visually distinguishing older phone-number history from interactions attached to the current task.
+
+Every task is visible in a shared queue. Assignment changes accountability, not visibility. Staff can claim, assign, discuss, call, message, prioritize, complete, and reopen work from one workspace. Completion is one click when linked outcome evidence already exists; otherwise staff selects a short completion reason. Completed work moves to the bottom instead of disappearing.
+
+## Product Principles
+
+1. **Unresolved work becomes durable.** A meaningful patient need must not exist only in a transcript, voicemail, notification, or staff member's memory.
+2. **Resolved interactions do not create noise.** If the AI or a human completes the request during the interaction, no task is required.
+3. **One task, one accountable outcome.** A task represents one piece of work, not an entire patient or communication channel.
+4. **Assignment is accountability, not concealment.** Everyone with access to the location can still see assigned work.
+5. **Communication is evidence.** Calls, recordings, transcripts, texts, and notes attach to the relevant task and remain visible in phone-number engagement history.
+6. **Provider events are facts.** Browser intent is not proof that a call connected, a message delivered, or a recording completed.
+7. **The database is authoritative.** PostgreSQL owns durable workflow state; realtime transports only project it.
+8. **Automation removes work without hiding decisions.** AI-created tasks show their source and can be corrected by staff.
+9. **Contact context is not patient identity.** Phone number, optional name, and AI handoff details help staff work but do not establish a canonical medical identity.
+10. **Production means proven.** The product does not ship until every release-bar journey works against production-like dependencies.
+
+## User Stories
+
+1. As a practice staff member, I want to see every active task for my authorized locations, so that work does not disappear when another person claims it.
+2. As a practice staff member, I want to see who owns each task, so that accountability is obvious.
+3. As a practice staff member, I want to filter the queue to my tasks, so that I can focus on my work.
+4. As a practice staff member, I want to see unassigned tasks, so that new work can be claimed quickly.
+5. As a practice staff member, I want Emergency tasks surfaced before other work, so that the most important needs are seen first.
+6. As a practice staff member, I want to sort tasks by priority, age, status, assignee, and recent activity, so that I can work in the order appropriate to the moment.
+7. As a practice staff member, I want the default queue ordered by Emergency, Priority, and Routine and then oldest first, so that urgent work and aging work are both protected.
+8. As a practice staff member, I want completed tasks to move to the bottom, so that the active queue stays focused without losing history.
+9. As a practice staff member, I want to reopen a completed task, so that an accidental or premature completion is recoverable.
+10. As a practice staff member, I want to create a task by entering only a title, so that manual capture is faster than remembering the work.
+11. As a practice staff member, I want contact context, priority, and assignee to be optional during manual creation, so that incomplete context does not block capture.
+12. As a practice staff member, I want manual tasks to default to Open, Routine, the current location, and unassigned, so that creation requires no setup work.
+13. As a practice staff member, I want to change a task between Open and In progress, so that the queue reflects whether work has started.
+14. As a practice staff member, I want to complete a task with one click when outcome evidence exists, or select a short completion reason otherwise, so that completion stays both fast and trustworthy.
+15. As a practice staff member, I want completion to record the actor and time automatically, so that the history remains trustworthy.
+16. As a practice staff member, I want to change a task's title, contact context, priority, assignee, and status, so that AI and human mistakes are correctable.
+17. As a practice staff member, I want to add an internal note to a task, so that the team can coordinate without contacting the patient.
+18. As a practice staff member, I want patient messages and internal notes to have clearly different composer modes, so that an internal comment is never accidentally sent.
+19. As a practice staff member, I want calls, texts, notes, recordings, transcripts, assignments, and status changes in one task timeline, so that I do not reconstruct context across pages.
+20. As a practice staff member, I want activity attached to the current task distinguished from older engagement history, so that the current piece of work remains understandable.
+21. As a practice staff member, I want the complete call and SMS history for the same practice/location and phone number visible when I open a task, so that I do not reconstruct context across pages.
+22. As a practice staff member, I want phone number, optional name, and AI handoff context displayed with their source, so that I know what information was actually supplied.
+23. As a practice staff member, I want calls, voicemails, and texts captured even when only a phone number is known, so that missing profile context does not erase work.
+24. As a practice staff member, I want phone-number history treated as engagement context rather than verified patient identity, so that shared numbers do not silently merge people.
+25. As a practice staff member, I want the AI receptionist's task tool to create a task immediately, so that clearly identified follow-up does not need re-entry.
+26. As a practice staff member, I want AI-created tasks labeled with their creator and source, so that I understand where the task came from.
+27. As a practice staff member, I want to expand the relevant transcript evidence behind an AI-created task, so that I can verify its interpretation when needed.
+28. As a patient, I want the AI receptionist to complete my booking when it can, so that no unnecessary human task is created.
+29. As a patient, I want the AI receptionist to transfer me to a human when it cannot complete my request, so that I can continue without starting over.
+30. As a staff member, I want to toggle Available or Unavailable in the Call Center, so that only prepared staff receive live transfers.
+31. As a staff member, I want a transfer offer to include the available contact and AI handoff context, so that I understand the need before answering.
+32. As a staff member, I want exactly one staff member to win an offered call, so that two people never answer the same patient.
+33. As a patient, I want the transfer to fall back after 20 seconds if nobody answers, so that I am not left ringing indefinitely.
+34. As a practice staff member, I want a voicemail to create an Open task with recording and transcription, so that the message becomes actionable work.
+35. As a practice staff member, I want an unanswered call without voicemail to create a Return missed call task, so that it does not disappear into a call log.
+36. As a practice staff member, I want abandoned or spam calls without meaningful caller context to remain in the call log rather than creating tasks, so that the queue stays useful.
+37. As a staff member, I want to answer, mute, use the keypad, hold, transfer, and end a human call from the engagement workspace, so that calling does not require a separate product.
+38. As a staff member, I want the active human call to remain mounted while I inspect SMS and call history, so that navigating the workspace cannot accidentally destroy the call.
+39. As a staff member, I want human inbound calls recorded and transcribed after I connect, so that the resulting work has evidence.
+40. As a staff member, I want staff-initiated outbound calls recorded and transcribed, so that follow-up conversations are captured.
+41. As a staff member, I want an outbound call started from a task linked automatically to the task with its contact snapshot, so that I perform no filing work.
+42. As a staff member, I want to place a standalone outbound call from the Call Center, so that I can contact a patient before a task exists.
+43. As a staff member, I want a standalone outbound call to create a call record but not an automatic task, so that completed conversations do not pollute the queue.
+44. As a staff member, I want to record `Resolved on call` or create a prefilled follow-up task after a human call, so that every answered call receives an explicit disposition.
+45. As a staff member, I want an inbound patient text to create a task when it is not a reply to an existing task thread, so that new requests enter the shared queue.
+46. As a staff member, I want a reply to a message sent from a task attached automatically to that task, so that the conversation stays coherent.
+47. As a staff member, I want to send an SMS from the task timeline and see delivery state, so that patient communication is visible to the team.
+48. As a staff member, I want AI to draft a patient response while requiring my confirmation before send, so that writing is faster without silently sending consequential content.
+49. As an administrator, I want to invite staff and assign authorized locations, so that access matches operational responsibility.
+50. As an administrator, I want to see all tasks across the practice's locations, so that I can supervise the complete workload.
+51. As a staff member, I want to see only data for authorized practices and locations, so that patient information does not cross tenant boundaries.
+52. As an operator, I want failed provider actions and unavailable recordings to be visible and retryable, so that failure cannot masquerade as success.
+53. As an operator, I want duplicate AI requests and provider webhooks to produce one durable result, so that retries do not duplicate work.
+54. As an operator, I want task updates to appear promptly in other staff browsers, so that the shared queue remains coordinated.
+55. As an operator, I want the portal to recover from a lost realtime connection by loading a fresh authoritative snapshot, so that stale sockets cannot lose state.
+56. As an operator, I want a searchable Recordings archive for every human inbound call, human outbound call, and voicemail, so that communication evidence remains accessible.
+57. As an operator, I want short-lived protected access to recordings rather than public URLs, so that sensitive audio is not exposed.
+58. As a product owner, I want every critical journey exercised against production-like Telnyx, SMS, Better Auth, and database dependencies before launch, so that August 6 is a production release rather than a demo.
+
+## Implementation Decisions
+
+### 1. Scope and system boundary
+
+- The portal, product backend, database, task workspace, human Call Center, SMS workflow, recording archive, and operational infrastructure are greenfield.
+- The existing AI receptionist and its booking behavior remain external systems.
+- The AI receptionist integrates through authenticated APIs. It receives no portal database credentials.
+- The first release has no EHR dependency, canonical patient record, or medical-identity verification flow.
+- The portal stores a task- or interaction-specific `ContactContext`: normalized phone number when available, optional display name, optional AI handoff details, and the source of each value.
+- The portal owns tasks, assignments, communication activity, human call state, call disposition, contact snapshots, and audit history.
+
+### 2. Product vocabulary
+
+- **Task:** the primary object and one accountable piece of patient work.
+- **Interaction:** a call, voicemail, SMS message, or staff note that may exist with or without a task.
+- **Contact context:** a snapshot of the phone number, optional name, and handoff details known for one task or interaction. It is not a global person or verified patient identity.
+- **Engagement history:** calls and messages found by practice, location, and normalized phone number for display as context. Display does not attach those interactions to the current task.
+- **Activity:** a chronological task entry such as an interaction, assignment, status change, or priority change.
+- **Queue:** a query over tasks; it is not a second source of state.
+- **Call:** the logical human-call session projected from provider legs and events.
+- **Provider event:** signed evidence received from Telnyx or another external system.
+
+### 3. Task rules
+
+- Status is one of `OPEN`, `IN_PROGRESS`, or `COMPLETED`.
+- Priority is stored as `P1`, `P2`, or `P3` and displayed as Emergency, Priority, or Routine.
+- Priority controls default ordering; it does not represent a clinical diagnosis.
+- Due time is optional. The release does not impose a due date or SLA on every task.
+- Every task belongs to exactly one practice and one location.
+- Every task has zero or one assigned staff member.
+- An unassigned task remains visible in the shared queue.
+- Assignment changes accountability, not visibility.
+- Sending an SMS or starting a call from an unassigned task atomically assigns it to the acting staff member and moves it to `IN_PROGRESS`. Opening or reading the task does not claim it.
+- If two staff members take a consequential action concurrently, the first committed action wins. The losing action is rejected before any provider side effect and shows the new owner.
+- Every task mutation requires the last observed task version so stale edits cannot silently overwrite current state.
+- Completion requires linked outcome evidence or a short explicit completion reason. It records the actor and timestamp and remains one click when sufficient evidence already exists.
+- Completed tasks sort below active tasks and can be reopened.
+- The default active order is priority and then oldest creation time.
+- Staff can override the default sort without changing shared state.
+
+### 4. Task creation rules
+
+- A successfully resolved AI or human interaction creates no task.
+- The AI task tool creates a task immediately only when the AI chooses asynchronous follow-up. It does not create a task for a live human transfer of the same need.
+- A voicemail creates an Open task with recording and transcription.
+- A meaningful unanswered call without voicemail creates an Open Return missed call task.
+- A new inbound SMS attaches to an existing task only when the sender/portal-number pair has exactly one open SMS conversation. Zero or multiple candidates create a new unassigned task.
+- An inbound SMS received after the related task was completed creates a new task rather than reopening or rewriting completed work.
+- A human may create a task manually through the quick composer.
+- Human inbound and outbound calls do not blindly generate tasks from every transcript.
+- A live AI-to-human transfer creates a call and offer, not a task.
+- After an answered human call, staff selects `Resolved on call` or `Create follow-up task`.
+- `Create follow-up task` prefills the call, contact snapshot, AI handoff, and relevant engagement context; assigns the answering staff member; and starts `IN_PROGRESS`.
+- A call remains durably `NEEDS_DISPOSITION` if the browser closes or staff leaves before choosing an outcome.
+- AI-created tasks expose their creator and source. Detailed rationale remains expandable rather than permanently occupying the workspace.
+
+### 5. Contact-context rules
+
+- `ContactContext` is stored as a snapshot on each task and interaction, not as a shared global Contact record.
+- A provider may supply a phone number. The AI transfer may additionally supply a display name and handoff details.
+- Every context value records its source: provider, AI transfer, or staff entry.
+- Phone-number history is scoped to one practice and location and is presented as context, not verified patient history.
+- Opening a task may display prior engagement for the same normalized number, but it does not relink or mutate those prior records.
+- Outbound calls and messages launched from a task copy the task's current contact snapshot.
+- Canonical patient identity and EMR-specific adapters are deferred.
+
+### 6. Experience model
+
+The approved rendering model is the source of truth:
+
+- A prioritized task queue occupies the left side.
+- Opening a task populates the central living engagement workspace with contact context, the current need, the SMS composer, task controls, and a chronological communication timeline.
+- The timeline shows inbound and outbound SMS, calls, voicemails, notes, recordings, transcripts, assignments, and status changes.
+- Current-task interactions are clearly distinguished from older phone-number engagement history.
+- Calls stay inline in the engagement workspace.
+- Patient message and internal note are explicit composer modes.
+- An active call uses the same workspace and shows the available contact snapshot, AI handoff, SMS history, and call history.
+- No patient-profile drawer or EMR-derived medical profile ships in the first release.
+
+Primary navigation:
+
+1. **Tasks** — default shared operating workspace.
+2. **Call Center** — availability, live offers, active human calls, and standalone dialer.
+3. **Recordings** — searchable human-call and voicemail archive.
+4. **Settings** — practice, location, staff, routing credentials, and integrations.
+
+Fixed task views:
+
+- All active
+- Mine
+- Unassigned
+- Emergency
+- Completed
+
+### 7. Call Center behavior
+
+- Staff explicitly toggle Available before receiving transfers.
+- Only staff authorized for the call's practice and location are eligible.
+- An AI-to-human transfer simultaneously offers one logical call to every available, authorized staff member for the location.
+- The transfer creates no task.
+- The first valid acceptance wins through an atomic PostgreSQL transition.
+- Losing or stale accept attempts receive an explicit already-claimed result.
+- The offer window is 20 seconds.
+- If no staff member answers, the provider routes the caller to voicemail.
+- A voicemail creates a task; a meaningful missed call without voicemail creates a callback task.
+- The winning staff member's workspace is populated with the available phone number, optional name, AI handoff details, SMS history, and call history.
+- When an answered call ends, its durable disposition becomes `NEEDS_DISPOSITION`.
+- `Resolved on call` closes the disposition without creating a task.
+- `Create follow-up task` creates one prefilled task linked to the call, assigned to the winner, and initially `IN_PROGRESS`.
+- Human call state is not considered connected solely because a browser clicked Answer.
+- Telnyx provider events confirm ringing, answered legs, bridging, recording, and termination.
+- Human inbound recording begins after the staff connection.
+- Staff outbound calls are recorded from initiation.
+- AI-only receptionist audio is outside the portal recording archive.
+- Browser calling uses one TelnyxRTC client per tab. The Telnyx SDK owns its signaling WebSocket and WebRTC media.
+
+### 8. SMS behavior
+
+- Telnyx sends signed inbound and delivery webhooks to the Go backend.
+- An inbound message attaches automatically only when its sender/portal-number pair has exactly one open SMS conversation in the practice and location.
+- Zero or multiple candidates create a new unassigned task rather than guessing.
+- A reply received after task completion creates a new task; the engagement timeline still shows both tasks and the complete phone-number conversation.
+- Staff send SMS from the task timeline through an authenticated HTTP command.
+- Sending from an unassigned task atomically claims it and moves it to `IN_PROGRESS` before the provider request is issued.
+- AI may draft a message, but staff confirms before sending in this release.
+- Message delivery state is projected from provider webhooks.
+
+### 9. Service architecture
+
+Use a small modular monolith in one repository:
+
+```text
+Next.js web application
+    ├── React + TypeScript
+    ├── shadcn/ui + Tailwind + Geist
+    ├── TelnyxRTC browser client
+    └── Generated OpenAPI client
+
+Go product service
+    ├── Access
+    ├── Work
+    ├── HumanCalling
+    ├── Messaging
+    ├── EvidenceArchive
+    └── HTTP, provider, persistence, SSE, and job adapters
+
+PostgreSQL
+    └── Sole durable product source of truth
+```
+
+- `Access` owns human and service principals, invitations, memberships, roles, location scope, and authorization decisions.
+- `Work` owns task creation, assignment, priority, status, completion, reopening, task activity, and queue projections.
+- `HumanCalling` owns availability, call offers, winner election, logical call state, bridge confirmation, disposition, and recording readiness. Telnyx voice behavior stays behind its provider adapter.
+- `Messaging` owns inbound correlation, send intent, delivery state, and retries. It asks `Work` to create a task when a new message needs accountable work.
+- `EvidenceArchive` owns protected recording/transcript availability, access grants, audit, retention, and deletion.
+- `ContactContext` is a small value object used by tasks and interactions, not an independent identity service.
+- The modules expose behavior-oriented interfaces. HTTP handlers, SQL, Telnyx, Better Auth/JWKS, object storage, SSE, and durable jobs remain replaceable adapters around them.
+- The browser calls the Go API directly. Next.js does not proxy ordinary product commands.
+- The Go service uses standard `net/http` with a small router, `pgx`, explicit SQL, and generated query bindings.
+- A narrow OpenAPI document generates the TypeScript API client.
+- Use forward-only SQL migrations.
+- Do not split the backend into microservices.
+- Keep one codebase and one database. Separate deployment processes only when necessary for web and Go runtime behavior.
+
+### 10. Transport decisions
+
+```text
+Browser ── HTTPS commands ─────────────> Go API
+Go API ── SSE state hints ─────────────> Browser
+Browser ── TelnyxRTC WSS signaling ────> Telnyx
+Browser ══ WebRTC human-call audio ═══> Telnyx
+Telnyx ── signed HTTPS webhooks ───────> Go API
+Existing AI agent ── HTTPS task tool ──> Go API
+Go API ── transactions ────────────────> PostgreSQL
+```
+
+- HTTP carries staff commands and AI tool requests.
+- SSE carries one-way task, offer, call, and message update hints.
+- SSE payloads contain stable IDs and monotonically increasing versions, not authoritative state.
+- A reconnecting browser reloads the current snapshot from the HTTP API.
+- PostgreSQL `LISTEN/NOTIFY` may fan update hints across Go instances; committed rows remain the only durable state.
+- Telnyx's SDK-managed WebSocket is provider signaling and is not an application state socket.
+- The portal does not add a general application WebSocket.
+
+### 11. Durable processing and failure behavior
+
+- Every externally retryable command accepts an idempotency key.
+- AI task creation stores an idempotency receipt scoped to the integration and practice.
+- Human and service mutations record distinct actor types and stable actor IDs. The AI uses its own scoped service identity and never impersonates a Better Auth user.
+- Telnyx webhook signatures are verified over the raw request.
+- Each provider event ID is inserted once behind a unique constraint.
+- Webhook receipt is committed quickly; normalized processing is retryable from PostgreSQL.
+- Background work uses a narrow PostgreSQL job/outbox table claimed with database locking. Do not add Kafka, Redis, or a generalized orchestration platform.
+- Provider command IDs are stable across retry attempts.
+- User-visible state distinguishes requested, provider-confirmed, failed, and recoverable operations.
+- Failures never silently advance a task or call to success.
+- Commands that both claim work and contact a provider commit ownership first and reject stale competitors before issuing the provider request.
+- Calls awaiting a human outcome remain durably visible as `NEEDS_DISPOSITION`; a browser disconnect cannot resolve or discard them.
+
+### 12. Core data model
+
+- **Practice**
+- **Location**
+- **User**
+- **Membership** with Admin or Staff role and authorized locations
+- **Invitation** with email, practice, role, authorized locations, expiration, revocation, and acceptance state
+- **ServiceIdentity** with minimum practice/location scope
+- **Task** with tenant, location, contact-context snapshot, source, title, status, priority, optional assignee, version, optional due time, and completion metadata
+- **Activity** with task, actor, type, timestamp, and normalized display payload
+- **Interaction** with channel, direction, provider identity, contact-context snapshot, optional task, and lifecycle timestamps
+- **Call** with logical call identity, provider session and leg identifiers, offer state, winning staff member, bridge state, disposition, and human-segment timing
+- **Recording** with protected object reference, availability, retention metadata, call, and optional task
+- **Transcript** with recording/call reference and protected text
+- **Message** with provider message identity, direction, delivery state, contact-context snapshot, and optional task
+- **ProviderEvent** with provider, unique event identity, receipt state, processing state, and normalized linkage
+- **IdempotencyReceipt**
+- **AuditEvent**
+- **Job** for named durable background effects
+
+The database stores current relational state plus append-only activity and audit history. This is not full event sourcing.
+
+### 13. API boundaries
+
+The first API surface should remain narrow:
+
+- Task list, task detail, manual creation, edit, claim, assign, status, priority, complete, reopen, and note commands
+- Phone-number engagement-history query scoped to practice and location
+- AI integration task-creation command
+- Call Center availability, offer acceptance, outbound initiation, privileged call-control, and post-call disposition commands
+- SMS send command
+- Recording and transcript lookup with short-lived protected access
+- Telnyx voice and messaging webhook receivers
+- SSE update stream
+
+The AI task-creation command requires:
+
+- service authentication
+- practice and location scope
+- idempotency key
+- stable source interaction or call identity
+- title and source
+- priority
+- optional phone number, display name, and AI handoff context with source metadata
+- optional supporting summary and transcript excerpt
+
+The AI task tool is for asynchronous follow-up only. A live human transfer must not call it for the same need.
+
+### 14. Authentication and authorization
+
+- Better Auth in Next.js owns human sign-in, account recovery, and browser-session lifecycle.
+- The browser obtains a short-lived Better Auth JWT for direct Go API calls.
+- The Go `Access` module verifies signature, issuer, audience, and expiration locally against cached Better Auth JWKS. It does not call Next.js on every request or read Better Auth session tables as an authorization mechanism.
+- Better Auth proves who the human is. PostgreSQL membership data and the Go `Access` module are the sole authority for what that human may do.
+- Practice and location IDs supplied by a client are requested context, never proof of access. `Access` resolves and enforces the allowed scope for every command, query, SSE stream, and evidence grant.
+- Admin may manage staff and see all practice locations. Staff may operate only explicitly authorized locations.
+- Each invitation is email-bound, expiring, and revocable and specifies practice, role, and authorized locations before send.
+- Integration credentials are separate service identities with the minimum required practice/location scope. Mutations record `actor_type=service` and the stable service actor ID.
+- Do not duplicate practice/location authorization in Better Auth organization permissions.
+- Better Auth may use the same PostgreSQL instance, but its tables remain private to Better Auth and the Go service never mutates them.
+- Telnyx JWTs are generated server-side; Telnyx API keys never reach the browser.
+
+### 15. Infrastructure
+
+- Deploy the web and Go service to Google Cloud in one production region.
+- Use Cloud SQL for PostgreSQL with regional high availability, automated backups, and point-in-time recovery.
+- Keep at least one warm Go instance on the human-call path.
+- Cap service scaling according to the PostgreSQL connection budget.
+- Store secrets in Secret Manager.
+- Store recordings in approved protected object storage; expose them only through short-lived, location-authorized access and audit each grant.
+- Require an approved recording/transcript retention period in each practice's production configuration. Delete protected content after the configured period while retaining non-content audit metadata.
+- Use one public product domain with path routing to the web and API services.
+- Use immutable container revisions and traffic-based rollback.
+- Keep migrations backward compatible through the release window.
+- Rollback switches staff and provider routing to the old portal, freezes new-portal writes, and preserves all new database state for reconciliation. It never destructively reverses the database.
+- Confirm executed BAAs and service eligibility/configuration before protected health information enters production.
+
+### 16. Observability
+
+- Emit structured logs without patient names, phone numbers, transcript content, message bodies, or recording URLs.
+- Trace commands through database transaction, provider command, provider event, and visible state transition.
+- Record metrics for task creation, provider-event delay, duplicate suppression, SSE reconnects, call offers, accept races, answer-to-bridge time, voicemail creation, missed-call creation, SMS delivery, and recording/transcript readiness.
+- Alert on failed webhook verification, growing unprocessed-event backlog, failed durable jobs, database saturation, elevated call-bridge failure, and cross-tenant authorization denial anomalies.
+
+## Testing Decisions
+
+### Highest testing seam
+
+The primary test seam is the complete observable product journey:
+
+> External provider/AI event or staff action → authenticated Go command → PostgreSQL transition → visible portal state.
+
+This is the highest useful seam because it proves the product promise while allowing Telnyx and Better Auth boundaries to be simulated deterministically.
+
+### Test strategy
+
+- Test external behavior and durable invariants, not controller, repository, hook, or SQL implementation details.
+- Use real PostgreSQL integration tests for concurrency, unique constraints, authorization scope, idempotency, and lifecycle transitions.
+- Exercise the Go service through its public HTTP interface.
+- Exercise the portal with Playwright against the real Go service and provider simulators.
+- Maintain signed Telnyx webhook fixtures for voice, recording, transcription, and messaging events.
+- Run controlled live Telnyx acceptance tests before release for the paths that simulation cannot prove: WebRTC readiness, transfer offer, answer, bridge, media, recording, transcription, SMS delivery, and voicemail.
+- Run every production journey in two browser sessions to verify shared visibility and realtime recovery.
+
+### Required invariant tests
+
+1. Two simultaneous call accepts produce exactly one winner.
+2. Replaying an AI task request produces one task.
+3. Replaying, reordering, or concurrently delivering provider events does not corrupt call or message state.
+4. A browser click cannot mark a call connected before provider evidence.
+5. A completed task remains queryable and can be reopened.
+6. Assignment does not remove the task from another authorized staff member's All active view.
+7. An unauthorized practice or location cannot read, mutate, stream, or fetch recording access for another tenant.
+8. Phone-number history is displayed as context and cannot silently relink older interactions to the current task.
+9. SSE disconnect and reconnect yields the authoritative current snapshot without losing updates.
+10. A failed post-commit process is eventually retried from durable PostgreSQL state.
+11. An unanswered 20-second transfer produces the correct voicemail or callback task.
+12. An answered AI transfer creates no task until staff chooses `Create follow-up task`.
+13. An undisposed answered call survives browser loss and remains `NEEDS_DISPOSITION`.
+14. `Resolved on call` creates no task; `Create follow-up task` creates one prefilled, assigned, `IN_PROGRESS` task.
+15. A standalone completed outbound call creates a call record but no task.
+16. A task-originated outbound call attaches to the task and copies its contact snapshot.
+17. Inbound SMS attaches only when exactly one open conversation matches; ambiguous or post-completion messages create new work.
+18. Two concurrent actions on an unassigned task produce one owner and at most one provider side effect.
+19. Completion records linked outcome evidence or an explicit completion reason.
+20. Logs and error responses remain free of protected content.
+
+### Performance targets
+
+- Staff commands acknowledge committed state within 300 ms at p95, excluding provider network time.
+- A committed task or call-state change becomes visible in another active browser within 2 seconds at p95.
+- Initial task workspace load completes within 1.5 seconds at p95 under the target production dataset.
+- Accepted transfer to provider-confirmed bridge completes within 3 seconds at p95 in the controlled acceptance environment.
+- The 20-second offer fallback is accurate within one second.
+- Duplicate tasks and duplicate bridged winners remain zero under replay and concurrency tests.
+
+## Production Release Bar
+
+The August 6 release does not ship until all conditions are proven:
+
+1. Staff can sign in and see only authorized practice/location data.
+2. Tasks can be created manually, by the asynchronous AI task tool, inbound SMS, voicemail, unanswered calls, and the post-call follow-up action.
+3. Staff can prioritize, assign, claim, edit, move between Open and In progress, complete, reopen, filter, sort, and search tasks.
+4. Completed tasks move to the bottom without disappearing.
+5. Opening a task shows its linked activity and the complete practice/location phone-number engagement history without merging identities.
+6. Available staff can receive an AI transfer and exactly one person wins the call.
+7. An answered transfer creates no task until staff records `Resolved on call` or `Create follow-up task`; undisposed calls cannot disappear.
+8. Unanswered transfers fall back after 20 seconds and create the correct voicemail or missed-call task.
+9. Human inbound and outbound calls record and transcribe successfully under the configured retention policy.
+10. Outbound calls started from a task attach to that task and preserve its contact snapshot.
+11. Staff can receive and send SMS from the task timeline, with ambiguous and post-completion replies creating new work.
+12. Provider events and AI task requests are authenticated, idempotent, and cannot create duplicates when retried.
+13. Concurrent task actions cannot overwrite ownership or issue duplicate patient contact.
+14. Cross-practice/location data access is denied and ordinary logs contain no protected content.
+15. Scoped staff invitations, short-lived evidence access, deployment, backups, rollback, monitoring, and the complete production journey are tested before launch.
+
+## Rollout Plan
+
+### Two-person operating model
+
+- Each vertical slice has one directly responsible owner and one reviewer.
+- Both people implement across schema, backend, frontend, tests, and deployment for the slice they own.
+- Avoid frontend/backend handoffs.
+- Merge only demoable, green slices.
+- Run the critical journey at the end of every day.
+- Stop adding scope after Monday, August 3.
+- Wednesday, August 5 is a release-candidate day, not a feature day.
+
+### Daily plan
+
+| Date | Outcome required by end of day | Owner A focus | Owner B focus | Verification gate |
+|---|---|---|---|---|
+| Thu Jul 23 | Product contract, architecture, release bar, and tickets approved | Spec and system invariants | Rendered experience inventory and acceptance journeys | No unresolved scope decision blocks implementation |
+| Fri Jul 24 | Deployed walking skeleton | Repository, Go service, PostgreSQL, migrations, Better Auth/Access | Next.js shell, generated client, deployment, first Playwright journey | Sign in → authorized empty workspace in production-like environment |
+| Sat Jul 25 | Live provider spine proven end to end, even with rough UI | `HumanCalling`, Telnyx voice adapter, durable events, recording/transcript receipt | TelnyxRTC, simultaneous offer, one-winner UI, active-call workspace, disposition | AI transfer → offer → one winner → bridge → recording/transcript → disposition → optional durable task |
+| Sun Jul 26 | Manual task loop works end to end | `Work` model, commands, optimistic concurrency, audit, queries | Queue, quick create, assignment/status/completion/reopen UI | Create → assign → In progress → evidence/reason → Complete → bottom → Reopen |
+| Mon Jul 27 | Living engagement workspace and realtime coordination work | Task activity, phone-history query, SSE/versioning | SMS-first workspace, unified timeline, reconnect/refetch behavior | Two authorized browsers see current task plus clearly separated phone history |
+| Tue Jul 28 | AI-created asynchronous tasks work | Scoped service identity, idempotent AI command | AI source and handoff presentation | Replay the same AI request; exactly one unassigned Open task appears |
+| Wed Jul 29 | SMS works through the task timeline | `Messaging`, webhooks, exact-one-open correlation, send/delivery state | Inbound tasks, composer, delivery rendering, AI draft confirmation | Exact match attaches; ambiguous/completed reply creates new task; stale concurrent send is blocked |
+| Thu Jul 30 | No-answer and call-disposition recovery work | 20-second fallback, voicemail, missed call, durable `NEEDS_DISPOSITION` | Recovery UI, post-call outcomes, prefilled follow-up task | Timeout falls back; browser loss preserves disposition; both outcome paths pass |
+| Fri Jul 31 | Outbound calling and call controls work | Task-originated and standalone outbound commands and linkage | Dialer, mute, keypad, hold, transfer, end, persistent active-call workspace | Task call links to task; standalone resolved call creates no task |
+| Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Recordings navigation, playback, transcript, failure states | Inbound/outbound/voicemail evidence appears and unauthorized access fails |
+| Sun Aug 2 | Administration and complete access boundaries work | Invitations, memberships, service scope, authorization audit | Staff/location settings and access-denied states | Email-bound invite activates exact scope; cross-location reads/writes/streams fail |
+| Mon Aug 3 | Feature complete; scope closes | Failure recovery, durable jobs, audit, tenant authorization | Empty/error/reconnect states, accessibility, full journey cleanup | All release-bar journeys pass in simulation |
+| Tue Aug 4 | Production hardening complete | Load/concurrency, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, performance, operator runbook | Concurrency, replay, isolation, backup, rollback, and observability gates pass |
+| Wed Aug 5 | Release candidate frozen and rehearsed | Production deployment rehearsal and provider configuration audit | Full staff rehearsal and UI blocker fixes only | Live Telnyx, SMS, recording, transcription, and AI-tool acceptance pass twice |
+| Thu Aug 6 | Full production release | Deploy, monitor backend/provider/database | Launch smoke, operator support, UI monitoring | All gates green; enable production routing; rollback immediately on release blocker |
+
+### August 6 release sequence
+
+1. Confirm database backup, deployable previous revision, provider failover routing, and on-call ownership.
+2. Deploy the release candidate with production routing disabled.
+3. Run sign-in, manual task, AI task, SMS, live transfer, fallback, outbound call, recording, transcript, and tenant-isolation smoke tests.
+4. Enable production task-tool and messaging webhooks.
+5. Enable human transfer routing.
+6. Monitor call bridging, task creation, webhook backlog, SMS delivery, recording readiness, error rates, and database capacity continuously.
+7. If a release-bar journey fails, switch staff and provider routing to the old portal, freeze new-portal writes, and preserve all new data for reconciliation.
+8. Do not perform schema contractions, cleanup migrations, or unrelated feature releases on launch day.
+
+## Out of Scope
+
+- Autonomous AI completion of queued tasks
+- Automatic transcript-to-task creation for every human call
+- Custom statuses or priority labels
+- Required due dates or a configurable SLA engine
+- Custom roles and permission builder
+- Custom saved views or filter builder
+- Advanced analytics or manager dashboards
+- Practice-facing call-routing and offer-timeout configuration
+- AI-only receptionist recording archive in the portal
+- Canonical patient identity, patient-profile merging, EMR lookup, or medical-chart ingestion
+- Automatic identity merging or historical relinking by phone number
+- New EHR or scheduling integrations
+- Native mobile applications
+- Full event sourcing
+- Microservices
+- Kafka, Redis-owned product state, or a generalized workflow engine
+- General application WebSockets
+- Multi-region active-active infrastructure
+
+## Further Notes
+
+- The existing portal prototype renderings define the visual interaction model, but terminology changes from Request to Task.
+- The product name in code and interfaces should use Acuity Portal; provider adapters should not leak Telnyx terminology into the task domain.
+- Emergency, Priority, and Routine are operational queue labels, not clinical assessments.
+- The first release's name and AI context are operational hints, not verified medical identity. The UI describes longitudinal results as phone-number engagement history.
+- The August 6 date is achievable only if the scope fence remains closed after ticket approval and both people work in vertical slices with daily integration.
+- The first implementation slice must prove the live provider spine by July 25 before isolated component-library, database-framework, or speculative provider-abstraction work.
+- TelnyxRTC owns its browser signaling WebSocket while WebRTC carries media; product commands remain HTTP and live product updates use SSE. See [Telnyx WebRTC signaling](https://developers.telnyx.com/development/webrtc/js-sdk/explanation/webrtc-signaling).
+- Telnyx webhooks are verified, acknowledged quickly, deduplicated, and interpreted as provider evidence. See [Telnyx Voice API webhooks](https://developers.telnyx.com/docs/voice/programmable-voice/voice-api-webhooks).
