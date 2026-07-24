@@ -1,0 +1,737 @@
+package httpapi
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/api"
+	"github.com/chasef07/acuity_product/backend/internal/authn"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
+)
+
+type IdentityAuthenticator interface {
+	Authenticate(context.Context, string) (access.Identity, error)
+}
+
+type EventStreamer interface {
+	Stream(
+		http.ResponseWriter,
+		*http.Request,
+		access.Identity,
+		string,
+		string,
+	) error
+	Ready() bool
+}
+
+type Config struct {
+	Role           string
+	AllowedOrigin  string
+	AcquireTimeout time.Duration
+}
+
+type Server struct {
+	config        Config
+	pool          *pgxpool.Pool
+	access        *access.Module
+	authenticator IdentityAuthenticator
+	events        EventStreamer
+}
+
+func New(
+	config Config,
+	pool *pgxpool.Pool,
+	accessModule *access.Module,
+	authenticator IdentityAuthenticator,
+) (http.Handler, error) {
+	return NewWithEvents(config, pool, accessModule, authenticator, nil)
+}
+
+func NewWithEvents(
+	config Config,
+	pool *pgxpool.Pool,
+	accessModule *access.Module,
+	authenticator IdentityAuthenticator,
+	events EventStreamer,
+) (http.Handler, error) {
+	if config.Role != "portal-api" &&
+		config.Role != "provider-ingress" &&
+		config.Role != "realtime" {
+		return nil, fmt.Errorf("unsupported HTTP runtime role %q", config.Role)
+	}
+	if pool == nil {
+		return nil, fmt.Errorf("database pool is required")
+	}
+	if config.AcquireTimeout <= 0 {
+		return nil, fmt.Errorf("positive acquisition timeout is required")
+	}
+	if config.Role != "provider-ingress" && (accessModule == nil || authenticator == nil) {
+		return nil, fmt.Errorf("Access and authentication adapters are required")
+	}
+
+	server := &Server{
+		config:        config,
+		pool:          pool,
+		access:        accessModule,
+		authenticator: authenticator,
+		events:        events,
+	}
+	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
+			server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+		},
+	})
+	return server.withRequestMetadata(generated), nil
+}
+
+func (server *Server) GetLiveness(w http.ResponseWriter, _ *http.Request) {
+	server.writeJSON(w, http.StatusOK, api.Health{
+		Role:   healthRole(server.config.Role),
+		Status: api.Ok,
+	})
+}
+
+func (server *Server) GetReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), server.config.AcquireTimeout)
+	defer cancel()
+	if err := server.pool.Ping(ctx); err != nil {
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+		return
+	}
+	if server.config.Role == "realtime" && (server.events == nil || !server.events.Ready()) {
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.Health{
+		Role:   healthRole(server.config.Role),
+		Status: api.Ok,
+	})
+}
+
+func (server *Server) DiscoverAccess(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	discovery, err := server.access.DiscoverActor(ctx, identity)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := discoveryResponse(discovery)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	var body api.SignUpEligibilityRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	token := ""
+	if body.InvitationToken != nil {
+		token = *body.InvitationToken
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	preview, err := server.access.InspectInvitation(ctx, access.InvitationInspection{
+		Token: token,
+		Email: string(body.Email),
+	})
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := invitationPreviewResponse(preview)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) InspectInvitation(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	var body api.InvitationCredentialRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	preview, err := server.access.InspectInvitation(ctx, access.InvitationInspection{Token: body.Token})
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := invitationPreviewResponse(preview)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.InvitationCredentialRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	authorization, err := server.access.AcceptInvitation(ctx, identity, body.Token)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := authorizationResponse(authorization)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetWorkspace(
+	w http.ResponseWriter,
+	r *http.Request,
+	params api.GetWorkspaceParams,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	authorization, err := server.access.ResolveActor(
+		ctx,
+		identity,
+		params.PracticeId.String(),
+		params.LocationId.String(),
+	)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := workspaceResponse(authorization)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) EnterSupportMode(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.EnterSupportModeRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	support, err := server.access.EnterSupportMode(ctx, access.EnterSupportModeCommand{
+		Identity:   identity,
+		PracticeID: body.PracticeId.String(),
+		Reason:     body.Reason,
+		Duration:   time.Duration(body.DurationMinutes) * time.Minute,
+	})
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := supportResponse(support)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, response)
+}
+
+func (server *Server) RevokeSupportMode(
+	w http.ResponseWriter,
+	r *http.Request,
+	supportSessionID uuid.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if err := server.access.RevokeSupportMode(ctx, identity, supportSessionID.String()); err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) AddLocation(
+	w http.ResponseWriter,
+	r *http.Request,
+	practiceID uuid.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.AddLocationRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	mutation, err := server.access.AddLocation(ctx, access.AddLocationCommand{
+		Identity:         identity,
+		PracticeID:       practiceID.String(),
+		SupportSessionID: body.SupportSessionId.String(),
+		Key:              body.Key,
+		Name:             body.Name,
+	})
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	response, err := locationMutationResponse(mutation)
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, response)
+}
+
+func (server *Server) GetEvents(
+	w http.ResponseWriter,
+	r *http.Request,
+	params api.GetEventsParams,
+) {
+	if server.config.Role != "realtime" || server.events == nil {
+		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if err := server.events.Stream(
+		w,
+		r,
+		identity,
+		params.PracticeId.String(),
+		params.LocationId.String(),
+	); err != nil {
+		server.writeAccessError(w, r, err)
+	}
+}
+
+func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
+	if server.config.Role == "portal-api" {
+		return true
+	}
+	server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
+	return false
+}
+
+func (server *Server) authenticate(w http.ResponseWriter, r *http.Request) (access.Identity, bool) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") || strings.Contains(strings.TrimPrefix(header, "Bearer "), " ") {
+		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
+		return access.Identity{}, false
+	}
+	token := strings.TrimPrefix(header, "Bearer ")
+	identity, err := server.authenticator.Authenticate(r.Context(), token)
+	if err != nil {
+		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
+		return access.Identity{}, false
+	}
+	return identity, true
+}
+
+func (server *Server) databaseContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), server.config.AcquireTimeout)
+}
+
+func (server *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "A JSON request body is required.", false)
+		return false
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 32*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The JSON request body is invalid.", false)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The JSON request body is invalid.", false)
+		return false
+	}
+	return true
+}
+
+func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, access.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, access.ErrInvitationUsed):
+		server.writeError(w, r, http.StatusConflict, "INVITATION_USED", "The invitation has already been accepted.", false)
+	case errors.Is(err, access.ErrDenied),
+		errors.Is(err, access.ErrEmailNotVerified),
+		errors.Is(err, access.ErrInvitationExpired),
+		errors.Is(err, access.ErrInvitationRevoked),
+		errors.Is(err, access.ErrSupportRequired),
+		errors.Is(err, access.ErrSupportExpired),
+		errors.Is(err, access.ErrSupportRevoked),
+		errors.Is(err, access.ErrSupportPracticeMismatch):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
+func (server *Server) writeError(
+	w http.ResponseWriter,
+	r *http.Request,
+	status int,
+	code string,
+	message string,
+	retryable bool,
+) {
+	var envelope api.ErrorEnvelope
+	envelope.Error.Code = code
+	envelope.Error.Message = message
+	envelope.Error.CorrelationId = correlationID(r.Context())
+	envelope.Error.Retryable = retryable
+	server.writeJSON(w, status, envelope)
+}
+
+func (server *Server) writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		correlation := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+		if correlation == "" || len(correlation) > 128 {
+			correlation = newCorrelationID()
+		}
+		ctx := context.WithValue(r.Context(), correlationContextKey{}, correlation)
+		w.Header().Set("X-Correlation-ID", correlation)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+
+		if origin := r.Header.Get("Origin"); origin != "" && origin == server.config.AllowedOrigin {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Correlation-ID")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type correlationContextKey struct{}
+
+func correlationID(ctx context.Context) string {
+	value, _ := ctx.Value(correlationContextKey{}).(string)
+	if value == "" {
+		return newCorrelationID()
+	}
+	return value
+}
+
+func newCorrelationID() string {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return "correlation-unavailable"
+	}
+	return hex.EncodeToString(value)
+}
+
+func healthRole(role string) api.HealthRole {
+	switch role {
+	case "portal-api":
+		return api.PortalApi
+	case "provider-ingress":
+		return api.ProviderIngress
+	default:
+		return api.Realtime
+	}
+}
+
+func invitationPreviewResponse(preview access.InvitationPreview) (api.InvitationPreview, error) {
+	response := api.InvitationPreview{
+		Email:     apiEmail(preview.Email),
+		Kind:      api.InvitationPreviewKind(preview.Kind),
+		Locations: make([]api.Location, 0, len(preview.Locations)),
+	}
+	if preview.PracticeID != "" {
+		practiceID, err := uuid.Parse(preview.PracticeID)
+		if err != nil {
+			return api.InvitationPreview{}, err
+		}
+		response.PracticeId = &practiceID
+		response.PracticeName = &preview.PracticeName
+		role := api.InvitationPreviewRole(preview.Role)
+		scope := api.InvitationPreviewLocationScope(preview.LocationScope)
+		response.Role = &role
+		response.LocationScope = &scope
+		response.ExpiresAt = &preview.ExpiresAt
+	}
+	for _, location := range preview.Locations {
+		converted, err := locationResponse(location)
+		if err != nil {
+			return api.InvitationPreview{}, err
+		}
+		response.Locations = append(response.Locations, converted)
+	}
+	return response, nil
+}
+
+func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) {
+	response := api.AccessDiscovery{
+		Actor:            actorResponse(discovery.Actor),
+		PlatformOperator: discovery.PlatformOperator,
+		Practices:        make([]api.PracticeAccess, 0, len(discovery.Practices)),
+	}
+	for _, practice := range discovery.Practices {
+		practiceResponse, err := practiceResponse(practice.Practice)
+		if err != nil {
+			return api.AccessDiscovery{}, err
+		}
+		item := api.PracticeAccess{
+			Id:        practiceResponse.Id,
+			Name:      practiceResponse.Name,
+			Version:   practiceResponse.Version,
+			Locations: []api.Location{},
+		}
+		if practice.Membership != nil {
+			membership, err := membershipResponse(*practice.Membership)
+			if err != nil {
+				return api.AccessDiscovery{}, err
+			}
+			item.Membership = &membership
+		}
+		for _, location := range practice.Locations {
+			converted, err := locationResponse(location)
+			if err != nil {
+				return api.AccessDiscovery{}, err
+			}
+			item.Locations = append(item.Locations, converted)
+		}
+		response.Practices = append(response.Practices, item)
+	}
+	return response, nil
+}
+
+func authorizationResponse(authorization access.Authorization) (api.Authorization, error) {
+	practice, err := practiceResponse(authorization.Practice)
+	if err != nil {
+		return api.Authorization{}, err
+	}
+	response := api.Authorization{
+		Actor:            actorResponse(authorization.Actor),
+		Practice:         practice,
+		Locations:        []api.Location{},
+		PlatformOperator: authorization.PlatformOperator,
+	}
+	if authorization.Membership.ID != "" {
+		membership, err := membershipResponse(authorization.Membership)
+		if err != nil {
+			return api.Authorization{}, err
+		}
+		response.Membership = &membership
+	}
+	for _, location := range authorization.Locations {
+		converted, err := locationResponse(location)
+		if err != nil {
+			return api.Authorization{}, err
+		}
+		response.Locations = append(response.Locations, converted)
+	}
+	if authorization.ActiveLocation != nil {
+		location, err := locationResponse(*authorization.ActiveLocation)
+		if err != nil {
+			return api.Authorization{}, err
+		}
+		response.ActiveLocation = &location
+	}
+	if authorization.SupportMode != nil {
+		support, err := supportResponse(*authorization.SupportMode)
+		if err != nil {
+			return api.Authorization{}, err
+		}
+		response.SupportMode = &support
+	}
+	return response, nil
+}
+
+func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapshot, error) {
+	if authorization.ActiveLocation == nil {
+		return api.WorkspaceSnapshot{}, access.ErrDenied
+	}
+	converted, err := authorizationResponse(authorization)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
+	}
+	response := api.WorkspaceSnapshot{
+		SchemaVersion:    api.N20260724,
+		Version:          authorization.Practice.Version,
+		State:            api.EMPTY,
+		Actor:            converted.Actor,
+		Practice:         converted.Practice,
+		Location:         *converted.ActiveLocation,
+		Membership:       converted.Membership,
+		PlatformOperator: authorization.PlatformOperator,
+		SupportMode:      converted.SupportMode,
+		Navigation: []api.NavigationItem{
+			{Id: api.Tasks, Label: "Tasks", Enabled: true},
+			{Id: api.CallCenter, Label: "Call Center", Enabled: false},
+			{Id: api.Recordings, Label: "Recordings", Enabled: false},
+			{Id: api.Settings, Label: "Settings", Enabled: false},
+		},
+	}
+	return response, nil
+}
+
+func supportResponse(support access.SupportMode) (api.SupportMode, error) {
+	id, err := uuid.Parse(support.ID)
+	if err != nil {
+		return api.SupportMode{}, err
+	}
+	practiceID, err := uuid.Parse(support.PracticeID)
+	if err != nil {
+		return api.SupportMode{}, err
+	}
+	return api.SupportMode{
+		Id:         id,
+		PracticeId: practiceID,
+		Reason:     support.Reason,
+		StartsAt:   support.StartsAt,
+		ExpiresAt:  support.ExpiresAt,
+	}, nil
+}
+
+func locationMutationResponse(mutation access.LocationMutation) (api.LocationMutation, error) {
+	location, err := locationResponse(mutation.Location)
+	if err != nil {
+		return api.LocationMutation{}, err
+	}
+	auditID, err := uuid.Parse(mutation.Audit.ID)
+	if err != nil {
+		return api.LocationMutation{}, err
+	}
+	practiceID, err := uuid.Parse(mutation.Audit.PracticeID)
+	if err != nil {
+		return api.LocationMutation{}, err
+	}
+	supportID, err := uuid.Parse(mutation.Audit.SupportSessionID)
+	if err != nil {
+		return api.LocationMutation{}, err
+	}
+	return api.LocationMutation{
+		Location:        location,
+		PracticeVersion: mutation.PracticeVersion,
+		Audit: api.AuditEvent{
+			Id:               auditID,
+			ActorSubject:     mutation.Audit.ActorSubject,
+			PracticeId:       practiceID,
+			SupportSessionId: supportID,
+			Action:           mutation.Audit.Action,
+			Reason:           mutation.Audit.Reason,
+			CreatedAt:        mutation.Audit.CreatedAt,
+		},
+	}, nil
+}
+
+func actorResponse(actor access.Actor) api.Actor {
+	return api.Actor{
+		Subject: actor.Subject,
+		Email:   apiEmail(actor.Email),
+		Type:    api.ActorType(actor.Type),
+	}
+}
+
+func practiceResponse(practice access.Practice) (api.Practice, error) {
+	id, err := uuid.Parse(practice.ID)
+	if err != nil {
+		return api.Practice{}, err
+	}
+	return api.Practice{Id: id, Name: practice.Name, Version: practice.Version}, nil
+}
+
+func locationResponse(location access.Location) (api.Location, error) {
+	id, err := uuid.Parse(location.ID)
+	if err != nil {
+		return api.Location{}, err
+	}
+	return api.Location{Id: id, Name: location.Name}, nil
+}
+
+func membershipResponse(membership access.Membership) (api.Membership, error) {
+	id, err := uuid.Parse(membership.ID)
+	if err != nil {
+		return api.Membership{}, err
+	}
+	return api.Membership{
+		Id:            id,
+		Role:          api.MembershipRole(membership.Role),
+		LocationScope: api.MembershipLocationScope(membership.LocationScope),
+	}, nil
+}
+
+func apiEmail(email string) openapi_types.Email {
+	return openapi_types.Email(email)
+}
+
+var _ IdentityAuthenticator = (*authn.JWKSAuthenticator)(nil)

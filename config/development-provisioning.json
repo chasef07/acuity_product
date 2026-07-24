@@ -1,0 +1,58 @@
+{
+  "Environment": "development",
+  "RequestedBy": "local-slice-1-fixture",
+  "PlatformOperators": [
+    "founder@acuity.test"
+  ],
+  "Practices": [
+    {
+      "Key": "abita-eye-group",
+      "Name": "Abita Eye Group",
+      "Locations": [
+        {
+          "Key": "fixture-location-1",
+          "Name": "Fixture Location 1"
+        },
+        {
+          "Key": "fixture-location-2",
+          "Name": "Fixture Location 2"
+        },
+        {
+          "Key": "fixture-location-3",
+          "Name": "Fixture Location 3"
+        },
+        {
+          "Key": "fixture-location-4",
+          "Name": "Fixture Location 4"
+        },
+        {
+          "Key": "fixture-location-5",
+          "Name": "Fixture Location 5"
+        },
+        {
+          "Key": "fixture-location-6",
+          "Name": "Fixture Location 6"
+        }
+      ],
+      "Invitations": [
+        {
+          "Key": "fixture-admin",
+          "Email": "admin@abita.test",
+          "Role": "ADMIN",
+          "LocationScope": "ALL",
+          "ExpiresAt": "2027-07-24T00:00:00Z"
+        },
+        {
+          "Key": "fixture-selected-staff",
+          "Email": "selected@abita.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "fixture-location-1"
+          ],
+          "ExpiresAt": "2027-07-24T00:00:00Z"
+        }
+      ]
+    }
+  ]
+}
