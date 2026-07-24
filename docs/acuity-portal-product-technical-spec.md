@@ -227,7 +227,8 @@ Fixed task views:
 
 ### 9. Service architecture
 
-Use a small modular monolith in one repository:
+Use a small modular monolith in one repository. Build one Go binary and one
+immutable backend image, then run that image in isolated runtime roles:
 
 ```text
 Next.js web application
@@ -236,13 +237,18 @@ Next.js web application
     ├── TelnyxRTC browser client
     └── Generated OpenAPI client
 
-Go product service
+Go product runtime — one codebase, binary, and image
     ├── Access
     ├── Work
     ├── HumanCalling
     ├── Messaging
     ├── EvidenceArchive
-    └── HTTP, provider, persistence, SSE, and job adapters
+    └── runtime adapters
+        ├── portal-api
+        ├── provider-ingress
+        ├── realtime
+        ├── worker
+        └── migrate
 
 PostgreSQL
     └── Sole durable product source of truth
@@ -255,30 +261,44 @@ PostgreSQL
 - `EvidenceArchive` owns protected recording/transcript availability, access grants, audit, retention, and deletion.
 - `ContactContext` is a small value object used by tasks and interactions, not an independent identity service.
 - The modules expose behavior-oriented interfaces. HTTP handlers, SQL, Telnyx, Better Auth/JWKS, object storage, SSE, and durable jobs remain replaceable adapters around them.
-- The browser calls the Go API directly. Next.js does not proxy ordinary product commands.
-- The Go service uses standard `net/http` with a small router, `pgx`, explicit SQL, and generated query bindings.
-- A narrow OpenAPI document generates the TypeScript API client.
+- The browser calls `portal-api` directly. Next.js does not proxy ordinary product commands.
+- The Go runtime uses standard `net/http` with a small router, `pgx`, explicit SQL, and generated query bindings.
+- A narrow OpenAPI document is the browser/backend contract and generates the TypeScript API client. CI fails when the generated client is stale or a change breaks the supported contract.
 - Use forward-only SQL migrations.
 - Do not split the backend into microservices.
-- Keep one codebase and one database. Separate deployment processes only when necessary for web and Go runtime behavior.
+- Runtime-role isolation is an operational deployment choice, not a domain split. The roles share modules and schema and never call one another over a private domain API.
+- Keep one backend codebase, one backend image, and one database. Do not create role-specific repositories, schemas, or duplicated business logic.
+
+Runtime roles:
+
+| Role | Deployment | Responsibility | Isolation reason |
+|---|---|---|---|
+| `portal-api` | Cloud Run service | Authenticated commands and queries, including latency-sensitive call control | Webhook bursts, streams, and jobs cannot consume command capacity |
+| `provider-ingress` | Cloud Run service | Telnyx voice, messaging, recording, and transcription webhook receipt | Provider acknowledgment remains short and independently scalable |
+| `realtime` | Cloud Run service | Authorized SSE update hints | Long-lived streams cannot occupy command request slots |
+| `worker` | Cloud Run worker pool | Provider-event projection, job/outbox execution, retry, and reconciliation | Durable work continues independently of request traffic |
+| `migrate` | Cloud Run job | One reviewed forward-compatible product and auth schema migration per release | Migrations never run during ordinary instance startup |
 
 ### 10. Transport decisions
 
 ```text
-Browser ── HTTPS commands ─────────────> Go API
-Go API ── SSE state hints ─────────────> Browser
+Browser ── HTTPS commands ─────────────> portal-api
+realtime ── SSE state hints ───────────> Browser
 Browser ── TelnyxRTC WSS signaling ────> Telnyx
 Browser ══ WebRTC human-call audio ═══> Telnyx
-Telnyx ── signed HTTPS webhooks ───────> Go API
-Existing AI agent ── HTTPS task tool ──> Go API
-Go API ── transactions ────────────────> PostgreSQL
+Telnyx ── signed HTTPS webhooks ───────> provider-ingress
+Existing AI agent ── HTTPS task tool ──> portal-api
+portal-api ── committed commands ──────> Telnyx
+worker ── retries/reconciliation ──────> Telnyx
+all Go roles ── bounded connections ──> PostgreSQL
 ```
 
 - HTTP carries staff commands and AI tool requests.
+- Command responses return committed state, stable IDs, and the new row version immediately. The UI renders requested or connecting state without waiting for a provider webhook.
 - SSE carries one-way task, offer, call, and message update hints.
 - SSE payloads contain stable IDs and monotonically increasing versions, not authoritative state.
-- A reconnecting browser reloads the current snapshot from the HTTP API.
-- PostgreSQL `LISTEN/NOTIFY` may fan update hints across Go instances; committed rows remain the only durable state.
+- SSE streams have a bounded lifetime, heartbeats, and jittered reconnect. Initial connection and every reconnect reload the current authorized snapshot from `portal-api`.
+- PostgreSQL `LISTEN/NOTIFY` may wake `realtime` instances through one dedicated direct connection per instance; committed rows remain the only durable state.
 - Telnyx's SDK-managed WebSocket is provider signaling and is not an application state socket.
 - The portal does not add a general application WebSocket.
 
@@ -288,10 +308,14 @@ Go API ── transactions ────────────────> Pos
 - AI task creation stores an idempotency receipt scoped to the integration and practice.
 - Human and service mutations record distinct actor types and stable actor IDs. The AI uses its own scoped service identity and never impersonates a Better Auth user.
 - Telnyx webhook signatures are verified over the raw request.
-- Each provider event ID is inserted once behind a unique constraint.
-- Webhook receipt is committed quickly; normalized processing is retryable from PostgreSQL.
-- Background work uses a narrow PostgreSQL job/outbox table claimed with database locking. Do not add Kafka, Redis, or a generalized orchestration platform.
-- Provider command IDs are stable across retry attempts.
+- `provider-ingress` inserts each provider event ID once behind a unique constraint and creates or confirms its processing job in the same short transaction.
+- `provider-ingress` returns `2xx` only after durable receipt commits. If PostgreSQL is unavailable, it returns a retryable `5xx` instead of acknowledging data it did not store.
+- Webhook receipt does not perform normalized projection, download media, or call another provider. `worker` applies the provider fact asynchronously and idempotently.
+- Background work uses a narrow PostgreSQL job/outbox table claimed with `FOR UPDATE SKIP LOCKED`. Do not add Kafka, Redis, or a generalized orchestration platform.
+- Shared rows are locked in one deterministic order. Serialization failures and deadlocks retry the complete bounded transaction, not only its final statement.
+- Commands that contact a provider commit ownership, intended state, and a durable provider-command record first. No provider request runs while a PostgreSQL transaction remains open.
+- `portal-api` issues latency-sensitive provider commands immediately after commit using a stable command ID. `worker` retries or reconciles when the process dies or the provider response is uncertain.
+- Provider command IDs remain stable across retry attempts and are persisted beyond the provider's duplicate-suppression window.
 - User-visible state distinguishes requested, provider-confirmed, failed, and recoverable operations.
 - Failures never silently advance a task or call to success.
 - Commands that both claim work and contact a provider commit ownership first and reject stale competitors before issuing the provider request.
@@ -313,6 +337,7 @@ Go API ── transactions ────────────────> Pos
 - **Transcript** with recording/call reference and protected text
 - **Message** with provider message identity, direction, delivery state, contact-context snapshot, and optional task
 - **ProviderEvent** with provider, unique event identity, receipt state, processing state, and normalized linkage
+- **ProviderCommand** with stable command identity, target, action, requested state, attempt state, and provider-event reconciliation
 - **IdempotencyReceipt**
 - **AuditEvent**
 - **Job** for named durable background effects
@@ -348,7 +373,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 ### 14. Authentication and authorization
 
 - Better Auth in Next.js owns human sign-in, account recovery, and browser-session lifecycle.
-- The browser obtains a short-lived Better Auth JWT for direct Go API calls.
+- The browser obtains a short-lived Better Auth JWT for direct `portal-api` calls.
 - The Go `Access` module verifies signature, issuer, audience, and expiration locally against cached Better Auth JWKS. It does not call Next.js on every request or read Better Auth session tables as an authorization mechanism.
 - Better Auth proves who the human is. PostgreSQL membership data and the Go `Access` module are the sole authority for what that human may do.
 - Practice and location IDs supplied by a client are requested context, never proof of access. `Access` resolves and enforces the allowed scope for every command, query, SSE stream, and evidence grant.
@@ -356,21 +381,39 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Each invitation is email-bound, expiring, and revocable and specifies practice, role, and authorized locations before send.
 - Integration credentials are separate service identities with the minimum required practice/location scope. Mutations record `actor_type=service` and the stable service actor ID.
 - Do not duplicate practice/location authorization in Better Auth organization permissions.
-- Better Auth may use the same PostgreSQL instance, but its tables remain private to Better Auth and the Go service never mutates them.
+- Better Auth may use the same PostgreSQL instance, but its tables remain private to Better Auth and the Go runtime never mutates them.
 - Telnyx JWTs are generated server-side; Telnyx API keys never reach the browser.
 
 ### 15. Infrastructure
 
-- Deploy the web and Go service to Google Cloud in one production region.
-- Use Cloud SQL for PostgreSQL with regional high availability, automated backups, and point-in-time recovery.
-- Keep at least one warm Go instance on the human-call path.
-- Cap service scaling according to the PostgreSQL connection budget.
+- Deploy the web and all Go runtime roles to Google Cloud in one production region.
+- Use Cloud SQL Enterprise Plus for PostgreSQL with regional high availability, automated backups, point-in-time recovery, deletion protection, and a rehearsed restore procedure.
+- Keep latency-critical `portal-api` and `provider-ingress` capacity warm. Production scaling must preserve zonal redundancy and avoid scale-to-zero on the human-call path.
+- Give every runtime role its own explicit Cloud Run concurrency, minimum-instance, maximum-instance, and `pgxpool` limits.
+- Give every runtime role a distinct Google service identity and least-privilege database role. Only `migrate` receives DDL authority.
+- `migrate` applies version-controlled product SQL and reviewed Better Auth schema SQL. Runtime Go modules never read or mutate Better Auth-owned tables.
+- Before sizing, record the 12-month capacity envelope: peak concurrent staff, active calls, open SSE streams, command rate, webhook burst rate, daily messages, PostgreSQL data volume, and evidence-retention volume.
+- Calculate the PostgreSQL connection ceiling before deployment:
+
+  ```text
+  sum(each service's maximum instances × its pool maximum)
+    + fixed worker connections
+    + Next.js and Better Auth connections
+    + dedicated LISTEN connections
+    + migration and operator headroom
+  ```
+
+- Normal maximum application pools must leave explicit headroom for overlapping revisions, failover reconnects, migrations, autovacuum, and operator access.
+- Use small direct `pgxpool` pools initially. Do not add managed transaction pooling until measurements justify it; `LISTEN/NOTIFY` retains a dedicated direct connection.
+- Cloud SQL regional failover closes existing connections and may cause roughly one minute of database unavailability. Every role uses bounded acquisition, exponential backoff with jitter, and only safe idempotent retries from the beginning of the operation.
 - Store secrets in Secret Manager.
 - Store recordings in approved protected object storage; expose them only through short-lived, location-authorized access and audit each grant.
 - Require an approved recording/transcript retention period in each practice's production configuration. Delete protected content after the configured period while retaining non-content audit metadata.
 - Use one public product domain with path routing to the web and API services.
-- Use immutable container revisions and traffic-based rollback.
-- Keep migrations backward compatible through the release window.
+- Publish immutable frontend and backend images by digest. Deploy backend roles from the same tested backend digest.
+- Deploy request-role revisions with no traffic and smoke-test startup, run `migrate` once, exercise the tagged revisions against the expanded schema, deploy the compatible worker and realtime revisions, then shift traffic gradually.
+- Keep migrations expand/contract compatible through every overlapping revision and rollback. Additive schema changes precede backfills; destructive contractions occur only in a later release.
+- Every runtime handles termination by stopping new work, releasing job leases, closing pools, and ending streams. Correctness never depends on shutdown cleanup completing.
 - Rollback switches staff and provider routing to the old portal, freezes new-portal writes, and preserves all new database state for reconciliation. It never destructively reverses the database.
 - Confirm executed BAAs and service eligibility/configuration before protected health information enters production.
 
@@ -378,8 +421,9 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 
 - Emit structured logs without patient names, phone numbers, transcript content, message bodies, or recording URLs.
 - Trace commands through database transaction, provider command, provider event, and visible state transition.
-- Record metrics for task creation, provider-event delay, duplicate suppression, SSE reconnects, call offers, accept races, answer-to-bridge time, voicemail creation, missed-call creation, SMS delivery, and recording/transcript readiness.
-- Alert on failed webhook verification, growing unprocessed-event backlog, failed durable jobs, database saturation, elevated call-bridge failure, and cross-tenant authorization denial anomalies.
+- Record metrics for task creation, provider receipt and processing delay, webhook acknowledgment, duplicate suppression, job/outbox depth, pool acquisition and saturation, SSE connections and reconnects, call offers, accept races, answer-to-bridge time, voicemail creation, missed-call creation, SMS delivery, and recording/transcript readiness.
+- Partition operational metrics by runtime role and revision so a noisy role or unsafe rollout is visible.
+- Alert on failed webhook verification, slow or failed durable receipt, growing unprocessed-event backlog, failed durable jobs, database saturation, pool wait, elevated call-bridge failure, and cross-tenant authorization denial anomalies.
 
 ## Testing Decisions
 
@@ -395,8 +439,8 @@ This is the highest useful seam because it proves the product promise while allo
 
 - Test external behavior and durable invariants, not controller, repository, hook, or SQL implementation details.
 - Use real PostgreSQL integration tests for concurrency, unique constraints, authorization scope, idempotency, and lifecycle transitions.
-- Exercise the Go service through its public HTTP interface.
-- Exercise the portal with Playwright against the real Go service and provider simulators.
+- Exercise `portal-api`, `provider-ingress`, and `realtime` through their public interfaces and `worker` through durable jobs.
+- Exercise the portal with Playwright against the real runtime roles and provider simulators.
 - Maintain signed Telnyx webhook fixtures for voice, recording, transcription, and messaging events.
 - Run controlled live Telnyx acceptance tests before release for the paths that simulation cannot prove: WebRTC readiness, transfer offer, answer, bridge, media, recording, transcription, SMS delivery, and voicemail.
 - Run every production journey in two browser sessions to verify shared visibility and realtime recovery.
@@ -423,6 +467,12 @@ This is the highest useful seam because it proves the product promise while allo
 18. Two concurrent actions on an unassigned task produce one owner and at most one provider side effect.
 19. Completion records linked outcome evidence or an explicit completion reason.
 20. Logs and error responses remain free of protected content.
+21. Killing `portal-api` after database commit but before or after a Telnyx request converges through the durable provider command without duplicate effect.
+22. A webhook burst cannot starve staff commands, exceed the connection ceiling, acknowledge uncommitted data, or corrupt event order.
+23. Overlapping Cloud Run revisions stay within the PostgreSQL connection budget.
+24. Cloud SQL failover produces visible transient failure and automatic recovery without false success or lost durable work.
+25. SSE timeout, instance death, and revision rollout reconnect to an authoritative snapshot without losing state.
+26. Killing a worker mid-job releases or expires its lease and safely resumes without double-applying the effect.
 
 ### Performance targets
 
@@ -430,8 +480,10 @@ This is the highest useful seam because it proves the product promise while allo
 - A committed task or call-state change becomes visible in another active browser within 2 seconds at p95.
 - Initial task workspace load completes within 1.5 seconds at p95 under the target production dataset.
 - Accepted transfer to provider-confirmed bridge completes within 3 seconds at p95 in the controlled acceptance environment.
+- Signed provider webhooks commit durable receipt and return `2xx` within 2 seconds at p99 under the target burst load when PostgreSQL is healthy.
 - The 20-second offer fallback is accurate within one second.
 - Duplicate tasks and duplicate bridged winners remain zero under replay and concurrency tests.
+- Pool acquisition time and total open connections remain inside the tested per-role budget during peak load and overlapping deployment.
 
 ## Production Release Bar
 
@@ -452,6 +504,10 @@ The August 6 release does not ship until all conditions are proven:
 13. Concurrent task actions cannot overwrite ownership or issue duplicate patient contact.
 14. Cross-practice/location data access is denied and ordinary logs contain no protected content.
 15. Scoped staff invitations, short-lived evidence access, deployment, backups, rollback, monitoring, and the complete production journey are tested before launch.
+16. API commands, provider ingress, realtime streams, durable workers, and migrations run in their specified isolated runtime roles from one tested backend image.
+17. The maximum connection budget holds under peak traffic, webhook bursts, worker backlog, SSE load, and an overlapping rollout.
+18. Cloud SQL failover, runtime termination, webhook retry, worker recovery, SSE reconnect, and traffic rollback are rehearsed without data loss or false success.
+19. The approved capacity envelope and burst factor are exercised successfully with measurable database, pool, runtime, and provider headroom.
 
 ## Rollout Plan
 
@@ -470,10 +526,10 @@ The August 6 release does not ship until all conditions are proven:
 | Date | Outcome required by end of day | Owner A focus | Owner B focus | Verification gate |
 |---|---|---|---|---|
 | Thu Jul 23 | Product contract, architecture, release bar, and tickets approved | Spec and system invariants | Rendered experience inventory and acceptance journeys | No unresolved scope decision blocks implementation |
-| Fri Jul 24 | Deployed walking skeleton | Repository, Go service, PostgreSQL, migrations, Better Auth/Access | Next.js shell, generated client, deployment, first Playwright journey | Sign in → authorized empty workspace in production-like environment |
-| Sat Jul 25 | Live provider spine proven end to end, even with rough UI | `HumanCalling`, Telnyx voice adapter, durable events, recording/transcript receipt | TelnyxRTC, simultaneous offer, one-winner UI, active-call workspace, disposition | AI transfer → offer → one winner → bridge → recording/transcript → disposition → optional durable task |
+| Fri Jul 24 | Deployed walking skeleton | One Go image, runtime modes, PostgreSQL, migration job, Better Auth/Access, connection budget | Next.js shell, generated client, deployment, first Playwright journey | Sign in → authorized `portal-api` → empty workspace; roles use bounded pools |
+| Sat Jul 25 | Live provider spine proven end to end, even with rough UI | `HumanCalling`, isolated `provider-ingress`, durable `worker`, Telnyx voice adapter, recording/transcript receipt | TelnyxRTC, simultaneous offer, one-winner UI, active-call workspace, disposition | AI transfer → offer → one winner → bridge → durable webhook receipt → projection → disposition → optional task |
 | Sun Jul 26 | Manual task loop works end to end | `Work` model, commands, optimistic concurrency, audit, queries | Queue, quick create, assignment/status/completion/reopen UI | Create → assign → In progress → evidence/reason → Complete → bottom → Reopen |
-| Mon Jul 27 | Living engagement workspace and realtime coordination work | Task activity, phone-history query, SSE/versioning | SMS-first workspace, unified timeline, reconnect/refetch behavior | Two authorized browsers see current task plus clearly separated phone history |
+| Mon Jul 27 | Living engagement workspace and realtime coordination work | Task activity, phone-history query, isolated `realtime`, SSE/versioning | SMS-first workspace, unified timeline, reconnect/refetch behavior | Two authorized browsers see current task; SSE restart reconstructs the authoritative snapshot |
 | Tue Jul 28 | AI-created asynchronous tasks work | Scoped service identity, idempotent AI command | AI source and handoff presentation | Replay the same AI request; exactly one unassigned Open task appears |
 | Wed Jul 29 | SMS works through the task timeline | `Messaging`, webhooks, exact-one-open correlation, send/delivery state | Inbound tasks, composer, delivery rendering, AI draft confirmation | Exact match attaches; ambiguous/completed reply creates new task; stale concurrent send is blocked |
 | Thu Jul 30 | No-answer and call-disposition recovery work | 20-second fallback, voicemail, missed call, durable `NEEDS_DISPOSITION` | Recovery UI, post-call outcomes, prefilled follow-up task | Timeout falls back; browser loss preserves disposition; both outcome paths pass |
@@ -481,7 +537,7 @@ The August 6 release does not ship until all conditions are proven:
 | Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Recordings navigation, playback, transcript, failure states | Inbound/outbound/voicemail evidence appears and unauthorized access fails |
 | Sun Aug 2 | Administration and complete access boundaries work | Invitations, memberships, service scope, authorization audit | Staff/location settings and access-denied states | Email-bound invite activates exact scope; cross-location reads/writes/streams fail |
 | Mon Aug 3 | Feature complete; scope closes | Failure recovery, durable jobs, audit, tenant authorization | Empty/error/reconnect states, accessibility, full journey cleanup | All release-bar journeys pass in simulation |
-| Tue Aug 4 | Production hardening complete | Load/concurrency, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, performance, operator runbook | Concurrency, replay, isolation, backup, rollback, and observability gates pass |
+| Tue Aug 4 | Production hardening complete | Load/concurrency, connection ceiling, Cloud SQL failover, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, SSE/runtime termination, performance, operator runbook | Peak load, role isolation, failover, replay, backup, rollback, and observability gates pass |
 | Wed Aug 5 | Release candidate frozen and rehearsed | Production deployment rehearsal and provider configuration audit | Full staff rehearsal and UI blocker fixes only | Live Telnyx, SMS, recording, transcription, and AI-tool acceptance pass twice |
 | Thu Aug 6 | Full production release | Deploy, monitor backend/provider/database | Launch smoke, operator support, UI monitoring | All gates green; enable production routing; rollback immediately on release blocker |
 
@@ -525,5 +581,7 @@ The August 6 release does not ship until all conditions are proven:
 - The first release's name and AI context are operational hints, not verified medical identity. The UI describes longitudinal results as phone-number engagement history.
 - The August 6 date is achievable only if the scope fence remains closed after ticket approval and both people work in vertical slices with daily integration.
 - The first implementation slice must prove the live provider spine by July 25 before isolated component-library, database-framework, or speculative provider-abstraction work.
+- One modular monolith means one domain implementation, backend image, and PostgreSQL authority. Runtime-role isolation prevents unlike workloads from sharing a failure and scaling domain; it does not create microservices.
 - TelnyxRTC owns its browser signaling WebSocket while WebRTC carries media; product commands remain HTTP and live product updates use SSE. See [Telnyx WebRTC signaling](https://developers.telnyx.com/development/webrtc/js-sdk/explanation/webrtc-signaling).
 - Telnyx webhooks are verified, acknowledged quickly, deduplicated, and interpreted as provider evidence. See [Telnyx Voice API webhooks](https://developers.telnyx.com/docs/voice/programmable-voice/voice-api-webhooks).
+- The concurrency, connection-budget, failure-isolation, and rollout rationale is recorded in [Backend concurrency and resilience review](research/backend-concurrency-resilience-review.md).
