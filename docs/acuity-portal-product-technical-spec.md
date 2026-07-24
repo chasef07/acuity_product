@@ -4,7 +4,7 @@
 **Release:** Full production
 **Release date:** Thursday, August 6, 2026
 **Team:** Two people working daily
-**Status:** Ready for ticket approval
+**Status:** Slice 1 ready for implementation
 
 ## Problem Statement
 
@@ -97,12 +97,17 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 56. As an operator, I want a searchable Recordings archive for every human inbound call, human outbound call, and voicemail, so that communication evidence remains accessible.
 57. As an operator, I want short-lived protected access to recordings rather than public URLs, so that sensitive audio is not exposed.
 58. As a product owner, I want every critical journey exercised against production-like Telnyx, SMS, Better Auth, and database dependencies before launch, so that August 6 is a production release rather than a demo.
+59. As an invited user, I want to verify my email and create my own password, so that no administrator creates or knows my credentials.
+60. As an administrator, I want every current and future location in my practice to be available automatically, so that adding a location does not silently exclude practice leadership.
+61. As a Platform Operator, I want to discover every practice and location while working inside an explicit active scope, so that I can support customers without mixing their work.
+62. As a Platform Operator, I want customer-data changes to require a reasoned, time-limited Support Mode that preserves my real identity, so that elevated support access is visible and auditable.
 
 ## Implementation Decisions
 
 ### 1. Scope and system boundary
 
 - The portal, product backend, database, task workspace, human Call Center, SMS workflow, recording archive, and operational infrastructure are greenfield.
+- Human accounts, credentials, sessions, Practice configuration, Location configuration, and product data also begin fresh. No code, schema, account, password, session, or application-data migration is part of the release.
 - The existing AI receptionist and its booking behavior remain external systems.
 - The AI receptionist integrates through authenticated APIs. It receives no portal database credentials.
 - The first release has no EHR dependency, canonical patient record, or medical-identity verification flow.
@@ -111,6 +116,12 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 
 ### 2. Product vocabulary
 
+- The canonical domain glossary is [CONTEXT.md](../CONTEXT.md).
+- **Practice:** one customer tenant and security boundary containing one or more locations.
+- **Location:** one physical or operational office within a practice.
+- **Membership:** one user's Admin or Staff role in one practice plus an `ALL` or `SELECTED` location scope.
+- **Platform Operator:** an internal Acuity Health user with global visibility and explicit audited Support Mode for customer-data changes.
+- **Support Mode:** a time-limited, practice-scoped mutation grant for a Platform Operator; it never impersonates a customer user.
 - **Task:** the primary object and one accountable piece of patient work.
 - **Interaction:** a call, voicemail, SMS message, or staff note that may exist with or without a task.
 - **Contact context:** a snapshot of the phone number, optional name, and handoff details known for one task or interaction. It is not a global person or verified patient identity.
@@ -166,15 +177,20 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 
 ### 6. Experience model
 
-The approved rendering model is the source of truth:
+The portal is a greenfield, desktop-first, sidebar-native operating workspace
+inspired by the persistent work-canvas grammar of Codex and T3 Code. It is not
+an analytics dashboard and does not reuse an existing portal implementation.
 
-- A prioritized task queue occupies the left side.
-- Opening a task populates the central living engagement workspace with contact context, the current need, the SMS composer, task controls, and a chronological communication timeline.
+- A persistent left sidebar owns practice/location context, primary navigation, search, filters, the current section's dense work list, and the signed-in user's status.
+- Selecting a task, call, recording, or setting changes the central canvas without replacing the application shell.
+- In Tasks, the sidebar contains the prioritized queue and the central living engagement workspace contains contact context, the current need, task controls, a chronological communication timeline, and the persistent composer.
 - The timeline shows inbound and outbound SMS, calls, voicemails, notes, recordings, transcripts, assignments, and status changes.
 - Current-task interactions are clearly distinguished from older phone-number engagement history.
 - Calls stay inline in the engagement workspace.
 - Patient message and internal note are explicit composer modes.
 - An active call uses the same workspace and shows the available contact snapshot, AI handoff, SMS history, and call history.
+- Active call state and controls remain mounted while the user changes sidebar selection or opens context.
+- Context opens in a right-side drawer and may pin only on sufficiently wide displays.
 - No patient-profile drawer or EMR-derived medical profile ships in the first release.
 
 Primary navigation:
@@ -191,6 +207,18 @@ Fixed task views:
 - Unassigned
 - Emergency
 - Completed
+
+Visual system:
+
+- Tailwind CSS 4 with shadcn/ui's Mira style, Zinc color base, and Base UI accessible primitives; do not use Radix UI.
+- Lucide React provides icons. CVA owns named component variants, and `tailwind-merge` composes classes through one helper.
+- DM Sans is the interface typeface. JetBrains Mono with SF Mono fallback is reserved for technical metadata; ordinary times and call timers use tabular numerals.
+- Light mode is the initial default. A near-black dark mode has full feature parity, and the user's choice persists.
+- CSS variables own light/dark theme and operational semantic colors. Raw utility colors do not encode task, call, delivery, or failure state.
+- The base corner radius is approximately 10 pixels. Use thin borders, shallow shadows, restrained motion, and compact desktop controls with larger coarse-pointer targets.
+- Translucency and subtle grain are limited to application chrome, overlays, and the persistent call surface. Task rows, patient communication, and consequential controls remain solid and high contrast.
+- The interface uses panels, hairline separation, and a communication thread rather than a grid of generic dashboard cards.
+- Add shadcn source components only when the current vertical slice uses them; do not preinstall or prebuild a generalized component library.
 
 ### 7. Call Center behavior
 
@@ -233,7 +261,8 @@ immutable backend image, then run that image in isolated runtime roles:
 ```text
 Next.js web application
     ├── React + TypeScript
-    ├── shadcn/ui + Tailwind + Geist
+    ├── Tailwind CSS 4 + shadcn/ui Mira/Zinc + Base UI
+    ├── DM Sans + Lucide React + CVA + tailwind-merge
     ├── TelnyxRTC browser client
     └── Generated OpenAPI client
 
@@ -326,8 +355,11 @@ all Go roles ── bounded connections ──> PostgreSQL
 - **Practice**
 - **Location**
 - **User**
-- **Membership** with Admin or Staff role and authorized locations
-- **Invitation** with email, practice, role, authorized locations, expiration, revocation, and acceptance state
+- **PlatformOperator** for the small set of internal Acuity users with global visibility
+- **Membership** with Admin or Staff role and `ALL` or `SELECTED` location scope
+- **MembershipLocation** entries for each explicitly selected location
+- **SupportSession** with Platform Operator, practice, reason, start, expiration, and revocation
+- **Invitation** with email, practice, role, location scope, expiration, revocation, and acceptance state
 - **ServiceIdentity** with minimum practice/location scope
 - **Task** with tenant, location, contact-context snapshot, source, title, status, priority, optional assignee, version, optional due time, and completion metadata
 - **Activity** with task, actor, type, timestamp, and normalized display payload
@@ -372,13 +404,20 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 
 ### 14. Authentication and authorization
 
-- Better Auth in Next.js owns human sign-in, account recovery, and browser-session lifecycle.
+- Human access is invite-only. Public sign-up is disabled.
+- The first release uses verified email and password with account recovery. Users create their own passwords from the invitation flow; no operator creates or knows another user's credentials.
+- MFA, magic-link authentication, and SSO are out of scope for the first release.
+- Better Auth in Next.js owns human sign-in, email verification, account recovery, and browser-session lifecycle.
 - The browser obtains a short-lived Better Auth JWT for direct `portal-api` calls.
 - The Go `Access` module verifies signature, issuer, audience, and expiration locally against cached Better Auth JWKS. It does not call Next.js on every request or read Better Auth session tables as an authorization mechanism.
 - Better Auth proves who the human is. PostgreSQL membership data and the Go `Access` module are the sole authority for what that human may do.
 - Practice and location IDs supplied by a client are requested context, never proof of access. `Access` resolves and enforces the allowed scope for every command, query, SSE stream, and evidence grant.
-- Admin may manage staff and see all practice locations. Staff may operate only explicitly authorized locations.
-- Each invitation is email-bound, expiring, and revocable and specifies practice, role, and authorized locations before send.
+- Admin always has `ALL` location scope for the practice. Staff may have `ALL` or `SELECTED` scope.
+- `ALL` includes every current and future location in the practice. `SELECTED` includes only explicit membership-location grants.
+- Platform Operators are not duplicated as Admin memberships in every practice. They can discover and read every current and future practice/location but still select an explicit active practice and location.
+- A Platform Operator must enter time-limited, practice-scoped Support Mode with a reason before mutating customer data. The UI shows a persistent banner, every action records the real Platform Operator, and expiration or revocation ends mutation access. Support Mode never impersonates a customer user.
+- Each invitation is email-bound, expiring, and revocable and specifies practice, role, and location scope before send.
+- Practice, Location, Platform Operator, and initial invitation records are created through an auditable provisioning path that accepts business facts, not human passwords.
 - Integration credentials are separate service identities with the minimum required practice/location scope. Mutations record `actor_type=service` and the stable service actor ID.
 - Do not duplicate practice/location authorization in Better Auth organization permissions.
 - Better Auth may use the same PostgreSQL instance, but its tables remain private to Better Auth and the Go runtime never mutates them.
@@ -407,6 +446,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Use small direct `pgxpool` pools initially. Do not add managed transaction pooling until measurements justify it; `LISTEN/NOTIFY` retains a dedicated direct connection.
 - Cloud SQL regional failover closes existing connections and may cause roughly one minute of database unavailability. Every role uses bounded acquisition, exponential backoff with jitter, and only safe idempotent retries from the beginning of the operation.
 - Store secrets in Secret Manager.
+- Generate internal application credentials through approved tooling or deployment automation. Do not commit them, paste them into product configuration, or ask an operator to invent them manually.
 - Store recordings in approved protected object storage; expose them only through short-lived, location-authorized access and audit each grant.
 - Require an approved recording/transcript retention period in each practice's production configuration. Delete protected content after the configured period while retaining non-content audit metadata.
 - Use one public product domain with path routing to the web and API services.
@@ -473,6 +513,10 @@ This is the highest useful seam because it proves the product promise while allo
 24. Cloud SQL failover produces visible transient failure and automatic recovery without false success or lost durable work.
 25. SSE timeout, instance death, and revision rollout reconnect to an authoritative snapshot without losing state.
 26. Killing a worker mid-job releases or expires its lease and safely resumes without double-applying the effect.
+27. Adding a location immediately grants access to Admin and `ALL`-scope Staff memberships but not `SELECTED`-scope Staff memberships.
+28. A Platform Operator can read every practice but cannot mutate customer data without an active Support Session for that practice; mutations retain the real actor, reason, and audit trail.
+29. Public sign-up is rejected, and an invitation can activate an account without any operator creating or learning the user's password.
+30. Sidebar navigation, context opening, and realtime reconnect do not unmount or lose an active call or the selected engagement workspace.
 
 ### Performance targets
 
@@ -508,6 +552,7 @@ The August 6 release does not ship until all conditions are proven:
 17. The maximum connection budget holds under peak traffic, webhook bursts, worker backlog, SSE load, and an overlapping rollout.
 18. Cloud SQL failover, runtime termination, webhook retry, worker recovery, SSE reconnect, and traffic rollback are rehearsed without data loss or false success.
 19. The approved capacity envelope and burst factor are exercised successfully with measurable database, pool, runtime, and provider headroom.
+20. Invite-only access, dynamic location scope, Platform Operator Support Mode, and the persistent sidebar workspace pass their authorization and browser acceptance journeys.
 
 ## Rollout Plan
 
@@ -575,7 +620,7 @@ The August 6 release does not ship until all conditions are proven:
 
 ## Further Notes
 
-- The existing portal prototype renderings define the visual interaction model, but terminology changes from Request to Task.
+- The frontend is greenfield. The approved reference defines only the persistent sidebar and living-workspace grammar; no existing portal code, component, stylesheet, account, or session is reused.
 - The product name in code and interfaces should use Acuity Portal; provider adapters should not leak Telnyx terminology into the task domain.
 - Emergency, Priority, and Routine are operational queue labels, not clinical assessments.
 - The first release's name and AI context are operational hints, not verified medical identity. The UI describes longitudinal results as phone-number engagement history.

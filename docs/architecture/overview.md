@@ -42,13 +42,60 @@ The Go runtime contains five deep modules. Each module has one behavior-oriented
 
 | Module | Owns | Does not own |
 |---|---|---|
-| `Access` | Human and service principals, invitations, memberships, roles, location scope, authorization decisions | Better Auth session implementation, task state, provider credentials |
+| `Access` | Human and service principals, invitations, memberships, Platform Operators, Support Mode, roles, location scope, authorization decisions | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
 | `HumanCalling` | Availability, simultaneous offers, winner election, logical call state, bridge confirmation, post-call disposition, recording readiness | Task lifecycle, SMS correlation, protected evidence access |
 | `Messaging` | Inbound correlation, send intent, delivery state, retries | Task lifecycle, contact identity, call state |
 | `EvidenceArchive` | Recording/transcript availability, protected grants, access audit, retention, deletion | Call control, task completion, provider routing |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
+
+## Access model
+
+```mermaid
+flowchart LR
+    User["User"]
+    Operator["Platform Operator"]
+    Membership["Practice Membership<br/>Admin or Staff"]
+    Practice["Practice"]
+    Locations["Current and future Locations"]
+    Selected["Selected Locations"]
+    Support["Time-limited Support Mode"]
+
+    User --> Operator
+    User --> Membership
+    Membership --> Practice
+    Membership -->|"Admin or ALL"| Locations
+    Membership -->|"Staff SELECTED"| Selected
+    Operator -->|"global visibility"| Practice
+    Operator -->|"mutations with reason"| Support
+    Support --> Practice
+```
+
+- Practice is the customer tenant and security boundary; Location is its physical or operational subdivision.
+- Admin always receives dynamic `ALL` scope. Staff receives either dynamic `ALL` scope or explicit `SELECTED` location grants.
+- Dynamic `ALL` scope includes locations created after the membership. `SELECTED` scope does not.
+- Platform Operator is a distinct Acuity-internal role rather than a replicated Practice membership.
+- Platform Operators keep global visibility but operate within an explicit active practice/location. Customer-data mutations additionally require unexpired, practice-scoped Support Mode with a reason and persistent UI indication.
+- Authorization records the real human or service actor. Support Mode never impersonates a customer user.
+- Human accounts are fresh and invite-only. Better Auth owns verified email/password credentials and recovery; `Access` owns invitations, roles, scopes, and authorization.
+
+## Browser shell
+
+The frontend is a greenfield, desktop-first, sidebar-native operating workspace:
+
+- a persistent left sidebar owns practice/location context, product navigation, search, filters, the current section's dense work list, and user status;
+- selection changes the central living workspace without replacing the application shell;
+- the task canvas holds the need, next action, communication thread, controls, and persistent composer;
+- context opens as a right drawer and may pin only on wide displays; and
+- active call state and controls remain mounted across sidebar selection and context navigation.
+
+The visual foundation is Tailwind CSS 4, shadcn/ui Mira with Zinc tokens, Base UI
+primitives, Lucide React, CVA, `tailwind-merge`, DM Sans, and a technical
+JetBrains Mono/SF Mono fallback. Light mode is the initial default with a
+persisted, full-parity near-black dark mode. Semantic CSS variables own
+operational state; translucency and grain stay out of task and communication
+content.
 
 ## Runtime roles
 
@@ -125,7 +172,7 @@ flowchart LR
 
 Dependency rules:
 
-1. `Access` resolves practice and location scope before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
+1. `Access` resolves Platform Operator or Practice membership, role, dynamic or selected location scope, and Support Mode before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
 2. `HumanCalling` and `Messaging` may ask `Work` to create accountable work. `Work` does not know Telnyx.
 3. `EvidenceArchive` grants protected access after authorization. No caller receives a permanent recording URL.
 4. PostgreSQL is the sole durable product authority. SSE, browser state, and provider commands are projections or requests.
@@ -379,6 +426,9 @@ The highest test seam is:
 - Stale task versions cannot overwrite ownership or issue duplicate contact.
 - Phone-number history is context, not verified identity.
 - `Access` resolves practice and location scope before every protected module invocation; caller-supplied IDs never grant authority.
+- Admin and `ALL`-scope Staff automatically receive current and future Practice locations; `SELECTED`-scope Staff receive only explicit grants.
+- Platform Operator visibility never implies mutation authority; customer-data changes require an active, audited, practice-scoped Support Mode without impersonation.
+- Public sign-up is disabled; accepting an invitation never requires an operator to create or know another user's password.
 - Realtime transport loss cannot lose durable work.
 - A provider webhook receives `2xx` only after its unique durable receipt commits.
 - A provider request never runs while a PostgreSQL transaction is open.
