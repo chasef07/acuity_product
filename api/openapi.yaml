@@ -1,0 +1,615 @@
+openapi: 3.0.3
+info:
+  title: Acuity Portal API
+  version: 2026-07-24
+  description: >
+    Slice 1 interface for invite-only identity activation, Access authorization,
+    the authorized empty workspace, Support Mode, and disposable realtime hints.
+servers:
+  - url: https://api.acuity.example
+    description: Deployment-supplied HTTPS origin
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      security: []
+      responses:
+        "200":
+          description: Process is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /health/ready:
+    get:
+      operationId: getReadiness
+      security: []
+      responses:
+        "200":
+          description: Required runtime dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/access/sign-up-eligibility:
+    post:
+      operationId: inspectSignUpEligibility
+      summary: Validate an invitation or provisioned Platform Operator email.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignUpEligibilityRequest"
+      responses:
+        "200":
+          description: The verified-email sign-up is eligible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationPreview"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/access:
+    get:
+      operationId: discoverAccess
+      summary: Discover current Practice and Location authorization.
+      responses:
+        "200":
+          description: Current Access authority from PostgreSQL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessDiscovery"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/invitations/inspect:
+    post:
+      operationId: inspectInvitation
+      summary: Inspect only the scope attached to the presented invitation.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationCredentialRequest"
+      responses:
+        "200":
+          description: Pending invitation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationPreview"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/invitations/accept:
+    post:
+      operationId: acceptInvitation
+      summary: Atomically activate an invitation for the verified identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationCredentialRequest"
+      responses:
+        "200":
+          description: Membership and authorized scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Authorization"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/workspace:
+    get:
+      operationId: getWorkspace
+      summary: Load the authoritative empty workspace snapshot.
+      parameters:
+        - name: practiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: locationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Authorized workspace snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceSnapshot"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/support-mode:
+    post:
+      operationId: enterSupportMode
+      summary: Enter time-limited Support Mode for one Practice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnterSupportModeRequest"
+      responses:
+        "201":
+          description: Active Support Mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportMode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/support-mode/{supportSessionId}:
+    delete:
+      operationId: revokeSupportMode
+      summary: Revoke the real operator's active Support Mode.
+      parameters:
+        - name: supportSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Support Mode revoked.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/practices/{practiceId}/locations:
+    post:
+      operationId: addLocation
+      summary: Add a Location as a Platform Operator in Support Mode.
+      parameters:
+        - name: practiceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLocationRequest"
+      responses:
+        "201":
+          description: Committed Location mutation and audit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationMutation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/events:
+    get:
+      operationId: getEvents
+      summary: Stream disposable version hints for one authorized scope.
+      parameters:
+        - name: practiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: locationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: >
+            Bounded text/event-stream. Initial connection and every reconnect
+            require an authoritative workspace refetch.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthenticated:
+      description: Missing or invalid credential.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Denied:
+      description: Current identity lacks the requested authority.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: The requested transition is no longer available.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unavailable:
+      description: A required dependency is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, role]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        role:
+          type: string
+          enum: [portal-api, provider-ingress, realtime]
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, correlationId, retryable]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            correlationId:
+              type: string
+            retryable:
+              type: boolean
+    SignUpEligibilityRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        invitationToken:
+          type: string
+          minLength: 32
+          maxLength: 256
+    InvitationCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 32
+          maxLength: 256
+    InvitationPreview:
+      type: object
+      additionalProperties: false
+      required: [kind, email, locations]
+      properties:
+        kind:
+          type: string
+          enum: [PRACTICE_INVITATION, PLATFORM_OPERATOR]
+        email:
+          type: string
+          format: email
+        practiceId:
+          type: string
+          format: uuid
+        practiceName:
+          type: string
+        role:
+          type: string
+          enum: [ADMIN, STAFF]
+        locationScope:
+          type: string
+          enum: [ALL, SELECTED]
+        locations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Location"
+        expiresAt:
+          type: string
+          format: date-time
+    Actor:
+      type: object
+      additionalProperties: false
+      required: [subject, email, type]
+      properties:
+        subject:
+          type: string
+        email:
+          type: string
+          format: email
+        type:
+          type: string
+          enum: [HUMAN, PLATFORM_OPERATOR]
+    Practice:
+      type: object
+      additionalProperties: false
+      required: [id, name, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    Location:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    Membership:
+      type: object
+      additionalProperties: false
+      required: [id, role, locationScope]
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [ADMIN, STAFF]
+        locationScope:
+          type: string
+          enum: [ALL, SELECTED]
+    SupportMode:
+      type: object
+      additionalProperties: false
+      required: [id, practiceId, reason, startsAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    Authorization:
+      type: object
+      additionalProperties: false
+      required: [actor, practice, locations, platformOperator]
+      properties:
+        actor:
+          $ref: "#/components/schemas/Actor"
+        practice:
+          $ref: "#/components/schemas/Practice"
+        membership:
+          $ref: "#/components/schemas/Membership"
+        locations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Location"
+        activeLocation:
+          $ref: "#/components/schemas/Location"
+        platformOperator:
+          type: boolean
+        supportMode:
+          $ref: "#/components/schemas/SupportMode"
+    PracticeAccess:
+      allOf:
+        - $ref: "#/components/schemas/Practice"
+        - type: object
+          additionalProperties: false
+          required: [locations]
+          properties:
+            membership:
+              $ref: "#/components/schemas/Membership"
+            locations:
+              type: array
+              items:
+                $ref: "#/components/schemas/Location"
+    AccessDiscovery:
+      type: object
+      additionalProperties: false
+      required: [actor, platformOperator, practices]
+      properties:
+        actor:
+          $ref: "#/components/schemas/Actor"
+        platformOperator:
+          type: boolean
+        practices:
+          type: array
+          items:
+            $ref: "#/components/schemas/PracticeAccess"
+    WorkspaceSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - version
+        - state
+        - actor
+        - practice
+        - location
+        - navigation
+        - platformOperator
+      properties:
+        schemaVersion:
+          type: string
+          enum: ["2026-07-24"]
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        state:
+          type: string
+          enum: [EMPTY]
+        actor:
+          $ref: "#/components/schemas/Actor"
+        practice:
+          $ref: "#/components/schemas/Practice"
+        location:
+          $ref: "#/components/schemas/Location"
+        membership:
+          $ref: "#/components/schemas/Membership"
+        platformOperator:
+          type: boolean
+        supportMode:
+          $ref: "#/components/schemas/SupportMode"
+        navigation:
+          type: array
+          items:
+            $ref: "#/components/schemas/NavigationItem"
+    NavigationItem:
+      type: object
+      additionalProperties: false
+      required: [id, label, enabled]
+      properties:
+        id:
+          type: string
+          enum: [tasks, call-center, recordings, settings]
+        label:
+          type: string
+        enabled:
+          type: boolean
+    EnterSupportModeRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, reason, durationMinutes]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 240
+    AddLocationRequest:
+      type: object
+      additionalProperties: false
+      required: [supportSessionId, key, name]
+      properties:
+        supportSessionId:
+          type: string
+          format: uuid
+        key:
+          type: string
+          minLength: 1
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, actorSubject, practiceId, supportSessionId, action, reason, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        actorSubject:
+          type: string
+        practiceId:
+          type: string
+          format: uuid
+        supportSessionId:
+          type: string
+          format: uuid
+        action:
+          type: string
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    LocationMutation:
+      type: object
+      additionalProperties: false
+      required: [location, practiceVersion, audit]
+      properties:
+        location:
+          $ref: "#/components/schemas/Location"
+        practiceVersion:
+          type: integer
+          format: int64
+        audit:
+          $ref: "#/components/schemas/AuditEvent"
+security:
+  - bearerAuth: []

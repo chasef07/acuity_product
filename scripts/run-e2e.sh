@@ -1,0 +1,141 @@
+#!/usr/bin/env sh
+set -eu
+
+: "${E2E_DATABASE_URL:?required and must name a disposable database ending in _e2e}"
+
+database_name="$(psql "$E2E_DATABASE_URL" -Atqc 'select current_database()')"
+case "$database_name" in
+  *_e2e) ;;
+  *)
+    echo "refusing to reset non-E2E database: $database_name" >&2
+    exit 1
+    ;;
+esac
+
+root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+runtime_dir="$(mktemp -d)"
+web_pid=""
+portal_pid=""
+realtime_pid=""
+provider_pid=""
+worker_pid=""
+cleanup() {
+  for pid in "$worker_pid" "$provider_pid" "$realtime_pid" "$portal_pid" "$web_pid"; do
+    if [ -n "$pid" ]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  rm -rf "$runtime_dir"
+}
+trap cleanup EXIT INT TERM
+
+psql "$E2E_DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP SCHEMA IF EXISTS auth CASCADE;
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+SQL
+
+cd "$root"
+go build -o "$runtime_dir/acuity" ./backend/cmd/acuity
+ACUITY_RUNTIME_ROLE=migrate \
+DATABASE_URL="$E2E_DATABASE_URL" \
+DATABASE_POOL_MAX=2 \
+DATABASE_ACQUIRE_TIMEOUT_MS=5000 \
+PROVISIONING_INPUT="$root/config/development-provisioning.json" \
+PROVISIONING_OUTPUT="$runtime_dir/provisioned.json" \
+"$runtime_dir/acuity"
+
+cd "$root/web"
+NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
+NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
+npm run build
+
+PORT=13000 \
+HOSTNAME=127.0.0.1 \
+AUTH_DATABASE_URL="$E2E_DATABASE_URL" \
+AUTH_DB_POOL_MAX=3 \
+AUTH_DB_ACQUIRE_TIMEOUT_MS=1500 \
+BETTER_AUTH_URL=http://127.0.0.1:13000 \
+BETTER_AUTH_SECRET=local-e2e-secret-that-is-at-least-32-characters \
+BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:13000 \
+PORTAL_API_INTERNAL_URL=http://127.0.0.1:18080 \
+PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
+AUTH_EMAIL_MODE=test \
+AUTH_ALLOW_TEST_EMAIL=true \
+NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
+NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
+npm start >"$runtime_dir/web.log" 2>&1 &
+web_pid=$!
+
+cd "$root"
+ACUITY_RUNTIME_ROLE=portal-api \
+DATABASE_URL="$E2E_DATABASE_URL" \
+DATABASE_POOL_MAX=4 \
+DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
+HTTP_PORT=18080 \
+BROWSER_ORIGIN=http://127.0.0.1:13000 \
+BETTER_AUTH_JWKS_URL=http://127.0.0.1:13000/api/auth/jwks \
+BETTER_AUTH_ISSUER=http://127.0.0.1:13000 \
+PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
+"$runtime_dir/acuity" >"$runtime_dir/portal.log" 2>&1 &
+portal_pid=$!
+
+ACUITY_RUNTIME_ROLE=realtime \
+DATABASE_URL="$E2E_DATABASE_URL" \
+DATABASE_POOL_MAX=3 \
+DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
+HTTP_PORT=18081 \
+BROWSER_ORIGIN=http://127.0.0.1:13000 \
+BETTER_AUTH_JWKS_URL=http://127.0.0.1:13000/api/auth/jwks \
+BETTER_AUTH_ISSUER=http://127.0.0.1:13000 \
+PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
+REALTIME_HEARTBEAT_SECONDS=2 \
+REALTIME_STREAM_SECONDS=30 \
+REALTIME_REVALIDATE_SECONDS=2 \
+REALTIME_RECONNECT_MIN_MS=100 \
+REALTIME_RECONNECT_MAX_SECONDS=2 \
+"$runtime_dir/acuity" >"$runtime_dir/realtime.log" 2>&1 &
+realtime_pid=$!
+
+ACUITY_RUNTIME_ROLE=provider-ingress \
+DATABASE_URL="$E2E_DATABASE_URL" \
+DATABASE_POOL_MAX=2 \
+DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
+HTTP_PORT=18082 \
+"$runtime_dir/acuity" >"$runtime_dir/provider.log" 2>&1 &
+provider_pid=$!
+
+ACUITY_RUNTIME_ROLE=worker \
+DATABASE_URL="$E2E_DATABASE_URL" \
+DATABASE_POOL_MAX=2 \
+DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
+"$runtime_dir/acuity" >"$runtime_dir/worker.log" 2>&1 &
+worker_pid=$!
+
+wait_for() {
+  url="$1"
+  attempts=0
+  until curl -fsS "$url" >/dev/null; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 50 ]; then
+      echo "runtime did not become ready: $url" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+wait_for http://127.0.0.1:13000/sign-in
+wait_for http://127.0.0.1:18080/health/ready
+wait_for http://127.0.0.1:18081/health/ready
+wait_for http://127.0.0.1:18082/health/ready
+kill -0 "$worker_pid"
+
+cd "$root/web"
+E2E_PROVISIONING_OUTPUT="$runtime_dir/provisioned.json" \
+E2E_BASE_URL=http://127.0.0.1:13000 \
+E2E_PORTAL_API_URL=http://127.0.0.1:18080 \
+E2E_REALTIME_URL=http://127.0.0.1:18081 \
+E2E_REALTIME_PID="$realtime_pid" \
+E2E_RUNTIME_BINARY="$runtime_dir/acuity" \
+npx playwright test --project=chromium
