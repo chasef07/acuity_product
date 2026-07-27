@@ -8,16 +8,16 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Field,
-  FieldDescription,
-  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { NewPasswordFields } from "@/components/auth/new-password-fields"
 import { inspectInvitation } from "@/lib/api/generated/sdk.gen"
 import type { InvitationPreview } from "@/lib/api/generated/types.gen"
 import { portalClient } from "@/lib/api/client"
 import { authClient } from "@/lib/auth-client"
+import { confirmedPassword } from "@/lib/password-policy"
 import {
   capturePendingInvitation,
   clearPendingInvitation,
@@ -74,9 +74,8 @@ export function InvitationForm() {
     setPending(true)
     setError("")
     const form = new FormData(event.currentTarget)
-    const password = String(form.get("password") ?? "")
-    const confirmation = String(form.get("confirmation") ?? "")
-    if (password !== confirmation) {
+    const password = confirmedPassword(form)
+    if (password === undefined) {
       setError("Passwords must match.")
       setPending(false)
       return
@@ -151,32 +150,7 @@ export function InvitationForm() {
           <FieldLabel htmlFor="email">Verified email</FieldLabel>
           <Input id="email" value={preview.email} readOnly disabled />
         </Field>
-        <Field data-invalid={Boolean(error)}>
-          <FieldLabel htmlFor="password">Create password</FieldLabel>
-          <Input
-            id="password"
-            name="password"
-            type="password"
-            minLength={12}
-            maxLength={128}
-            autoComplete="new-password"
-            required
-          />
-          <FieldDescription>Use at least 12 characters.</FieldDescription>
-        </Field>
-        <Field data-invalid={Boolean(error)}>
-          <FieldLabel htmlFor="confirmation">Confirm password</FieldLabel>
-          <Input
-            id="confirmation"
-            name="confirmation"
-            type="password"
-            minLength={12}
-            maxLength={128}
-            autoComplete="new-password"
-            required
-          />
-          <FieldError>{error}</FieldError>
-        </Field>
+        <NewPasswordFields error={error} />
         <Button type="submit" size="lg" disabled={pending}>
           {pending && (
             <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />

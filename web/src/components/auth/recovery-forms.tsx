@@ -6,15 +6,11 @@ import { CheckCircle2Icon, LoaderCircleIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { NewPasswordFields } from "@/components/auth/new-password-fields"
 import { authClient } from "@/lib/auth-client"
+import { confirmedPassword } from "@/lib/password-policy"
 
 export function ForgotPasswordForm() {
   const [pending, setPending] = useState(false)
@@ -97,8 +93,8 @@ export function ResetPasswordForm() {
     setPending(true)
     setError("")
     const data = new FormData(event.currentTarget)
-    const password = String(data.get("password") ?? "")
-    if (password !== String(data.get("confirmation") ?? "")) {
+    const password = confirmedPassword(data)
+    if (password === undefined) {
       setError("Passwords must match.")
       setPending(false)
       return
@@ -147,32 +143,11 @@ export function ResetPasswordForm() {
   return (
     <form onSubmit={submit}>
       <FieldGroup>
-        <Field data-invalid={Boolean(error)}>
-          <FieldLabel htmlFor="password">New password</FieldLabel>
-          <Input
-            id="password"
-            name="password"
-            type="password"
-            minLength={12}
-            maxLength={128}
-            autoComplete="new-password"
-            required
-          />
-          <FieldDescription>Use at least 12 characters.</FieldDescription>
-        </Field>
-        <Field data-invalid={Boolean(error)}>
-          <FieldLabel htmlFor="confirmation">Confirm new password</FieldLabel>
-          <Input
-            id="confirmation"
-            name="confirmation"
-            type="password"
-            minLength={12}
-            maxLength={128}
-            autoComplete="new-password"
-            required
-          />
-          <FieldError>{error}</FieldError>
-        </Field>
+        <NewPasswordFields
+          error={error}
+          passwordLabel="New password"
+          confirmationLabel="Confirm new password"
+        />
         <Button type="submit" size="lg" disabled={pending}>
           {pending && (
             <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />

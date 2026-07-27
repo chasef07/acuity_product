@@ -12,7 +12,7 @@ export type IncomingMediaLeg = {
   unmute: () => void
 }
 
-export type CallingMediaCallbacks = {
+type CallingMediaCallbacks = {
   onState: (state: MediaState) => void
   onIncoming: (leg: IncomingMediaLeg) => void
 }
@@ -56,7 +56,7 @@ export function createCallingMediaAdapter(): CallingMediaAdapter {
   return window.__acuityCallingMediaFactory?.() ?? new TelnyxMediaAdapter()
 }
 
-export function correlatedCallID(clientState?: string): string | undefined {
+function correlatedCallID(clientState?: string): string | undefined {
   if (!clientState) return
   try {
     const decoded = JSON.parse(window.atob(clientState)) as {

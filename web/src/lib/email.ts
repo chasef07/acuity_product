@@ -1,8 +1,10 @@
 import nodemailer from "nodemailer"
 
+import { positiveInteger, required } from "@/lib/server-env"
+
 export type AuthEmailKind = "verification" | "password-reset"
 
-export type AuthEmail = {
+type AuthEmail = {
   kind: AuthEmailKind
   to: string
   url: string
@@ -101,20 +103,4 @@ export function latestTestEmail(
   }
   const messages = testEmails().get(email.trim().toLowerCase()) ?? []
   return messages.findLast((message) => message.kind === kind)
-}
-
-function required(name: string): string {
-  const value = process.env[name]?.trim()
-  if (!value) {
-    throw new Error(`${name} is required`)
-  }
-  return value
-}
-
-function positiveInteger(name: string): number {
-  const value = Number.parseInt(required(name), 10)
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`)
-  }
-  return value
 }
