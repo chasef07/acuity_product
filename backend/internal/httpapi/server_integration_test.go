@@ -3,13 +3,17 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,8 +60,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		Email:         "selected@abita.test",
 		EmailVerified: true,
 	}
-	handler, err := httpapi.New(httpapi.Config{
-		Role:           "portal-api",
+	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigin:  "http://localhost:3000",
 		AcquireTimeout: 500 * time.Millisecond,
 	}, pool, accessModule, staticAuthenticator{
@@ -209,8 +212,7 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 	); err != nil {
 		t.Fatalf("accept pool fixture: %v", err)
 	}
-	handler, err := httpapi.New(httpapi.Config{
-		Role:           "portal-api",
+	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigin:  "http://localhost:3000",
 		AcquireTimeout: 75 * time.Millisecond,
 	}, pool, accessModule, staticAuthenticator{"member-token": identity})
@@ -272,10 +274,16 @@ func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testin
 	}
 	defer pool.Close()
 
-	handler, err := httpapi.New(httpapi.Config{
-		Role:           "provider-ingress",
+	calling := humancalling.New(
+		pool,
+		nil,
+		nil,
+		humancalling.Config{},
+		nil,
+	)
+	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 75 * time.Millisecond,
-	}, pool, nil, nil)
+	}, pool, calling)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +306,84 @@ func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testin
 	if envelope.Error.Code != "UNAVAILABLE" || !envelope.Error.Retryable {
 		t.Fatalf("unavailable readiness error = %#v", envelope)
 	}
+}
+
+func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate webhook key: %v", err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		nil,
+		humancalling.Config{
+			WebhookPublicKey: publicKey,
+			WebhookTolerance: 5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	handler, err := httpapi.NewProviderIngress(httpapi.Config{
+		AcquireTimeout: 500 * time.Millisecond,
+	}, pool, calling)
+	if err != nil {
+		t.Fatalf("new provider-ingress HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"http-webhook-event","occurred_at":"%s","payload":{"call_control_id":"caller-control","call_leg_id":"caller-leg","call_session_id":"caller-session","to":"sip:opaque@synthetic.sip.telnyx.com"}}}`,
+		now.Format(time.RFC3339Nano),
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	send := func(signature string) *http.Response {
+		t.Helper()
+		request, err := http.NewRequest(
+			http.MethodPost,
+			server.URL+"/v1/provider/telnyx/webhooks",
+			bytes.NewReader(raw),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("telnyx-timestamp", timestamp)
+		request.Header.Set("telnyx-signature-ed25519", signature)
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		response := send(signature)
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf(
+				"signed webhook attempt %d status = %d, body = %s",
+				attempt+1,
+				response.StatusCode,
+				readBody(t, response),
+			)
+		}
+		_ = response.Body.Close()
+	}
+	invalid := send(base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)))
+	if invalid.StatusCode != http.StatusBadRequest {
+		t.Fatalf(
+			"invalid webhook status = %d, body = %s",
+			invalid.StatusCode,
+			readBody(t, invalid),
+		)
+	}
+	_ = invalid.Body.Close()
 }
 
 func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.T) {
@@ -354,21 +440,27 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
 	}
-	handler, err := httpapi.NewWithCalling(
+	serviceAuthenticator, err := humancalling.NewServiceAuthenticator(
+		"abita-token",
+		humancalling.ServiceIdentity{
+			Subject:    "abita-synthetic",
+			PracticeID: authorization.Practice.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new service authenticator: %v", err)
+	}
+	handler, err := httpapi.NewPortal(
 		httpapi.Config{
-			Role:           "portal-api",
 			AllowedOrigin:  "http://localhost:3000",
 			AcquireTimeout: 500 * time.Millisecond,
 		},
 		pool,
-		accessModule,
-		staticAuthenticator{"calling-token": identity},
-		calling,
-		staticServiceAuthenticator{
-			"abita-token": {
-				Subject:    "abita-synthetic",
-				PracticeID: authorization.Practice.ID,
-			},
+		httpapi.PortalDependencies{
+			Access:               accessModule,
+			Authenticator:        staticAuthenticator{"calling-token": identity},
+			Calling:              calling,
+			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
 	if err != nil {
@@ -522,19 +614,6 @@ func (adapter staticAuthenticator) Authenticate(_ context.Context, token string)
 	return identity, nil
 }
 
-type staticServiceAuthenticator map[string]humancalling.ServiceIdentity
-
-func (adapter staticServiceAuthenticator) AuthenticateService(
-	_ context.Context,
-	token string,
-) (humancalling.ServiceIdentity, error) {
-	identity, ok := adapter[token]
-	if !ok {
-		return humancalling.ServiceIdentity{}, errors.New("invalid service credential")
-	}
-	return identity, nil
-}
-
 type httpCallingProvider struct{}
 
 func (httpCallingProvider) Execute(
@@ -548,6 +627,32 @@ func (httpCallingProvider) Execute(
 		}, nil
 	}
 	return humancalling.ProviderResult{}, nil
+}
+
+func newPortalHandler(
+	t *testing.T,
+	config httpapi.Config,
+	pool *pgxpool.Pool,
+	accessModule *access.Module,
+	authenticator httpapi.IdentityAuthenticator,
+) (http.Handler, error) {
+	t.Helper()
+	serviceAuthenticator, err := humancalling.NewServiceAuthenticator(
+		"unused-service-token",
+		humancalling.ServiceIdentity{
+			Subject:    "unused-service",
+			PracticeID: "00000000-0000-0000-0000-000000000001",
+		},
+	)
+	if err != nil {
+		t.Fatalf("new test service authenticator: %v", err)
+	}
+	return httpapi.NewPortal(config, pool, httpapi.PortalDependencies{
+		Access:               accessModule,
+		Authenticator:        authenticator,
+		Calling:              humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
+		ServiceAuthenticator: serviceAuthenticator,
+	})
 }
 
 func request(

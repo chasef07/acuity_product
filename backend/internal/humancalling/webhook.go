@@ -327,29 +327,6 @@ func (m *Module) attachReceiptCall(
 	return nil
 }
 
-func (m *Module) ReceiptStatus(
-	ctx context.Context,
-	eventID string,
-) (WebhookReceipt, error) {
-	var result WebhookReceipt
-	result.EventID = eventID
-	if err := m.pool.QueryRow(ctx, `
-		SELECT event_type, state, duplicate_count
-		FROM human_calling_provider_receipts
-		WHERE event_id = $1
-	`, eventID).Scan(
-		&result.EventType,
-		&result.State,
-		&result.DuplicateCount,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return WebhookReceipt{}, ErrDenied
-		}
-		return WebhookReceipt{}, fmt.Errorf("read provider receipt status: %w", err)
-	}
-	return result, nil
-}
-
 func decodeTelnyxEnvelope(raw []byte) (telnyxEnvelope, error) {
 	var envelope telnyxEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {

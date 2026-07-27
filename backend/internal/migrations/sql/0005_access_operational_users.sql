@@ -1,0 +1,2 @@
+ALTER VIEW human_calling_operational_users
+RENAME TO access_operational_users;

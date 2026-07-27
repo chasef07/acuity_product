@@ -96,9 +96,17 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	if err != nil || !processed {
 		t.Fatalf("process signed receipt: processed=%t err=%v", processed, err)
 	}
-	projected, err := calling.ReceiptStatus(context.Background(), "webhook-event-1")
-	if err != nil || projected.State != humancalling.ReceiptApplied || projected.DuplicateCount != 1 {
-		t.Fatalf("projected receipt = %#v, err = %v", projected, err)
+	var projectedState humancalling.ReceiptState
+	var duplicateCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, duplicate_count
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'webhook-event-1'
+	`).Scan(&projectedState, &duplicateCount); err != nil {
+		t.Fatalf("read projected receipt: %v", err)
+	}
+	if projectedState != humancalling.ReceiptApplied || duplicateCount != 1 {
+		t.Fatalf("projected receipt state = %q, duplicates = %d", projectedState, duplicateCount)
 	}
 
 	if _, err := calling.AcquireSoftphone(
@@ -269,17 +277,17 @@ func TestIrreparableKnownWebhookReceiptFailsPermanently(t *testing.T) {
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process malformed known event: processed=%t err=%v", processed, err)
 	}
-	receipt, err := calling.ReceiptStatus(context.Background(), "malformed-known-event")
-	if err != nil || receipt.State != humancalling.ReceiptFailed {
-		t.Fatalf("malformed known receipt = %#v, err = %v", receipt, err)
-	}
+	var state humancalling.ReceiptState
 	var errorCode string
 	if err := pool.QueryRow(context.Background(), `
-		SELECT projection_error_code
+		SELECT state, projection_error_code
 		FROM human_calling_provider_receipts
 		WHERE event_id = 'malformed-known-event'
-	`).Scan(&errorCode); err != nil {
+	`).Scan(&state, &errorCode); err != nil {
 		t.Fatalf("read malformed receipt diagnostics: %v", err)
+	}
+	if state != humancalling.ReceiptFailed {
+		t.Fatalf("malformed receipt state = %q", state)
 	}
 	if errorCode != "INVALID_PROVIDER_EVENT" {
 		t.Fatalf("projection error = %q, want INVALID_PROVIDER_EVENT", errorCode)

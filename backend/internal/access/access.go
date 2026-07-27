@@ -473,7 +473,7 @@ func (m *Module) AcceptInvitation(ctx context.Context, identity Identity, token 
 	`, identity.Subject, practiceID, invitationID, membershipID); err != nil {
 		return Authorization{}, fmt.Errorf("audit invitation acceptance: %w", err)
 	}
-	if _, err := bumpAndNotify(ctx, tx, practiceID); err != nil {
+	if _, err := m.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return Authorization{}, err
 	}
 
@@ -699,39 +699,50 @@ func (m *Module) LockMembershipAuthorization(
 	return authorization, nil
 }
 
-// LockOperationalActor holds one current Membership against revocation and
-// applies Platform Operator precedence for an operation without Practice scope.
+// LockOperationalActor holds the actor's current Memberships against revocation,
+// returns their Practice IDs, and applies Platform Operator precedence.
 func (m *Module) LockOperationalActor(
 	ctx context.Context,
 	tx pgx.Tx,
 	identity Identity,
-) error {
+) ([]string, error) {
 	if tx == nil ||
 		!identity.EmailVerified ||
 		strings.TrimSpace(identity.Subject) == "" {
-		return ErrDenied
+		return nil, ErrDenied
 	}
 	if _, isOperator, err := bindPlatformOperator(ctx, tx, identity); err != nil {
-		return err
+		return nil, err
 	} else if isOperator {
-		return ErrDenied
+		return nil, ErrDenied
 	}
-	var membershipID string
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text
+	rows, err := tx.Query(ctx, `
+		SELECT practice_id::text
 		FROM access_memberships
 		WHERE user_subject = $1
 			AND revoked_at IS NULL
-		ORDER BY id
-		LIMIT 1
+		ORDER BY practice_id
 		FOR SHARE
-	`, identity.Subject).Scan(&membershipID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDenied
-		}
-		return fmt.Errorf("lock operational actor: %w", err)
+	`, identity.Subject)
+	if err != nil {
+		return nil, fmt.Errorf("lock operational actor: %w", err)
 	}
-	return nil
+	defer rows.Close()
+	practiceIDs := []string{}
+	for rows.Next() {
+		var practiceID string
+		if err := rows.Scan(&practiceID); err != nil {
+			return nil, fmt.Errorf("scan operational Practice: %w", err)
+		}
+		practiceIDs = append(practiceIDs, practiceID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate operational Practices: %w", err)
+	}
+	if len(practiceIDs) == 0 {
+		return nil, ErrDenied
+	}
+	return practiceIDs, nil
 }
 
 // DiscoverActor returns every currently authorized Practice and Location. A
@@ -912,7 +923,7 @@ func (m *Module) EnterSupportMode(
 	`, command.Identity.Subject, command.PracticeID, result.ID, reason); err != nil {
 		return SupportMode{}, fmt.Errorf("audit Support Mode: %w", err)
 	}
-	if _, err := bumpAndNotify(ctx, tx, command.PracticeID); err != nil {
+	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
 		return SupportMode{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -989,7 +1000,7 @@ func (m *Module) RevokeSupportMode(
 	`, identity.Subject, practiceID, supportSessionID, reason); err != nil {
 		return fmt.Errorf("audit Support Mode revocation: %w", err)
 	}
-	if _, err := bumpAndNotify(ctx, tx, practiceID); err != nil {
+	if _, err := m.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1062,7 +1073,7 @@ func (m *Module) RevokeInvitation(
 	); err != nil {
 		return err
 	}
-	if _, err := bumpAndNotify(ctx, tx, command.PracticeID); err != nil {
+	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1132,7 +1143,7 @@ func (m *Module) RevokeMembership(
 	); err != nil {
 		return err
 	}
-	if _, err := bumpAndNotify(ctx, tx, command.PracticeID); err != nil {
+	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1276,7 +1287,7 @@ func (m *Module) AddLocation(
 	).Scan(&result.Audit.ID); err != nil {
 		return LocationMutation{}, fmt.Errorf("audit Location mutation: %w", err)
 	}
-	result.PracticeVersion, err = bumpAndNotify(ctx, tx, command.PracticeID)
+	result.PracticeVersion, err = m.RecordWorkspaceChange(ctx, tx, command.PracticeID)
 	if err != nil {
 		return LocationMutation{}, err
 	}
@@ -1541,7 +1552,16 @@ func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Locatio
 	return locations, nil
 }
 
-func bumpAndNotify(ctx context.Context, tx pgx.Tx, practiceID string) (int64, error) {
+// RecordWorkspaceChange advances the authoritative Practice workspace version
+// and publishes a disposable refetch hint in the caller's transaction.
+func (m *Module) RecordWorkspaceChange(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+) (int64, error) {
+	if tx == nil || strings.TrimSpace(practiceID) == "" {
+		return 0, ErrDenied
+	}
 	var version int64
 	if err := tx.QueryRow(ctx, `
 		UPDATE access_practices

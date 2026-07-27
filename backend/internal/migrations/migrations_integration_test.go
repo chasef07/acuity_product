@@ -21,8 +21,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 4 {
-		t.Fatalf("migration count = %d, want 4", migrationCount)
+	if migrationCount != 5 {
+		t.Fatalf("migration count = %d, want 5", migrationCount)
 	}
 
 	for _, table := range []string{
@@ -67,5 +67,19 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 		if !exists {
 			t.Fatalf("calling table %s is missing", table)
 		}
+	}
+	var operationalUsersView bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.views
+			WHERE table_schema = 'public'
+				AND table_name = 'access_operational_users'
+		)
+	`).Scan(&operationalUsersView); err != nil {
+		t.Fatalf("inspect Access operational Users view: %v", err)
+	}
+	if !operationalUsersView {
+		t.Fatal("Access operational Users view is missing")
 	}
 }

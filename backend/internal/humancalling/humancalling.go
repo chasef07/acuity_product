@@ -507,7 +507,8 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, fmt.Errorf("begin softphone lease acquisition: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
+	practiceIDs, err := m.access.LockOperationalActor(ctx, tx, identity)
+	if err != nil {
 		return SoftphoneState{}, ErrDenied
 	}
 	callRows, err := tx.Query(ctx, `
@@ -641,30 +642,8 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, fmt.Errorf("transfer current connection attempt ownership: %w", err)
 	}
 	if previousSessionID != "" && previousSessionID != sessionID {
-		practiceRows, err := tx.Query(ctx, `
-			SELECT DISTINCT practice_id::text
-			FROM access_memberships
-			WHERE user_subject = $1 AND revoked_at IS NULL
-		`, identity.Subject)
-		if err != nil {
-			return SoftphoneState{}, fmt.Errorf("list takeover notification Practices: %w", err)
-		}
-		practiceIDs := []string{}
-		for practiceRows.Next() {
-			var practiceID string
-			if err := practiceRows.Scan(&practiceID); err != nil {
-				practiceRows.Close()
-				return SoftphoneState{}, fmt.Errorf("scan takeover notification Practice: %w", err)
-			}
-			practiceIDs = append(practiceIDs, practiceID)
-		}
-		if err := practiceRows.Err(); err != nil {
-			practiceRows.Close()
-			return SoftphoneState{}, fmt.Errorf("iterate takeover notification Practices: %w", err)
-		}
-		practiceRows.Close()
 		for _, practiceID := range practiceIDs {
-			if err := notifyPractice(ctx, tx, practiceID); err != nil {
+			if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 				return SoftphoneState{}, err
 			}
 		}
@@ -692,7 +671,7 @@ func (m *Module) SetReadiness(
 		return SoftphoneState{}, fmt.Errorf("begin calling readiness: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
+	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
 		return SoftphoneState{}, ErrDenied
 	}
 	var state SoftphoneState
@@ -802,7 +781,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 					command.action = 'DISABLE_CREDENTIAL'
 					AND EXISTS (
 						SELECT 1
-						FROM human_calling_operational_users operational
+						FROM access_operational_users operational
 						WHERE operational.user_subject = command.user_subject
 					)
 				)
@@ -810,7 +789,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 					command.action = 'CREATE_CREDENTIAL'
 					AND NOT EXISTS (
 						SELECT 1
-						FROM human_calling_operational_users operational
+						FROM access_operational_users operational
 						WHERE operational.user_subject = command.user_subject
 					)
 				)
@@ -828,7 +807,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 			AND credential.provider_credential_id IS NULL
 			AND NOT EXISTS (
 				SELECT 1
-				FROM human_calling_operational_users operational
+				FROM access_operational_users operational
 				WHERE operational.user_subject = credential.user_subject
 			)
 	`, m.now()); err != nil {
@@ -837,7 +816,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO human_calling_credentials (user_subject, state)
 		SELECT user_subject, 'PENDING'
-		FROM human_calling_operational_users
+		FROM access_operational_users
 		ON CONFLICT (user_subject) DO UPDATE
 		SET
 			provider_credential_id = NULL,
@@ -863,7 +842,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 			AND credential.provider_credential_id IS NOT NULL
 			AND EXISTS (
 				SELECT 1
-				FROM human_calling_operational_users operational
+				FROM access_operational_users operational
 				WHERE operational.user_subject = credential.user_subject
 			)
 	`, m.now()); err != nil {
@@ -928,7 +907,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 			AND c.provider_credential_id IS NOT NULL
 			AND NOT EXISTS (
 				SELECT 1
-				FROM human_calling_operational_users operational
+				FROM access_operational_users operational
 				WHERE operational.user_subject = c.user_subject
 			)
 			AND NOT EXISTS (
@@ -1064,7 +1043,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
-			FROM human_calling_operational_users
+			FROM access_operational_users
 			WHERE user_subject = $1
 		)
 	`, userSubject).Scan(&authorized); err != nil {
@@ -1305,7 +1284,7 @@ func (m *Module) authorizeMediaJWT(
 		return "", fmt.Errorf("begin media JWT authorization: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
+	if _, err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
 		return "", ErrDenied
 	}
 	var leaseCurrent bool
@@ -1547,7 +1526,7 @@ func (m *Module) AcceptOffer(
 		); err != nil {
 			return AcceptResult{}, err
 		}
-		if err := notifyPractice(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return AcceptResult{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -1747,7 +1726,7 @@ func (m *Module) AcceptOffer(
 	); err != nil {
 		return AcceptResult{}, err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return AcceptResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1947,7 +1926,7 @@ func (m *Module) RecordDisposition(
 		return Call{}, fmt.Errorf("begin Call disposition: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
+	if _, err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
 		return Call{}, ErrDenied
 	}
 
@@ -2035,7 +2014,7 @@ func (m *Module) RecordDisposition(
 	); err != nil {
 		return Call{}, err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return Call{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -2058,7 +2037,7 @@ func (m *Module) RequestHangup(
 		return Call{}, fmt.Errorf("begin Call hangup: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
+	if _, err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
 		return Call{}, ErrDenied
 	}
 
@@ -2254,7 +2233,7 @@ func (m *Module) ExpireOffers(ctx context.Context) (int, error) {
 		); err != nil {
 			return 0, err
 		}
-		if err := notifyPractice(ctx, tx, offer.practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, offer.practiceID); err != nil {
 			return 0, err
 		}
 	}
@@ -2432,7 +2411,7 @@ func (m *Module) ExpireConnections(ctx context.Context) (int, error) {
 		); err != nil {
 			return 0, err
 		}
-		if err := notifyPractice(ctx, tx, connection.practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, connection.practiceID); err != nil {
 			return 0, err
 		}
 	}
@@ -2528,7 +2507,7 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		); err != nil {
 			return err
 		}
-		if err := notifyPractice(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return err
 		}
 	}
@@ -2661,7 +2640,7 @@ func (m *Module) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
 		); err != nil {
 			return reconciled, err
 		}
-		if err := notifyPractice(ctx, tx, item.practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, item.practiceID); err != nil {
 			return reconciled, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -2692,7 +2671,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 						command.action = 'DISABLE_CREDENTIAL'
 						AND EXISTS (
 							SELECT 1
-							FROM human_calling_operational_users operational
+							FROM access_operational_users operational
 							WHERE operational.user_subject = command.user_subject
 						)
 					)
@@ -2700,7 +2679,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 						command.action = 'CREATE_CREDENTIAL'
 						AND NOT EXISTS (
 							SELECT 1
-							FROM human_calling_operational_users operational
+							FROM access_operational_users operational
 							WHERE operational.user_subject = command.user_subject
 						)
 					)
@@ -3196,7 +3175,7 @@ func (m *Module) finishCommand(
 					return err
 				}
 			}
-			if err := notifyPractice(ctx, tx, practiceID); err != nil {
+			if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 				return err
 			}
 		}
@@ -3206,7 +3185,7 @@ func (m *Module) finishCommand(
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM human_calling_operational_users
+				FROM access_operational_users
 				WHERE user_subject = $1
 			)
 		`, *userSubject).Scan(&operational); err != nil {
@@ -3273,7 +3252,7 @@ func (m *Module) finishCommand(
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM human_calling_operational_users
+				FROM access_operational_users
 				WHERE user_subject = $1
 			)
 		`, *userSubject).Scan(&authorized); err != nil {
@@ -3383,7 +3362,7 @@ func (m *Module) finishCommand(
 		); err != nil {
 			return err
 		}
-		if err := notifyPractice(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return err
 		}
 	}
@@ -3573,7 +3552,7 @@ func (m *Module) applyStaffInitiated(
 	); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -3697,7 +3676,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 	); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -3814,7 +3793,7 @@ func (m *Module) applyRingbackStarted(ctx context.Context, fact ProviderFact) er
 	); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -4060,7 +4039,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		); err != nil {
 			return err
 		}
-		if err := notifyPractice(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -4081,7 +4060,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		); err != nil {
 			return err
 		}
-		if err := notifyPractice(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -4249,7 +4228,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -4527,7 +4506,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -4649,7 +4628,7 @@ func (m *Module) applyRecordingFact(
 	); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -4793,7 +4772,10 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		"",
 		CommandAnswerCaller,
 		fact.CallControlID,
-		map[string]any{"client_state": opaqueClientState(callID, "caller")},
+		map[string]any{
+			"transcription": false,
+			"client_state":  opaqueClientState(callID, "caller"),
+		},
 		m.now(),
 		"",
 	)
@@ -4820,7 +4802,7 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 	if err := appendTimeline(ctx, tx, callID, practiceID, "offer.created", "", fact.EventID, "", "", "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := notifyPractice(ctx, tx, practiceID); err != nil {
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -4977,29 +4959,6 @@ func appendTimeline(
 		`, eventID, callID); err != nil {
 			return fmt.Errorf("attach provider receipt to Call: %w", err)
 		}
-	}
-	return nil
-}
-
-func notifyPractice(ctx context.Context, tx pgx.Tx, practiceID string) error {
-	var version int64
-	if err := tx.QueryRow(ctx, `
-		UPDATE access_practices
-		SET workspace_version = workspace_version + 1
-		WHERE id = $1
-		RETURNING workspace_version
-	`, practiceID).Scan(&version); err != nil {
-		return fmt.Errorf("advance Call workspace version: %w", err)
-	}
-	payload, err := json.Marshal(map[string]any{
-		"practiceId": practiceID,
-		"version":    version,
-	})
-	if err != nil {
-		return fmt.Errorf("encode Call workspace notification: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `SELECT pg_notify('acuity_workspace_hints', $1)`, string(payload)); err != nil {
-		return fmt.Errorf("publish Call workspace notification: %w", err)
 	}
 	return nil
 }

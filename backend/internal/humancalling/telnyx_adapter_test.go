@@ -41,12 +41,9 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 	defer server.Close()
 
 	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
-		APIKey:        "synthetic-key",
-		BaseURL:       server.URL + "/v2",
-		HTTPClient:    server.Client(),
-		CallControlID: "call-control-app",
-		FromNumber:    "+15555550199",
-		RingbackURL:   "https://media.example.test/ringback.wav",
+		APIKey:     "synthetic-key",
+		BaseURL:    server.URL + "/v2",
+		HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatalf("new Telnyx adapter: %v", err)
@@ -57,6 +54,8 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		TargetID: "caller-control",
 		Payload: map[string]any{
 			"to":                    "sip:synthetic-user@sip.telnyx.com",
+			"connection_id":         "call-control-app",
+			"from":                  "+15555550199",
 			"link_to":               "caller-control",
 			"bridge_intent":         true,
 			"bridge_on_answer":      true,
@@ -99,6 +98,43 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		recordingRequest["channels"] != "dual" ||
 		recordingRequest["transcription"] != false {
 		t.Fatalf("Telnyx recording request = %#v", recordingRequest)
+	}
+}
+
+func TestTelnyxAdapterRejectsIncompleteDurableCommand(t *testing.T) {
+	requested := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		_ *http.Request,
+	) {
+		requested <- struct{}{}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:     "synthetic-key",
+		BaseURL:    server.URL + "/v2",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("new Telnyx adapter: %v", err)
+	}
+	if _, err := adapter.Execute(context.Background(), humancalling.ProviderCommand{
+		ID:       "incomplete-dial",
+		Action:   humancalling.CommandDialStaff,
+		TargetID: "caller-control",
+		Payload: map[string]any{
+			"to":      "sip:synthetic-user@sip.telnyx.com",
+			"link_to": "caller-control",
+		},
+	}); err != humancalling.ErrInvalidInput {
+		t.Fatalf("incomplete Dial error = %v, want %v", err, humancalling.ErrInvalidInput)
+	}
+	select {
+	case <-requested:
+		t.Fatal("incomplete durable command reached Telnyx")
+	default:
 	}
 }
 
