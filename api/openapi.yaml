@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
   title: Acuity Portal API
-  version: 2026-07-24
+  version: 2026-07-27
   description: >
-    Slice 1 interface for invite-only identity activation, Access authorization,
-    the authorized empty workspace, Support Mode, and disposable realtime hints.
+    Acuity Portal Access and HumanCalling interfaces with PostgreSQL authority,
+    durable Telnyx commands and receipts, and disposable realtime hints.
 servers:
   - url: https://api.acuity.example
     description: Deployment-supplied HTTPS origin
@@ -258,12 +258,304 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/handoffs:
+    post:
+      operationId: createHandoff
+      summary: Create one authenticated, idempotent Abita handoff.
+      security:
+        - serviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHandoffRequest"
+      responses:
+        "201":
+          description: Opaque single-use SIP handoff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Handoff"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/provider/telnyx/webhooks:
+    post:
+      operationId: receiveTelnyxWebhook
+      summary: Verify and durably receipt one raw Telnyx webhook.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "204":
+          description: Receipt durably committed or accepted duplicate.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/softphone/lease:
+    post:
+      operationId: acquireSoftphone
+      summary: Acquire, renew, or explicitly take over the User's softphone lease.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoftphoneLeaseRequest"
+      responses:
+        "200":
+          description: Current softphone ownership.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoftphoneState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/readiness:
+    put:
+      operationId: setCallingReadiness
+      summary: Commit the media-owning session's current technical readiness.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallingReadinessRequest"
+      responses:
+        "200":
+          description: Current derived operational state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoftphoneState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/media-token:
+    post:
+      operationId: issueCallingMediaToken
+      summary: Issue a short-lived Telnyx JWT to the current softphone owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaTokenRequest"
+      responses:
+        "200":
+          description: Short-lived browser media credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/offers:
+    get:
+      operationId: listCallingOffers
+      summary: List every current offer the User may accept now.
+      responses:
+        "200":
+          description: Earliest-deadline-first authoritative offers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallingOfferList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/offers/{callId}/accept:
+    post:
+      operationId: acceptCallingOffer
+      summary: Atomically claim one current offer and commit its Dial command.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptCallingOfferRequest"
+      responses:
+        "200":
+          description: Committed acceptance or explicit losing result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptCallingOfferResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/calls/{callId}:
+    get:
+      operationId: getCallingCall
+      summary: Read the winning User's durable active or disposition Call.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Authorized Call workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallingCall"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/calls/{callId}/hangup:
+    post:
+      operationId: requestCallingHangup
+      summary: Commit a provider hangup command without claiming termination.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallingControlRequest"
+      responses:
+        "202":
+          description: Hangup intent committed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallingCall"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/calls/{callId}/disposition:
+    post:
+      operationId: recordCallingDisposition
+      summary: Resolve the provider-terminated Call without creating a Task.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallingDispositionRequest"
+      responses:
+        "200":
+          description: Durable terminal Call outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallingCall"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/calls/{callId}/timeline:
+    get:
+      operationId: getOperatorCallingTimeline
+      summary: Read one sanitized durable Call timeline as a Platform Operator.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Sanitized provider and workflow history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCallingTimeline"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    serviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-service-token
   responses:
     BadRequest:
       description: Invalid request.
@@ -611,5 +903,384 @@ components:
           format: int64
         audit:
           $ref: "#/components/schemas/AuditEvent"
+    ContactContextInput:
+      type: object
+      additionalProperties: false
+      properties:
+        phone:
+          type: string
+          maxLength: 40
+        phoneSource:
+          type: string
+          maxLength: 100
+        displayName:
+          type: string
+          maxLength: 200
+        nameSource:
+          type: string
+          maxLength: 100
+        transferReason:
+          type: string
+          maxLength: 500
+        reasonSource:
+          type: string
+          maxLength: 100
+    CreateHandoffRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, sourceCallId, idempotencyKey, contact]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        sourceCallId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 200
+        contact:
+          $ref: "#/components/schemas/ContactContextInput"
+    Handoff:
+      type: object
+      additionalProperties: false
+      required: [id, sipDestination, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sipDestination:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    SoftphoneLeaseRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, takeover]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        takeover:
+          type: boolean
+    CallingReadinessRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - sessionId
+        - registered
+        - microphoneReady
+        - audioReady
+        - sessionHealthy
+        - available
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        registered:
+          type: boolean
+        microphoneReady:
+          type: boolean
+        audioReady:
+          type: boolean
+        sessionHealthy:
+          type: boolean
+        available:
+          type: boolean
+    SoftphoneState:
+      type: object
+      additionalProperties: false
+      required: [sessionId, leaseExpiresAt, owner, available, activeCallId]
+      properties:
+        sessionId:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        owner:
+          type: boolean
+        available:
+          type: boolean
+        activeCallId:
+          type: string
+          description: The User's current durable Call, or empty when capacity is free.
+    MediaTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+    MediaToken:
+      type: object
+      additionalProperties: false
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    CallingOffer:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - displayName
+        - nameSource
+        - transferReason
+        - reasonSource
+        - deadline
+        - state
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        displayName:
+          type: string
+        nameSource:
+          type: string
+        transferReason:
+          type: string
+        reasonSource:
+          type: string
+        deadline:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [OFFERING]
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    CallingOfferList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallingOffer"
+    AcceptCallingOfferRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+    CallingControlRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+    AcceptCallingOfferResult:
+      type: object
+      additionalProperties: false
+      required: [status, callId, state]
+      properties:
+        status:
+          type: string
+          enum: [ACCEPTED, ALREADY_CLAIMED, EXPIRED, INELIGIBLE]
+        callId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+            - OFFERING
+            - CONNECTING
+            - CONNECTED
+            - RECONCILING
+            - UNANSWERED
+            - NEEDS_DISPOSITION
+            - RESOLVED
+            - FOLLOW_UP_REQUIRED
+    CallingRecording:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [INTENDED, RECORDING, READY, FAILED]
+        failureCode:
+          type: string
+    CallingCall:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - state
+        - deadline
+        - phone
+        - phoneSource
+        - displayName
+        - nameSource
+        - transferReason
+        - reasonSource
+        - expectedStaffLegId
+        - providerTermination
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        state:
+          type: string
+          enum:
+            - CONNECTING
+            - CONNECTED
+            - RECONCILING
+            - UNANSWERED
+            - NEEDS_DISPOSITION
+            - RESOLVED
+            - FOLLOW_UP_REQUIRED
+        deadline:
+          type: string
+          format: date-time
+        phone:
+          type: string
+        phoneSource:
+          type: string
+        displayName:
+          type: string
+        nameSource:
+          type: string
+        transferReason:
+          type: string
+        reasonSource:
+          type: string
+        expectedStaffLegId:
+          type: string
+          description: Empty until Telnyx identifies the one staff leg created for this claim.
+        providerTermination:
+          type: string
+        connectedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        recording:
+          $ref: "#/components/schemas/CallingRecording"
+    CallingDispositionRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, outcome]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+        outcome:
+          type: string
+          enum: [RESOLVED, FOLLOW_UP_REQUIRED]
+    OperatorCallingTimelineEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - opaqueReference
+        - errorCode
+        - commandAction
+        - commandState
+        - commandAttempts
+        - receiptState
+        - ageSeconds
+        - occurredAt
+      properties:
+        kind:
+          type: string
+        opaqueReference:
+          type: string
+        errorCode:
+          type: string
+        commandAction:
+          type: string
+        commandState:
+          type: string
+        commandAttempts:
+          type: integer
+          minimum: 0
+        receiptState:
+          type: string
+        ageSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+        occurredAt:
+          type: string
+          format: date-time
+    OperatorCallingTimeline:
+      type: object
+      additionalProperties: false
+      required: [callId, practiceId, state, version, entries]
+      properties:
+        callId:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+            - OFFERING
+            - CONNECTING
+            - CONNECTED
+            - RECONCILING
+            - UNANSWERED
+            - NEEDS_DISPOSITION
+            - RESOLVED
+            - FOLLOW_UP_REQUIRED
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorCallingTimelineEntry"
 security:
   - bearerAuth: []

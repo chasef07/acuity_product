@@ -15,6 +15,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -35,6 +36,10 @@ type EventStreamer interface {
 	Ready() bool
 }
 
+type ServiceAuthenticator interface {
+	AuthenticateService(context.Context, string) (humancalling.ServiceIdentity, error)
+}
+
 type Config struct {
 	Role           string
 	AllowedOrigin  string
@@ -47,6 +52,8 @@ type Server struct {
 	access        *access.Module
 	authenticator IdentityAuthenticator
 	events        EventStreamer
+	calling       *humancalling.Module
+	serviceAuth   ServiceAuthenticator
 }
 
 func New(
@@ -55,7 +62,7 @@ func New(
 	accessModule *access.Module,
 	authenticator IdentityAuthenticator,
 ) (http.Handler, error) {
-	return NewWithEvents(config, pool, accessModule, authenticator, nil)
+	return newServer(config, pool, accessModule, authenticator, nil, nil, nil)
 }
 
 func NewWithEvents(
@@ -64,6 +71,29 @@ func NewWithEvents(
 	accessModule *access.Module,
 	authenticator IdentityAuthenticator,
 	events EventStreamer,
+) (http.Handler, error) {
+	return newServer(config, pool, accessModule, authenticator, events, nil, nil)
+}
+
+func NewWithCalling(
+	config Config,
+	pool *pgxpool.Pool,
+	accessModule *access.Module,
+	authenticator IdentityAuthenticator,
+	calling *humancalling.Module,
+	serviceAuth ServiceAuthenticator,
+) (http.Handler, error) {
+	return newServer(config, pool, accessModule, authenticator, nil, calling, serviceAuth)
+}
+
+func newServer(
+	config Config,
+	pool *pgxpool.Pool,
+	accessModule *access.Module,
+	authenticator IdentityAuthenticator,
+	events EventStreamer,
+	calling *humancalling.Module,
+	serviceAuth ServiceAuthenticator,
 ) (http.Handler, error) {
 	if config.Role != "portal-api" &&
 		config.Role != "provider-ingress" &&
@@ -86,6 +116,8 @@ func NewWithEvents(
 		access:        accessModule,
 		authenticator: authenticator,
 		events:        events,
+		calling:       calling,
+		serviceAuth:   serviceAuth,
 	}
 	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
@@ -368,12 +400,350 @@ func (server *Server) GetEvents(
 	}
 }
 
+func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) || server.calling == nil || server.serviceAuth == nil {
+		if server.config.Role == "portal-api" && (server.calling == nil || server.serviceAuth == nil) {
+			server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available.", false)
+		}
+		return
+	}
+	service, ok := server.authenticateService(w, r)
+	if !ok {
+		return
+	}
+	var body api.CreateHandoffRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	if service.PracticeID != body.PracticeId.String() {
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	handoff, err := server.calling.CreateHandoff(ctx, humancalling.CreateHandoffCommand{
+		Service:        service,
+		LocationID:     body.LocationId.String(),
+		SourceCallID:   body.SourceCallId,
+		IdempotencyKey: body.IdempotencyKey,
+		Contact: humancalling.ContactContext{
+			Phone:          stringValue(body.Contact.Phone),
+			PhoneSource:    stringValue(body.Contact.PhoneSource),
+			DisplayName:    stringValue(body.Contact.DisplayName),
+			NameSource:     stringValue(body.Contact.NameSource),
+			TransferReason: stringValue(body.Contact.TransferReason),
+			ReasonSource:   stringValue(body.Contact.ReasonSource),
+		},
+	})
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	handoffID, err := uuid.Parse(handoff.ID)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, api.Handoff{
+		Id:             handoffID,
+		SipDestination: handoff.SIPDestination,
+		ExpiresAt:      handoff.ExpiresAt,
+	})
+}
+
+func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request) {
+	if server.config.Role != "provider-ingress" || server.calling == nil {
+		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 256*1024+1))
+	if err != nil || len(raw) > 256*1024 {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if _, err := server.calling.ReceiveWebhook(
+		ctx,
+		raw,
+		r.Header.Get("telnyx-timestamp"),
+		r.Header.Get("telnyx-signature-ed25519"),
+	); err != nil {
+		if errors.Is(err, humancalling.ErrInvalidWebhook) {
+			server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
+			return
+		}
+		server.writeCallingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) AcquireSoftphone(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.SoftphoneLeaseRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	state, err := server.calling.AcquireSoftphone(ctx, identity, body.SessionId, body.Takeover)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, softphoneResponse(state))
+}
+
+func (server *Server) SetCallingReadiness(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CallingReadinessRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	state, err := server.calling.SetReadiness(ctx, humancalling.ReadinessCommand{
+		Identity:        identity,
+		SessionID:       body.SessionId,
+		Registered:      body.Registered,
+		MicrophoneReady: body.MicrophoneReady,
+		AudioReady:      body.AudioReady,
+		SessionHealthy:  body.SessionHealthy,
+		Available:       body.Available,
+	})
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, softphoneResponse(state))
+}
+
+func (server *Server) IssueCallingMediaToken(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.MediaTokenRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	token, err := server.calling.IssueMediaJWT(ctx, identity, body.SessionId)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.MediaToken{
+		Token:     token.Token,
+		ExpiresAt: token.ExpiresAt,
+	})
+}
+
+func (server *Server) ListCallingOffers(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	offers, err := server.calling.ListOffers(ctx, identity)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response := api.CallingOfferList{Items: make([]api.CallingOffer, 0, len(offers))}
+	for _, offer := range offers {
+		converted, err := callingOfferResponse(offer)
+		if err != nil {
+			server.writeCallingError(w, r, err)
+			return
+		}
+		response.Items = append(response.Items, converted)
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) AcceptCallingOffer(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.AcceptCallingOfferRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	result, err := server.calling.AcceptOffer(ctx, identity, body.SessionId, callID.String())
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	convertedID, err := uuid.Parse(result.CallID)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.AcceptCallingOfferResult{
+		CallId: convertedID,
+		Status: api.AcceptCallingOfferResultStatus(result.Status),
+		State:  api.AcceptCallingOfferResultState(result.State),
+	})
+}
+
+func (server *Server) GetCallingCall(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.ReadCall(ctx, identity, callID.String())
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callingCallResponse(call)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) RequestCallingHangup(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CallingControlRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.RequestHangup(
+		ctx,
+		identity,
+		body.SessionId,
+		callID.String(),
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callingCallResponse(call)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusAccepted, response)
+}
+
+func (server *Server) RecordCallingDisposition(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CallingDispositionRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.RecordDisposition(
+		ctx,
+		identity,
+		body.SessionId,
+		callID.String(),
+		humancalling.Disposition(body.Outcome),
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callingCallResponse(call)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetOperatorCallingTimeline(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	if !server.portalOnly(w, r) || server.calling == nil {
+		if server.config.Role == "portal-api" && server.calling == nil {
+			server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available.", false)
+		}
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	timeline, err := server.calling.ReadOperatorTimeline(ctx, identity, callID.String())
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := operatorTimelineResponse(timeline)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
 	if server.config.Role == "portal-api" {
 		return true
 	}
 	server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
 	return false
+}
+
+func (server *Server) callingIdentity(
+	w http.ResponseWriter,
+	r *http.Request,
+) (access.Identity, bool) {
+	if !server.portalOnly(w, r) {
+		return access.Identity{}, false
+	}
+	if server.calling == nil {
+		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available.", false)
+		return access.Identity{}, false
+	}
+	return server.authenticate(w, r)
 }
 
 func (server *Server) authenticate(w http.ResponseWriter, r *http.Request) (access.Identity, bool) {
@@ -387,6 +757,27 @@ func (server *Server) authenticate(w http.ResponseWriter, r *http.Request) (acce
 	if err != nil {
 		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
 		return access.Identity{}, false
+	}
+	return identity, true
+}
+
+func (server *Server) authenticateService(
+	w http.ResponseWriter,
+	r *http.Request,
+) (humancalling.ServiceIdentity, bool) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") ||
+		strings.Contains(strings.TrimPrefix(header, "Bearer "), " ") {
+		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
+		return humancalling.ServiceIdentity{}, false
+	}
+	identity, err := server.serviceAuth.AuthenticateService(
+		r.Context(),
+		strings.TrimPrefix(header, "Bearer "),
+	)
+	if err != nil {
+		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
+		return humancalling.ServiceIdentity{}, false
 	}
 	return identity, true
 }
@@ -433,6 +824,24 @@ func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, e
 	}
 }
 
+func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, humancalling.ErrInvalidInput),
+		errors.Is(err, humancalling.ErrInvalidWebhook):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, humancalling.ErrDenied),
+		errors.Is(err, humancalling.ErrInvalidHandoff),
+		errors.Is(err, humancalling.ErrIneligible):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, humancalling.ErrConflict),
+		errors.Is(err, humancalling.ErrExpired),
+		errors.Is(err, humancalling.ErrAlreadyClaimed):
+		server.writeError(w, r, http.StatusConflict, "CALL_CONFLICT", "The Call state changed. Refresh and try again.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
 func (server *Server) writeError(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -470,7 +879,7 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Correlation-ID")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -728,6 +1137,130 @@ func membershipResponse(membership access.Membership) (api.Membership, error) {
 		Role:          api.MembershipRole(membership.Role),
 		LocationScope: api.MembershipLocationScope(membership.LocationScope),
 	}, nil
+}
+
+func softphoneResponse(state humancalling.SoftphoneState) api.SoftphoneState {
+	return api.SoftphoneState{
+		SessionId:      state.SessionID,
+		LeaseExpiresAt: state.LeaseExpiresAt,
+		Owner:          state.Owner,
+		Available:      state.Available,
+		ActiveCallId:   state.ActiveCallID,
+	}
+}
+
+func callingOfferResponse(offer humancalling.Offer) (api.CallingOffer, error) {
+	id, err := uuid.Parse(offer.ID)
+	if err != nil {
+		return api.CallingOffer{}, err
+	}
+	practiceID, err := uuid.Parse(offer.PracticeID)
+	if err != nil {
+		return api.CallingOffer{}, err
+	}
+	locationID, err := uuid.Parse(offer.LocationID)
+	if err != nil {
+		return api.CallingOffer{}, err
+	}
+	return api.CallingOffer{
+		Id:             id,
+		PracticeId:     practiceID,
+		LocationId:     locationID,
+		LocationName:   offer.LocationName,
+		DisplayName:    offer.DisplayName,
+		NameSource:     offer.NameSource,
+		TransferReason: offer.TransferReason,
+		ReasonSource:   offer.ReasonSource,
+		Deadline:       offer.Deadline,
+		State:          api.CallingOfferState(offer.State),
+		Version:        offer.Version,
+	}, nil
+}
+
+func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
+	id, err := uuid.Parse(call.ID)
+	if err != nil {
+		return api.CallingCall{}, err
+	}
+	practiceID, err := uuid.Parse(call.PracticeID)
+	if err != nil {
+		return api.CallingCall{}, err
+	}
+	locationID, err := uuid.Parse(call.LocationID)
+	if err != nil {
+		return api.CallingCall{}, err
+	}
+	response := api.CallingCall{
+		Id:                  id,
+		PracticeId:          practiceID,
+		LocationId:          locationID,
+		LocationName:        call.LocationName,
+		State:               api.CallingCallState(call.State),
+		Deadline:            call.Deadline,
+		Phone:               call.Phone,
+		PhoneSource:         call.PhoneSource,
+		DisplayName:         call.DisplayName,
+		NameSource:          call.NameSource,
+		TransferReason:      call.TransferReason,
+		ReasonSource:        call.ReasonSource,
+		ExpectedStaffLegId:  call.ExpectedStaffLegID,
+		ProviderTermination: call.ProviderTermination,
+		Version:             call.Version,
+	}
+	if call.ConnectedAt != nil {
+		response.ConnectedAt = call.ConnectedAt
+	}
+	if call.Recording.State != "" {
+		recording := api.CallingRecording{
+			State: api.CallingRecordingState(call.Recording.State),
+		}
+		if call.Recording.FailureCode != "" {
+			recording.FailureCode = &call.Recording.FailureCode
+		}
+		response.Recording = &recording
+	}
+	return response, nil
+}
+
+func operatorTimelineResponse(
+	timeline humancalling.OperatorTimeline,
+) (api.OperatorCallingTimeline, error) {
+	callID, err := uuid.Parse(timeline.CallID)
+	if err != nil {
+		return api.OperatorCallingTimeline{}, err
+	}
+	practiceID, err := uuid.Parse(timeline.PracticeID)
+	if err != nil {
+		return api.OperatorCallingTimeline{}, err
+	}
+	response := api.OperatorCallingTimeline{
+		CallId:     callID,
+		PracticeId: practiceID,
+		State:      api.OperatorCallingTimelineState(timeline.State),
+		Version:    timeline.Version,
+		Entries:    make([]api.OperatorCallingTimelineEntry, 0, len(timeline.Entries)),
+	}
+	for _, entry := range timeline.Entries {
+		response.Entries = append(response.Entries, api.OperatorCallingTimelineEntry{
+			Kind:            entry.Kind,
+			OpaqueReference: entry.OpaqueReference,
+			ErrorCode:       entry.ErrorCode,
+			CommandAction:   entry.CommandAction,
+			CommandState:    entry.CommandState,
+			CommandAttempts: entry.CommandAttempts,
+			ReceiptState:    entry.ReceiptState,
+			AgeSeconds:      entry.AgeSeconds,
+			OccurredAt:      entry.OccurredAt,
+		})
+	}
+	return response, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func apiEmail(email string) openapi_types.Email {

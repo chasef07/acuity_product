@@ -16,6 +16,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
@@ -166,6 +167,45 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if event := readSSEEvent(t, memberReader); event.Event != "ready" {
 		t.Fatalf("member ready event = %#v", event)
 	}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		realtimeCallingProvider{},
+		humancalling.Config{
+			SIPDomain:       "synthetic.sip.telnyx.com",
+			HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+		},
+		func() time.Time { return now },
+	)
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject:    "abita-realtime-test",
+			PracticeID: practice.ID,
+		},
+		LocationID:     location.ID,
+		SourceCallID:   "realtime-call-source",
+		IdempotencyKey: "realtime-call-idempotency",
+	})
+	if err != nil {
+		t.Fatalf("create realtime Call handoff: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "realtime-call-initiated",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		CallControlID: "realtime-caller-control",
+		CallLegID:     "realtime-caller-leg",
+		CallSessionID: "realtime-call-session",
+		To:            handoff.SIPDestination,
+	}); err != nil {
+		t.Fatalf("publish HumanCalling mutation: %v", err)
+	}
+	callHint := readSSEEvent(t, memberReader)
+	if callHint.Event != "hint" ||
+		callHint.Data.PracticeID != practice.ID ||
+		callHint.Data.Version <= mutation.PracticeVersion {
+		t.Fatalf("HumanCalling hint event = %#v", callHint)
+	}
 	if err := accessModule.RevokeMembership(
 		context.Background(),
 		access.RevokeMembershipCommand{
@@ -226,6 +266,15 @@ func waitForReady(t *testing.T, client *http.Client, target string) {
 }
 
 type staticAuthenticator map[string]access.Identity
+
+type realtimeCallingProvider struct{}
+
+func (realtimeCallingProvider) Execute(
+	context.Context,
+	humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	return humancalling.ProviderResult{}, nil
+}
 
 func (adapter staticAuthenticator) Authenticate(_ context.Context, token string) (access.Identity, error) {
 	identity, ok := adapter[token]

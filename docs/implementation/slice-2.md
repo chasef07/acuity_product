@@ -1,0 +1,134 @@
+# Slice 2 implementation note
+
+Issue [#4](https://github.com/chasef07/acuity_product/issues/4) is the
+controlling contract. This note records the implemented request path, owners,
+failure rules, deterministic proof, and the evidence still required from the
+controlled live provider run.
+
+## Request path and ownership
+
+`HumanCalling` owns the logical handoff, Call, offer deadline, softphone lease,
+readiness, claimant, provider intent, provider evidence, disposition, and
+recording readiness. `Access` remains the sole authority for the current User,
+Membership role, Practice, and Location Scope.
+
+The vertical path is:
+
+1. Abita authenticates to `portal-api` with its scoped service credential and
+   creates an idempotent handoff. The response contains a two-minute,
+   single-use SIP destination whose opaque token is stored only as a digest.
+2. A synthetic LiveKit caller transfers to that destination. Telnyx sends the
+   exact signed webhook body to `provider-ingress`.
+3. `provider-ingress` verifies the Ed25519 signature and timestamp, commits the
+   raw receipt, and only then acknowledges it. It does not project state or call
+   Telnyx.
+4. `worker` projects receipts and executes previously committed commands.
+   Admission consumes the handoff, creates one 20-second logical offer, answers
+   the caller, and starts looping ringback.
+5. Authorized Admin and Staff browsers maintain one renewable softphone lease
+   per User. Available is derived from that lease, current Access, TelnyxRTC
+   registration, microphone, audio unlock, and a fresh healthy-session report.
+6. Accepting rechecks all authority and readiness under the PostgreSQL Call
+   lock. One claimant commits one Dial intent. Other Users receive a committed
+   claimed result and no provider leg.
+7. The selected browser auto-answers only the TelnyxRTC leg whose opaque
+   `client_state` names that accepted Call and the staff-leg version.
+8. Only the matching signed `call.bridged` fact marks the Call Connected and
+   commits dual-channel recording intent. Provider-confirmed termination moves
+   the Call to Needs Disposition. The winner records Resolved or Follow-up
+   Required; no Task is created in this slice.
+
+The browser and realtime stream are projections. PostgreSQL is the one source
+of truth, and SSE messages are refetch hints.
+
+## Invariants and recovery
+
+- Contact Context never appears in the SIP token, Telnyx `client_state`,
+  notifications, provider command identity, or ordinary logs. Before claim,
+  Users receive only the sourced display name, short transfer reason, Location,
+  and deadline. Expanded phone context is winner-only.
+- Platform Operators cannot acquire a softphone lease or media credential.
+  Their separate timeline is read-only and contains sanitized states and opaque
+  references, not receipt bodies, secrets, recordings, or retry controls.
+- One current softphone lease exists per User. A second session is view-only
+  until explicit takeover; takeover clears the former session's readiness.
+- Media JWTs are issued only to the current authorized lease owner and must
+  contain a valid future expiry no more than 29 days away. Telnyx's token API
+  exposes no requested TTL and its documented example is 28 days; the
+  controlled live gate must verify the account's actual bounded lifetime and
+  credential-revocation behavior before patient routing.
+- One partial unique PostgreSQL constraint limits each User to one Connecting,
+  Connected, Reconciling, or Needs Disposition Call.
+- Provider commands have a stable identity and are committed before execution.
+  A definitive pre-bridge failure may reopen the same offer only before its
+  original deadline. A transport, timeout, conflict, throttling, interrupted
+  send, or incomplete response is ambiguous. A returned ambiguous result enters
+  Reconciling and is not retried. After a worker interruption while a Call
+  Control request is in flight, recovery may resend only the identical durable
+  command ID; [Telnyx documents](https://developers.telnyx.com/api-reference/call-commands/dial)
+  that duplicate command IDs are ignored, so this
+  repairs the pre-request crash point without creating a second provider effect.
+- Duplicate receipts and projected facts are idempotent. Out-of-order terminal
+  facts cannot regress a Call. Unknown signed events remain stored for
+  diagnosis.
+- Browser answer and Dial success are never connection proof. After bridge, the
+  claimant is final; reconnect or reload may recover only that provider leg and
+  cannot elect another User.
+- Recording intent is impossible before bridge. The Telnyx Call Control
+  Application must be configured for custom private GCS storage. Acuity marks a
+  recording Ready only when the signed provider event names the configured
+  `gs://bucket/object`; otherwise it records a visible failure. No human-call
+  transcription command or schema exists.
+
+## Deterministic proof
+
+`TEST_DATABASE_URL=... go test ./...` exercises the module, authenticated HTTP
+surface, exact-byte webhook verification, real PostgreSQL concurrency,
+command/receipt recovery, Telnyx HTTP adapter, configuration, and migrations.
+
+`E2E_DATABASE_URL=... ./scripts/run-e2e.sh` resets only a database whose name
+ends in `_e2e`, builds the production web application and Go runtime, starts
+every runtime role plus a deterministic Telnyx command adapter, and runs the
+Slice 1 and Slice 2 Playwright journeys together. Slice 2 uses the real web
+application, authenticated HTTP interfaces, SSE refetch path, PostgreSQL state,
+provider ingress, receipt projector, and command worker. Only the external
+Telnyx API and browser media device are deterministic adapters.
+
+The Slice 2 journey creates two distinct authorized Staff Users, enables both
+softphones, commits an authenticated Abita handoff, delivers signed webhook
+bodies, and proves that both browsers see the sidebar queue while exactly one
+PostgreSQL claimant and one Dial command exist. Only the winner's exact media
+leg answers. The same journey proves provider-confirmed bridge, post-bridge
+dual-channel/no-transcription recording intent, signed GCS readiness,
+same-User tab takeover with old-media fencing, provider-confirmed hangup, and
+durable disposition. Integration tests additionally cover no-redial ambiguous
+recovery, deadline expiry, invalid JWT boundaries, receipt reordering, and the
+sanitized operator timeline.
+
+These tests are deterministic product proof, not live Telnyx, LiveKit, audio, or
+GCS proof.
+
+## Controlled live gate
+
+Real patient routing remains disabled. The issue cannot be closed as live-proven
+until one explicitly approved synthetic run supplies all of this evidence:
+
+- one synthetic Abita/LiveKit caller and two distinct authorized, ready browser
+  Users;
+- the opaque SIP token arriving intact at the configured shared Telnyx Call
+  Control Application;
+- signed public webhook delivery and committed receipt rows;
+- both Users seeing the same offer and one PostgreSQL claimant after
+  near-simultaneous acceptance;
+- one Telnyx linked Dial and only the correlated browser leg auto-answering;
+- matching provider bridge events, clear two-way audio, browser reconnect, and
+  reload recovery without a second Dial or bridge;
+- provider-confirmed hangup, committed disposition, and a sanitized Platform
+  Operator timeline explaining the journey; and
+- a post-bridge dual-channel WAV object in the dedicated private GCS bucket,
+  with no Telnyx or application transcription artifact.
+
+The run requires approved Telnyx, LiveKit, public HTTPS webhook, GCS, browser
+audio, synthetic identities, and secret configuration. Health endpoints, mock
+audio, successful command responses, or a Dial response alone do not satisfy
+this gate.

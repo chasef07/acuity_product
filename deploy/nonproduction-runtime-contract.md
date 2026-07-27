@@ -1,4 +1,4 @@
-# Slice 1 non-production runtime contract
+# Slice 1 and 2 non-production runtime contract
 
 This is a deployable contract, not a claim that an external environment exists.
 Project, image, domain, service accounts, database capacity, and email sender
@@ -35,10 +35,16 @@ uses an instance split between revisions while keeping the total fixed.
 
 Each runtime gets a distinct service account. Only `migrate` receives schema
 DDL authority and provisioning-file access. `portal-api`, `realtime`, and
-`worker` receive product DML authority. `provider-ingress` receives only the
-future ingress permissions it actually needs; Slice 1 grants no provider
-credentials. The web service gets Better Auth schema access, its auth secret,
-and its SMTP sender, but no product-schema mutation authority.
+`worker` receive product DML authority. `provider-ingress` receives
+only the receipt-table INSERT, event-ID-scoped SELECT FOR UPDATE, and
+duplicate-count UPDATE authority required for signed Telnyx receipts, but no
+provider API credential. It does not read Call or attempt state; the worker
+attaches `receipt.call_id` while projecting the signed fact. The worker receives
+the Telnyx API credential needed to execute
+durable commands. `portal-api` receives that credential only for lease-bound
+short-lived media JWT issuance; no provider credential reaches the browser. The
+web service gets Better Auth schema access, its auth secret, and its SMTP sender,
+but no product-schema mutation authority.
 Each database authority is delivered through a distinct Secret Manager secret;
 runtime roles never share a database credential.
 
@@ -50,11 +56,21 @@ bound, then shift traffic. Never run migrations from application startup.
 Required service configuration:
 
 - `portal-api`: database settings, browser origin, Better Auth JWKS HTTPS URL,
-  exact issuer, and exact API audience.
+  exact issuer and audience, SIP domain, handoff-token key, scoped Abita service
+  credential and Practice, Telnyx command configuration, and the shared
+  `HUMAN_CALLING_OFFER_SECONDS`,
+  `HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS`,
+  `HUMAN_CALLING_LEASE_SECONDS`, and
+  `HUMAN_CALLING_READINESS_GRACE_SECONDS` values.
 - `realtime`: the same authority configuration plus bounded heartbeat, stream
   lifetime, revalidation, and reconnect intervals.
-- `provider-ingress`: database settings and HTTP port only in Slice 1.
-- `worker`: database settings only.
+- `provider-ingress`: database settings, HTTP port, and the Telnyx Ed25519
+  webhook public key. It permits public HTTPS invocation because Telnyx must
+  reach it; exact-body signature and timestamp verification are the application
+  authentication boundary.
+- `worker`: database settings, Telnyx command configuration, the same four
+  Human Calling timing values as `portal-api`, and the expected direct-recording
+  GCS bucket name.
 - `migrate`: database settings and, only for initial provisioning, paired
   input/output paths. The output contains one-time invitation credentials and
   must be captured as a `0600` secret artifact. An invitation link uses
@@ -67,10 +83,16 @@ Required service configuration:
   `portal-api`, and `realtime` permit unauthenticated Cloud Run invocation
   because sign-in/invitation/health interfaces and browser JWT requests reach
   them directly; their application interfaces still enforce the OpenAPI and
-  Better Auth authorization contract. `provider-ingress` remains private in
-  Slice 1.
+  Better Auth authorization contract.
 
 Readiness is dependency-aware; liveness is process-only. Realtime marks itself
 unready until its dedicated PostgreSQL listener is connected. SSE hints carry
 only Practice ID and version. Every reconnect revalidates Access and the browser
 refetches the authoritative snapshot.
+
+The shared Telnyx Call Control Application and Credential Connection remain
+deployment inputs. Its webhook target must be the public `provider-ingress`
+route, and its custom recording storage must point directly at the dedicated
+private GCS bucket named by `TELNYX_RECORDING_BUCKET`. GCS access, lifecycle,
+retention, consent, and release approval are external gates; the application
+does not proxy recording bytes or create transcripts.

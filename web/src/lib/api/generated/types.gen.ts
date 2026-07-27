@@ -137,6 +137,148 @@ export type LocationMutation = {
     audit: AuditEvent;
 };
 
+export type ContactContextInput = {
+    phone?: string;
+    phoneSource?: string;
+    displayName?: string;
+    nameSource?: string;
+    transferReason?: string;
+    reasonSource?: string;
+};
+
+export type CreateHandoffRequest = {
+    practiceId: string;
+    locationId: string;
+    sourceCallId: string;
+    idempotencyKey: string;
+    contact: ContactContextInput;
+};
+
+export type Handoff = {
+    id: string;
+    sipDestination: string;
+    expiresAt: string;
+};
+
+export type SoftphoneLeaseRequest = {
+    sessionId: string;
+    takeover: boolean;
+};
+
+export type CallingReadinessRequest = {
+    sessionId: string;
+    registered: boolean;
+    microphoneReady: boolean;
+    audioReady: boolean;
+    sessionHealthy: boolean;
+    available: boolean;
+};
+
+export type SoftphoneState = {
+    sessionId: string;
+    leaseExpiresAt: string;
+    owner: boolean;
+    available: boolean;
+    /**
+     * The User's current durable Call, or empty when capacity is free.
+     */
+    activeCallId: string;
+};
+
+export type MediaTokenRequest = {
+    sessionId: string;
+};
+
+export type MediaToken = {
+    token: string;
+    expiresAt: string;
+};
+
+export type CallingOffer = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    displayName: string;
+    nameSource: string;
+    transferReason: string;
+    reasonSource: string;
+    deadline: string;
+    state: 'OFFERING';
+    version: number;
+};
+
+export type CallingOfferList = {
+    items: Array<CallingOffer>;
+};
+
+export type AcceptCallingOfferRequest = {
+    sessionId: string;
+};
+
+export type CallingControlRequest = {
+    sessionId: string;
+};
+
+export type AcceptCallingOfferResult = {
+    status: 'ACCEPTED' | 'ALREADY_CLAIMED' | 'EXPIRED' | 'INELIGIBLE';
+    callId: string;
+    state: 'OFFERING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+};
+
+export type CallingRecording = {
+    state: 'INTENDED' | 'RECORDING' | 'READY' | 'FAILED';
+    failureCode?: string;
+};
+
+export type CallingCall = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    state: 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    deadline: string;
+    phone: string;
+    phoneSource: string;
+    displayName: string;
+    nameSource: string;
+    transferReason: string;
+    reasonSource: string;
+    /**
+     * Empty until Telnyx identifies the one staff leg created for this claim.
+     */
+    expectedStaffLegId: string;
+    providerTermination: string;
+    connectedAt?: string;
+    version: number;
+    recording?: CallingRecording;
+};
+
+export type CallingDispositionRequest = {
+    sessionId: string;
+    outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+};
+
+export type OperatorCallingTimelineEntry = {
+    kind: string;
+    opaqueReference: string;
+    errorCode: string;
+    commandAction: string;
+    commandState: string;
+    commandAttempts: number;
+    receiptState: string;
+    ageSeconds: number;
+    occurredAt: string;
+};
+
+export type OperatorCallingTimeline = {
+    callId: string;
+    practiceId: string;
+    state: 'OFFERING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    version: number;
+    entries: Array<OperatorCallingTimelineEntry>;
+};
+
 export type GetLivenessData = {
     body?: never;
     path?: never;
@@ -489,3 +631,414 @@ export type GetEventsResponses = {
 };
 
 export type GetEventsResponse = GetEventsResponses[keyof GetEventsResponses];
+
+export type CreateHandoffData = {
+    body: CreateHandoffRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/handoffs';
+};
+
+export type CreateHandoffErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CreateHandoffError = CreateHandoffErrors[keyof CreateHandoffErrors];
+
+export type CreateHandoffResponses = {
+    /**
+     * Opaque single-use SIP handoff.
+     */
+    201: Handoff;
+};
+
+export type CreateHandoffResponse = CreateHandoffResponses[keyof CreateHandoffResponses];
+
+export type ReceiveTelnyxWebhookData = {
+    body: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/provider/telnyx/webhooks';
+};
+
+export type ReceiveTelnyxWebhookErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReceiveTelnyxWebhookError = ReceiveTelnyxWebhookErrors[keyof ReceiveTelnyxWebhookErrors];
+
+export type ReceiveTelnyxWebhookResponses = {
+    /**
+     * Receipt durably committed or accepted duplicate.
+     */
+    204: void;
+};
+
+export type ReceiveTelnyxWebhookResponse = ReceiveTelnyxWebhookResponses[keyof ReceiveTelnyxWebhookResponses];
+
+export type AcquireSoftphoneData = {
+    body: SoftphoneLeaseRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/calling/softphone/lease';
+};
+
+export type AcquireSoftphoneErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type AcquireSoftphoneError = AcquireSoftphoneErrors[keyof AcquireSoftphoneErrors];
+
+export type AcquireSoftphoneResponses = {
+    /**
+     * Current softphone ownership.
+     */
+    200: SoftphoneState;
+};
+
+export type AcquireSoftphoneResponse = AcquireSoftphoneResponses[keyof AcquireSoftphoneResponses];
+
+export type SetCallingReadinessData = {
+    body: CallingReadinessRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/calling/readiness';
+};
+
+export type SetCallingReadinessErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type SetCallingReadinessError = SetCallingReadinessErrors[keyof SetCallingReadinessErrors];
+
+export type SetCallingReadinessResponses = {
+    /**
+     * Current derived operational state.
+     */
+    200: SoftphoneState;
+};
+
+export type SetCallingReadinessResponse = SetCallingReadinessResponses[keyof SetCallingReadinessResponses];
+
+export type IssueCallingMediaTokenData = {
+    body: MediaTokenRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/calling/media-token';
+};
+
+export type IssueCallingMediaTokenErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type IssueCallingMediaTokenError = IssueCallingMediaTokenErrors[keyof IssueCallingMediaTokenErrors];
+
+export type IssueCallingMediaTokenResponses = {
+    /**
+     * Short-lived browser media credential.
+     */
+    200: MediaToken;
+};
+
+export type IssueCallingMediaTokenResponse = IssueCallingMediaTokenResponses[keyof IssueCallingMediaTokenResponses];
+
+export type ListCallingOffersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/calling/offers';
+};
+
+export type ListCallingOffersErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ListCallingOffersError = ListCallingOffersErrors[keyof ListCallingOffersErrors];
+
+export type ListCallingOffersResponses = {
+    /**
+     * Earliest-deadline-first authoritative offers.
+     */
+    200: CallingOfferList;
+};
+
+export type ListCallingOffersResponse = ListCallingOffersResponses[keyof ListCallingOffersResponses];
+
+export type AcceptCallingOfferData = {
+    body: AcceptCallingOfferRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/offers/{callId}/accept';
+};
+
+export type AcceptCallingOfferErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type AcceptCallingOfferError = AcceptCallingOfferErrors[keyof AcceptCallingOfferErrors];
+
+export type AcceptCallingOfferResponses = {
+    /**
+     * Committed acceptance or explicit losing result.
+     */
+    200: AcceptCallingOfferResult;
+};
+
+export type AcceptCallingOfferResponse = AcceptCallingOfferResponses[keyof AcceptCallingOfferResponses];
+
+export type GetCallingCallData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}';
+};
+
+export type GetCallingCallErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetCallingCallError = GetCallingCallErrors[keyof GetCallingCallErrors];
+
+export type GetCallingCallResponses = {
+    /**
+     * Authorized Call workspace.
+     */
+    200: CallingCall;
+};
+
+export type GetCallingCallResponse = GetCallingCallResponses[keyof GetCallingCallResponses];
+
+export type RequestCallingHangupData = {
+    body: CallingControlRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/hangup';
+};
+
+export type RequestCallingHangupErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RequestCallingHangupError = RequestCallingHangupErrors[keyof RequestCallingHangupErrors];
+
+export type RequestCallingHangupResponses = {
+    /**
+     * Hangup intent committed.
+     */
+    202: CallingCall;
+};
+
+export type RequestCallingHangupResponse = RequestCallingHangupResponses[keyof RequestCallingHangupResponses];
+
+export type RecordCallingDispositionData = {
+    body: CallingDispositionRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/disposition';
+};
+
+export type RecordCallingDispositionErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RecordCallingDispositionError = RecordCallingDispositionErrors[keyof RecordCallingDispositionErrors];
+
+export type RecordCallingDispositionResponses = {
+    /**
+     * Durable terminal Call outcome.
+     */
+    200: CallingCall;
+};
+
+export type RecordCallingDispositionResponse = RecordCallingDispositionResponses[keyof RecordCallingDispositionResponses];
+
+export type GetOperatorCallingTimelineData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/operator/calls/{callId}/timeline';
+};
+
+export type GetOperatorCallingTimelineErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorCallingTimelineError = GetOperatorCallingTimelineErrors[keyof GetOperatorCallingTimelineErrors];
+
+export type GetOperatorCallingTimelineResponses = {
+    /**
+     * Sanitized provider and workflow history.
+     */
+    200: OperatorCallingTimeline;
+};
+
+export type GetOperatorCallingTimelineResponse = GetOperatorCallingTimelineResponses[keyof GetOperatorCallingTimelineResponses];

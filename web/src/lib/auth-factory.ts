@@ -43,6 +43,11 @@ export function createAuth() {
     secret: authSecret(),
     trustedOrigins: commaSeparated("BETTER_AUTH_TRUSTED_ORIGINS"),
     database: pool,
+    rateLimit: {
+      enabled:
+        process.env.AUTH_EMAIL_MODE !== "test" ||
+        process.env.AUTH_ALLOW_TEST_EMAIL !== "true",
+    },
     emailAndPassword: {
       enabled: true,
       autoSignIn: false,
