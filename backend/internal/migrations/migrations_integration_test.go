@@ -68,18 +68,23 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 			t.Fatalf("calling table %s is missing", table)
 		}
 	}
-	var operationalUsersView bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM information_schema.views
-			WHERE table_schema = 'public'
-				AND table_name = 'access_operational_users'
-		)
-	`).Scan(&operationalUsersView); err != nil {
-		t.Fatalf("inspect Access operational Users view: %v", err)
-	}
-	if !operationalUsersView {
-		t.Fatal("Access operational Users view is missing")
+	for _, view := range []string{
+		"access_operational_users",
+		"human_calling_operational_users",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.views
+				WHERE table_schema = 'public'
+					AND table_name = $1
+			)
+		`, view).Scan(&exists); err != nil {
+			t.Fatalf("inspect operational Users view %s: %v", view, err)
+		}
+		if !exists {
+			t.Fatalf("operational Users view %s is missing", view)
+		}
 	}
 }

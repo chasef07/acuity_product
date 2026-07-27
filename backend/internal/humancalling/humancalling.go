@@ -2790,15 +2790,24 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		}
 		return false, fmt.Errorf("claim provider command: %w", err)
 	}
+	if err := tx.QueryRow(ctx, `
+		UPDATE human_calling_provider_commands
+		SET
+			state = 'SENDING',
+			attempts = attempts + 1,
+			payload = CASE
+				WHEN action = 'ANSWER_CALLER' AND NOT payload ? 'transcription'
+					THEN payload || '{"transcription":false}'::jsonb
+				ELSE payload
+			END,
+			updated_at = $2
+		WHERE id = $1
+		RETURNING payload
+	`, command.ID, m.now()).Scan(&encoded); err != nil {
+		return false, fmt.Errorf("mark provider command sending: %w", err)
+	}
 	if err := json.Unmarshal(encoded, &command.Payload); err != nil {
 		return false, fmt.Errorf("decode provider command: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_provider_commands
-		SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
-		WHERE id = $1
-	`, command.ID, m.now()); err != nil {
-		return false, fmt.Errorf("mark provider command sending: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit provider command claim: %w", err)

@@ -941,6 +941,52 @@ func TestAmbiguousCallerAnswerWaitsForCallerAnswerEvidence(t *testing.T) {
 	}
 }
 
+func TestWorkerNormalizesQueuedLegacyAnswerBeforeProviderRequest(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		pool,
+		nil,
+		provider,
+		humancalling.Config{},
+		func() time.Time { return now },
+	)
+	const commandID = "00000000-0000-0000-0000-000000000101"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			id, action, target_id, payload, next_attempt_at
+		)
+		VALUES (
+			$1, 'ANSWER_CALLER', 'legacy-caller-control',
+			'{"client_state":"legacy-client-state"}'::jsonb, $2
+		)
+	`, commandID, now); err != nil {
+		t.Fatalf("insert legacy Answer command: %v", err)
+	}
+
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("process legacy Answer command: processed=%t err=%v", processed, err)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.commands) != 1 ||
+		provider.commands[0].Payload["transcription"] != false {
+		t.Fatalf("normalized provider command = %#v", provider.commands)
+	}
+	var persisted map[string]any
+	if err := pool.QueryRow(context.Background(), `
+		SELECT payload
+		FROM human_calling_provider_commands
+		WHERE id = $1
+	`, commandID).Scan(&persisted); err != nil {
+		t.Fatalf("read normalized Answer command: %v", err)
+	}
+	if persisted["transcription"] != false {
+		t.Fatalf("persisted Answer payload = %#v", persisted)
+	}
+}
+
 func TestAcceptedCallCannotDialAfterCallerAnswerDefinitivelyFails(t *testing.T) {
 	provider := &recordingProvider{
 		answerError: fmt.Errorf(

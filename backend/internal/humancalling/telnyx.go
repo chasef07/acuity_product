@@ -71,11 +71,15 @@ func (adapter *TelnyxAdapter) Execute(
 		}
 		path = callActionPath(command.TargetID, "playback_start")
 	case CommandDialStaff:
+		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
 		if emptyString(payload["to"]) ||
 			emptyString(payload["connection_id"]) ||
 			emptyString(payload["from"]) ||
 			emptyString(payload["link_to"]) ||
 			emptyString(payload["client_state"]) ||
+			!validTimeout ||
+			timeoutSeconds <= 0 ||
+			timeoutSeconds != float64(int(timeoutSeconds)) ||
 			payload["bridge_intent"] != true ||
 			payload["bridge_on_answer"] != true ||
 			payload["prevent_double_bridge"] != true {

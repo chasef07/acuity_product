@@ -61,6 +61,7 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 			"bridge_on_answer":      true,
 			"prevent_double_bridge": true,
 			"client_state":          "opaque-state",
+			"timeout_secs":          float64(20),
 		},
 	})
 	if err != nil ||
@@ -88,6 +89,7 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		dialRequest["command_id"] != "command-dial-1" ||
 		dialRequest["connection_id"] != "call-control-app" ||
 		dialRequest["from"] != "+15555550199" ||
+		dialRequest["timeout_secs"] != float64(20) ||
 		dialRequest["bridge_on_answer"] != true ||
 		dialRequest["prevent_double_bridge"] != true {
 		t.Fatalf("Telnyx Dial request = %#v", dialRequest)
@@ -125,8 +127,14 @@ func TestTelnyxAdapterRejectsIncompleteDurableCommand(t *testing.T) {
 		Action:   humancalling.CommandDialStaff,
 		TargetID: "caller-control",
 		Payload: map[string]any{
-			"to":      "sip:synthetic-user@sip.telnyx.com",
-			"link_to": "caller-control",
+			"to":                    "sip:synthetic-user@sip.telnyx.com",
+			"connection_id":         "call-control-app",
+			"from":                  "+15555550199",
+			"link_to":               "caller-control",
+			"bridge_intent":         true,
+			"bridge_on_answer":      true,
+			"prevent_double_bridge": true,
+			"client_state":          "opaque-state",
 		},
 	}); err != humancalling.ErrInvalidInput {
 		t.Fatalf("incomplete Dial error = %v, want %v", err, humancalling.ErrInvalidInput)
