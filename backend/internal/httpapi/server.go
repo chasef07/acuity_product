@@ -41,12 +41,25 @@ type ServiceAuthenticator interface {
 }
 
 type Config struct {
-	Role           string
 	AllowedOrigin  string
 	AcquireTimeout time.Duration
 }
 
+type PortalDependencies struct {
+	Access               *access.Module
+	Authenticator        IdentityAuthenticator
+	Calling              *humancalling.Module
+	ServiceAuthenticator ServiceAuthenticator
+}
+
+type RealtimeDependencies struct {
+	Access        *access.Module
+	Authenticator IdentityAuthenticator
+	Events        EventStreamer
+}
+
 type Server struct {
+	role          string
 	config        Config
 	pool          *pgxpool.Pool
 	access        *access.Module
@@ -56,68 +69,85 @@ type Server struct {
 	serviceAuth   ServiceAuthenticator
 }
 
-func New(
-	config Config,
-	pool *pgxpool.Pool,
-	accessModule *access.Module,
-	authenticator IdentityAuthenticator,
-) (http.Handler, error) {
-	return newServer(config, pool, accessModule, authenticator, nil, nil, nil)
+type serverDependencies struct {
+	access        *access.Module
+	authenticator IdentityAuthenticator
+	events        EventStreamer
+	calling       *humancalling.Module
+	serviceAuth   ServiceAuthenticator
 }
 
-func NewWithEvents(
+func NewPortal(
 	config Config,
 	pool *pgxpool.Pool,
-	accessModule *access.Module,
-	authenticator IdentityAuthenticator,
-	events EventStreamer,
+	dependencies PortalDependencies,
 ) (http.Handler, error) {
-	return newServer(config, pool, accessModule, authenticator, events, nil, nil)
+	if dependencies.Access == nil ||
+		dependencies.Authenticator == nil ||
+		dependencies.Calling == nil ||
+		dependencies.ServiceAuthenticator == nil {
+		return nil, fmt.Errorf("portal dependencies are required")
+	}
+	return newServer("portal-api", config, pool, serverDependencies{
+		access:        dependencies.Access,
+		authenticator: dependencies.Authenticator,
+		calling:       dependencies.Calling,
+		serviceAuth:   dependencies.ServiceAuthenticator,
+	})
 }
 
-func NewWithCalling(
+func NewRealtime(
 	config Config,
 	pool *pgxpool.Pool,
-	accessModule *access.Module,
-	authenticator IdentityAuthenticator,
+	dependencies RealtimeDependencies,
+) (http.Handler, error) {
+	if dependencies.Access == nil ||
+		dependencies.Authenticator == nil ||
+		dependencies.Events == nil {
+		return nil, fmt.Errorf("realtime dependencies are required")
+	}
+	return newServer("realtime", config, pool, serverDependencies{
+		access:        dependencies.Access,
+		authenticator: dependencies.Authenticator,
+		events:        dependencies.Events,
+	})
+}
+
+func NewProviderIngress(
+	config Config,
+	pool *pgxpool.Pool,
 	calling *humancalling.Module,
-	serviceAuth ServiceAuthenticator,
 ) (http.Handler, error) {
-	return newServer(config, pool, accessModule, authenticator, nil, calling, serviceAuth)
+	if calling == nil {
+		return nil, fmt.Errorf("provider-ingress calling module is required")
+	}
+	return newServer("provider-ingress", config, pool, serverDependencies{
+		calling: calling,
+	})
 }
 
 func newServer(
+	role string,
 	config Config,
 	pool *pgxpool.Pool,
-	accessModule *access.Module,
-	authenticator IdentityAuthenticator,
-	events EventStreamer,
-	calling *humancalling.Module,
-	serviceAuth ServiceAuthenticator,
+	dependencies serverDependencies,
 ) (http.Handler, error) {
-	if config.Role != "portal-api" &&
-		config.Role != "provider-ingress" &&
-		config.Role != "realtime" {
-		return nil, fmt.Errorf("unsupported HTTP runtime role %q", config.Role)
-	}
 	if pool == nil {
 		return nil, fmt.Errorf("database pool is required")
 	}
 	if config.AcquireTimeout <= 0 {
 		return nil, fmt.Errorf("positive acquisition timeout is required")
 	}
-	if config.Role != "provider-ingress" && (accessModule == nil || authenticator == nil) {
-		return nil, fmt.Errorf("Access and authentication adapters are required")
-	}
 
 	server := &Server{
+		role:          role,
 		config:        config,
 		pool:          pool,
-		access:        accessModule,
-		authenticator: authenticator,
-		events:        events,
-		calling:       calling,
-		serviceAuth:   serviceAuth,
+		access:        dependencies.access,
+		authenticator: dependencies.authenticator,
+		events:        dependencies.events,
+		calling:       dependencies.calling,
+		serviceAuth:   dependencies.serviceAuth,
 	}
 	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
@@ -129,7 +159,7 @@ func newServer(
 
 func (server *Server) GetLiveness(w http.ResponseWriter, _ *http.Request) {
 	server.writeJSON(w, http.StatusOK, api.Health{
-		Role:   healthRole(server.config.Role),
+		Role:   healthRole(server.role),
 		Status: api.Ok,
 	})
 }
@@ -141,12 +171,12 @@ func (server *Server) GetReadiness(w http.ResponseWriter, r *http.Request) {
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 		return
 	}
-	if server.config.Role == "realtime" && (server.events == nil || !server.events.Ready()) {
+	if server.role == "realtime" && !server.events.Ready() {
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, api.Health{
-		Role:   healthRole(server.config.Role),
+		Role:   healthRole(server.role),
 		Status: api.Ok,
 	})
 }
@@ -381,7 +411,7 @@ func (server *Server) GetEvents(
 	r *http.Request,
 	params api.GetEventsParams,
 ) {
-	if server.config.Role != "realtime" || server.events == nil {
+	if server.role != "realtime" {
 		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
 		return
 	}
@@ -401,10 +431,7 @@ func (server *Server) GetEvents(
 }
 
 func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
-	if !server.portalOnly(w, r) || server.calling == nil || server.serviceAuth == nil {
-		if server.config.Role == "portal-api" && (server.calling == nil || server.serviceAuth == nil) {
-			server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available.", false)
-		}
+	if !server.portalOnly(w, r) {
 		return
 	}
 	service, ok := server.authenticateService(w, r)
@@ -452,7 +479,7 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 }
 
 func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request) {
-	if server.config.Role != "provider-ingress" || server.calling == nil {
+	if server.role != "provider-ingress" {
 		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
 		return
 	}
@@ -699,10 +726,7 @@ func (server *Server) GetOperatorCallingTimeline(
 	r *http.Request,
 	callID openapi_types.UUID,
 ) {
-	if !server.portalOnly(w, r) || server.calling == nil {
-		if server.config.Role == "portal-api" && server.calling == nil {
-			server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available.", false)
-		}
+	if !server.portalOnly(w, r) {
 		return
 	}
 	identity, ok := server.authenticate(w, r)
@@ -725,7 +749,7 @@ func (server *Server) GetOperatorCallingTimeline(
 }
 
 func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
-	if server.config.Role == "portal-api" {
+	if server.role == "portal-api" {
 		return true
 	}
 	server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
@@ -737,10 +761,6 @@ func (server *Server) callingIdentity(
 	r *http.Request,
 ) (access.Identity, bool) {
 	if !server.portalOnly(w, r) {
-		return access.Identity{}, false
-	}
-	if server.calling == nil {
-		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available.", false)
 		return access.Identity{}, false
 	}
 	return server.authenticate(w, r)

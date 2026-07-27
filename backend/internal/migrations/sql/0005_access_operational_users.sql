@@ -1,0 +1,6 @@
+ALTER VIEW human_calling_operational_users
+RENAME TO access_operational_users;
+
+CREATE VIEW human_calling_operational_users AS
+SELECT user_subject
+FROM access_operational_users;

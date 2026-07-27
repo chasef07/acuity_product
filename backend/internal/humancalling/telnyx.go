@@ -15,13 +15,9 @@ import (
 )
 
 type TelnyxConfig struct {
-	APIKey                 string
-	BaseURL                string
-	HTTPClient             *http.Client
-	CallControlID          string
-	CredentialConnectionID string
-	FromNumber             string
-	RingbackURL            string
+	APIKey     string
+	BaseURL    string
+	HTTPClient *http.Client
 }
 
 type TelnyxAdapter struct {
@@ -60,44 +56,70 @@ func (adapter *TelnyxAdapter) Execute(
 
 	switch command.Action {
 	case CommandAnswerCaller:
+		if command.TargetID == "" ||
+			payload["transcription"] != false ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = callActionPath(command.TargetID, "answer")
-		payload["transcription"] = false
 	case CommandStartRingback:
+		if command.TargetID == "" ||
+			emptyString(payload["audio_url"]) ||
+			payload["loop"] != "infinity" ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = callActionPath(command.TargetID, "playback_start")
-		if emptyString(payload["audio_url"]) {
-			payload["audio_url"] = adapter.config.RingbackURL
-		}
-		payload["loop"] = "infinity"
 	case CommandDialStaff:
+		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
+		if emptyString(payload["to"]) ||
+			emptyString(payload["connection_id"]) ||
+			emptyString(payload["from"]) ||
+			emptyString(payload["link_to"]) ||
+			emptyString(payload["client_state"]) ||
+			!validTimeout ||
+			timeoutSeconds <= 0 ||
+			timeoutSeconds != float64(int(timeoutSeconds)) ||
+			payload["bridge_intent"] != true ||
+			payload["bridge_on_answer"] != true ||
+			payload["prevent_double_bridge"] != true {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = "/calls"
-		if emptyString(payload["connection_id"]) {
-			payload["connection_id"] = adapter.config.CallControlID
-		}
-		if emptyString(payload["from"]) {
-			payload["from"] = adapter.config.FromNumber
-		}
-		payload["bridge_intent"] = true
-		payload["bridge_on_answer"] = true
-		payload["prevent_double_bridge"] = true
 	case CommandHangup:
+		if command.TargetID == "" {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = callActionPath(command.TargetID, "hangup")
 	case CommandStartRecording:
+		if command.TargetID == "" ||
+			payload["format"] != "wav" ||
+			payload["channels"] != "dual" ||
+			payload["recording_track"] != "both" ||
+			payload["transcription"] != false ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = callActionPath(command.TargetID, "record_start")
-		payload["format"] = "wav"
-		payload["channels"] = "dual"
-		payload["recording_track"] = "both"
-		payload["transcription"] = false
 	case CommandCreateCredential:
+		if emptyString(payload["connection_id"]) ||
+			emptyString(payload["name"]) ||
+			emptyString(payload["tag"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = "/telephony_credentials"
 		delete(payload, "command_id")
-		if emptyString(payload["connection_id"]) {
-			payload["connection_id"] = adapter.config.CredentialConnectionID
-		}
 	case CommandDisableCredential:
+		if command.TargetID == "" {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = "/telephony_credentials/" + url.PathEscape(command.TargetID)
 		method = http.MethodDelete
 		payload = nil
 	case CommandCreateJWT:
+		if command.TargetID == "" {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = "/telephony_credentials/" + url.PathEscape(command.TargetID) + "/token"
 		delete(payload, "command_id")
 	default:

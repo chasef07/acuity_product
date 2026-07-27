@@ -95,14 +95,17 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	}
 	go streams.Run(ctx)
 
-	handler, err := httpapi.NewWithEvents(httpapi.Config{
-		Role:           "realtime",
+	handler, err := httpapi.NewRealtime(httpapi.Config{
 		AllowedOrigin:  "http://localhost:3000",
 		AcquireTimeout: 500 * time.Millisecond,
-	}, pool, accessModule, staticAuthenticator{
-		"operator-token": operator,
-		"member-token":   member,
-	}, streams)
+	}, pool, httpapi.RealtimeDependencies{
+		Access: accessModule,
+		Authenticator: staticAuthenticator{
+			"operator-token": operator,
+			"member-token":   member,
+		},
+		Events: streams,
+	})
 	if err != nil {
 		t.Fatalf("new realtime HTTP adapter: %v", err)
 	}

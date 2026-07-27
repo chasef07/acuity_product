@@ -4,6 +4,11 @@ import { jwt } from "better-auth/plugins"
 import { Pool } from "pg"
 
 import { getAuthEmailSender, type AuthEmailKind } from "@/lib/email"
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from "@/lib/password-policy"
+import { positiveInteger, required } from "@/lib/server-env"
 
 export function createAuth() {
   const baseURL = required("BETTER_AUTH_URL")
@@ -52,8 +57,8 @@ export function createAuth() {
       enabled: true,
       autoSignIn: false,
       requireEmailVerification: true,
-      minPasswordLength: 12,
-      maxPasswordLength: 128,
+      minPasswordLength: PASSWORD_MIN_LENGTH,
+      maxPasswordLength: PASSWORD_MAX_LENGTH,
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: async ({ user, url, token }) => {
         await deliver("password-reset", user.email, url, token)
@@ -109,22 +114,6 @@ export function createAuth() {
     ],
     telemetry: { enabled: false },
   })
-}
-
-function required(name: string): string {
-  const value = process.env[name]?.trim()
-  if (!value) {
-    throw new Error(`${name} is required`)
-  }
-  return value
-}
-
-function positiveInteger(name: string): number {
-  const value = Number.parseInt(required(name), 10)
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`)
-  }
-  return value
 }
 
 function authSecret(): string {

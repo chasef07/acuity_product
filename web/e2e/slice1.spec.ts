@@ -3,6 +3,8 @@ import { spawn, type ChildProcess } from "node:child_process"
 
 import { expect, test, type Page } from "@playwright/test"
 
+import { latestEmail } from "./support"
+
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL =
   process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
@@ -354,26 +356,6 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
   await operatorContext.close()
   await secondCustomerContext.close()
 })
-
-async function latestEmail(
-  page: Page,
-  email: string,
-  kind: "verification" | "password-reset",
-): Promise<string> {
-  let url = ""
-  await expect
-    .poll(async () => {
-      const response = await page.request.get(`${webURL}/api/test/email`, {
-        params: { email, kind },
-      })
-      if (response.ok()) {
-        url = ((await response.json()) as { url: string }).url
-      }
-      return url
-    })
-    .not.toBe("")
-  return url
-}
 
 async function accessToken(page: Page): Promise<string> {
   const response = await page.request.get(`${webURL}/api/auth/token`)

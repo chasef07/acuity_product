@@ -69,11 +69,10 @@ func run() error {
 			humanCallingConfig(config),
 			nil,
 		)
-		handler, err := httpapi.NewWithCalling(httpapi.Config{
-			Role:           string(config.Role),
+		handler, err := httpapi.NewProviderIngress(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
-		}, pool, nil, nil, calling, nil)
+		}, pool, calling)
 		if err != nil {
 			return err
 		}
@@ -133,11 +132,14 @@ func runAuthorizedHTTP(
 			return err
 		}
 		go hub.Run(ctx)
-		handler, err = httpapi.NewWithEvents(httpapi.Config{
-			Role:           string(config.Role),
+		handler, err = httpapi.NewRealtime(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
-		}, pool, accessModule, authenticator, hub)
+		}, pool, httpapi.RealtimeDependencies{
+			Access:        accessModule,
+			Authenticator: authenticator,
+			Events:        hub,
+		})
 		if err != nil {
 			return err
 		}
@@ -163,11 +165,15 @@ func runAuthorizedHTTP(
 		if err != nil {
 			return err
 		}
-		handler, err = httpapi.NewWithCalling(httpapi.Config{
-			Role:           string(config.Role),
+		handler, err = httpapi.NewPortal(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
-		}, pool, accessModule, authenticator, calling, serviceAuth)
+		}, pool, httpapi.PortalDependencies{
+			Access:               accessModule,
+			Authenticator:        authenticator,
+			Calling:              calling,
+			ServiceAuthenticator: serviceAuth,
+		})
 		if err != nil {
 			return err
 		}
@@ -252,12 +258,8 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 
 func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
 	return humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
-		APIKey:                 config.HumanCalling.TelnyxAPIKey,
-		BaseURL:                config.HumanCalling.TelnyxAPIBaseURL,
-		CallControlID:          config.HumanCalling.CallControlID,
-		CredentialConnectionID: config.HumanCalling.CredentialConnectionID,
-		FromNumber:             config.HumanCalling.FromNumber,
-		RingbackURL:            config.HumanCalling.RingbackURL,
+		APIKey:  config.HumanCalling.TelnyxAPIKey,
+		BaseURL: config.HumanCalling.TelnyxAPIBaseURL,
 	})
 }
 
