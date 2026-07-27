@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -298,6 +300,218 @@ func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testin
 	}
 }
 
+func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "slice-2-http-test",
+		Practices: []access.PracticeProvision{{
+			Key:       "calling-practice",
+			Name:      "Calling Practice",
+			Locations: []access.LocationProvision{{Key: "calling-location", Name: "Calling Location"}},
+			Invitations: []access.InvitationProvision{{
+				Key:           "calling-staff",
+				Email:         "staff@calling.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision calling HTTP fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "calling-staff-subject",
+		Email:         "staff@calling.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept calling HTTP fixture: %v", err)
+	}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		httpCallingProvider{},
+		humancalling.Config{
+			SIPDomain:       "synthetic.sip.telnyx.com",
+			OfferDuration:   20 * time.Second,
+			HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+			RecordingBucket: "synthetic-recordings",
+		},
+		func() time.Time { return now },
+	)
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatalf("reconcile HTTP calling credentials: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
+	}
+	handler, err := httpapi.NewWithCalling(
+		httpapi.Config{
+			Role:           "portal-api",
+			AllowedOrigin:  "http://localhost:3000",
+			AcquireTimeout: 500 * time.Millisecond,
+		},
+		pool,
+		accessModule,
+		staticAuthenticator{"calling-token": identity},
+		calling,
+		staticServiceAuthenticator{
+			"abita-token": {
+				Subject:    "abita-synthetic",
+				PracticeID: authorization.Practice.ID,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("new calling HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	handoffBody, _ := json.Marshal(map[string]any{
+		"practiceId":     authorization.Practice.ID,
+		"locationId":     authorization.Locations[0].ID,
+		"sourceCallId":   "http-source-call",
+		"idempotencyKey": "http-idempotency",
+		"contact": map[string]any{
+			"displayName":    "HTTP Caller",
+			"nameSource":     "Abita",
+			"transferReason": "HTTP interface proof",
+			"reasonSource":   "Abita AI",
+		},
+	})
+	unauthenticated := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"wrong-service-token",
+		handoffBody,
+	)
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated handoff status = %d", unauthenticated.StatusCode)
+	}
+	_ = unauthenticated.Body.Close()
+	created := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"abita-token",
+		handoffBody,
+	)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create handoff status = %d, body = %s", created.StatusCode, readBody(t, created))
+	}
+	var handoff struct {
+		ID             string    `json:"id"`
+		SIPDestination string    `json:"sipDestination"`
+		ExpiresAt      time.Time `json:"expiresAt"`
+	}
+	decode(t, created, &handoff)
+	if strings.Contains(handoff.SIPDestination, "HTTP Caller") ||
+		!strings.HasPrefix(handoff.SIPDestination, "sip:") {
+		t.Fatalf("handoff response = %#v", handoff)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "http-inbound-event",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		CallControlID: "http-caller-control",
+		CallLegID:     "http-caller-leg",
+		CallSessionID: "http-call-session",
+		To:            handoff.SIPDestination,
+	}); err != nil {
+		t.Fatalf("admit HTTP caller: %v", err)
+	}
+
+	leaseBody, _ := json.Marshal(map[string]any{
+		"sessionId": "http-browser",
+		"takeover":  false,
+	})
+	lease := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/softphone/lease",
+		"calling-token",
+		leaseBody,
+	)
+	if lease.StatusCode != http.StatusOK {
+		t.Fatalf("lease status = %d, body = %s", lease.StatusCode, readBody(t, lease))
+	}
+	_ = lease.Body.Close()
+	readinessBody, _ := json.Marshal(map[string]any{
+		"sessionId":       "http-browser",
+		"registered":      true,
+		"microphoneReady": true,
+		"audioReady":      true,
+		"sessionHealthy":  true,
+		"available":       true,
+	})
+	readiness := request(
+		t,
+		server.Client(),
+		http.MethodPut,
+		server.URL+"/v1/calling/readiness",
+		"calling-token",
+		readinessBody,
+	)
+	if readiness.StatusCode != http.StatusOK {
+		t.Fatalf("readiness status = %d, body = %s", readiness.StatusCode, readBody(t, readiness))
+	}
+	_ = readiness.Body.Close()
+	offersResponse := request(
+		t,
+		server.Client(),
+		http.MethodGet,
+		server.URL+"/v1/calling/offers",
+		"calling-token",
+		nil,
+	)
+	if offersResponse.StatusCode != http.StatusOK {
+		t.Fatalf("offers status = %d, body = %s", offersResponse.StatusCode, readBody(t, offersResponse))
+	}
+	var offers struct {
+		Items []struct {
+			ID    string `json:"id"`
+			Phone string `json:"phone"`
+		} `json:"items"`
+	}
+	decode(t, offersResponse, &offers)
+	if len(offers.Items) != 1 || offers.Items[0].Phone != "" {
+		t.Fatalf("HTTP offers = %#v", offers)
+	}
+	acceptBody, _ := json.Marshal(map[string]any{"sessionId": "http-browser"})
+	accepted := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/offers/"+offers.Items[0].ID+"/accept",
+		"calling-token",
+		acceptBody,
+	)
+	if accepted.StatusCode != http.StatusOK {
+		t.Fatalf("accept status = %d, body = %s", accepted.StatusCode, readBody(t, accepted))
+	}
+	var acceptedResult struct {
+		Status string `json:"status"`
+	}
+	decode(t, accepted, &acceptedResult)
+	if acceptedResult.Status != "ACCEPTED" {
+		t.Fatalf("accepted result = %#v", acceptedResult)
+	}
+}
+
 type staticAuthenticator map[string]access.Identity
 
 func (adapter staticAuthenticator) Authenticate(_ context.Context, token string) (access.Identity, error) {
@@ -306,6 +520,34 @@ func (adapter staticAuthenticator) Authenticate(_ context.Context, token string)
 		return access.Identity{}, authn.ErrInvalidCredential
 	}
 	return identity, nil
+}
+
+type staticServiceAuthenticator map[string]humancalling.ServiceIdentity
+
+func (adapter staticServiceAuthenticator) AuthenticateService(
+	_ context.Context,
+	token string,
+) (humancalling.ServiceIdentity, error) {
+	identity, ok := adapter[token]
+	if !ok {
+		return humancalling.ServiceIdentity{}, errors.New("invalid service credential")
+	}
+	return identity, nil
+}
+
+type httpCallingProvider struct{}
+
+func (httpCallingProvider) Execute(
+	_ context.Context,
+	command humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	if command.Action == humancalling.CommandCreateCredential {
+		return humancalling.ProviderResult{
+			CredentialID: "http-credential",
+			SIPUsername:  "http-sip-user",
+		}, nil
+	}
+	return humancalling.ProviderResult{}, nil
 }
 
 func request(

@@ -1,10 +1,13 @@
 package app
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Role string
@@ -30,6 +33,27 @@ type Config struct {
 	ProvisioningInput  string
 	ProvisioningOutput string
 	Realtime           RealtimeConfig
+	HumanCalling       HumanCallingConfig
+}
+
+type HumanCallingConfig struct {
+	SIPDomain              string
+	HandoffTokenKey        []byte
+	HandoffServiceToken    string
+	HandoffServiceSubject  string
+	HandoffServicePractice string
+	WebhookPublicKey       []byte
+	TelnyxAPIKey           string
+	TelnyxAPIBaseURL       string
+	CallControlID          string
+	CredentialConnectionID string
+	FromNumber             string
+	RingbackURL            string
+	RecordingBucket        string
+	OfferDuration          time.Duration
+	ConnectionTimeout      time.Duration
+	LeaseDuration          time.Duration
+	ReadinessGrace         time.Duration
 }
 
 type RealtimeConfig struct {
@@ -97,10 +121,105 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			return Config{}, err
 		}
 	}
+	if role == RolePortalAPI {
+		if config.HumanCalling, err = loadHandoffConfig(getenv); err != nil {
+			return Config{}, err
+		}
+	}
+	if role == RolePortalAPI || role == RoleWorker {
+		if err := loadTelnyxCommandConfig(getenv, &config.HumanCalling); err != nil {
+			return Config{}, err
+		}
+	}
+	if role == RoleProviderIngress {
+		if config.HumanCalling.WebhookPublicKey, err = requiredBase64Key(
+			getenv,
+			"TELNYX_WEBHOOK_PUBLIC_KEY",
+			32,
+		); err != nil {
+			return Config{}, err
+		}
+	}
 	if role == RoleMigrate && (config.ProvisioningInput == "") != (config.ProvisioningOutput == "") {
 		return Config{}, fmt.Errorf("PROVISIONING_INPUT and PROVISIONING_OUTPUT must be set together")
 	}
 	return config, nil
+}
+
+func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
+	var result HumanCallingConfig
+	var err error
+	if result.SIPDomain, err = required(getenv, "HUMAN_CALLING_SIP_DOMAIN"); err != nil {
+		return HumanCallingConfig{}, err
+	}
+	if result.HandoffTokenKey, err = requiredBase64Key(
+		getenv,
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY",
+		32,
+	); err != nil {
+		return HumanCallingConfig{}, err
+	}
+	if result.HandoffServiceToken, err = required(getenv, "HANDOFF_SERVICE_TOKEN"); err != nil {
+		return HumanCallingConfig{}, err
+	}
+	if result.HandoffServiceSubject, err = required(getenv, "HANDOFF_SERVICE_SUBJECT"); err != nil {
+		return HumanCallingConfig{}, err
+	}
+	if result.HandoffServicePractice, err = required(
+		getenv,
+		"HANDOFF_SERVICE_PRACTICE_ID",
+	); err != nil {
+		return HumanCallingConfig{}, err
+	}
+	if _, err := uuid.Parse(result.HandoffServicePractice); err != nil {
+		return HumanCallingConfig{}, fmt.Errorf("HANDOFF_SERVICE_PRACTICE_ID must be a UUID")
+	}
+	return result, nil
+}
+
+func loadTelnyxCommandConfig(
+	getenv func(string) string,
+	result *HumanCallingConfig,
+) error {
+	values := []struct {
+		name   string
+		target *string
+	}{
+		{"TELNYX_API_KEY", &result.TelnyxAPIKey},
+		{"TELNYX_CALL_CONTROL_ID", &result.CallControlID},
+		{"TELNYX_CREDENTIAL_CONNECTION_ID", &result.CredentialConnectionID},
+		{"TELNYX_FROM_NUMBER", &result.FromNumber},
+		{"TELNYX_RINGBACK_URL", &result.RingbackURL},
+		{"TELNYX_RECORDING_BUCKET", &result.RecordingBucket},
+	}
+	for _, value := range values {
+		loaded, err := required(getenv, value.name)
+		if err != nil {
+			return err
+		}
+		*value.target = loaded
+	}
+	result.TelnyxAPIBaseURL = strings.TrimSpace(getenv("TELNYX_API_BASE_URL"))
+	timings := []struct {
+		name   string
+		target *time.Duration
+	}{
+		{"HUMAN_CALLING_OFFER_SECONDS", &result.OfferDuration},
+		{"HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS", &result.ConnectionTimeout},
+		{"HUMAN_CALLING_LEASE_SECONDS", &result.LeaseDuration},
+		{"HUMAN_CALLING_READINESS_GRACE_SECONDS", &result.ReadinessGrace},
+	}
+	for _, timing := range timings {
+		seconds, err := positiveInt(getenv, timing.name)
+		if err != nil {
+			return err
+		}
+		*timing.target = time.Duration(seconds) * time.Second
+	}
+	if result.ReadinessGrace >= result.LeaseDuration {
+		return fmt.Errorf("calling readiness grace must be shorter than the lease")
+	}
+	return nil
 }
 
 func loadRealtimeConfig(getenv func(string) string) (RealtimeConfig, error) {
@@ -155,4 +274,20 @@ func positiveInt(getenv func(string) string, name string) (int, error) {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
 	}
 	return value, nil
+}
+
+func requiredBase64Key(
+	getenv func(string) string,
+	name string,
+	length int,
+) ([]byte, error) {
+	raw, err := required(getenv, name)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(decoded) != length {
+		return nil, fmt.Errorf("%s must be base64 encoding of exactly %d bytes", name, length)
+	}
+	return decoded, nil
 }

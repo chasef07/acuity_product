@@ -22,6 +22,66 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AcceptCallingOfferResultState.
+const (
+	AcceptCallingOfferResultStateCONNECTED        AcceptCallingOfferResultState = "CONNECTED"
+	AcceptCallingOfferResultStateCONNECTING       AcceptCallingOfferResultState = "CONNECTING"
+	AcceptCallingOfferResultStateFOLLOWUPREQUIRED AcceptCallingOfferResultState = "FOLLOW_UP_REQUIRED"
+	AcceptCallingOfferResultStateNEEDSDISPOSITION AcceptCallingOfferResultState = "NEEDS_DISPOSITION"
+	AcceptCallingOfferResultStateOFFERING         AcceptCallingOfferResultState = "OFFERING"
+	AcceptCallingOfferResultStateRECONCILING      AcceptCallingOfferResultState = "RECONCILING"
+	AcceptCallingOfferResultStateRESOLVED         AcceptCallingOfferResultState = "RESOLVED"
+	AcceptCallingOfferResultStateUNANSWERED       AcceptCallingOfferResultState = "UNANSWERED"
+)
+
+// Valid indicates whether the value is a known member of the AcceptCallingOfferResultState enum.
+func (e AcceptCallingOfferResultState) Valid() bool {
+	switch e {
+	case AcceptCallingOfferResultStateCONNECTED:
+		return true
+	case AcceptCallingOfferResultStateCONNECTING:
+		return true
+	case AcceptCallingOfferResultStateFOLLOWUPREQUIRED:
+		return true
+	case AcceptCallingOfferResultStateNEEDSDISPOSITION:
+		return true
+	case AcceptCallingOfferResultStateOFFERING:
+		return true
+	case AcceptCallingOfferResultStateRECONCILING:
+		return true
+	case AcceptCallingOfferResultStateRESOLVED:
+		return true
+	case AcceptCallingOfferResultStateUNANSWERED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AcceptCallingOfferResultStatus.
+const (
+	ACCEPTED       AcceptCallingOfferResultStatus = "ACCEPTED"
+	ALREADYCLAIMED AcceptCallingOfferResultStatus = "ALREADY_CLAIMED"
+	EXPIRED        AcceptCallingOfferResultStatus = "EXPIRED"
+	INELIGIBLE     AcceptCallingOfferResultStatus = "INELIGIBLE"
+)
+
+// Valid indicates whether the value is a known member of the AcceptCallingOfferResultStatus enum.
+func (e AcceptCallingOfferResultStatus) Valid() bool {
+	switch e {
+	case ACCEPTED:
+		return true
+	case ALREADYCLAIMED:
+		return true
+	case EXPIRED:
+		return true
+	case INELIGIBLE:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ActorType.
 const (
 	ActorTypeHUMAN            ActorType = "HUMAN"
@@ -34,6 +94,96 @@ func (e ActorType) Valid() bool {
 	case ActorTypeHUMAN:
 		return true
 	case ActorTypePLATFORMOPERATOR:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallingCallState.
+const (
+	CallingCallStateCONNECTED        CallingCallState = "CONNECTED"
+	CallingCallStateCONNECTING       CallingCallState = "CONNECTING"
+	CallingCallStateFOLLOWUPREQUIRED CallingCallState = "FOLLOW_UP_REQUIRED"
+	CallingCallStateNEEDSDISPOSITION CallingCallState = "NEEDS_DISPOSITION"
+	CallingCallStateRECONCILING      CallingCallState = "RECONCILING"
+	CallingCallStateRESOLVED         CallingCallState = "RESOLVED"
+	CallingCallStateUNANSWERED       CallingCallState = "UNANSWERED"
+)
+
+// Valid indicates whether the value is a known member of the CallingCallState enum.
+func (e CallingCallState) Valid() bool {
+	switch e {
+	case CallingCallStateCONNECTED:
+		return true
+	case CallingCallStateCONNECTING:
+		return true
+	case CallingCallStateFOLLOWUPREQUIRED:
+		return true
+	case CallingCallStateNEEDSDISPOSITION:
+		return true
+	case CallingCallStateRECONCILING:
+		return true
+	case CallingCallStateRESOLVED:
+		return true
+	case CallingCallStateUNANSWERED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallingDispositionRequestOutcome.
+const (
+	CallingDispositionRequestOutcomeFOLLOWUPREQUIRED CallingDispositionRequestOutcome = "FOLLOW_UP_REQUIRED"
+	CallingDispositionRequestOutcomeRESOLVED         CallingDispositionRequestOutcome = "RESOLVED"
+)
+
+// Valid indicates whether the value is a known member of the CallingDispositionRequestOutcome enum.
+func (e CallingDispositionRequestOutcome) Valid() bool {
+	switch e {
+	case CallingDispositionRequestOutcomeFOLLOWUPREQUIRED:
+		return true
+	case CallingDispositionRequestOutcomeRESOLVED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallingOfferState.
+const (
+	CallingOfferStateOFFERING CallingOfferState = "OFFERING"
+)
+
+// Valid indicates whether the value is a known member of the CallingOfferState enum.
+func (e CallingOfferState) Valid() bool {
+	switch e {
+	case CallingOfferStateOFFERING:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallingRecordingState.
+const (
+	FAILED    CallingRecordingState = "FAILED"
+	INTENDED  CallingRecordingState = "INTENDED"
+	READY     CallingRecordingState = "READY"
+	RECORDING CallingRecordingState = "RECORDING"
+)
+
+// Valid indicates whether the value is a known member of the CallingRecordingState enum.
+func (e CallingRecordingState) Valid() bool {
+	switch e {
+	case FAILED:
+		return true
+	case INTENDED:
+		return true
+	case READY:
+		return true
+	case RECORDING:
 		return true
 	default:
 		return false
@@ -190,6 +340,42 @@ func (e NavigationItemId) Valid() bool {
 	}
 }
 
+// Defines values for OperatorCallingTimelineState.
+const (
+	OperatorCallingTimelineStateCONNECTED        OperatorCallingTimelineState = "CONNECTED"
+	OperatorCallingTimelineStateCONNECTING       OperatorCallingTimelineState = "CONNECTING"
+	OperatorCallingTimelineStateFOLLOWUPREQUIRED OperatorCallingTimelineState = "FOLLOW_UP_REQUIRED"
+	OperatorCallingTimelineStateNEEDSDISPOSITION OperatorCallingTimelineState = "NEEDS_DISPOSITION"
+	OperatorCallingTimelineStateOFFERING         OperatorCallingTimelineState = "OFFERING"
+	OperatorCallingTimelineStateRECONCILING      OperatorCallingTimelineState = "RECONCILING"
+	OperatorCallingTimelineStateRESOLVED         OperatorCallingTimelineState = "RESOLVED"
+	OperatorCallingTimelineStateUNANSWERED       OperatorCallingTimelineState = "UNANSWERED"
+)
+
+// Valid indicates whether the value is a known member of the OperatorCallingTimelineState enum.
+func (e OperatorCallingTimelineState) Valid() bool {
+	switch e {
+	case OperatorCallingTimelineStateCONNECTED:
+		return true
+	case OperatorCallingTimelineStateCONNECTING:
+		return true
+	case OperatorCallingTimelineStateFOLLOWUPREQUIRED:
+		return true
+	case OperatorCallingTimelineStateNEEDSDISPOSITION:
+		return true
+	case OperatorCallingTimelineStateOFFERING:
+		return true
+	case OperatorCallingTimelineStateRECONCILING:
+		return true
+	case OperatorCallingTimelineStateRESOLVED:
+		return true
+	case OperatorCallingTimelineStateUNANSWERED:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WorkspaceSnapshotSchemaVersion.
 const (
 	N20260724 WorkspaceSnapshotSchemaVersion = "2026-07-24"
@@ -219,6 +405,24 @@ func (e WorkspaceSnapshotState) Valid() bool {
 		return false
 	}
 }
+
+// AcceptCallingOfferRequest defines model for AcceptCallingOfferRequest.
+type AcceptCallingOfferRequest struct {
+	SessionId string `json:"sessionId"`
+}
+
+// AcceptCallingOfferResult defines model for AcceptCallingOfferResult.
+type AcceptCallingOfferResult struct {
+	CallId openapi_types.UUID             `json:"callId"`
+	State  AcceptCallingOfferResultState  `json:"state"`
+	Status AcceptCallingOfferResultStatus `json:"status"`
+}
+
+// AcceptCallingOfferResultState defines model for AcceptCallingOfferResult.State.
+type AcceptCallingOfferResultState string
+
+// AcceptCallingOfferResultStatus defines model for AcceptCallingOfferResult.Status.
+type AcceptCallingOfferResultStatus string
 
 // AccessDiscovery defines model for AccessDiscovery.
 type AccessDiscovery struct {
@@ -266,6 +470,107 @@ type Authorization struct {
 	SupportMode      *SupportMode `json:"supportMode,omitempty"`
 }
 
+// CallingCall defines model for CallingCall.
+type CallingCall struct {
+	ConnectedAt *time.Time `json:"connectedAt,omitempty"`
+	Deadline    time.Time  `json:"deadline"`
+	DisplayName string     `json:"displayName"`
+
+	// ExpectedStaffLegId Empty until Telnyx identifies the one staff leg created for this claim.
+	ExpectedStaffLegId  string             `json:"expectedStaffLegId"`
+	Id                  openapi_types.UUID `json:"id"`
+	LocationId          openapi_types.UUID `json:"locationId"`
+	LocationName        string             `json:"locationName"`
+	NameSource          string             `json:"nameSource"`
+	Phone               string             `json:"phone"`
+	PhoneSource         string             `json:"phoneSource"`
+	PracticeId          openapi_types.UUID `json:"practiceId"`
+	ProviderTermination string             `json:"providerTermination"`
+	ReasonSource        string             `json:"reasonSource"`
+	Recording           *CallingRecording  `json:"recording,omitempty"`
+	State               CallingCallState   `json:"state"`
+	TransferReason      string             `json:"transferReason"`
+	Version             int64              `json:"version"`
+}
+
+// CallingCallState defines model for CallingCall.State.
+type CallingCallState string
+
+// CallingControlRequest defines model for CallingControlRequest.
+type CallingControlRequest struct {
+	SessionId string `json:"sessionId"`
+}
+
+// CallingDispositionRequest defines model for CallingDispositionRequest.
+type CallingDispositionRequest struct {
+	Outcome   CallingDispositionRequestOutcome `json:"outcome"`
+	SessionId string                           `json:"sessionId"`
+}
+
+// CallingDispositionRequestOutcome defines model for CallingDispositionRequest.Outcome.
+type CallingDispositionRequestOutcome string
+
+// CallingOffer defines model for CallingOffer.
+type CallingOffer struct {
+	Deadline       time.Time          `json:"deadline"`
+	DisplayName    string             `json:"displayName"`
+	Id             openapi_types.UUID `json:"id"`
+	LocationId     openapi_types.UUID `json:"locationId"`
+	LocationName   string             `json:"locationName"`
+	NameSource     string             `json:"nameSource"`
+	PracticeId     openapi_types.UUID `json:"practiceId"`
+	ReasonSource   string             `json:"reasonSource"`
+	State          CallingOfferState  `json:"state"`
+	TransferReason string             `json:"transferReason"`
+	Version        int64              `json:"version"`
+}
+
+// CallingOfferState defines model for CallingOffer.State.
+type CallingOfferState string
+
+// CallingOfferList defines model for CallingOfferList.
+type CallingOfferList struct {
+	Items []CallingOffer `json:"items"`
+}
+
+// CallingReadinessRequest defines model for CallingReadinessRequest.
+type CallingReadinessRequest struct {
+	AudioReady      bool   `json:"audioReady"`
+	Available       bool   `json:"available"`
+	MicrophoneReady bool   `json:"microphoneReady"`
+	Registered      bool   `json:"registered"`
+	SessionHealthy  bool   `json:"sessionHealthy"`
+	SessionId       string `json:"sessionId"`
+}
+
+// CallingRecording defines model for CallingRecording.
+type CallingRecording struct {
+	FailureCode *string               `json:"failureCode,omitempty"`
+	State       CallingRecordingState `json:"state"`
+}
+
+// CallingRecordingState defines model for CallingRecording.State.
+type CallingRecordingState string
+
+// ContactContextInput defines model for ContactContextInput.
+type ContactContextInput struct {
+	DisplayName    *string `json:"displayName,omitempty"`
+	NameSource     *string `json:"nameSource,omitempty"`
+	Phone          *string `json:"phone,omitempty"`
+	PhoneSource    *string `json:"phoneSource,omitempty"`
+	ReasonSource   *string `json:"reasonSource,omitempty"`
+	TransferReason *string `json:"transferReason,omitempty"`
+}
+
+// CreateHandoffRequest defines model for CreateHandoffRequest.
+type CreateHandoffRequest struct {
+	Contact        ContactContextInput `json:"contact"`
+	IdempotencyKey string              `json:"idempotencyKey"`
+	LocationId     openapi_types.UUID  `json:"locationId"`
+	PracticeId     openapi_types.UUID  `json:"practiceId"`
+	SourceCallId   string              `json:"sourceCallId"`
+}
+
 // EnterSupportModeRequest defines model for EnterSupportModeRequest.
 type EnterSupportModeRequest struct {
 	DurationMinutes int                `json:"durationMinutes"`
@@ -281,6 +586,13 @@ type ErrorEnvelope struct {
 		Message       string `json:"message"`
 		Retryable     bool   `json:"retryable"`
 	} `json:"error"`
+}
+
+// Handoff defines model for Handoff.
+type Handoff struct {
+	ExpiresAt      time.Time          `json:"expiresAt"`
+	Id             openapi_types.UUID `json:"id"`
+	SipDestination string             `json:"sipDestination"`
 }
 
 // Health defines model for Health.
@@ -334,6 +646,17 @@ type LocationMutation struct {
 	PracticeVersion int64      `json:"practiceVersion"`
 }
 
+// MediaToken defines model for MediaToken.
+type MediaToken struct {
+	ExpiresAt time.Time `json:"expiresAt"`
+	Token     string    `json:"token"`
+}
+
+// MediaTokenRequest defines model for MediaTokenRequest.
+type MediaTokenRequest struct {
+	SessionId string `json:"sessionId"`
+}
+
 // Membership defines model for Membership.
 type Membership struct {
 	Id            openapi_types.UUID      `json:"id"`
@@ -357,6 +680,31 @@ type NavigationItem struct {
 // NavigationItemId defines model for NavigationItem.Id.
 type NavigationItemId string
 
+// OperatorCallingTimeline defines model for OperatorCallingTimeline.
+type OperatorCallingTimeline struct {
+	CallId     openapi_types.UUID             `json:"callId"`
+	Entries    []OperatorCallingTimelineEntry `json:"entries"`
+	PracticeId openapi_types.UUID             `json:"practiceId"`
+	State      OperatorCallingTimelineState   `json:"state"`
+	Version    int64                          `json:"version"`
+}
+
+// OperatorCallingTimelineState defines model for OperatorCallingTimeline.State.
+type OperatorCallingTimelineState string
+
+// OperatorCallingTimelineEntry defines model for OperatorCallingTimelineEntry.
+type OperatorCallingTimelineEntry struct {
+	AgeSeconds      int64     `json:"ageSeconds"`
+	CommandAction   string    `json:"commandAction"`
+	CommandAttempts int       `json:"commandAttempts"`
+	CommandState    string    `json:"commandState"`
+	ErrorCode       string    `json:"errorCode"`
+	Kind            string    `json:"kind"`
+	OccurredAt      time.Time `json:"occurredAt"`
+	OpaqueReference string    `json:"opaqueReference"`
+	ReceiptState    string    `json:"receiptState"`
+}
+
 // Practice defines model for Practice.
 type Practice struct {
 	Id      openapi_types.UUID `json:"id"`
@@ -377,6 +725,22 @@ type PracticeAccess struct {
 type SignUpEligibilityRequest struct {
 	Email           openapi_types.Email `json:"email"`
 	InvitationToken *string             `json:"invitationToken,omitempty"`
+}
+
+// SoftphoneLeaseRequest defines model for SoftphoneLeaseRequest.
+type SoftphoneLeaseRequest struct {
+	SessionId string `json:"sessionId"`
+	Takeover  bool   `json:"takeover"`
+}
+
+// SoftphoneState defines model for SoftphoneState.
+type SoftphoneState struct {
+	// ActiveCallId The User's current durable Call, or empty when capacity is free.
+	ActiveCallId   string    `json:"activeCallId"`
+	Available      bool      `json:"available"`
+	LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
+	Owner          bool      `json:"owner"`
+	SessionId      string    `json:"sessionId"`
 }
 
 // SupportMode defines model for SupportMode.
@@ -429,6 +793,9 @@ type GetEventsParams struct {
 	LocationId openapi_types.UUID `form:"locationId" json:"locationId"`
 }
 
+// ReceiveTelnyxWebhookJSONBody defines parameters for ReceiveTelnyxWebhook.
+type ReceiveTelnyxWebhookJSONBody map[string]interface{}
+
 // GetWorkspaceParams defines parameters for GetWorkspace.
 type GetWorkspaceParams struct {
 	PracticeId openapi_types.UUID `form:"practiceId" json:"practiceId"`
@@ -438,6 +805,27 @@ type GetWorkspaceParams struct {
 // InspectSignUpEligibilityJSONRequestBody defines body for InspectSignUpEligibility for application/json ContentType.
 type InspectSignUpEligibilityJSONRequestBody = SignUpEligibilityRequest
 
+// RecordCallingDispositionJSONRequestBody defines body for RecordCallingDisposition for application/json ContentType.
+type RecordCallingDispositionJSONRequestBody = CallingDispositionRequest
+
+// RequestCallingHangupJSONRequestBody defines body for RequestCallingHangup for application/json ContentType.
+type RequestCallingHangupJSONRequestBody = CallingControlRequest
+
+// IssueCallingMediaTokenJSONRequestBody defines body for IssueCallingMediaToken for application/json ContentType.
+type IssueCallingMediaTokenJSONRequestBody = MediaTokenRequest
+
+// AcceptCallingOfferJSONRequestBody defines body for AcceptCallingOffer for application/json ContentType.
+type AcceptCallingOfferJSONRequestBody = AcceptCallingOfferRequest
+
+// SetCallingReadinessJSONRequestBody defines body for SetCallingReadiness for application/json ContentType.
+type SetCallingReadinessJSONRequestBody = CallingReadinessRequest
+
+// AcquireSoftphoneJSONRequestBody defines body for AcquireSoftphone for application/json ContentType.
+type AcquireSoftphoneJSONRequestBody = SoftphoneLeaseRequest
+
+// CreateHandoffJSONRequestBody defines body for CreateHandoff for application/json ContentType.
+type CreateHandoffJSONRequestBody = CreateHandoffRequest
+
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = InvitationCredentialRequest
 
@@ -446,6 +834,9 @@ type InspectInvitationJSONRequestBody = InvitationCredentialRequest
 
 // AddLocationJSONRequestBody defines body for AddLocation for application/json ContentType.
 type AddLocationJSONRequestBody = AddLocationRequest
+
+// ReceiveTelnyxWebhookJSONRequestBody defines body for ReceiveTelnyxWebhook for application/json ContentType.
+type ReceiveTelnyxWebhookJSONRequestBody ReceiveTelnyxWebhookJSONBody
 
 // EnterSupportModeJSONRequestBody defines body for EnterSupportMode for application/json ContentType.
 type EnterSupportModeJSONRequestBody = EnterSupportModeRequest
@@ -464,18 +855,51 @@ type ServerInterface interface {
 	// InspectSignUpEligibility Validate an invitation or provisioned Platform Operator email.
 	// (POST /v1/access/sign-up-eligibility)
 	InspectSignUpEligibility(w http.ResponseWriter, r *http.Request)
+	// GetCallingCall Read the winning User's durable active or disposition Call.
+	// (GET /v1/calling/calls/{callId})
+	GetCallingCall(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
+	// RecordCallingDisposition Resolve the provider-terminated Call without creating a Task.
+	// (POST /v1/calling/calls/{callId}/disposition)
+	RecordCallingDisposition(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
+	// RequestCallingHangup Commit a provider hangup command without claiming termination.
+	// (POST /v1/calling/calls/{callId}/hangup)
+	RequestCallingHangup(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
+	// IssueCallingMediaToken Issue a short-lived Telnyx JWT to the current softphone owner.
+	// (POST /v1/calling/media-token)
+	IssueCallingMediaToken(w http.ResponseWriter, r *http.Request)
+	// ListCallingOffers List every current offer the User may accept now.
+	// (GET /v1/calling/offers)
+	ListCallingOffers(w http.ResponseWriter, r *http.Request)
+	// AcceptCallingOffer Atomically claim one current offer and commit its Dial command.
+	// (POST /v1/calling/offers/{callId}/accept)
+	AcceptCallingOffer(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
+	// SetCallingReadiness Commit the media-owning session's current technical readiness.
+	// (PUT /v1/calling/readiness)
+	SetCallingReadiness(w http.ResponseWriter, r *http.Request)
+	// AcquireSoftphone Acquire, renew, or explicitly take over the User's softphone lease.
+	// (POST /v1/calling/softphone/lease)
+	AcquireSoftphone(w http.ResponseWriter, r *http.Request)
 	// GetEvents Stream disposable version hints for one authorized scope.
 	// (GET /v1/events)
 	GetEvents(w http.ResponseWriter, r *http.Request, params GetEventsParams)
+	// CreateHandoff Create one authenticated, idempotent Abita handoff.
+	// (POST /v1/handoffs)
+	CreateHandoff(w http.ResponseWriter, r *http.Request)
 	// AcceptInvitation Atomically activate an invitation for the verified identity.
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
 	// InspectInvitation Inspect only the scope attached to the presented invitation.
 	// (POST /v1/invitations/inspect)
 	InspectInvitation(w http.ResponseWriter, r *http.Request)
+	// GetOperatorCallingTimeline Read one sanitized durable Call timeline as a Platform Operator.
+	// (GET /v1/operator/calls/{callId}/timeline)
+	GetOperatorCallingTimeline(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
 	// AddLocation Add a Location as a Platform Operator in Support Mode.
 	// (POST /v1/practices/{practiceId}/locations)
 	AddLocation(w http.ResponseWriter, r *http.Request, practiceId openapi_types.UUID)
+	// ReceiveTelnyxWebhook Verify and durably receipt one raw Telnyx webhook.
+	// (POST /v1/provider/telnyx/webhooks)
+	ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request)
 	// EnterSupportMode Enter time-limited Support Mode for one Practice.
 	// (POST /v1/support-mode)
 	EnterSupportMode(w http.ResponseWriter, r *http.Request)
@@ -552,6 +976,166 @@ func (siw *ServerInterfaceWrapper) InspectSignUpEligibility(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// GetCallingCall operation middleware
+func (siw *ServerInterfaceWrapper) GetCallingCall(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callId" -------------
+	var callId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callId", r.PathValue("callId"), &callId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCallingCall(w, r, callId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RecordCallingDisposition operation middleware
+func (siw *ServerInterfaceWrapper) RecordCallingDisposition(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callId" -------------
+	var callId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callId", r.PathValue("callId"), &callId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RecordCallingDisposition(w, r, callId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RequestCallingHangup operation middleware
+func (siw *ServerInterfaceWrapper) RequestCallingHangup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callId" -------------
+	var callId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callId", r.PathValue("callId"), &callId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RequestCallingHangup(w, r, callId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IssueCallingMediaToken operation middleware
+func (siw *ServerInterfaceWrapper) IssueCallingMediaToken(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IssueCallingMediaToken(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCallingOffers operation middleware
+func (siw *ServerInterfaceWrapper) ListCallingOffers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCallingOffers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptCallingOffer operation middleware
+func (siw *ServerInterfaceWrapper) AcceptCallingOffer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callId" -------------
+	var callId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callId", r.PathValue("callId"), &callId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptCallingOffer(w, r, callId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetCallingReadiness operation middleware
+func (siw *ServerInterfaceWrapper) SetCallingReadiness(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetCallingReadiness(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcquireSoftphone operation middleware
+func (siw *ServerInterfaceWrapper) AcquireSoftphone(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcquireSoftphone(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetEvents operation middleware
 func (siw *ServerInterfaceWrapper) GetEvents(w http.ResponseWriter, r *http.Request) {
 
@@ -598,6 +1182,20 @@ func (siw *ServerInterfaceWrapper) GetEvents(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// CreateHandoff operation middleware
+func (siw *ServerInterfaceWrapper) CreateHandoff(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateHandoff(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AcceptInvitation operation middleware
 func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 
@@ -626,6 +1224,32 @@ func (siw *ServerInterfaceWrapper) InspectInvitation(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetOperatorCallingTimeline operation middleware
+func (siw *ServerInterfaceWrapper) GetOperatorCallingTimeline(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callId" -------------
+	var callId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callId", r.PathValue("callId"), &callId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOperatorCallingTimeline(w, r, callId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AddLocation operation middleware
 func (siw *ServerInterfaceWrapper) AddLocation(w http.ResponseWriter, r *http.Request) {
 
@@ -643,6 +1267,20 @@ func (siw *ServerInterfaceWrapper) AddLocation(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddLocation(w, r, practiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReceiveTelnyxWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveTelnyxWebhook(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -869,6 +1507,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/support-mode/{supportSessionId}", wrapper.RevokeSupportMode)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/practices/{practiceId}/locations", wrapper.AddLocation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/events", wrapper.GetEvents)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/handoffs", wrapper.CreateHandoff)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/provider/telnyx/webhooks", wrapper.ReceiveTelnyxWebhook)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/softphone/lease", wrapper.AcquireSoftphone)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/calling/readiness", wrapper.SetCallingReadiness)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/media-token", wrapper.IssueCallingMediaToken)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/calling/offers", wrapper.ListCallingOffers)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/offers/{callId}/accept", wrapper.AcceptCallingOffer)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/calling/calls/{callId}", wrapper.GetCallingCall)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/calls/{callId}/hangup", wrapper.RequestCallingHangup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/calls/{callId}/disposition", wrapper.RecordCallingDisposition)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/operator/calls/{callId}/timeline", wrapper.GetOperatorCallingTimeline)
 
 	return m
 }
@@ -878,46 +1527,76 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

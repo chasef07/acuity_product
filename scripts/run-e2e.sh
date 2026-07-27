@@ -19,8 +19,9 @@ portal_pid=""
 realtime_pid=""
 provider_pid=""
 worker_pid=""
+telnyx_pid=""
 cleanup() {
-  for pid in "$worker_pid" "$provider_pid" "$realtime_pid" "$portal_pid" "$web_pid"; do
+  for pid in "$worker_pid" "$provider_pid" "$realtime_pid" "$portal_pid" "$web_pid" "$telnyx_pid"; do
     if [ -n "$pid" ]; then
       kill "$pid" 2>/dev/null || true
     fi
@@ -44,6 +45,21 @@ DATABASE_ACQUIRE_TIMEOUT_MS=5000 \
 PROVISIONING_INPUT="$root/config/development-provisioning.json" \
 PROVISIONING_OUTPUT="$runtime_dir/provisioned.json" \
 "$runtime_dir/acuity"
+practice_id="$(psql "$E2E_DATABASE_URL" -Atqc \
+  "select id from access_practices where provisioning_key = 'abita-eye-group'")"
+
+TELNYX_FIXTURE_PUBLIC_KEY_OUTPUT="$runtime_dir/telnyx-public-key" \
+node "$root/scripts/telnyx-api-fixture.mjs" >"$runtime_dir/telnyx.log" 2>&1 &
+telnyx_pid=$!
+attempts=0
+until [ -s "$runtime_dir/telnyx-public-key" ]; do
+  attempts=$((attempts + 1))
+  if [ "$attempts" -ge 50 ]; then
+    echo "Telnyx fixture did not publish its webhook key" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
 
 cd "$root/web"
 NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
@@ -77,6 +93,22 @@ BROWSER_ORIGIN=http://127.0.0.1:13000 \
 BETTER_AUTH_JWKS_URL=http://127.0.0.1:13000/api/auth/jwks \
 BETTER_AUTH_ISSUER=http://127.0.0.1:13000 \
 PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
+HUMAN_CALLING_SIP_DOMAIN=synthetic.sip.telnyx.com \
+HUMAN_CALLING_HANDOFF_TOKEN_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+HUMAN_CALLING_OFFER_SECONDS=20 \
+HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS=15 \
+HUMAN_CALLING_LEASE_SECONDS=30 \
+HUMAN_CALLING_READINESS_GRACE_SECONDS=15 \
+HANDOFF_SERVICE_TOKEN=synthetic-service-token \
+HANDOFF_SERVICE_SUBJECT=abita-synthetic \
+HANDOFF_SERVICE_PRACTICE_ID="$practice_id" \
+TELNYX_API_KEY=KEY_e2e \
+TELNYX_API_BASE_URL=http://127.0.0.1:19000/v2 \
+TELNYX_CALL_CONTROL_ID=fixture-call-control \
+TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
+TELNYX_FROM_NUMBER=+15555550100 \
+TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
+TELNYX_RECORDING_BUCKET=synthetic-recordings \
 "$runtime_dir/acuity" >"$runtime_dir/portal.log" 2>&1 &
 portal_pid=$!
 
@@ -102,6 +134,7 @@ DATABASE_URL="$E2E_DATABASE_URL" \
 DATABASE_POOL_MAX=2 \
 DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
 HTTP_PORT=18082 \
+TELNYX_WEBHOOK_PUBLIC_KEY="$(cat "$runtime_dir/telnyx-public-key")" \
 "$runtime_dir/acuity" >"$runtime_dir/provider.log" 2>&1 &
 provider_pid=$!
 
@@ -109,6 +142,17 @@ ACUITY_RUNTIME_ROLE=worker \
 DATABASE_URL="$E2E_DATABASE_URL" \
 DATABASE_POOL_MAX=2 \
 DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
+TELNYX_API_KEY=KEY_e2e \
+TELNYX_API_BASE_URL=http://127.0.0.1:19000/v2 \
+TELNYX_CALL_CONTROL_ID=fixture-call-control \
+TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
+TELNYX_FROM_NUMBER=+15555550100 \
+TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
+TELNYX_RECORDING_BUCKET=synthetic-recordings \
+HUMAN_CALLING_OFFER_SECONDS=20 \
+HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS=15 \
+HUMAN_CALLING_LEASE_SECONDS=30 \
+HUMAN_CALLING_READINESS_GRACE_SECONDS=15 \
 "$runtime_dir/acuity" >"$runtime_dir/worker.log" 2>&1 &
 worker_pid=$!
 
@@ -126,6 +170,7 @@ wait_for() {
 }
 
 wait_for http://127.0.0.1:13000/sign-in
+wait_for http://127.0.0.1:19000/health
 wait_for http://127.0.0.1:18080/health/ready
 wait_for http://127.0.0.1:18081/health/ready
 wait_for http://127.0.0.1:18082/health/ready
@@ -138,4 +183,6 @@ E2E_PORTAL_API_URL=http://127.0.0.1:18080 \
 E2E_REALTIME_URL=http://127.0.0.1:18081 \
 E2E_REALTIME_PID="$realtime_pid" \
 E2E_RUNTIME_BINARY="$runtime_dir/acuity" \
+E2E_DATABASE_URL="$E2E_DATABASE_URL" \
+E2E_TELNYX_FIXTURE_URL=http://127.0.0.1:19000 \
 npx playwright test --project=chromium

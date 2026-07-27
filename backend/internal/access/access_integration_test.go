@@ -464,6 +464,43 @@ func TestInvitationEligibilityDiscoveryAndRequestedLocationStayInsideAccess(t *t
 	}
 }
 
+func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	module := access.New(pool, func() time.Time { return now })
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "operator-identity-test",
+		PlatformOperators: []string{"founder@acuity.test"},
+		Practices: []access.PracticeProvision{{
+			Key:  "operator-identity-practice",
+			Name: "Operator Identity Practice",
+		}},
+	}); err != nil {
+		t.Fatalf("provision operator identity: %v", err)
+	}
+	bound := access.Identity{
+		Subject:       "founder-subject",
+		Email:         "founder@acuity.test",
+		EmailVerified: true,
+	}
+	discovery, err := module.DiscoverActor(context.Background(), bound)
+	if err != nil || !discovery.PlatformOperator {
+		t.Fatalf("bind configured operator: discovery=%#v err=%v", discovery, err)
+	}
+	changedEmail := bound
+	changedEmail.Email = "founder+changed@acuity.test"
+	discovery, err = module.DiscoverActor(context.Background(), changedEmail)
+	if err != nil || !discovery.PlatformOperator {
+		t.Fatalf("resolve bound operator by subject: discovery=%#v err=%v", discovery, err)
+	}
+	conflictingSubject := bound
+	conflictingSubject.Subject = "different-subject"
+	if _, err := module.DiscoverActor(context.Background(), conflictingSubject); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("conflicting operator identity error = %v, want denied", err)
+	}
+}
+
 func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudited(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)

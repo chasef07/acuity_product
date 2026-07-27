@@ -51,6 +51,16 @@
             "fixture-location-1"
           ],
           "ExpiresAt": "2027-07-24T00:00:00Z"
+        },
+        {
+          "Key": "fixture-secondary-staff",
+          "Email": "secondary@abita.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "fixture-location-1"
+          ],
+          "ExpiresAt": "2027-07-24T00:00:00Z"
         }
       ]
     }

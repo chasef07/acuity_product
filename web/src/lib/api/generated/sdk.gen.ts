@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AddLocationData, AddLocationErrors, AddLocationResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses } from './types.gen';
+import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -118,5 +118,135 @@ export const addLocation = <ThrowOnError extends boolean = false>(options: Optio
 export const getEvents = <ThrowOnError extends boolean = false>(options: Options<GetEventsData, ThrowOnError, GetEventsResponse>) => (options.client ?? client).sse.get<GetEventsResponses, GetEventsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/v1/events',
+    ...options
+});
+
+/**
+ * Create one authenticated, idempotent Abita handoff.
+ */
+export const createHandoff = <ThrowOnError extends boolean = false>(options: Options<CreateHandoffData, ThrowOnError>) => (options.client ?? client).post<CreateHandoffResponses, CreateHandoffErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/handoffs',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Verify and durably receipt one raw Telnyx webhook.
+ */
+export const receiveTelnyxWebhook = <ThrowOnError extends boolean = false>(options: Options<ReceiveTelnyxWebhookData, ThrowOnError>) => (options.client ?? client).post<ReceiveTelnyxWebhookResponses, ReceiveTelnyxWebhookErrors, ThrowOnError>({
+    url: '/v1/provider/telnyx/webhooks',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Acquire, renew, or explicitly take over the User's softphone lease.
+ */
+export const acquireSoftphone = <ThrowOnError extends boolean = false>(options: Options<AcquireSoftphoneData, ThrowOnError>) => (options.client ?? client).post<AcquireSoftphoneResponses, AcquireSoftphoneErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/softphone/lease',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Commit the media-owning session's current technical readiness.
+ */
+export const setCallingReadiness = <ThrowOnError extends boolean = false>(options: Options<SetCallingReadinessData, ThrowOnError>) => (options.client ?? client).put<SetCallingReadinessResponses, SetCallingReadinessErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/readiness',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Issue a short-lived Telnyx JWT to the current softphone owner.
+ */
+export const issueCallingMediaToken = <ThrowOnError extends boolean = false>(options: Options<IssueCallingMediaTokenData, ThrowOnError>) => (options.client ?? client).post<IssueCallingMediaTokenResponses, IssueCallingMediaTokenErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/media-token',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List every current offer the User may accept now.
+ */
+export const listCallingOffers = <ThrowOnError extends boolean = false>(options?: Options<ListCallingOffersData, ThrowOnError>) => (options?.client ?? client).get<ListCallingOffersResponses, ListCallingOffersErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/offers',
+    ...options
+});
+
+/**
+ * Atomically claim one current offer and commit its Dial command.
+ */
+export const acceptCallingOffer = <ThrowOnError extends boolean = false>(options: Options<AcceptCallingOfferData, ThrowOnError>) => (options.client ?? client).post<AcceptCallingOfferResponses, AcceptCallingOfferErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/offers/{callId}/accept',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read the winning User's durable active or disposition Call.
+ */
+export const getCallingCall = <ThrowOnError extends boolean = false>(options: Options<GetCallingCallData, ThrowOnError>) => (options.client ?? client).get<GetCallingCallResponses, GetCallingCallErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/calls/{callId}',
+    ...options
+});
+
+/**
+ * Commit a provider hangup command without claiming termination.
+ */
+export const requestCallingHangup = <ThrowOnError extends boolean = false>(options: Options<RequestCallingHangupData, ThrowOnError>) => (options.client ?? client).post<RequestCallingHangupResponses, RequestCallingHangupErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/calls/{callId}/hangup',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Resolve the provider-terminated Call without creating a Task.
+ */
+export const recordCallingDisposition = <ThrowOnError extends boolean = false>(options: Options<RecordCallingDispositionData, ThrowOnError>) => (options.client ?? client).post<RecordCallingDispositionResponses, RecordCallingDispositionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/calling/calls/{callId}/disposition',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one sanitized durable Call timeline as a Platform Operator.
+ */
+export const getOperatorCallingTimeline = <ThrowOnError extends boolean = false>(options: Options<GetOperatorCallingTimelineData, ThrowOnError>) => (options.client ?? client).get<GetOperatorCallingTimelineResponses, GetOperatorCallingTimelineErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/operator/calls/{callId}/timeline',
     ...options
 });

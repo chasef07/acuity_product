@@ -16,6 +16,7 @@ import {
   Mic2Icon,
   MoonIcon,
   PanelRightIcon,
+  PhoneCallIcon,
   RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
@@ -92,10 +93,12 @@ import {
 } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
+  CallingOffer,
   PracticeAccess,
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
+import { CallingDock } from "@/components/workspace/calling-dock"
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type ConnectionState = "connecting" | "connected" | "disconnected"
@@ -113,6 +116,8 @@ export function WorkspaceShell() {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>()
   const [practiceID, setPracticeID] = useState("")
   const [locationID, setLocationID] = useState("")
+  const [callingHint, setCallingHint] = useState(0)
+  const [callingOffers, setCallingOffers] = useState<CallingOffer[]>([])
 
   const loadSnapshot = useCallback(
     async (
@@ -245,6 +250,7 @@ export function WorkspaceShell() {
             buffer = events.pop() ?? ""
             if (events.some((event) => event.includes("data:"))) {
               await snapshotRef.current(practiceID, locationID, false)
+              setCallingHint((current) => current + 1)
             }
           }
         } catch {
@@ -318,6 +324,8 @@ export function WorkspaceShell() {
         locationID={locationID}
         onPracticeChange={selectPractice}
         onLocationChange={selectLocation}
+        callingEnabled={!workspace.platformOperator}
+        callingOffers={callingOffers}
       />
       <SidebarInset
         data-testid="mounted-workspace"
@@ -351,6 +359,11 @@ export function WorkspaceShell() {
           )}
           <WorkspaceContextSheet workspace={workspace} />
         </header>
+        <CallingDock
+          platformOperator={workspace.platformOperator}
+          hint={callingHint}
+          onOffersChanged={setCallingOffers}
+        />
         <section className="flex min-h-0 flex-1 items-center justify-center p-6">
           {loadState === "loading" ? (
             <WorkspaceCenterLoading />
@@ -397,6 +410,8 @@ function WorkspaceSidebar({
   locationID,
   onPracticeChange,
   onLocationChange,
+  callingEnabled,
+  callingOffers,
 }: {
   discovery: AccessDiscovery
   practice: PracticeAccess
@@ -404,6 +419,8 @@ function WorkspaceSidebar({
   locationID: string
   onPracticeChange: (value: string) => void
   onLocationChange: (value: string) => void
+  callingEnabled: boolean
+  callingOffers: CallingOffer[]
 }) {
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
@@ -481,9 +498,22 @@ function WorkspaceSidebar({
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton disabled tooltip="Call Center">
+                <SidebarMenuButton
+                  disabled={!callingEnabled}
+                  isActive={callingOffers.length > 0}
+                  tooltip="Call Center"
+                >
                   <HeadphonesIcon aria-hidden="true" />
                   <span>Call Center</span>
+                  {callingOffers.length > 0 && (
+                    <Badge
+                      data-testid="calling-queue-count"
+                      className="ml-auto"
+                      variant="secondary"
+                    >
+                      {callingOffers.length}
+                    </Badge>
+                  )}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
@@ -501,6 +531,36 @@ function WorkspaceSidebar({
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        {callingOffers.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Incoming calls</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {callingOffers.map((offer) => (
+                  <SidebarMenuItem key={offer.id}>
+                    <SidebarMenuButton
+                      className="h-auto items-start py-2"
+                      tooltip={offer.displayName || "Incoming caller"}
+                    >
+                      <PhoneCallIcon aria-hidden="true" className="mt-0.5" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium">
+                          {offer.displayName || "Incoming caller"}
+                        </span>
+                        <span className="truncate text-[0.625rem] text-muted-foreground">
+                          {offer.locationName}
+                          {offer.transferReason
+                            ? ` · ${offer.transferReason}`
+                            : ""}
+                        </span>
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
         <SidebarGroup>
           <SidebarGroupLabel>Current view</SidebarGroupLabel>
           <SidebarGroupContent>

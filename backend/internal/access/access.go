@@ -234,12 +234,20 @@ func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	result := Provisioned{Invitations: []InvitationCredential{}}
+	operatorEmails := make([]string, 0, len(input.PlatformOperators))
 	for _, email := range input.PlatformOperators {
+		operatorEmails = append(operatorEmails, normalizeEmail(email))
+	}
+	sort.Strings(operatorEmails)
+	for _, email := range operatorEmails {
+		if err := lockPlatformOperatorEmail(ctx, tx, email); err != nil {
+			return Provisioned{}, err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO access_platform_operators (email)
 			VALUES ($1)
 			ON CONFLICT (email) DO NOTHING
-		`, normalizeEmail(email)); err != nil {
+		`, email); err != nil {
 			return Provisioned{}, fmt.Errorf("provision Platform Operator: %w", err)
 		}
 	}
@@ -640,6 +648,90 @@ func (m *Module) ResolveActor(
 		return Authorization{}, fmt.Errorf("commit actor resolution: %w", err)
 	}
 	return authorized, nil
+}
+
+// LockMembershipAuthorization resolves current operational authority inside a
+// caller-owned transaction and locks the Membership against concurrent
+// revocation until that transaction commits.
+func (m *Module) LockMembershipAuthorization(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	practiceID string,
+	locationID string,
+) (Authorization, error) {
+	if tx == nil ||
+		!identity.EmailVerified ||
+		strings.TrimSpace(identity.Subject) == "" ||
+		strings.TrimSpace(practiceID) == "" ||
+		strings.TrimSpace(locationID) == "" {
+		return Authorization{}, ErrDenied
+	}
+	if _, isOperator, err := bindPlatformOperator(ctx, tx, identity); err != nil {
+		return Authorization{}, err
+	} else if isOperator {
+		return Authorization{}, ErrDenied
+	}
+	var membershipID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM access_memberships
+		WHERE user_subject = $1
+			AND practice_id = $2
+			AND revoked_at IS NULL
+		FOR SHARE
+	`, identity.Subject, practiceID).Scan(&membershipID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Authorization{}, ErrDenied
+		}
+		return Authorization{}, fmt.Errorf("lock Membership authorization: %w", err)
+	}
+	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if authorization.Membership.ID != membershipID {
+		return Authorization{}, ErrDenied
+	}
+	if err := selectRequestedLocation(&authorization, locationID); err != nil {
+		return Authorization{}, err
+	}
+	return authorization, nil
+}
+
+// LockOperationalActor holds one current Membership against revocation and
+// applies Platform Operator precedence for an operation without Practice scope.
+func (m *Module) LockOperationalActor(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+) error {
+	if tx == nil ||
+		!identity.EmailVerified ||
+		strings.TrimSpace(identity.Subject) == "" {
+		return ErrDenied
+	}
+	if _, isOperator, err := bindPlatformOperator(ctx, tx, identity); err != nil {
+		return err
+	} else if isOperator {
+		return ErrDenied
+	}
+	var membershipID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM access_memberships
+		WHERE user_subject = $1
+			AND revoked_at IS NULL
+		ORDER BY id
+		LIMIT 1
+		FOR SHARE
+	`, identity.Subject).Scan(&membershipID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDenied
+		}
+		return fmt.Errorf("lock operational actor: %w", err)
+	}
+	return nil
 }
 
 // DiscoverActor returns every currently authorized Practice and Location. A
@@ -1285,21 +1377,81 @@ func bindPlatformOperator(
 	tx pgx.Tx,
 	identity Identity,
 ) (string, bool, error) {
-	var operatorID string
-	err := tx.QueryRow(ctx, `
-		UPDATE access_platform_operators
-		SET user_subject = COALESCE(user_subject, $2)
-		WHERE email = $1
-			AND (user_subject IS NULL OR user_subject = $2)
-		RETURNING id::text
-	`, normalizeEmail(identity.Email), identity.Subject).Scan(&operatorID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if err := lockPlatformOperatorIdentity(ctx, tx, identity); err != nil {
+		return "", false, err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id::text, email, COALESCE(user_subject, '')
+		FROM access_platform_operators
+		WHERE user_subject = $1 OR email = $2
+		ORDER BY id
+		FOR UPDATE
+	`, identity.Subject, normalizeEmail(identity.Email))
+	if err != nil {
+		return "", false, fmt.Errorf("resolve Platform Operator: %w", err)
+	}
+	defer rows.Close()
+	var operatorID, emailOperatorID string
+	for rows.Next() {
+		var id, email, subject string
+		if err := rows.Scan(&id, &email, &subject); err != nil {
+			return "", false, fmt.Errorf("scan Platform Operator: %w", err)
+		}
+		if email == normalizeEmail(identity.Email) {
+			if subject != "" && subject != identity.Subject {
+				return "", false, ErrDenied
+			}
+			emailOperatorID = id
+		}
+		if subject == identity.Subject {
+			operatorID = id
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", false, fmt.Errorf("iterate Platform Operators: %w", err)
+	}
+	rows.Close()
+	if operatorID != "" {
+		return operatorID, true, nil
+	}
+	if emailOperatorID == "" {
 		return "", false, nil
 	}
-	if err != nil {
+	if err := tx.QueryRow(ctx, `
+		UPDATE access_platform_operators
+		SET user_subject = $2
+		WHERE id = $1 AND user_subject IS NULL
+		RETURNING id::text
+	`, emailOperatorID, identity.Subject).Scan(&operatorID); err != nil {
 		return "", false, fmt.Errorf("bind Platform Operator: %w", err)
 	}
 	return operatorID, true, nil
+}
+
+func lockPlatformOperatorIdentity(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+) error {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(1094927189, hashtext($1))
+	`, identity.Subject); err != nil {
+		return fmt.Errorf("lock Platform Operator subject: %w", err)
+	}
+	return lockPlatformOperatorEmail(ctx, tx, identity.Email)
+}
+
+func lockPlatformOperatorEmail(
+	ctx context.Context,
+	tx pgx.Tx,
+	email string,
+) error {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(1094927188, hashtext($1))
+	`, normalizeEmail(email)); err != nil {
+		return fmt.Errorf("lock Platform Operator identity: %w", err)
+	}
+	return nil
 }
 
 func loadOperatorAuthorization(

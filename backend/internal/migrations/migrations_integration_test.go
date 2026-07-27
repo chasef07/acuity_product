@@ -8,7 +8,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
 
-func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthSchema(t *testing.T) {
+func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 
@@ -21,8 +21,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthSchema(t *testing.T
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 3 {
-		t.Fatalf("migration count = %d, want 3", migrationCount)
+	if migrationCount != 4 {
+		t.Fatalf("migration count = %d, want 4", migrationCount)
 	}
 
 	for _, table := range []string{
@@ -44,6 +44,28 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthSchema(t *testing.T
 		}
 		if !exists {
 			t.Fatalf("auth table %s is missing", table)
+		}
+	}
+	for _, table := range []string{
+		"human_calling_handoffs",
+		"human_calling_calls",
+		"human_calling_provider_commands",
+		"human_calling_provider_receipts",
+		"human_calling_recordings",
+		"human_calling_timeline",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.tables
+				WHERE table_schema = 'public' AND table_name = $1
+			)
+		`, table).Scan(&exists); err != nil {
+			t.Fatalf("inspect calling table %s: %v", table, err)
+		}
+		if !exists {
+			t.Fatalf("calling table %s is missing", table)
 		}
 	}
 }

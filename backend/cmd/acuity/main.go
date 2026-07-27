@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/app"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,11 +62,18 @@ func run() error {
 	case app.RoleWorker:
 		return runWorker(ctx, config, pool)
 	case app.RoleProviderIngress:
-		handler, err := httpapi.New(httpapi.Config{
+		calling := humancalling.New(
+			pool,
+			nil,
+			nil,
+			humanCallingConfig(config),
+			nil,
+		)
+		handler, err := httpapi.NewWithCalling(httpapi.Config{
 			Role:           string(config.Role),
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
-		}, pool, nil, nil)
+		}, pool, nil, nil, calling, nil)
 		if err != nil {
 			return err
 		}
@@ -133,11 +142,32 @@ func runAuthorizedHTTP(
 			return err
 		}
 	} else {
-		handler, err = httpapi.New(httpapi.Config{
+		provider, err := newTelnyxProvider(config)
+		if err != nil {
+			return err
+		}
+		calling := humancalling.New(
+			pool,
+			accessModule,
+			provider,
+			humanCallingConfig(config),
+			nil,
+		)
+		serviceAuth, err := humancalling.NewServiceAuthenticator(
+			config.HumanCalling.HandoffServiceToken,
+			humancalling.ServiceIdentity{
+				Subject:    config.HumanCalling.HandoffServiceSubject,
+				PracticeID: config.HumanCalling.HandoffServicePractice,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		handler, err = httpapi.NewWithCalling(httpapi.Config{
 			Role:           string(config.Role),
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
-		}, pool, accessModule, authenticator)
+		}, pool, accessModule, authenticator, calling, serviceAuth)
 		if err != nil {
 			return err
 		}
@@ -154,13 +184,62 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 	}
 	slog.Info("runtime_ready", "role", config.Role)
 
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	provider, err := newTelnyxProvider(config)
+	if err != nil {
+		return err
+	}
+	calling := humancalling.New(
+		pool,
+		access.New(pool, nil),
+		provider,
+		humanCallingConfig(config),
+		nil,
+	)
+	if err := calling.ReconcileCredentials(ctx); err != nil {
+		return fmt.Errorf("initial calling credential reconciliation: %w", err)
+	}
+
+	workTicker := time.NewTicker(250 * time.Millisecond)
+	defer workTicker.Stop()
+	credentialTicker := time.NewTicker(30 * time.Second)
+	defer credentialTicker.Stop()
+	healthTicker := time.NewTicker(30 * time.Second)
+	defer healthTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-workTicker.C:
+			workContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := calling.ExpireOffers(workContext); err != nil {
+				slog.Warn("calling_offer_expiry_failed", "error", err)
+			}
+			if _, err := calling.ExpireConnections(workContext); err != nil {
+				slog.Warn("calling_connection_expiry_failed", "error", err)
+			}
+			if err := calling.RecoverInterruptedCommands(workContext); err != nil {
+				slog.Warn("provider_command_recovery_failed", "error", err)
+			}
+			if _, err := calling.ReconcileConfirmedHangups(workContext); err != nil {
+				slog.Warn("provider_hangup_reconciliation_failed", "error", err)
+			}
+			if _, err := calling.ProcessNextReceipt(workContext); err != nil {
+				slog.Warn("provider_receipt_processing_failed", "error", err)
+			}
+			if _, err := calling.ProcessNextCredentialReconciliation(workContext); err != nil {
+				slog.Warn("provider_credential_reconciliation_failed", "error", err)
+			}
+			if _, err := calling.ProcessNextCommand(workContext); err != nil {
+				slog.Warn("provider_command_processing_failed", "error", err)
+			}
+			cancel()
+		case <-credentialTicker.C:
+			workContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
+			if err := calling.ReconcileCredentials(workContext); err != nil {
+				slog.Warn("calling_credential_reconciliation_failed", "error", err)
+			}
+			cancel()
+		case <-healthTicker.C:
 			pingContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
 			err := pool.Ping(pingContext)
 			cancel()
@@ -168,6 +247,34 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 				slog.Warn("worker_dependency_unavailable")
 			}
 		}
+	}
+}
+
+func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
+	return humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:                 config.HumanCalling.TelnyxAPIKey,
+		BaseURL:                config.HumanCalling.TelnyxAPIBaseURL,
+		CallControlID:          config.HumanCalling.CallControlID,
+		CredentialConnectionID: config.HumanCalling.CredentialConnectionID,
+		FromNumber:             config.HumanCalling.FromNumber,
+		RingbackURL:            config.HumanCalling.RingbackURL,
+	})
+}
+
+func humanCallingConfig(config app.Config) humancalling.Config {
+	return humancalling.Config{
+		SIPDomain:              config.HumanCalling.SIPDomain,
+		OfferDuration:          config.HumanCalling.OfferDuration,
+		ConnectionTimeout:      config.HumanCalling.ConnectionTimeout,
+		HandoffTokenKey:        config.HumanCalling.HandoffTokenKey,
+		LeaseDuration:          config.HumanCalling.LeaseDuration,
+		ReadinessGrace:         config.HumanCalling.ReadinessGrace,
+		CallControlID:          config.HumanCalling.CallControlID,
+		CredentialConnectionID: config.HumanCalling.CredentialConnectionID,
+		FromNumber:             config.HumanCalling.FromNumber,
+		RingbackURL:            config.HumanCalling.RingbackURL,
+		RecordingBucket:        config.HumanCalling.RecordingBucket,
+		WebhookPublicKey:       ed25519.PublicKey(config.HumanCalling.WebhookPublicKey),
 	}
 }
 
