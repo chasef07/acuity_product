@@ -1,0 +1,15 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - web/Dockerfile
+      - --build-arg
+      - NEXT_PUBLIC_PORTAL_API_URL=${_PORTAL_API_URL}
+      - --build-arg
+      - NEXT_PUBLIC_REALTIME_URL=${_REALTIME_URL}
+      - --tag
+      - ${_IMAGE}
+      - web
+images:
+  - ${_IMAGE}

@@ -13,6 +13,17 @@ const telnyxFixtureURL =
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 const databaseURL = process.env.E2E_DATABASE_URL
 
+test("caller ringback is a stable public WAV", async ({ request }) => {
+  const response = await request.get(`${webURL}/ringback.wav`)
+
+  expect(response.ok()).toBeTruthy()
+  expect(response.headers()["content-type"]).toBe("audio/wav")
+  expect(response.headers()["cache-control"]).toContain("immutable")
+  const audio = Buffer.from(await response.body())
+  expect(audio.subarray(0, 4).toString("ascii")).toBe("RIFF")
+  expect(audio.subarray(8, 12).toString("ascii")).toBe("WAVE")
+})
+
 test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider evidence", async ({
   browser,
   page: selectedPage,
