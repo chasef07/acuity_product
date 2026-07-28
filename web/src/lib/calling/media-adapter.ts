@@ -62,8 +62,15 @@ type SDKClient = {
   on: (event: string, callback: (value?: unknown) => void) => SDKClient
 }
 
-export function createCallingMediaAdapter(): CallingMediaAdapter {
-  return window.__acuityCallingMediaFactory?.() ?? new TelnyxMediaAdapter()
+type SDKClientFactory = (token: string) => Promise<SDKClient>
+
+export function createCallingMediaAdapter(
+  createClient?: SDKClientFactory,
+): CallingMediaAdapter {
+  return (
+    window.__acuityCallingMediaFactory?.() ??
+    new TelnyxMediaAdapter(createClient)
+  )
 }
 
 function mediaTokenFromHeaders(
@@ -106,12 +113,40 @@ export function applyMicrophoneFence(
   else call.unmuteAudio()
 }
 
+type ActiveMediaSession = {
+  call: SDKCall
+  providerLegID: string
+  mediaToken: string
+  desiredMuted: boolean
+  attachmentCurrent: boolean
+}
+
+function matchesMediaSession(
+  session: ActiveMediaSession | undefined,
+  providerLegID: string,
+  mediaToken: string,
+): session is ActiveMediaSession {
+  return (
+    session?.providerLegID === providerLegID &&
+    session.mediaToken === mediaToken
+  )
+}
+
 class TelnyxMediaAdapter implements CallingMediaAdapter {
   private client?: SDKClient
-  private activeCall?: SDKCall
-  private desiredMuted = false
+  private activeSession?: ActiveMediaSession
   private output?: HTMLMediaElement
   private quarantine?: HTMLAudioElement
+  private readonly createClient: SDKClientFactory
+
+  constructor(
+    createClient: SDKClientFactory = async (token) => {
+      const { TelnyxRTC } = await import("@telnyx/webrtc")
+      return new TelnyxRTC(callingClientOptions(token)) as SDKClient
+    },
+  ) {
+    this.createClient = createClient
+  }
 
   async connect(
     token: string,
@@ -136,20 +171,23 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     document.body.append(quarantine)
     this.output = output
     this.quarantine = quarantine
-    const { TelnyxRTC } = await import("@telnyx/webrtc")
-    const client = new TelnyxRTC(callingClientOptions(token)) as SDKClient
+    const client = await this.createClient(token)
     client.remoteElement = quarantine
     this.client = client
     client.on("telnyx.socket.close", () => {
-      if (this.activeCall) {
-        applyMicrophoneFence(this.activeCall, false, this.desiredMuted)
+      const session = this.activeSession
+      if (session) {
+        this.activeSession = { ...session, attachmentCurrent: false }
+        applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
       callbacks.onState("reconnecting")
     })
     client.on("telnyx.ready", () => callbacks.onState("ready"))
     client.on("telnyx.error", () => {
-      if (this.activeCall) {
-        applyMicrophoneFence(this.activeCall, false, this.desiredMuted)
+      const session = this.activeSession
+      if (session) {
+        this.activeSession = { ...session, attachmentCurrent: false }
+        applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
       callbacks.onState("unavailable")
     })
@@ -163,7 +201,13 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       ) {
         return
       }
-      if (call === this.activeCall) return
+      if (
+        call === this.activeSession?.call &&
+        this.activeSession.attachmentCurrent &&
+        call.state !== "recovering"
+      ) {
+        return
+      }
       const providerLegID = call.options.telnyxLegId
       const mediaToken = mediaTokenFromHeaders(call.options.customHeaders)
       if (!providerLegID || !mediaToken) {
@@ -177,7 +221,15 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         mediaToken,
         recovery: call.state !== "ringing",
         answer: async () => {
-          this.activeCall = call
+          const current = this.activeSession
+          const recoversActiveLeg = matchesMediaSession(
+            current,
+            providerLegID,
+            mediaToken,
+          )
+          const desiredMuted = recoversActiveLeg
+            ? current.desiredMuted
+            : false
           if (call.state === "ringing") {
             await call.answer({ remoteElement: quarantine.id })
           }
@@ -186,15 +238,28 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
           }
           output.srcObject = call.remoteStream
           await output.play()
-          applyMicrophoneFence(call, true, this.desiredMuted)
+          applyMicrophoneFence(call, true, desiredMuted)
+          this.activeSession = {
+            call,
+            providerLegID,
+            mediaToken,
+            desiredMuted,
+            attachmentCurrent: true,
+          }
         },
         reject: () => rejectMediaCall(call),
         mute: () => {
-          this.desiredMuted = true
+          const current = this.activeSession
+          if (matchesMediaSession(current, providerLegID, mediaToken)) {
+            this.activeSession = { ...current, desiredMuted: true }
+          }
           call.muteAudio()
         },
         unmute: () => {
-          this.desiredMuted = false
+          const current = this.activeSession
+          if (matchesMediaSession(current, providerLegID, mediaToken)) {
+            this.activeSession = { ...current, desiredMuted: false }
+          }
           call.unmuteAudio()
         },
       })
@@ -205,8 +270,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
   async disconnect() {
     const client = this.client
     this.client = undefined
-    this.activeCall = undefined
-    this.desiredMuted = false
+    this.activeSession = undefined
     if (this.output) this.output.srcObject = null
     this.output = undefined
     this.quarantine?.remove()
