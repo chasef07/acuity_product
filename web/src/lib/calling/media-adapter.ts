@@ -5,7 +5,6 @@ export type MediaState =
   | "unavailable"
 
 export type IncomingMediaLeg = {
-  callID: string
   providerLegID: string
   answer: () => Promise<void>
   mute: () => void
@@ -34,7 +33,7 @@ declare global {
 
 type SDKCall = {
   state: string
-  options: { clientState?: string; telnyxLegId?: string }
+  options: { telnyxLegId?: string }
   answer: (options?: { remoteElement?: string }) => Promise<void>
   muteAudio: () => void
   unmuteAudio: () => void
@@ -54,21 +53,6 @@ type SDKClient = {
 
 export function createCallingMediaAdapter(): CallingMediaAdapter {
   return window.__acuityCallingMediaFactory?.() ?? new TelnyxMediaAdapter()
-}
-
-function correlatedCallID(clientState?: string): string | undefined {
-  if (!clientState) return
-  try {
-    const decoded = JSON.parse(window.atob(clientState)) as {
-      v?: number
-      call?: string
-      leg?: string
-    }
-    if (decoded.v !== 1 || decoded.leg !== "staff" || !decoded.call) return
-    return decoded.call
-  } catch {
-    return
-  }
 }
 
 class TelnyxMediaAdapter implements CallingMediaAdapter {
@@ -100,11 +84,9 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       ) {
         return
       }
-      const callID = correlatedCallID(call.options.clientState)
       const providerLegID = call.options.telnyxLegId
-      if (!callID || !providerLegID) return
+      if (!providerLegID) return
       callbacks.onIncoming({
-        callID,
         providerLegID,
         answer:
           call.state === "ringing"

@@ -292,7 +292,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       })
       .toBe("fixture-staff-leg")
 
-    await sendIncomingLegs(winnerPage, durableCall.id)
+    await sendIncomingLegs(loserPage)
+    await sendIncomingLegs(winnerPage)
     await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
     await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
 
@@ -411,7 +412,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/),
     ).toBeVisible()
-    await sendIncomingLegs(takeoverPage, durableCall.id)
+    await sendIncomingLegs(takeoverPage)
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     await signalMedia(takeoverPage, "reconnecting")
@@ -430,7 +431,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/)).toBeVisible({
       timeout: 15_000,
     })
-    await sendIncomingLegs(takeoverPage, durableCall.id)
+    await sendIncomingLegs(takeoverPage)
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
 
@@ -564,7 +565,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         )
         return result.rows[0]
       })
-    await sendIncomingLegs(takeoverPage, recoveryCall.id)
+    await sendIncomingLegs(takeoverPage)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     const recoveryStaffState = Buffer.from(JSON.stringify({
       v: 1,
@@ -742,7 +743,6 @@ async function prepareBrowser(context: BrowserContext) {
           callbacks: {
             onState: (state: string) => void
             onIncoming: (leg: {
-              callID: string
               providerLegID: string
               answer: () => Promise<void>
               mute: () => void
@@ -751,9 +751,8 @@ async function prepareBrowser(context: BrowserContext) {
           },
         ) => {
           state.signal = callbacks.onState
-          state.incoming = (callID: string, providerLegID: string) =>
+          state.incoming = (providerLegID: string) =>
             callbacks.onIncoming({
-              callID,
               providerLegID,
               answer: async () => {
                 state.answers += 1
@@ -826,26 +825,20 @@ function providerLegPayload(clientState: string) {
   }
 }
 
-async function sendIncomingLegs(page: Page, callID: string) {
-  await page.evaluate((expectedCallID) => {
+async function sendIncomingLegs(page: Page) {
+  await page.evaluate(() => {
     const fixture = window as typeof window & {
       __acuityCallingTestState: {
-        incoming?: (callID: string, providerLegID: string) => void
+        incoming?: (providerLegID: string) => void
       }
     }
     fixture.__acuityCallingTestState.incoming?.(
-      "00000000-0000-0000-0000-000000000999",
-      "fixture-staff-leg",
-    )
-    fixture.__acuityCallingTestState.incoming?.(
-      expectedCallID,
       "unrelated-staff-leg",
     )
     fixture.__acuityCallingTestState.incoming?.(
-      expectedCallID,
       "fixture-staff-leg",
     )
-  }, callID)
+  })
 }
 
 async function mediaCount(

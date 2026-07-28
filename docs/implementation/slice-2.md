@@ -37,8 +37,10 @@ The vertical path is:
 7. The Dial targets the selected User's managed Telnyx credential at
    `sip.telnyx.com`; the Call Control application's custom SIP subdomain is
    reserved for inbound Abita handoff admission. The selected browser
-   auto-answers only the TelnyxRTC leg whose opaque
-   `client_state` names that accepted Call and the staff-leg version.
+   auto-answers only when the TelnyxRTC leg ID matches the authoritative
+   expected staff leg committed for its currently accepted Call. Telnyx
+   `client_state` correlates signed provider events, but is not exposed on the
+   browser's incoming invite.
 8. Only the matching signed `call.bridged` fact marks the Call Connected and
    commits dual-channel recording intent. Provider-confirmed termination moves
    the Call to Needs Disposition. The winner records Resolved or Follow-up

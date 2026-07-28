@@ -140,13 +140,9 @@ export function CallingDock({
 
   const handleIncoming = useCallback(
     async (leg: IncomingMediaLeg) => {
-      if (
-        leg.callID !== expectedCallRef.current ||
-        !ownerRef.current
-      ) {
-        return
-      }
-      const legKey = `${leg.callID}:${leg.providerLegID}`
+      const callID = expectedCallRef.current
+      if (!callID || !ownerRef.current) return
+      const legKey = `${callID}:${leg.providerLegID}`
       if (pendingMediaLegsRef.current.has(legKey)) return
       pendingMediaLegsRef.current.add(legKey)
       try {
@@ -166,7 +162,7 @@ export function CallingDock({
           setLease(currentLease.data)
           const current = await getCallingCall({
             client: portalClient(token),
-            path: { callId: leg.callID },
+            path: { callId: callID },
           }).catch(() => undefined)
           if (!current?.data) return
           if (
