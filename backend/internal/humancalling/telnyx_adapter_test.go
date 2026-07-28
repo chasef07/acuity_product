@@ -2,7 +2,9 @@ package humancalling_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,48 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
+
+func TestTelnyxAdapterAcceptsRawMediaJWT(t *testing.T) {
+	expiresAt := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	claims := base64.RawURLEncoding.EncodeToString([]byte(
+		`{"exp":` + fmt.Sprint(expiresAt.Unix()) + `}`,
+	))
+	token := "eyJhbGciOiJIUzI1NiJ9." + claims + ".synthetic-signature"
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v2/telephony_credentials/credential-1/token" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.WriteHeader(http.StatusCreated)
+		_, _ = writer.Write([]byte(token))
+	}))
+	defer server.Close()
+
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:     "synthetic-key",
+		BaseURL:    server.URL + "/v2",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), humancalling.ProviderCommand{
+		ID:       "create-jwt-1",
+		Action:   humancalling.CommandCreateJWT,
+		TargetID: "credential-1",
+		Payload:  map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("create media JWT: %v", err)
+	}
+	if result.JWT != token || !result.JWTExpiresAt.Equal(expiresAt) {
+		t.Fatalf("media JWT result = %#v", result)
+	}
+}
 
 func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 	requests := make(chan map[string]any, 2)

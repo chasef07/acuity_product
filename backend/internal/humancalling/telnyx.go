@@ -176,7 +176,13 @@ func (adapter *TelnyxAdapter) Execute(
 		}, nil
 	case CommandCreateJWT:
 		var token string
-		if err := json.Unmarshal(responseBody, &token); err != nil || token == "" {
+		if err := json.Unmarshal(responseBody, &token); err != nil {
+			candidate := strings.TrimSpace(string(responseBody))
+			if len(strings.Split(candidate, ".")) == 3 {
+				token = candidate
+			}
+		}
+		if token == "" {
 			return ProviderResult{}, fmt.Errorf(
 				"%w: invalid Telnyx JWT response",
 				ErrAmbiguousEffect,
