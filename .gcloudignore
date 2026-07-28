@@ -1,0 +1,15 @@
+.gcloudignore
+.git
+.github
+.DS_Store
+.env*
+node_modules
+.next
+coverage
+dist
+playwright-report
+test-results
+web/node_modules
+web/.next
+web/playwright-report
+web/test-results
