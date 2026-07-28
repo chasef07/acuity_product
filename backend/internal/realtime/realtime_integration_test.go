@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,8 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) {
@@ -188,6 +191,9 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		LocationID:     location.ID,
 		SourceCallID:   "realtime-call-source",
 		IdempotencyKey: "realtime-call-idempotency",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100",
+		},
 	})
 	if err != nil {
 		t.Fatalf("create realtime Call handoff: %v", err)
@@ -209,6 +215,64 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		callHint.Data.Version <= mutation.PracticeVersion {
 		t.Fatalf("HumanCalling hint event = %#v", callHint)
 	}
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		UPDATE human_calling_calls
+		SET state = 'FOLLOW_UP_REQUIRED'
+		WHERE call_session_id = 'realtime-call-session'
+		RETURNING id::text
+	`).Scan(&callID); err != nil {
+		t.Fatalf("prepare realtime Task Call: %v", err)
+	}
+	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	taskTx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin realtime Task creation: %v", err)
+	}
+	task, err := workModule.EnsureCallFollowUp(
+		context.Background(),
+		taskTx,
+		work.EnsureCallFollowUpCommand{
+			CallID:     callID,
+			PracticeID: practice.ID,
+			LocationID: location.ID,
+			Phone:      "+15555550100",
+			Reason:     "Realtime follow-up",
+			Creator:    memberAuthorization.Actor,
+		},
+	)
+	if err != nil {
+		_ = taskTx.Rollback(context.Background())
+		t.Fatalf("create realtime Task: %v", err)
+	}
+	if err := taskTx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit realtime Task: %v", err)
+	}
+	taskHint := readSSEEvent(t, memberReader)
+	if taskHint.Event != "hint" ||
+		taskHint.Data.PracticeID != practice.ID ||
+		taskHint.Data.Version <= callHint.Data.Version {
+		t.Fatalf("Task creation hint = %#v", taskHint)
+	}
+	renamed, err := workModule.RenameTask(
+		context.Background(),
+		work.RenameTaskCommand{
+			Identity:        member,
+			TaskID:          task.ID,
+			ExpectedVersion: task.Version,
+			Title:           "Renamed realtime follow-up",
+		},
+	)
+	if err != nil {
+		t.Fatalf("rename realtime Task: %v", err)
+	}
+	renameHint := readSSEEvent(t, memberReader)
+	if renameHint.Event != "hint" ||
+		renameHint.Data.PracticeID != practice.ID ||
+		renameHint.Data.Version <= taskHint.Data.Version ||
+		renamed.Version != task.Version+1 {
+		t.Fatalf("Task rename hint = %#v, Task = %#v", renameHint, renamed)
+	}
 	if err := accessModule.RevokeMembership(
 		context.Background(),
 		access.RevokeMembershipCommand{
@@ -219,6 +283,13 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		},
 	); err != nil {
 		t.Fatalf("revoke streamed Membership: %v", err)
+	}
+	if _, err := workModule.ReadTask(
+		context.Background(),
+		member,
+		task.ID,
+	); !errors.Is(err, work.ErrDenied) {
+		t.Fatalf("revoked member Task read error = %v, want denied", err)
 	}
 	closed := make(chan error, 1)
 	go func() {

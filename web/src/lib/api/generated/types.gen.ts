@@ -138,7 +138,7 @@ export type LocationMutation = {
 };
 
 export type ContactContextInput = {
-    phone?: string;
+    phone: string;
     phoneSource?: string;
     displayName?: string;
     nameSource?: string;
@@ -261,6 +261,78 @@ export type CallingCall = {
 export type CallingDispositionRequest = {
     sessionId: string;
     outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+};
+
+export type CallingDispositionResult = {
+    call: CallingCall;
+    taskId?: string;
+};
+
+export type TaskActor = {
+    subject: string;
+    email: string;
+};
+
+export type Task = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    callId: string;
+    phone: string;
+    title: string;
+    state: 'OPEN' | 'COMPLETED';
+    createdBy: TaskActor;
+    createdAt: string;
+    completedBy?: TaskActor;
+    completedAt?: string;
+    version: number;
+    updatedAt: string;
+};
+
+export type TaskPage = {
+    items: Array<Task>;
+    nextCursor: string;
+};
+
+export type TaskQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    search?: string;
+    cursor?: string;
+    limit?: number;
+};
+
+export type RenameTaskRequest = {
+    expectedVersion: number;
+    title: string;
+    supportSessionId?: string;
+};
+
+export type TaskTransitionRequest = {
+    expectedVersion: number;
+    supportSessionId?: string;
+};
+
+export type CallHistoryItem = {
+    id: string;
+    type: 'CALL';
+    direction: 'INBOUND';
+    startedAt: string;
+    endedAt?: string;
+    durationSeconds: number;
+    locationId: string;
+    locationName: string;
+    answeredByEmail: string;
+    transferReason: string;
+    outcome: 'OFFERING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    current: boolean;
+    originating: boolean;
+};
+
+export type CallHistoryPage = {
+    items: Array<CallHistoryItem>;
+    nextCursor: string;
 };
 
 export type OperatorCallingTimelineEntry = {
@@ -1005,12 +1077,295 @@ export type RecordCallingDispositionError = RecordCallingDispositionErrors[keyof
 
 export type RecordCallingDispositionResponses = {
     /**
-     * Durable terminal Call outcome.
+     * Durable terminal Call outcome and optional linked Task.
      */
-    200: CallingCall;
+    200: CallingDispositionResult;
 };
 
 export type RecordCallingDispositionResponse = RecordCallingDispositionResponses[keyof RecordCallingDispositionResponses];
+
+export type GetCallingCallHistoryData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: {
+        cursor?: string;
+    };
+    url: '/v1/calling/calls/{callId}/history';
+};
+
+export type GetCallingCallHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetCallingCallHistoryError = GetCallingCallHistoryErrors[keyof GetCallingCallHistoryErrors];
+
+export type GetCallingCallHistoryResponses = {
+    /**
+     * Newest page presented in chronological order.
+     */
+    200: CallHistoryPage;
+};
+
+export type GetCallingCallHistoryResponse = GetCallingCallHistoryResponses[keyof GetCallingCallHistoryResponses];
+
+export type QueryTasksData = {
+    body: TaskQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/tasks/query';
+};
+
+export type QueryTasksErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryTasksError = QueryTasksErrors[keyof QueryTasksErrors];
+
+export type QueryTasksResponses = {
+    /**
+     * Open-first Task rail page.
+     */
+    200: TaskPage;
+};
+
+export type QueryTasksResponse = QueryTasksResponses[keyof QueryTasksResponses];
+
+export type ReadTaskData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}';
+};
+
+export type ReadTaskErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReadTaskError = ReadTaskErrors[keyof ReadTaskErrors];
+
+export type ReadTaskResponses = {
+    /**
+     * Current Task state.
+     */
+    200: Task;
+};
+
+export type ReadTaskResponse = ReadTaskResponses[keyof ReadTaskResponses];
+
+export type RenameTaskData = {
+    body: RenameTaskRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/title';
+};
+
+export type RenameTaskErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RenameTaskError = RenameTaskErrors[keyof RenameTaskErrors];
+
+export type RenameTaskResponses = {
+    /**
+     * Renamed Task.
+     */
+    200: Task;
+};
+
+export type RenameTaskResponse = RenameTaskResponses[keyof RenameTaskResponses];
+
+export type CompleteTaskData = {
+    body: TaskTransitionRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/complete';
+};
+
+export type CompleteTaskErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CompleteTaskError = CompleteTaskErrors[keyof CompleteTaskErrors];
+
+export type CompleteTaskResponses = {
+    /**
+     * Completed or idempotently current Task.
+     */
+    200: Task;
+};
+
+export type CompleteTaskResponse = CompleteTaskResponses[keyof CompleteTaskResponses];
+
+export type ReopenTaskData = {
+    body: TaskTransitionRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/reopen';
+};
+
+export type ReopenTaskErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReopenTaskError = ReopenTaskErrors[keyof ReopenTaskErrors];
+
+export type ReopenTaskResponses = {
+    /**
+     * Reopened or idempotently current Task.
+     */
+    200: Task;
+};
+
+export type ReopenTaskResponse = ReopenTaskResponses[keyof ReopenTaskResponses];
+
+export type GetTaskCallHistoryData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: {
+        cursor?: string;
+    };
+    url: '/v1/tasks/{taskId}/history';
+};
+
+export type GetTaskCallHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetTaskCallHistoryError = GetTaskCallHistoryErrors[keyof GetTaskCallHistoryErrors];
+
+export type GetTaskCallHistoryResponses = {
+    /**
+     * Newest page presented in chronological order.
+     */
+    200: CallHistoryPage;
+};
+
+export type GetTaskCallHistoryResponse = GetTaskCallHistoryResponses[keyof GetTaskCallHistoryResponses];
 
 export type GetOperatorCallingTimelineData = {
     body?: never;

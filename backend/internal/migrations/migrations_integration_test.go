@@ -21,8 +21,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 5 {
-		t.Fatalf("migration count = %d, want 5", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("migration count = %d, want 6", migrationCount)
 	}
 
 	for _, table := range []string{
@@ -53,6 +53,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_timeline",
+		"work_tasks",
+		"work_task_activities",
 	} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `

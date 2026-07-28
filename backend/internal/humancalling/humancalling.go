@@ -12,10 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -73,6 +75,8 @@ var (
 	ErrProviderTargetAbsent      = errors.New("provider target is absent")
 	ErrInvalidWebhook            = errors.New("invalid provider webhook")
 )
+
+var canonicalE164 = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
 
 type AcceptStatus string
 
@@ -259,6 +263,37 @@ type Call struct {
 	Recording           Recording
 }
 
+type CallHistoryQuery struct {
+	Identity          access.Identity
+	PracticeID        string
+	Phone             string
+	CurrentCallID     string
+	OriginatingCallID string
+	Cursor            string
+	Limit             int
+}
+
+type CallHistoryItem struct {
+	ID              string
+	Type            string
+	Direction       string
+	StartedAt       time.Time
+	EndedAt         *time.Time
+	DurationSeconds int64
+	LocationID      string
+	LocationName    string
+	AnsweredByEmail string
+	TransferReason  string
+	Outcome         CallState
+	Current         bool
+	Originating     bool
+}
+
+type CallHistoryPage struct {
+	Items      []CallHistoryItem
+	NextCursor string
+}
+
 type OperatorTimeline struct {
 	CallID     string
 	PracticeID string
@@ -286,9 +321,15 @@ const (
 	DispositionFollowUpRequired Disposition = "FOLLOW_UP_REQUIRED"
 )
 
+type DispositionResult struct {
+	Call   Call
+	TaskID string
+}
+
 type Module struct {
 	pool     *pgxpool.Pool
 	access   *access.Module
+	work     *work.Module
 	provider Provider
 	config   Config
 	now      func() time.Time
@@ -333,7 +374,7 @@ func New(
 			panic("secure random source unavailable")
 		}
 	}
-	return &Module{
+	module := &Module{
 		pool:     pool,
 		access:   accessModule,
 		provider: provider,
@@ -341,6 +382,10 @@ func New(
 		now:      now,
 		tokenKey: tokenKey,
 	}
+	if pool != nil && accessModule != nil {
+		module.work = work.New(pool, accessModule, now)
+	}
+	return module
 }
 
 func (m *Module) CreateHandoff(
@@ -1790,6 +1835,171 @@ func (m *Module) ReadCall(
 	return call, nil
 }
 
+func (m *Module) QueryCallHistory(
+	ctx context.Context,
+	query CallHistoryQuery,
+) (CallHistoryPage, error) {
+	if m.access == nil ||
+		strings.TrimSpace(query.PracticeID) == "" ||
+		!canonicalE164.MatchString(query.Phone) {
+		return CallHistoryPage{}, ErrInvalidInput
+	}
+	limit := query.Limit
+	if limit == 0 {
+		limit = 20
+	}
+	if limit < 1 || limit > 20 {
+		return CallHistoryPage{}, ErrInvalidInput
+	}
+	cursor, err := decodeCallHistoryCursor(query.Cursor)
+	if err != nil {
+		return CallHistoryPage{}, ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return CallHistoryPage{}, fmt.Errorf("begin Call history: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	authorization, err := m.access.LockReadAuthorization(
+		ctx,
+		tx,
+		query.Identity,
+		query.PracticeID,
+		"",
+	)
+	if err != nil {
+		return CallHistoryPage{}, ErrDenied
+	}
+	locationIDs := make([]string, 0, len(authorization.Locations))
+	for _, location := range authorization.Locations {
+		locationIDs = append(locationIDs, location.ID)
+	}
+	if len(locationIDs) == 0 {
+		return CallHistoryPage{}, ErrDenied
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT
+			call.id::text,
+			call.created_at,
+			call.ended_at,
+			CASE
+				WHEN call.connected_at IS NOT NULL AND call.ended_at IS NOT NULL
+				THEN GREATEST(
+					0,
+					EXTRACT(EPOCH FROM (call.ended_at - call.connected_at))::bigint
+				)
+				ELSE 0
+			END,
+			call.location_id::text,
+			location.name,
+			COALESCE(membership.email, ''),
+			COALESCE(handoff.transfer_reason, ''),
+			call.state
+		FROM human_calling_calls call
+		JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		JOIN access_locations location
+			ON location.practice_id = call.practice_id
+			AND location.id = call.location_id
+		LEFT JOIN access_memberships membership
+			ON membership.practice_id = call.practice_id
+			AND membership.user_subject = call.winner_subject
+		WHERE call.practice_id = $1
+			AND call.location_id::text = ANY($2::text[])
+			AND handoff.phone = $3
+			AND (
+				NOT $4
+				OR call.created_at < $5
+				OR (call.created_at = $5 AND call.id::text < $6)
+			)
+		ORDER BY call.created_at DESC, call.id DESC
+		LIMIT $7
+	`, query.PracticeID, locationIDs, query.Phone, cursor.Present,
+		cursor.CreatedAt, cursor.ID, limit+1,
+	)
+	if err != nil {
+		return CallHistoryPage{}, fmt.Errorf("query Call history: %w", err)
+	}
+	defer rows.Close()
+	items := make([]CallHistoryItem, 0, limit+1)
+	for rows.Next() {
+		var item CallHistoryItem
+		if err := rows.Scan(
+			&item.ID,
+			&item.StartedAt,
+			&item.EndedAt,
+			&item.DurationSeconds,
+			&item.LocationID,
+			&item.LocationName,
+			&item.AnsweredByEmail,
+			&item.TransferReason,
+			&item.Outcome,
+		); err != nil {
+			return CallHistoryPage{}, fmt.Errorf("scan Call history: %w", err)
+		}
+		item.Type = "CALL"
+		item.Direction = "INBOUND"
+		item.Current = item.ID == query.CurrentCallID
+		item.Originating = item.ID == query.OriginatingCallID
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return CallHistoryPage{}, fmt.Errorf("iterate Call history: %w", err)
+	}
+	rows.Close()
+
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		nextCursor, err = encodeCallHistoryCursor(items[len(items)-1])
+		if err != nil {
+			return CallHistoryPage{}, err
+		}
+	}
+	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
+		items[left], items[right] = items[right], items[left]
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CallHistoryPage{}, fmt.Errorf("commit Call history: %w", err)
+	}
+	return CallHistoryPage{Items: items, NextCursor: nextCursor}, nil
+}
+
+type callHistoryCursor struct {
+	Present   bool      `json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
+	ID        string    `json:"id"`
+}
+
+func encodeCallHistoryCursor(item CallHistoryItem) (string, error) {
+	encoded, err := json.Marshal(callHistoryCursor{
+		CreatedAt: item.StartedAt,
+		ID:        item.ID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode Call history cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+func decodeCallHistoryCursor(encoded string) (callHistoryCursor, error) {
+	if encoded == "" {
+		return callHistoryCursor{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return callHistoryCursor{}, err
+	}
+	var cursor callHistoryCursor
+	if err := json.Unmarshal(raw, &cursor); err != nil {
+		return callHistoryCursor{}, err
+	}
+	if cursor.CreatedAt.IsZero() || strings.TrimSpace(cursor.ID) == "" {
+		return callHistoryCursor{}, ErrInvalidInput
+	}
+	cursor.Present = true
+	return cursor, nil
+}
+
 func (m *Module) ReadOperatorTimeline(
 	ctx context.Context,
 	identity access.Identity,
@@ -1932,58 +2142,65 @@ func (m *Module) RecordDisposition(
 	sessionID string,
 	callID string,
 	disposition Disposition,
-) (Call, error) {
+) (DispositionResult, error) {
 	if sessionID == "" ||
+		m.work == nil ||
 		(disposition != DispositionResolved &&
 			disposition != DispositionFollowUpRequired) {
-		return Call{}, ErrInvalidInput
+		return DispositionResult{}, ErrInvalidInput
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Call{}, fmt.Errorf("begin Call disposition: %w", err)
+		return DispositionResult{}, fmt.Errorf("begin Call disposition: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, identity); err != nil {
-		return Call{}, ErrDenied
+		return DispositionResult{}, ErrDenied
 	}
 
 	var practiceID, locationID, winnerSubject, claimantSessionID string
+	var phone, transferReason string
 	var state CallState
 	if err := tx.QueryRow(ctx, `
 		SELECT
-			practice_id::text,
-			location_id::text,
-			state,
-			COALESCE(winner_subject, ''),
-			COALESCE(claimant_session_id, '')
-		FROM human_calling_calls
-		WHERE id = $1
-		FOR UPDATE
+			call.practice_id::text,
+			call.location_id::text,
+			call.state,
+			COALESCE(call.winner_subject, ''),
+			COALESCE(call.claimant_session_id, ''),
+			COALESCE(handoff.phone, ''),
+			COALESCE(handoff.transfer_reason, '')
+		FROM human_calling_calls call
+		JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		WHERE call.id = $1
+		FOR UPDATE OF call
 	`, callID).Scan(
 		&practiceID,
 		&locationID,
 		&state,
 		&winnerSubject,
 		&claimantSessionID,
+		&phone,
+		&transferReason,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Call{}, ErrDenied
+			return DispositionResult{}, ErrDenied
 		}
-		return Call{}, fmt.Errorf("lock Call disposition: %w", err)
+		return DispositionResult{}, fmt.Errorf("lock Call disposition: %w", err)
 	}
-	if state != CallNeedsDisposition ||
-		winnerSubject != identity.Subject ||
+	if winnerSubject != identity.Subject ||
 		claimantSessionID != sessionID {
-		return Call{}, ErrConflict
+		return DispositionResult{}, ErrConflict
 	}
-	if _, err := m.access.LockMembershipAuthorization(
+	authorization, err := m.access.LockMembershipAuthorization(
 		ctx,
 		tx,
 		identity,
 		practiceID,
 		locationID,
-	); err != nil {
-		return Call{}, ErrDenied
+	)
+	if err != nil {
+		return DispositionResult{}, ErrDenied
 	}
 	var ownsCurrentLease bool
 	if err := tx.QueryRow(ctx, `
@@ -1993,17 +2210,50 @@ func (m *Module) RecordDisposition(
 		FOR UPDATE
 	`, identity.Subject, sessionID, m.now()).Scan(&ownsCurrentLease); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Call{}, ErrConflict
+			return DispositionResult{}, ErrConflict
 		}
-		return Call{}, fmt.Errorf("verify disposition lease: %w", err)
+		return DispositionResult{}, fmt.Errorf("verify disposition lease: %w", err)
 	}
 	if !ownsCurrentLease {
-		return Call{}, ErrConflict
+		return DispositionResult{}, ErrConflict
 	}
 	nextState := CallResolved
 	if disposition == DispositionFollowUpRequired {
 		nextState = CallFollowUpRequired
 	}
+	if state != CallNeedsDisposition && state != nextState {
+		return DispositionResult{}, ErrConflict
+	}
+	taskID := ""
+	if disposition == DispositionFollowUpRequired {
+		task, err := m.work.EnsureCallFollowUp(
+			ctx,
+			tx,
+			work.EnsureCallFollowUpCommand{
+				CallID:     callID,
+				PracticeID: practiceID,
+				LocationID: locationID,
+				Phone:      phone,
+				Reason:     transferReason,
+				Creator:    authorization.Actor,
+			},
+		)
+		if err != nil {
+			return DispositionResult{}, err
+		}
+		taskID = task.ID
+	}
+	if state == nextState {
+		if err := tx.Commit(ctx); err != nil {
+			return DispositionResult{}, fmt.Errorf("commit replayed Call disposition: %w", err)
+		}
+		call, err := m.ReadCall(ctx, identity, callID)
+		if err != nil {
+			return DispositionResult{}, err
+		}
+		return DispositionResult{Call: call, TaskID: taskID}, nil
+	}
+	dispositionAt := m.now()
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls
 		SET
@@ -2013,8 +2263,8 @@ func (m *Module) RecordDisposition(
 			version = version + 1,
 			updated_at = $4
 		WHERE id = $1
-	`, callID, nextState, identity.Subject, m.now()); err != nil {
-		return Call{}, fmt.Errorf("record Call disposition: %w", err)
+	`, callID, nextState, identity.Subject, dispositionAt); err != nil {
+		return DispositionResult{}, fmt.Errorf("record Call disposition: %w", err)
 	}
 	if err := appendTimeline(
 		ctx,
@@ -2027,17 +2277,23 @@ func (m *Module) RecordDisposition(
 		"",
 		"",
 		"",
-		m.now(),
+		dispositionAt,
 	); err != nil {
-		return Call{}, err
+		return DispositionResult{}, err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return Call{}, err
+	if disposition == DispositionResolved {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+			return DispositionResult{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Call{}, fmt.Errorf("commit Call disposition: %w", err)
+		return DispositionResult{}, fmt.Errorf("commit Call disposition: %w", err)
 	}
-	return m.ReadCall(ctx, identity, callID)
+	call, err := m.ReadCall(ctx, identity, callID)
+	if err != nil {
+		return DispositionResult{}, err
+	}
+	return DispositionResult{Call: call, TaskID: taskID}, nil
 }
 
 func (m *Module) RequestHangup(
@@ -5001,6 +5257,7 @@ func validateHandoff(command CreateHandoffCommand, sipDomain string) error {
 		strings.TrimSpace(command.LocationID) == "" ||
 		strings.TrimSpace(command.SourceCallID) == "" ||
 		strings.TrimSpace(command.IdempotencyKey) == "" ||
+		!canonicalE164.MatchString(command.Contact.Phone) ||
 		strings.TrimSpace(sipDomain) == "" {
 		return ErrInvalidInput
 	}

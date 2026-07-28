@@ -14,6 +14,7 @@ esac
 
 root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 runtime_dir="$(mktemp -d)"
+replacement_realtime_pid_file="$runtime_dir/realtime-replacement.pid"
 web_pid=""
 portal_pid=""
 realtime_pid=""
@@ -21,6 +22,13 @@ provider_pid=""
 worker_pid=""
 telnyx_pid=""
 cleanup() {
+  if [ -f "$replacement_realtime_pid_file" ]; then
+    replacement_realtime_pid="$(cat "$replacement_realtime_pid_file")"
+    case "$replacement_realtime_pid" in
+      *[!0-9]*|"") ;;
+      *) kill "$replacement_realtime_pid" 2>/dev/null || true ;;
+    esac
+  fi
   for pid in "$worker_pid" "$provider_pid" "$realtime_pid" "$portal_pid" "$web_pid" "$telnyx_pid"; do
     if [ -n "$pid" ]; then
       kill "$pid" 2>/dev/null || true
@@ -183,6 +191,7 @@ E2E_BASE_URL=http://127.0.0.1:13000 \
 E2E_PORTAL_API_URL=http://127.0.0.1:18080 \
 E2E_REALTIME_URL=http://127.0.0.1:18081 \
 E2E_REALTIME_PID="$realtime_pid" \
+E2E_REALTIME_REPLACEMENT_PID_FILE="$replacement_realtime_pid_file" \
 E2E_RUNTIME_BINARY="$runtime_dir/acuity" \
 E2E_DATABASE_URL="$E2E_DATABASE_URL" \
 E2E_TELNYX_FIXTURE_URL=http://127.0.0.1:19000 \

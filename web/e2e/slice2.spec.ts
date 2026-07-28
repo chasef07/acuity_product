@@ -28,7 +28,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
   browser,
   page: selectedPage,
 }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   test.skip(
     !provisioningOutput || !databaseURL,
     "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
@@ -497,7 +497,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText("Call ended", { exact: true }),
     ).toBeVisible()
-    await takeoverPage.getByRole("button", { name: "Resolved" }).click()
+    await takeoverPage.getByRole("button", { name: "Create task" }).click()
     await expect
       .poll(async () => {
         const result = await database.query<{ state: string }>(
@@ -506,7 +506,68 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         )
         return result.rows[0]?.state
       })
-      .toBe("RESOLVED")
+      .toBe("FOLLOW_UP_REQUIRED")
+    const followUpTask = await expect
+      .poll(async () => {
+        const result = await database.query<{
+          id: string
+          title: string
+          state: string
+        }>(
+          `SELECT id::text, title, state
+             FROM work_tasks
+            WHERE call_id = $1`,
+          [durableCall.id],
+        )
+        return result.rows[0] ?? null
+      })
+      .not.toBeNull()
+      .then(async () => {
+        const result = await database.query<{
+          id: string
+          title: string
+          state: string
+        }>(
+          `SELECT id::text, title, state
+             FROM work_tasks
+            WHERE call_id = $1`,
+          [durableCall.id],
+        )
+        return result.rows[0]
+      })
+    expect(followUpTask).toEqual({
+      id: expect.any(String),
+      title: "Scheduling help",
+      state: "OPEN",
+    })
+    await expect(
+      takeoverPage.getByRole("heading", {
+        name: "Scheduling help",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      loserPage.getByRole("button", { name: /Scheduling help/ }),
+    ).toBeVisible()
+    await expect(
+      loserPage.getByRole("heading", {
+        name: "Scheduling help",
+        exact: true,
+      }),
+    ).not.toBeVisible()
+    await loserPage.getByRole("button", { name: /Scheduling help/ }).click()
+    await expect(
+      loserPage.getByRole("heading", {
+        name: "Scheduling help",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await loserPage.getByLabel("Search tasks").fill("+15555550100")
+    await expect(
+      loserPage.getByRole("button", { name: /Scheduling help/ }),
+    ).toBeVisible()
+    expect(loserPage.url()).not.toContain("5555550100")
+    await loserPage.getByLabel("Search tasks").fill("")
     await expect(
       callCenter(takeoverPage).getByText("Available", { exact: true }),
     ).toBeVisible()
@@ -570,6 +631,18 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       ),
     ).toBeVisible()
     await takeoverPage.getByRole("button", { name: "Accept" }).click()
+    await expect(
+      takeoverPage.getByRole("heading", {
+        name: "Recovery Caller",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      loserPage.getByRole("heading", {
+        name: "Scheduling help",
+        exact: true,
+      }),
+    ).toBeVisible()
     const recoveryCall = await expect
       .poll(async () => {
         const result = await database.query<{
@@ -663,6 +736,62 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText("Available", { exact: true }),
     ).toBeVisible()
+    await expect(
+      takeoverPage.getByRole("heading", {
+        name: "Scheduling help",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await takeoverPage.getByRole("button", { name: "Rename task" }).click()
+    await takeoverPage.getByLabel("Task title").fill("Confirm scheduling plan")
+    await takeoverPage.getByLabel("Task title").press("Enter")
+    await expect(
+      takeoverPage.getByRole("heading", {
+        name: "Confirm scheduling plan",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      loserPage.getByRole("heading", {
+        name: "Confirm scheduling plan",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await takeoverPage.getByRole("button", { name: "Complete" }).click()
+    await expect(
+      takeoverPage.getByRole("button", { name: "Reopen" }),
+    ).toBeVisible()
+    await expect(
+      loserPage.getByRole("button", { name: "Reopen" }),
+    ).toBeVisible()
+    await loserPage.getByRole("button", { name: "Reopen" }).click()
+    await expect(
+      takeoverPage.getByRole("button", { name: "Complete" }),
+    ).toBeVisible()
+    await expect(
+      loserPage.getByRole("button", { name: "Complete" }),
+    ).toBeVisible()
+    await expect
+      .poll(async () => {
+        const result = await database.query<{
+          task_state: string
+          activity_count: string
+        }>(
+          `SELECT
+             task.state AS task_state,
+             count(activity.id)::text AS activity_count
+           FROM work_tasks task
+           JOIN work_task_activities activity ON activity.task_id = task.id
+          WHERE task.id = $1
+          GROUP BY task.state`,
+          [followUpTask.id],
+        )
+        return result.rows[0]
+      })
+      .toEqual({
+        task_state: "OPEN",
+        activity_count: "4",
+      })
     await takeoverPage.getByRole("button", { name: "Pause calls" }).click()
     await expect(
       callCenter(takeoverPage).getByText("Paused", { exact: true }),

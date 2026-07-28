@@ -16,6 +16,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -49,6 +50,7 @@ type PortalDependencies struct {
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
 	Calling              *humancalling.Module
+	Work                 *work.Module
 	ServiceAuthenticator ServiceAuthenticator
 }
 
@@ -66,6 +68,7 @@ type Server struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	work          *work.Module
 	serviceAuth   ServiceAuthenticator
 }
 
@@ -74,6 +77,7 @@ type serverDependencies struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	work          *work.Module
 	serviceAuth   ServiceAuthenticator
 }
 
@@ -85,6 +89,7 @@ func NewPortal(
 	if dependencies.Access == nil ||
 		dependencies.Authenticator == nil ||
 		dependencies.Calling == nil ||
+		dependencies.Work == nil ||
 		dependencies.ServiceAuthenticator == nil {
 		return nil, fmt.Errorf("portal dependencies are required")
 	}
@@ -92,6 +97,7 @@ func NewPortal(
 		access:        dependencies.Access,
 		authenticator: dependencies.Authenticator,
 		calling:       dependencies.Calling,
+		work:          dependencies.Work,
 		serviceAuth:   dependencies.ServiceAuthenticator,
 	})
 }
@@ -147,6 +153,7 @@ func newServer(
 		authenticator: dependencies.authenticator,
 		events:        dependencies.events,
 		calling:       dependencies.calling,
+		work:          dependencies.work,
 		serviceAuth:   dependencies.serviceAuth,
 	}
 	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
@@ -454,7 +461,7 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		SourceCallID:   body.SourceCallId,
 		IdempotencyKey: body.IdempotencyKey,
 		Contact: humancalling.ContactContext{
-			Phone:          stringValue(body.Contact.Phone),
+			Phone:          body.Contact.Phone,
 			PhoneSource:    stringValue(body.Contact.PhoneSource),
 			DisplayName:    stringValue(body.Contact.DisplayName),
 			NameSource:     stringValue(body.Contact.NameSource),
@@ -702,7 +709,7 @@ func (server *Server) RecordCallingDisposition(
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	call, err := server.calling.RecordDisposition(
+	result, err := server.calling.RecordDisposition(
 		ctx,
 		identity,
 		body.SessionId,
@@ -713,9 +720,251 @@ func (server *Server) RecordCallingDisposition(
 		server.writeCallingError(w, r, err)
 		return
 	}
-	response, err := callingCallResponse(call)
+	callResponse, err := callingCallResponse(result.Call)
 	if err != nil {
 		server.writeCallingError(w, r, err)
+		return
+	}
+	response := api.CallingDispositionResult{Call: callResponse}
+	if result.TaskID != "" {
+		taskID, err := uuid.Parse(result.TaskID)
+		if err != nil {
+			server.writeCallingError(w, r, err)
+			return
+		}
+		response.TaskId = &taskID
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetCallingCallHistory(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+	params api.GetCallingCallHistoryParams,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.ReadCall(ctx, identity, callID.String())
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	history, err := server.calling.QueryCallHistory(
+		ctx,
+		humancalling.CallHistoryQuery{
+			Identity:      identity,
+			PracticeID:    call.PracticeID,
+			Phone:         call.Phone,
+			CurrentCallID: call.ID,
+			Cursor:        stringValue(params.Cursor),
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callHistoryResponse(history)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.TaskQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	page, err := server.work.QueryTasks(ctx, work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: body.PracticeId.String(),
+		LocationID: uuidString(body.LocationId),
+		Search:     stringValue(body.Search),
+		Cursor:     stringValue(body.Cursor),
+		Limit:      intValue(body.Limit),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskPageResponse(page)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) ReadTask(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, err := server.work.ReadTask(ctx, identity, taskID.String())
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) RenameTask(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.RenameTaskRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, err := server.work.RenameTask(ctx, work.RenameTaskCommand{
+		Identity:         identity,
+		TaskID:           taskID.String(),
+		ExpectedVersion:  body.ExpectedVersion,
+		Title:            body.Title,
+		SupportSessionID: uuidString(body.SupportSessionId),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) CompleteTask(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.TaskTransitionRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, err := server.work.CompleteTask(ctx, work.CompleteTaskCommand{
+		Identity:         identity,
+		TaskID:           taskID.String(),
+		ExpectedVersion:  body.ExpectedVersion,
+		SupportSessionID: uuidString(body.SupportSessionId),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) ReopenTask(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.TaskTransitionRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, err := server.work.ReopenTask(ctx, work.ReopenTaskCommand{
+		Identity:         identity,
+		TaskID:           taskID.String(),
+		ExpectedVersion:  body.ExpectedVersion,
+		SupportSessionID: uuidString(body.SupportSessionId),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetTaskCallHistory(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+	params api.GetTaskCallHistoryParams,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, err := server.work.ReadTask(ctx, identity, taskID.String())
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	history, err := server.calling.QueryCallHistory(
+		ctx,
+		humancalling.CallHistoryQuery{
+			Identity:          identity,
+			PracticeID:        task.PracticeID,
+			Phone:             task.Phone,
+			OriginatingCallID: task.CallID,
+			Cursor:            stringValue(params.Cursor),
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callHistoryResponse(history)
+	if err != nil {
+		server.writeWorkError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -757,6 +1006,16 @@ func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (server *Server) callingIdentity(
+	w http.ResponseWriter,
+	r *http.Request,
+) (access.Identity, bool) {
+	if !server.portalOnly(w, r) {
+		return access.Identity{}, false
+	}
+	return server.authenticate(w, r)
+}
+
+func (server *Server) taskIdentity(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (access.Identity, bool) {
@@ -857,6 +1116,23 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 		errors.Is(err, humancalling.ErrExpired),
 		errors.Is(err, humancalling.ErrAlreadyClaimed):
 		server.writeError(w, r, http.StatusConflict, "CALL_CONFLICT", "The Call state changed. Refresh and try again.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
+func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, work.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, work.ErrDenied),
+		errors.Is(err, access.ErrSupportRequired),
+		errors.Is(err, access.ErrSupportExpired),
+		errors.Is(err, access.ErrSupportRevoked),
+		errors.Is(err, access.ErrSupportPracticeMismatch):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, work.ErrConflict):
+		server.writeError(w, r, http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}
@@ -1243,6 +1519,100 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 	return response, nil
 }
 
+func taskResponse(task work.Task) (api.Task, error) {
+	id, err := uuid.Parse(task.ID)
+	if err != nil {
+		return api.Task{}, err
+	}
+	practiceID, err := uuid.Parse(task.PracticeID)
+	if err != nil {
+		return api.Task{}, err
+	}
+	locationID, err := uuid.Parse(task.LocationID)
+	if err != nil {
+		return api.Task{}, err
+	}
+	callID, err := uuid.Parse(task.CallID)
+	if err != nil {
+		return api.Task{}, err
+	}
+	response := api.Task{
+		Id:           id,
+		PracticeId:   practiceID,
+		LocationId:   locationID,
+		LocationName: task.LocationName,
+		CallId:       callID,
+		Phone:        task.Phone,
+		Title:        task.Title,
+		State:        api.TaskState(task.State),
+		CreatedBy: api.TaskActor{
+			Subject: task.CreatedBy.Subject,
+			Email:   apiEmail(task.CreatedBy.Email),
+		},
+		CreatedAt: task.CreatedAt,
+		Version:   task.Version,
+		UpdatedAt: task.UpdatedAt,
+	}
+	if task.CompletedBy != nil {
+		response.CompletedBy = &api.TaskActor{
+			Subject: task.CompletedBy.Subject,
+			Email:   apiEmail(task.CompletedBy.Email),
+		}
+	}
+	response.CompletedAt = task.CompletedAt
+	return response, nil
+}
+
+func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
+	response := api.TaskPage{
+		Items:      make([]api.Task, 0, len(page.Items)),
+		NextCursor: page.NextCursor,
+	}
+	for _, task := range page.Items {
+		item, err := taskResponse(task)
+		if err != nil {
+			return api.TaskPage{}, err
+		}
+		response.Items = append(response.Items, item)
+	}
+	return response, nil
+}
+
+func callHistoryResponse(
+	history humancalling.CallHistoryPage,
+) (api.CallHistoryPage, error) {
+	response := api.CallHistoryPage{
+		Items:      make([]api.CallHistoryItem, 0, len(history.Items)),
+		NextCursor: history.NextCursor,
+	}
+	for _, item := range history.Items {
+		id, err := uuid.Parse(item.ID)
+		if err != nil {
+			return api.CallHistoryPage{}, err
+		}
+		locationID, err := uuid.Parse(item.LocationID)
+		if err != nil {
+			return api.CallHistoryPage{}, err
+		}
+		response.Items = append(response.Items, api.CallHistoryItem{
+			Id:              id,
+			Type:            api.CallHistoryItemType(item.Type),
+			Direction:       api.CallHistoryItemDirection(item.Direction),
+			StartedAt:       item.StartedAt,
+			EndedAt:         item.EndedAt,
+			DurationSeconds: item.DurationSeconds,
+			LocationId:      locationID,
+			LocationName:    item.LocationName,
+			AnsweredByEmail: item.AnsweredByEmail,
+			TransferReason:  item.TransferReason,
+			Outcome:         api.CallHistoryItemOutcome(item.Outcome),
+			Current:         item.Current,
+			Originating:     item.Originating,
+		})
+	}
+	return response, nil
+}
+
 func operatorTimelineResponse(
 	timeline humancalling.OperatorTimeline,
 ) (api.OperatorCallingTimeline, error) {
@@ -1280,6 +1650,20 @@ func operatorTimelineResponse(
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
+	}
+	return *value
+}
+
+func uuidString(value *openapi_types.UUID) string {
+	if value == nil {
+		return ""
+	}
+	return value.String()
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
 	}
 	return *value
 }

@@ -24,6 +24,9 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -175,6 +178,255 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		t.Fatalf("missing credential status = %d, body = %s", missingCredential.StatusCode, readBody(t, missingCredential))
 	}
 	_ = missingCredential.Body.Close()
+}
+
+func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "slice-3-http-test",
+		Practices: []access.PracticeProvision{{
+			Key:       "task-practice",
+			Name:      "Task Practice",
+			Locations: []access.LocationProvision{{Key: "task-office", Name: "Task Office"}},
+			Invitations: []access.InvitationProvision{{
+				Key:           "task-staff",
+				Email:         "task-staff@synthetic.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision Task HTTP fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "task-staff-subject",
+		Email:         "task-staff@synthetic.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept Task HTTP invitation: %v", err)
+	}
+	handoffID := uuid.NewString()
+	callID := uuid.NewString()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_handoffs (
+			id,
+			service_subject,
+			practice_id,
+			location_id,
+			source_call_id,
+			idempotency_key,
+			input_fingerprint,
+			token_hash,
+			phone,
+			phone_source,
+			display_name,
+			name_source,
+			transfer_reason,
+			reason_source,
+			expires_at,
+			consumed_at,
+			created_at
+		)
+		VALUES ($1, 'abita-task-http', $2, $3, 'task-http-source',
+			'task-http-idempotency', $4, $5, '+19855550100', 'Abita',
+			'HTTP Caller', 'Abita', 'Verify referral', 'Abita AI', $6, $7, $7)
+	`, handoffID, authorization.Practice.ID, authorization.Locations[0].ID,
+		[]byte(callID), []byte("token-"+callID), now.Add(time.Minute), now,
+	); err != nil {
+		t.Fatalf("insert Task HTTP handoff: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id,
+			handoff_id,
+			practice_id,
+			location_id,
+			state,
+			offer_deadline,
+			caller_call_control_id,
+			caller_call_leg_id,
+			call_session_id,
+			claimant_subject,
+			winner_subject,
+			claimant_session_id,
+			disposition_actor_subject,
+			disposition_at,
+			connected_at,
+			ended_at,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'FOLLOW_UP_REQUIRED', $5,
+			'task-http-control', 'task-http-leg', 'task-http-session',
+			$6, $6, 'task-http-browser', $6, $7, $7, $8, $7, $8)
+	`, callID, handoffID, authorization.Practice.ID,
+		authorization.Locations[0].ID, now.Add(20*time.Second),
+		identity.Subject, now.Add(10*time.Second), now.Add(70*time.Second),
+	); err != nil {
+		t.Fatalf("insert Task HTTP Call: %v", err)
+	}
+	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin Task HTTP fixture transaction: %v", err)
+	}
+	task, err := workModule.EnsureCallFollowUp(
+		context.Background(),
+		tx,
+		work.EnsureCallFollowUpCommand{
+			CallID:     callID,
+			PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID,
+			Phone:      "+19855550100",
+			Reason:     "Verify referral",
+			Creator:    authorization.Actor,
+		},
+	)
+	if err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatalf("create Task HTTP fixture: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit Task HTTP fixture: %v", err)
+	}
+
+	handler, err := newPortalHandler(
+		t,
+		httpapi.Config{
+			AllowedOrigin:  "http://localhost:3000",
+			AcquireTimeout: 500 * time.Millisecond,
+		},
+		pool,
+		accessModule,
+		staticAuthenticator{"task-token": identity},
+	)
+	if err != nil {
+		t.Fatalf("new Task HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	queryBody, _ := json.Marshal(map[string]any{
+		"practiceId": authorization.Practice.ID,
+		"search":     "(985) 555-0100",
+	})
+	queryResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks/query",
+		"task-token",
+		queryBody,
+	)
+	if queryResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Task query status = %d, body = %s", queryResponse.StatusCode, readBody(t, queryResponse))
+	}
+	var page api.TaskPage
+	decode(t, queryResponse, &page)
+	if len(page.Items) != 1 || page.Items[0].Id.String() != task.ID {
+		t.Fatalf("Task query page = %#v", page)
+	}
+
+	renameBody, _ := json.Marshal(map[string]any{
+		"expectedVersion": 1,
+		"title":           "Confirm referral receipt",
+	})
+	renamedResponse := request(
+		t,
+		server.Client(),
+		http.MethodPut,
+		server.URL+"/v1/tasks/"+task.ID+"/title",
+		"task-token",
+		renameBody,
+	)
+	if renamedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Task rename status = %d, body = %s", renamedResponse.StatusCode, readBody(t, renamedResponse))
+	}
+	var renamed api.Task
+	decode(t, renamedResponse, &renamed)
+	if renamed.Title != "Confirm referral receipt" || renamed.Version != 2 {
+		t.Fatalf("renamed HTTP Task = %#v", renamed)
+	}
+	staleResponse := request(
+		t,
+		server.Client(),
+		http.MethodPut,
+		server.URL+"/v1/tasks/"+task.ID+"/title",
+		"task-token",
+		renameBody,
+	)
+	if staleResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("stale Task rename status = %d, body = %s", staleResponse.StatusCode, readBody(t, staleResponse))
+	}
+	_ = staleResponse.Body.Close()
+
+	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": 2})
+	completedResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks/"+task.ID+"/complete",
+		"task-token",
+		completeBody,
+	)
+	if completedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Task completion status = %d, body = %s", completedResponse.StatusCode, readBody(t, completedResponse))
+	}
+	var completed api.Task
+	decode(t, completedResponse, &completed)
+	if completed.State != api.COMPLETED || completed.CompletedBy == nil ||
+		string(completed.CompletedBy.Email) != identity.Email {
+		t.Fatalf("completed HTTP Task = %#v", completed)
+	}
+
+	reopenBody, _ := json.Marshal(map[string]any{"expectedVersion": completed.Version})
+	reopenedResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks/"+task.ID+"/reopen",
+		"task-token",
+		reopenBody,
+	)
+	if reopenedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Task reopen status = %d, body = %s", reopenedResponse.StatusCode, readBody(t, reopenedResponse))
+	}
+	var reopened api.Task
+	decode(t, reopenedResponse, &reopened)
+	if reopened.State != api.OPEN || reopened.CompletedBy != nil ||
+		reopened.Title != renamed.Title {
+		t.Fatalf("reopened HTTP Task = %#v", reopened)
+	}
+
+	historyResponse := request(
+		t,
+		server.Client(),
+		http.MethodGet,
+		server.URL+"/v1/tasks/"+task.ID+"/history",
+		"task-token",
+		nil,
+	)
+	if historyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Task history status = %d, body = %s", historyResponse.StatusCode, readBody(t, historyResponse))
+	}
+	var history api.CallHistoryPage
+	decode(t, historyResponse, &history)
+	if len(history.Items) != 1 ||
+		history.Items[0].Id.String() != callID ||
+		!history.Items[0].Originating {
+		t.Fatalf("Task Call history = %#v", history)
+	}
 }
 
 func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing.T) {
@@ -460,6 +712,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			Access:               accessModule,
 			Authenticator:        staticAuthenticator{"calling-token": identity},
 			Calling:              calling,
+			Work:                 work.New(pool, accessModule, nil),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -475,6 +728,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		"sourceCallId":   "http-source-call",
 		"idempotencyKey": "http-idempotency",
 		"contact": map[string]any{
+			"phone":          "+15555550100",
 			"displayName":    "HTTP Caller",
 			"nameSource":     "Abita",
 			"transferReason": "HTTP interface proof",
@@ -651,6 +905,7 @@ func newPortalHandler(
 		Access:               accessModule,
 		Authenticator:        authenticator,
 		Calling:              humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
+		Work:                 work.New(pool, accessModule, nil),
 		ServiceAuthenticator: serviceAuthenticator,
 	})
 }

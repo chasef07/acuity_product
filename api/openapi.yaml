@@ -491,7 +491,7 @@ paths:
   /v1/calling/calls/{callId}/disposition:
     post:
       operationId: recordCallingDisposition
-      summary: Resolve the provider-terminated Call without creating a Task.
+      summary: Resolve the provider-terminated Call and optionally ensure its one follow-up Task.
       parameters:
         - name: callId
           in: path
@@ -507,11 +507,11 @@ paths:
               $ref: "#/components/schemas/CallingDispositionRequest"
       responses:
         "200":
-          description: Durable terminal Call outcome.
+          description: Durable terminal Call outcome and optional linked Task.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CallingCall"
+                $ref: "#/components/schemas/CallingDispositionResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -520,6 +520,217 @@ paths:
           $ref: "#/components/responses/Denied"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/calls/{callId}/history:
+    get:
+      operationId: getCallingCallHistory
+      summary: Read authorized exact-phone Call Engagement History for the active Call.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Newest page presented in chronological order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallHistoryPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/query:
+    post:
+      operationId: queryTasks
+      summary: Query the authorized Task rail with protected search input.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskQueryRequest"
+      responses:
+        "200":
+          description: Open-first Task rail page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}:
+    get:
+      operationId: readTask
+      summary: Read one currently authorized Task.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current Task state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/title:
+    put:
+      operationId: renameTask
+      summary: Rename one open Task at its last observed version.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameTaskRequest"
+      responses:
+        "200":
+          description: Renamed Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/complete:
+    post:
+      operationId: completeTask
+      summary: Complete one Task at its last observed version.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskTransitionRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/reopen:
+    post:
+      operationId: reopenTask
+      summary: Reopen one completed Task at its last observed version.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskTransitionRequest"
+      responses:
+        "200":
+          description: Reopened or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/history:
+    get:
+      operationId: getTaskCallHistory
+      summary: Read authorized exact-phone Call Engagement History for one Task.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Newest page presented in chronological order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallHistoryPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/operator/calls/{callId}/timeline:
@@ -906,10 +1117,11 @@ components:
     ContactContextInput:
       type: object
       additionalProperties: false
+      required: [phone]
       properties:
         phone:
           type: string
-          maxLength: 40
+          pattern: '^\+[1-9][0-9]{7,14}$'
         phoneSource:
           type: string
           maxLength: 100
@@ -1220,6 +1432,211 @@ components:
         outcome:
           type: string
           enum: [RESOLVED, FOLLOW_UP_REQUIRED]
+    CallingDispositionResult:
+      type: object
+      additionalProperties: false
+      required: [call]
+      properties:
+        call:
+          $ref: "#/components/schemas/CallingCall"
+        taskId:
+          type: string
+          format: uuid
+    TaskActor:
+      type: object
+      additionalProperties: false
+      required: [subject, email]
+      properties:
+        subject:
+          type: string
+        email:
+          type: string
+          format: email
+    Task:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - callId
+        - phone
+        - title
+        - state
+        - createdBy
+        - createdAt
+        - version
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        callId:
+          type: string
+          format: uuid
+        phone:
+          type: string
+        title:
+          type: string
+        state:
+          type: string
+          enum: [OPEN, COMPLETED]
+        createdBy:
+          $ref: "#/components/schemas/TaskActor"
+        createdAt:
+          type: string
+          format: date-time
+        completedBy:
+          $ref: "#/components/schemas/TaskActor"
+        completedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+    TaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+        nextCursor:
+          type: string
+    TaskQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        search:
+          type: string
+          maxLength: 500
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+    RenameTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, title]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        supportSessionId:
+          type: string
+          format: uuid
+    TaskTransitionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        supportSessionId:
+          type: string
+          format: uuid
+    CallHistoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - direction
+        - startedAt
+        - durationSeconds
+        - locationId
+        - locationName
+        - answeredByEmail
+        - transferReason
+        - outcome
+        - current
+        - originating
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [CALL]
+        direction:
+          type: string
+          enum: [INBOUND]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        durationSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        answeredByEmail:
+          type: string
+        transferReason:
+          type: string
+        outcome:
+          type: string
+          enum:
+            - OFFERING
+            - CONNECTING
+            - CONNECTED
+            - RECONCILING
+            - UNANSWERED
+            - NEEDS_DISPOSITION
+            - RESOLVED
+            - FOLLOW_UP_REQUIRED
+        current:
+          type: boolean
+        originating:
+          type: boolean
+    CallHistoryPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallHistoryItem"
+        nextCursor:
+          type: string
     OperatorCallingTimelineEntry:
       type: object
       additionalProperties: false

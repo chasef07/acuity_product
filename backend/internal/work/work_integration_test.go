@@ -1,0 +1,925 @@
+package work_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	callID := insertCall(t, pool, authorization, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+
+	command := work.EnsureCallFollowUpCommand{
+		CallID:     callID,
+		PracticeID: authorization.Practice.ID,
+		LocationID: authorization.Locations[0].ID,
+		Phone:      "+15555550100",
+		Reason:     "  Confirm surgery instructions  ",
+		Creator:    authorization.Actor,
+	}
+	first := ensureCallFollowUp(t, pool, module, command)
+	replayed := ensureCallFollowUp(t, pool, module, command)
+
+	if replayed.ID != first.ID {
+		t.Fatalf("replayed Task ID = %q, want %q", replayed.ID, first.ID)
+	}
+	task, err := module.ReadTask(context.Background(), identity, first.ID)
+	if err != nil {
+		t.Fatalf("read Task: %v", err)
+	}
+	if task.State != work.TaskOpen ||
+		task.Title != "Confirm surgery instructions" ||
+		task.Phone != "+15555550100" ||
+		task.CallID != callID ||
+		task.Version != 1 ||
+		task.CreatedBy.Subject != identity.Subject ||
+		task.CreatedBy.Email != identity.Email {
+		t.Fatalf("created Task = %#v", task)
+	}
+
+	var activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_activities
+		WHERE task_id = $1 AND kind = 'TASK_CREATED'
+	`, task.ID).Scan(&activityCount); err != nil {
+		t.Fatalf("count Task Activities: %v", err)
+	}
+	if activityCount != 1 {
+		t.Fatalf("Task creation Activity count = %d, want 1", activityCount)
+	}
+}
+
+func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	callID := insertCall(t, pool, authorization, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+		CallID:     callID,
+		PracticeID: authorization.Practice.ID,
+		LocationID: authorization.Locations[0].ID,
+		Phone:      "+15555550100",
+		Reason:     "Confirm surgery instructions",
+		Creator:    authorization.Actor,
+	})
+
+	now = now.Add(time.Minute)
+	renamed, err := module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:        identity,
+		TaskID:          task.ID,
+		ExpectedVersion: task.Version,
+		Title:           "  Confirm post-op instructions  ",
+	})
+	if err != nil {
+		t.Fatalf("rename Task: %v", err)
+	}
+	if renamed.Title != "Confirm post-op instructions" || renamed.Version != 2 {
+		t.Fatalf("renamed Task = %#v", renamed)
+	}
+
+	stale, err := module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:        identity,
+		TaskID:          task.ID,
+		ExpectedVersion: task.Version,
+		Title:           "Overwrite committed work",
+	})
+	if !errors.Is(err, work.ErrConflict) {
+		t.Fatalf("stale rename error = %v, want conflict", err)
+	}
+	if stale.Title != renamed.Title || stale.Version != renamed.Version {
+		t.Fatalf("stale rename current Task = %#v, want %#v", stale, renamed)
+	}
+
+	now = now.Add(time.Minute)
+	completed, err := module.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Identity:        identity,
+		TaskID:          task.ID,
+		ExpectedVersion: renamed.Version,
+	})
+	if err != nil {
+		t.Fatalf("complete Task: %v", err)
+	}
+	if completed.State != work.TaskCompleted ||
+		completed.Version != 3 ||
+		completed.CompletedBy == nil ||
+		completed.CompletedBy.Subject != identity.Subject ||
+		completed.CompletedBy.Email != identity.Email ||
+		completed.CompletedAt == nil ||
+		!completed.CompletedAt.Equal(now) {
+		t.Fatalf("completed Task = %#v", completed)
+	}
+	replayedCompletion, err := module.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity:        identity,
+			TaskID:          task.ID,
+			ExpectedVersion: renamed.Version,
+		},
+	)
+	if err != nil || replayedCompletion.Version != completed.Version {
+		t.Fatalf("replayed completion = %#v, err = %v", replayedCompletion, err)
+	}
+	if _, err := module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:        identity,
+		TaskID:          task.ID,
+		ExpectedVersion: completed.Version,
+		Title:           "Completed work must not change",
+	}); !errors.Is(err, work.ErrConflict) {
+		t.Fatalf("completed rename error = %v, want conflict", err)
+	}
+
+	now = now.Add(time.Minute)
+	reopened, err := module.ReopenTask(context.Background(), work.ReopenTaskCommand{
+		Identity:        identity,
+		TaskID:          task.ID,
+		ExpectedVersion: completed.Version,
+	})
+	if err != nil {
+		t.Fatalf("reopen Task: %v", err)
+	}
+	if reopened.State != work.TaskOpen ||
+		reopened.Version != 4 ||
+		reopened.CompletedBy != nil ||
+		reopened.CompletedAt != nil ||
+		reopened.Title != renamed.Title ||
+		reopened.Phone != task.Phone ||
+		reopened.CallID != task.CallID {
+		t.Fatalf("reopened Task = %#v", reopened)
+	}
+	replayedReopen, err := module.ReopenTask(
+		context.Background(),
+		work.ReopenTaskCommand{
+			Identity:        identity,
+			TaskID:          task.ID,
+			ExpectedVersion: completed.Version,
+		},
+	)
+	if err != nil || replayedReopen.Version != reopened.Version {
+		t.Fatalf("replayed reopen = %#v, err = %v", replayedReopen, err)
+	}
+
+	var activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_activities
+		WHERE task_id = $1
+	`, task.ID).Scan(&activityCount); err != nil {
+		t.Fatalf("count lifecycle Activities: %v", err)
+	}
+	if activityCount != 4 {
+		t.Fatalf("Task Activity count = %d, want 4", activityCount)
+	}
+}
+
+func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+
+	openOld := createTask(
+		t, pool, module, authorization, authorization.Locations[0].ID,
+		"+19851230001", "Verify referral", now,
+	)
+	now = now.Add(time.Minute)
+	openNew := createTask(
+		t, pool, module, authorization, authorization.Locations[1].ID,
+		"+19851230002", "Confirm surgery instructions", now,
+	)
+	now = now.Add(time.Minute)
+	completedOld := createTask(
+		t, pool, module, authorization, authorization.Locations[0].ID,
+		"+19851230003", "Send records", now,
+	)
+	now = now.Add(time.Minute)
+	completedOld, err := module.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity:        identity,
+			TaskID:          completedOld.ID,
+			ExpectedVersion: completedOld.Version,
+		},
+	)
+	if err != nil {
+		t.Fatalf("complete older Task: %v", err)
+	}
+	now = now.Add(time.Minute)
+	completedNew := createTask(
+		t, pool, module, authorization, authorization.Locations[1].ID,
+		"+19851230004", "Confirm pharmacy", now,
+	)
+	now = now.Add(time.Minute)
+	completedNew, err = module.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity:        identity,
+			TaskID:          completedNew.ID,
+			ExpectedVersion: completedNew.Version,
+		},
+	)
+	if err != nil {
+		t.Fatalf("complete newer Task: %v", err)
+	}
+
+	firstPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Limit:      2,
+	})
+	if err != nil {
+		t.Fatalf("query first Task page: %v", err)
+	}
+	assertTaskIDs(t, firstPage.Items, openOld.ID, openNew.ID)
+	if firstPage.NextCursor == "" {
+		t.Fatal("first Task page has no next cursor")
+	}
+	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Cursor:     firstPage.NextCursor,
+		Limit:      2,
+	})
+	if err != nil {
+		t.Fatalf("query second Task page: %v", err)
+	}
+	assertTaskIDs(t, secondPage.Items, completedNew.ID, completedOld.ID)
+	if secondPage.NextCursor != "" {
+		t.Fatalf("last Task page cursor = %q, want empty", secondPage.NextCursor)
+	}
+
+	locationPage, err := module.QueryTasks(
+		context.Background(),
+		work.QueryTasksCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query Location Tasks: %v", err)
+	}
+	assertTaskIDs(t, locationPage.Items, openOld.ID, completedOld.ID)
+
+	titlePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Search:     "SURGERY",
+	})
+	if err != nil {
+		t.Fatalf("search Task title: %v", err)
+	}
+	assertTaskIDs(t, titlePage.Items, openNew.ID)
+
+	phonePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Search:     "(985) 123-0002",
+	})
+	if err != nil {
+		t.Fatalf("search Task phone: %v", err)
+	}
+	assertTaskIDs(t, phonePage.Items, openNew.ID)
+
+	for _, literal := range []string{"%", "_"} {
+		literalPage, err := module.QueryTasks(
+			context.Background(),
+			work.QueryTasksCommand{
+				Identity:   identity,
+				PracticeID: authorization.Practice.ID,
+				Search:     literal,
+			},
+		)
+		if err != nil {
+			t.Fatalf("search literal %q: %v", literal, err)
+		}
+		assertTaskIDs(t, literalPage.Items)
+	}
+}
+
+func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := createTask(
+		t,
+		pool,
+		module,
+		authorization,
+		authorization.Locations[0].ID,
+		"+19855550100",
+		"Concurrent follow-up",
+		now,
+	)
+
+	runConcurrent := func(action func() (work.Task, error)) []work.Task {
+		t.Helper()
+		start := make(chan struct{})
+		results := make(chan work.Task, 2)
+		errorsFound := make(chan error, 2)
+		var group sync.WaitGroup
+		for range 2 {
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				<-start
+				result, err := action()
+				if err != nil {
+					errorsFound <- err
+					return
+				}
+				results <- result
+			}()
+		}
+		close(start)
+		group.Wait()
+		close(results)
+		close(errorsFound)
+		for err := range errorsFound {
+			t.Fatalf("concurrent Task transition: %v", err)
+		}
+		collected := []work.Task{}
+		for result := range results {
+			collected = append(collected, result)
+		}
+		if len(collected) != 2 {
+			t.Fatalf("concurrent Task results = %#v", collected)
+		}
+		return collected
+	}
+
+	now = now.Add(time.Minute)
+	completed := runConcurrent(func() (work.Task, error) {
+		return module.CompleteTask(
+			context.Background(),
+			work.CompleteTaskCommand{
+				Identity:        identity,
+				TaskID:          task.ID,
+				ExpectedVersion: task.Version,
+			},
+		)
+	})
+	if completed[0].Version != 2 || completed[1].Version != 2 ||
+		completed[0].CompletedBy == nil || completed[1].CompletedBy == nil ||
+		completed[0].CompletedBy.Subject != completed[1].CompletedBy.Subject {
+		t.Fatalf("concurrent completion results = %#v", completed)
+	}
+
+	now = now.Add(time.Minute)
+	reopened := runConcurrent(func() (work.Task, error) {
+		return module.ReopenTask(
+			context.Background(),
+			work.ReopenTaskCommand{
+				Identity:        identity,
+				TaskID:          task.ID,
+				ExpectedVersion: completed[0].Version,
+			},
+		)
+	})
+	if reopened[0].Version != 3 || reopened[1].Version != 3 ||
+		reopened[0].State != work.TaskOpen || reopened[1].State != work.TaskOpen {
+		t.Fatalf("concurrent reopen results = %#v", reopened)
+	}
+
+	var completionCount, reopenCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*) FILTER (WHERE kind = 'TASK_COMPLETED'),
+			count(*) FILTER (WHERE kind = 'TASK_REOPENED')
+		FROM work_task_activities
+		WHERE task_id = $1
+	`, task.ID).Scan(&completionCount, &reopenCount); err != nil {
+		t.Fatalf("count concurrent Task Activities: %v", err)
+	}
+	if completionCount != 1 || reopenCount != 1 {
+		t.Fatalf(
+			"completion Activities = %d, reopen Activities = %d, want 1 each",
+			completionCount,
+			reopenCount,
+		)
+	}
+}
+
+func TestPlatformOperatorReadsGloballyAndMutatesOnlyInCurrentSupportMode(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(
+		context.Background(),
+		access.Provisioning{
+			Environment:       "test",
+			RequestedBy:       "slice-3-operator-test",
+			PlatformOperators: []string{"operator@acuity.test"},
+			Practices: []access.PracticeProvision{{
+				Key:       "operator-practice",
+				Name:      "Operator Practice",
+				Locations: []access.LocationProvision{{Key: "office", Name: "Office"}},
+				Invitations: []access.InvitationProvision{{
+					Key:           "staff",
+					Email:         "staff@operator.test",
+					Role:          access.RoleStaff,
+					LocationScope: access.LocationScopeAll,
+					ExpiresAt:     now.Add(time.Hour),
+				}},
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("provision operator Task fixture: %v", err)
+	}
+	staffIdentity := access.Identity{
+		Subject:       "operator-fixture-staff",
+		Email:         "staff@operator.test",
+		EmailVerified: true,
+	}
+	staff, err := accessModule.AcceptInvitation(
+		context.Background(),
+		staffIdentity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept operator Task Staff invitation: %v", err)
+	}
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := createTask(
+		t,
+		pool,
+		module,
+		staff,
+		staff.Locations[0].ID,
+		"+19855550199",
+		"Review supported follow-up",
+		now,
+	)
+	operator := access.Identity{
+		Subject:       "operator-subject",
+		Email:         "operator@acuity.test",
+		EmailVerified: true,
+	}
+
+	page, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   operator,
+		PracticeID: staff.Practice.ID,
+	})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != task.ID {
+		t.Fatalf("operator Task read = %#v, err = %v", page, err)
+	}
+	_, err = module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:        operator,
+		TaskID:          task.ID,
+		ExpectedVersion: task.Version,
+		Title:           "Supported follow-up",
+	})
+	if !errors.Is(err, access.ErrSupportRequired) {
+		t.Fatalf("operator rename without Support Mode error = %v", err)
+	}
+
+	support, err := accessModule.EnterSupportMode(
+		context.Background(),
+		access.EnterSupportModeCommand{
+			Identity:   operator,
+			PracticeID: staff.Practice.ID,
+			Reason:     "Validate Task support workflow",
+			Duration:   time.Hour,
+		},
+	)
+	if err != nil {
+		t.Fatalf("enter Task Support Mode: %v", err)
+	}
+	renamed, err := module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:         operator,
+		TaskID:           task.ID,
+		ExpectedVersion:  task.Version,
+		Title:            "Supported follow-up",
+		SupportSessionID: support.ID,
+	})
+	if err != nil || renamed.CreatedBy.Subject != staffIdentity.Subject {
+		t.Fatalf("supported Task rename = %#v, err = %v", renamed, err)
+	}
+	completed, err := module.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity:         operator,
+			TaskID:           task.ID,
+			ExpectedVersion:  renamed.Version,
+			SupportSessionID: support.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("supported Task completion: %v", err)
+	}
+	reopened, err := module.ReopenTask(
+		context.Background(),
+		work.ReopenTaskCommand{
+			Identity:         operator,
+			TaskID:           task.ID,
+			ExpectedVersion:  completed.Version,
+			SupportSessionID: support.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("supported Task reopen: %v", err)
+	}
+
+	auditEvents, err := accessModule.AuditTrail(
+		context.Background(),
+		operator,
+		staff.Practice.ID,
+	)
+	if err != nil {
+		t.Fatalf("load supported Task audit trail: %v", err)
+	}
+	expectedVersions := map[string]int64{
+		"task.title_changed": renamed.Version,
+		"task.completed":     completed.Version,
+		"task.reopened":      reopened.Version,
+	}
+	for _, event := range auditEvents {
+		version, expected := expectedVersions[event.Action]
+		if !expected {
+			continue
+		}
+		if event.ActorSubject != operator.Subject ||
+			event.SupportSessionID != support.ID ||
+			event.Reason != support.Reason {
+			t.Fatalf("supported Task audit = %#v", event)
+		}
+		var resourceType string
+		var taskID string
+		var taskVersion int64
+		if err := pool.QueryRow(context.Background(), `
+			SELECT
+				details ->> 'resourceType',
+				details ->> 'resourceId',
+				(details ->> 'resourceVersion')::bigint
+			FROM access_audit_events
+			WHERE id = $1
+		`, event.ID).Scan(&resourceType, &taskID, &taskVersion); err != nil {
+			t.Fatalf("load supported Task audit details: %v", err)
+		}
+		if resourceType != "task" ||
+			taskID != task.ID ||
+			taskVersion != version {
+			t.Fatalf(
+				"supported Task audit details = (%q, %q, %d), want (%q, %q, %d)",
+				resourceType,
+				taskID,
+				taskVersion,
+				"task",
+				task.ID,
+				version,
+			)
+		}
+		delete(expectedVersions, event.Action)
+	}
+	if len(expectedVersions) != 0 {
+		t.Fatalf("missing supported Task audit actions = %#v", expectedVersions)
+	}
+
+	if err := accessModule.RevokeSupportMode(
+		context.Background(),
+		operator,
+		support.ID,
+	); err != nil {
+		t.Fatalf("revoke Task Support Mode: %v", err)
+	}
+	_, err = module.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Identity:         operator,
+		TaskID:           task.ID,
+		ExpectedVersion:  reopened.Version,
+		SupportSessionID: support.ID,
+	})
+	if !errors.Is(err, access.ErrSupportRevoked) {
+		t.Fatalf("operator completion after Support revocation error = %v", err)
+	}
+}
+
+func TestSupportedTaskAuditFailureRollsBackMutation(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	staff, staffIdentity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := createTask(
+		t,
+		pool,
+		module,
+		staff,
+		staff.Locations[0].ID,
+		"+19855550200",
+		"Keep this title",
+		now,
+	)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO access_platform_operators (email)
+		VALUES ('operator@acuity.test')
+	`); err != nil {
+		t.Fatalf("provision rollback-test operator: %v", err)
+	}
+	operator := access.Identity{
+		Subject:       "rollback-test-operator",
+		Email:         "operator@acuity.test",
+		EmailVerified: true,
+	}
+	support, err := accessModule.EnterSupportMode(
+		context.Background(),
+		access.EnterSupportModeCommand{
+			Identity:   operator,
+			PracticeID: staff.Practice.ID,
+			Reason:     "Verify atomic Task audit",
+			Duration:   time.Hour,
+		},
+	)
+	if err != nil {
+		t.Fatalf("enter rollback-test Support Mode: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE FUNCTION reject_supported_task_audit()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'synthetic supported Task audit failure';
+		END
+		$$;
+
+		CREATE TRIGGER reject_supported_task_audit
+		BEFORE INSERT ON access_audit_events
+		FOR EACH ROW
+		WHEN (NEW.action LIKE 'task.%')
+		EXECUTE FUNCTION reject_supported_task_audit()
+	`); err != nil {
+		t.Fatalf("install supported Task audit failure: %v", err)
+	}
+
+	_, err = module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:         operator,
+		TaskID:           task.ID,
+		ExpectedVersion:  task.Version,
+		Title:            "Must roll back",
+		SupportSessionID: support.ID,
+	})
+	if err == nil {
+		t.Fatal("supported Task rename succeeded without its audit")
+	}
+	current, err := module.ReadTask(context.Background(), staffIdentity, task.ID)
+	if err != nil {
+		t.Fatalf("read Task after audit failure: %v", err)
+	}
+	if current.Title != task.Title || current.Version != task.Version {
+		t.Fatalf("Task after audit failure = %#v, want %#v", current, task)
+	}
+	var activityCount, auditCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(
+				SELECT count(*)
+				FROM work_task_activities
+				WHERE task_id = $1 AND task_version > $2
+			),
+			(
+				SELECT count(*)
+				FROM access_audit_events
+				WHERE action LIKE 'task.%'
+					AND details ->> 'resourceId' = $1::text
+			)
+	`, task.ID, task.Version).Scan(&activityCount, &auditCount); err != nil {
+		t.Fatalf("count rolled-back Task evidence: %v", err)
+	}
+	if activityCount != 0 || auditCount != 0 {
+		t.Fatalf(
+			"rolled-back Task evidence = (%d Activities, %d audits)",
+			activityCount,
+			auditCount,
+		)
+	}
+}
+
+func ensureCallFollowUp(
+	t *testing.T,
+	pool interface {
+		BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+	},
+	module *work.Module,
+	command work.EnsureCallFollowUpCommand,
+) work.Task {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin Task transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	task, err := module.EnsureCallFollowUp(ctx, tx, command)
+	if err != nil {
+		t.Fatalf("ensure Call follow-up: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit Task transaction: %v", err)
+	}
+	return task
+}
+
+func provisionStaff(
+	t *testing.T,
+	module *access.Module,
+	now time.Time,
+) (access.Authorization, access.Identity) {
+	t.Helper()
+	provisioned, err := module.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "slice-3-work-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "synthetic-practice",
+			Name: "Synthetic Practice",
+			Locations: []access.LocationProvision{
+				{Key: "synthetic-location-1", Name: "Synthetic Location 1"},
+				{Key: "synthetic-location-2", Name: "Synthetic Location 2"},
+			},
+			Invitations: []access.InvitationProvision{{
+				Key:           "synthetic-staff",
+				Email:         "staff@synthetic.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision Staff: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "synthetic-staff-subject",
+		Email:         "staff@synthetic.test",
+		EmailVerified: true,
+	}
+	authorization, err := module.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept Staff invitation: %v", err)
+	}
+	return authorization, identity
+}
+
+func insertCall(
+	t *testing.T,
+	pool interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
+	authorization access.Authorization,
+	now time.Time,
+) string {
+	t.Helper()
+	return insertCallAt(
+		t,
+		pool,
+		authorization,
+		authorization.Locations[0].ID,
+		"+15555550100",
+		"Confirm surgery instructions",
+		now,
+	)
+}
+
+func createTask(
+	t *testing.T,
+	pool interface {
+		BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
+	module *work.Module,
+	authorization access.Authorization,
+	locationID string,
+	phone string,
+	reason string,
+	now time.Time,
+) work.Task {
+	t.Helper()
+	callID := insertCallAt(
+		t,
+		pool,
+		authorization,
+		locationID,
+		phone,
+		reason,
+		now,
+	)
+	return ensureCallFollowUp(t, pool, module, work.EnsureCallFollowUpCommand{
+		CallID:     callID,
+		PracticeID: authorization.Practice.ID,
+		LocationID: locationID,
+		Phone:      phone,
+		Reason:     reason,
+		Creator:    authorization.Actor,
+	})
+}
+
+func insertCallAt(
+	t *testing.T,
+	pool interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
+	authorization access.Authorization,
+	locationID string,
+	phone string,
+	reason string,
+	now time.Time,
+) string {
+	t.Helper()
+	handoffID := uuid.NewString()
+	callID := uuid.NewString()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_handoffs (
+			id,
+			service_subject,
+			practice_id,
+			location_id,
+			source_call_id,
+			idempotency_key,
+			input_fingerprint,
+			token_hash,
+			phone,
+			phone_source,
+			display_name,
+			name_source,
+			transfer_reason,
+			reason_source,
+			expires_at,
+			consumed_at,
+			created_at
+		)
+		VALUES ($1, 'abita-synthetic', $2, $3, $4, $5, $6, $7,
+			$8, 'Abita', 'Synthetic Caller', 'Abita',
+			$9, 'Abita AI', $10, $11, $11)
+	`, handoffID, authorization.Practice.ID, locationID,
+		"source-"+callID, "idempotency-"+callID, []byte(callID),
+		[]byte("token-"+callID), phone, reason, now.Add(time.Minute), now,
+	); err != nil {
+		t.Fatalf("insert handoff fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_calls (
+			id,
+			handoff_id,
+			practice_id,
+			location_id,
+			state,
+			offer_deadline,
+			caller_call_control_id,
+			caller_call_leg_id,
+			call_session_id,
+			claimant_subject,
+			winner_subject,
+			claimant_session_id,
+			disposition_at,
+			connected_at,
+			ended_at,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'FOLLOW_UP_REQUIRED', $5,
+			$6, $7, $8, $9, $9, 'browser-session', $10, $10, $10, $10, $10)
+	`, callID, handoffID, authorization.Practice.ID, locationID,
+		now.Add(time.Minute), "control-"+callID, "leg-"+callID, "session-"+callID,
+		authorization.Actor.Subject,
+		now,
+	); err != nil {
+		t.Fatalf("insert Call fixture: %v", err)
+	}
+	return callID
+}
+
+func assertTaskIDs(t *testing.T, tasks []work.Task, expected ...string) {
+	t.Helper()
+	if len(tasks) != len(expected) {
+		t.Fatalf("Task count = %d, want %d: %#v", len(tasks), len(expected), tasks)
+	}
+	for index, task := range tasks {
+		if task.ID != expected[index] {
+			t.Fatalf("Task %d ID = %q, want %q", index, task.ID, expected[index])
+		}
+	}
+}

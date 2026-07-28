@@ -21,6 +21,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -172,6 +173,7 @@ func runAuthorizedHTTP(
 			Access:               accessModule,
 			Authenticator:        authenticator,
 			Calling:              calling,
+			Work:                 work.New(pool, accessModule, nil),
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {
