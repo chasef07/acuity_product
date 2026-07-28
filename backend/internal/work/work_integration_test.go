@@ -515,6 +515,86 @@ func TestPlatformOperatorReadsGloballyAndMutatesOnlyInCurrentSupportMode(t *test
 	if err != nil || renamed.CreatedBy.Subject != staffIdentity.Subject {
 		t.Fatalf("supported Task rename = %#v, err = %v", renamed, err)
 	}
+	completed, err := module.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity:         operator,
+			TaskID:           task.ID,
+			ExpectedVersion:  renamed.Version,
+			SupportSessionID: support.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("supported Task completion: %v", err)
+	}
+	reopened, err := module.ReopenTask(
+		context.Background(),
+		work.ReopenTaskCommand{
+			Identity:         operator,
+			TaskID:           task.ID,
+			ExpectedVersion:  completed.Version,
+			SupportSessionID: support.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("supported Task reopen: %v", err)
+	}
+
+	auditEvents, err := accessModule.AuditTrail(
+		context.Background(),
+		operator,
+		staff.Practice.ID,
+	)
+	if err != nil {
+		t.Fatalf("load supported Task audit trail: %v", err)
+	}
+	expectedVersions := map[string]int64{
+		"task.title_changed": renamed.Version,
+		"task.completed":     completed.Version,
+		"task.reopened":      reopened.Version,
+	}
+	for _, event := range auditEvents {
+		version, expected := expectedVersions[event.Action]
+		if !expected {
+			continue
+		}
+		if event.ActorSubject != operator.Subject ||
+			event.SupportSessionID != support.ID ||
+			event.Reason != support.Reason {
+			t.Fatalf("supported Task audit = %#v", event)
+		}
+		var resourceType string
+		var taskID string
+		var taskVersion int64
+		if err := pool.QueryRow(context.Background(), `
+			SELECT
+				details ->> 'resourceType',
+				details ->> 'resourceId',
+				(details ->> 'resourceVersion')::bigint
+			FROM access_audit_events
+			WHERE id = $1
+		`, event.ID).Scan(&resourceType, &taskID, &taskVersion); err != nil {
+			t.Fatalf("load supported Task audit details: %v", err)
+		}
+		if resourceType != "task" ||
+			taskID != task.ID ||
+			taskVersion != version {
+			t.Fatalf(
+				"supported Task audit details = (%q, %q, %d), want (%q, %q, %d)",
+				resourceType,
+				taskID,
+				taskVersion,
+				"task",
+				task.ID,
+				version,
+			)
+		}
+		delete(expectedVersions, event.Action)
+	}
+	if len(expectedVersions) != 0 {
+		t.Fatalf("missing supported Task audit actions = %#v", expectedVersions)
+	}
+
 	if err := accessModule.RevokeSupportMode(
 		context.Background(),
 		operator,
@@ -525,11 +605,112 @@ func TestPlatformOperatorReadsGloballyAndMutatesOnlyInCurrentSupportMode(t *test
 	_, err = module.CompleteTask(context.Background(), work.CompleteTaskCommand{
 		Identity:         operator,
 		TaskID:           task.ID,
-		ExpectedVersion:  renamed.Version,
+		ExpectedVersion:  reopened.Version,
 		SupportSessionID: support.ID,
 	})
 	if !errors.Is(err, access.ErrSupportRevoked) {
 		t.Fatalf("operator completion after Support revocation error = %v", err)
+	}
+}
+
+func TestSupportedTaskAuditFailureRollsBackMutation(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	staff, staffIdentity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := createTask(
+		t,
+		pool,
+		module,
+		staff,
+		staff.Locations[0].ID,
+		"+19855550200",
+		"Keep this title",
+		now,
+	)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO access_platform_operators (email)
+		VALUES ('operator@acuity.test')
+	`); err != nil {
+		t.Fatalf("provision rollback-test operator: %v", err)
+	}
+	operator := access.Identity{
+		Subject:       "rollback-test-operator",
+		Email:         "operator@acuity.test",
+		EmailVerified: true,
+	}
+	support, err := accessModule.EnterSupportMode(
+		context.Background(),
+		access.EnterSupportModeCommand{
+			Identity:   operator,
+			PracticeID: staff.Practice.ID,
+			Reason:     "Verify atomic Task audit",
+			Duration:   time.Hour,
+		},
+	)
+	if err != nil {
+		t.Fatalf("enter rollback-test Support Mode: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE FUNCTION reject_supported_task_audit()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'synthetic supported Task audit failure';
+		END
+		$$;
+
+		CREATE TRIGGER reject_supported_task_audit
+		BEFORE INSERT ON access_audit_events
+		FOR EACH ROW
+		WHEN (NEW.action LIKE 'task.%')
+		EXECUTE FUNCTION reject_supported_task_audit()
+	`); err != nil {
+		t.Fatalf("install supported Task audit failure: %v", err)
+	}
+
+	_, err = module.RenameTask(context.Background(), work.RenameTaskCommand{
+		Identity:         operator,
+		TaskID:           task.ID,
+		ExpectedVersion:  task.Version,
+		Title:            "Must roll back",
+		SupportSessionID: support.ID,
+	})
+	if err == nil {
+		t.Fatal("supported Task rename succeeded without its audit")
+	}
+	current, err := module.ReadTask(context.Background(), staffIdentity, task.ID)
+	if err != nil {
+		t.Fatalf("read Task after audit failure: %v", err)
+	}
+	if current.Title != task.Title || current.Version != task.Version {
+		t.Fatalf("Task after audit failure = %#v, want %#v", current, task)
+	}
+	var activityCount, auditCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(
+				SELECT count(*)
+				FROM work_task_activities
+				WHERE task_id = $1 AND task_version > $2
+			),
+			(
+				SELECT count(*)
+				FROM access_audit_events
+				WHERE action LIKE 'task.%'
+					AND details ->> 'resourceId' = $1::text
+			)
+	`, task.ID, task.Version).Scan(&activityCount, &auditCount); err != nil {
+		t.Fatalf("count rolled-back Task evidence: %v", err)
+	}
+	if activityCount != 0 || auditCount != 0 {
+		t.Fatalf(
+			"rolled-back Task evidence = (%d Activities, %d audits)",
+			activityCount,
+			auditCount,
+		)
 	}
 }
 

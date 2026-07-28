@@ -191,7 +191,7 @@ func (m *Module) RenameTask(
 	if err != nil {
 		return Task{}, err
 	}
-	actor, err := m.authorizeMutation(
+	authorization, err := m.authorizeMutation(
 		ctx,
 		tx,
 		command.Identity,
@@ -201,6 +201,7 @@ func (m *Module) RenameTask(
 	if err != nil {
 		return Task{}, err
 	}
+	actor := authorization.Actor
 	task, err = lockTask(ctx, tx, command.TaskID)
 	if err != nil {
 		return Task{}, err
@@ -232,6 +233,16 @@ func (m *Module) RenameTask(
 	); err != nil {
 		return Task{}, err
 	}
+	if err := m.auditSupportedMutation(
+		ctx,
+		tx,
+		authorization,
+		task,
+		"task.title_changed",
+		changedAt,
+	); err != nil {
+		return Task{}, err
+	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
 		return Task{}, err
 	}
@@ -259,7 +270,7 @@ func (m *Module) CompleteTask(
 	if err != nil {
 		return Task{}, err
 	}
-	actor, err := m.authorizeMutation(
+	authorization, err := m.authorizeMutation(
 		ctx,
 		tx,
 		command.Identity,
@@ -269,6 +280,7 @@ func (m *Module) CompleteTask(
 	if err != nil {
 		return Task{}, err
 	}
+	actor := authorization.Actor
 	task, err = lockTask(ctx, tx, command.TaskID)
 	if err != nil {
 		return Task{}, err
@@ -308,6 +320,16 @@ func (m *Module) CompleteTask(
 	); err != nil {
 		return Task{}, err
 	}
+	if err := m.auditSupportedMutation(
+		ctx,
+		tx,
+		authorization,
+		task,
+		"task.completed",
+		completedAt,
+	); err != nil {
+		return Task{}, err
+	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
 		return Task{}, err
 	}
@@ -335,7 +357,7 @@ func (m *Module) ReopenTask(
 	if err != nil {
 		return Task{}, err
 	}
-	actor, err := m.authorizeMutation(
+	authorization, err := m.authorizeMutation(
 		ctx,
 		tx,
 		command.Identity,
@@ -345,6 +367,7 @@ func (m *Module) ReopenTask(
 	if err != nil {
 		return Task{}, err
 	}
+	actor := authorization.Actor
 	task, err = lockTask(ctx, tx, command.TaskID)
 	if err != nil {
 		return Task{}, err
@@ -380,6 +403,16 @@ func (m *Module) ReopenTask(
 		task,
 		"TASK_REOPENED",
 		actor,
+		reopenedAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if err := m.auditSupportedMutation(
+		ctx,
+		tx,
+		authorization,
+		task,
+		"task.reopened",
 		reopenedAt,
 	); err != nil {
 		return Task{}, err
@@ -654,7 +687,7 @@ func (m *Module) authorizeMutation(
 	identity access.Identity,
 	task Task,
 	supportSessionID string,
-) (access.Actor, error) {
+) (access.Authorization, error) {
 	authorization, err := m.access.LockMutationAuthorization(
 		ctx,
 		tx,
@@ -668,11 +701,33 @@ func (m *Module) authorizeMutation(
 			errors.Is(err, access.ErrSupportExpired) ||
 			errors.Is(err, access.ErrSupportRevoked) ||
 			errors.Is(err, access.ErrSupportPracticeMismatch) {
-			return access.Actor{}, err
+			return access.Authorization{}, err
 		}
-		return access.Actor{}, ErrDenied
+		return access.Authorization{}, ErrDenied
 	}
-	return authorization.Actor, nil
+	return authorization, nil
+}
+
+func (m *Module) auditSupportedMutation(
+	ctx context.Context,
+	tx pgx.Tx,
+	authorization access.Authorization,
+	task Task,
+	action string,
+	occurredAt time.Time,
+) error {
+	return m.access.AuditSupportedMutation(
+		ctx,
+		tx,
+		authorization,
+		access.SupportedMutationAudit{
+			Action:          action,
+			ResourceType:    "task",
+			ResourceID:      task.ID,
+			ResourceVersion: task.Version,
+			OccurredAt:      occurredAt,
+		},
+	)
 }
 
 func appendActivity(
