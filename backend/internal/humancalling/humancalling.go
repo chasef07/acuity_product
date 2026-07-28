@@ -84,7 +84,8 @@ const (
 )
 
 type Config struct {
-	SIPDomain              string
+	HandoffSIPDomain       string
+	StaffSIPDomain         string
 	OfferDuration          time.Duration
 	ConnectionTimeout      time.Duration
 	HandoffLifetime        time.Duration
@@ -320,6 +321,9 @@ func New(
 	if config.WebhookTolerance <= 0 {
 		config.WebhookTolerance = 5 * time.Minute
 	}
+	if config.StaffSIPDomain == "" {
+		config.StaffSIPDomain = config.HandoffSIPDomain
+	}
 	tokenKey := append([]byte(nil), config.HandoffTokenKey...)
 	if len(tokenKey) == 0 {
 		tokenKey = make([]byte, 32)
@@ -341,7 +345,7 @@ func (m *Module) CreateHandoff(
 	ctx context.Context,
 	command CreateHandoffCommand,
 ) (Handoff, error) {
-	if err := validateHandoff(command, m.config.SIPDomain); err != nil {
+	if err := validateHandoff(command, m.config.HandoffSIPDomain); err != nil {
 		return Handoff{}, err
 	}
 	fingerprint, err := handoffFingerprint(command)
@@ -1620,7 +1624,7 @@ func (m *Module) AcceptOffer(
 	acceptedAt := m.now()
 	connectionDeadline := acceptedAt.Add(m.config.ConnectionTimeout)
 	payload := map[string]any{
-		"to":                    managedSIPDestination(sipUsername, m.config.SIPDomain),
+		"to":                    managedSIPDestination(sipUsername, m.config.StaffSIPDomain),
 		"connection_id":         m.config.CallControlID,
 		"from":                  m.config.FromNumber,
 		"link_to":               "",
@@ -5009,7 +5013,7 @@ func (m *Module) handoffToken(handoffID string) string {
 }
 
 func (m *Module) sipDestination(handoffID string) string {
-	return "sip:" + m.handoffToken(handoffID) + "@" + m.config.SIPDomain
+	return "sip:" + m.handoffToken(handoffID) + "@" + m.config.HandoffSIPDomain
 }
 
 func tokenFromDestination(destination string) (string, error) {

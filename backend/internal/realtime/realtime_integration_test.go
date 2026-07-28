@@ -175,8 +175,8 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		accessModule,
 		realtimeCallingProvider{},
 		humancalling.Config{
-			SIPDomain:       "synthetic.sip.telnyx.com",
-			HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		},
 		func() time.Time { return now },
 	)

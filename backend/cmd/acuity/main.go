@@ -265,7 +265,8 @@ func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
 
 func humanCallingConfig(config app.Config) humancalling.Config {
 	return humancalling.Config{
-		SIPDomain:              config.HumanCalling.SIPDomain,
+		HandoffSIPDomain:       config.HumanCalling.HandoffSIPDomain,
+		StaffSIPDomain:         config.HumanCalling.StaffSIPDomain,
 		OfferDuration:          config.HumanCalling.OfferDuration,
 		ConnectionTimeout:      config.HumanCalling.ConnectionTimeout,
 		HandoffTokenKey:        config.HumanCalling.HandoffTokenKey,

@@ -24,10 +24,11 @@ func TestAuthenticatedHandoffCreatesOneCurrentOffer(t *testing.T) {
 	authorization, identity := provisionStaff(t, accessModule, now)
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		OfferDuration:   20 * time.Second,
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket: "synthetic-recordings",
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		StaffSIPDomain:   "sip.telnyx.com",
+		OfferDuration:    20 * time.Second,
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		RecordingBucket:  "synthetic-recordings",
 	}, func() time.Time { return now })
 
 	command := humancalling.CreateHandoffCommand{
@@ -114,8 +115,8 @@ func TestConcurrentHandoffRetriesReplayTheCommittedIdentity(t *testing.T) {
 		accessModule,
 		&recordingProvider{},
 		humancalling.Config{
-			SIPDomain:       "synthetic.sip.telnyx.com",
-			HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		},
 		func() time.Time { return now },
 	)
@@ -169,8 +170,8 @@ func TestSoftphoneLeaseRequiresExplicitTakeover(t *testing.T) {
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, identity := provisionStaff(t, accessModule, now)
 	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 	}, func() time.Time { return now })
 
 	first, err := calling.AcquireSoftphone(
@@ -597,10 +598,11 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		OfferDuration:   20 * time.Second,
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket: "synthetic-recordings",
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		StaffSIPDomain:   "sip.telnyx.com",
+		OfferDuration:    20 * time.Second,
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		RecordingBucket:  "synthetic-recordings",
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -719,7 +721,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		if command.Action == humancalling.CommandDialStaff {
 			destination, _ := command.Payload["to"].(string)
 			if !strings.HasPrefix(destination, "sip:sip-acuity-") ||
-				!strings.HasSuffix(destination, "@synthetic.sip.telnyx.com") {
+				!strings.HasSuffix(destination, "@sip.telnyx.com") {
 				provider.mu.Unlock()
 				t.Fatalf("Dial destination = %q", destination)
 			}
@@ -1415,10 +1417,10 @@ func TestDelayedHistoricalWinnerDoesNotConflictWithANewerActiveCall(t *testing.T
 		{CallControlID: "historical-a2-control", CallLegID: "historical-a2-leg"},
 	}}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		OfferDuration:   20 * time.Second,
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket: "synthetic-recordings",
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		OfferDuration:    20 * time.Second,
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		RecordingBucket:  "synthetic-recordings",
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	for index, identity := range identities {
@@ -1603,7 +1605,7 @@ func TestOperationalUserGetsOneManagedCredentialAndLeaseBoundJWT(t *testing.T) {
 	_, identity := provisionStaff(t, accessModule, now)
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -1703,7 +1705,7 @@ func TestMediaJWTIssuanceRejectsConcurrentMembershipRevocation(t *testing.T) {
 	}
 	t.Cleanup(release)
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -1781,7 +1783,7 @@ func TestMediaJWTIssuanceRejectsConcurrentPlatformOperatorPromotion(t *testing.T
 	}
 	t.Cleanup(release)
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -1865,7 +1867,7 @@ func TestConcurrentMediaJWTIssuanceCompletesWithOnePoolConnection(t *testing.T) 
 	_, identity := provisionStaff(t, accessModule, now)
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -1908,7 +1910,7 @@ func TestPlatformOperatorPromotionRevokesOperationalCalling(t *testing.T) {
 	authorization, identity := provisionStaff(t, accessModule, now)
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -2032,7 +2034,7 @@ func TestDefinitiveCredentialDisableFailureIsRetriedWhileAccessIsRevoked(t *test
 		},
 	}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -2080,8 +2082,8 @@ func TestReauthorizationFencesPendingAndAmbiguousCredentialDisable(t *testing.T)
 	_, identity := provisionStaff(t, accessModule, now)
 	provider := &reauthorizationProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	setAuthorized := func(authorized bool) {
@@ -2207,7 +2209,7 @@ func TestMediaJWTRejectsProviderResultsOutsideTheBrowserSafetyBoundary(t *testin
 				accessModule,
 				provider,
 				humancalling.Config{
-					SIPDomain:              "synthetic.sip.telnyx.com",
+					HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 					HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 					CredentialConnectionID: "credential-connection-1",
 				},
@@ -2246,7 +2248,7 @@ func TestAmbiguousCredentialWritesReconcileThroughProviderState(t *testing.T) {
 	_, identity := provisionStaff(t, accessModule, now)
 	provider := &credentialRecoveryProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:              "synthetic.sip.telnyx.com",
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
@@ -2314,8 +2316,8 @@ func TestPlatformOperatorReadsOnlyTheSanitizedDurableTimeline(t *testing.T) {
 	authorization, _ := provisionStaff(t, accessModule, now)
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 	}, func() time.Time { return now })
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
@@ -2596,8 +2598,8 @@ func TestHistoricalBridgeCannotRegressADispositionedCall(t *testing.T) {
 		accessModule,
 		&recordingProvider{},
 		humancalling.Config{
-			SIPDomain:       "synthetic.sip.telnyx.com",
-			HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		},
 		func() time.Time { return now.Add(time.Hour) },
 	)
@@ -3056,10 +3058,11 @@ func readyOfferAt(
 	accessModule := access.New(pool, clock)
 	authorization, identity := provisionStaff(t, accessModule, now)
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		SIPDomain:       "synthetic.sip.telnyx.com",
-		OfferDuration:   20 * time.Second,
-		HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket: "synthetic-recordings",
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		StaffSIPDomain:   "sip.telnyx.com",
+		OfferDuration:    20 * time.Second,
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		RecordingBucket:  "synthetic-recordings",
 	}, clock)
 	prepareCredentials(t, calling)
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{

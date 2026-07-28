@@ -34,7 +34,10 @@ The vertical path is:
 6. Accepting rechecks all authority and readiness under the PostgreSQL Call
    lock. One claimant commits one Dial intent. Other Users receive a committed
    claimed result and no provider leg.
-7. The selected browser auto-answers only the TelnyxRTC leg whose opaque
+7. The Dial targets the selected User's managed Telnyx credential at
+   `sip.telnyx.com`; the Call Control application's custom SIP subdomain is
+   reserved for inbound Abita handoff admission. The selected browser
+   auto-answers only the TelnyxRTC leg whose opaque
    `client_state` names that accepted Call and the staff-leg version.
 8. Only the matching signed `call.bridged` fact marks the Call Connected and
    commits dual-channel recording intent. Provider-confirmed termination moves

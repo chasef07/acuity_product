@@ -26,7 +26,7 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		t.Fatal(err)
 	}
 	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
-		SIPDomain:        "synthetic.sip.telnyx.com",
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		RecordingBucket:  "synthetic-recordings",
@@ -317,7 +317,7 @@ func TestWaitingProviderReceiptIsAttachedToOperatorTimeline(t *testing.T) {
 		accessModule,
 		&recordingProvider{},
 		humancalling.Config{
-			SIPDomain:        "synthetic.sip.telnyx.com",
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
 			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 			WebhookPublicKey: publicKey,
 			WebhookTolerance: 5 * time.Minute,

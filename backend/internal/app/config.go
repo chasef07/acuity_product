@@ -37,7 +37,8 @@ type Config struct {
 }
 
 type HumanCallingConfig struct {
-	SIPDomain              string
+	HandoffSIPDomain       string
+	StaffSIPDomain         string
 	HandoffTokenKey        []byte
 	HandoffServiceToken    string
 	HandoffServiceSubject  string
@@ -149,7 +150,13 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 	var result HumanCallingConfig
 	var err error
-	if result.SIPDomain, err = required(getenv, "HUMAN_CALLING_SIP_DOMAIN"); err != nil {
+	if result.HandoffSIPDomain, err = required(getenv, "HUMAN_CALLING_SIP_DOMAIN"); err != nil {
+		return HumanCallingConfig{}, err
+	}
+	if result.StaffSIPDomain, err = required(
+		getenv,
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN",
+	); err != nil {
 		return HumanCallingConfig{}, err
 	}
 	if result.HandoffTokenKey, err = requiredBase64Key(
