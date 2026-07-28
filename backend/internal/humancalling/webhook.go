@@ -189,7 +189,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 					AND processing_started_at <= $1 - interval '30 seconds'
 				)
 			)
-		ORDER BY received_at, event_id
+		ORDER BY next_attempt_at, received_at, event_id
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`, m.now()).Scan(&eventID, &eventType, &raw, &receivedAt)

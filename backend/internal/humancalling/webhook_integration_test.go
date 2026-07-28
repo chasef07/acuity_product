@@ -244,6 +244,102 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	}
 }
 
+func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		OfferDuration:    20 * time.Second,
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		WebhookPublicKey: publicKey,
+		WebhookTolerance: 5 * time.Minute,
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	if _, err := calling.AcquireSoftphone(
+		context.Background(),
+		identity,
+		"non-starved-browser",
+		false,
+	); err != nil {
+		t.Fatalf("acquire softphone: %v", err)
+	}
+	if _, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity:        identity,
+		SessionID:       "non-starved-browser",
+		Registered:      true,
+		MicrophoneReady: true,
+		AudioReady:      true,
+		SessionHealthy:  true,
+		Available:       true,
+	}); err != nil {
+		t.Fatalf("set readiness: %v", err)
+	}
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject:    "abita-non-starved-handoff",
+			PracticeID: authorization.Practice.ID,
+		},
+		LocationID:     authorization.Locations[0].ID,
+		SourceCallID:   "non-starved-source",
+		IdempotencyKey: "non-starved-idempotency",
+		Contact: humancalling.ContactContext{
+			DisplayName: "Non-starved Caller",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create handoff: %v", err)
+	}
+	handoffToken := strings.SplitN(
+		strings.TrimPrefix(handoff.SIPDestination, "sip:"),
+		"@",
+		2,
+	)[0]
+	receive := func(raw []byte) {
+		t.Helper()
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(),
+			raw,
+			timestamp,
+			signature,
+		); err != nil {
+			t.Fatalf("receive webhook: %v", err)
+		}
+	}
+	receive([]byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"waiting-before-handoff","occurred_at":"%s","payload":{"call_control_id":"waiting-control","call_leg_id":"waiting-leg","call_session_id":"waiting-session"}}}`,
+		now.Format(time.RFC3339Nano),
+	)))
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process waiting receipt: processed=%t err=%v", processed, err)
+	}
+
+	now = now.Add(500 * time.Millisecond)
+	receive([]byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"new-handoff-behind-retry","occurred_at":"%s","payload":{"call_control_id":"new-handoff-control","call_leg_id":"new-handoff-leg","call_session_id":"new-handoff-session","custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]}}}`,
+		now.Format(time.RFC3339Nano),
+		handoffToken,
+	)))
+	now = now.Add(600 * time.Millisecond)
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process new handoff receipt: processed=%t err=%v", processed, err)
+	}
+	offers, err := calling.ListOffers(context.Background(), identity)
+	if err != nil || len(offers) != 1 || offers[0].DisplayName != "Non-starved Caller" {
+		t.Fatalf("new handoff offer = %#v, err = %v", offers, err)
+	}
+}
+
 func TestIrreparableKnownWebhookReceiptFailsPermanently(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
