@@ -14,8 +14,42 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestHandoffRequiresCanonicalE164Phone(t *testing.T) {
+	calling := humancalling.New(
+		nil,
+		nil,
+		nil,
+		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		},
+		nil,
+	)
+	for _, phone := range []string{"", "985-555-0100", "+0123456789", "+1555 555 0100"} {
+		_, err := calling.CreateHandoff(
+			context.Background(),
+			humancalling.CreateHandoffCommand{
+				Service: humancalling.ServiceIdentity{
+					Subject:    "abita-synthetic",
+					PracticeID: "00000000-0000-0000-0000-000000000001",
+				},
+				LocationID:     "00000000-0000-0000-0000-000000000002",
+				SourceCallID:   "source-call",
+				IdempotencyKey: "idempotency-key",
+				Contact: humancalling.ContactContext{
+					Phone: phone,
+				},
+			},
+		)
+		if !errors.Is(err, humancalling.ErrInvalidInput) {
+			t.Fatalf("phone %q error = %v, want invalid input", phone, err)
+		}
+	}
+}
 
 func TestAuthenticatedHandoffCreatesOneCurrentOffer(t *testing.T) {
 	pool := testdb.Open(t)
@@ -105,6 +139,422 @@ func TestAuthenticatedHandoffCreatesOneCurrentOffer(t *testing.T) {
 	}
 }
 
+func TestFollowUpDispositionAtomicallyCreatesAndReplaysOneTask(t *testing.T) {
+	calling, identity, offer := readyOffer(
+		t,
+		&recordingProvider{},
+		"follow-up-disposition",
+	)
+	sessionID := "follow-up-disposition-browser"
+	if _, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		sessionID,
+		offer.ID,
+	); err != nil {
+		t.Fatalf("accept follow-up Call: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open follow-up observer pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	endedAt := time.Date(2026, time.July, 27, 12, 0, 10, 0, time.UTC)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET
+			state = 'NEEDS_DISPOSITION',
+			winner_subject = claimant_subject,
+			connected_at = $2,
+			ended_at = $2,
+			updated_at = $2
+		WHERE id = $1
+	`, offer.ID, endedAt); err != nil {
+		t.Fatalf("prepare provider-terminated Call: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan humancalling.DispositionResult, 2)
+	foundErrors := make(chan error, 2)
+	var group sync.WaitGroup
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			result, err := calling.RecordDisposition(
+				context.Background(),
+				identity,
+				sessionID,
+				offer.ID,
+				humancalling.DispositionFollowUpRequired,
+			)
+			if err != nil {
+				foundErrors <- err
+				return
+			}
+			results <- result
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+	close(foundErrors)
+	for err := range foundErrors {
+		t.Fatalf("create concurrent follow-up disposition: %v", err)
+	}
+	committed := make([]humancalling.DispositionResult, 0, 2)
+	for result := range results {
+		committed = append(committed, result)
+	}
+	if len(committed) != 2 {
+		t.Fatalf("concurrent follow-up results = %#v", committed)
+	}
+	first, replayed := committed[0], committed[1]
+	if first.Call.State != humancalling.CallFollowUpRequired ||
+		first.TaskID == "" {
+		t.Fatalf("follow-up disposition = %#v", first)
+	}
+	if replayed.TaskID != first.TaskID ||
+		replayed.Call.State != humancalling.CallFollowUpRequired {
+		t.Fatalf("replayed follow-up disposition = %#v, want %#v", replayed, first)
+	}
+
+	accessModule := access.New(pool, nil)
+	task, err := work.New(pool, accessModule, nil).ReadTask(
+		context.Background(),
+		identity,
+		first.TaskID,
+	)
+	if err != nil {
+		t.Fatalf("read disposition Task: %v", err)
+	}
+	if task.CallID != offer.ID ||
+		task.State != work.TaskOpen ||
+		task.Phone != "+15555550100" ||
+		task.Title != "Recovery proof" {
+		t.Fatalf("disposition Task = %#v", task)
+	}
+	var taskCount, activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM work_tasks WHERE call_id = $1),
+			(SELECT count(*)
+			 FROM work_task_activities activity
+			 JOIN work_tasks task ON task.id = activity.task_id
+			 WHERE task.call_id = $1)
+	`, offer.ID).Scan(&taskCount, &activityCount); err != nil {
+		t.Fatalf("count disposition Task rows: %v", err)
+	}
+	if taskCount != 1 || activityCount != 1 {
+		t.Fatalf("Task rows = %d, Activity rows = %d, want 1 each", taskCount, activityCount)
+	}
+}
+
+func TestFollowUpTaskFailureLeavesCallNeedingDisposition(t *testing.T) {
+	calling, identity, offer := readyOffer(
+		t,
+		&recordingProvider{},
+		"follow-up-failure",
+	)
+	sessionID := "follow-up-failure-browser"
+	if _, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		sessionID,
+		offer.ID,
+	); err != nil {
+		t.Fatalf("accept failed follow-up Call: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open failed follow-up observer pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	endedAt := time.Date(2026, time.July, 27, 12, 0, 10, 0, time.UTC)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET
+			state = 'NEEDS_DISPOSITION',
+			winner_subject = claimant_subject,
+			connected_at = $2,
+			ended_at = $2,
+			updated_at = $2
+		WHERE id = $1
+	`, offer.ID, endedAt); err != nil {
+		t.Fatalf("prepare failed follow-up Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE FUNCTION fail_work_task_insert()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced Task insert failure';
+		END;
+		$$
+	`); err != nil {
+		t.Fatalf("create Task failure fixture: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE TRIGGER fail_work_task_insert
+		BEFORE INSERT ON work_tasks
+		FOR EACH ROW EXECUTE FUNCTION fail_work_task_insert()
+	`); err != nil {
+		t.Fatalf("install Task failure fixture: %v", err)
+	}
+
+	if _, err := calling.RecordDisposition(
+		context.Background(),
+		identity,
+		sessionID,
+		offer.ID,
+		humancalling.DispositionFollowUpRequired,
+	); err == nil {
+		t.Fatal("failed Task disposition unexpectedly succeeded")
+	}
+	var state humancalling.CallState
+	var taskCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT state FROM human_calling_calls WHERE id = $1),
+			(SELECT count(*) FROM work_tasks WHERE call_id = $1)
+	`, offer.ID).Scan(&state, &taskCount); err != nil {
+		t.Fatalf("read failed Task disposition state: %v", err)
+	}
+	if state != humancalling.CallNeedsDisposition || taskCount != 0 {
+		t.Fatalf("failed Task disposition state = %s, Task count = %d", state, taskCount)
+	}
+}
+
+func TestCallHistoryUsesExactPhoneAndCurrentAuthorizedLocations(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "slice-3-history-test",
+		Practices: []access.PracticeProvision{
+			{
+				Key:  "history-practice",
+				Name: "History Practice",
+				Locations: []access.LocationProvision{
+					{Key: "authorized-office", Name: "Authorized Office"},
+					{Key: "hidden-office", Name: "Hidden Office"},
+				},
+				Invitations: []access.InvitationProvision{{
+					Key:                  "history-staff",
+					Email:                "history@synthetic.test",
+					Role:                 access.RoleStaff,
+					LocationScope:        access.LocationScopeSelected,
+					SelectedLocationKeys: []string{"authorized-office"},
+					ExpiresAt:            now.Add(time.Hour),
+				}},
+			},
+			{
+				Key:       "other-practice",
+				Name:      "Other Practice",
+				Locations: []access.LocationProvision{{Key: "other-office", Name: "Other Office"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("provision history scope: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "history-staff-subject",
+		Email:         "history@synthetic.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept history invitation: %v", err)
+	}
+	var hiddenLocationID, otherPracticeID, otherLocationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_locations
+		WHERE provisioning_key = 'hidden-office'
+	`).Scan(&hiddenLocationID); err != nil {
+		t.Fatalf("read hidden Location: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.id::text, location.id::text
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'other-practice'
+	`).Scan(&otherPracticeID, &otherLocationID); err != nil {
+		t.Fatalf("read other Practice scope: %v", err)
+	}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		&recordingProvider{},
+		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		},
+		func() time.Time { return now },
+	)
+	admitHistoricalCall := func(
+		key string,
+		practiceID string,
+		locationID string,
+		phone string,
+		at time.Time,
+	) string {
+		t.Helper()
+		now = at
+		handoff, err := calling.CreateHandoff(
+			context.Background(),
+			humancalling.CreateHandoffCommand{
+				Service: humancalling.ServiceIdentity{
+					Subject:    "abita-history",
+					PracticeID: practiceID,
+				},
+				LocationID:     locationID,
+				SourceCallID:   key + "-source",
+				IdempotencyKey: key + "-idempotency",
+				Contact: humancalling.ContactContext{
+					Phone:          phone,
+					PhoneSource:    "Abita",
+					DisplayName:    "Shared Phone Caller",
+					NameSource:     "Abita",
+					TransferReason: key + " reason",
+					ReasonSource:   "Abita AI",
+				},
+			},
+		)
+		if err != nil {
+			t.Fatalf("create %s history handoff: %v", key, err)
+		}
+		if err := calling.ApplyProviderFact(
+			context.Background(),
+			humancalling.ProviderFact{
+				EventID:       key + "-event",
+				Type:          humancalling.FactCallInitiated,
+				OccurredAt:    at,
+				CallControlID: key + "-control",
+				CallLegID:     key + "-leg",
+				CallSessionID: key + "-session",
+				To:            handoff.SIPDestination,
+			},
+		); err != nil {
+			t.Fatalf("admit %s history Call: %v", key, err)
+		}
+		var callID string
+		if err := pool.QueryRow(context.Background(), `
+			UPDATE human_calling_calls
+			SET
+				state = 'RESOLVED',
+				claimant_subject = $2,
+				winner_subject = $2,
+				claimant_session_id = 'history-browser',
+				connected_at = $3,
+				ended_at = $4,
+				disposition_actor_subject = $2,
+				disposition_at = $4,
+				updated_at = $4
+			WHERE caller_call_control_id = $1
+			RETURNING id::text
+		`, key+"-control", identity.Subject, at.Add(10*time.Second),
+			at.Add(70*time.Second),
+		).Scan(&callID); err != nil {
+			t.Fatalf("finish %s history Call: %v", key, err)
+		}
+		return callID
+	}
+	phone := "+19855550100"
+	oldest := admitHistoricalCall(
+		"oldest",
+		authorization.Practice.ID,
+		authorization.Locations[0].ID,
+		phone,
+		now,
+	)
+	middle := admitHistoricalCall(
+		"middle",
+		authorization.Practice.ID,
+		authorization.Locations[0].ID,
+		phone,
+		now.Add(time.Minute),
+	)
+	newest := admitHistoricalCall(
+		"newest",
+		authorization.Practice.ID,
+		authorization.Locations[0].ID,
+		phone,
+		now.Add(2*time.Minute),
+	)
+	_ = admitHistoricalCall(
+		"hidden-location",
+		authorization.Practice.ID,
+		hiddenLocationID,
+		phone,
+		now.Add(3*time.Minute),
+	)
+	_ = admitHistoricalCall(
+		"other-phone",
+		authorization.Practice.ID,
+		authorization.Locations[0].ID,
+		"+19855550199",
+		now.Add(4*time.Minute),
+	)
+	_ = admitHistoricalCall(
+		"other-practice",
+		otherPracticeID,
+		otherLocationID,
+		phone,
+		now.Add(5*time.Minute),
+	)
+
+	first, err := calling.QueryCallHistory(
+		context.Background(),
+		humancalling.CallHistoryQuery{
+			Identity:          identity,
+			PracticeID:        authorization.Practice.ID,
+			Phone:             phone,
+			OriginatingCallID: newest,
+			Limit:             2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query newest Call history: %v", err)
+	}
+	if len(first.Items) != 2 ||
+		first.Items[0].ID != middle ||
+		first.Items[1].ID != newest ||
+		!first.Items[1].Originating ||
+		first.Items[1].DurationSeconds != 60 ||
+		first.Items[1].AnsweredByEmail != identity.Email ||
+		first.NextCursor == "" {
+		t.Fatalf("newest Call history = %#v", first)
+	}
+	older, err := calling.QueryCallHistory(
+		context.Background(),
+		humancalling.CallHistoryQuery{
+			Identity:          identity,
+			PracticeID:        authorization.Practice.ID,
+			Phone:             phone,
+			OriginatingCallID: newest,
+			Cursor:            first.NextCursor,
+			Limit:             2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query older Call history: %v", err)
+	}
+	if len(older.Items) != 1 ||
+		older.Items[0].ID != oldest ||
+		older.NextCursor != "" {
+		t.Fatalf("older Call history = %#v", older)
+	}
+}
+
 func TestConcurrentHandoffRetriesReplayTheCommittedIdentity(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
@@ -129,6 +579,7 @@ func TestConcurrentHandoffRetriesReplayTheCommittedIdentity(t *testing.T) {
 		SourceCallID:   "concurrent-handoff-source",
 		IdempotencyKey: "concurrent-handoff-idempotency",
 		Contact: humancalling.ContactContext{
+			Phone:       "+15555550100",
 			DisplayName: "Concurrent Handoff",
 			NameSource:  "Abita",
 		},
@@ -874,7 +1325,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record disposition: %v", err)
 	}
-	if resolved.State != humancalling.CallResolved {
+	if resolved.Call.State != humancalling.CallResolved {
 		t.Fatalf("resolved Call = %#v", resolved)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -1470,6 +1921,7 @@ func TestDelayedHistoricalWinnerDoesNotConflictWithANewerActiveCall(t *testing.T
 			SourceCallID:   key + "-source",
 			IdempotencyKey: key + "-idempotency",
 			Contact: humancalling.ContactContext{
+				Phone:          "+15555550100",
 				DisplayName:    key,
 				NameSource:     "Abita",
 				TransferReason: "Historical winner proof",
@@ -1942,6 +2394,9 @@ func TestPlatformOperatorPromotionRevokesOperationalCalling(t *testing.T) {
 		LocationID:     authorization.Locations[0].ID,
 		SourceCallID:   "operator-promotion-source",
 		IdempotencyKey: "operator-promotion-idempotency",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100",
+		},
 	})
 	if err != nil {
 		t.Fatalf("create operator promotion handoff: %v", err)
@@ -2346,6 +2801,9 @@ func TestPlatformOperatorReadsOnlyTheSanitizedDurableTimeline(t *testing.T) {
 		LocationID:     authorization.Locations[0].ID,
 		SourceCallID:   "operator-timeline-source",
 		IdempotencyKey: "operator-timeline-idempotency",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100",
+		},
 	})
 	if err != nil {
 		t.Fatalf("create operator timeline handoff: %v", err)
@@ -2630,6 +3088,9 @@ func TestHistoricalBridgeCannotRegressADispositionedCall(t *testing.T) {
 		LocationID:     authorization.Locations[0].ID,
 		SourceCallID:   "terminal-bridge-source",
 		IdempotencyKey: "terminal-bridge-idempotency",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100",
+		},
 	})
 	if err != nil {
 		t.Fatalf("create terminal bridge handoff: %v", err)

@@ -28,6 +28,7 @@ import {
 } from "@/lib/api/generated/sdk.gen"
 import type {
   CallingCall,
+  CallingDispositionResult,
   CallingOffer,
   OperatorCallingTimeline,
   SoftphoneState,
@@ -45,6 +46,8 @@ type CallingDockProps = {
   platformOperator: boolean
   hint: number
   onOffersChanged: (offers: CallingOffer[]) => void
+  onCallChanged: (call: CallingCall | undefined) => void
+  onDisposition: (result: CallingDispositionResult) => void
 }
 
 const sessionStorageKey = "acuity.callingSession"
@@ -55,6 +58,8 @@ export function CallingDock({
   platformOperator,
   hint,
   onOffersChanged,
+  onCallChanged,
+  onDisposition,
 }: CallingDockProps) {
   const [sessionID] = useState(browserSessionID)
   const [lease, setLease] = useState<SoftphoneState>()
@@ -92,6 +97,9 @@ export function CallingDock({
   useEffect(() => {
     onOffersChanged(offers)
   }, [offers, onOffersChanged])
+  useEffect(() => {
+    onCallChanged(activeCall)
+  }, [activeCall, onCallChanged])
   useEffect(
     () => () => {
       onOffersChanged([])
@@ -666,6 +674,7 @@ export function CallingDock({
       setError("The Call disposition could not be recorded.")
       return
     }
+    onDisposition(result.data)
     setActiveCall(undefined)
     setExpectedCallID("")
     expectedCallRef.current = ""
@@ -687,11 +696,11 @@ export function CallingDock({
   return (
     <section
       aria-label="Call Center"
-      className="border-b border-amber-300/50 bg-amber-50/70 px-4 py-2 dark:border-amber-900 dark:bg-amber-950/30"
+      className="border-b bg-muted/20 px-4 py-2"
     >
       <audio id="acuity-calling-remote-audio" autoPlay className="hidden" />
       <div className="flex min-h-9 flex-wrap items-center gap-2">
-        <HeadphonesIcon className="size-4 text-amber-700 dark:text-amber-400" />
+        <HeadphonesIcon className="size-4 text-primary" />
         <span className="text-xs font-semibold uppercase tracking-[0.16em]">
           Call Center
         </span>
@@ -914,7 +923,7 @@ function ActiveCallControls({
     call.state === "RESOLVED" || call.state === "FOLLOW_UP_REQUIRED"
   const closedWithoutDisposition = call.state === "UNANSWERED"
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-300/60 bg-background px-3 py-2 dark:border-amber-900">
+    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2">
       <Badge variant={call.state === "CONNECTED" ? "secondary" : "outline"}>
         {callStateLabel(call.state)}
       </Badge>
@@ -966,7 +975,7 @@ function ActiveCallControls({
             variant="outline"
             onClick={() => onDispose("FOLLOW_UP_REQUIRED")}
           >
-            Follow-up required
+            Create task
           </Button>
         </>
       )}
@@ -1025,7 +1034,7 @@ function callStateLabel(state: CallingCall["state"]) {
     case "RESOLVED":
       return "Resolved"
     case "FOLLOW_UP_REQUIRED":
-      return "Follow-up required"
+      return "Follow-up created"
   }
 }
 

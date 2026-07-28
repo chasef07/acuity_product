@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises"
-import { spawn, type ChildProcess } from "node:child_process"
+import { readFile, writeFile } from "node:fs/promises"
+import { spawn } from "node:child_process"
 
 import { expect, test, type Page } from "@playwright/test"
 
@@ -11,12 +11,8 @@ const portalURL =
 const realtimeURL =
   process.env.E2E_REALTIME_URL ?? "http://127.0.0.1:18081"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
-let replacementRealtime: ChildProcess | undefined
-
-test.afterEach(() => {
-  replacementRealtime?.kill("SIGKILL")
-  replacementRealtime = undefined
-})
+const replacementRealtimePIDFile =
+  process.env.E2E_REALTIME_REPLACEMENT_PID_FILE
 
 test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async ({
   browser,
@@ -77,8 +73,8 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await page.getByLabel("Password").fill("fixture-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
     await expect(page).toHaveURL(/\/workspace$/)
-    await expect(page.getByText("No tasks yet")).toBeVisible()
-    await expect(page.getByText("Abita Eye Group · Fixture Location 1")).toBeVisible()
+    await expect(page.getByText("No follow-up tasks")).toBeVisible()
+    await expect(page.getByText("Abita Eye Group · All offices")).toBeVisible()
     await expect(page.getByText("Live")).toBeVisible()
   })
 
@@ -111,7 +107,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
   const secondCustomerPage = await secondCustomerContext.newPage()
   await abortFirstRealtimeRequest(secondCustomerPage)
   await secondCustomerPage.goto("/workspace")
-  await expect(secondCustomerPage.getByText("No tasks yet")).toBeVisible()
+  await expect(secondCustomerPage.getByText("No follow-up tasks")).toBeVisible()
   await expect(secondCustomerPage.getByText("Live")).toBeVisible()
   const initialVersion = Number(
     await page.getByTestId("mounted-workspace").getAttribute(
@@ -141,7 +137,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await expect(page.getByText("Disconnected")).toBeVisible()
     await expect(secondCustomerPage.getByText("Disconnected")).toBeVisible()
 
-    replacementRealtime = spawn(runtimeBinary!, [], {
+    const replacementRealtime = spawn(runtimeBinary!, [], {
       env: {
         ...process.env,
         ACUITY_RUNTIME_ROLE: "realtime",
@@ -161,6 +157,14 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
       },
       stdio: "ignore",
     })
+    expect(replacementRealtime.pid).toBeTruthy()
+    expect(replacementRealtimePIDFile).toBeTruthy()
+    await writeFile(
+      replacementRealtimePIDFile!,
+      String(replacementRealtime.pid),
+      "utf8",
+    )
+    replacementRealtime.unref()
 
     await expect(page.getByText("Live")).toBeVisible()
     await expect(secondCustomerPage.getByText("Live")).toBeVisible()
@@ -192,7 +196,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await operatorPage.getByLabel("Email").fill("founder@acuity.test")
     await operatorPage.getByLabel("Password").fill("operator-password-1234")
     await operatorPage.getByRole("button", { name: "Sign in" }).click()
-    await expect(operatorPage.getByText("No tasks yet")).toBeVisible()
+    await expect(operatorPage.getByText("No follow-up tasks")).toBeVisible()
 
     await operatorPage
       .getByRole("button", { name: "Enter Support Mode" })
@@ -207,6 +211,9 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await expect(
       operatorPage.getByText("Validate Slice 1 browser workflow"),
     ).toBeVisible()
+    await operatorPage.getByLabel("Location").selectOption({
+      label: "Fixture Location 1",
+    })
 
     const operatorToken = await accessToken(operatorPage)
     const snapshotResponse = await operatorPage.request.get(
@@ -283,7 +290,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await page.getByLabel("Email").fill("admin@abita.test")
     await page.getByLabel("Password").fill("updated-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
-    await expect(page.getByText("No tasks yet")).toBeVisible()
+    await expect(page.getByText("No follow-up tasks")).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
       fullPage: true,
@@ -305,7 +312,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     })
     const coarsePage = await coarseContext.newPage()
     await coarsePage.goto("/workspace")
-    await expect(coarsePage.getByText("No tasks yet")).toBeVisible()
+    await expect(coarsePage.getByText("No follow-up tasks")).toBeVisible()
     await expect(coarsePage.getByLabel("Practice")).toBeVisible()
     await coarsePage.screenshot({
       path: testInfo.outputPath("workspace-coarse-pointer.png"),

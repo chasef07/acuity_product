@@ -699,6 +699,130 @@ func (m *Module) LockMembershipAuthorization(
 	return authorization, nil
 }
 
+// LockMutationAuthorization resolves current customer-data mutation authority
+// inside a caller-owned transaction. Practice Users use their current
+// Membership; Platform Operators additionally require active Support Mode.
+func (m *Module) LockMutationAuthorization(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	practiceID string,
+	locationID string,
+	supportSessionID string,
+) (Authorization, error) {
+	if tx == nil ||
+		!identity.EmailVerified ||
+		strings.TrimSpace(identity.Subject) == "" ||
+		strings.TrimSpace(practiceID) == "" ||
+		strings.TrimSpace(locationID) == "" {
+		return Authorization{}, ErrDenied
+	}
+	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if !isOperator {
+		return m.LockMembershipAuthorization(
+			ctx,
+			tx,
+			identity,
+			practiceID,
+			locationID,
+		)
+	}
+	if supportSessionID == "" {
+		return Authorization{}, ErrSupportRequired
+	}
+	if _, err := m.authorizeSupportMutation(
+		ctx,
+		tx,
+		identity,
+		practiceID,
+		supportSessionID,
+	); err != nil {
+		return Authorization{}, err
+	}
+	authorization, err := loadOperatorAuthorization(
+		ctx,
+		tx,
+		identity,
+		operatorID,
+		practiceID,
+		m.now(),
+	)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if err := selectRequestedLocation(&authorization, locationID); err != nil {
+		return Authorization{}, err
+	}
+	return authorization, nil
+}
+
+// LockReadAuthorization resolves current read authority inside a caller-owned
+// transaction so revocation cannot race the protected query.
+func (m *Module) LockReadAuthorization(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	practiceID string,
+	locationID string,
+) (Authorization, error) {
+	if tx == nil ||
+		!identity.EmailVerified ||
+		strings.TrimSpace(identity.Subject) == "" ||
+		strings.TrimSpace(practiceID) == "" {
+		return Authorization{}, ErrDenied
+	}
+	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if isOperator {
+		authorization, err := loadOperatorAuthorization(
+			ctx,
+			tx,
+			identity,
+			operatorID,
+			practiceID,
+			m.now(),
+		)
+		if err != nil {
+			return Authorization{}, err
+		}
+		if err := selectRequestedLocation(&authorization, locationID); err != nil {
+			return Authorization{}, err
+		}
+		return authorization, nil
+	}
+
+	var membershipID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM access_memberships
+		WHERE user_subject = $1
+			AND practice_id = $2
+			AND revoked_at IS NULL
+		FOR SHARE
+	`, identity.Subject, practiceID).Scan(&membershipID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Authorization{}, ErrDenied
+		}
+		return Authorization{}, fmt.Errorf("lock Membership read authorization: %w", err)
+	}
+	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if authorization.Membership.ID != membershipID {
+		return Authorization{}, ErrDenied
+	}
+	if err := selectRequestedLocation(&authorization, locationID); err != nil {
+		return Authorization{}, err
+	}
+	return authorization, nil
+}
+
 // LockOperationalActor holds the actor's current Memberships against revocation,
 // returns their Practice IDs, and applies Platform Operator precedence.
 func (m *Module) LockOperationalActor(

@@ -43,6 +43,7 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		SourceCallID:   "webhook-source",
 		IdempotencyKey: "webhook-idempotency",
 		Contact: humancalling.ContactContext{
+			Phone:          "+15555550100",
 			DisplayName:    "Webhook Caller",
 			NameSource:     "Abita",
 			TransferReason: "Webhook proof",
@@ -289,6 +290,7 @@ func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
 		SourceCallID:   "non-starved-source",
 		IdempotencyKey: "non-starved-idempotency",
 		Contact: humancalling.ContactContext{
+			Phone:       "+15555550100",
 			DisplayName: "Non-starved Caller",
 		},
 	})
@@ -428,6 +430,9 @@ func TestWaitingProviderReceiptIsAttachedToOperatorTimeline(t *testing.T) {
 		LocationID:     authorization.Locations[0].ID,
 		SourceCallID:   "waiting-receipt-source",
 		IdempotencyKey: "waiting-receipt-idempotency",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100",
+		},
 	})
 	if err != nil {
 		t.Fatalf("create waiting receipt handoff: %v", err)

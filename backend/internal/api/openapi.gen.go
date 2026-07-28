@@ -100,6 +100,72 @@ func (e ActorType) Valid() bool {
 	}
 }
 
+// Defines values for CallHistoryItemDirection.
+const (
+	INBOUND CallHistoryItemDirection = "INBOUND"
+)
+
+// Valid indicates whether the value is a known member of the CallHistoryItemDirection enum.
+func (e CallHistoryItemDirection) Valid() bool {
+	switch e {
+	case INBOUND:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallHistoryItemOutcome.
+const (
+	CallHistoryItemOutcomeCONNECTED        CallHistoryItemOutcome = "CONNECTED"
+	CallHistoryItemOutcomeCONNECTING       CallHistoryItemOutcome = "CONNECTING"
+	CallHistoryItemOutcomeFOLLOWUPREQUIRED CallHistoryItemOutcome = "FOLLOW_UP_REQUIRED"
+	CallHistoryItemOutcomeNEEDSDISPOSITION CallHistoryItemOutcome = "NEEDS_DISPOSITION"
+	CallHistoryItemOutcomeOFFERING         CallHistoryItemOutcome = "OFFERING"
+	CallHistoryItemOutcomeRECONCILING      CallHistoryItemOutcome = "RECONCILING"
+	CallHistoryItemOutcomeRESOLVED         CallHistoryItemOutcome = "RESOLVED"
+	CallHistoryItemOutcomeUNANSWERED       CallHistoryItemOutcome = "UNANSWERED"
+)
+
+// Valid indicates whether the value is a known member of the CallHistoryItemOutcome enum.
+func (e CallHistoryItemOutcome) Valid() bool {
+	switch e {
+	case CallHistoryItemOutcomeCONNECTED:
+		return true
+	case CallHistoryItemOutcomeCONNECTING:
+		return true
+	case CallHistoryItemOutcomeFOLLOWUPREQUIRED:
+		return true
+	case CallHistoryItemOutcomeNEEDSDISPOSITION:
+		return true
+	case CallHistoryItemOutcomeOFFERING:
+		return true
+	case CallHistoryItemOutcomeRECONCILING:
+		return true
+	case CallHistoryItemOutcomeRESOLVED:
+		return true
+	case CallHistoryItemOutcomeUNANSWERED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallHistoryItemType.
+const (
+	CALL CallHistoryItemType = "CALL"
+)
+
+// Valid indicates whether the value is a known member of the CallHistoryItemType enum.
+func (e CallHistoryItemType) Valid() bool {
+	switch e {
+	case CALL:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CallingCallState.
 const (
 	CallingCallStateCONNECTED        CallingCallState = "CONNECTED"
@@ -376,6 +442,24 @@ func (e OperatorCallingTimelineState) Valid() bool {
 	}
 }
 
+// Defines values for TaskState.
+const (
+	COMPLETED TaskState = "COMPLETED"
+	OPEN      TaskState = "OPEN"
+)
+
+// Valid indicates whether the value is a known member of the TaskState enum.
+func (e TaskState) Valid() bool {
+	switch e {
+	case COMPLETED:
+		return true
+	case OPEN:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WorkspaceSnapshotSchemaVersion.
 const (
 	N20260724 WorkspaceSnapshotSchemaVersion = "2026-07-24"
@@ -470,6 +554,38 @@ type Authorization struct {
 	SupportMode      *SupportMode `json:"supportMode,omitempty"`
 }
 
+// CallHistoryItem defines model for CallHistoryItem.
+type CallHistoryItem struct {
+	AnsweredByEmail string                   `json:"answeredByEmail"`
+	Current         bool                     `json:"current"`
+	Direction       CallHistoryItemDirection `json:"direction"`
+	DurationSeconds int64                    `json:"durationSeconds"`
+	EndedAt         *time.Time               `json:"endedAt,omitempty"`
+	Id              openapi_types.UUID       `json:"id"`
+	LocationId      openapi_types.UUID       `json:"locationId"`
+	LocationName    string                   `json:"locationName"`
+	Originating     bool                     `json:"originating"`
+	Outcome         CallHistoryItemOutcome   `json:"outcome"`
+	StartedAt       time.Time                `json:"startedAt"`
+	TransferReason  string                   `json:"transferReason"`
+	Type            CallHistoryItemType      `json:"type"`
+}
+
+// CallHistoryItemDirection defines model for CallHistoryItem.Direction.
+type CallHistoryItemDirection string
+
+// CallHistoryItemOutcome defines model for CallHistoryItem.Outcome.
+type CallHistoryItemOutcome string
+
+// CallHistoryItemType defines model for CallHistoryItem.Type.
+type CallHistoryItemType string
+
+// CallHistoryPage defines model for CallHistoryPage.
+type CallHistoryPage struct {
+	Items      []CallHistoryItem `json:"items"`
+	NextCursor string            `json:"nextCursor"`
+}
+
 // CallingCall defines model for CallingCall.
 type CallingCall struct {
 	ConnectedAt *time.Time `json:"connectedAt,omitempty"`
@@ -512,6 +628,12 @@ type CallingDispositionRequest struct {
 
 // CallingDispositionRequestOutcome defines model for CallingDispositionRequest.Outcome.
 type CallingDispositionRequestOutcome string
+
+// CallingDispositionResult defines model for CallingDispositionResult.
+type CallingDispositionResult struct {
+	Call   CallingCall         `json:"call"`
+	TaskId *openapi_types.UUID `json:"taskId,omitempty"`
+}
 
 // CallingOffer defines model for CallingOffer.
 type CallingOffer struct {
@@ -559,7 +681,7 @@ type CallingRecordingState string
 type ContactContextInput struct {
 	DisplayName    *string `json:"displayName,omitempty"`
 	NameSource     *string `json:"nameSource,omitempty"`
-	Phone          *string `json:"phone,omitempty"`
+	Phone          string  `json:"phone"`
 	PhoneSource    *string `json:"phoneSource,omitempty"`
 	ReasonSource   *string `json:"reasonSource,omitempty"`
 	TransferReason *string `json:"transferReason,omitempty"`
@@ -724,6 +846,13 @@ type PracticeAccess struct {
 	Version    int64              `json:"version"`
 }
 
+// RenameTaskRequest defines model for RenameTaskRequest.
+type RenameTaskRequest struct {
+	ExpectedVersion  int64               `json:"expectedVersion"`
+	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
+	Title            string              `json:"title"`
+}
+
 // SignUpEligibilityRequest defines model for SignUpEligibilityRequest.
 type SignUpEligibilityRequest struct {
 	Email           openapi_types.Email `json:"email"`
@@ -753,6 +882,54 @@ type SupportMode struct {
 	PracticeId openapi_types.UUID `json:"practiceId"`
 	Reason     string             `json:"reason"`
 	StartsAt   time.Time          `json:"startsAt"`
+}
+
+// Task defines model for Task.
+type Task struct {
+	CallId       openapi_types.UUID `json:"callId"`
+	CompletedAt  *time.Time         `json:"completedAt,omitempty"`
+	CompletedBy  *TaskActor         `json:"completedBy,omitempty"`
+	CreatedAt    time.Time          `json:"createdAt"`
+	CreatedBy    TaskActor          `json:"createdBy"`
+	Id           openapi_types.UUID `json:"id"`
+	LocationId   openapi_types.UUID `json:"locationId"`
+	LocationName string             `json:"locationName"`
+	Phone        string             `json:"phone"`
+	PracticeId   openapi_types.UUID `json:"practiceId"`
+	State        TaskState          `json:"state"`
+	Title        string             `json:"title"`
+	UpdatedAt    time.Time          `json:"updatedAt"`
+	Version      int64              `json:"version"`
+}
+
+// TaskState defines model for Task.State.
+type TaskState string
+
+// TaskActor defines model for TaskActor.
+type TaskActor struct {
+	Email   openapi_types.Email `json:"email"`
+	Subject string              `json:"subject"`
+}
+
+// TaskPage defines model for TaskPage.
+type TaskPage struct {
+	Items      []Task `json:"items"`
+	NextCursor string `json:"nextCursor"`
+}
+
+// TaskQueryRequest defines model for TaskQueryRequest.
+type TaskQueryRequest struct {
+	Cursor     *string             `json:"cursor,omitempty"`
+	Limit      *int                `json:"limit,omitempty"`
+	LocationId *openapi_types.UUID `json:"locationId,omitempty"`
+	PracticeId openapi_types.UUID  `json:"practiceId"`
+	Search     *string             `json:"search,omitempty"`
+}
+
+// TaskTransitionRequest defines model for TaskTransitionRequest.
+type TaskTransitionRequest struct {
+	ExpectedVersion  int64               `json:"expectedVersion"`
+	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
 }
 
 // WorkspaceSnapshot defines model for WorkspaceSnapshot.
@@ -790,6 +967,11 @@ type Unauthenticated = ErrorEnvelope
 // Unavailable defines model for Unavailable.
 type Unavailable = ErrorEnvelope
 
+// GetCallingCallHistoryParams defines parameters for GetCallingCallHistory.
+type GetCallingCallHistoryParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // GetEventsParams defines parameters for GetEvents.
 type GetEventsParams struct {
 	PracticeId openapi_types.UUID `form:"practiceId" json:"practiceId"`
@@ -798,6 +980,11 @@ type GetEventsParams struct {
 
 // ReceiveTelnyxWebhookJSONBody defines parameters for ReceiveTelnyxWebhook.
 type ReceiveTelnyxWebhookJSONBody map[string]interface{}
+
+// GetTaskCallHistoryParams defines parameters for GetTaskCallHistory.
+type GetTaskCallHistoryParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
 
 // GetWorkspaceParams defines parameters for GetWorkspace.
 type GetWorkspaceParams struct {
@@ -844,6 +1031,18 @@ type ReceiveTelnyxWebhookJSONRequestBody ReceiveTelnyxWebhookJSONBody
 // EnterSupportModeJSONRequestBody defines body for EnterSupportMode for application/json ContentType.
 type EnterSupportModeJSONRequestBody = EnterSupportModeRequest
 
+// QueryTasksJSONRequestBody defines body for QueryTasks for application/json ContentType.
+type QueryTasksJSONRequestBody = TaskQueryRequest
+
+// CompleteTaskJSONRequestBody defines body for CompleteTask for application/json ContentType.
+type CompleteTaskJSONRequestBody = TaskTransitionRequest
+
+// ReopenTaskJSONRequestBody defines body for ReopenTask for application/json ContentType.
+type ReopenTaskJSONRequestBody = TaskTransitionRequest
+
+// RenameTaskJSONRequestBody defines body for RenameTask for application/json ContentType.
+type RenameTaskJSONRequestBody = RenameTaskRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
@@ -861,12 +1060,15 @@ type ServerInterface interface {
 	// GetCallingCall Read the winning User's durable active or disposition Call.
 	// (GET /v1/calling/calls/{callId})
 	GetCallingCall(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
-	// RecordCallingDisposition Resolve the provider-terminated Call without creating a Task.
+	// RecordCallingDisposition Resolve the provider-terminated Call and optionally ensure its one follow-up Task.
 	// (POST /v1/calling/calls/{callId}/disposition)
 	RecordCallingDisposition(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
 	// RequestCallingHangup Commit a provider hangup command without claiming termination.
 	// (POST /v1/calling/calls/{callId}/hangup)
 	RequestCallingHangup(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
+	// GetCallingCallHistory Read authorized exact-phone Call Engagement History for the active Call.
+	// (GET /v1/calling/calls/{callId}/history)
+	GetCallingCallHistory(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID, params GetCallingCallHistoryParams)
 	// IssueCallingMediaToken Issue a short-lived Telnyx JWT to the current softphone owner.
 	// (POST /v1/calling/media-token)
 	IssueCallingMediaToken(w http.ResponseWriter, r *http.Request)
@@ -909,6 +1111,24 @@ type ServerInterface interface {
 	// RevokeSupportMode Revoke the real operator's active Support Mode.
 	// (DELETE /v1/support-mode/{supportSessionId})
 	RevokeSupportMode(w http.ResponseWriter, r *http.Request, supportSessionId openapi_types.UUID)
+	// QueryTasks Query the authorized Task rail with protected search input.
+	// (POST /v1/tasks/query)
+	QueryTasks(w http.ResponseWriter, r *http.Request)
+	// ReadTask Read one currently authorized Task.
+	// (GET /v1/tasks/{taskId})
+	ReadTask(w http.ResponseWriter, r *http.Request, taskId openapi_types.UUID)
+	// CompleteTask Complete one Task at its last observed version.
+	// (POST /v1/tasks/{taskId}/complete)
+	CompleteTask(w http.ResponseWriter, r *http.Request, taskId openapi_types.UUID)
+	// GetTaskCallHistory Read authorized exact-phone Call Engagement History for one Task.
+	// (GET /v1/tasks/{taskId}/history)
+	GetTaskCallHistory(w http.ResponseWriter, r *http.Request, taskId openapi_types.UUID, params GetTaskCallHistoryParams)
+	// ReopenTask Reopen one completed Task at its last observed version.
+	// (POST /v1/tasks/{taskId}/reopen)
+	ReopenTask(w http.ResponseWriter, r *http.Request, taskId openapi_types.UUID)
+	// RenameTask Rename one open Task at its last observed version.
+	// (PUT /v1/tasks/{taskId}/title)
+	RenameTask(w http.ResponseWriter, r *http.Request, taskId openapi_types.UUID)
 	// GetWorkspace Load the authoritative empty workspace snapshot.
 	// (GET /v1/workspace)
 	GetWorkspace(w http.ResponseWriter, r *http.Request, params GetWorkspaceParams)
@@ -1048,6 +1268,48 @@ func (siw *ServerInterfaceWrapper) RequestCallingHangup(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RequestCallingHangup(w, r, callId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCallingCallHistory operation middleware
+func (siw *ServerInterfaceWrapper) GetCallingCallHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callId" -------------
+	var callId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callId", r.PathValue("callId"), &callId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCallingCallHistoryParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCallingCallHistory(w, r, callId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1333,6 +1595,166 @@ func (siw *ServerInterfaceWrapper) RevokeSupportMode(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// QueryTasks operation middleware
+func (siw *ServerInterfaceWrapper) QueryTasks(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QueryTasks(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadTask operation middleware
+func (siw *ServerInterfaceWrapper) ReadTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "taskId" -------------
+	var taskId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "taskId", r.PathValue("taskId"), &taskId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "taskId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadTask(w, r, taskId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteTask operation middleware
+func (siw *ServerInterfaceWrapper) CompleteTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "taskId" -------------
+	var taskId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "taskId", r.PathValue("taskId"), &taskId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "taskId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteTask(w, r, taskId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTaskCallHistory operation middleware
+func (siw *ServerInterfaceWrapper) GetTaskCallHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "taskId" -------------
+	var taskId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "taskId", r.PathValue("taskId"), &taskId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "taskId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTaskCallHistoryParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTaskCallHistory(w, r, taskId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReopenTask operation middleware
+func (siw *ServerInterfaceWrapper) ReopenTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "taskId" -------------
+	var taskId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "taskId", r.PathValue("taskId"), &taskId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "taskId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReopenTask(w, r, taskId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameTask operation middleware
+func (siw *ServerInterfaceWrapper) RenameTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "taskId" -------------
+	var taskId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "taskId", r.PathValue("taskId"), &taskId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "taskId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameTask(w, r, taskId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWorkspace operation middleware
 func (siw *ServerInterfaceWrapper) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 
@@ -1520,6 +1942,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/calling/calls/{callId}", wrapper.GetCallingCall)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/calls/{callId}/hangup", wrapper.RequestCallingHangup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/calls/{callId}/disposition", wrapper.RecordCallingDisposition)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/calling/calls/{callId}/history", wrapper.GetCallingCallHistory)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks/query", wrapper.QueryTasks)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tasks/{taskId}", wrapper.ReadTask)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/tasks/{taskId}/title", wrapper.RenameTask)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks/{taskId}/complete", wrapper.CompleteTask)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks/{taskId}/reopen", wrapper.ReopenTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tasks/{taskId}/history", wrapper.GetTaskCallHistory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/operator/calls/{callId}/timeline", wrapper.GetOperatorCallingTimeline)
 
 	return m
@@ -1530,77 +1959,90 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"mzmDZxwnagGfXv4dAAD//w==",
+	"7H1bc9rItvBf6dK3q/bDB8bJZGZq/EZsMmEfbDOGJGdXJifVlhbQ21K3pruFzUn5v5/qi+4tQASInclT",
+	"giW1Vq/7rZe+eD6LYkaBSuGdffE4iJhRAfrHaxzcwF8JCKl++YxKoPq/OI5D4mNJGO39RzCq/ib8BURY",
+	"/e8fHGbemff/evnSPXNV9AacMz6gSwhZDN7j42PHC0D4nMRqMe/MG9IlDkmAuHnxiffY8c4ZnYXEPyIU",
+	"0wWkEECAJMdUEHUJEYEoQyGjc+AILzEJ8W0IGsoLoASC48F4nnAOVCISAJVErlCI/TuBZAl0nMgF40Su",
+	"NIjvqPqtbvexPCasl0QIQueIcUQsgX0OGnAcpqCl2DweWH2NKcIhQAHEQAOg/krRWEIUM445CVcooUU6",
+	"P3bsy7WE9H0fYnmOw5DQ+fVsBrwgMDgINNPgcMxZDFwSJVYzHAroeHHhT188AUIQRoeaJBF+GAGdy4V3",
+	"9vL0tONFhKa/X3Q8uYrBO/OE5ITONTzpHryzj4WFPmW3stv/gC8Vkl3giiRsC62Pw9CAOmM8wtI785KE",
+	"BF4NuI4nJJaaoECTSAF4/ebN4GZ49bvX8c6vr64G59PSj8GF1/FuBufXV+fDkbny7qp/NfkwuNGXrgaD",
+	"i8nni+FkfD0ZTofXV/r2yfXovb785no0uv7w+d34883gj3dD9cynBqgSUQSrf34+GJu390c3g/7Fvz+f",
+	"j/rDS/2XwX+Ph+b1w6vBaPj78PVo4Fi3Sgrzkk6KrhQZTYQR4oIIny2Br1rSA/uS8U3C0Nc3PXa8OMRS",
+	"0e06Bo7tgxagW8ZCwFTfxbEviW9eQCREYtMLxvYJsxe1hl0Vc45XNfQYoB3gFN/txpUFugWGIMIkLDGs",
+	"+YuLNxLzphwr+TXzh5xr3r677CsOHI/60zfXN5efr8eDm/70+mYL7rCv6ZQhcW44CEbMKMDdtMsdrCp6",
+	"5cVGvdLxKI6gtTpS+ItjxuWkqNE2qIkaaiordPQOLERODCUBkYNlajBaSQ4xFqW2D82fkzXM4HNQRrQv",
+	"SzsMsISuJBG4eItspzRT/t9Sx3LAomETX08MfUsJFyX4Oi5qWaxmkBVx5SafdlL+F6fEaEnBJaTysUlH",
+	"ZfelBN5aa4b2ye31YfFdZU3Y8SKIboGLBYk3rXKZ39lad2+rsQuccsmCjY9NCrc2avV06SLmHPC72EH5",
+	"J2+JkIyvhhKitgxBxT1wCF6vBqnSr4uucZ3d2AsIh0wtpJp+ePX6+t2V25sIEq43OAGf0UCUZIxQ+csr",
+	"TytNEqmlTrMFCJUwB81cyvM8hCJJUT9sd/uV1fy1Gxgnc0KxVD+duGOJ9Fn0JB0+3lJX66BPe8iN2rXq",
+	"Dpz3R6PNlj/HfZHXijDWWapEygqhOjWWrwGfEybn/TI1N8jhGM+hpRxmOnIrZVmVeYfOpPAgzxMuSlqv",
+	"Ccf6naVnmnZI6Fz90zYEYpSC35KlAsBBSCi0eIKIOMSrRoGEh1hDcQkBwVN2B5pRy0HudYz/SgBJdRXJ",
+	"BU4zBjMCJlsAD9iX6APc3kzPUaRWQiHM0YxxfdkyDPJDTKITF5QpFBOJZ7MRzI26KUMxiGKpYmlJQjSF",
+	"kK4eqmAwCkioFfTbrcdgoSBizeu/kTJU3uiEJdx3X44XjK65su7Jdu5fzNmSBMCnwCMtzg3ayjhja97L",
+	"wWc8sLp9k7ASOr/J7ncF+t9O2W+huZfAhcVTs6l+UTfVLlVe8obXqWmDooIaSJmkzBJlqS/xmUOxl6jq",
+	"FEWnlnCzTY6YddqSUclZ+KQTXRbUCyJiZjK3u4Hr8Gd2cD5Ke95pj7kB33a3O6b1thR9bTGVqGFxt0tU",
+	"qV+1Zis6N9kS/P1b1ydqWHbJDqxZrzlF+5yU61fozII+TlX0FmpQs+iItFYp7f3iTB42pVTNimtgvgEc",
+	"EApC7KYNcRIQptZYuaO/UgWnfjkiPmfa0q1Zg8OcCAncVKfq161OfAs4lIvV2nv2aWRKgNW30inipgZk",
+	"ETNrqVPwv1qQZYZJmHA4t6mbzQI+vJoOri4yZ+zmwrhiuuyhzFp/OHKaMkeBo2FDjErsS/UPPMghjZO2",
+	"rFZRzVUibtCZ1Ux3s3MeYymBqwDlf/788/9/fNH97dPH0+5vn7782nnx6vEfXmej+77xXVUFvPGBuoot",
+	"PPKz45EKXczmnHTRQdVbTAM2m+2mA3xD2o16y8EB2qJCFDMJ1F/9V60osU11oaWtbWkrhSbSeVbe/Brd",
+	"0Wy5Sm+p4aSTodhFwQGVwAsJ2N2ImKaXLglNpPlThB+MYX756nS9mf6K+kSVj3fGZ1ZYqO7EibNSG0DL",
+	"wqF6trWINChin3EOYYF/a3dEIIRNtTnQKPmqybpW/WsFQr5c9dXFxeoYq6xlUOBCrFUkbVH6EBMO4gDp",
+	"bkHiCxCyOQni8jArD3UK8Dn3rG16yy1zFpYMsJJeHHZxTAqBeJfQOQchDHuHGhfbNS+wuxbdCBoW186G",
+	"dEmkRsJ51pqzm3qRaSKyqD9//qUk7z+93ASxWWU9pGMOSwL3h+sG2IFZ7wgNitQZ3/TPp8Pzwefh1fvh",
+	"tG/TWtu0DOR2Y+KzcqmhPxp5HW8yGJms2rpn91OxbJ2UNLc3BrlVkehfXA4VXibT/ps3m9lZIznvncj3",
+	"6uKXYnW4TaS23Vape4suXdPYwJBCeJnInYrgSUA2umSFJokCd7ThiZSo79cE+BuC+uy19dU6dhsu/JTr",
+	"G4c1Npn22kY9bTIXOeBPOl96WepH2L+MfI0e+0pNoQHSa1TBcCHiCi/J3LhJ7VsPgCqPqiFxQUpGQWJx",
+	"l/YGdn1QXr1XqMAInUSQUv/XqdzxLYRbah1zbycDz7XvtCHDpiKmJII0l3qYxlCgkpMW3YUNAA6o5Ks9",
+	"2Kun2ae6p0xq1oBabtyq5DpzmrRgEIP/ltZqDru3yvgsijAN+s2Ne+kdUkIUm1MNWy05SVmgzqsqAmpM",
+	"r6X+Xr1bxtel81YtAkwX629gBhxoc50WSCyb4HV7StWFi7uqYrWCkjpKKzB0iiQt7dvFSeNCd9rRvLH9",
+	"ViWoqTKsqxJUuqHVXsPweuadfdy6J68Vep5Cf2KDr+dSKJ8eO94NKDxOsbjbzTdKy9rvd6TsTu2xHU8S",
+	"GcLXZrOqsKfLulhpQub0XTwIyZzckpDI1Y7oaox6Cxv56aUrI02ygHu6l9DevNi5VzaTOn89Aizg2D5z",
+	"x5P4DtgS+BY5tmJxKHts7Z4yjd26vzlPSdfPqb0TwP8psjatIOHKzUPqkQ5iHIHuvLpfAEU+jrFPpD7i",
+	"NOMAznaqDVW8UBFm0D6sYvcU+Bb1uu0rchVI0lcUd9Ap489JnXLj85NIZO7xAIDEXLYAcWMNPsu8Zytv",
+	"CoGVgj9cHKFMUggtGzGzh16vNtk3BX12CGCHIx/2kZYv+kadJ2t6Fr82nBoPrnT0dDkeDZoi/cyy1q4k",
+	"cdAW8d+kCyWPtGxjn9lSHmzl7FDkpmIQlm+1SZi+2QG4DUfYmuA9ePO41jDH6RhXr/ojAb6jD+Y3QdPx",
+	"QhKZHG5Wif15YyH2wNVwwNxf7NB/kL+mCYXT7ET9M3L9N7jwrr1+YPxOxNiHCcWxWDB50JO9u+T0dz2J",
+	"RrNE6dZiWsmtupJ2hzvepv9WYJfUML08fflL9/TX7stXjcXWkiEbXI6n/3bfuuMJur2ZqvIeizYltT5r",
+	"Tud5JZJudVJPqwg/4USuJurVhmVvAXPg/cQUyc2vN+mu/vVh6lliaKLqq7mkLaSMjebhS+LDa3O5voxJ",
+	"ZnXtbd20FLNh3Ucdyc5YPYzq+4mKisa6LI9MygZhGqC3SYSpTXkihXc+wz4IdE/kAo2ZkHMOkz9G+ZiN",
+	"ThZ/2UMuNnVmlrNZM9HRvwLdr61vTgv+aEGoFCd/5gmBGnDjYYG0Zzn//mrSh0BxTLwz76eT05OfFB2x",
+	"XGi69Ba6c6EXkqXmzzloZcQ0fa0K9H4HOSJLoGkbQmEYzMvT070N5rBNFI6JHGPONPKJQDyhlND5SYnR",
+	"vLOPn9TvdDc87SRt2k7W8vpt9nOTzhfhCdUEzuaMEBAIc036wExn+fn0p6YXZZD3inNSnIhZvujhLOfo",
+	"xEo6ZsKmJg+Il+pYizVTbFKhSwUJzTiLCiKmMfTq9MVWGCoNudHPbYFZO79nZ0IkUYT5qoDfLCWTGiIt",
+	"9anxTbdqTr0bLs+J1xNkTrtJ3IU87af7VZlwUHRIhfJFaolCzxgIEPI1M2KyF7I2JiQfyyZJ8gQeD8he",
+	"9T6ghlFOS+BkRiDo6kAFWdwqJWPQayc4HYVNCvJaZJr3OCQq8EOYojzdihhHuj9MaXsI0NhaZZSaZaR3",
+	"lHOPb2yV/lf0vph49HGdgiye6FHmguMIJHChKxVEYVCZkLTocZaHuGU6dwo02+RHfzogT5QOKDkmPlmh",
+	"g0AnSNF96qA/I/2iTJo+MXtPtIVMM8Cp52FSnop1gvxEmN7uJj7pFR5o1jbmnEL90NlR2Wf/Wq35zOCR",
+	"1VrjcT4HP19YmktzijM0XG0PC2p7w2ITa6KQ0DsIkAq/LbOfbubCwgjA48nHq9PfNt+eDQXch0AJFi5B",
+	"y1TWjWsxKlNNUcRluEJARcIBESn0wfUZC0N2r4yKxe96OVtgOk/idSKmcW454a25+7sQr8rp4a1E6+Wx",
+	"rINBtA70qNShG5ESgpPvmPfP9SYRzhgfGd5MA1cd6rLEjn9Q1kbmB8Y387kZ6bGl/2EHgByL0Tt24b8S",
+	"4KvCyiZHW1zp2A5MceqKg02v4B6ERDGeK30FAqjSUoQif8EZZSGbEx+HiPEA+BNX9ftwhXDu0+lRJl1d",
+	"fDFae0DneA6REmeL1GyuiXWT3H6RHoPSzVqBG8IuIRKw/FuarXAI/VnvJD6yW1LYoYMnJwvGZTckSwjQ",
+	"LWf3AridJVMZ9PrD7UiZV7MPwkgUUGezhv/6MEWSlcbviLSLBOk2hzrLstlM68sGVTsiojT59aCJn9oZ",
+	"eQfHDDAPCQjZTc/fd2eEC5mlgLCJYjSszyg6U9tFsAS+ykin96CJ+U6LBV4hrCfxIsrumwiZG1Fzb7Ma",
+	"qk/1feauYvNU5SOrvMZ5ya5EZuotWtpi6usYHB7U24lEIdMjsLle4fs2y33JIuWChCvjNuoQqSwNyrU0",
+	"DraOoS4IDlOXsy4RPEviKyFIHDIwyRzJcsL/YHFMbZTGkVmz0lS4JrMeANemJUMYDpEuCH7fPGgDG6V1",
+	"jTPH7nWyzHYQFjomJfgLqj3mjM/qLJiZ355uO1ynjTULZPQ5VA7e2Sj7ZJmw4r2IBYm/cxVo2KCDOFC4",
+	"7xQtQbhCEt8B0jUimXfw5jjSLJbzICzTz3M0BdEDc4fb7Ffi20o7556j51J33CFLBBIepMFMV0gOOCqz",
+	"bXXBGme+ZgkNIEC1dU7QkBJp7JEe8qmLdTSwTh0H++f02xEI04rPmhUVEIcZSH9x8id9Ppw70VgodifY",
+	"bgPTnKDjZ8WkhbBb+Cwu8OvCzIUQzUqyNIjmUIbaNexmKwX5Yn+NAXaHDv6zY1mVTxhCNxGAJsMxsqj7",
+	"ESmXS6Vfqi1BHz89lsqnhtgZX2ab66BsvI5E/VsicQHFll3zcqvYMtbKC88H4t11sziOHQOVhvO7vu2T",
+	"9QVqLelQC99tBqcQ5+hsYr1+nyYb0w6E7GtNbvYjppFjY6fH34kBt+ryGAMNTI9eevM37+iwpEKMKodv",
+	"AUYcEJYS+wvleDBbcMwT+AXYLXMw2+dRLazIwgH9Jqew6Uz/d9Dl0bQ1V2IaK29OqaOswqXLWozfzUJ2",
+	"j2yJ6rn1f+hp6dnWiof+UMobCAuE6y1DOXNl31nqfcmDgsde6ShxgxnMP0m0FTvtKeY4VL6x/oGlI/uJ",
+	"tfk/axOMWQthZG+3hjcg33teMQgQLnRQOvkbEYpsgz26ZAEU+d0ogJ7UVZbePdwuGLsTa1udgCzBVGU+",
+	"mNu/wuK6T34YKag212/Bf6/qnew3psPcKoRV3sOAGLeJaa0uDJQ7pwD32/qofKOVaYm3YNtGea3lOL5P",
+	"y2KWYDlF7ZmLbmQPXbipWB2aeSCfqWk255F1SfnzTPUOSFP2rkjId6w0NFm0UezqM3YQlDaf5TPSLm03",
+	"d/W+VE+MPRrpC8EcEKoqjiW7gzLPbTaTjm+p7dP/cuiLEia4Bjp4Vq6Qgth+8xaHKHWX/ynS9g63JdDj",
+	"t3omddmoNvQ5z6kd1HUIhVE7THrkyCo7nOtMTwG1BXl1G+KYhLrj6PtWFpocpj0oz2PkCNDnvmLOpD75",
+	"icwJWURonMgqc30x38Zo7r1Xbrw+ubyNZrAf2niq8Zg5gd1c/tEYLBYdn1WcZQuF4arKFE0076UDJtZk",
+	"wO0dR+eAw6ix+oHub6DLGqImM+pDf3s8ywWHeXfOj4Z4V+1cI01zv5ZdbNo0QiwkYrcC+BKCtC7UKAVb",
+	"dP+qxdu2/u5BEn60/v5tW39Tlm7kWg4shrXHn9T1H3r7sHrbYPmH2m4nEgpnxmXJzN7u6jsbx+TsuMun",
+	"Nz5zMaiPoXwyIqAA+3Fiz8npCjWa0zXLt2DyrDlnnVuSze35W7VU7c7C9TlH689e5x1Swj7wnDr8mT1/",
+	"Xe76snM2XTurdbMUh+TYVhbFrpbFKkd8IQ7ZKtINaomiEATo7XQ6niDzAW+v4yU8tFNuxFmvh2NygvXQ",
+	"mBN4wMoOeI+fHv8vAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

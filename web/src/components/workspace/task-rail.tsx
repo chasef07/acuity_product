@@ -1,0 +1,377 @@
+"use client"
+
+import { useEffect, useRef } from "react"
+import { useTheme } from "next-themes"
+import { useRouter } from "next/navigation"
+import {
+  ActivityIcon,
+  CheckCircle2Icon,
+  LogOutIcon,
+  MoonIcon,
+  PhoneCallIcon,
+  SearchIcon,
+  SunIcon,
+} from "lucide-react"
+
+import { Badge } from "@/components/ui/badge"
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInput,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar"
+import { Spinner } from "@/components/ui/spinner"
+import type {
+  AccessDiscovery,
+  CallingOffer,
+  PracticeAccess,
+  Task,
+} from "@/lib/api/generated/types.gen"
+import { authClient } from "@/lib/auth-client"
+import { cn } from "@/lib/utils"
+
+export type ConnectionState = "connecting" | "connected" | "disconnected"
+
+type TaskRailProps = {
+  discovery: AccessDiscovery
+  practice: PracticeAccess
+  practiceID: string
+  locationScopeID: string
+  tasks: Task[]
+  selectedTaskID: string
+  search: string
+  loading: boolean
+  nextCursor: string
+  connection: ConnectionState
+  callingOffers: CallingOffer[]
+  onPracticeChange: (practiceID: string) => void
+  onLocationScopeChange: (locationID: string) => void
+  onSearchChange: (search: string) => void
+  onTaskSelect: (task: Task) => void
+  onLoadMore: () => void
+}
+
+export function TaskRail({
+  discovery,
+  practice,
+  practiceID,
+  locationScopeID,
+  tasks,
+  selectedTaskID,
+  search,
+  loading,
+  nextCursor,
+  connection,
+  callingOffers,
+  onPracticeChange,
+  onLocationScopeChange,
+  onSearchChange,
+  onTaskSelect,
+  onLoadMore,
+}: TaskRailProps) {
+  const open = tasks.filter((task) => task.state === "OPEN")
+  const completed = tasks.filter((task) => task.state === "COMPLETED")
+  const showOffice = practice.locations.length > 1 && !locationScopeID
+  const router = useRouter()
+  const { resolvedTheme, setTheme } = useTheme()
+
+  return (
+    <Sidebar collapsible="offcanvas" className="border-r">
+      <SidebarHeader className="gap-3 border-b px-3 py-3">
+        <div className="flex items-center gap-2">
+          <span className="flex size-8 items-center justify-center rounded-sm bg-primary text-primary-foreground">
+            <ActivityIcon className="size-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">Acuity Health</p>
+            <p className="text-[0.625rem] uppercase tracking-[0.18em] text-muted-foreground">
+              Follow-up work
+            </p>
+          </div>
+          <ConnectionMark state={connection} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <NativeSelect
+            aria-label="Practice"
+            value={practiceID}
+            onChange={(event) => onPracticeChange(event.target.value)}
+          >
+            {discovery.practices.map((item) => (
+              <NativeSelectOption key={item.id} value={item.id}>
+                {item.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            aria-label="Location"
+            value={locationScopeID}
+            onChange={(event) => onLocationScopeChange(event.target.value)}
+          >
+            {practice.locations.length > 1 && (
+              <NativeSelectOption value="">All offices</NativeSelectOption>
+            )}
+            {practice.locations.map((location) => (
+              <NativeSelectOption key={location.id} value={location.id}>
+                {location.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <SidebarInput
+            aria-label="Search tasks"
+            autoComplete="off"
+            placeholder="Search title or phone"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            className="pl-7"
+          />
+        </div>
+      </SidebarHeader>
+      <SidebarContent className="gap-0">
+        {callingOffers.length > 0 && (
+          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
+            <PhoneCallIcon className="size-3.5 text-primary" />
+            <span className="font-medium">Incoming call</span>
+            <Badge
+              data-testid="calling-queue-count"
+              variant="secondary"
+              className="ml-auto font-mono"
+            >
+              {callingOffers.length}
+            </Badge>
+          </div>
+        )}
+        <TaskGroup
+          label="Open"
+          tasks={open}
+          selectedTaskID={selectedTaskID}
+          showOffice={showOffice}
+          onTaskSelect={onTaskSelect}
+        />
+        <TaskGroup
+          label="Completed"
+          tasks={completed}
+          selectedTaskID={selectedTaskID}
+          showOffice={showOffice}
+          onTaskSelect={onTaskSelect}
+        />
+        {loading && (
+          <div className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
+            <Spinner />
+            Refreshing tasks
+          </div>
+        )}
+        {!loading && tasks.length === 0 && (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            No follow-up tasks
+          </p>
+        )}
+        <TaskLoadSentinel
+          cursor={nextCursor}
+          loading={loading}
+          onLoadMore={onLoadMore}
+        />
+      </SidebarContent>
+      <SidebarFooter className="border-t p-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip={
+                resolvedTheme === "dark" ? "Use light mode" : "Use dark mode"
+              }
+              onClick={() =>
+                setTheme(resolvedTheme === "dark" ? "light" : "dark")
+              }
+            >
+              {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
+              <span>
+                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Sign out"
+              onClick={() =>
+                void authClient
+                  .signOut()
+                  .then(() => router.push("/sign-in"))
+              }
+            >
+              <LogOutIcon />
+              <span className="truncate">{discovery.actor.email}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </Sidebar>
+  )
+}
+
+function TaskGroup({
+  label,
+  tasks,
+  selectedTaskID,
+  showOffice,
+  onTaskSelect,
+}: {
+  label: "Open" | "Completed"
+  tasks: Task[]
+  selectedTaskID: string
+  showOffice: boolean
+  onTaskSelect: (task: Task) => void
+}) {
+  if (tasks.length === 0) return null
+  return (
+    <SidebarGroup className="p-0">
+      <SidebarGroupLabel className="h-8 border-b px-3 text-[0.625rem] uppercase tracking-[0.16em]">
+        {label}
+        <span className="ml-auto font-mono tabular-nums">{tasks.length}</span>
+      </SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu className="gap-0">
+          {tasks.map((task) => (
+            <SidebarMenuItem key={task.id}>
+              <SidebarMenuButton
+                isActive={task.id === selectedTaskID}
+                className={cn(
+                  "h-auto min-h-16 animate-in rounded-none border-b px-3 py-2 fade-in slide-in-from-top-1 duration-200",
+                  "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
+                )}
+                tooltip={task.title}
+                onClick={() => onTaskSelect(task)}
+              >
+                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="flex min-w-0 items-center gap-2">
+                    {task.state === "COMPLETED" && (
+                      <CheckCircle2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="truncate text-xs font-medium">
+                      {task.title}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 font-mono text-[0.625rem] text-muted-foreground">
+                    <span>{formatPhone(task.phone)}</span>
+                    <span aria-hidden="true">·</span>
+                    <time dateTime={taskRelativeAt(task)}>
+                      {relativeTime(taskRelativeAt(task))}
+                    </time>
+                    {showOffice && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="truncate font-sans">
+                          {task.locationName}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  )
+}
+
+function TaskLoadSentinel({
+  cursor,
+  loading,
+  onLoadMore,
+}: {
+  cursor: string
+  loading: boolean
+  onLoadMore: () => void
+}) {
+  const sentinel = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const element = sentinel.current
+    if (!element || !cursor || loading) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) onLoadMore()
+      },
+      { rootMargin: "160px 0px" },
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [cursor, loading, onLoadMore])
+
+  if (!cursor) return null
+  return (
+    <div
+      ref={sentinel}
+      aria-label="Loading more tasks"
+      className="flex h-8 items-center justify-center text-muted-foreground"
+    >
+      {loading && <Spinner />}
+    </div>
+  )
+}
+
+function ConnectionMark({ state }: { state: ConnectionState }) {
+  return (
+    <span
+      aria-label={
+        state === "connected"
+          ? "Live updates connected"
+          : state === "connecting"
+            ? "Connecting live updates"
+            : "Live updates disconnected"
+      }
+      className="flex items-center gap-1.5 font-mono text-[0.625rem] text-muted-foreground"
+    >
+      <span
+        className={cn(
+          "size-2 rounded-full",
+          state === "connected" && "bg-primary",
+          state === "connecting" && "animate-pulse bg-muted-foreground",
+          state === "disconnected" && "bg-destructive",
+        )}
+      />
+      {state === "connected"
+        ? "Live"
+        : state === "connecting"
+          ? "Sync"
+          : "Disconnected"}
+    </span>
+  )
+}
+
+function relativeTime(value: string) {
+  const elapsed = Date.now() - new Date(value).getTime()
+  const minutes = Math.max(0, Math.floor(elapsed / 60_000))
+  if (minutes < 1) return "now"
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  return `${days}d`
+}
+
+function taskRelativeAt(task: Task) {
+  return task.state === "OPEN"
+    ? task.createdAt
+    : task.completedAt ?? task.updatedAt
+}
+
+function formatPhone(phone: string) {
+  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
+  if (!match) return phone
+  return `(${match[1]}) ${match[2]}-${match[3]}`
+}
