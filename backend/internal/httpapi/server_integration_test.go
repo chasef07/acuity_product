@@ -427,10 +427,10 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		accessModule,
 		httpCallingProvider{},
 		humancalling.Config{
-			SIPDomain:       "synthetic.sip.telnyx.com",
-			OfferDuration:   20 * time.Second,
-			HandoffTokenKey: []byte("0123456789abcdef0123456789abcdef"),
-			RecordingBucket: "synthetic-recordings",
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			OfferDuration:    20 * time.Second,
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			RecordingBucket:  "synthetic-recordings",
 		},
 		func() time.Time { return now },
 	)

@@ -1152,6 +1152,7 @@ components:
         - transferReason
         - reasonSource
         - expectedStaffLegId
+        - expectedMediaToken
         - providerTermination
         - version
       properties:
@@ -1194,6 +1195,9 @@ components:
         expectedStaffLegId:
           type: string
           description: Empty until Telnyx identifies the one staff leg created for this claim.
+        expectedMediaToken:
+          type: string
+          description: Opaque token that identifies the exact WebRTC media leg for the current claim.
         providerTermination:
           type: string
         connectedAt:

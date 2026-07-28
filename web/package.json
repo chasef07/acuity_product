@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:unit": "node --experimental-strip-types --test src/lib/calling/*.test.ts",
     "api:generate": "openapi-ts -i ../api/openapi.yaml -o src/lib/api/generated -c @hey-api/client-fetch",
     "api:check": "npm run api:generate && git diff --exit-code -- src/lib/api/generated",
     "test:e2e": "playwright test"

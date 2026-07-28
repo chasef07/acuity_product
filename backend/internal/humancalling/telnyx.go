@@ -77,6 +77,7 @@ func (adapter *TelnyxAdapter) Execute(
 			emptyString(payload["from"]) ||
 			emptyString(payload["link_to"]) ||
 			emptyString(payload["client_state"]) ||
+			!validMediaTokenHeader(payload["custom_headers"]) ||
 			!validTimeout ||
 			timeoutSeconds <= 0 ||
 			timeoutSeconds != float64(int(timeoutSeconds)) ||
@@ -176,7 +177,13 @@ func (adapter *TelnyxAdapter) Execute(
 		}, nil
 	case CommandCreateJWT:
 		var token string
-		if err := json.Unmarshal(responseBody, &token); err != nil || token == "" {
+		if err := json.Unmarshal(responseBody, &token); err != nil {
+			candidate := strings.TrimSpace(string(responseBody))
+			if len(strings.Split(candidate, ".")) == 3 {
+				token = candidate
+			}
+		}
+		if token == "" {
 			return ProviderResult{}, fmt.Errorf(
 				"%w: invalid Telnyx JWT response",
 				ErrAmbiguousEffect,
@@ -363,6 +370,24 @@ func clonePayload(input map[string]any) map[string]any {
 func emptyString(value any) bool {
 	text, ok := value.(string)
 	return !ok || strings.TrimSpace(text) == ""
+}
+
+func validMediaTokenHeader(value any) bool {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	var headers []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(encoded, &headers); err != nil ||
+		len(headers) != 1 ||
+		!strings.EqualFold(headers[0].Name, "X-Acuity-Media-Token") {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(headers[0].Value)
+	return err == nil && len(decoded) == 32
 }
 
 func jwtExpiration(token string) time.Time {

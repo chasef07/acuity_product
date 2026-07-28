@@ -75,7 +75,7 @@ export function CallingDock({
   const availabilityRef = useRef(false)
   const availabilityIntentRef = useRef(false)
   const announcedOffersRef = useRef(new Set<string>())
-  const pendingMediaLegsRef = useRef(new Set<string>())
+  const pendingMediaLegsRef = useRef(new Map<string, string>())
   const ringtoneRef = useRef<(() => void) | null>(null)
   const connectingRef = useRef(false)
   const notificationsRef = useRef(new Map<string, Notification>())
@@ -140,19 +140,38 @@ export function CallingDock({
 
   const handleIncoming = useCallback(
     async (leg: IncomingMediaLeg) => {
-      if (
-        leg.callID !== expectedCallRef.current ||
-        !ownerRef.current
-      ) {
+      const attached = mediaLegRef.current
+      const replacesAttachedRecovery =
+        attached &&
+        leg.recovery &&
+        attached.providerLegID === leg.providerLegID &&
+        attached.mediaToken === leg.mediaToken
+      if (attached && !replacesAttachedRecovery) {
+        if (
+          attached.providerLegID !== leg.providerLegID ||
+          attached.mediaToken !== leg.mediaToken
+        ) {
+          await leg.reject().catch(() => undefined)
+        }
         return
       }
-      const legKey = `${leg.callID}:${leg.providerLegID}`
-      if (pendingMediaLegsRef.current.has(legKey)) return
-      pendingMediaLegsRef.current.add(legKey)
+      const pendingProviderLegID = pendingMediaLegsRef.current.get(
+        leg.mediaToken,
+      )
+      if (pendingProviderLegID) {
+        if (pendingProviderLegID !== leg.providerLegID) {
+          await leg.reject().catch(() => undefined)
+        }
+        return
+      }
+      pendingMediaLegsRef.current.set(leg.mediaToken, leg.providerLegID)
       try {
         for (let attempt = 0; attempt < 200; attempt += 1) {
           const token = await getAccessToken()
-          if (!token) return
+          if (!token) {
+            await leg.reject().catch(() => undefined)
+            return
+          }
           const currentLease = await acquireSoftphone({
             client: portalClient(token),
             body: { sessionId: sessionID, takeover: false },
@@ -161,38 +180,81 @@ export function CallingDock({
             setLease(currentLease?.data)
             setAvailable(false)
             ownerRef.current = false
+            await leg.reject().catch(() => undefined)
             return
           }
           setLease(currentLease.data)
+          ownerRef.current = true
+          const callID =
+            expectedCallRef.current || currentLease.data.activeCallId
+          if (!callID) {
+            await new Promise((resolve) => window.setTimeout(resolve, 100))
+            continue
+          }
+          if (!expectedCallRef.current) {
+            expectedCallRef.current = callID
+            setExpectedCallID(callID)
+            setAvailable(false)
+            availabilityRef.current = false
+          }
           const current = await getCallingCall({
             client: portalClient(token),
-            path: { callId: leg.callID },
+            path: { callId: callID },
           }).catch(() => undefined)
-          if (!current?.data) return
-          if (
-            current.data.expectedStaffLegId &&
-            current.data.expectedStaffLegId !== leg.providerLegID
-          ) {
+          if (!current?.data) {
+            await leg.reject().catch(() => undefined)
             return
           }
-          if (current.data.expectedStaffLegId === leg.providerLegID) {
+          if (
+            current.data.expectedMediaToken &&
+            current.data.expectedMediaToken !== leg.mediaToken
+          ) {
+            await leg.reject().catch(() => undefined)
+            return
+          }
+          if (current.data.expectedMediaToken === leg.mediaToken) {
+            const currentAttached = mediaLegRef.current
+            const replacesCurrentRecovery =
+              currentAttached &&
+              leg.recovery &&
+              currentAttached.providerLegID === leg.providerLegID &&
+              currentAttached.mediaToken === leg.mediaToken
+            if (currentAttached && !replacesCurrentRecovery) {
+              await leg.reject().catch(() => undefined)
+              return
+            }
             await leg.answer()
             mediaLegRef.current = leg
             setMediaAttached(true)
             setActiveCall(current.data)
             return
           }
+          if (
+            current.data.state !== "CONNECTING" &&
+            current.data.state !== "RECONCILING" &&
+            current.data.state !== "CONNECTED"
+          ) {
+            await leg.reject().catch(() => undefined)
+            return
+          }
           await new Promise((resolve) => window.setTimeout(resolve, 100))
         }
+        await leg.reject().catch(() => undefined)
         setError("The browser audio leg did not become authoritative before the connection deadline.")
         setAvailable(false)
         await updateReadiness(false, "unavailable")
       } catch {
+        await leg.reject().catch(() => undefined)
         setError("The accepted browser audio leg could not be answered.")
         setAvailable(false)
         await updateReadiness(false, "unavailable")
       } finally {
-        pendingMediaLegsRef.current.delete(legKey)
+        if (
+          pendingMediaLegsRef.current.get(leg.mediaToken) ===
+          leg.providerLegID
+        ) {
+          pendingMediaLegsRef.current.delete(leg.mediaToken)
+        }
       }
     },
     [sessionID, updateReadiness],

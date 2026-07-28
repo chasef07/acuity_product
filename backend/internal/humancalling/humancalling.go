@@ -84,7 +84,8 @@ const (
 )
 
 type Config struct {
-	SIPDomain              string
+	HandoffSIPDomain       string
+	StaffSIPDomain         string
 	OfferDuration          time.Duration
 	ConnectionTimeout      time.Duration
 	HandoffLifetime        time.Duration
@@ -137,6 +138,7 @@ type ProviderFact struct {
 	CallSessionID      string
 	ClientState        string
 	To                 string
+	HandoffToken       string
 	HangupCause        string
 	RecordingID        string
 	RecordingBucket    string
@@ -243,6 +245,8 @@ type Call struct {
 	ClaimantSubject     string
 	WinnerSubject       string
 	ExpectedStaffLegID  string
+	ExpectedMediaToken  string
+	currentAttemptID    string
 	Phone               string
 	PhoneSource         string
 	DisplayName         string
@@ -319,6 +323,9 @@ func New(
 	if config.WebhookTolerance <= 0 {
 		config.WebhookTolerance = 5 * time.Minute
 	}
+	if config.StaffSIPDomain == "" {
+		config.StaffSIPDomain = config.HandoffSIPDomain
+	}
 	tokenKey := append([]byte(nil), config.HandoffTokenKey...)
 	if len(tokenKey) == 0 {
 		tokenKey = make([]byte, 32)
@@ -340,7 +347,7 @@ func (m *Module) CreateHandoff(
 	ctx context.Context,
 	command CreateHandoffCommand,
 ) (Handoff, error) {
-	if err := validateHandoff(command, m.config.SIPDomain); err != nil {
+	if err := validateHandoff(command, m.config.HandoffSIPDomain); err != nil {
 		return Handoff{}, err
 	}
 	fingerprint, err := handoffFingerprint(command)
@@ -1619,7 +1626,7 @@ func (m *Module) AcceptOffer(
 	acceptedAt := m.now()
 	connectionDeadline := acceptedAt.Add(m.config.ConnectionTimeout)
 	payload := map[string]any{
-		"to":                    managedSIPDestination(sipUsername, m.config.SIPDomain),
+		"to":                    managedSIPDestination(sipUsername, m.config.StaffSIPDomain),
 		"connection_id":         m.config.CallControlID,
 		"from":                  m.config.FromNumber,
 		"link_to":               "",
@@ -1628,6 +1635,10 @@ func (m *Module) AcceptOffer(
 		"prevent_double_bridge": true,
 		"client_state":          opaqueClientState(callID, "staff", attemptID),
 		"timeout_secs":          int(m.config.ConnectionTimeout.Seconds()),
+		"custom_headers": []map[string]string{{
+			"name":  "X-Acuity-Media-Token",
+			"value": m.staffMediaToken(callID, attemptID),
+		}},
 	}
 	payload["link_to"] = callerCallControlID
 	encoded, err := json.Marshal(payload)
@@ -1769,6 +1780,12 @@ func (m *Module) ReadCall(
 	}
 	if call.ClaimantSubject != identity.Subject && call.WinnerSubject != identity.Subject {
 		return Call{}, ErrDenied
+	}
+	if call.currentAttemptID != "" &&
+		(call.State == CallConnecting ||
+			call.State == CallReconciling ||
+			call.State == CallConnected) {
+		call.ExpectedMediaToken = m.staffMediaToken(call.ID, call.currentAttemptID)
 	}
 	return call, nil
 }
@@ -4659,6 +4676,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(c.claimant_subject, ''),
 			COALESCE(c.winner_subject, ''),
 			COALESCE(c.expected_staff_call_leg_id, ''),
+			COALESCE(c.current_attempt_id::text, ''),
 			COALESCE(h.phone, ''),
 			COALESCE(h.phone_source, ''),
 			COALESCE(h.display_name, ''),
@@ -4688,6 +4706,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.ClaimantSubject,
 		&result.WinnerSubject,
 		&result.ExpectedStaffLegID,
+		&result.currentAttemptID,
 		&result.Phone,
 		&result.PhoneSource,
 		&result.DisplayName,
@@ -4713,9 +4732,13 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 }
 
 func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
-	token, err := tokenFromDestination(fact.To)
-	if err != nil {
-		return err
+	token := fact.HandoffToken
+	if token == "" {
+		var err error
+		token, err = tokenFromDestination(fact.To)
+		if err != nil {
+			return err
+		}
 	}
 	tokenHash := sha256.Sum256([]byte(token))
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -5003,8 +5026,14 @@ func (m *Module) handoffToken(handoffID string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func (m *Module) staffMediaToken(callID string, attemptID string) string {
+	mac := hmac.New(sha256.New, m.tokenKey)
+	_, _ = mac.Write([]byte("staff-media-v1\x00" + callID + "\x00" + attemptID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
 func (m *Module) sipDestination(handoffID string) string {
-	return "sip:" + m.handoffToken(handoffID) + "@" + m.config.SIPDomain
+	return "sip:" + m.handoffToken(handoffID) + "@" + m.config.HandoffSIPDomain
 }
 
 func tokenFromDestination(destination string) (string, error) {

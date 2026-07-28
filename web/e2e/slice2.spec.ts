@@ -206,6 +206,17 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       )).toBeTruthy()
     }
 
+    let releaseAcceptResponses: () => void = () => {}
+    const acceptResponseGate = new Promise<void>((resolve) => {
+      releaseAcceptResponses = resolve
+    })
+    for (const page of [selectedPage, secondaryPage]) {
+      await page.route("**/calling/offers/*/accept", async (route) => {
+        const response = await route.fetch()
+        await acceptResponseGate
+        await route.fulfill({ response })
+      })
+    }
     await Promise.all([
       selectedPage.getByRole("button", { name: "Accept" }).click(),
       secondaryPage.getByRole("button", { name: "Accept" }).click(),
@@ -259,6 +270,27 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         : secondaryPage
     const loserPage =
       winnerPage === selectedPage ? secondaryPage : selectedPage
+    const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
+    await sendIncomingLeg(
+      winnerPage,
+      "unrelated-browser-leg",
+      "unrelated-media-token",
+    )
+    await sendIncomingLeg(
+      winnerPage,
+      "early-browser-leg",
+      durableMediaToken,
+    )
+    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+    await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
+    await sendIncomingLeg(
+      winnerPage,
+      "replayed-browser-leg",
+      durableMediaToken,
+    )
+    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+    await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(2)
+    releaseAcceptResponses()
     await expect(
       winnerPage
         .getByRole("region", { name: "Call Center" })
@@ -292,7 +324,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       })
       .toBe("fixture-staff-leg")
 
-    await sendIncomingLegs(winnerPage, durableCall.id)
+    await sendIncomingLegs(loserPage, durableMediaToken)
     await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
     await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
 
@@ -411,7 +443,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/),
     ).toBeVisible()
-    await sendIncomingLegs(takeoverPage, durableCall.id)
+    await sendIncomingLegs(takeoverPage, durableMediaToken)
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     await signalMedia(takeoverPage, "reconnecting")
@@ -422,6 +454,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText("Connected", { exact: true }),
     ).toBeVisible()
+    await sendIncomingLeg(
+      takeoverPage,
+      "fixture-browser-leg",
+      durableMediaToken,
+      true,
+    )
+    await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(2)
 
     await takeoverPage.reload()
     await expect(callCenter(takeoverPage).getByText("Connected", { exact: true })).toBeVisible({
@@ -430,7 +469,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/)).toBeVisible({
       timeout: 15_000,
     })
-    await sendIncomingLegs(takeoverPage, durableCall.id)
+    await sendIncomingLegs(takeoverPage, durableMediaToken)
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
 
@@ -564,7 +603,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         )
         return result.rows[0]
       })
-    await sendIncomingLegs(takeoverPage, recoveryCall.id)
+    await sendIncomingLegs(
+      takeoverPage,
+      await mediaTokenForCall(database, recoveryCall.id),
+    )
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     const recoveryStaffState = Buffer.from(JSON.stringify({
       v: 1,
@@ -659,11 +701,14 @@ async function prepareBrowser(context: BrowserContext) {
   await context.addInitScript(() => {
     const state = {
       answers: 0,
+      rejects: 0,
       disconnects: 0,
       ringtonePulses: 0,
       ringtoneStops: 0,
       notifications: [] as Array<{ title: string; body: string; tag: string }>,
-      incoming: undefined as undefined | ((id: string, legID: string) => void),
+      incoming: undefined as
+        | undefined
+        | ((id: string, legID: string, recovery: boolean) => void),
       signal: undefined as undefined | ((state: string) => void),
     }
     const microphone = {
@@ -742,21 +787,31 @@ async function prepareBrowser(context: BrowserContext) {
           callbacks: {
             onState: (state: string) => void
             onIncoming: (leg: {
-              callID: string
               providerLegID: string
+              mediaToken: string
+              recovery: boolean
               answer: () => Promise<void>
+              reject: () => Promise<void>
               mute: () => void
               unmute: () => void
             }) => void
           },
         ) => {
           state.signal = callbacks.onState
-          state.incoming = (callID: string, providerLegID: string) =>
+          state.incoming = (
+            providerLegID: string,
+            mediaToken: string,
+            recovery: boolean,
+          ) =>
             callbacks.onIncoming({
-              callID,
               providerLegID,
+              mediaToken,
+              recovery,
               answer: async () => {
                 state.answers += 1
+              },
+              reject: async () => {
+                state.rejects += 1
               },
               mute: () => undefined,
               unmute: () => undefined,
@@ -826,36 +881,74 @@ function providerLegPayload(clientState: string) {
   }
 }
 
-async function sendIncomingLegs(page: Page, callID: string) {
-  await page.evaluate((expectedCallID) => {
+async function sendIncomingLegs(page: Page, mediaToken: string) {
+  await sendIncomingLeg(page, "unrelated-browser-leg", "unrelated-media-token")
+  await sendIncomingLeg(page, "fixture-browser-leg", mediaToken)
+}
+
+async function sendIncomingLeg(
+  page: Page,
+  providerLegID: string,
+  mediaToken: string,
+  recovery = false,
+) {
+  await page.evaluate(({ providerLegID, mediaToken, recovery }) => {
     const fixture = window as typeof window & {
       __acuityCallingTestState: {
-        incoming?: (callID: string, providerLegID: string) => void
+        incoming?: (
+          providerLegID: string,
+          mediaToken: string,
+          recovery: boolean,
+        ) => void
       }
     }
     fixture.__acuityCallingTestState.incoming?.(
-      "00000000-0000-0000-0000-000000000999",
-      "fixture-staff-leg",
+      providerLegID,
+      mediaToken,
+      recovery,
     )
-    fixture.__acuityCallingTestState.incoming?.(
-      expectedCallID,
-      "unrelated-staff-leg",
-    )
-    fixture.__acuityCallingTestState.incoming?.(
-      expectedCallID,
-      "fixture-staff-leg",
-    )
-  }, callID)
+  }, { providerLegID, mediaToken, recovery })
+}
+
+async function mediaTokenForCall(database: Pool, callID: string) {
+  return expect
+    .poll(async () => {
+      const result = await database.query<{ token: string | null }>(
+        `SELECT payload->'custom_headers'->0->>'value' AS token
+           FROM human_calling_provider_commands
+          WHERE call_id = $1 AND action = 'DIAL_STAFF'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [callID],
+      )
+      return result.rows[0]?.token ?? ""
+    })
+    .not.toBe("")
+    .then(async () => {
+      const result = await database.query<{ token: string }>(
+        `SELECT payload->'custom_headers'->0->>'value' AS token
+           FROM human_calling_provider_commands
+          WHERE call_id = $1 AND action = 'DIAL_STAFF'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [callID],
+      )
+      return result.rows[0].token
+    })
 }
 
 async function mediaCount(
   page: Page,
-  key: "answers" | "disconnects",
+  key: "answers" | "rejects" | "disconnects",
 ) {
   return page.evaluate(
     ({ value }) =>
       (window as typeof window & {
-        __acuityCallingTestState: { answers: number; disconnects: number }
+        __acuityCallingTestState: {
+          answers: number
+          rejects: number
+          disconnects: number
+        }
       }).__acuityCallingTestState[value],
     { value: key },
   )

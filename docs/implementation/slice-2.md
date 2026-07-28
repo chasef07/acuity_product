@@ -17,11 +17,14 @@ The vertical path is:
 1. Abita authenticates to `portal-api` with its scoped service credential and
    creates an idempotent handoff. The response contains a two-minute,
    single-use SIP destination whose opaque token is stored only as a digest.
-2. A synthetic LiveKit caller transfers to that destination. Telnyx sends the
-   exact signed webhook body to `provider-ingress`.
+2. A synthetic LiveKit caller transfers to that destination and forwards the
+   same opaque token in `X-Acuity-Handoff-Token`. Telnyx normalizes the SIP
+   request URI to the assigned application number, but preserves the custom
+   header in the exact signed webhook body sent to `provider-ingress`.
 3. `provider-ingress` verifies the Ed25519 signature and timestamp, commits the
    raw receipt, and only then acknowledges it. It does not project state or call
-   Telnyx.
+   Telnyx. Admission fails closed when no valid unique token can be correlated,
+   or when the token is expired, consumed, or unknown.
 4. `worker` projects receipts and executes previously committed commands.
    Admission consumes the handoff, creates one 20-second logical offer, answers
    the caller, and starts looping ringback.
@@ -31,8 +34,23 @@ The vertical path is:
 6. Accepting rechecks all authority and readiness under the PostgreSQL Call
    lock. One claimant commits one Dial intent. Other Users receive a committed
    claimed result and no provider leg.
-7. The selected browser auto-answers only the TelnyxRTC leg whose opaque
-   `client_state` names that accepted Call and the staff-leg version.
+7. The Dial targets the selected User's managed Telnyx credential at
+   `sip.telnyx.com`; the Call Control application's custom SIP subdomain is
+   reserved for inbound Abita handoff admission. The selected browser
+   auto-answers only when the incoming invite carries the same HMAC-derived
+   `X-Acuity-Media-Token` committed with its currently accepted Call. Telnyx
+   creates distinct Call Control and WebRTC endpoint leg IDs, so those IDs are
+   not compared across that boundary. Telnyx `client_state` correlates signed
+   provider events, while the opaque custom header correlates the browser media
+   invite without exposing Contact Context. The SDK attaches recovery media to
+   a muted quarantine output with its microphone fenced; Acuity makes audio
+   audible and restores the User's intended microphone state only after current
+   lease, Call state, and token validation. A duplicate leg carrying the same
+   attempt token is rejected rather than becoming a second media attachment.
+   Ringing rejects end only that invite; active or recovering rejects purge the
+   local attachment without sending a provider BYE. Signaling recovery starts
+   muted and must pass the same authoritative validation before restoring the
+   prior microphone intent.
 8. Only the matching signed `call.bridged` fact marks the Call Connected and
    commits dual-channel recording intent. Provider-confirmed termination moves
    the Call to Needs Disposition. The winner records Resolved or Follow-up
@@ -69,8 +87,9 @@ of truth, and SSE messages are refetch hints.
   that duplicate command IDs are ignored, so this
   repairs the pre-request crash point without creating a second provider effect.
 - Duplicate receipts and projected facts are idempotent. Out-of-order terminal
-  facts cannot regress a Call. Unknown signed events remain stored for
-  diagnosis.
+  facts cannot regress a Call. Retried receipts are selected by their next
+  eligible attempt time, so stale uncorrelated facts cannot starve a newly
+  arrived handoff. Unknown signed events remain stored for diagnosis.
 - Browser answer and Dial success are never connection proof. After bridge, the
   claimant is final; reconnect or reload may recover only that provider leg and
   cannot elect another User.
@@ -97,11 +116,15 @@ Telnyx API and browser media device are deterministic adapters.
 The Slice 2 journey creates two distinct authorized Staff Users, enables both
 softphones, commits an authenticated Abita handoff, delivers signed webhook
 bodies, and proves that both browsers see the sidebar queue while exactly one
-PostgreSQL claimant and one Dial command exist. Only the winner's exact media
-leg answers. The same journey proves provider-confirmed bridge, post-bridge
+PostgreSQL claimant and one Dial command exist. Only the winner's exact opaque
+media token answers, even though the browser endpoint leg ID differs from the
+Call Control leg ID. The same journey proves provider-confirmed bridge, post-bridge
 dual-channel/no-transcription recording intent, signed GCS readiness,
 same-User tab takeover with old-media fencing, provider-confirmed hangup, and
-durable disposition. Integration tests additionally cover no-redial ambiguous
+durable disposition. The browser journey delays the successful Accept response
+until after the matching media invite to prove the committed softphone lease
+recovers that ordering safely, and replays a second leg with the same token to
+prove it is rejected. Integration tests additionally cover no-redial ambiguous
 recovery, deadline expiry, invalid JWT boundaries, receipt reordering, and the
 sanitized operator timeline.
 
@@ -115,12 +138,14 @@ until one explicitly approved synthetic run supplies all of this evidence:
 
 - one synthetic Abita/LiveKit caller and two distinct authorized, ready browser
   Users;
-- the opaque SIP token arriving intact at the configured shared Telnyx Call
-  Control Application;
+- the opaque handoff token arriving intact in the signed custom header at the
+  configured shared Telnyx Call Control Application despite Telnyx normalizing
+  the request URI;
 - signed public webhook delivery and committed receipt rows;
 - both Users seeing the same offer and one PostgreSQL claimant after
   near-simultaneous acceptance;
-- one Telnyx linked Dial and only the correlated browser leg auto-answering;
+- one Telnyx linked Dial and only the media-token-correlated browser invite
+  auto-answering;
 - matching provider bridge events, clear two-way audio, browser reconnect, and
   reload recovery without a second Dial or bridge;
 - provider-confirmed hangup, committed disposition, and a sanitized Platform

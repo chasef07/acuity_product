@@ -1224,6 +1224,7 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		TransferReason:      call.TransferReason,
 		ReasonSource:        call.ReasonSource,
 		ExpectedStaffLegId:  call.ExpectedStaffLegID,
+		ExpectedMediaToken:  call.ExpectedMediaToken,
 		ProviderTermination: call.ProviderTermination,
 		Version:             call.Version,
 	}

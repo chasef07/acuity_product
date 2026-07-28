@@ -17,6 +17,7 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"BETTER_AUTH_ISSUER":                       "https://portal.example",
 		"PORTAL_API_AUDIENCE":                      "https://api.example",
 		"HUMAN_CALLING_SIP_DOMAIN":                 "synthetic.sip.telnyx.com",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN":           "sip.telnyx.com",
 		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":          "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"HUMAN_CALLING_OFFER_SECONDS":              "20",
 		"HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS": "15",
@@ -55,6 +56,10 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		config.HumanCalling.ReadinessGrace != 15*time.Second {
 		t.Fatalf("calling timings = %#v", config.HumanCalling)
 	}
+	if config.HumanCalling.HandoffSIPDomain != "synthetic.sip.telnyx.com" ||
+		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" {
+		t.Fatalf("calling SIP domains = %#v", config.HumanCalling)
+	}
 
 	for _, role := range []Role{
 		RolePortalAPI,
@@ -80,6 +85,7 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		}
 		if role == RoleProviderIngress || role == RoleWorker || role == RoleRealtime || role == RoleMigrate {
 			delete(values, "HUMAN_CALLING_SIP_DOMAIN")
+			delete(values, "HUMAN_CALLING_STAFF_SIP_DOMAIN")
 			delete(values, "HUMAN_CALLING_HANDOFF_TOKEN_KEY")
 			delete(values, "HANDOFF_SERVICE_TOKEN")
 			delete(values, "HANDOFF_SERVICE_SUBJECT")
@@ -106,6 +112,7 @@ func TestLoadConfigRejectsMalformedHumanCallingKeys(t *testing.T) {
 		"BETTER_AUTH_ISSUER":              "https://portal.example",
 		"PORTAL_API_AUDIENCE":             "https://api.example",
 		"HUMAN_CALLING_SIP_DOMAIN":        "synthetic.sip.telnyx.com",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN":  "sip.telnyx.com",
 		"HUMAN_CALLING_HANDOFF_TOKEN_KEY": "too-short",
 		"HANDOFF_SERVICE_TOKEN":           "synthetic-service-token",
 		"HANDOFF_SERVICE_SUBJECT":         "abita-synthetic",

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,12 @@ type telnyxVoicePayload struct {
 	RecordingURLs      struct {
 		WAV string `json:"wav"`
 	} `json:"recording_urls"`
+	CustomHeaders []telnyxCustomHeader `json:"custom_headers"`
+}
+
+type telnyxCustomHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 func (m *Module) ReceiveWebhook(
@@ -182,7 +189,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 					AND processing_started_at <= $1 - interval '30 seconds'
 				)
 			)
-		ORDER BY received_at, event_id
+		ORDER BY next_attempt_at, received_at, event_id
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`, m.now()).Scan(&eventID, &eventType, &raw, &receivedAt)
@@ -374,6 +381,10 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	fact.CallSessionID = payload.CallSessionID
 	fact.ClientState = payload.ClientState
 	fact.To = payload.To
+	fact.HandoffToken, err = handoffTokenFromHeaders(payload.CustomHeaders)
+	if err != nil {
+		return ProviderFact{}, false, err
+	}
 	fact.HangupCause = payload.HangupCause
 	fact.RecordingID = payload.RecordingID
 	fact.RecordingObjectKey = payload.RecordingObjectKey
@@ -400,6 +411,25 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 		)
 	}
 	return fact, true, nil
+}
+
+func handoffTokenFromHeaders(headers []telnyxCustomHeader) (string, error) {
+	const name = "X-Acuity-Handoff-Token"
+	var token string
+	for _, header := range headers {
+		if !strings.EqualFold(header.Name, name) {
+			continue
+		}
+		if token != "" {
+			return "", ErrInvalidWebhook
+		}
+		token = strings.TrimSpace(header.Value)
+		decoded, err := base64.RawURLEncoding.DecodeString(token)
+		if err != nil || len(decoded) != sha256.Size {
+			return "", ErrInvalidWebhook
+		}
+	}
+	return token, nil
 }
 
 func validUUID(value string) bool {
