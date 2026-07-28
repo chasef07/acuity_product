@@ -1781,7 +1781,10 @@ func (m *Module) ReadCall(
 	if call.ClaimantSubject != identity.Subject && call.WinnerSubject != identity.Subject {
 		return Call{}, ErrDenied
 	}
-	if call.currentAttemptID != "" {
+	if call.currentAttemptID != "" &&
+		(call.State == CallConnecting ||
+			call.State == CallReconciling ||
+			call.State == CallConnected) {
 		call.ExpectedMediaToken = m.staffMediaToken(call.ID, call.currentAttemptID)
 	}
 	return call, nil

@@ -717,6 +717,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		t.Fatalf("provider commands = %#v, want one Dial", provider.commands)
 	}
 	var dialMediaToken string
+	var dialClientState string
 	provider.mu.Lock()
 	for _, command := range provider.commands {
 		if command.Action == humancalling.CommandDialStaff {
@@ -733,11 +734,12 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 					dialMediaToken, _ = header["value"].(string)
 				}
 			}
+			dialClientState, _ = command.Payload["client_state"].(string)
 		}
 	}
 	provider.mu.Unlock()
-	if dialMediaToken == "" {
-		t.Fatalf("Dial omitted the opaque browser media token")
+	if dialMediaToken == "" || dialClientState == "" {
+		t.Fatalf("Dial omitted opaque correlation: %#v", provider.commands)
 	}
 
 	connecting, err := calling.ReadCall(context.Background(), winner, offers[0].ID)
@@ -754,9 +756,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 			dialMediaToken,
 		)
 	}
-	clientState := base64.StdEncoding.EncodeToString([]byte(
-		fmt.Sprintf(`{"v":1,"call":"%s","leg":"staff"}`, offers[0].ID),
-	))
+	clientState := dialClientState
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "claim-staff-initiated-event",
 		Type:          humancalling.FactCallInitiated,
@@ -860,7 +860,8 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		t.Fatalf("read ended Call: %v", err)
 	}
 	if ended.State != humancalling.CallNeedsDisposition ||
-		ended.Recording.State != humancalling.RecordingReady {
+		ended.Recording.State != humancalling.RecordingReady ||
+		ended.ExpectedMediaToken != "" {
 		t.Fatalf("ended Call = %#v", ended)
 	}
 	resolved, err := calling.RecordDisposition(

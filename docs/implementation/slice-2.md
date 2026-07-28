@@ -42,7 +42,15 @@ The vertical path is:
    creates distinct Call Control and WebRTC endpoint leg IDs, so those IDs are
    not compared across that boundary. Telnyx `client_state` correlates signed
    provider events, while the opaque custom header correlates the browser media
-   invite without exposing Contact Context.
+   invite without exposing Contact Context. The SDK attaches recovery media to
+   a muted quarantine output with its microphone fenced; Acuity makes audio
+   audible and restores the User's intended microphone state only after current
+   lease, Call state, and token validation. A duplicate leg carrying the same
+   attempt token is rejected rather than becoming a second media attachment.
+   Ringing rejects end only that invite; active or recovering rejects purge the
+   local attachment without sending a provider BYE. Signaling recovery starts
+   muted and must pass the same authoritative validation before restoring the
+   prior microphone intent.
 8. Only the matching signed `call.bridged` fact marks the Call Connected and
    commits dual-channel recording intent. Provider-confirmed termination moves
    the Call to Needs Disposition. The winner records Resolved or Follow-up
@@ -113,7 +121,10 @@ media token answers, even though the browser endpoint leg ID differs from the
 Call Control leg ID. The same journey proves provider-confirmed bridge, post-bridge
 dual-channel/no-transcription recording intent, signed GCS readiness,
 same-User tab takeover with old-media fencing, provider-confirmed hangup, and
-durable disposition. Integration tests additionally cover no-redial ambiguous
+durable disposition. The browser journey delays the successful Accept response
+until after the matching media invite to prove the committed softphone lease
+recovers that ordering safely, and replays a second leg with the same token to
+prove it is rejected. Integration tests additionally cover no-redial ambiguous
 recovery, deadline expiry, invalid JWT boundaries, receipt reordering, and the
 sanitized operator timeline.
 

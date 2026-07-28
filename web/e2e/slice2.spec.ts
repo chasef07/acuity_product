@@ -206,6 +206,17 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       )).toBeTruthy()
     }
 
+    let releaseAcceptResponses: () => void = () => {}
+    const acceptResponseGate = new Promise<void>((resolve) => {
+      releaseAcceptResponses = resolve
+    })
+    for (const page of [selectedPage, secondaryPage]) {
+      await page.route("**/calling/offers/*/accept", async (route) => {
+        const response = await route.fetch()
+        await acceptResponseGate
+        await route.fulfill({ response })
+      })
+    }
     await Promise.all([
       selectedPage.getByRole("button", { name: "Accept" }).click(),
       secondaryPage.getByRole("button", { name: "Accept" }).click(),
@@ -259,6 +270,27 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         : secondaryPage
     const loserPage =
       winnerPage === selectedPage ? secondaryPage : selectedPage
+    const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
+    await sendIncomingLeg(
+      winnerPage,
+      "unrelated-browser-leg",
+      "unrelated-media-token",
+    )
+    await sendIncomingLeg(
+      winnerPage,
+      "early-browser-leg",
+      durableMediaToken,
+    )
+    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+    await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
+    await sendIncomingLeg(
+      winnerPage,
+      "replayed-browser-leg",
+      durableMediaToken,
+    )
+    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+    await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(2)
+    releaseAcceptResponses()
     await expect(
       winnerPage
         .getByRole("region", { name: "Call Center" })
@@ -292,9 +324,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       })
       .toBe("fixture-staff-leg")
 
-    const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
     await sendIncomingLegs(loserPage, durableMediaToken)
-    await sendIncomingLegs(winnerPage, durableMediaToken)
     await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
     await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
 
@@ -424,6 +454,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText("Connected", { exact: true }),
     ).toBeVisible()
+    await sendIncomingLeg(
+      takeoverPage,
+      "fixture-browser-leg",
+      durableMediaToken,
+      true,
+    )
+    await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(2)
 
     await takeoverPage.reload()
     await expect(callCenter(takeoverPage).getByText("Connected", { exact: true })).toBeVisible({
@@ -664,11 +701,14 @@ async function prepareBrowser(context: BrowserContext) {
   await context.addInitScript(() => {
     const state = {
       answers: 0,
+      rejects: 0,
       disconnects: 0,
       ringtonePulses: 0,
       ringtoneStops: 0,
       notifications: [] as Array<{ title: string; body: string; tag: string }>,
-      incoming: undefined as undefined | ((id: string, legID: string) => void),
+      incoming: undefined as
+        | undefined
+        | ((id: string, legID: string, recovery: boolean) => void),
       signal: undefined as undefined | ((state: string) => void),
     }
     const microphone = {
@@ -749,19 +789,29 @@ async function prepareBrowser(context: BrowserContext) {
             onIncoming: (leg: {
               providerLegID: string
               mediaToken: string
+              recovery: boolean
               answer: () => Promise<void>
+              reject: () => Promise<void>
               mute: () => void
               unmute: () => void
             }) => void
           },
         ) => {
           state.signal = callbacks.onState
-          state.incoming = (providerLegID: string, mediaToken: string) =>
+          state.incoming = (
+            providerLegID: string,
+            mediaToken: string,
+            recovery: boolean,
+          ) =>
             callbacks.onIncoming({
               providerLegID,
               mediaToken,
+              recovery,
               answer: async () => {
                 state.answers += 1
+              },
+              reject: async () => {
+                state.rejects += 1
               },
               mute: () => undefined,
               unmute: () => undefined,
@@ -832,21 +882,32 @@ function providerLegPayload(clientState: string) {
 }
 
 async function sendIncomingLegs(page: Page, mediaToken: string) {
-  await page.evaluate((expectedMediaToken) => {
+  await sendIncomingLeg(page, "unrelated-browser-leg", "unrelated-media-token")
+  await sendIncomingLeg(page, "fixture-browser-leg", mediaToken)
+}
+
+async function sendIncomingLeg(
+  page: Page,
+  providerLegID: string,
+  mediaToken: string,
+  recovery = false,
+) {
+  await page.evaluate(({ providerLegID, mediaToken, recovery }) => {
     const fixture = window as typeof window & {
       __acuityCallingTestState: {
-        incoming?: (providerLegID: string, mediaToken: string) => void
+        incoming?: (
+          providerLegID: string,
+          mediaToken: string,
+          recovery: boolean,
+        ) => void
       }
     }
     fixture.__acuityCallingTestState.incoming?.(
-      "unrelated-browser-leg",
-      "unrelated-media-token",
+      providerLegID,
+      mediaToken,
+      recovery,
     )
-    fixture.__acuityCallingTestState.incoming?.(
-      "fixture-browser-leg",
-      expectedMediaToken,
-    )
-  }, mediaToken)
+  }, { providerLegID, mediaToken, recovery })
 }
 
 async function mediaTokenForCall(database: Pool, callID: string) {
@@ -878,12 +939,16 @@ async function mediaTokenForCall(database: Pool, callID: string) {
 
 async function mediaCount(
   page: Page,
-  key: "answers" | "disconnects",
+  key: "answers" | "rejects" | "disconnects",
 ) {
   return page.evaluate(
     ({ value }) =>
       (window as typeof window & {
-        __acuityCallingTestState: { answers: number; disconnects: number }
+        __acuityCallingTestState: {
+          answers: number
+          rejects: number
+          disconnects: number
+        }
       }).__acuityCallingTestState[value],
     { value: key },
   )
