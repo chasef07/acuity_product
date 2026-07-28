@@ -137,6 +137,7 @@ type ProviderFact struct {
 	CallSessionID      string
 	ClientState        string
 	To                 string
+	HandoffToken       string
 	HangupCause        string
 	RecordingID        string
 	RecordingBucket    string
@@ -4713,9 +4714,13 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 }
 
 func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
-	token, err := tokenFromDestination(fact.To)
-	if err != nil {
-		return err
+	token := fact.HandoffToken
+	if token == "" {
+		var err error
+		token, err = tokenFromDestination(fact.To)
+		if err != nil {
+			return err
+		}
 	}
 	tokenHash := sha256.Sum256([]byte(token))
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})

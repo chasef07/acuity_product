@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,11 +52,16 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	if err != nil {
 		t.Fatalf("create webhook handoff: %v", err)
 	}
+	handoffToken := strings.SplitN(
+		strings.TrimPrefix(handoff.SIPDestination, "sip:"),
+		"@",
+		2,
+	)[0]
 
 	raw := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.initiated","id":"webhook-event-1","occurred_at":"%s","payload":{"call_control_id":"webhook-caller-control","call_leg_id":"webhook-caller-leg","call_session_id":"webhook-session","client_state":"","to":"%s"}}}`,
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"webhook-event-1","occurred_at":"%s","payload":{"call_control_id":"webhook-caller-control","call_leg_id":"webhook-caller-leg","call_session_id":"webhook-session","client_state":"","to":"+14843336938","custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]}}}`,
 		now.Format(time.RFC3339Nano),
-		handoff.SIPDestination,
+		handoffToken,
 	))
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(

@@ -17,11 +17,14 @@ The vertical path is:
 1. Abita authenticates to `portal-api` with its scoped service credential and
    creates an idempotent handoff. The response contains a two-minute,
    single-use SIP destination whose opaque token is stored only as a digest.
-2. A synthetic LiveKit caller transfers to that destination. Telnyx sends the
-   exact signed webhook body to `provider-ingress`.
+2. A synthetic LiveKit caller transfers to that destination and forwards the
+   same opaque token in `X-Acuity-Handoff-Token`. Telnyx normalizes the SIP
+   request URI to the assigned application number, but preserves the custom
+   header in the exact signed webhook body sent to `provider-ingress`.
 3. `provider-ingress` verifies the Ed25519 signature and timestamp, commits the
    raw receipt, and only then acknowledges it. It does not project state or call
-   Telnyx.
+   Telnyx. Admission fails closed when no valid unique token can be correlated,
+   or when the token is expired, consumed, or unknown.
 4. `worker` projects receipts and executes previously committed commands.
    Admission consumes the handoff, creates one 20-second logical offer, answers
    the caller, and starts looping ringback.
@@ -115,8 +118,9 @@ until one explicitly approved synthetic run supplies all of this evidence:
 
 - one synthetic Abita/LiveKit caller and two distinct authorized, ready browser
   Users;
-- the opaque SIP token arriving intact at the configured shared Telnyx Call
-  Control Application;
+- the opaque handoff token arriving intact in the signed custom header at the
+  configured shared Telnyx Call Control Application despite Telnyx normalizing
+  the request URI;
 - signed public webhook delivery and committed receipt rows;
 - both Users seeing the same offer and one PostgreSQL claimant after
   near-simultaneous acceptance;
