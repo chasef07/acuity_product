@@ -245,6 +245,8 @@ type Call struct {
 	ClaimantSubject     string
 	WinnerSubject       string
 	ExpectedStaffLegID  string
+	ExpectedMediaToken  string
+	currentAttemptID    string
 	Phone               string
 	PhoneSource         string
 	DisplayName         string
@@ -1633,6 +1635,10 @@ func (m *Module) AcceptOffer(
 		"prevent_double_bridge": true,
 		"client_state":          opaqueClientState(callID, "staff", attemptID),
 		"timeout_secs":          int(m.config.ConnectionTimeout.Seconds()),
+		"custom_headers": []map[string]string{{
+			"name":  "X-Acuity-Media-Token",
+			"value": m.staffMediaToken(callID, attemptID),
+		}},
 	}
 	payload["link_to"] = callerCallControlID
 	encoded, err := json.Marshal(payload)
@@ -1774,6 +1780,9 @@ func (m *Module) ReadCall(
 	}
 	if call.ClaimantSubject != identity.Subject && call.WinnerSubject != identity.Subject {
 		return Call{}, ErrDenied
+	}
+	if call.currentAttemptID != "" {
+		call.ExpectedMediaToken = m.staffMediaToken(call.ID, call.currentAttemptID)
 	}
 	return call, nil
 }
@@ -4664,6 +4673,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(c.claimant_subject, ''),
 			COALESCE(c.winner_subject, ''),
 			COALESCE(c.expected_staff_call_leg_id, ''),
+			COALESCE(c.current_attempt_id::text, ''),
 			COALESCE(h.phone, ''),
 			COALESCE(h.phone_source, ''),
 			COALESCE(h.display_name, ''),
@@ -4693,6 +4703,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.ClaimantSubject,
 		&result.WinnerSubject,
 		&result.ExpectedStaffLegID,
+		&result.currentAttemptID,
 		&result.Phone,
 		&result.PhoneSource,
 		&result.DisplayName,
@@ -5009,6 +5020,12 @@ func handoffFingerprint(command CreateHandoffCommand) ([32]byte, error) {
 func (m *Module) handoffToken(handoffID string) string {
 	mac := hmac.New(sha256.New, m.tokenKey)
 	_, _ = mac.Write([]byte(handoffID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (m *Module) staffMediaToken(callID string, attemptID string) string {
+	mac := hmac.New(sha256.New, m.tokenKey)
+	_, _ = mac.Write([]byte("staff-media-v1\x00" + callID + "\x00" + attemptID))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 

@@ -106,6 +106,10 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 			"prevent_double_bridge": true,
 			"client_state":          "opaque-state",
 			"timeout_secs":          float64(20),
+			"custom_headers": []map[string]string{{
+				"name":  "X-Acuity-Media-Token",
+				"value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			}},
 		},
 	})
 	if err != nil ||
@@ -135,7 +139,9 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		dialRequest["from"] != "+15555550199" ||
 		dialRequest["timeout_secs"] != float64(20) ||
 		dialRequest["bridge_on_answer"] != true ||
-		dialRequest["prevent_double_bridge"] != true {
+		dialRequest["prevent_double_bridge"] != true ||
+		fmt.Sprint(dialRequest["custom_headers"]) !=
+			"[map[name:X-Acuity-Media-Token value:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]]" {
 		t.Fatalf("Telnyx Dial request = %#v", dialRequest)
 	}
 	recordingRequest := <-requests
@@ -179,6 +185,7 @@ func TestTelnyxAdapterRejectsIncompleteDurableCommand(t *testing.T) {
 			"bridge_on_answer":      true,
 			"prevent_double_bridge": true,
 			"client_state":          "opaque-state",
+			"timeout_secs":          float64(20),
 		},
 	}); err != humancalling.ErrInvalidInput {
 		t.Fatalf("incomplete Dial error = %v, want %v", err, humancalling.ErrInvalidInput)

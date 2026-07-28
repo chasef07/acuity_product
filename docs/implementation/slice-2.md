@@ -37,10 +37,12 @@ The vertical path is:
 7. The Dial targets the selected User's managed Telnyx credential at
    `sip.telnyx.com`; the Call Control application's custom SIP subdomain is
    reserved for inbound Abita handoff admission. The selected browser
-   auto-answers only when the TelnyxRTC leg ID matches the authoritative
-   expected staff leg committed for its currently accepted Call. Telnyx
-   `client_state` correlates signed provider events, but is not exposed on the
-   browser's incoming invite.
+   auto-answers only when the incoming invite carries the same HMAC-derived
+   `X-Acuity-Media-Token` committed with its currently accepted Call. Telnyx
+   creates distinct Call Control and WebRTC endpoint leg IDs, so those IDs are
+   not compared across that boundary. Telnyx `client_state` correlates signed
+   provider events, while the opaque custom header correlates the browser media
+   invite without exposing Contact Context.
 8. Only the matching signed `call.bridged` fact marks the Call Connected and
    commits dual-channel recording intent. Provider-confirmed termination moves
    the Call to Needs Disposition. The winner records Resolved or Follow-up
@@ -77,8 +79,9 @@ of truth, and SSE messages are refetch hints.
   that duplicate command IDs are ignored, so this
   repairs the pre-request crash point without creating a second provider effect.
 - Duplicate receipts and projected facts are idempotent. Out-of-order terminal
-  facts cannot regress a Call. Unknown signed events remain stored for
-  diagnosis.
+  facts cannot regress a Call. Retried receipts are selected by their next
+  eligible attempt time, so stale uncorrelated facts cannot starve a newly
+  arrived handoff. Unknown signed events remain stored for diagnosis.
 - Browser answer and Dial success are never connection proof. After bridge, the
   claimant is final; reconnect or reload may recover only that provider leg and
   cannot elect another User.
@@ -105,8 +108,9 @@ Telnyx API and browser media device are deterministic adapters.
 The Slice 2 journey creates two distinct authorized Staff Users, enables both
 softphones, commits an authenticated Abita handoff, delivers signed webhook
 bodies, and proves that both browsers see the sidebar queue while exactly one
-PostgreSQL claimant and one Dial command exist. Only the winner's exact media
-leg answers. The same journey proves provider-confirmed bridge, post-bridge
+PostgreSQL claimant and one Dial command exist. Only the winner's exact opaque
+media token answers, even though the browser endpoint leg ID differs from the
+Call Control leg ID. The same journey proves provider-confirmed bridge, post-bridge
 dual-channel/no-transcription recording intent, signed GCS readiness,
 same-User tab takeover with old-media fencing, provider-confirmed hangup, and
 durable disposition. Integration tests additionally cover no-redial ambiguous
@@ -129,7 +133,8 @@ until one explicitly approved synthetic run supplies all of this evidence:
 - signed public webhook delivery and committed receipt rows;
 - both Users seeing the same offer and one PostgreSQL claimant after
   near-simultaneous acceptance;
-- one Telnyx linked Dial and only the correlated browser leg auto-answering;
+- one Telnyx linked Dial and only the media-token-correlated browser invite
+  auto-answering;
 - matching provider bridge events, clear two-way audio, browser reconnect, and
   reload recovery without a second Dial or bridge;
 - provider-confirmed hangup, committed disposition, and a sanitized Platform

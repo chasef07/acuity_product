@@ -248,6 +248,10 @@ export type CallingCall = {
      * Empty until Telnyx identifies the one staff leg created for this claim.
      */
     expectedStaffLegId: string;
+    /**
+     * Opaque token that identifies the exact WebRTC media leg for the current claim.
+     */
+    expectedMediaToken: string;
     providerTermination: string;
     connectedAt?: string;
     version: number;

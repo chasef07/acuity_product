@@ -6,6 +6,7 @@ export type MediaState =
 
 export type IncomingMediaLeg = {
   providerLegID: string
+  mediaToken: string
   answer: () => Promise<void>
   mute: () => void
   unmute: () => void
@@ -33,7 +34,10 @@ declare global {
 
 type SDKCall = {
   state: string
-  options: { telnyxLegId?: string }
+  options: {
+    telnyxLegId?: string
+    customHeaders?: Array<{ name: string; value: string }>
+  }
   answer: (options?: { remoteElement?: string }) => Promise<void>
   muteAudio: () => void
   unmuteAudio: () => void
@@ -53,6 +57,18 @@ type SDKClient = {
 
 export function createCallingMediaAdapter(): CallingMediaAdapter {
   return window.__acuityCallingMediaFactory?.() ?? new TelnyxMediaAdapter()
+}
+
+function mediaTokenFromHeaders(
+  headers?: Array<{ name: string; value: string }>,
+) {
+  const matches = headers?.filter(
+    (header) => header.name.toLowerCase() === "x-acuity-media-token",
+  )
+  if (matches?.length !== 1) return
+  const token = matches[0].value.trim()
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return
+  return token
 }
 
 class TelnyxMediaAdapter implements CallingMediaAdapter {
@@ -85,9 +101,11 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         return
       }
       const providerLegID = call.options.telnyxLegId
-      if (!providerLegID) return
+      const mediaToken = mediaTokenFromHeaders(call.options.customHeaders)
+      if (!providerLegID || !mediaToken) return
       callbacks.onIncoming({
         providerLegID,
+        mediaToken,
         answer:
           call.state === "ringing"
             ? () => call.answer({ remoteElement })

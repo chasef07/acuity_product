@@ -716,6 +716,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	if provider.count(humancalling.CommandDialStaff) != 1 {
 		t.Fatalf("provider commands = %#v, want one Dial", provider.commands)
 	}
+	var dialMediaToken string
 	provider.mu.Lock()
 	for _, command := range provider.commands {
 		if command.Action == humancalling.CommandDialStaff {
@@ -725,9 +726,19 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 				provider.mu.Unlock()
 				t.Fatalf("Dial destination = %q", destination)
 			}
+			headers, _ := command.Payload["custom_headers"].([]any)
+			if len(headers) == 1 {
+				header, _ := headers[0].(map[string]any)
+				if header["name"] == "X-Acuity-Media-Token" {
+					dialMediaToken, _ = header["value"].(string)
+				}
+			}
 		}
 	}
 	provider.mu.Unlock()
+	if dialMediaToken == "" {
+		t.Fatalf("Dial omitted the opaque browser media token")
+	}
 
 	connecting, err := calling.ReadCall(context.Background(), winner, offers[0].ID)
 	if err != nil {
@@ -735,6 +746,13 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	}
 	if connecting.State != humancalling.CallConnecting || connecting.Phone != "+15555550123" {
 		t.Fatalf("connecting Call = %#v", connecting)
+	}
+	if connecting.ExpectedMediaToken != dialMediaToken {
+		t.Fatalf(
+			"expected media token = %q, want durable Dial token %q",
+			connecting.ExpectedMediaToken,
+			dialMediaToken,
+		)
 	}
 	clientState := base64.StdEncoding.EncodeToString([]byte(
 		fmt.Sprintf(`{"v":1,"call":"%s","leg":"staff"}`, offers[0].ID),

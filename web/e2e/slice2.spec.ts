@@ -292,8 +292,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       })
       .toBe("fixture-staff-leg")
 
-    await sendIncomingLegs(loserPage)
-    await sendIncomingLegs(winnerPage)
+    const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
+    await sendIncomingLegs(loserPage, durableMediaToken)
+    await sendIncomingLegs(winnerPage, durableMediaToken)
     await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
     await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
 
@@ -412,7 +413,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/),
     ).toBeVisible()
-    await sendIncomingLegs(takeoverPage)
+    await sendIncomingLegs(takeoverPage, durableMediaToken)
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     await signalMedia(takeoverPage, "reconnecting")
@@ -431,7 +432,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/)).toBeVisible({
       timeout: 15_000,
     })
-    await sendIncomingLegs(takeoverPage)
+    await sendIncomingLegs(takeoverPage, durableMediaToken)
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
 
@@ -565,7 +566,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         )
         return result.rows[0]
       })
-    await sendIncomingLegs(takeoverPage)
+    await sendIncomingLegs(
+      takeoverPage,
+      await mediaTokenForCall(database, recoveryCall.id),
+    )
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     const recoveryStaffState = Buffer.from(JSON.stringify({
       v: 1,
@@ -744,6 +748,7 @@ async function prepareBrowser(context: BrowserContext) {
             onState: (state: string) => void
             onIncoming: (leg: {
               providerLegID: string
+              mediaToken: string
               answer: () => Promise<void>
               mute: () => void
               unmute: () => void
@@ -751,9 +756,10 @@ async function prepareBrowser(context: BrowserContext) {
           },
         ) => {
           state.signal = callbacks.onState
-          state.incoming = (providerLegID: string) =>
+          state.incoming = (providerLegID: string, mediaToken: string) =>
             callbacks.onIncoming({
               providerLegID,
+              mediaToken,
               answer: async () => {
                 state.answers += 1
               },
@@ -825,20 +831,49 @@ function providerLegPayload(clientState: string) {
   }
 }
 
-async function sendIncomingLegs(page: Page) {
-  await page.evaluate(() => {
+async function sendIncomingLegs(page: Page, mediaToken: string) {
+  await page.evaluate((expectedMediaToken) => {
     const fixture = window as typeof window & {
       __acuityCallingTestState: {
-        incoming?: (providerLegID: string) => void
+        incoming?: (providerLegID: string, mediaToken: string) => void
       }
     }
     fixture.__acuityCallingTestState.incoming?.(
-      "unrelated-staff-leg",
+      "unrelated-browser-leg",
+      "unrelated-media-token",
     )
     fixture.__acuityCallingTestState.incoming?.(
-      "fixture-staff-leg",
+      "fixture-browser-leg",
+      expectedMediaToken,
     )
-  })
+  }, mediaToken)
+}
+
+async function mediaTokenForCall(database: Pool, callID: string) {
+  return expect
+    .poll(async () => {
+      const result = await database.query<{ token: string | null }>(
+        `SELECT payload->'custom_headers'->0->>'value' AS token
+           FROM human_calling_provider_commands
+          WHERE call_id = $1 AND action = 'DIAL_STAFF'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [callID],
+      )
+      return result.rows[0]?.token ?? ""
+    })
+    .not.toBe("")
+    .then(async () => {
+      const result = await database.query<{ token: string }>(
+        `SELECT payload->'custom_headers'->0->>'value' AS token
+           FROM human_calling_provider_commands
+          WHERE call_id = $1 AND action = 'DIAL_STAFF'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [callID],
+      )
+      return result.rows[0].token
+    })
 }
 
 async function mediaCount(

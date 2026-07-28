@@ -142,7 +142,7 @@ export function CallingDock({
     async (leg: IncomingMediaLeg) => {
       const callID = expectedCallRef.current
       if (!callID || !ownerRef.current) return
-      const legKey = `${callID}:${leg.providerLegID}`
+      const legKey = `${callID}:${leg.mediaToken}:${leg.providerLegID}`
       if (pendingMediaLegsRef.current.has(legKey)) return
       pendingMediaLegsRef.current.add(legKey)
       try {
@@ -166,12 +166,12 @@ export function CallingDock({
           }).catch(() => undefined)
           if (!current?.data) return
           if (
-            current.data.expectedStaffLegId &&
-            current.data.expectedStaffLegId !== leg.providerLegID
+            current.data.expectedMediaToken &&
+            current.data.expectedMediaToken !== leg.mediaToken
           ) {
             return
           }
-          if (current.data.expectedStaffLegId === leg.providerLegID) {
+          if (current.data.expectedMediaToken === leg.mediaToken) {
             await leg.answer()
             mediaLegRef.current = leg
             setMediaAttached(true)
