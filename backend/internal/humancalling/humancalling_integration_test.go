@@ -1414,46 +1414,13 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	)
 	accessModule := access.New(pool, func() time.Time { return now })
 	const concurrentAgents = 10
-	invitations := make([]access.InvitationProvision, 0, concurrentAgents)
-	identities := make([]access.Identity, 0, concurrentAgents)
-	for index := range concurrentAgents {
-		invitations = append(invitations, access.InvitationProvision{
-			Key:           fmt.Sprintf("claim-staff-%d", index+1),
-			Email:         fmt.Sprintf("staff-%d@claim.test", index+1),
-			Role:          access.RoleStaff,
-			LocationScope: access.LocationScopeAll,
-			ExpiresAt:     now.Add(time.Hour),
-		})
-		identities = append(identities, access.Identity{
-			Subject:       fmt.Sprintf("claim-staff-%d", index+1),
-			Email:         fmt.Sprintf("staff-%d@claim.test", index+1),
-			EmailVerified: true,
-		})
-	}
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment: "test",
-		RequestedBy: "slice-2-claim-test",
-		Practices: []access.PracticeProvision{{
-			Key:         "claim-practice",
-			Name:        "Claim Practice",
-			Locations:   []access.LocationProvision{{Key: "claim-location", Name: "Claim Location"}},
-			Invitations: invitations,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("provision claim fixture: %v", err)
-	}
-	authorizations := make([]access.Authorization, len(identities))
-	for index := range identities {
-		authorizations[index], err = accessModule.AcceptInvitation(
-			context.Background(),
-			identities[index],
-			provisioned.Invitations[index].Token,
-		)
-		if err != nil {
-			t.Fatalf("accept claim invitation %d: %v", index, err)
-		}
-	}
+	authorization, identities := provisionConcurrentStaff(
+		t,
+		accessModule,
+		now,
+		"claim",
+		concurrentAgents,
+	)
 
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
@@ -1468,9 +1435,9 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-synthetic",
-			PracticeID: authorizations[0].Practice.ID,
+			PracticeID: authorization.Practice.ID,
 		},
-		LocationID:     authorizations[0].Locations[0].ID,
+		LocationID:     authorization.Locations[0].ID,
 		SourceCallID:   "claim-source-call",
 		IdempotencyKey: "claim-idempotency",
 		Contact: humancalling.ContactContext{
@@ -1496,28 +1463,7 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("admit claim caller: %v", err)
 	}
-	for index, identity := range identities {
-		sessionID := fmt.Sprintf("claim-browser-%d", index+1)
-		if _, err := calling.AcquireSoftphone(
-			context.Background(),
-			identity,
-			sessionID,
-			false,
-		); err != nil {
-			t.Fatalf("acquire claim softphone %d: %v", index, err)
-		}
-		if _, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
-			Identity:        identity,
-			SessionID:       sessionID,
-			Registered:      true,
-			MicrophoneReady: true,
-			AudioReady:      true,
-			SessionHealthy:  true,
-			Available:       true,
-		}); err != nil {
-			t.Fatalf("establish claim readiness %d: %v", index, err)
-		}
-	}
+	readyConcurrentStaff(t, calling, identities, "claim-browser")
 	offers, err := calling.ListOffers(context.Background(), identities[0])
 	if err != nil || len(offers) != 1 {
 		t.Fatalf("claim fixture offers = %#v, err = %v", offers, err)
@@ -4187,6 +4133,76 @@ func (provider *recordingProvider) ordered(
 		}
 	}
 	return firstIndex >= 0 && secondIndex > firstIndex
+}
+
+func provisionConcurrentStaff(
+	t *testing.T,
+	accessModule *access.Module,
+	now time.Time,
+	prefix string,
+	count int,
+) (access.Authorization, []access.Identity) {
+	t.Helper()
+	invitations := make([]access.InvitationProvision, count)
+	identities := make([]access.Identity, count)
+	for index := range count {
+		email := fmt.Sprintf("%s-staff-%d@synthetic.test", prefix, index+1)
+		invitations[index] = access.InvitationProvision{
+			Key: fmt.Sprintf("%s-staff-%d", prefix, index+1), Email: email,
+			Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			ExpiresAt: now.Add(time.Hour),
+		}
+		identities[index] = access.Identity{
+			Subject: fmt.Sprintf("%s-staff-%d", prefix, index+1),
+			Email:   email, EmailVerified: true,
+		}
+	}
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: prefix + "-test",
+		Practices: []access.PracticeProvision{{
+			Key: prefix + "-practice", Name: prefix + " practice",
+			Locations: []access.LocationProvision{{
+				Key: prefix + "-location", Name: prefix + " location",
+			}},
+			Invitations: invitations,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision %s staff: %v", prefix, err)
+	}
+	var authorization access.Authorization
+	for index, identity := range identities {
+		authorization, err = accessModule.AcceptInvitation(
+			context.Background(), identity, provisioned.Invitations[index].Token,
+		)
+		if err != nil {
+			t.Fatalf("accept %s invitation %d: %v", prefix, index+1, err)
+		}
+	}
+	return authorization, identities
+}
+
+func readyConcurrentStaff(
+	t *testing.T,
+	calling *humancalling.Module,
+	identities []access.Identity,
+	sessionPrefix string,
+) {
+	t.Helper()
+	for index, identity := range identities {
+		sessionID := fmt.Sprintf("%s-%d", sessionPrefix, index+1)
+		if _, err := calling.AcquireSoftphone(
+			context.Background(), identity, sessionID, false,
+		); err != nil {
+			t.Fatalf("acquire %s softphone %d: %v", sessionPrefix, index+1, err)
+		}
+		if _, err := calling.SetReadiness(
+			context.Background(),
+			ready(identity, sessionID),
+		); err != nil {
+			t.Fatalf("ready %s softphone %d: %v", sessionPrefix, index+1, err)
+		}
+	}
 }
 
 func provisionStaff(
