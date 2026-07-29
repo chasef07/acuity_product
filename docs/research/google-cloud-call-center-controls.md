@@ -31,7 +31,9 @@ For a service-wide database safety invariant, apply the contract's total cap wit
 The worker-pool command is contract-correct: `--instances "$5"` is a fixed worker-pool count, and the worker log-metric filters use the documented monitored-resource type.
 
 Resolution: the deployment command now uses service-level `--min` and `--max`
-for request services. The fixed worker-pool instance count remains unchanged.
+for request services. Capacity counts those service maxima once across traffic
+splits and applies the explicit overlap multiplier only to worker-pool
+revisions. The fixed worker-pool instance count remains unchanged.
 
 ## Logs-based metric contracts
 

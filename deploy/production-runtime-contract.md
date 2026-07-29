@@ -12,7 +12,7 @@ value from the JSON contract:
 
 ```sh
 ACUITY_DEPLOYMENT_PROFILE=production \
-USABLE_DATABASE_CONNECTIONS=80 \
+USABLE_DATABASE_CONNECTIONS=50 \
   ./deploy/cloud-run-commands.example.sh
 ```
 
@@ -46,29 +46,31 @@ capacity never drops below two.
 
 ## PostgreSQL ceiling
 
-One fully scaled revision can open at most:
+Request services can open at most 30 connections under their service-level
+maximums, regardless of how traffic is split across revisions:
 
 ```text
 web                 2 × (3 + 0) =  6
 portal-api          3 × (4 + 0) = 12
 provider-ingress    2 × (2 + 0) =  4
 realtime            2 × (3 + 1) =  8
-worker              2 × (2 + 0) =  4
                                       --
-single revision                       34
+request-service total                 30
 ```
 
-The production reservation is:
+The worker pool can temporarily run two revisions during a rollout. Its overlap
+is the only revision multiplier in the production reservation:
 
 ```text
-two complete overlapping revisions   2 × 34 = 68
-one migration task, pool max 2                 2
-operator and database-operations headroom     10
-                                                --
-required usable connections                    80
+request services under service caps             30
+two worker revisions                  2 × 4 =     8
+one migration task, pool max 2                   2
+operator and database-operations headroom       10
+                                                  --
+required usable connections                      50
 ```
 
-Cloud SQL must expose at least 80 connections usable by these application and
+Cloud SQL must expose at least 50 connections usable by these application and
 operator identities after provider-reserved connections. Deployment stops if
 that bound is unavailable. Reduce maximum instances or pool maxima before
 deploying; do not rely on connection acquisition timeouts as capacity control.
@@ -77,12 +79,12 @@ Every runtime pool uses `MinConns=0`, its checked `DATABASE_POOL_MAX`, a 1500 ms
 acquisition/connect timeout, a five-minute idle limit, and bounded connection
 lifetime jitter. The migration job uses one task, pool max 2, a 5000 ms timeout,
 and no automatic retry. The dedicated realtime `LISTEN` connection is outside
-its `pgxpool` and is counted separately for every maximum instance in both
-revisions.
+its `pgxpool` and is counted once for every realtime instance allowed by the
+service-level maximum.
 
 ## Rollout contract
 
-1. Confirm the database exposes the 80-connection reservation.
+1. Confirm the database exposes the 50-connection reservation.
 2. Run the single forward-only migration job with the migration database role.
 3. Apply `database-grants.sql`; new relations receive no runtime authority until
    their exact role grants are added to that file.

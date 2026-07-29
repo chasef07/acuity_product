@@ -1,5 +1,5 @@
 {
-  "revisionOverlap": 2,
+  "workerPoolRevisionOverlap": 2,
   "migration": {
     "tasks": 1,
     "poolMaximum": 2,
@@ -7,7 +7,7 @@
     "maximumRetries": 0
   },
   "operatorHeadroom": 10,
-  "requiredDatabaseConnections": 80,
+  "requiredDatabaseConnections": 50,
   "runtimes": [
     {
       "name": "web",

@@ -10,7 +10,7 @@ import (
 )
 
 type productionContract struct {
-	RevisionOverlap             int               `json:"revisionOverlap"`
+	WorkerPoolRevisionOverlap   int               `json:"workerPoolRevisionOverlap"`
 	Migration                   migrationCapacity `json:"migration"`
 	OperatorHeadroom            int               `json:"operatorHeadroom"`
 	RequiredDatabaseConnections int               `json:"requiredDatabaseConnections"`
@@ -105,7 +105,8 @@ func TestProductionRuntimeContractBoundsCapacityAndKeepsCallingWarm(t *testing.T
 		t.Fatalf("runtime count = %d, want %d", len(contract.Runtimes), len(expected))
 	}
 
-	singleRevisionConnections := 0
+	serviceConnections := 0
+	workerPoolConnectionsPerRevision := 0
 	for _, configured := range contract.Runtimes {
 		want, ok := expected[configured.Name]
 		if !ok {
@@ -114,21 +115,35 @@ func TestProductionRuntimeContractBoundsCapacityAndKeepsCallingWarm(t *testing.T
 		if configured != want {
 			t.Errorf("runtime %s = %+v, want %+v", configured.Name, configured, want)
 		}
-		singleRevisionConnections += configured.MaximumInstances *
+		runtimeConnections := configured.MaximumInstances *
 			(configured.PoolMaximum + configured.DedicatedConnections)
+		if configured.Kind == "service" {
+			serviceConnections += runtimeConnections
+		} else {
+			workerPoolConnectionsPerRevision += runtimeConnections
+		}
 		delete(expected, configured.Name)
 	}
 	if len(expected) != 0 {
 		t.Fatalf("missing production runtimes: %v", expected)
 	}
-	if singleRevisionConnections != 34 {
+	if serviceConnections != 30 {
 		t.Errorf(
-			"single-revision connection ceiling = %d, want 34",
-			singleRevisionConnections,
+			"service connection ceiling = %d, want 30",
+			serviceConnections,
 		)
 	}
-	if contract.RevisionOverlap != 2 {
-		t.Errorf("revision overlap = %d, want 2", contract.RevisionOverlap)
+	if workerPoolConnectionsPerRevision != 4 {
+		t.Errorf(
+			"worker-pool connection ceiling per revision = %d, want 4",
+			workerPoolConnectionsPerRevision,
+		)
+	}
+	if contract.WorkerPoolRevisionOverlap != 2 {
+		t.Errorf(
+			"worker-pool revision overlap = %d, want 2",
+			contract.WorkerPoolRevisionOverlap,
+		)
 	}
 	wantMigration := migrationCapacity{
 		Tasks:                          1,
@@ -143,11 +158,12 @@ func TestProductionRuntimeContractBoundsCapacityAndKeepsCallingWarm(t *testing.T
 		t.Errorf("operator headroom = %d, want 10", contract.OperatorHeadroom)
 	}
 
-	calculated := singleRevisionConnections*contract.RevisionOverlap +
+	calculated := serviceConnections +
+		workerPoolConnectionsPerRevision*contract.WorkerPoolRevisionOverlap +
 		contract.Migration.Tasks*contract.Migration.PoolMaximum +
 		contract.OperatorHeadroom
-	if calculated != 80 {
-		t.Errorf("calculated production connection ceiling = %d, want 80", calculated)
+	if calculated != 50 {
+		t.Errorf("calculated production connection ceiling = %d, want 50", calculated)
 	}
 	if contract.RequiredDatabaseConnections != calculated {
 		t.Errorf(

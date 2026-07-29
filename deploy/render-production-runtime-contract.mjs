@@ -14,7 +14,8 @@ const integer = (value, field, minimum = 0) => {
 }
 
 const runtimeNames = new Set()
-let singleRevisionConnections = 0
+let serviceConnections = 0
+let workerPoolConnectionsPerRevision = 0
 const rows = contract.runtimes.map((runtime, index) => {
   const prefix = `runtimes[${index}]`
   if (!/^[a-z][a-z0-9-]*$/.test(runtime.name) || runtimeNames.has(runtime.name)) {
@@ -46,7 +47,12 @@ const rows = contract.runtimes.map((runtime, index) => {
   if (runtime.kind === "worker-pool" && minimum !== maximum) {
     throw new Error(`${prefix} worker-pool instances must be fixed`)
   }
-  singleRevisionConnections += maximum * (pool + dedicated)
+  const runtimeConnections = maximum * (pool + dedicated)
+  if (runtime.kind === "service") {
+    serviceConnections += runtimeConnections
+  } else {
+    workerPoolConnectionsPerRevision += runtimeConnections
+  }
   return [
     runtime.name,
     runtime.kind,
@@ -72,9 +78,9 @@ for (const required of [
   }
 }
 
-const revisionOverlap = integer(
-  contract.revisionOverlap,
-  "revisionOverlap",
+const workerPoolRevisionOverlap = integer(
+  contract.workerPoolRevisionOverlap,
+  "workerPoolRevisionOverlap",
   1,
 )
 const operatorHeadroom = integer(
@@ -97,7 +103,8 @@ const migrationRetries = integer(
   "migration.maximumRetries",
 )
 const calculatedConnections =
-  singleRevisionConnections * revisionOverlap +
+  serviceConnections +
+  workerPoolConnectionsPerRevision * workerPoolRevisionOverlap +
   migrationTasks * migrationPool +
   operatorHeadroom
 const requiredConnections = integer(
