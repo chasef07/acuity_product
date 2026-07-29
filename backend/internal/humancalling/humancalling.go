@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -109,6 +110,7 @@ type Config struct {
 	RecordingBucket        string
 	WebhookPublicKey       ed25519.PublicKey
 	WebhookTolerance       time.Duration
+	Observer               observability.Observer
 }
 
 type ServiceIdentity = access.ServiceIdentity
@@ -337,6 +339,7 @@ type Module struct {
 	config   Config
 	now      func() time.Time
 	tokenKey []byte
+	observer observability.Observer
 }
 
 func New(
@@ -384,6 +387,7 @@ func New(
 		config:   config,
 		now:      now,
 		tokenKey: tokenKey,
+		observer: config.Observer,
 	}
 	if pool != nil && accessModule != nil {
 		module.work = work.New(pool, accessModule, now)
@@ -4461,7 +4465,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	}
 
 	var winningAttemptID string
-	var bridgeAt time.Time
+	var acceptedAt, bridgeAt time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			id::text,
@@ -4470,7 +4474,8 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			staff_call_control_id,
 			staff_call_leg_id,
 			bridge_occurred_at,
-			ended_at
+			ended_at,
+			created_at
 		FROM human_calling_connection_attempts
 		WHERE call_id = $1 AND bridge_occurred_at IS NOT NULL
 		ORDER BY bridge_occurred_at, created_at, id
@@ -4484,6 +4489,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		&staffLegID,
 		&bridgeAt,
 		&attemptEndedAt,
+		&acceptedAt,
 	); err != nil {
 		return fmt.Errorf("select provider-confirmed winning attempt: %w", err)
 	}
@@ -4613,6 +4619,12 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit bridge projection: %w", err)
+	}
+	if nextState == CallConnected {
+		observability.Record(
+			m.observer,
+			observability.CallBridged(bridgeAt.Sub(acceptedAt)),
+		)
 	}
 	return nil
 }

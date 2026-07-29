@@ -1,10 +1,12 @@
 package humancalling_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1130,6 +1133,12 @@ func TestConcurrentHangupReconciliationClaimsOneProviderCheck(t *testing.T) {
 func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"worker-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	accessModule := access.New(pool, func() time.Time { return now })
 	const concurrentAgents = 10
 	invitations := make([]access.InvitationProvision, 0, concurrentAgents)
@@ -1180,6 +1189,7 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		RecordingBucket:  "synthetic-recordings",
+		Observer:         observer,
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -1389,6 +1399,12 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		connected.WinnerSubject != winner.Subject ||
 		connected.Recording.State != humancalling.RecordingIntended {
 		t.Fatalf("provider-confirmed Call = %#v", connected)
+	}
+	if !strings.Contains(
+		metrics.String(),
+		`"metric":"acuity_call_center_accept_to_bridge"`,
+	) || !strings.Contains(metrics.String(), `"seconds":2`) {
+		t.Fatalf("accept-to-bridge metric = %s", metrics.String())
 	}
 	processed, err := calling.ProcessNextCommand(context.Background())
 	if err != nil || !processed {

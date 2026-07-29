@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -565,6 +567,12 @@ func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testin
 func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeProviderIngress,
+		"provider-ingress-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate webhook key: %v", err)
@@ -581,6 +589,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	)
 	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 500 * time.Millisecond,
+		Observer:       observer,
 	}, pool, calling)
 	if err != nil {
 		t.Fatalf("new provider-ingress HTTP adapter: %v", err)
@@ -638,6 +647,15 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 		)
 	}
 	_ = invalid.Body.Close()
+
+	for _, outcome := range []string{"accepted", "duplicate", "invalid"} {
+		if !strings.Contains(
+			metrics.String(),
+			`"outcome":"`+outcome+`"`,
+		) {
+			t.Fatalf("%s webhook metric omitted: %s", outcome, metrics.String())
+		}
+	}
 }
 
 func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
@@ -968,6 +986,12 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"portal-api-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	accessModule := access.New(pool, func() time.Time { return now })
 	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
@@ -1037,6 +1061,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		httpapi.Config{
 			AllowedOrigin:  "http://localhost:3000",
 			AcquireTimeout: 500 * time.Millisecond,
+			Observer:       observer,
 		},
 		pool,
 		httpapi.PortalDependencies{
@@ -1186,6 +1211,12 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	decode(t, accepted, &acceptedResult)
 	if acceptedResult.Status != "ACCEPTED" {
 		t.Fatalf("accepted result = %#v", acceptedResult)
+	}
+	if !strings.Contains(
+		metrics.String(),
+		`"metric":"acuity_call_center_call_accept"`,
+	) || !strings.Contains(metrics.String(), `"outcome":"won"`) {
+		t.Fatalf("won Call accept metric omitted: %s", metrics.String())
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/worker"
@@ -47,11 +48,21 @@ func run() error {
 	)
 	defer stop()
 
-	pool, err := openPool(ctx, config)
+	revision := os.Getenv("K_REVISION")
+	if revision == "" {
+		revision = "local"
+	}
+	observer := observability.NewLogger(
+		observability.RuntimeRole(config.Role),
+		revision,
+		slog.Default(),
+	)
+	pool, err := openPool(ctx, config, observer)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
+	go reportMetrics(ctx, pool, observer)
 
 	slog.Info("runtime_starting",
 		"role", config.Role,
@@ -62,31 +73,36 @@ func run() error {
 	case app.RoleMigrate:
 		return runMigrate(ctx, config, pool)
 	case app.RoleWorker:
-		return runWorker(ctx, config, pool)
+		return runWorker(ctx, config, pool, observer)
 	case app.RoleProviderIngress:
 		calling := humancalling.New(
 			pool,
 			nil,
 			nil,
-			humanCallingConfig(config),
+			humanCallingConfig(config, observer),
 			nil,
 		)
 		handler, err := httpapi.NewProviderIngress(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
+			Observer:       observer,
 		}, pool, calling)
 		if err != nil {
 			return err
 		}
 		return serve(ctx, config, handler)
 	case app.RolePortalAPI, app.RoleRealtime:
-		return runAuthorizedHTTP(ctx, config, pool)
+		return runAuthorizedHTTP(ctx, config, pool, observer)
 	default:
 		return fmt.Errorf("unsupported runtime role %q", config.Role)
 	}
 }
 
-func openPool(ctx context.Context, config app.Config) (*pgxpool.Pool, error) {
+func openPool(
+	ctx context.Context,
+	config app.Config,
+	observer observability.Observer,
+) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(config.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
@@ -97,6 +113,7 @@ func openPool(ctx context.Context, config app.Config) (*pgxpool.Pool, error) {
 	poolConfig.MaxConnLifetime = 30 * time.Minute
 	poolConfig.MaxConnLifetimeJitter = 5 * time.Minute
 	poolConfig.ConnConfig.ConnectTimeout = config.AcquireTimeout
+	poolConfig.ConnConfig.Tracer = observability.NewPoolTracer(observer)
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
@@ -104,10 +121,37 @@ func openPool(ctx context.Context, config app.Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+func reportMetrics(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	observer observability.Observer,
+) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	report := func() {
+		stat := pool.Stat()
+		observability.Record(observer, observability.DatabasePoolState(
+			stat.AcquiredConns(),
+			stat.IdleConns(),
+			stat.MaxConns(),
+		))
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			report()
+			return
+		case <-ticker.C:
+			report()
+		}
+	}
+}
+
 func runAuthorizedHTTP(
 	ctx context.Context,
 	config app.Config,
 	pool *pgxpool.Pool,
+	observer observability.Observer,
 ) error {
 	accessModule := access.New(pool, nil)
 	authenticator, err := authn.NewJWKSAuthenticator(authn.JWKSConfig{
@@ -129,6 +173,7 @@ func runAuthorizedHTTP(
 			RevalidateInterval: config.Realtime.Revalidate,
 			ReconnectMin:       config.Realtime.ReconnectMin,
 			ReconnectMax:       config.Realtime.ReconnectMax,
+			Observer:           observer,
 		}, accessModule)
 		if err != nil {
 			return err
@@ -137,6 +182,7 @@ func runAuthorizedHTTP(
 		handler, err = httpapi.NewRealtime(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
+			Observer:       observer,
 		}, pool, httpapi.RealtimeDependencies{
 			Access:        accessModule,
 			Authenticator: authenticator,
@@ -154,7 +200,7 @@ func runAuthorizedHTTP(
 			pool,
 			accessModule,
 			provider,
-			humanCallingConfig(config),
+			humanCallingConfig(config, observer),
 			nil,
 		)
 		serviceAuth, err := access.NewServiceAuthenticator(
@@ -175,6 +221,7 @@ func runAuthorizedHTTP(
 		handler, err = httpapi.NewPortal(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
+			Observer:       observer,
 		}, pool, httpapi.PortalDependencies{
 			Access:               accessModule,
 			Authenticator:        authenticator,
@@ -189,7 +236,12 @@ func runAuthorizedHTTP(
 	return serve(ctx, config, handler)
 }
 
-func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error {
+func runWorker(
+	ctx context.Context,
+	config app.Config,
+	pool *pgxpool.Pool,
+	observer observability.Observer,
+) error {
 	pingContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
 	err := pool.Ping(pingContext)
 	cancel()
@@ -205,7 +257,7 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 		pool,
 		access.New(pool, nil),
 		provider,
-		humanCallingConfig(config),
+		humanCallingConfig(config, observer),
 		nil,
 	)
 	if err := calling.ReconcileCredentials(ctx); err != nil {
@@ -238,7 +290,10 @@ func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
 	})
 }
 
-func humanCallingConfig(config app.Config) humancalling.Config {
+func humanCallingConfig(
+	config app.Config,
+	observer observability.Observer,
+) humancalling.Config {
 	return humancalling.Config{
 		HandoffSIPDomain:       config.HumanCalling.HandoffSIPDomain,
 		StaffSIPDomain:         config.HumanCalling.StaffSIPDomain,
@@ -253,6 +308,7 @@ func humanCallingConfig(config app.Config) humancalling.Config {
 		RingbackURL:            config.HumanCalling.RingbackURL,
 		RecordingBucket:        config.HumanCalling.RecordingBucket,
 		WebhookPublicKey:       ed25519.PublicKey(config.HumanCalling.WebhookPublicKey),
+		Observer:               observer,
 	}
 }
 

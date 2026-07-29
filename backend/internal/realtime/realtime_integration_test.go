@@ -2,10 +2,12 @@ package realtime_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +21,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -326,6 +329,12 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeRealtime,
+		"realtime-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	accessModule := access.New(pool, func() time.Time { return now })
 	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
@@ -370,6 +379,7 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 		RevalidateInterval: time.Second,
 		ReconnectMin:       10 * time.Millisecond,
 		ReconnectMax:       50 * time.Millisecond,
+		Observer:           observer,
 	}, accessModule)
 	if err != nil {
 		t.Fatalf("new realtime burst adapter: %v", err)
@@ -452,6 +462,17 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 	}
 	if got := writer.maxHintVersion(); got != newestVersion {
 		t.Fatalf("newest realtime burst version = %d, want %d", got, newestVersion)
+	}
+	for _, fragment := range []string{
+		`"metric":"acuity_call_center_sse_stream"`,
+		`"active":0`,
+		`"state":"closed"`,
+		`"reason":"client"`,
+		`"metric":"acuity_call_center_sse_listener"`,
+	} {
+		if !strings.Contains(metrics.String(), fragment) {
+			t.Fatalf("realtime metrics omitted %s: %s", fragment, metrics.String())
+		}
 	}
 }
 
