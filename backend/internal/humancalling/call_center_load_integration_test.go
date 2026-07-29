@@ -25,9 +25,9 @@ func TestMixedRoleBurstKeepsTenStaffCommandsAndWorkerLanesMoving(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	ingressPool := openLoadPool(t, 2)
-	portalPool := openLoadPool(t, 4)
-	workerPool := openLoadPool(t, 2)
+	ingressPool := openLoadPool(t, 1)
+	portalPool := openLoadPool(t, 1)
+	workerPool := openLoadPool(t, 1)
 	now := time.Date(2026, time.July, 29, 18, 30, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -109,13 +109,13 @@ func TestMixedRoleBurstKeepsTenStaffCommandsAndWorkerLanesMoving(t *testing.T) {
 		t.Fatalf("read target Call: %v", err)
 	}
 
-	held := make([]*pgxpool.Conn, 0, 2)
+	held := make([]*pgxpool.Conn, 0, 1)
 	defer func() {
 		for _, connection := range held {
 			connection.Release()
 		}
 	}()
-	for range 2 {
+	for range 1 {
 		connection, err := ingressPool.Acquire(ctx)
 		if err != nil {
 			t.Fatalf("hold provider-ingress connection: %v", err)
@@ -132,6 +132,7 @@ func TestMixedRoleBurstKeepsTenStaffCommandsAndWorkerLanesMoving(t *testing.T) {
 	}
 	startReads, startAccepts := make(chan struct{}), make(chan struct{})
 	commands := make(chan commandResult, len(identities))
+	portalWaitBeforeCommands := portalPool.Stat().AcquireDuration()
 	var reads sync.WaitGroup
 	reads.Add(len(identities))
 	for index, identity := range identities {
@@ -249,9 +250,9 @@ func TestMixedRoleBurstKeepsTenStaffCommandsAndWorkerLanesMoving(t *testing.T) {
 		pool *pgxpool.Pool
 		max  int32
 	}{
-		{"provider-ingress", ingressPool, 2},
-		{"portal-api", portalPool, 4},
-		{"worker", workerPool, 2},
+		{"provider-ingress", ingressPool, 1},
+		{"portal-api", portalPool, 1},
+		{"worker", workerPool, 1},
 	} {
 		if role.pool.Config().MaxConns != role.max ||
 			role.pool.Stat().TotalConns() > role.max {
@@ -262,7 +263,9 @@ func TestMixedRoleBurstKeepsTenStaffCommandsAndWorkerLanesMoving(t *testing.T) {
 	ackP95, ackP99 := loadPercentile(ackDurations, 95), loadPercentile(ackDurations, 99)
 	commandP95 := loadPercentile(commandDurations, 95)
 	commandP99 := loadPercentile(commandDurations, 99)
-	const localCeiling = 5 * time.Second
+	portalCommandPoolWait :=
+		portalPool.Stat().AcquireDuration() - portalWaitBeforeCommands
+	const localCeiling = time.Second
 	if ackP99 > localCeiling || commandP99 > localCeiling {
 		t.Fatalf(
 			"deterministic local ceiling exceeded: ack_p99=%s command_p99=%s",
@@ -270,8 +273,12 @@ func TestMixedRoleBurstKeepsTenStaffCommandsAndWorkerLanesMoving(t *testing.T) {
 		)
 	}
 	t.Logf(
-		"deterministic local proof only (not a production SLA): webhook_ack_p95=%s webhook_ack_p99=%s staff_command_p95=%s staff_command_p99=%s",
-		ackP95, ackP99, commandP95, commandP99,
+		"deterministic local proof only (not a production SLA): webhook_ack_p95=%s webhook_ack_p99=%s staff_command_p95=%s staff_command_p99=%s portal_pool_wait_during_staff_commands=%s",
+		ackP95,
+		ackP99,
+		commandP95,
+		commandP99,
+		portalCommandPoolWait,
 	)
 }
 

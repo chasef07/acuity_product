@@ -22,7 +22,14 @@ The current direction does need one refinement before implementation:
 
 Those workloads have materially different scaling and failure behavior. Separate runtime roles from the same Go image preserve the modular monolith while preventing an SSE surge or slow job from starving call commands or webhook receipt.
 
-This architecture is appropriate for a regionally highly available production system. It is **not yet a multi-region disaster-recovery design**. Cloud SQL regional HA synchronously replicates across two zones, but failover closes connections and is expected to make the database unavailable for about 60 seconds. A contractual regional-outage RTO/RPO would require a separately designed and tested cross-region recovery path. [Cloud SQL high availability](https://docs.cloud.google.com/sql/docs/postgres/high-availability)
+The original review recommended regional high availability. The checked
+2026-07-29 pilot contract supersedes that recommendation for Acuity's observed
+traffic: Cloud SQL Enterprise, single-zone, 2 vCPU / 8 GiB, and 50 GiB SSD in
+`us-east1`. Acuity accepts that a database or zone outage does not fail over
+automatically; the portal and call control can remain unavailable until
+recovery or restore. Telnyx retries and durable reconciliation protect
+correctness, not availability. Regional HA remains a future option if measured
+availability requirements justify its cost.
 
 ## Recommended deployment shape
 
@@ -87,15 +94,26 @@ Before production:
 2. set a small `pgxpool.MaxConns` independently for every role;
 3. set a **service-level** maximum instance count for every Cloud Run service;
 4. include the Next.js/Better Auth pool and worker pool in the same budget; and
-5. leave explicit capacity for failover reconnects, deployments, migrations, autovacuum, and operator access.
+5. leave explicit capacity for overlapping deployments, migrations, recovery, autovacuum, and operator access.
 
-A reasonable starting policy is to allocate no more than roughly 60% of measured `max_connections` to normal maximum application pools and preserve the remainder as safety headroom. That percentage is an Acuity operating recommendation, not a Google default; load tests and observed pool wait time should determine the final values.
+The checked pilot contract replaces the earlier percentage heuristic with an
+exact 22-connection reservation: 11 across configured request-service maxima,
+2 across one old and one new worker revision, 1 migration connection, 5 for one
+extra instance of every request role, and 3 operator/recovery connections.
+Production still reads the actual `max_connections` limit before deployment.
+Cloud Run can temporarily exceed a configured maximum, so this is not claimed
+as a hard physical ceiling. Any later pool or instance change must recalculate
+the reservation and repeat the production-shaped contention tests.
 
 Cloud Run recommends service-level maximum instances when the goal is to protect a backing database. Revision-level limits can briefly fan out during overlapping deployments, and rapid spikes can temporarily exceed a configured limit. [Cloud Run maximum instances](https://docs.cloud.google.com/run/docs/configuring/max-instances) Concurrency per instance is also a deliberate control: Google recommends beginning below a very high default—its example starting point is 8—then increasing from measurement. [Cloud Run concurrency](https://docs.cloud.google.com/run/docs/about-concurrency)
 
 Do not adopt Cloud SQL Managed Connection Pooling on day one merely because it exists. It requires Enterprise Plus, and transaction-pooling mode does not support `LISTEN`. Start with small direct `pgxpool` pools. If connection surges later justify managed pooling, route ordinary short transactions through it while retaining a dedicated direct connection for `LISTEN/NOTIFY`. [Cloud SQL Managed Connection Pooling](https://docs.cloud.google.com/sql/docs/postgres/managed-connection-pooling)
 
-Cloud SQL HA does not make connections immortal. Failover closes existing connections and clients reconnect to the same endpoint after an expected interruption of about 60 seconds. The Go service must use bounded connection acquisition, exponential backoff with jitter for reconnects, and idempotent whole-operation retries only where safe. [Cloud SQL high availability](https://docs.cloud.google.com/sql/docs/postgres/high-availability)
+The initial zonal Cloud SQL target has no standby failover. The Go service must
+use bounded connection acquisition, exponential backoff with jitter for
+reconnects after recovery, and idempotent whole-operation retries only where
+safe. If regional HA is adopted later, failover still closes existing
+connections and requires the same recovery behavior. [Cloud SQL high availability](https://docs.cloud.google.com/sql/docs/postgres/high-availability)
 
 ## Webhook durability, retries, and ordering
 
@@ -191,14 +209,20 @@ The architecture is ready to build, but it is not production-proven until these 
 2. reordered, duplicate, and concurrent Telnyx events produce one valid state;
 3. a process killed after database commit but before or after a Telnyx request reconciles correctly;
 4. webhook receipt stays below Telnyx's two-second deadline under burst load;
-5. the calculated connection ceiling is respected during peak load and an overlapping rollout;
-6. Cloud SQL failover causes visible transient errors and automatic recovery without false success;
+5. the calculated connection reservation covers peak load, measured autoscaler overshoot, and an overlapping rollout;
+6. a Cloud SQL outage causes visible errors and recovery after restore without false success;
 7. SSE clients reconnect and reconstruct current state after timeout, revision rollout, and instance death;
 8. a worker killed mid-job does not lose or double-apply the effect;
 9. an application rollback works after every migration; and
 10. backup restore and regional recovery procedures meet the chosen RTO/RPO.
 
-The missing inputs are a capacity envelope—peak concurrent staff, active calls, open SSE streams, webhook burst rate, daily messages, and retention volume—and explicit availability targets. Those numbers determine pool sizes and instance caps; they do not require a different architecture.
+The first checked envelope is 5–10 logged-in staff, 7 webhook requests in the
+highest visible second, 35 in the busiest visible minute, and about 5,544
+webhook events per day. Events are not calls. The deterministic proof uses 25
+simultaneous signed webhook requests and 10 concurrent staff commands. Live
+Cloud Run, Cloud SQL, Telnyx, Florida latency, active-call, SSE, and retention
+measurements remain acceptance gates; they do not require a different
+architecture unless the evidence exceeds the checked bounds.
 
 ## Decision
 

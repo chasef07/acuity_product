@@ -26,9 +26,10 @@ func TestProviderIngressHTTPBurstMeetsCurrentTrafficDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	ingressPool := openLoadPool(t, 2)
-	portalPool := openLoadPool(t, 4)
-	workerPool := openLoadPool(t, 2)
+	ingressPool := openLoadPool(t, 1)
+	portalPool := openLoadPool(t, 1)
+	realtimePool := openLoadPool(t, 1)
+	workerPool := openLoadPool(t, 1)
 	now := time.Date(2026, time.July, 29, 20, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -42,10 +43,11 @@ func TestProviderIngressHTTPBurstMeetsCurrentTrafficDeadline(t *testing.T) {
 	}
 	clock := func() time.Time { return now }
 	portalAccess := access.New(portalPool, clock)
+	realtimeAccess := access.New(realtimePool, clock)
 	portal := humancalling.New(portalPool, portalAccess, nil, config, clock)
 	ingress := humancalling.New(ingressPool, nil, nil, config, clock)
 	worker := humancalling.New(workerPool, nil, nil, config, clock)
-	authorization, _ := provisionConcurrentStaff(
+	authorization, identities := provisionConcurrentStaff(
 		t,
 		portalAccess,
 		now,
@@ -138,8 +140,21 @@ func TestProviderIngressHTTPBurstMeetsCurrentTrafficDeadline(t *testing.T) {
 	}
 	ready.Wait()
 	close(start)
-	awaitBlockedIngressWrites(t, controlPool, ingressPool)
-	assertPoolResponsive(t, portalPool, "portal-api")
+	awaitBlockedIngressWrites(t, controlPool, ingressPool, 1)
+	responsiveContext, cancelResponsive := context.WithTimeout(ctx, 250*time.Millisecond)
+	offers, err := portal.ListOffers(responsiveContext, identities[0])
+	if err != nil || len(offers) != 0 {
+		t.Fatalf("portal-api path under ingress pressure: offers=%#v error=%v", offers, err)
+	}
+	if _, err := realtimeAccess.ResolveActor(
+		responsiveContext,
+		identities[0],
+		authorization.Practice.ID,
+		authorization.Locations[0].ID,
+	); err != nil {
+		t.Fatalf("realtime authorization path under ingress pressure: %v", err)
+	}
+	cancelResponsive()
 	assertPoolResponsive(t, workerPool, "worker")
 	if err := receiptLock.Commit(ctx); err != nil {
 		t.Fatalf("release provider-receipt lock: %v", err)
@@ -222,6 +237,7 @@ func awaitBlockedIngressWrites(
 	t *testing.T,
 	controlPool *pgxpool.Pool,
 	ingressPool *pgxpool.Pool,
+	expected int,
 ) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
@@ -238,14 +254,17 @@ func awaitBlockedIngressWrites(
 		`).Scan(&blocked); err != nil {
 			t.Fatalf("inspect blocked provider-ingress writes: %v", err)
 		}
-		if blocked == 2 && ingressPool.Stat().AcquiredConns() == 2 {
+		if blocked == expected &&
+			ingressPool.Stat().AcquiredConns() == int32(expected) {
 			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf(
-				"blocked ingress writes=%d acquired=%d; want 2 and 2",
+				"blocked ingress writes=%d acquired=%d; want %d and %d",
 				blocked,
 				ingressPool.Stat().AcquiredConns(),
+				expected,
+				expected,
 			)
 		}
 		time.Sleep(5 * time.Millisecond)
