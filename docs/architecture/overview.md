@@ -195,24 +195,27 @@ The provider seams exist for deterministic testing, not speculative multi-vendor
 
 ## Connection and concurrency budget
 
-Every Cloud Run instance owns a local connection pool. The production ceiling is:
+Every Cloud Run instance owns a local connection pool. The production
+reservation is:
 
 ```text
 sum(each service's maximum instances × its pool maximum)
   + fixed worker connections
   + Next.js and Better Auth connections
   + dedicated LISTEN connections
-  + migration and operator headroom
+  + migration, autoscaler-overshoot, and operator headroom
 ```
 
 Rules:
 
 1. Each runtime role has explicit concurrency, minimum-instance, maximum-instance, and `pgxpool` limits.
-2. Normal maximum pools leave capacity for overlapping revisions, failover reconnects, migrations, autovacuum, and operator access.
+2. The checked pilot reservation is 22 usable client connections: 11 across configured request-service maxima, 2 across overlapping one-instance worker revisions, 1 migration connection, 5 for one extra instance of every request role, and 3 operator/recovery connections. Cloud Run can temporarily exceed configured maxima, so live overshoot remains a gate rather than a claimed hard ceiling.
 3. `realtime` uses one dedicated direct connection per instance for `LISTEN/NOTIFY`; notifications are hints and durable rows repair every gap.
 4. Transactions are short. Shared rows are locked in deterministic order, and serialization failures or deadlocks retry the complete bounded transaction.
 5. No provider request runs while a PostgreSQL transaction is open.
-6. Cloud SQL failover is treated as a visible transient outage. Connections use bounded acquisition and jittered backoff; only safe idempotent operations retry.
+6. The initial production database is Cloud SQL Enterprise, single-zone, 2 vCPU / 8 GiB, and 50 GiB SSD with storage auto-increase in `us-east1`; backups are also pinned to `us-east1`. A database or zone outage has no automatic failover and remains visible until recovery or restore; only safe idempotent operations retry.
+7. `portal-api`, `provider-ingress`, and `realtime` keep one instance warm; web may scale to zero; worker remains one fixed instance. Maximum service bounds remain 3, 2, 2, and 2 respectively for portal, ingress, realtime, and web.
+8. Every request role and the worker starts at 1 vCPU / 512 MiB. Request services use request-based billing; worker and migration use instance-based billing.
 
 Before sizing these limits, record the 12-month capacity envelope: peak
 concurrent staff, active calls, open SSE streams, command rate, webhook burst
@@ -413,7 +416,7 @@ The highest test seam is:
 - Provider adapters supply deterministic replay, reordering, timeout, and failure scenarios.
 - Playwright proves the complete browser-visible journey across two authorized sessions.
 - Controlled live Telnyx acceptance proves WebRTC, bridge, media, recording, transcription, SMS delivery, and voicemail behavior that simulation cannot prove.
-- Failure acceptance kills runtime roles between database commit and external effect, exercises Cloud SQL failover, overlaps revisions, and verifies the calculated connection ceiling.
+- Failure acceptance kills runtime roles between database commit and external effect, exercises database outage and restore, overlaps revisions, and verifies the calculated connection reservation.
 
 ## Invariants
 
@@ -433,7 +436,9 @@ The highest test seam is:
 - A provider webhook receives `2xx` only after its unique durable receipt commits.
 - A provider request never runs while a PostgreSQL transaction is open.
 - One durable provider command survives process death and converges without duplicate effect.
-- No runtime role or overlapping deployment can exceed the planned PostgreSQL connection ceiling.
+- Configured runtime demand, measured maximum-instance overshoot, overlapping
+  deployment, migration, and operator use remain inside the PostgreSQL
+  reservation.
 - Old and new revisions remain schema-compatible throughout rollout and rollback.
 - Runtime, realtime, provider, or database interruption is visible and recoverable; it never creates false success.
 

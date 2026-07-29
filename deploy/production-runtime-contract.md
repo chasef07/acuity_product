@@ -1,106 +1,146 @@
 # Production runtime capacity contract
 
-This is the checked production configuration target. It is not evidence that a
-Cloud Run or Cloud SQL environment exists. The machine-readable values live in
-`production-runtime-contract.json`; CI verifies the warm-capacity invariants and
-connection arithmetic.
+This is the checked production target for Acuity's observed traffic and 5–10
+logged-in call-center Staff. It is not evidence that a Cloud Run or Cloud SQL
+environment exists. The machine-readable values live in
+`production-runtime-contract.json`; tests verify the topology, resources,
+billing mode, recovery controls, and connection arithmetic.
 
-`cloud-run-commands.example.sh` defaults to the separate non-production
-scale-to-zero profile. Production deployment must be selected explicitly and
-consumes every concurrency, minimum, maximum, pool, and acquisition-timeout
-value from the JSON contract:
+Production defaults to `us-east1` (South Carolina) because current users are in
+Florida. Cloud Run services, the worker pool, Cloud SQL, recording storage, and
+other regional dependencies stay co-located there. This geography is a starting
+assumption. Measured Florida-to-`us-east1` latency remains a live release gate.
 
-```sh
-ACUITY_DEPLOYMENT_PROFILE=production \
-USABLE_DATABASE_CONNECTIONS=50 \
-  ./deploy/cloud-run-commands.example.sh
-```
+## Database
 
-`USABLE_DATABASE_CONNECTIONS` is a required measured deployment input. The
-script recomputes the contract reservation and stops before any `gcloud` call
-when the input is below the required value.
+| Setting | Checked value |
+| --- | --- |
+| Product | Cloud SQL for PostgreSQL 16 |
+| Edition | Enterprise, not Enterprise Plus |
+| Availability | Single-zone (`ZONAL`), no automatic failover |
+| Compute | 2 vCPU / 8 GiB |
+| Storage | 50 GiB SSD initially, automatic growth on, alert before growth |
+| Recovery | Daily automated backup at 04:00 UTC in `us-east1`, seven retained backups, seven days of PITR logs |
+| Protection | Deletion protection on |
+| Data cache | Off |
 
-Request-service minimums and maximums use Cloud Run's service-level `--min` and
-`--max` controls. They remain total bounds while traffic is split across
-revisions; revision-scoped instance flags are not used as database-capacity
-controls.
+The accepted availability tradeoff is explicit: a database or zone outage does
+not automatically fail over. Telnyx retries, committed receipts, stable command
+IDs, and durable worker recovery protect correctness, but portal and call
+control can remain unavailable until the database recovers or operators restore
+it. A restore rehearsal is required before launch and after material recovery
+changes.
 
-All Go runtimes and the migration job use one immutable backend image digest.
-Only `ACUITY_RUNTIME_ROLE` and role-specific secrets change. The web runtime
-uses the matching immutable web digest.
+`cloud-sql-commands.example.sh` consumes the checked database row. It is an
+operator command, not an automated deployment and is never run by tests.
 
-| Runtime | Kind | Concurrency | Min | Max | Pool max | Direct connections |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| web / Better Auth | service | 40 | 1 | 2 | 3 | 0 |
-| `portal-api` | service | 20 | 2 | 3 | 4 | 0 |
-| `provider-ingress` | service | 20 | 2 | 2 | 2 | 0 |
-| `realtime` | service | 50 | 2 | 2 | 3 | 1 `LISTEN` |
-| `worker` | worker pool | not applicable | 2 fixed | 2 fixed | 2 | 0 |
+## Runtime floor and burst bounds
 
-`portal-api` and `provider-ingress` each keep two instances warm so staff
-commands and provider acknowledgements do not depend on cold starts.
-`realtime` also keeps two warm instances for active call-center sessions. The
-worker pool keeps exactly two instances available; during a compatible rollout,
-the old and new revisions may temporarily contribute two each, but the active
-capacity never drops below two.
+Every service and job is pinned to 1 vCPU / 512 MiB. Request services use
+request-based billing (`--cpu-throttling`); the fixed worker pool and migration
+job use instance-based billing. Maximum instance counts preserve PR #15's burst
+capacity while the warm floor and local pools reflect the measured pilot load.
 
-## PostgreSQL ceiling
+| Runtime | Kind | Billing | Concurrency | Min | Max | Pool max | Direct |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| web / Better Auth | service | request | 40 | 0 | 2 | 1 | 0 |
+| `portal-api` | service | request | 20 | 1 | 3 | 1 | 0 |
+| `provider-ingress` | service | request | 20 | 1 | 2 | 1 | 0 |
+| `realtime` | service | request | 50 | 1 | 2 | 1 | 1 `LISTEN` |
+| `worker` | worker pool | instance | n/a | 1 fixed | 1 fixed | 1 | 0 |
 
-Request services can open at most 30 connections under their service-level
-maximums, regardless of how traffic is split across revisions:
+The web can scale to zero because a cold web render does not own provider
+acknowledgement, call control, realtime freshness, or durable recovery.
+`portal-api`, `provider-ingress`, and `realtime` each keep one instance warm.
+The worker keeps one fixed instance. The runtime roles remain separate because
+their failure owners remain separate; saving a few dollars is not a reason to
+couple ingress acknowledgement or durable recovery to portal traffic.
+
+## Exact PostgreSQL reservation
+
+Request services are bounded by service-level maximums across all traffic-split
+revisions in ordinary operation:
 
 ```text
-web                 2 × (3 + 0) =  6
-portal-api          3 × (4 + 0) = 12
-provider-ingress    2 × (2 + 0) =  4
-realtime            2 × (3 + 1) =  8
-                                      --
-request-service total                 30
+web                 2 × (1 + 0) = 2
+portal-api          3 × (1 + 0) = 3
+provider-ingress    2 × (1 + 0) = 2
+realtime            2 × (1 + 1) = 4
+                                     --
+configured request-service demand    11
 ```
 
-The worker pool can temporarily run two revisions during a rollout. Its overlap
-is the only revision multiplier in the production reservation:
+Only the worker pool gets a rollout-overlap multiplier:
 
 ```text
-request services under service caps             30
-two worker revisions                  2 × 4 =     8
-one migration task, pool max 2                   2
-operator and database-operations headroom       10
+request services under configured service caps  11
+two worker revisions                  2 × 1 =     2
+one migration task, pool max 1                   1
+one extra instance per request role               5
+operator/database-operations headroom            3
                                                   --
-required usable connections                      50
+required usable application connections         22
 ```
 
-Cloud SQL must expose at least 50 connections usable by these application and
-operator identities after provider-reserved connections. Deployment stops if
-that bound is unavailable. Reduce maximum instances or pool maxima before
-deploying; do not rely on connection acquisition timeouts as capacity control.
+Cloud Run documents that rapid traffic spikes or maintenance can temporarily
+exceed a configured maximum. The five-connection autoscaler allowance covers
+one extra web, portal, ingress, and realtime instance, including realtime's
+direct listener. It is explicit headroom, not a claim that the platform cannot
+overshoot it. The three operator connections provide two simultaneous
+diagnostic sessions and one recovery session. Autovacuum uses PostgreSQL worker
+slots rather than these client connections. Deployment reads the actual
+`max_connections` value and active reserved usage; it stops before any `gcloud`
+call unless at least 22 connections are measured usable. Live maximum-instance
+overshoot and pool saturation remain acceptance gates.
 
 Every runtime pool uses `MinConns=0`, its checked `DATABASE_POOL_MAX`, a 1500 ms
 acquisition/connect timeout, a five-minute idle limit, and bounded connection
-lifetime jitter. The migration job uses one task, pool max 2, a 5000 ms timeout,
-and no automatic retry. The dedicated realtime `LISTEN` connection is outside
-its `pgxpool` and is counted once for every realtime instance allowed by the
-service-level maximum.
+lifetime jitter. The migration job uses one task, pool max 1, a 5000 ms timeout,
+and no automatic retry. Realtime's dedicated `LISTEN` connection is outside its
+pool and is counted once for every allowed realtime instance.
 
-## Rollout contract
+## Deterministic acceptance evidence
 
-1. Confirm the database exposes the 50-connection reservation.
-2. Run the single forward-only migration job with the migration database role.
-3. Apply `database-grants.sql`; new relations receive no runtime authority until
-   their exact role grants are added to that file.
-4. Start the new request revisions without traffic and verify dependency-aware
-   readiness.
-5. Keep both worker revisions within the overlap budget while preserving at
-   least two active worker instances.
-6. Shift traffic gradually, verify tagged revisions, then retire the prior
-   request and worker revisions.
+Observed legacy traffic peaked at seven webhook requests in one visible second,
+35 in the busy minute, and about 5,544 events/day. Events are not Calls. The
+checked proof deliberately exceeds that observation:
 
-Each runtime uses its own service account and database credential.
-`portal-api` and `worker` alone receive the Telnyx command credential.
-`provider-ingress` receives only the webhook verification key and its
-column-scoped receipt authority. `realtime` receives no HumanCalling or Work
-table authority. The web runtime receives only Better Auth schema authority.
+- 25 simultaneous correctly signed requests traverse the real
+  `provider-ingress` HTTP handler with its 1.5-second deadline and one database
+  connection;
+- every response is `204`, duplicates converge, and the 25-request nearest-rank
+  p99 (the burst maximum) must stay below one second;
+- ten simultaneous Staff commands run through the calling module on a
+  one-connection portal pool;
+- portal and realtime authorization database paths remain responsive while
+  ingress is observably blocked; and
+- one worker connection keeps receipt and command lanes moving while a provider
+  command is held.
 
-Actual Cloud SQL failover/restore rehearsal, production load evidence, and
-alert-delivery smoke tests remain release gates. This contract does not claim
-those gates are complete.
+Ten repeated runs on 2026-07-29 passed at the one-connection portal floor. HTTP
+webhook burst maxima were about 56–91 ms, mixed-role webhook p99 was about
+74–100 ms, and ten-command p99 was about 47–63 ms. Cumulative portal pool wait
+during each ten-command window was about 370–501 ms. These are deterministic
+local PostgreSQL measurements, not
+Cloud Run, Cloud SQL, network, Florida-user, or Telnyx production evidence.
+
+## Operator use
+
+Production runtime rendering and its fail-closed capacity check:
+
+```sh
+ACUITY_DEPLOYMENT_PROFILE=production \
+USABLE_DATABASE_CONNECTIONS=22 \
+RECORDING_BUCKET_LOCATION=us-east1 \
+  ./deploy/cloud-run-commands.example.sh
+```
+
+The command also rejects a Cloud SQL connection name or recording-bucket
+location outside `us-east1`. See `production-runbook.md` for the deployment,
+restore rehearsal, rollback, and live acceptance sequence, and
+`production-cost-estimate.md` for the rate-card model.
+
+Remaining release gates are live Cloud Run/Cloud SQL load and latency, measured
+Florida-to-`us-east1` portal/call-control latency, Cloud SQL backup/PITR restore,
+actual usable connection capacity, rolling-revision behavior, and live Telnyx
+delivery/retry/reconciliation. This contract claims none of those are complete.

@@ -25,7 +25,7 @@ describe the new receipt-only ingress path.
 The provider-ingress HTTP proof sends 25 simultaneous correctly signed
 requests, more than three times the highest visible production second, through
 the real handler with the production-shaped 1.5-second request/database
-deadline and a two-connection ingress pool.
+deadline and a one-connection ingress pool.
 
 The test requires:
 
@@ -33,15 +33,25 @@ The test requires:
 - acknowledgement p99 is under one second;
 - acknowledgement commits receipts and duplicates without projecting Calls;
 - the worker later converges every unique receipt exactly once; and
-- the independent portal and worker pools remain responsive.
+- independent portal and realtime authorization paths remain responsive while
+  ingress is observably blocked.
 
-Five repeated local runs on 2026-07-29 passed. For 25 requests, the reported
+Ten repeated local runs on 2026-07-29 passed. For 25 requests, the reported
 nearest-rank p99 is the strict burst maximum rather than a production percentile.
-The test holds the receipt table until both ingress database sessions are
-observably blocked, then proves the portal and worker pools remain responsive
-before releasing the burst. Across ten synchronized runs in two independent
-passes, acknowledgement p95 ranged from about 32 ms to 316 ms and the burst
-maximum from about 33 ms to 317 ms.
+The test holds the receipt table until the single ingress database session is
+observably blocked, proves real portal and realtime authorization queries plus
+the independent worker pool remain responsive, then releases the burst. Across
+ten synchronized runs, HTTP acknowledgement p95 stayed below the one-second
+gate and the burst maximum ranged from about 56 ms to 91 ms.
+
+The mixed-role proof uses one ingress connection, one portal connection, and
+one worker connection. Across ten repeated runs, mixed-role webhook p99 ranged
+from about 74 ms to 100 ms and ten concurrent Staff-command p99 ranged from
+about 47 ms to 63 ms. The command duration includes transaction and pool wait;
+cumulative portal pool-acquisition wait during each ten-command window ranged
+from about 370 ms to 501 ms. A held provider command did not stop the single
+worker from applying receipt work, and duplicate provider command IDs did not
+occur.
 
 This combines a Vercel production traffic baseline with deterministic local
 PostgreSQL evidence. It does not prove live Telnyx delivery, Cloud Run
