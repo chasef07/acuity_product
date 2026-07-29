@@ -5,6 +5,7 @@ import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
   ActivityIcon,
+  BotIcon,
   CheckCircle2Icon,
   LogOutIcon,
   MoonIcon,
@@ -51,6 +52,7 @@ type TaskRailProps = {
   tasks: Task[]
   selectedTaskID: string
   search: string
+  ordering: "time" | "priority"
   loading: boolean
   nextCursor: string
   connection: ConnectionState
@@ -58,6 +60,7 @@ type TaskRailProps = {
   onPracticeChange: (practiceID: string) => void
   onLocationScopeChange: (locationID: string) => void
   onSearchChange: (search: string) => void
+  onOrderingChange: (ordering: "time" | "priority") => void
   onTaskSelect: (task: Task) => void
   onLoadMore: () => void
 }
@@ -70,6 +73,7 @@ export function TaskRail({
   tasks,
   selectedTaskID,
   search,
+  ordering,
   loading,
   nextCursor,
   connection,
@@ -77,6 +81,7 @@ export function TaskRail({
   onPracticeChange,
   onLocationScopeChange,
   onSearchChange,
+  onOrderingChange,
   onTaskSelect,
   onLoadMore,
 }: TaskRailProps) {
@@ -128,16 +133,30 @@ export function TaskRail({
             ))}
           </NativeSelect>
         </div>
-        <div className="relative">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <SidebarInput
-            aria-label="Search tasks"
-            autoComplete="off"
-            placeholder="Search title or phone"
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            className="pl-7"
-          />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <SidebarInput
+              aria-label="Search tasks"
+              autoComplete="off"
+              placeholder="Search title or phone"
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className="pl-7"
+            />
+          </div>
+          <NativeSelect
+            aria-label="Order tasks"
+            size="sm"
+            value={ordering}
+            onChange={(event) =>
+              onOrderingChange(event.target.value as "time" | "priority")
+            }
+            className="w-20"
+          >
+            <NativeSelectOption value="time">Time</NativeSelectOption>
+            <NativeSelectOption value="priority">Priority</NativeSelectOption>
+          </NativeSelect>
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
@@ -262,9 +281,37 @@ function TaskGroup({
                     <span className="truncate text-xs font-medium">
                       {task.title}
                     </span>
+                    {task.origin === "ABITA_AI" && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 gap-1 px-1 font-mono text-[0.5625rem]"
+                      >
+                        <BotIcon className="size-2.5" aria-hidden="true" />
+                        AI
+                      </Badge>
+                    )}
                   </span>
                   <span className="flex items-center gap-2 font-mono text-[0.625rem] text-muted-foreground">
                     <span>{formatPhone(task.phone)}</span>
+                    {task.category && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="capitalize">{task.category}</span>
+                      </>
+                    )}
+                    {task.origin === "ABITA_AI" && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span
+                          className={cn(
+                            task.urgency === "high_priority" &&
+                              "text-destructive",
+                          )}
+                        >
+                          {railUrgency(task.urgency)}
+                        </span>
+                      </>
+                    )}
                     <span aria-hidden="true">·</span>
                     <time dateTime={taskRelativeAt(task)}>
                       {relativeTime(taskRelativeAt(task))}
@@ -374,4 +421,10 @@ function formatPhone(phone: string) {
   const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
   if (!match) return phone
   return `(${match[1]}) ${match[2]}-${match[3]}`
+}
+
+function railUrgency(urgency: Task["urgency"]) {
+  if (urgency === "high_priority") return "High"
+  if (urgency === "non_urgent") return "Non-urgent"
+  return "Normal"
 }

@@ -71,6 +71,8 @@ type View = "none" | "task" | "call"
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
 const taskScopeStorageKey = "acuity.taskLocationScope"
+const taskOrderingStorageKey = "acuity.taskOrdering"
+type TaskOrdering = "time" | "priority"
 
 export function TaskWorkspaceShell() {
   const router = useRouter()
@@ -85,6 +87,7 @@ export function TaskWorkspaceShell() {
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
   const [settledSearch, setSettledSearch] = useState("")
+  const [ordering, setOrdering] = useState<TaskOrdering>("time")
   const [tasks, setTasks] = useState<Task[]>([])
   const [nextCursor, setNextCursor] = useState("")
   const [tasksLoading, setTasksLoading] = useState(false)
@@ -186,6 +189,7 @@ export function TaskWorkspaceShell() {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
           ...(settledSearch ? { search: settledSearch } : {}),
+          ordering,
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -225,7 +229,7 @@ export function TaskWorkspaceShell() {
         setView("none")
       }
     },
-    [locationScopeID, practiceID, settledSearch],
+    [locationScopeID, ordering, practiceID, settledSearch],
   )
   const refreshSelectedTask = useCallback(async () => {
     const current = selectedTaskRef.current
@@ -313,6 +317,9 @@ export function TaskWorkspaceShell() {
         : practice.locations.some((item) => item.id === storedScope)
           ? storedScope ?? ""
           : ""
+    setOrdering(
+      readTaskOrdering(result.data.actor.subject, practice.id),
+    )
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -416,8 +423,9 @@ export function TaskWorkspaceShell() {
   }, [practiceID])
 
   function selectPractice(nextPracticeID: string) {
+    if (!discovery) return
     taskQueryGenerationRef.current += 1
-    const practice = discovery?.practices.find(
+    const practice = discovery.practices.find(
       (item) => item.id === nextPracticeID,
     )
     const location = practice?.locations[0]
@@ -431,6 +439,7 @@ export function TaskWorkspaceShell() {
         : practice.locations.some((item) => item.id === storedScope)
           ? storedScope ?? ""
           : ""
+    setOrdering(readTaskOrdering(discovery.actor.subject, practice.id))
     tasksRef.current = []
     hasLoadedTasksRef.current = false
     setTasks([])
@@ -559,6 +568,7 @@ export function TaskWorkspaceShell() {
         tasks={tasks}
         selectedTaskID={selectedTask?.id ?? ""}
         search={search}
+        ordering={ordering}
         loading={tasksLoading}
         nextCursor={nextCursor}
         connection={connection}
@@ -568,6 +578,14 @@ export function TaskWorkspaceShell() {
         onSearchChange={(value) => {
           taskQueryGenerationRef.current += 1
           setSearch(value)
+        }}
+        onOrderingChange={(value) => {
+          taskQueryGenerationRef.current += 1
+          setOrdering(value)
+          window.localStorage.setItem(
+            taskOrderingKey(discovery.actor.subject, practiceID),
+            value,
+          )
         }}
         onTaskSelect={selectTask}
         onLoadMore={() => void loadTasks(nextCursor, true)}
@@ -635,6 +653,20 @@ export function TaskWorkspaceShell() {
       </SidebarInset>
     </SidebarProvider>
   )
+}
+
+function taskOrderingKey(userSubject: string, practiceID: string) {
+  return `${taskOrderingStorageKey}.${userSubject}.${practiceID}`
+}
+
+function readTaskOrdering(
+  userSubject: string,
+  practiceID: string,
+): TaskOrdering {
+  const stored = window.localStorage.getItem(
+    taskOrderingKey(userSubject, practiceID),
+  )
+  return stored === "priority" ? "priority" : "time"
 }
 
 function SupportDialog({

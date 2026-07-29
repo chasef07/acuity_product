@@ -156,11 +156,16 @@ func runAuthorizedHTTP(
 			humanCallingConfig(config),
 			nil,
 		)
-		serviceAuth, err := humancalling.NewServiceAuthenticator(
-			config.HumanCalling.HandoffServiceToken,
-			humancalling.ServiceIdentity{
-				Subject:    config.HumanCalling.HandoffServiceSubject,
-				PracticeID: config.HumanCalling.HandoffServicePractice,
+		serviceAuth, err := access.NewServiceAuthenticator(
+			config.Service.Token,
+			access.ServiceIdentity{
+				Subject:       config.Service.Subject,
+				PracticeID:    config.Service.PracticeID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+					access.ServiceCapabilityCreateTask,
+				},
 			},
 		)
 		if err != nil {

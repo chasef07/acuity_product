@@ -1,7 +1,9 @@
 package work
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/jackc/pgx/v5"
@@ -22,34 +25,103 @@ const (
 	TaskCompleted TaskState = "COMPLETED"
 )
 
+type TaskOrigin string
+
+const (
+	TaskOriginHumanCallFollowUp TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
+	TaskOriginAbitaAI           TaskOrigin = "ABITA_AI"
+)
+
+type TaskUrgency string
+
+const (
+	TaskUrgencyHighPriority TaskUrgency = "high_priority"
+	TaskUrgencyNormal       TaskUrgency = "normal"
+	TaskUrgencyNonUrgent    TaskUrgency = "non_urgent"
+)
+
+type TaskCategory string
+
+const (
+	TaskCategoryBilling       TaskCategory = "billing"
+	TaskCategoryAppointments  TaskCategory = "appointments"
+	TaskCategoryDocumentation TaskCategory = "documentation"
+	TaskCategoryOptical       TaskCategory = "optical"
+	TaskCategoryMedication    TaskCategory = "medication"
+	TaskCategoryReferrals     TaskCategory = "referrals"
+	TaskCategoryOther         TaskCategory = "other"
+)
+
+type TaskCreateStatus string
+
+const (
+	TaskCreated   TaskCreateStatus = "created"
+	TaskDuplicate TaskCreateStatus = "duplicate"
+)
+
+type TaskOrdering string
+
+const (
+	TaskOrderingTime     TaskOrdering = "time"
+	TaskOrderingPriority TaskOrdering = "priority"
+)
+
 var (
 	ErrDenied       = errors.New("work access denied")
 	ErrInvalidInput = errors.New("invalid work input")
 	ErrConflict     = errors.New("work transition conflict")
 )
 
-var canonicalPhone = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
+var (
+	canonicalPhone = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
+	officeKey      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
+	idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
+)
 
 type ActorSnapshot struct {
+	Kind    access.ActorKind
 	Subject string
 	Email   string
 }
 
 type Task struct {
-	ID           string
-	PracticeID   string
-	LocationID   string
-	LocationName string
-	CallID       string
-	Phone        string
-	Title        string
-	State        TaskState
-	CreatedBy    ActorSnapshot
-	CreatedAt    time.Time
-	CompletedBy  *ActorSnapshot
-	CompletedAt  *time.Time
-	Version      int64
-	UpdatedAt    time.Time
+	ID            string
+	PracticeID    string
+	LocationID    string
+	LocationName  string
+	CallID        string
+	Phone         string
+	Title         string
+	State         TaskState
+	Origin        TaskOrigin
+	Urgency       TaskUrgency
+	Category      TaskCategory
+	CallerName    string
+	SourceCallID  string
+	SourceMessage string
+	CreatedBy     ActorSnapshot
+	CreatedAt     time.Time
+	CompletedBy   *ActorSnapshot
+	CompletedAt   *time.Time
+	Version       int64
+	UpdatedAt     time.Time
+}
+
+type CreateAITaskCommand struct {
+	Service                 access.ServiceIdentity
+	OfficeKey               string
+	OfficePhone             string
+	InboundOfficePhone      string
+	SourceCallID            string
+	IdempotencyKey          string
+	Phone                   string
+	CallerName              string
+	CompatibilityPatientID  string
+	CompatibilityPatientDOB string
+	Summary                 string
+	Message                 string
+	Category                TaskCategory
+	Urgency                 TaskUrgency
 }
 
 type EnsureCallFollowUpCommand struct {
@@ -88,6 +160,7 @@ type QueryTasksCommand struct {
 	PracticeID string
 	LocationID string
 	Search     string
+	Ordering   TaskOrdering
 	Cursor     string
 	Limit      int
 }
@@ -156,11 +229,12 @@ func (m *Module) EnsureCallFollowUp(
 			task_id,
 			task_version,
 			kind,
+			actor_kind,
 			actor_subject,
 			actor_email,
 			occurred_at
 		)
-		VALUES ($1, 1, 'TASK_CREATED', $2, $3, $4)
+		VALUES ($1, 1, 'TASK_CREATED', 'HUMAN', $2, $3, $4)
 	`, task.ID, task.CreatedBy.Subject, task.CreatedBy.Email, task.CreatedAt); err != nil {
 		return Task{}, fmt.Errorf("append Task creation Activity: %w", err)
 	}
@@ -168,6 +242,133 @@ func (m *Module) EnsureCallFollowUp(
 		return Task{}, err
 	}
 	return task, nil
+}
+
+// CreateAITask accepts one authenticated Abita outcome and commits its Task,
+// immutable source, creation Activity, idempotency fingerprint, and workspace
+// version in one transaction.
+func (m *Module) CreateAITask(
+	ctx context.Context,
+	command CreateAITaskCommand,
+) (Task, TaskCreateStatus, error) {
+	normalizeAITaskCommand(&command)
+	if m.pool == nil || m.access == nil || !validAITaskCommand(command) {
+		return Task{}, "", ErrInvalidInput
+	}
+	fingerprint, err := aiTaskFingerprint(command)
+	if err != nil {
+		return Task{}, "", err
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Task{}, "", fmt.Errorf("begin AI Task creation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	authorization, err := m.access.LockServiceAuthorization(
+		ctx,
+		tx,
+		command.Service,
+		command.OfficeKey,
+		access.ServiceCapabilityCreateTask,
+	)
+	if err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return Task{}, "", ErrDenied
+		}
+		return Task{}, "", fmt.Errorf("authorize AI Task creation: %w", err)
+	}
+
+	createdAt := m.now()
+	var taskID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO work_tasks (
+			practice_id,
+			location_id,
+			call_id,
+			phone,
+			title,
+			state,
+			origin,
+			urgency,
+			category,
+			caller_name,
+			source_call_id,
+			source_message,
+			created_by_kind,
+			created_by_subject,
+			created_by_email,
+			created_at,
+			ai_idempotency_key,
+			ai_input_fingerprint,
+			updated_at
+		)
+		VALUES (
+			$1, $2, NULL, $3, $4, 'OPEN', 'ABITA_AI', $5, $6, $7, $8,
+			$9, 'SERVICE', $10, NULL, $11, $12, $13, $11
+		)
+		ON CONFLICT (created_by_subject, ai_idempotency_key)
+			WHERE origin = 'ABITA_AI'
+		DO NOTHING
+		RETURNING id::text
+	`,
+		authorization.PracticeID,
+		authorization.LocationID,
+		command.Phone,
+		command.Summary,
+		command.Urgency,
+		command.Category,
+		nullIfEmpty(command.CallerName),
+		command.SourceCallID,
+		command.Message,
+		command.Service.Subject,
+		createdAt,
+		command.IdempotencyKey,
+		fingerprint[:],
+	).Scan(&taskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var existingFingerprint []byte
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text, ai_input_fingerprint
+			FROM work_tasks
+			WHERE origin = 'ABITA_AI'
+				AND created_by_subject = $1
+				AND ai_idempotency_key = $2
+			FOR SHARE
+		`, command.Service.Subject, command.IdempotencyKey).Scan(
+			&taskID,
+			&existingFingerprint,
+		); err != nil {
+			return Task{}, "", fmt.Errorf("load replayed AI Task: %w", err)
+		}
+		if !bytes.Equal(existingFingerprint, fingerprint[:]) {
+			return Task{}, "", ErrConflict
+		}
+		task, err := loadTask(ctx, tx, taskID)
+		if err != nil {
+			return Task{}, "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Task{}, "", fmt.Errorf("commit AI Task replay: %w", err)
+		}
+		return task, TaskDuplicate, nil
+	}
+	if err != nil {
+		return Task{}, "", fmt.Errorf("create AI Task: %w", err)
+	}
+	task, err := loadTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, "", err
+	}
+	if err := appendActivity(ctx, tx, task, "TASK_CREATED", task.CreatedBy, createdAt); err != nil {
+		return Task{}, "", err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+		return Task{}, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, "", fmt.Errorf("commit AI Task creation: %w", err)
+	}
+	return task, TaskCreated, nil
 }
 
 func (m *Module) RenameTask(
@@ -228,7 +429,7 @@ func (m *Module) RenameTask(
 		tx,
 		task,
 		"TITLE_CHANGED",
-		actor,
+		humanActorSnapshot(actor),
 		changedAt,
 	); err != nil {
 		return Task{}, err
@@ -307,7 +508,8 @@ func (m *Module) CompleteTask(
 		return Task{}, fmt.Errorf("complete Task: %w", err)
 	}
 	task.State = TaskCompleted
-	task.CompletedBy = &ActorSnapshot{Subject: actor.Subject, Email: actor.Email}
+	completionActor := humanActorSnapshot(actor)
+	task.CompletedBy = &completionActor
 	task.CompletedAt = &completedAt
 	task.UpdatedAt = completedAt
 	if err := appendActivity(
@@ -315,7 +517,7 @@ func (m *Module) CompleteTask(
 		tx,
 		task,
 		"TASK_COMPLETED",
-		actor,
+		humanActorSnapshot(actor),
 		completedAt,
 	); err != nil {
 		return Task{}, err
@@ -402,7 +604,7 @@ func (m *Module) ReopenTask(
 		tx,
 		task,
 		"TASK_REOPENED",
-		actor,
+		humanActorSnapshot(actor),
 		reopenedAt,
 	); err != nil {
 		return Task{}, err
@@ -431,9 +633,14 @@ func (m *Module) QueryTasks(
 	command QueryTasksCommand,
 ) (TaskPage, error) {
 	command.Search = strings.TrimSpace(command.Search)
+	if command.Ordering == "" {
+		command.Ordering = TaskOrderingTime
+	}
 	if m.access == nil ||
 		strings.TrimSpace(command.PracticeID) == "" ||
-		len(command.Search) > 500 {
+		len(command.Search) > 500 ||
+		(command.Ordering != TaskOrderingTime &&
+			command.Ordering != TaskOrderingPriority) {
 		return TaskPage{}, ErrInvalidInput
 	}
 	limit := command.Limit
@@ -443,7 +650,7 @@ func (m *Module) QueryTasks(
 	if limit < 1 || limit > 50 {
 		return TaskPage{}, ErrInvalidInput
 	}
-	cursor, err := decodeTaskCursor(command.Cursor)
+	cursor, err := decodeTaskCursor(command.Cursor, command.Ordering)
 	if err != nil {
 		return TaskPage{}, ErrInvalidInput
 	}
@@ -485,6 +692,13 @@ func (m *Module) QueryTasks(
 			task.phone,
 			task.title,
 			task.state,
+			task.origin,
+			task.urgency,
+			task.category,
+			task.caller_name,
+			task.source_call_id,
+			task.source_message,
+			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
 			task.created_at,
@@ -505,38 +719,84 @@ func (m *Module) QueryTasks(
 				OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
 			)
 			AND (
-				NOT $5
+				NOT $6
 				OR (
-					$6 = 'OPEN'
+					$7 = 'OPEN'
 					AND (
 						(
 							task.state = 'OPEN'
 							AND (
-								task.created_at > $7
-								OR (task.created_at = $7 AND task.id::text > $8)
+								(
+									$5 = 'time'
+									AND (
+										task.created_at > $9
+										OR (
+											task.created_at = $9
+											AND task.id::text > $10
+										)
+									)
+								)
+								OR (
+									$5 = 'priority'
+									AND (
+										(
+											CASE task.urgency
+												WHEN 'high_priority' THEN 0
+												WHEN 'normal' THEN 1
+												ELSE 2
+											END
+										) > $8
+										OR (
+											(
+												CASE task.urgency
+													WHEN 'high_priority' THEN 0
+													WHEN 'normal' THEN 1
+													ELSE 2
+												END
+											) = $8
+											AND (
+												task.created_at > $9
+												OR (
+													task.created_at = $9
+													AND task.id::text > $10
+												)
+											)
+										)
+									)
+								)
 							)
 						)
 						OR task.state = 'COMPLETED'
 					)
 				)
 				OR (
-					$6 = 'COMPLETED'
+					$7 = 'COMPLETED'
 					AND task.state = 'COMPLETED'
 					AND (
-						task.completed_at < $7
-						OR (task.completed_at = $7 AND task.id::text > $8)
+						task.completed_at < $9
+						OR (task.completed_at = $9 AND task.id::text > $10)
 					)
 				)
 			)
 		ORDER BY
 			CASE task.state WHEN 'OPEN' THEN 0 ELSE 1 END,
+			CASE
+				WHEN task.state = 'OPEN' AND $5 = 'priority'
+				THEN CASE task.urgency
+					WHEN 'high_priority' THEN 0
+					WHEN 'normal' THEN 1
+					ELSE 2
+				END
+				ELSE 0
+			END,
 			CASE WHEN task.state = 'OPEN' THEN task.created_at END,
 			CASE WHEN task.state = 'COMPLETED' THEN task.completed_at END DESC,
 			task.id
-		LIMIT $9
+		LIMIT $11
 	`, command.PracticeID, locationIDs, command.Search,
-		normalizedDigits(command.Search), cursor.Present, cursor.State,
-		cursor.OrderedAt, cursor.ID, limit+1,
+		normalizedDigits(command.Search), command.Ordering, cursor.Present,
+		cursor.State, urgencyRank(cursor.Urgency), cursor.OrderedAt, cursor.ID,
+		limit+1,
 	)
 	if err != nil {
 		return TaskPage{}, fmt.Errorf("query Tasks: %w", err)
@@ -544,29 +804,10 @@ func (m *Module) QueryTasks(
 	defer rows.Close()
 	items := make([]Task, 0, limit+1)
 	for rows.Next() {
-		var task Task
-		var completedSubject, completedEmail *string
-		if err := rows.Scan(
-			&task.ID,
-			&task.PracticeID,
-			&task.LocationID,
-			&task.LocationName,
-			&task.CallID,
-			&task.Phone,
-			&task.Title,
-			&task.State,
-			&task.CreatedBy.Subject,
-			&task.CreatedBy.Email,
-			&task.CreatedAt,
-			&completedSubject,
-			&completedEmail,
-			&task.CompletedAt,
-			&task.Version,
-			&task.UpdatedAt,
-		); err != nil {
+		task, err := scanTask(rows)
+		if err != nil {
 			return TaskPage{}, fmt.Errorf("scan Task query: %w", err)
 		}
-		setCompletionActor(&task, completedSubject, completedEmail)
 		items = append(items, task)
 	}
 	if err := rows.Err(); err != nil {
@@ -577,7 +818,10 @@ func (m *Module) QueryTasks(
 	nextCursor := ""
 	if len(items) > limit {
 		items = items[:limit]
-		nextCursor, err = encodeTaskCursor(items[len(items)-1])
+		nextCursor, err = encodeTaskCursor(
+			items[len(items)-1],
+			command.Ordering,
+		)
 		if err != nil {
 			return TaskPage{}, err
 		}
@@ -625,13 +869,15 @@ type taskQuerier interface {
 }
 
 type taskCursor struct {
-	Present   bool      `json:"-"`
-	State     TaskState `json:"state"`
-	OrderedAt time.Time `json:"orderedAt"`
-	ID        string    `json:"id"`
+	Present   bool         `json:"-"`
+	Ordering  TaskOrdering `json:"ordering"`
+	State     TaskState    `json:"state"`
+	Urgency   TaskUrgency  `json:"urgency"`
+	OrderedAt time.Time    `json:"orderedAt"`
+	ID        string       `json:"id"`
 }
 
-func encodeTaskCursor(task Task) (string, error) {
+func encodeTaskCursor(task Task, ordering TaskOrdering) (string, error) {
 	orderedAt := task.CreatedAt
 	if task.State == TaskCompleted {
 		if task.CompletedAt == nil {
@@ -640,7 +886,9 @@ func encodeTaskCursor(task Task) (string, error) {
 		orderedAt = *task.CompletedAt
 	}
 	encoded, err := json.Marshal(taskCursor{
+		Ordering:  ordering,
 		State:     task.State,
+		Urgency:   task.Urgency,
 		OrderedAt: orderedAt,
 		ID:        task.ID,
 	})
@@ -650,7 +898,10 @@ func encodeTaskCursor(task Task) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
-func decodeTaskCursor(encoded string) (taskCursor, error) {
+func decodeTaskCursor(
+	encoded string,
+	ordering TaskOrdering,
+) (taskCursor, error) {
 	if encoded == "" {
 		return taskCursor{}, nil
 	}
@@ -662,13 +913,32 @@ func decodeTaskCursor(encoded string) (taskCursor, error) {
 	if err := json.Unmarshal(raw, &cursor); err != nil {
 		return taskCursor{}, err
 	}
-	if (cursor.State != TaskOpen && cursor.State != TaskCompleted) ||
+	if cursor.Ordering == "" {
+		cursor.Ordering = TaskOrderingTime
+	}
+	if cursor.Urgency == "" {
+		cursor.Urgency = TaskUrgencyNormal
+	}
+	if cursor.Ordering != ordering ||
+		(cursor.State != TaskOpen && cursor.State != TaskCompleted) ||
+		(cursor.State == TaskOpen && !validTaskUrgency(cursor.Urgency)) ||
 		cursor.OrderedAt.IsZero() ||
 		strings.TrimSpace(cursor.ID) == "" {
 		return taskCursor{}, ErrInvalidInput
 	}
 	cursor.Present = true
 	return cursor, nil
+}
+
+func urgencyRank(urgency TaskUrgency) int {
+	switch urgency {
+	case TaskUrgencyHighPriority:
+		return 0
+	case TaskUrgencyNormal:
+		return 1
+	default:
+		return 2
+	}
 }
 
 func normalizedDigits(value string) string {
@@ -735,7 +1005,7 @@ func appendActivity(
 	tx pgx.Tx,
 	task Task,
 	kind string,
-	actor access.Actor,
+	actor ActorSnapshot,
 	occurredAt time.Time,
 ) error {
 	if _, err := tx.Exec(ctx, `
@@ -743,13 +1013,14 @@ func appendActivity(
 			task_id,
 			task_version,
 			kind,
+			actor_kind,
 			actor_subject,
 			actor_email,
 			occurred_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, task.ID, task.Version, kind, actor.Subject,
-		strings.ToLower(strings.TrimSpace(actor.Email)), occurredAt,
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, task.ID, task.Version, kind, actor.Kind, actor.Subject,
+		nullIfEmpty(strings.ToLower(strings.TrimSpace(actor.Email))), occurredAt,
 	); err != nil {
 		return fmt.Errorf("append Task Activity: %w", err)
 	}
@@ -764,7 +1035,8 @@ func insertTask(
 	now time.Time,
 ) (Task, bool, error) {
 	var task Task
-	var completedSubject, completedEmail *string
+	var category, callerName, sourceCall, sourceMessage *string
+	var createdEmail, completedSubject, completedEmail *string
 	var inserted bool
 	err := tx.QueryRow(ctx, `
 		WITH inserted AS (
@@ -775,12 +1047,18 @@ func insertTask(
 				phone,
 				title,
 				state,
+				origin,
+				urgency,
+				created_by_kind,
 				created_by_subject,
 				created_by_email,
 				created_at,
 				updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, $8)
+			VALUES (
+				$1, $2, $3, $4, $5, 'OPEN', 'HUMAN_CALL_FOLLOW_UP',
+				'normal', 'HUMAN', $6, $7, $8, $8
+			)
 			ON CONFLICT (call_id) DO NOTHING
 			RETURNING *
 		)
@@ -793,6 +1071,13 @@ func insertTask(
 			task.phone,
 			task.title,
 			task.state,
+			task.origin,
+			task.urgency,
+			task.category,
+			task.caller_name,
+			task.source_call_id,
+			task.source_message,
+			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
 			task.created_at,
@@ -824,8 +1109,15 @@ func insertTask(
 		&task.Phone,
 		&task.Title,
 		&task.State,
+		&task.Origin,
+		&task.Urgency,
+		&category,
+		&callerName,
+		&sourceCall,
+		&sourceMessage,
+		&task.CreatedBy.Kind,
 		&task.CreatedBy.Subject,
-		&task.CreatedBy.Email,
+		&createdEmail,
 		&task.CreatedAt,
 		&completedSubject,
 		&completedEmail,
@@ -837,6 +1129,7 @@ func insertTask(
 	if err != nil {
 		return Task{}, false, fmt.Errorf("ensure Call follow-up Task: %w", err)
 	}
+	setTaskSource(&task, category, callerName, sourceCall, sourceMessage, createdEmail)
 	setCompletionActor(&task, completedSubject, completedEmail)
 	return task, inserted, nil
 }
@@ -846,9 +1139,7 @@ func loadTask(
 	querier taskQuerier,
 	taskID string,
 ) (Task, error) {
-	var task Task
-	var completedSubject, completedEmail *string
-	err := querier.QueryRow(ctx, `
+	task, err := scanTask(querier.QueryRow(ctx, `
 		SELECT
 			task.id::text,
 			task.practice_id::text,
@@ -858,6 +1149,13 @@ func loadTask(
 			task.phone,
 			task.title,
 			task.state,
+			task.origin,
+			task.urgency,
+			task.category,
+			task.caller_name,
+			task.source_call_id,
+			task.source_message,
+			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
 			task.created_at,
@@ -871,31 +1169,13 @@ func loadTask(
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
 		WHERE task.id = $1
-	`, taskID).Scan(
-		&task.ID,
-		&task.PracticeID,
-		&task.LocationID,
-		&task.LocationName,
-		&task.CallID,
-		&task.Phone,
-		&task.Title,
-		&task.State,
-		&task.CreatedBy.Subject,
-		&task.CreatedBy.Email,
-		&task.CreatedAt,
-		&completedSubject,
-		&completedEmail,
-		&task.CompletedAt,
-		&task.Version,
-		&task.UpdatedAt,
-	)
+	`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("read Task: %w", err)
 	}
-	setCompletionActor(&task, completedSubject, completedEmail)
 	return task, nil
 }
 
@@ -904,9 +1184,7 @@ func lockTask(
 	tx pgx.Tx,
 	taskID string,
 ) (Task, error) {
-	var task Task
-	var completedSubject, completedEmail *string
-	err := tx.QueryRow(ctx, `
+	task, err := scanTask(tx.QueryRow(ctx, `
 		SELECT
 			task.id::text,
 			task.practice_id::text,
@@ -916,6 +1194,13 @@ func lockTask(
 			task.phone,
 			task.title,
 			task.state,
+			task.origin,
+			task.urgency,
+			task.category,
+			task.caller_name,
+			task.source_call_id,
+			task.source_message,
+			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
 			task.created_at,
@@ -930,32 +1215,89 @@ func lockTask(
 			AND location.id = task.location_id
 		WHERE task.id = $1
 		FOR UPDATE OF task
-	`, taskID).Scan(
-		&task.ID,
-		&task.PracticeID,
-		&task.LocationID,
-		&task.LocationName,
-		&task.CallID,
-		&task.Phone,
-		&task.Title,
-		&task.State,
-		&task.CreatedBy.Subject,
-		&task.CreatedBy.Email,
-		&task.CreatedAt,
-		&completedSubject,
-		&completedEmail,
-		&task.CompletedAt,
-		&task.Version,
-		&task.UpdatedAt,
-	)
+	`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("lock Task: %w", err)
 	}
+	return task, nil
+}
+
+type taskScanner interface {
+	Scan(...any) error
+}
+
+func scanTask(scanner taskScanner) (Task, error) {
+	var task Task
+	var callID, category, callerName, sourceCall, sourceMessage *string
+	var createdEmail, completedSubject, completedEmail *string
+	if err := scanner.Scan(
+		&task.ID,
+		&task.PracticeID,
+		&task.LocationID,
+		&task.LocationName,
+		&callID,
+		&task.Phone,
+		&task.Title,
+		&task.State,
+		&task.Origin,
+		&task.Urgency,
+		&category,
+		&callerName,
+		&sourceCall,
+		&sourceMessage,
+		&task.CreatedBy.Kind,
+		&task.CreatedBy.Subject,
+		&createdEmail,
+		&task.CreatedAt,
+		&completedSubject,
+		&completedEmail,
+		&task.CompletedAt,
+		&task.Version,
+		&task.UpdatedAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if callID != nil {
+		task.CallID = *callID
+	}
+	setTaskSource(
+		&task,
+		category,
+		callerName,
+		sourceCall,
+		sourceMessage,
+		createdEmail,
+	)
 	setCompletionActor(&task, completedSubject, completedEmail)
 	return task, nil
+}
+
+func setTaskSource(
+	task *Task,
+	category *string,
+	callerName *string,
+	sourceCall *string,
+	sourceMessage *string,
+	createdEmail *string,
+) {
+	if category != nil {
+		task.Category = TaskCategory(*category)
+	}
+	if callerName != nil {
+		task.CallerName = *callerName
+	}
+	if sourceCall != nil {
+		task.SourceCallID = *sourceCall
+	}
+	if sourceMessage != nil {
+		task.SourceMessage = *sourceMessage
+	}
+	if createdEmail != nil {
+		task.CreatedBy.Email = *createdEmail
+	}
 }
 
 func setCompletionActor(
@@ -966,5 +1308,128 @@ func setCompletionActor(
 	if subject == nil || email == nil {
 		return
 	}
-	task.CompletedBy = &ActorSnapshot{Subject: *subject, Email: *email}
+	task.CompletedBy = &ActorSnapshot{
+		Kind:    access.ActorHuman,
+		Subject: *subject,
+		Email:   *email,
+	}
+}
+
+func humanActorSnapshot(actor access.Actor) ActorSnapshot {
+	return ActorSnapshot{
+		Kind:    access.ActorHuman,
+		Subject: actor.Subject,
+		Email:   actor.Email,
+	}
+}
+
+func normalizeAITaskCommand(command *CreateAITaskCommand) {
+	command.Service.Subject = strings.TrimSpace(command.Service.Subject)
+	command.Service.PracticeID = strings.TrimSpace(command.Service.PracticeID)
+	command.OfficeKey = strings.TrimSpace(command.OfficeKey)
+	command.OfficePhone = strings.TrimSpace(command.OfficePhone)
+	command.InboundOfficePhone = strings.TrimSpace(command.InboundOfficePhone)
+	command.SourceCallID = strings.TrimSpace(command.SourceCallID)
+	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
+	command.Phone = strings.TrimSpace(command.Phone)
+	command.CallerName = strings.TrimSpace(command.CallerName)
+	command.CompatibilityPatientID = strings.TrimSpace(
+		command.CompatibilityPatientID,
+	)
+	command.CompatibilityPatientDOB = strings.TrimSpace(
+		command.CompatibilityPatientDOB,
+	)
+	command.Summary = strings.TrimSpace(command.Summary)
+	command.Message = strings.TrimSpace(command.Message)
+}
+
+func validAITaskCommand(command CreateAITaskCommand) bool {
+	return officeKey.MatchString(command.OfficeKey) &&
+		textLengthBetween(command.SourceCallID, 1, 255) &&
+		idempotencyKey.MatchString(command.IdempotencyKey) &&
+		canonicalPhone.MatchString(command.Phone) &&
+		canonicalPhone.MatchString(command.OfficePhone) &&
+		(command.InboundOfficePhone == "" ||
+			canonicalPhone.MatchString(command.InboundOfficePhone)) &&
+		textLengthBetween(command.Summary, 1, 240) &&
+		textLengthBetween(command.Message, 1, 2500) &&
+		textLengthBetween(command.CallerName, 0, 200) &&
+		textLengthBetween(command.CompatibilityPatientID, 0, 255) &&
+		textLengthBetween(command.CompatibilityPatientDOB, 0, 64) &&
+		validTaskCategory(command.Category) &&
+		validTaskUrgency(command.Urgency)
+}
+
+func validTaskCategory(category TaskCategory) bool {
+	switch category {
+	case TaskCategoryBilling,
+		TaskCategoryAppointments,
+		TaskCategoryDocumentation,
+		TaskCategoryOptical,
+		TaskCategoryMedication,
+		TaskCategoryReferrals,
+		TaskCategoryOther:
+		return true
+	default:
+		return false
+	}
+}
+
+func validTaskUrgency(urgency TaskUrgency) bool {
+	switch urgency {
+	case TaskUrgencyHighPriority, TaskUrgencyNormal, TaskUrgencyNonUrgent:
+		return true
+	default:
+		return false
+	}
+}
+
+func textLengthBetween(value string, minimum int, maximum int) bool {
+	length := utf8.RuneCountInString(value)
+	return length >= minimum && length <= maximum
+}
+
+func aiTaskFingerprint(command CreateAITaskCommand) ([32]byte, error) {
+	payload, err := json.Marshal(struct {
+		ServiceSubject          string       `json:"serviceSubject"`
+		PracticeID              string       `json:"practiceId"`
+		OfficeKey               string       `json:"officeKey"`
+		OfficePhone             string       `json:"officePhone"`
+		InboundOfficePhone      string       `json:"inboundOfficePhone"`
+		SourceCallID            string       `json:"sourceCallId"`
+		Phone                   string       `json:"phone"`
+		CallerName              string       `json:"callerName"`
+		CompatibilityPatientID  string       `json:"compatibilityPatientId"`
+		CompatibilityPatientDOB string       `json:"compatibilityPatientDob"`
+		Summary                 string       `json:"summary"`
+		Message                 string       `json:"message"`
+		Category                TaskCategory `json:"category"`
+		Urgency                 TaskUrgency  `json:"urgency"`
+	}{
+		ServiceSubject:          command.Service.Subject,
+		PracticeID:              command.Service.PracticeID,
+		OfficeKey:               command.OfficeKey,
+		OfficePhone:             command.OfficePhone,
+		InboundOfficePhone:      command.InboundOfficePhone,
+		SourceCallID:            command.SourceCallID,
+		Phone:                   command.Phone,
+		CallerName:              command.CallerName,
+		CompatibilityPatientID:  command.CompatibilityPatientID,
+		CompatibilityPatientDOB: command.CompatibilityPatientDOB,
+		Summary:                 command.Summary,
+		Message:                 command.Message,
+		Category:                command.Category,
+		Urgency:                 command.Urgency,
+	})
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("encode AI Task fingerprint: %w", err)
+	}
+	return sha256.Sum256(payload), nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }

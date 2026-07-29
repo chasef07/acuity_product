@@ -105,10 +105,7 @@ type Config struct {
 	WebhookTolerance       time.Duration
 }
 
-type ServiceIdentity struct {
-	Subject    string
-	PracticeID string
-}
+type ServiceIdentity = access.ServiceIdentity
 
 type ContactContext struct {
 	Phone          string
@@ -5270,7 +5267,28 @@ func validateHandoff(command CreateHandoffCommand, sipDomain string) error {
 }
 
 func handoffFingerprint(command CreateHandoffCommand) ([32]byte, error) {
-	encoded, err := json.Marshal(command)
+	// Keep the pre-Access-generalization payload stable so a handoff committed
+	// by an overlapping revision remains safely replayable.
+	type fingerprintService struct {
+		Subject    string
+		PracticeID string
+	}
+	encoded, err := json.Marshal(struct {
+		Service        fingerprintService
+		LocationID     string
+		SourceCallID   string
+		IdempotencyKey string
+		Contact        ContactContext
+	}{
+		Service: fingerprintService{
+			Subject:    command.Service.Subject,
+			PracticeID: command.Service.PracticeID,
+		},
+		LocationID:     command.LocationID,
+		SourceCallID:   command.SourceCallID,
+		IdempotencyKey: command.IdempotencyKey,
+		Contact:        command.Contact,
+	})
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("encode handoff fingerprint: %w", err)
 	}

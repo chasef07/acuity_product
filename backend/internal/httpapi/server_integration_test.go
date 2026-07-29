@@ -386,7 +386,9 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	var completed api.Task
 	decode(t, completedResponse, &completed)
 	if completed.State != api.COMPLETED || completed.CompletedBy == nil ||
-		string(completed.CompletedBy.Email) != identity.Email {
+		completed.CompletedBy.Kind != api.TaskActorKindHUMAN ||
+		completed.CompletedBy.Email == nil ||
+		string(*completed.CompletedBy.Email) != identity.Email {
 		t.Fatalf("completed HTTP Task = %#v", completed)
 	}
 
@@ -638,6 +640,331 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	_ = invalid.Body.Close()
 }
 
+func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(
+		context.Background(),
+		access.Provisioning{
+			Environment: "test",
+			RequestedBy: "slice-4-http-test",
+			Practices: []access.PracticeProvision{{
+				Key:  "calling-practice",
+				Name: "Calling Practice",
+				Locations: []access.LocationProvision{{
+					Key:            "calling-location",
+					Name:           "Calling Location",
+					AbitaOfficeKey: "spring-hill",
+				}},
+				Invitations: []access.InvitationProvision{{
+					Key:           "calling-staff",
+					Email:         "staff@calling.test",
+					Role:          access.RoleStaff,
+					LocationScope: access.LocationScopeAll,
+					ExpiresAt:     now.Add(time.Hour),
+				}},
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("provision staff Task HTTP fixture: %v", err)
+	}
+	staffIdentity := access.Identity{
+		Subject:       "calling-staff-subject",
+		Email:         "staff@calling.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.AcceptInvitation(
+		context.Background(),
+		staffIdentity,
+		provisioned.Invitations[0].Token,
+	); err != nil {
+		t.Fatalf("accept staff Task HTTP fixture: %v", err)
+	}
+	var practiceID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_practices
+		WHERE provisioning_key = 'calling-practice'
+	`).Scan(&practiceID); err != nil {
+		t.Fatalf("load staff Task HTTP Practice: %v", err)
+	}
+	serviceAuthenticator, err := access.NewServiceAuthenticator(
+		"abita-token",
+		access.ServiceIdentity{
+			Subject:       "abita-synthetic",
+			PracticeID:    practiceID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities: []access.ServiceCapability{
+				access.ServiceCapabilityCreateTask,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("new staff Task service authenticator: %v", err)
+	}
+	handler, err := httpapi.NewPortal(
+		httpapi.Config{
+			AllowedOrigin:  "http://localhost:3000",
+			AcquireTimeout: 500 * time.Millisecond,
+		},
+		pool,
+		httpapi.PortalDependencies{
+			Access:        accessModule,
+			Authenticator: staticAuthenticator{"staff-token": staffIdentity},
+			Calling: humancalling.New(
+				pool,
+				accessModule,
+				httpCallingProvider{},
+				humancalling.Config{},
+				nil,
+			),
+			Work:                 work.New(pool, accessModule, func() time.Time { return now }),
+			ServiceAuthenticator: serviceAuthenticator,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new staff Task HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	payload := map[string]any{
+		"callId":         "room/+@opaque",
+		"callerPhone":    "+17275551212",
+		"category":       "documentation",
+		"idempotencyKey": "staff_task_3f94a1",
+		"message":        "Caller asked the office to send records to a specialist.",
+		"officeKey":      "spring-hill",
+		"officePhone":    "+17275919997",
+		"patient": map[string]any{
+			"dob":  "01/01/1980",
+			"id":   "patient-1",
+			"name": "Jane Doe",
+		},
+		"source":  "agent",
+		"summary": "Caller needs records sent.",
+		"urgency": "normal",
+	}
+	body, _ := json.Marshal(payload)
+	unauthenticated := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks",
+		"wrong-token",
+		body,
+	)
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Fatalf(
+			"unauthenticated staff Task status = %d",
+			unauthenticated.StatusCode,
+		)
+	}
+	_ = unauthenticated.Body.Close()
+
+	missingOfficePhone := make(map[string]any, len(payload))
+	for key, value := range payload {
+		missingOfficePhone[key] = value
+	}
+	delete(missingOfficePhone, "officePhone")
+	invalidBody, _ := json.Marshal(missingOfficePhone)
+	invalid := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks",
+		"abita-token",
+		invalidBody,
+	)
+	if invalid.StatusCode != http.StatusBadRequest {
+		t.Fatalf(
+			"invalid staff Task status = %d, body = %s",
+			invalid.StatusCode,
+			readBody(t, invalid),
+		)
+	}
+	_ = invalid.Body.Close()
+
+	withTranscript := make(map[string]any, len(payload)+1)
+	for key, value := range payload {
+		withTranscript[key] = value
+	}
+	withTranscript["transcript"] = "protected content"
+	protectedBody, _ := json.Marshal(withTranscript)
+	protected := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks",
+		"abita-token",
+		protectedBody,
+	)
+	if protected.StatusCode != http.StatusBadRequest {
+		t.Fatalf(
+			"protected staff Task field status = %d, body = %s",
+			protected.StatusCode,
+			readBody(t, protected),
+		)
+	}
+	_ = protected.Body.Close()
+
+	handoffBody, _ := json.Marshal(map[string]any{
+		"practiceId":     practiceID,
+		"locationId":     uuid.NewString(),
+		"sourceCallId":   "capability-check",
+		"idempotencyKey": "capability-check",
+		"contact": map[string]any{
+			"phone": "+17275551212",
+		},
+	})
+	handoff := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"abita-token",
+		handoffBody,
+	)
+	if handoff.StatusCode != http.StatusForbidden {
+		t.Fatalf(
+			"Task-only service handoff status = %d, body = %s",
+			handoff.StatusCode,
+			readBody(t, handoff),
+		)
+	}
+	_ = handoff.Body.Close()
+
+	created := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks",
+		"abita-token",
+		body,
+	)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf(
+			"create staff Task status = %d, body = %s",
+			created.StatusCode,
+			readBody(t, created),
+		)
+	}
+	var receipt struct {
+		Status   string `json:"status"`
+		TaskID   string `json:"taskId"`
+		Category string `json:"category"`
+		Urgency  string `json:"urgency"`
+	}
+	decode(t, created, &receipt)
+	if receipt.Status != "created" ||
+		receipt.TaskID == "" ||
+		receipt.Category != "documentation" ||
+		receipt.Urgency != "normal" {
+		t.Fatalf("created staff Task receipt = %#v", receipt)
+	}
+
+	duplicate := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks",
+		"abita-token",
+		body,
+	)
+	if duplicate.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"duplicate staff Task status = %d, body = %s",
+			duplicate.StatusCode,
+			readBody(t, duplicate),
+		)
+	}
+	var duplicateReceipt struct {
+		Status string `json:"status"`
+		TaskID string `json:"taskId"`
+	}
+	decode(t, duplicate, &duplicateReceipt)
+	if duplicateReceipt.Status != "duplicate" ||
+		duplicateReceipt.TaskID != receipt.TaskID {
+		t.Fatalf("duplicate staff Task receipt = %#v", duplicateReceipt)
+	}
+
+	queryBody, _ := json.Marshal(map[string]any{
+		"practiceId": practiceID,
+		"ordering":   "priority",
+	})
+	query := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks/query",
+		"staff-token",
+		queryBody,
+	)
+	if query.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"query staff Task status = %d, body = %s",
+			query.StatusCode,
+			readBody(t, query),
+		)
+	}
+	var page api.TaskPage
+	decode(t, query, &page)
+	if len(page.Items) != 1 {
+		t.Fatalf("queried staff Tasks = %#v", page.Items)
+	}
+	projected := page.Items[0]
+	if projected.Id.String() != receipt.TaskID ||
+		projected.Origin != api.ABITAAI ||
+		projected.Urgency != api.Normal ||
+		projected.Category == nil ||
+		*projected.Category != api.Documentation ||
+		projected.CallerName == nil ||
+		*projected.CallerName != "Jane Doe" ||
+		projected.SourceCallId == nil ||
+		*projected.SourceCallId != "room/+@opaque" ||
+		projected.SourceMessage == nil ||
+		*projected.SourceMessage != payload["message"] ||
+		projected.CallId != nil ||
+		projected.CreatedBy.Kind != api.TaskActorKindSERVICE ||
+		projected.CreatedBy.Email != nil {
+		t.Fatalf("projected staff Task = %#v", projected)
+	}
+
+	payload["message"] = "Changed request content."
+	changedBody, _ := json.Marshal(payload)
+	conflict := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/tasks",
+		"abita-token",
+		changedBody,
+	)
+	if conflict.StatusCode != http.StatusConflict {
+		t.Fatalf(
+			"conflicting staff Task status = %d, body = %s",
+			conflict.StatusCode,
+			readBody(t, conflict),
+		)
+	}
+	_ = conflict.Body.Close()
+
+	var stored string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT to_jsonb(task)::text
+		FROM work_tasks task
+		WHERE id = $1
+	`, receipt.TaskID).Scan(&stored); err != nil {
+		t.Fatalf("read stored staff Task: %v", err)
+	}
+	if strings.Contains(stored, "patient-1") ||
+		strings.Contains(stored, "01/01/1980") {
+		t.Fatalf("stored staff Task retained excluded patient data: %s", stored)
+	}
+}
+
 func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
@@ -692,11 +1019,15 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
 		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
 	}
-	serviceAuthenticator, err := humancalling.NewServiceAuthenticator(
+	serviceAuthenticator, err := access.NewServiceAuthenticator(
 		"abita-token",
-		humancalling.ServiceIdentity{
-			Subject:    "abita-synthetic",
-			PracticeID: authorization.Practice.ID,
+		access.ServiceIdentity{
+			Subject:       "abita-synthetic",
+			PracticeID:    authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities: []access.ServiceCapability{
+				access.ServiceCapabilityHumanHandoff,
+			},
 		},
 	)
 	if err != nil {
@@ -891,11 +1222,16 @@ func newPortalHandler(
 	authenticator httpapi.IdentityAuthenticator,
 ) (http.Handler, error) {
 	t.Helper()
-	serviceAuthenticator, err := humancalling.NewServiceAuthenticator(
+	serviceAuthenticator, err := access.NewServiceAuthenticator(
 		"unused-service-token",
-		humancalling.ServiceIdentity{
-			Subject:    "unused-service",
-			PracticeID: "00000000-0000-0000-0000-000000000001",
+		access.ServiceIdentity{
+			Subject:       "unused-service",
+			PracticeID:    "00000000-0000-0000-0000-000000000001",
+			LocationScope: access.LocationScopeAll,
+			Capabilities: []access.ServiceCapability{
+				access.ServiceCapabilityHumanHandoff,
+				access.ServiceCapabilityCreateTask,
+			},
 		},
 	)
 	if err != nil {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
+  BotIcon,
   CheckIcon,
   CheckCircle2Icon,
   Clock3Icon,
@@ -334,7 +335,7 @@ function TaskWorkspace({
         <div className="mt-4 grid gap-3 border-t pt-3 text-xs text-muted-foreground sm:grid-cols-3">
           <Metadata
             label="Created"
-            value={`${formatDateTime(task.createdAt)} · ${task.createdBy.email}`}
+            value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
           />
           <Metadata
             label="Last changed"
@@ -344,12 +345,13 @@ function TaskWorkspace({
             label="Completed"
             value={
               task.completedAt
-                ? `${formatDateTime(task.completedAt)} · ${task.completedBy?.email ?? ""}`
+                ? `${formatDateTime(task.completedAt)} · ${task.completedBy ? actorLabel(task.completedBy) : ""}`
                 : "Not completed"
             }
           />
         </div>
       </header>
+      {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
       <CallHistory
         key={`task:${task.id}`}
         source={{ kind: "task", id: task.id }}
@@ -357,6 +359,74 @@ function TaskWorkspace({
       />
     </section>
   )
+}
+
+function AITaskSource({ task }: { task: Task }) {
+  return (
+    <section
+      aria-label="AI Task source"
+      className="border-b bg-muted/20 px-5 py-4"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className="gap-1.5">
+          <BotIcon className="size-3.5" aria-hidden="true" />
+          AI-created
+        </Badge>
+        {task.category && (
+          <Badge variant="secondary">{formatCategory(task.category)}</Badge>
+        )}
+        <Badge
+          variant={
+            task.urgency === "high_priority" ? "destructive" : "secondary"
+          }
+        >
+          {formatUrgency(task.urgency)}
+        </Badge>
+        <span className="ml-auto text-xs text-muted-foreground">
+          Created by AI · {formatDateTime(task.createdAt)}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 text-sm md:grid-cols-[minmax(0,1fr)_auto]">
+        <div>
+          <p className="font-medium">
+            {task.callerName
+              ? `AI-supplied name: ${task.callerName}`
+              : "Caller"}{" "}
+            · {formatPhone(task.phone)}
+          </p>
+          <p className="mt-1 max-w-3xl whitespace-pre-wrap text-muted-foreground">
+            {task.sourceMessage}
+          </p>
+        </div>
+        {task.sourceCallId && (
+          <div className="text-xs text-muted-foreground md:text-right">
+            <p className="uppercase tracking-[0.12em]">Source call</p>
+            <p className="mt-1 font-mono">{task.sourceCallId}</p>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function actorLabel(actor: Task["createdBy"]) {
+  if (actor.email) return actor.email
+  return actor.kind === "SERVICE" ? "Abita AI" : actor.subject
+}
+
+function formatCategory(category: NonNullable<Task["category"]>) {
+  return category.charAt(0).toUpperCase() + category.slice(1)
+}
+
+function formatUrgency(urgency: Task["urgency"]) {
+  switch (urgency) {
+    case "high_priority":
+      return "High priority"
+    case "non_urgent":
+      return "Non-urgent"
+    default:
+      return "Normal"
+  }
 }
 
 function CallWorkspace({

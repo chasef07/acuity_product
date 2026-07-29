@@ -81,6 +81,186 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       }, { timeout: 40_000 })
       .toBe(2)
 
+    await test.step("AI Tasks converge without stealing either browser's selection", async () => {
+      await Promise.all([
+        expect(selectedPage.getByText("No follow-up tasks")).toBeVisible(),
+        expect(secondaryPage.getByText("No follow-up tasks")).toBeVisible(),
+      ])
+      const createStaffTask = async ({
+        idempotencyKey,
+        summary,
+        message,
+        urgency,
+      }: {
+        idempotencyKey: string
+        summary: string
+        message: string
+        urgency: "high_priority" | "normal" | "non_urgent"
+      }) =>
+        selectedPage.request.post(`${portalURL}/v1/tasks`, {
+          headers: { authorization: "Bearer synthetic-service-token" },
+          data: {
+            callId: "slice-4-e2e-source-call",
+            callerPhone: "+17275551212",
+            category: "documentation",
+            idempotencyKey,
+            message,
+            officeKey: "spring-hill",
+            officePhone: "+17275919997",
+            patient: {
+              id: "compatibility-only-patient-id",
+              dob: "01/01/1980",
+              name: "Synthetic Caller",
+            },
+            source: "agent",
+            summary,
+            urgency,
+          },
+        })
+
+      const firstTitle = "Send records to specialist"
+      const firstMessage =
+        "Caller asked the office to send records to the named specialist."
+      const firstResponse = await createStaffTask({
+        idempotencyKey: "slice_4_e2e_first",
+        summary: firstTitle,
+        message: firstMessage,
+        urgency: "normal",
+      })
+      expect(firstResponse.status()).toBe(201)
+      const firstReceipt = (await firstResponse.json()) as {
+        status: string
+        taskId: string
+      }
+      expect(firstReceipt).toEqual({
+        status: "created",
+        taskId: expect.any(String),
+        category: "documentation",
+        urgency: "normal",
+      })
+      const replayResponse = await createStaffTask({
+        idempotencyKey: "slice_4_e2e_first",
+        summary: firstTitle,
+        message: firstMessage,
+        urgency: "normal",
+      })
+      expect(replayResponse.status()).toBe(200)
+      expect(await replayResponse.json()).toEqual({
+        status: "duplicate",
+        taskId: firstReceipt.taskId,
+        category: "documentation",
+        urgency: "normal",
+      })
+
+      const firstTaskButtons = [
+        selectedPage.getByRole("button", { name: new RegExp(firstTitle) }),
+        secondaryPage.getByRole("button", { name: new RegExp(firstTitle) }),
+      ]
+      await Promise.all(firstTaskButtons.map((button) => expect(button).toBeVisible()))
+      await Promise.all([
+        expect(
+          selectedPage.getByRole("heading", { name: firstTitle, exact: true }),
+        ).not.toBeVisible(),
+        expect(
+          secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
+        ).not.toBeVisible(),
+      ])
+      await Promise.all(firstTaskButtons.map((button) => button.click()))
+      await Promise.all([
+        expect(
+          selectedPage.getByRole("heading", { name: firstTitle, exact: true }),
+        ).toBeVisible(),
+        expect(
+          secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
+        ).toBeVisible(),
+      ])
+      await expect(
+        selectedPage.getByRole("region", { name: "AI Task source" }),
+      ).toContainText(firstMessage)
+      await expect(
+        selectedPage.getByRole("region", { name: "AI Task source" }),
+      ).toContainText("AI-supplied name: Synthetic Caller")
+
+      const secondTitle = "Urgent document correction"
+      const secondResponse = await createStaffTask({
+        idempotencyKey: "slice_4_e2e_second",
+        summary: secondTitle,
+        message: "Caller identified an urgent correction as a separate outcome.",
+        urgency: "high_priority",
+      })
+      expect(secondResponse.status()).toBe(201)
+      await Promise.all([
+        expect(
+          selectedPage.getByRole("button", { name: new RegExp(secondTitle) }),
+        ).toBeVisible(),
+        expect(
+          secondaryPage.getByRole("button", { name: new RegExp(secondTitle) }),
+        ).toBeVisible(),
+      ])
+      await Promise.all([
+        expect(
+          selectedPage.getByRole("heading", { name: firstTitle, exact: true }),
+        ).toBeVisible(),
+        expect(
+          secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
+        ).toBeVisible(),
+      ])
+
+      await secondaryPage.getByLabel("Order tasks").selectOption("priority")
+      await expect(secondaryPage.getByLabel("Order tasks")).toHaveValue(
+        "priority",
+      )
+      await expect(selectedPage.getByLabel("Order tasks")).toHaveValue("time")
+      await secondaryPage.reload()
+      await expect(secondaryPage.getByLabel("Order tasks")).toHaveValue(
+        "priority",
+      )
+      await secondaryPage
+        .getByRole("button", { name: new RegExp(firstTitle) })
+        .click()
+
+      await selectedPage.getByRole("button", { name: "Complete" }).click()
+      await expect(
+        secondaryPage.getByRole("button", { name: "Reopen" }),
+      ).toBeVisible()
+      await secondaryPage.getByRole("button", { name: "Reopen" }).click()
+      await expect(
+        selectedPage.getByRole("button", { name: "Complete" }),
+      ).toBeVisible()
+
+      const committed = await database.query<{
+        origin: string
+        source_message: string
+        actor_kind: string
+        actor_email: string | null
+        raw_task: string
+        creation_activities: string
+      }>(
+        `SELECT
+           task.origin,
+           task.source_message,
+           task.created_by_kind AS actor_kind,
+           task.created_by_email AS actor_email,
+           to_jsonb(task)::text AS raw_task,
+           count(activity.id)::text AS creation_activities
+         FROM work_tasks task
+         LEFT JOIN work_task_activities activity
+           ON activity.task_id = task.id
+           AND activity.kind = 'TASK_CREATED'
+         WHERE task.id = $1
+         GROUP BY task.id`,
+        [firstReceipt.taskId],
+      )
+      expect(committed.rows[0]).toEqual({
+        origin: "ABITA_AI",
+        source_message: firstMessage,
+        actor_kind: "SERVICE",
+        actor_email: null,
+        raw_task: expect.not.stringContaining("compatibility-only-patient-id"),
+        creation_activities: "1",
+      })
+    })
+
     await Promise.all([
       enableCalling(selectedPage),
       enableCalling(secondaryPage),
