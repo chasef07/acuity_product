@@ -367,9 +367,6 @@ func (m *Module) Send(
 		return Message{}, "", ErrInvalidInput
 	}
 	if command.ThreadID == "" {
-		if command.TaskID != "" {
-			return Message{}, "", ErrInvalidInput
-		}
 		destination, err := normalizePhone(command.Destination)
 		if err != nil {
 			return Message{}, "", ErrInvalidInput
@@ -2231,12 +2228,15 @@ func (m *Module) ApplyTaskUnread(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	authorizedLocations := map[string]struct{}{}
+	practiceIDs := make([]string, 0, len(tasks))
+	locationIDs := make([]string, 0, len(tasks))
+	phones := make([]string, 0, len(tasks))
+	messageThreadIDs := make([]string, 0, len(tasks))
+	unreadEnabled := make([]bool, 0, len(tasks))
 	for index := range tasks {
 		task := &tasks[index]
 		task.Unread = false
-		if task.State != work.TaskOpen {
-			continue
-		}
+		task.ConversationThreadID = ""
 		authorizationKey := task.PracticeID + ":" + task.LocationID
 		if _, ok := authorizedLocations[authorizationKey]; !ok {
 			if _, err := m.access.LockReadAuthorization(
@@ -2250,34 +2250,90 @@ func (m *Module) ApplyTaskUnread(
 			}
 			authorizedLocations[authorizationKey] = struct{}{}
 		}
-		threadID := task.MessageThreadID
-		if threadID == "" {
-			if err := tx.QueryRow(ctx, `
-				SELECT id::text
-				FROM messaging_threads
-				WHERE practice_id = $1
-					AND location_id = $2
-					AND external_phone = $3
-				ORDER BY updated_at DESC, id DESC
-				LIMIT 1
-			`, task.PracticeID, task.LocationID, task.Phone).Scan(&threadID); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					continue
-				}
-				return fmt.Errorf("resolve Task conversation Thread: %w", err)
-			}
-		}
-		task.ConversationThreadID = threadID
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM messaging_thread_unreads
-				WHERE thread_id = $1 AND user_subject = $2
-			)
-		`, threadID, identity.Subject).Scan(&task.Unread); err != nil {
-			return fmt.Errorf("project Task unread: %w", err)
-		}
+		practiceIDs = append(practiceIDs, task.PracticeID)
+		locationIDs = append(locationIDs, task.LocationID)
+		phones = append(phones, task.Phone)
+		messageThreadIDs = append(messageThreadIDs, task.MessageThreadID)
+		unreadEnabled = append(unreadEnabled, task.State == work.TaskOpen)
 	}
+	rows, err := tx.Query(ctx, `
+		WITH task_input AS (
+			SELECT
+				input.task_index,
+				input.practice_id::uuid AS practice_id,
+				input.location_id::uuid AS location_id,
+				input.phone,
+				NULLIF(input.message_thread_id, '')::uuid AS message_thread_id,
+				input.unread_enabled
+			FROM unnest(
+				$1::text[],
+				$2::text[],
+				$3::text[],
+				$4::text[],
+				$5::boolean[]
+			) WITH ORDINALITY AS input(
+				practice_id,
+				location_id,
+				phone,
+				message_thread_id,
+				unread_enabled,
+				task_index
+			)
+		)
+		SELECT
+			task_input.task_index,
+			thread.id::text,
+			task_input.unread_enabled
+				AND unread.thread_id IS NOT NULL
+		FROM task_input
+		JOIN LATERAL (
+			SELECT candidate.id
+			FROM messaging_threads candidate
+			WHERE candidate.practice_id = task_input.practice_id
+				AND candidate.location_id = task_input.location_id
+				AND (
+					(
+						task_input.message_thread_id IS NOT NULL
+						AND candidate.id = task_input.message_thread_id
+					)
+					OR (
+						task_input.message_thread_id IS NULL
+						AND candidate.external_phone = task_input.phone
+					)
+				)
+			ORDER BY candidate.updated_at DESC, candidate.id DESC
+			LIMIT 1
+		) thread ON true
+		LEFT JOIN messaging_thread_unreads unread
+			ON unread.thread_id = thread.id
+			AND unread.user_subject = $6
+	`, practiceIDs, locationIDs, phones, messageThreadIDs, unreadEnabled,
+		identity.Subject,
+	)
+	if err != nil {
+		return fmt.Errorf("project Task conversations: %w", err)
+	}
+	for rows.Next() {
+		var taskIndex int
+		var threadID string
+		var unread bool
+		if err := rows.Scan(&taskIndex, &threadID, &unread); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan Task conversation projection: %w", err)
+		}
+		taskIndex--
+		if taskIndex < 0 || taskIndex >= len(tasks) {
+			rows.Close()
+			return fmt.Errorf("Task conversation projection index is invalid")
+		}
+		tasks[taskIndex].ConversationThreadID = threadID
+		tasks[taskIndex].Unread = unread
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate Task conversation projection: %w", err)
+	}
+	rows.Close()
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Task unread projection: %w", err)
 	}

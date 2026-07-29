@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,8 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) {
@@ -31,8 +36,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			Key:  "message-practice",
 			Name: "Message Practice",
 			Locations: []access.LocationProvision{{
-				Key:  "message-office",
-				Name: "Message Office",
+				Key:            "message-office",
+				Name:           "Message Office",
+				AbitaOfficeKey: "message-office",
 			}, {
 				Key:  "message-office-two",
 				Name: "Message Office Two",
@@ -1163,6 +1169,120 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			err,
 		)
 	}
+
+	aiTask, status, err := workModule.CreateAITask(
+		context.Background(),
+		work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject:       "message-ai-service",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
+				},
+			},
+			OfficeKey:      "message-office",
+			OfficePhone:    "+17275550100",
+			SourceCallID:   "message-ai-task-source",
+			IdempotencyKey: "message-ai-task",
+			Phone:          "+17275550155",
+			CallerName:     "Task caller",
+			Summary:        "Send the requested information.",
+			Message:        "The caller asked the office to text an update.",
+			Category:       work.TaskCategoryDocumentation,
+			Urgency:        work.TaskUrgencyNormal,
+		},
+	)
+	if err != nil || status != work.TaskCreated {
+		t.Fatalf("create unthreaded AI Task = %#v, %q, %v", aiTask, status, err)
+	}
+	taskMessage, _, err := module.Send(
+		context.Background(),
+		messaging.SendCommand{
+			Identity:       identity,
+			PracticeID:     aiTask.PracticeID,
+			LocationID:     aiTask.LocationID,
+			Destination:    aiTask.Phone,
+			TaskID:         aiTask.ID,
+			Body:           "Here is the update you requested.",
+			IdempotencyKey: "message-ai-task-first-send",
+		},
+	)
+	if err != nil {
+		t.Fatalf("send first Message from unthreaded Task: %v", err)
+	}
+	if taskMessage.TaskID != aiTask.ID ||
+		taskMessage.Thread.ExternalPhone != aiTask.Phone ||
+		taskMessage.Thread.LocationID != aiTask.LocationID {
+		t.Fatalf("first unthreaded Task Message = %#v", taskMessage)
+	}
+
+	tracer := &messagingProjectionTracer{}
+	tracedConfig, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("parse traced Messaging database config: %v", err)
+	}
+	tracedConfig.ConnConfig.Tracer = tracer
+	tracedPool, err := pgxpool.NewWithConfig(context.Background(), tracedConfig)
+	if err != nil {
+		t.Fatalf("open traced Messaging database pool: %v", err)
+	}
+	t.Cleanup(tracedPool.Close)
+	tracedAccess := access.New(tracedPool, func() time.Time { return now })
+	tracedModule := messaging.New(
+		tracedPool,
+		tracedAccess,
+		nil,
+		nil,
+		messaging.Config{},
+		func() time.Time { return now },
+	)
+	taskPage := make([]work.Task, 50)
+	for index := range taskPage {
+		taskPage[index] = aiTask
+	}
+	if err := tracedModule.ApplyTaskUnread(
+		context.Background(),
+		identity,
+		taskPage,
+	); err != nil {
+		t.Fatalf("batch Task conversation projection: %v", err)
+	}
+	for index, projected := range taskPage {
+		if projected.ConversationThreadID != taskMessage.Thread.ID ||
+			projected.Unread {
+			t.Fatalf("projected Task %d = %#v", index, projected)
+		}
+	}
+	if calls := tracer.messagingQueries.Load(); calls != 1 {
+		t.Fatalf("Task Messaging projection queries = %d, want 1", calls)
+	}
+
+	completedAITask, err := workModule.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity:        identity,
+			TaskID:          aiTask.ID,
+			ExpectedVersion: aiTask.Version,
+		},
+	)
+	if err != nil {
+		t.Fatalf("complete Task with conversation: %v", err)
+	}
+	completedPage := []work.Task{completedAITask}
+	if err := module.ApplyTaskUnread(
+		context.Background(),
+		identity,
+		completedPage,
+	); err != nil ||
+		completedPage[0].ConversationThreadID != taskMessage.Thread.ID ||
+		completedPage[0].Unread {
+		t.Fatalf(
+			"completed Task conversation projection = %#v, %v",
+			completedPage,
+			err,
+		)
+	}
 }
 
 func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
@@ -1224,7 +1344,10 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	if err != nil {
 		t.Fatalf("create attachment webhook key: %v", err)
 	}
-	store := messaging.NewMemoryAttachmentStore()
+	memoryStore := messaging.NewMemoryAttachmentStore()
+	store := &deleteFailingAttachmentStore{
+		AttachmentObjectStore: memoryStore,
+	}
 	provider := &providerFixture{}
 	module := messaging.New(
 		pool,
@@ -1581,6 +1704,70 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		!bytes.Equal(inboundContent.Content, pdf) {
 		t.Fatalf("stored inbound attachment = %#v, %v", inboundContent, err)
 	}
+
+	expiring, err := module.UploadAttachment(
+		context.Background(),
+		messaging.UploadAttachmentCommand{
+			Identity:     identity,
+			PracticeID:   authorization.Practice.ID,
+			LocationID:   authorization.Locations[0].ID,
+			FileName:     "expired.png",
+			DeclaredType: "image/png",
+			Content:      png,
+		},
+	)
+	if err != nil {
+		t.Fatalf("upload attachment for expiration: %v", err)
+	}
+	now = now.Add(16 * time.Minute)
+	store.deleteError = errors.New("transient protected-object deletion failure")
+	if err := module.ExpirePendingAttachments(
+		context.Background(),
+	); err == nil {
+		t.Fatal("attachment expiration ignored object deletion failure")
+	}
+	var expiredRowExists bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1
+			FROM messaging_attachments
+			WHERE id = $1
+		)
+	`, expiring.ID).Scan(&expiredRowExists); err != nil {
+		t.Fatalf("inspect failed attachment expiration: %v", err)
+	}
+	if !expiredRowExists {
+		t.Fatal("failed object deletion removed its retryable attachment row")
+	}
+	if _, err := memoryStore.Get(
+		context.Background(),
+		"attachments/"+expiring.ID,
+	); err != nil {
+		t.Fatalf("failed expiration lost protected object: %v", err)
+	}
+
+	store.deleteError = nil
+	if err := module.ExpirePendingAttachments(context.Background()); err != nil {
+		t.Fatalf("retry attachment expiration: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1
+			FROM messaging_attachments
+			WHERE id = $1
+		)
+	`, expiring.ID).Scan(&expiredRowExists); err != nil {
+		t.Fatalf("inspect retried attachment expiration: %v", err)
+	}
+	if expiredRowExists {
+		t.Fatal("successful object deletion retained expired attachment row")
+	}
+	if _, err := memoryStore.Get(
+		context.Background(),
+		"attachments/"+expiring.ID,
+	); !errors.Is(err, messaging.ErrObjectNotFound) {
+		t.Fatalf("expired protected object error = %v, want not found", err)
+	}
 }
 
 func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomically(
@@ -1855,4 +2042,42 @@ func (fixture *providerFixture) Reconcile(
 		return messaging.ProviderResult{}, messaging.ErrAmbiguous
 	}
 	return fixture.reconcileResult, nil
+}
+
+type messagingProjectionTracer struct {
+	messagingQueries atomic.Int64
+}
+
+func (tracer *messagingProjectionTracer) TraceQueryStart(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceQueryStartData,
+) context.Context {
+	if strings.Contains(data.SQL, "FROM messaging_threads") ||
+		strings.Contains(data.SQL, "FROM messaging_thread_unreads") {
+		tracer.messagingQueries.Add(1)
+	}
+	return ctx
+}
+
+func (*messagingProjectionTracer) TraceQueryEnd(
+	context.Context,
+	*pgx.Conn,
+	pgx.TraceQueryEndData,
+) {
+}
+
+type deleteFailingAttachmentStore struct {
+	messaging.AttachmentObjectStore
+	deleteError error
+}
+
+func (store *deleteFailingAttachmentStore) Delete(
+	ctx context.Context,
+	key string,
+) error {
+	if store.deleteError != nil {
+		return store.deleteError
+	}
+	return store.AttachmentObjectStore.Delete(ctx, key)
 }

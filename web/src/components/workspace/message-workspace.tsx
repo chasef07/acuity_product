@@ -168,15 +168,27 @@ export function TaskMessageConversation({
   canMutate,
   revision,
   onTaskCreated,
+  onMessageSent,
 }: {
   task: Task
   supportSessionID: string
   canMutate: boolean
   revision: number
   onTaskCreated: (task: Task) => void
+  onMessageSent: () => void
 }) {
-  const threadID = task.messageThreadId || task.conversationThreadId
-  if (!threadID) return null
+  const [createdMessage, setCreatedMessage] = useState<Message>()
+  const threadID =
+    task.messageThreadId ||
+    task.conversationThreadId ||
+    createdMessage?.thread.id ||
+    ""
+  const disabled = !canMutate || task.state !== "OPEN"
+  const disabledReason = !canMutate
+    ? "Read only"
+    : task.state !== "OPEN"
+      ? "Reopen this Task to send a message"
+      : ""
   return (
     <section
       aria-label="Task conversation"
@@ -187,20 +199,42 @@ export function TaskMessageConversation({
           Conversation · {formatPhone(task.phone)}
         </p>
       </div>
-      <MessageConversation
-        threadID={threadID}
-        composingNew={false}
-        practiceID={task.practiceId}
-        locationID={task.locationId}
-        taskID={task.id}
-        taskOpen={task.state === "OPEN"}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        onMessageSent={() => undefined}
-        onThreadRead={() => undefined}
-        onTaskCreated={onTaskCreated}
-      />
+      {threadID ? (
+        <MessageConversation
+          threadID={threadID}
+          composingNew={false}
+          practiceID={task.practiceId}
+          locationID={task.locationId}
+          taskID={task.id}
+          taskOpen={task.state === "OPEN"}
+          supportSessionID={supportSessionID}
+          canMutate={canMutate}
+          revision={revision}
+          initialMessage={createdMessage}
+          onMessageSent={(message) => {
+            setCreatedMessage(message)
+            onMessageSent()
+          }}
+          onThreadRead={() => undefined}
+          onTaskCreated={onTaskCreated}
+        />
+      ) : (
+        <MessageComposer
+          threadID=""
+          practiceID={task.practiceId}
+          locationID={task.locationId}
+          taskID={task.id}
+          initialDestination={task.phone}
+          destinationLocked
+          supportSessionID={supportSessionID}
+          disabled={disabled}
+          disabledReason={disabledReason}
+          onSent={(message) => {
+            setCreatedMessage(message)
+            onMessageSent()
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -962,6 +996,8 @@ function MessageComposer({
   practiceID,
   locationID,
   taskID,
+  initialDestination,
+  destinationLocked = false,
   supportSessionID,
   disabled,
   disabledReason,
@@ -972,12 +1008,16 @@ function MessageComposer({
   practiceID: string
   locationID: string
   taskID?: string
+  initialDestination?: string
+  destinationLocked?: boolean
   supportSessionID: string
   disabled: boolean
   disabledReason: string
   onSent: (message: Message) => void
 }) {
-  const [destination, setDestination] = useState(thread?.externalPhone ?? "")
+  const [destination, setDestination] = useState(
+    thread?.externalPhone ?? initialDestination ?? "",
+  )
   const [body, setBody] = useState("")
   const [file, setFile] = useState<File>()
   const [pending, setPending] = useState(false)
@@ -1108,7 +1148,7 @@ function MessageComposer({
             placeholder="+1 727 555 0100"
             className="mb-2 font-mono"
             value={destination}
-            disabled={disabled || pending}
+            disabled={disabled || pending || destinationLocked}
             onChange={(event) => setDestination(event.target.value)}
           />
         )}

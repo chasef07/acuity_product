@@ -670,32 +670,54 @@ func (m *Module) ExpirePendingAttachments(ctx context.Context) error {
 	if m.pool == nil || m.config.AttachmentStore == nil {
 		return ErrInvalidInput
 	}
-	rows, err := m.pool.Query(ctx, `
-		DELETE FROM messaging_attachments
-		WHERE direction = 'OUTBOUND'
-			AND state = 'PENDING'
-			AND message_id IS NULL
-			AND expires_at <= $1
-		RETURNING object_key
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin pending attachment expiration: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM messaging_attachments
+			WHERE direction = 'OUTBOUND'
+				AND state = 'PENDING'
+				AND message_id IS NULL
+				AND expires_at <= $1
+			ORDER BY expires_at, id
+			FOR UPDATE SKIP LOCKED
+			LIMIT 50
+		)
+		DELETE FROM messaging_attachments attachment
+		USING expired
+		WHERE attachment.id = expired.id
+		RETURNING attachment.object_key
 	`, m.now())
 	if err != nil {
 		return fmt.Errorf("expire pending attachments: %w", err)
 	}
-	defer rows.Close()
-	var deleteErrors []error
+	objectKeys := make([]string, 0, 50)
 	for rows.Next() {
 		var objectKey string
 		if err := rows.Scan(&objectKey); err != nil {
+			rows.Close()
 			return fmt.Errorf("scan expired pending attachment: %w", err)
 		}
-		if err := m.config.AttachmentStore.Delete(ctx, objectKey); err != nil {
-			deleteErrors = append(deleteErrors, err)
-		}
+		objectKeys = append(objectKeys, objectKey)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return fmt.Errorf("iterate expired pending attachments: %w", err)
 	}
-	return errors.Join(deleteErrors...)
+	rows.Close()
+	for _, objectKey := range objectKeys {
+		if err := m.config.AttachmentStore.Delete(ctx, objectKey); err != nil {
+			return fmt.Errorf("delete expired pending attachment object: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit pending attachment expiration: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) downloadAttachment(

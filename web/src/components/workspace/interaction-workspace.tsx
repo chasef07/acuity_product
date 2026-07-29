@@ -353,15 +353,16 @@ function TaskWorkspace({
         </div>
       </header>
       {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
-      {task.messageThreadId || task.conversationThreadId ? (
-        <TaskMessageConversation
-          task={task}
-          supportSessionID={supportSessionID}
-          canMutate={canMutate}
-          revision={historyHint}
-          onTaskCreated={onTaskUpdated}
-        />
-      ) : (
+      <TaskMessageConversation
+        key={task.id}
+        task={task}
+        supportSessionID={supportSessionID}
+        canMutate={canMutate}
+        revision={historyHint}
+        onTaskCreated={onTaskUpdated}
+        onMessageSent={() => void refreshTask()}
+      />
+      {!task.messageThreadId && !task.conversationThreadId && (
         <CallHistory
           key={`task:${task.id}`}
           source={{ kind: "task", id: task.id }}
