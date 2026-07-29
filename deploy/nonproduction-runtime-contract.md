@@ -42,13 +42,16 @@ equal-jitter exponential backoff from 250 milliseconds to 10 seconds and reset
 to the normal cadence after a successful or no-work iteration.
 
 Each runtime gets a distinct service account. Only `migrate` receives schema
-DDL authority and provisioning-file access. `portal-api`, `realtime`, and
-`worker` receive product DML authority. `provider-ingress` receives
-only the receipt-table INSERT, event-ID-scoped SELECT FOR UPDATE, and
-duplicate-count UPDATE authority required for signed Telnyx receipts, but no
-provider API credential. It does not read Call or attempt state; the worker
-attaches `receipt.call_id` while projecting the signed fact. The worker receives
-the Telnyx API credential needed to execute
+DDL authority and provisioning-file access. `database-grants.sql` is the
+runtime authority contract: `portal-api` receives only the Access, HumanCalling,
+and Work table operations used by its request paths; `realtime` receives Access
+reads plus the single Platform Operator binding column; and `worker` receives
+only durable HumanCalling projection, command, and reconciliation authority.
+`provider-ingress` receives column-scoped receipt INSERT, event-ID-scoped
+SELECT FOR UPDATE, and duplicate-count UPDATE authority, but no provider API
+credential. It does not read Call or attempt state; the worker attaches
+`receipt.call_id` while projecting the signed fact. The worker receives the
+Telnyx API credential needed to execute
 durable commands. `portal-api` receives that credential only for lease-bound
 short-lived media JWT issuance; no provider credential reaches the browser. The
 web service gets Better Auth schema access, its auth secret, and its SMTP sender,

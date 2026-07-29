@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
+# Non-production example. Production instance and pool bounds are defined in
+# production-runtime-contract.json and must not be replaced by these scale-to-zero values.
+
 : "${GCP_PROJECT:?required}"
 : "${GCP_REGION:?required}"
 : "${CLOUD_SQL_INSTANCE:?required project:region:instance connection name}"
