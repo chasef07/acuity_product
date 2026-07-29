@@ -3,11 +3,13 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -26,6 +28,17 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	}
 	if migrationCount != 9 {
 		t.Fatalf("migration count = %d, want 9", migrationCount)
+	}
+	var activeCommandIndexIsUnique bool
+	if err := pool.QueryRow(ctx, `
+		SELECT indisunique
+		FROM pg_index
+		WHERE indexrelid = 'human_calling_active_call_commands_idx'::regclass
+	`).Scan(&activeCommandIndexIsUnique); err != nil {
+		t.Fatalf("inspect active Call command index: %v", err)
+	}
+	if !activeCommandIndexIsUnique {
+		t.Fatal("active Call command index is not unique")
 	}
 
 	for _, table := range []string{
@@ -178,4 +191,82 @@ func TestProviderReceiptRetryMigrationEnforcesAttemptAndQuarantineState(t *testi
 		nil,
 		"human_calling_provider_receipts_quarantine_check",
 	)
+}
+
+func TestCommandLaneMigrationRejectsDuplicateActiveCommands(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		DROP INDEX human_calling_active_call_commands_idx;
+		DELETE FROM schema_migrations
+		WHERE name = '0009_human_calling_command_lanes.sql';
+
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000501',
+			'duplicate-command-practice',
+			'Duplicate Command Practice'
+		);
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000502',
+			'00000000-0000-0000-0000-000000000501',
+			'duplicate-command-location',
+			'Duplicate Command Location'
+		);
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, expires_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000511',
+			'duplicate-command-test',
+			'00000000-0000-0000-0000-000000000501',
+			'00000000-0000-0000-0000-000000000502',
+			'duplicate-command-source',
+			'duplicate-command-key',
+			'\x01',
+			'\x02',
+			now() + interval '1 hour'
+		);
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000521',
+			'00000000-0000-0000-0000-000000000511',
+			'00000000-0000-0000-0000-000000000501',
+			'00000000-0000-0000-0000-000000000502',
+			'OFFERING',
+			now() + interval '1 minute',
+			'duplicate-command-control',
+			'duplicate-command-leg',
+			'duplicate-command-session'
+		);
+		INSERT INTO human_calling_provider_commands (
+			call_id, action, target_id, state
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000521',
+				'HANGUP',
+				'duplicate-command-one',
+				'SENDING'
+			),
+			(
+				'00000000-0000-0000-0000-000000000521',
+				'HANGUP',
+				'duplicate-command-two',
+				'AMBIGUOUS'
+			)
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("prepare duplicate active commands: %v", err)
+	}
+
+	err := migrations.Apply(ctx, pool)
+	if err == nil ||
+		!strings.Contains(err.Error(), "cannot enforce one active provider command per Call") {
+		t.Fatalf("duplicate active command migration error = %v", err)
+	}
 }

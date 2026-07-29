@@ -1088,7 +1088,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 			SET
 				state = 'AMBIGUOUS',
 				last_error_code = 'PROVIDER_STATE_UNAVAILABLE',
-				next_attempt_at = $2 + interval '5 seconds',
+				next_attempt_at = $2::timestamptz + interval '5 seconds',
 				updated_at = $2
 			WHERE id = $1 AND state = 'SENDING'
 		`, command.ID, m.now()); err != nil {
@@ -1097,7 +1097,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 		if err := tx.Commit(ctx); err != nil {
 			return true, fmt.Errorf("commit deferred credential reconciliation: %w", err)
 		}
-		return true, nil
+		return true, fmt.Errorf("query provider credential state: %w", lookupErr)
 	}
 	var authorized bool
 	if err := tx.QueryRow(ctx, `
@@ -3178,6 +3178,9 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		WHERE id = $1
 		RETURNING payload
 	`, command.ID, m.now()).Scan(&encoded); err != nil {
+		if isActiveCallCommandConflict(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("mark provider command sending: %w", err)
 	}
 	if err := json.Unmarshal(encoded, &command.Payload); err != nil {
@@ -5502,6 +5505,13 @@ func managedSIPDestination(username string, domain string) string {
 func isUniqueViolation(err error) bool {
 	var postgresError *pgconn.PgError
 	return errors.As(err, &postgresError) && postgresError.Code == "23505"
+}
+
+func isActiveCallCommandConflict(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) &&
+		postgresError.Code == "23505" &&
+		postgresError.ConstraintName == "human_calling_active_call_commands_idx"
 }
 
 func sanitizeCode(value string) string {

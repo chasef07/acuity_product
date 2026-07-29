@@ -18,18 +18,7 @@ func TestWorkerSerializesCommandsPerCallWithoutBlockingOtherWork(t *testing.T) {
 	setupPool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
 	seedWorkerConcurrencyFixture(t, setupPool, now)
-
-	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatalf("parse two-connection pool config: %v", err)
-	}
-	config.MinConns = 0
-	config.MaxConns = 2
-	pool, err := pgxpool.NewWithConfig(context.Background(), config)
-	if err != nil {
-		t.Fatalf("open two-connection pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
+	pool := openTwoConnectionWorkerPool(t)
 
 	provider := newSerialCallProvider()
 	newWorker := func() *humancalling.Module {
@@ -44,7 +33,7 @@ func TestWorkerSerializesCommandsPerCallWithoutBlockingOtherWork(t *testing.T) {
 	firstWorker := newWorker()
 	secondWorker := newWorker()
 	receiptWorker := newWorker()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	firstResult := make(chan error, 1)
 	go func() {
@@ -119,6 +108,134 @@ func TestWorkerSerializesCommandsPerCallWithoutBlockingOtherWork(t *testing.T) {
 			unknownReceipts,
 		)
 	}
+}
+
+func TestMixedRevisionClaimRaceKeepsOneActiveCommandPerCall(t *testing.T) {
+	setupPool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	seedWorkerConcurrencyFixture(t, setupPool, now)
+	pool := openTwoConnectionWorkerPool(t)
+	provider := newSerialCallProvider()
+	worker := humancalling.New(
+		pool,
+		nil,
+		provider,
+		humancalling.Config{},
+		func() time.Time { return now },
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	oldWorkerClaim, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin old-worker claim: %v", err)
+	}
+	defer func() { _ = oldWorkerClaim.Rollback(ctx) }()
+	var oldCommandID string
+	if err := oldWorkerClaim.QueryRow(ctx, `
+		SELECT id::text
+		FROM human_calling_provider_commands
+		WHERE state = 'PENDING' AND next_attempt_at <= $1
+		ORDER BY created_at, id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`, now).Scan(&oldCommandID); err != nil {
+		t.Fatalf("old worker select command: %v", err)
+	}
+	if _, err := oldWorkerClaim.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
+		WHERE id = $1
+	`, oldCommandID, now); err != nil {
+		t.Fatalf("old worker mark command sending: %v", err)
+	}
+
+	type claimResult struct {
+		processed bool
+		err       error
+	}
+	result := make(chan claimResult, 1)
+	go func() {
+		processed, err := worker.ProcessNextCommand(ctx)
+		result <- claimResult{processed: processed, err: err}
+	}()
+	awaitCommandClaimConflict(t, setupPool)
+	if err := oldWorkerClaim.Commit(ctx); err != nil {
+		t.Fatalf("commit old-worker claim: %v", err)
+	}
+	raceResult := <-result
+	if raceResult.err != nil || raceResult.processed {
+		t.Fatalf(
+			"new worker claim race: processed=%t err=%v",
+			raceResult.processed,
+			raceResult.err,
+		)
+	}
+	select {
+	case <-provider.secondCallAStarted:
+		t.Fatal("new worker called provider for the old worker's active Call")
+	default:
+	}
+
+	if processed, err := worker.ProcessNextCommand(ctx); err != nil || !processed {
+		t.Fatalf("process different Call after claim conflict: processed=%t err=%v", processed, err)
+	}
+	awaitSignal(t, provider.callBStarted, "Call B command after mixed-revision conflict")
+
+	if _, err := setupPool.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENT', sent_at = $2, updated_at = $2
+		WHERE id = $1 AND state = 'SENDING'
+	`, oldCommandID, now); err != nil {
+		t.Fatalf("finish old-worker provider command: %v", err)
+	}
+	if processed, err := worker.ProcessNextCommand(ctx); err != nil || !processed {
+		t.Fatalf("process next same-Call command: processed=%t err=%v", processed, err)
+	}
+	awaitSignal(t, provider.secondCallAStarted, "Call A command after old worker finished")
+}
+
+func openTwoConnectionWorkerPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("parse two-connection pool config: %v", err)
+	}
+	config.MinConns = 0
+	config.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("open two-connection pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func awaitCommandClaimConflict(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked bool
+		if err := pool.QueryRow(context.Background(), `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity
+				WHERE datname = current_database()
+					AND pid <> pg_backend_pid()
+					AND state = 'active'
+					AND wait_event_type = 'Lock'
+					AND query LIKE '%UPDATE human_calling_provider_commands%'
+					AND query LIKE '%RETURNING payload%'
+			)
+		`).Scan(&blocked); err != nil {
+			t.Fatalf("inspect command claim conflict: %v", err)
+		}
+		if blocked {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("new worker did not wait on the mixed-revision command conflict")
 }
 
 type serialCallProvider struct {

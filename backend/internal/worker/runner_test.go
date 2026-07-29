@@ -228,7 +228,9 @@ func TestQueueLaneBacksOffConsecutiveErrorsAndResetsAfterProgress(t *testing.T) 
 }
 
 func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
-	work := &maintenanceFailureWork{controlledWork: newControlledWork()}
+	work := &credentialReconciliationFailureWork{
+		controlledWork: newControlledWork(),
+	}
 	runner := &Runner{
 		config: Config{
 			WorkInterval:    10 * time.Millisecond,
@@ -282,17 +284,21 @@ type controlledWork struct {
 	blockReconciliation   bool
 }
 
-type maintenanceFailureWork struct {
+type credentialReconciliationFailureWork struct {
 	*controlledWork
-	offerCalls int
+	reconciliationCalls int
 }
 
-func (work *maintenanceFailureWork) ExpireOffers(context.Context) (int, error) {
-	work.offerCalls++
-	if work.offerCalls == 1 || work.offerCalls == 2 || work.offerCalls == 4 {
-		return 0, errors.New("maintenance database unavailable")
+func (work *credentialReconciliationFailureWork) ProcessNextCredentialReconciliation(
+	context.Context,
+) (bool, error) {
+	work.reconciliationCalls++
+	if work.reconciliationCalls == 1 ||
+		work.reconciliationCalls == 2 ||
+		work.reconciliationCalls == 4 {
+		return true, errors.New("provider credential lookup unavailable")
 	}
-	return 0, nil
+	return false, nil
 }
 
 func newControlledWork() *controlledWork {

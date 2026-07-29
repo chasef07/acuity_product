@@ -2985,6 +2985,50 @@ func TestAmbiguousCredentialWritesReconcileThroughProviderState(t *testing.T) {
 	}
 }
 
+func TestCredentialStateLookupFailureIsDurableAndVisibleToWorker(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, identity := provisionStaff(t, accessModule, now)
+	lookupErr := errors.New("provider credential lookup unavailable")
+	provider := &credentialRecoveryProvider{lookupErr: lookupErr}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "credential-connection-1",
+	}, func() time.Time { return now })
+
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatalf("commit credential creation: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("execute ambiguous credential creation: processed=%t err=%v", processed, err)
+	}
+	now = now.Add(6 * time.Second)
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if !processed || !errors.Is(err, lookupErr) {
+		t.Fatalf("provider lookup failure: processed=%t err=%v", processed, err)
+	}
+
+	var state, errorCode string
+	var nextAttemptAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code, next_attempt_at
+		FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, identity.Subject).Scan(&state, &errorCode, &nextAttemptAt); err != nil {
+		t.Fatalf("read deferred credential reconciliation: %v", err)
+	}
+	if state != "AMBIGUOUS" ||
+		errorCode != "PROVIDER_STATE_UNAVAILABLE" ||
+		!nextAttemptAt.Equal(now.Add(5*time.Second)) {
+		t.Fatalf(
+			"deferred credential reconciliation: state=%s error=%s next=%s",
+			state,
+			errorCode,
+			nextAttemptAt,
+		)
+	}
+}
+
 func TestPlatformOperatorReadsOnlyTheSanitizedDurableTimeline(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
@@ -3460,7 +3504,8 @@ type blockingJWTProvider struct {
 }
 
 type credentialRecoveryProvider struct {
-	present bool
+	present   bool
+	lookupErr error
 }
 
 type reauthorizationProvider struct {
@@ -3544,6 +3589,9 @@ func (provider *credentialRecoveryProvider) FindCredentialByName(
 	_ context.Context,
 	name string,
 ) (humancalling.ProviderResult, bool, error) {
+	if provider.lookupErr != nil {
+		return humancalling.ProviderResult{}, false, provider.lookupErr
+	}
 	if !provider.present {
 		return humancalling.ProviderResult{}, false, nil
 	}
