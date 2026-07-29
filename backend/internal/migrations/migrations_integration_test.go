@@ -316,6 +316,40 @@ func TestCommandLaneMigrationRepairsInvalidConcurrentIndex(t *testing.T) {
 	assertActiveCommandIndexValid(t, pool)
 }
 
+func TestCommandLaneMigrationKeepsValidIndexWhenRecordingIsRetried(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	var indexBefore uint32
+	if err := pool.QueryRow(ctx, `
+		SELECT 'human_calling_active_call_commands_idx'::regclass::oid
+	`).Scan(&indexBefore); err != nil {
+		t.Fatalf("read active provider-command index identity: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM schema_migrations
+		WHERE name = '0009_human_calling_command_lanes.sql'
+	`); err != nil {
+		t.Fatalf("remove command-lane migration marker: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("record valid concurrent index migration: %v", err)
+	}
+	var indexAfter uint32
+	if err := pool.QueryRow(ctx, `
+		SELECT 'human_calling_active_call_commands_idx'::regclass::oid
+	`).Scan(&indexAfter); err != nil {
+		t.Fatalf("read recovered provider-command index identity: %v", err)
+	}
+	if indexAfter != indexBefore {
+		t.Fatalf(
+			"valid provider-command index was rebuilt: before=%d after=%d",
+			indexBefore,
+			indexAfter,
+		)
+	}
+}
+
 func TestCommandLaneMigrationDoesNotBlockProviderCommandWrites(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()

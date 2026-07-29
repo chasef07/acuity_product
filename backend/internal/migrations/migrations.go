@@ -16,6 +16,7 @@ var migrationFiles embed.FS
 
 const (
 	nonTransactionalMigrationHeader = "-- acuity:no-transaction"
+	migrationCompletionQueryHeader  = "-- acuity:complete-if-true"
 	migrationStatementSeparator     = "-- acuity:next-statement"
 )
 
@@ -136,16 +137,49 @@ func applyNonTransactional(
 	name string,
 	statements []string,
 ) error {
-	for index, statement := range statements {
+	firstStatement := 0
+	if query, ok := migrationCompletionQuery(statements[0]); ok {
+		var complete bool
+		if err := pool.QueryRow(ctx, query).Scan(&complete); err != nil {
+			return fmt.Errorf(
+				"check non-transactional migration %s completion: %w",
+				name,
+				err,
+			)
+		}
+		if complete {
+			return recordMigration(ctx, pool, name)
+		}
+		firstStatement = 1
+	}
+	for index, statement := range statements[firstStatement:] {
 		if _, err := pool.Exec(ctx, statement); err != nil {
 			return fmt.Errorf(
 				"apply non-transactional migration %s statement %d: %w",
 				name,
-				index+1,
+				firstStatement+index+1,
 				err,
 			)
 		}
 	}
+	return recordMigration(ctx, pool, name)
+}
+
+func migrationCompletionQuery(statement string) (string, bool) {
+	lines := strings.SplitN(statement, "\n", 2)
+	if strings.TrimSpace(lines[0]) != migrationCompletionQueryHeader ||
+		len(lines) != 2 ||
+		strings.TrimSpace(lines[1]) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(lines[1]), true
+}
+
+func recordMigration(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	name string,
+) error {
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO public.schema_migrations (name) VALUES ($1)`,
 		name,
