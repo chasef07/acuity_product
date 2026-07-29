@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var expectedFastReceiptRetryDelays = [...]time.Duration{
@@ -678,110 +679,458 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 	}
 }
 
-func TestOnlyQuarantinedProviderReceiptCanBeExplicitlyRequeued(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+func TestProviderReceiptRequeueRequiresScopedOperatorSupportMode(t *testing.T) {
+	fixture := newQuarantinedReceiptFixture(t)
+	support := fixture.enterSupportMode(
+		t,
+		fixture.practiceID,
+		"Repair failed provider receipt projection",
+	)
+
+	_, err := fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         fixture.staffIdentity,
+			PracticeID:       fixture.practiceID,
+			SupportSessionID: support.ID,
+			EventID:          fixture.eventID,
+		},
+	)
+	if !errors.Is(err, humancalling.ErrDenied) {
+		t.Fatalf("Staff receipt requeue error = %v, want denied", err)
+	}
+	_, err = fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:   fixture.operator,
+			PracticeID: fixture.practiceID,
+			EventID:    fixture.eventID,
+		},
+	)
+	if !errors.Is(err, access.ErrSupportRequired) {
+		t.Fatalf("operator requeue without Support Mode error = %v", err)
+	}
+	if _, err := fixture.access.EnterSupportMode(
+		context.Background(),
+		access.EnterSupportModeCommand{
+			Identity:   fixture.operator,
+			PracticeID: fixture.practiceID,
+			Reason:     " ",
+			Duration:   time.Hour,
+		},
+	); !errors.Is(err, access.ErrInvalidInput) {
+		t.Fatalf("Support Mode without reason error = %v", err)
+	}
+	otherSupport := fixture.enterSupportMode(
+		t,
+		fixture.otherPracticeID,
+		"Investigate another Practice",
+	)
+	_, err = fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         fixture.operator,
+			PracticeID:       fixture.practiceID,
+			SupportSessionID: otherSupport.ID,
+			EventID:          fixture.eventID,
+		},
+	)
+	if !errors.Is(err, access.ErrSupportPracticeMismatch) {
+		t.Fatalf("cross-Practice Support Mode error = %v", err)
+	}
+	_, err = fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         fixture.operator,
+			PracticeID:       fixture.otherPracticeID,
+			SupportSessionID: otherSupport.ID,
+			EventID:          fixture.eventID,
+		},
+	)
+	if !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("wrong-Practice receipt requeue error = %v, want conflict", err)
+	}
+	_, err = fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         fixture.operator,
+			PracticeID:       fixture.practiceID,
+			SupportSessionID: support.ID,
+			EventID:          "missing-provider-receipt",
+		},
+	)
+	if !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("missing receipt requeue error = %v, want conflict", err)
+	}
+	if receipt := fixture.receive(t); receipt.State != humancalling.ReceiptQuarantined {
+		t.Fatalf("rejected requeue changed receipt = %#v", receipt)
+	}
+}
+
+func TestSupportedProviderReceiptRequeueIsAuditedAndReplaysImmutableEvidence(t *testing.T) {
+	fixture := newQuarantinedReceiptFixture(t)
+	reason := "Retry verified receipt after projection repair"
+	support := fixture.enterSupportMode(t, fixture.practiceID, reason)
+
+	requeued, err := fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         fixture.operator,
+			PracticeID:       fixture.practiceID,
+			SupportSessionID: support.ID,
+			EventID:          fixture.eventID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("supported receipt requeue: %v", err)
+	}
+	if requeued.EventID != fixture.eventID ||
+		requeued.EventType != string(humancalling.FactCallAnswered) ||
+		requeued.State != humancalling.ReceiptPending ||
+		requeued.Duplicate {
+		t.Fatalf("supported requeue = %#v", requeued)
+	}
+	auditEvents, err := fixture.access.AuditTrail(
+		context.Background(),
+		fixture.operator,
+		fixture.practiceID,
+	)
+	if err != nil {
+		t.Fatalf("read receipt requeue audit: %v", err)
+	}
+	foundAudit := false
+	for _, event := range auditEvents {
+		if event.Action != "provider_receipt.requeued" {
+			continue
+		}
+		if event.ActorSubject != fixture.operator.Subject ||
+			event.PracticeID != fixture.practiceID ||
+			event.SupportSessionID != support.ID ||
+			event.Reason != reason {
+			t.Fatalf("receipt requeue audit = %#v", event)
+		}
+		foundAudit = true
+	}
+	if !foundAudit {
+		t.Fatalf("receipt requeue audit absent: %#v", auditEvents)
+	}
+	fixture.provider.mu.Lock()
+	providerCommands := len(fixture.provider.commands)
+	fixture.provider.mu.Unlock()
+	if providerCommands != 0 {
+		t.Fatalf("receipt requeue issued %d provider commands", providerCommands)
+	}
+
+	if processed, err := fixture.calling.ProcessNextReceipt(
+		context.Background(),
+	); err != nil || !processed {
+		t.Fatalf("replay supported receipt: processed=%t err=%v", processed, err)
+	}
+	if receipt := fixture.receive(t); !receipt.Duplicate ||
+		receipt.State != humancalling.ReceiptApplied {
+		t.Fatalf("replayed immutable receipt = %#v", receipt)
+	}
+	_, err = fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         fixture.operator,
+			PracticeID:       fixture.practiceID,
+			SupportSessionID: support.ID,
+			EventID:          fixture.eventID,
+		},
+	)
+	if !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("requeue applied receipt error = %v, want conflict", err)
+	}
+}
+
+func TestProviderReceiptRequeueRollsBackWhenAuditFails(t *testing.T) {
+	fixture := newQuarantinedReceiptFixture(t)
+	support := fixture.enterSupportMode(
+		t,
+		fixture.practiceID,
+		"Verify atomic provider receipt requeue",
+	)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		CREATE FUNCTION reject_provider_receipt_requeue_audit()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'synthetic provider receipt audit failure';
+		END
+		$$;
+
+		CREATE TRIGGER reject_provider_receipt_requeue_audit
+		BEFORE INSERT ON access_audit_events
+		FOR EACH ROW
+		WHEN (NEW.action = 'provider_receipt.requeued')
+		EXECUTE FUNCTION reject_provider_receipt_requeue_audit()
+	`); err != nil {
+		t.Fatalf("install receipt audit failure: %v", err)
+	}
+	command := humancalling.RequeueQuarantinedReceiptCommand{
+		Identity:         fixture.operator,
+		PracticeID:       fixture.practiceID,
+		SupportSessionID: support.ID,
+		EventID:          fixture.eventID,
+	}
+	if _, err := fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		command,
+	); err == nil {
+		t.Fatal("receipt requeue succeeded without its audit")
+	}
+	if receipt := fixture.receive(t); receipt.State != humancalling.ReceiptQuarantined {
+		t.Fatalf("receipt requeue survived audit failure = %#v", receipt)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		DROP TRIGGER reject_provider_receipt_requeue_audit
+			ON access_audit_events;
+		DROP FUNCTION reject_provider_receipt_requeue_audit()
+	`); err != nil {
+		t.Fatalf("remove receipt audit failure: %v", err)
+	}
+	if _, err := fixture.calling.RequeueQuarantinedReceipt(
+		context.Background(),
+		command,
+	); err != nil {
+		t.Fatalf("requeue after audit repair: %v", err)
+	}
+	auditEvents, err := fixture.access.AuditTrail(
+		context.Background(),
+		fixture.operator,
+		fixture.practiceID,
+	)
+	if err != nil {
+		t.Fatalf("read repaired receipt audit: %v", err)
+	}
+	requeueAudits := 0
+	for _, event := range auditEvents {
+		if event.Action == "provider_receipt.requeued" {
+			requeueAudits++
+		}
+	}
+	if requeueAudits != 1 {
+		t.Fatalf("receipt requeue audits = %d, want 1", requeueAudits)
+	}
+}
+
+type quarantinedReceiptFixture struct {
+	pool            *pgxpool.Pool
+	now             time.Time
+	access          *access.Module
+	calling         *humancalling.Module
+	provider        *recordingProvider
+	staffIdentity   access.Identity
+	operator        access.Identity
+	practiceID      string
+	locationID      string
+	otherPracticeID string
+	eventID         string
+	raw             []byte
+	privateKey      ed25519.PrivateKey
+}
+
+func newQuarantinedReceiptFixture(t *testing.T) *quarantinedReceiptFixture {
+	t.Helper()
+	fixture := &quarantinedReceiptFixture{
+		pool:     testdb.Open(t),
+		now:      time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC),
+		provider: &recordingProvider{},
+		operator: access.Identity{
+			Subject:       "receipt-operator-subject",
+			Email:         "receipt-operator@acuity.test",
+			EmailVerified: true,
+		},
+		eventID: "quarantined-projection",
+	}
+	fixture.access = access.New(fixture.pool, func() time.Time {
+		return fixture.now
+	})
+	staff, staffIdentity := provisionStaff(t, fixture.access, fixture.now)
+	fixture.staffIdentity = staffIdentity
+	fixture.practiceID = staff.Practice.ID
+	fixture.locationID = staff.Locations[0].ID
+	if _, err := fixture.access.Provision(
+		context.Background(),
+		access.Provisioning{
+			Environment:       "test",
+			RequestedBy:       "receipt-requeue-test",
+			PlatformOperators: []string{fixture.operator.Email},
+			Practices: []access.PracticeProvision{{
+				Key:       "other-receipt-practice",
+				Name:      "Other Receipt Practice",
+				Locations: []access.LocationProvision{{Key: "office", Name: "Office"}},
+			}},
+		},
+	); err != nil {
+		t.Fatalf("provision receipt operator fixture: %v", err)
+	}
+	discovery, err := fixture.access.DiscoverActor(
+		context.Background(),
+		fixture.operator,
+	)
+	if err != nil {
+		t.Fatalf("discover receipt operator Practices: %v", err)
+	}
+	for _, practice := range discovery.Practices {
+		if practice.ID != fixture.practiceID {
+			fixture.otherPracticeID = practice.ID
+		}
+	}
+	if fixture.otherPracticeID == "" {
+		t.Fatal("other receipt Practice was not provisioned")
+	}
+
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &recordingProvider{}
-	calling := humancalling.New(
-		pool,
-		nil,
-		provider,
+	fixture.privateKey = privateKey
+	fixture.calling = humancalling.New(
+		fixture.pool,
+		fixture.access,
+		fixture.provider,
 		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 			WebhookPublicKey: publicKey,
 			WebhookTolerance: 5 * time.Minute,
 		},
-		func() time.Time { return now },
+		func() time.Time { return fixture.now },
 	)
-	raw := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.future","id":"explicit-requeue","occurred_at":"%s","payload":{}}}`,
-		now.Format(time.RFC3339Nano),
-	))
-	receive := func() humancalling.WebhookReceipt {
-		t.Helper()
-		timestamp := strconv.FormatInt(now.Unix(), 10)
-		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
-			privateKey,
-			append([]byte(timestamp+"|"), raw...),
-		))
-		receipt, err := calling.ReceiveWebhook(
-			context.Background(),
-			raw,
-			timestamp,
-			signature,
-		)
-		if err != nil {
-			t.Fatalf("receive explicit-requeue receipt: %v", err)
-		}
-		return receipt
-	}
-	if receipt := receive(); receipt.State != humancalling.ReceiptPending {
-		t.Fatalf("initial explicit-requeue receipt = %#v", receipt)
-	}
-	if _, err := calling.RequeueQuarantinedReceipt(
+	handoff, err := fixture.calling.CreateHandoff(
 		context.Background(),
-		"explicit-requeue",
-	); !errors.Is(err, humancalling.ErrConflict) {
-		t.Fatalf("requeue pending receipt error = %v, want conflict", err)
-	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("process future receipt: processed=%t err=%v", processed, err)
-	}
-	if _, err := calling.RequeueQuarantinedReceipt(
-		context.Background(),
-		"explicit-requeue",
-	); !errors.Is(err, humancalling.ErrConflict) {
-		t.Fatalf("requeue unknown receipt error = %v, want conflict", err)
-	}
-	if _, err := calling.RequeueQuarantinedReceipt(
-		context.Background(),
-		"missing-receipt",
-	); !errors.Is(err, humancalling.ErrConflict) {
-		t.Fatalf("requeue missing receipt error = %v, want conflict", err)
-	}
-
-	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_provider_receipts
-		SET
-			state = 'QUARANTINED',
-			projection_attempts = 10,
-			projection_error_code = 'PROJECTION_RETRY_EXHAUSTED',
-			last_attempt_at = $2,
-			projected_at = $2,
-			quarantined_at = $2
-		WHERE event_id = $1
-	`, "explicit-requeue", now); err != nil {
-		t.Fatalf("arrange quarantined receipt: %v", err)
-	}
-	requeued, err := calling.RequeueQuarantinedReceipt(
-		context.Background(),
-		"explicit-requeue",
+		humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject:    "receipt-requeue-service",
+				PracticeID: fixture.practiceID,
+			},
+			LocationID:     fixture.locationID,
+			SourceCallID:   "receipt-requeue-source",
+			IdempotencyKey: "receipt-requeue-idempotency",
+			Contact: humancalling.ContactContext{
+				Phone: "+15555550100",
+			},
+		},
 	)
 	if err != nil {
-		t.Fatalf("requeue quarantined receipt: %v", err)
+		t.Fatalf("create receipt-requeue handoff: %v", err)
 	}
-	if requeued.EventID != "explicit-requeue" ||
-		requeued.EventType != "call.future" ||
-		requeued.State != humancalling.ReceiptPending ||
-		requeued.Duplicate ||
-		requeued.DuplicateCount != 0 {
-		t.Fatalf("requeued receipt = %#v", requeued)
+	if err := fixture.calling.ApplyProviderFact(
+		context.Background(),
+		humancalling.ProviderFact{
+			EventID:       "receipt-requeue-call",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    fixture.now,
+			CallControlID: "receipt-requeue-control",
+			CallLegID:     "receipt-requeue-leg",
+			CallSessionID: "receipt-requeue-session",
+			To:            handoff.SIPDestination,
+		},
+	); err != nil {
+		t.Fatalf("admit receipt-requeue Call: %v", err)
 	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("replay requeued receipt: processed=%t err=%v", processed, err)
+	fixture.raw = []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"%s","occurred_at":"%s","payload":{"call_control_id":"receipt-requeue-control","call_leg_id":"receipt-requeue-leg","call_session_id":"receipt-requeue-session"}}}`,
+		fixture.eventID,
+		fixture.now.Format(time.RFC3339Nano),
+	))
+	if _, err := fixture.pool.Exec(context.Background(), `
+		CREATE FUNCTION reject_receipt_projection_workspace_change()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'synthetic receipt projection failure';
+		END
+		$$;
+
+		CREATE TRIGGER reject_receipt_projection_workspace_change
+		BEFORE UPDATE OF workspace_version ON access_practices
+		FOR EACH ROW
+		EXECUTE FUNCTION reject_receipt_projection_workspace_change()
+	`); err != nil {
+		t.Fatalf("install receipt projection failure: %v", err)
 	}
-	if receipt := receive(); !receipt.Duplicate ||
-		receipt.State != humancalling.ReceiptUnknown ||
-		receipt.DuplicateCount != 1 {
-		t.Fatalf("replayed immutable receipt = %#v", receipt)
+	if receipt := fixture.receive(t); receipt.State != humancalling.ReceiptPending {
+		t.Fatalf("initial failing receipt = %#v", receipt)
 	}
-	provider.mu.Lock()
-	providerCommands := len(provider.commands)
-	provider.mu.Unlock()
-	if providerCommands != 0 {
-		t.Fatalf("receipt replay issued %d provider commands", providerCommands)
+	if processed, err := fixture.calling.ProcessNextReceipt(
+		context.Background(),
+	); err != nil || !processed {
+		t.Fatalf("process initial failing receipt: processed=%t err=%v", processed, err)
+	}
+	for retry, delay := range expectedFastReceiptRetryDelays {
+		fixture.now = fixture.now.Add(delay)
+		if processed, err := fixture.calling.ProcessNextReceipt(
+			context.Background(),
+		); err != nil || !processed {
+			t.Fatalf(
+				"process failing receipt retry %d: processed=%t err=%v",
+				retry+2,
+				processed,
+				err,
+			)
+		}
+	}
+	if receipt := fixture.receive(t); receipt.State != humancalling.ReceiptQuarantined {
+		t.Fatalf("projection failure receipt = %#v", receipt)
+	}
+	fixture.allowProjection(t)
+	return fixture
+}
+
+func (fixture *quarantinedReceiptFixture) receive(
+	t *testing.T,
+) humancalling.WebhookReceipt {
+	t.Helper()
+	timestamp := strconv.FormatInt(fixture.now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		fixture.privateKey,
+		append([]byte(timestamp+"|"), fixture.raw...),
+	))
+	receipt, err := fixture.calling.ReceiveWebhook(
+		context.Background(),
+		fixture.raw,
+		timestamp,
+		signature,
+	)
+	if err != nil {
+		t.Fatalf("receive quarantined receipt: %v", err)
+	}
+	return receipt
+}
+
+func (fixture *quarantinedReceiptFixture) enterSupportMode(
+	t *testing.T,
+	practiceID string,
+	reason string,
+) access.SupportMode {
+	t.Helper()
+	support, err := fixture.access.EnterSupportMode(
+		context.Background(),
+		access.EnterSupportModeCommand{
+			Identity:   fixture.operator,
+			PracticeID: practiceID,
+			Reason:     reason,
+			Duration:   time.Hour,
+		},
+	)
+	if err != nil {
+		t.Fatalf("enter receipt Support Mode: %v", err)
+	}
+	return support
+}
+
+func (fixture *quarantinedReceiptFixture) allowProjection(t *testing.T) {
+	t.Helper()
+	if _, err := fixture.pool.Exec(context.Background(), `
+		DROP TRIGGER reject_receipt_projection_workspace_change
+			ON access_practices;
+		DROP FUNCTION reject_receipt_projection_workspace_change()
+	`); err != nil {
+		t.Fatalf("remove receipt projection failure: %v", err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -39,6 +40,13 @@ type WebhookReceipt struct {
 	State          ReceiptState
 	Duplicate      bool
 	DuplicateCount int
+}
+
+type RequeueQuarantinedReceiptCommand struct {
+	Identity         access.Identity
+	PracticeID       string
+	SupportSessionID string
+	EventID          string
 }
 
 type telnyxEnvelope struct {
@@ -174,16 +182,104 @@ func (m *Module) ReceiveWebhook(
 }
 
 // RequeueQuarantinedReceipt schedules persisted, previously verified evidence
-// for replay. Callers must enforce operator authorization and audit.
+// for replay under Practice-scoped Platform Operator Support Mode.
 func (m *Module) RequeueQuarantinedReceipt(
 	ctx context.Context,
-	eventID string,
+	command RequeueQuarantinedReceiptCommand,
 ) (WebhookReceipt, error) {
-	if strings.TrimSpace(eventID) == "" {
+	if m.access == nil ||
+		strings.TrimSpace(command.PracticeID) == "" ||
+		strings.TrimSpace(command.EventID) == "" {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return WebhookReceipt{}, fmt.Errorf(
+			"begin quarantined provider receipt requeue: %w",
+			err,
+		)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locationID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM access_locations
+		WHERE practice_id::text = $1
+		ORDER BY id
+		LIMIT 1
+	`, command.PracticeID).Scan(&locationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return WebhookReceipt{}, ErrDenied
+		}
+		return WebhookReceipt{}, fmt.Errorf(
+			"load provider receipt Practice authorization location: %w",
+			err,
+		)
+	}
+	authorization, err := m.access.LockMutationAuthorization(
+		ctx,
+		tx,
+		command.Identity,
+		command.PracticeID,
+		locationID,
+		command.SupportSessionID,
+	)
+	if err != nil {
+		if errors.Is(err, access.ErrSupportRequired) ||
+			errors.Is(err, access.ErrSupportExpired) ||
+			errors.Is(err, access.ErrSupportRevoked) ||
+			errors.Is(err, access.ErrSupportPracticeMismatch) {
+			return WebhookReceipt{}, err
+		}
+		return WebhookReceipt{}, ErrDenied
+	}
+	if !authorization.PlatformOperator || authorization.SupportMode == nil {
+		return WebhookReceipt{}, ErrDenied
+	}
+
 	var result WebhookReceipt
-	err := m.pool.QueryRow(ctx, `
+	var state ReceiptState
+	var projectionAttempts int64
+	err = tx.QueryRow(ctx, `
+		SELECT
+			receipt.event_id,
+			receipt.event_type,
+			receipt.state,
+			receipt.duplicate_count,
+			receipt.projection_attempts
+		FROM human_calling_provider_receipts receipt
+		JOIN human_calling_calls call ON call.id = receipt.call_id
+		WHERE receipt.event_id = $1
+			AND call.practice_id::text = $2
+		FOR UPDATE OF receipt
+	`, command.EventID, command.PracticeID).Scan(
+		&result.EventID,
+		&result.EventType,
+		&state,
+		&result.DuplicateCount,
+		&projectionAttempts,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WebhookReceipt{}, fmt.Errorf(
+			"%w: provider receipt is outside the authorized Practice",
+			ErrConflict,
+		)
+	}
+	if err != nil {
+		return WebhookReceipt{}, fmt.Errorf(
+			"lock quarantined provider receipt: %w",
+			err,
+		)
+	}
+	if state != ReceiptQuarantined {
+		return WebhookReceipt{}, fmt.Errorf(
+			"%w: provider receipt is not quarantined",
+			ErrConflict,
+		)
+	}
+	requeuedAt := m.now()
+	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_provider_receipts
 		SET
 			state = 'PENDING',
@@ -195,13 +291,8 @@ func (m *Module) RequeueQuarantinedReceipt(
 			projected_at = NULL,
 			quarantined_at = NULL
 		WHERE event_id = $1 AND state = 'QUARANTINED'
-		RETURNING event_id, event_type, state, duplicate_count
-	`, eventID, m.now()).Scan(
-		&result.EventID,
-		&result.EventType,
-		&result.State,
-		&result.DuplicateCount,
-	)
+		RETURNING state
+	`, command.EventID, requeuedAt).Scan(&result.State)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WebhookReceipt{}, fmt.Errorf(
 			"%w: provider receipt is not quarantined",
@@ -211,6 +302,26 @@ func (m *Module) RequeueQuarantinedReceipt(
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf(
 			"requeue quarantined provider receipt: %w",
+			err,
+		)
+	}
+	if err := m.access.AuditSupportedMutation(
+		ctx,
+		tx,
+		authorization,
+		access.SupportedMutationAudit{
+			Action:          "provider_receipt.requeued",
+			ResourceType:    "provider_receipt",
+			ResourceID:      command.EventID,
+			ResourceVersion: projectionAttempts,
+			OccurredAt:      requeuedAt,
+		},
+	); err != nil {
+		return WebhookReceipt{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return WebhookReceipt{}, fmt.Errorf(
+			"commit quarantined provider receipt requeue: %w",
 			err,
 		)
 	}
