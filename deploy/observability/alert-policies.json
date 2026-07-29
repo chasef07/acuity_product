@@ -1,0 +1,429 @@
+[
+  {
+    "displayName": "Acuity call center - webhook ingress",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "webhook_ingress"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "Provider ingress is unavailable or its durable acknowledgement latency is above the initial one-second p99 objective."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Any unavailable webhook acknowledgement",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_webhook_acknowledgement_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"unavailable\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Webhook acknowledgement p99 above one second",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_webhook_acknowledgement_seconds\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 1,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - receipt backlog",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "receipt_backlog"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "The durable provider receipt queue is old or remains above the initial bounded burst assumption. Replace the depth threshold with a measured production baseline."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Oldest receipt above 30 seconds",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_receipt_queue_oldest_age_seconds\" AND resource.type=\"cloud_run_worker_pool\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 30,
+          "duration": "60s"
+        }
+      },
+      {
+        "displayName": "Receipt depth above 64 for five minutes",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_receipt_queue_depth\" AND resource.type=\"cloud_run_worker_pool\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 64,
+          "duration": "300s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - receipt quarantine",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "receipt_quarantine"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "A verified provider receipt exhausted retryable projection and entered quarantine. Repair the projection boundary before audited requeue."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Any quarantined provider receipt",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_receipt_processing_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.outcome=\"quarantined\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - provider commands",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "provider_commands"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "Dial work is waiting too long or a provider command has an ambiguous outcome. Reconcile provider evidence before any repeated effect."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Dial command queue p95 above one second",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_queue_seconds\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.action=\"dial_staff\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_95",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 1,
+          "duration": "60s"
+        }
+      },
+      {
+        "displayName": "Ambiguous service provider command",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"ambiguous\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Ambiguous worker provider command",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.outcome=\"ambiguous\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - database pool",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "database_pool"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "A runtime timed out acquiring PostgreSQL or sustained pool saturation above the initial 0.8 threshold."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Service database acquisition timeout",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_database_pool_acquire_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"timeout\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Worker database acquisition timeout",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_database_pool_acquire_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.outcome=\"timeout\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Service database saturation above 0.8",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_database_pool_saturation_ratio\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0.8,
+          "duration": "300s"
+        }
+      },
+      {
+        "displayName": "Worker database saturation above 0.8",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_database_pool_saturation_ratio\" AND resource.type=\"cloud_run_worker_pool\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0.8,
+          "duration": "300s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - realtime listener",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "realtime_listener"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "The realtime PostgreSQL listener is repeatedly disconnecting or failed to reconnect."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "More than three listener disconnects in five minutes",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_sse_listener_disconnect_count\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "300s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 3,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Any listener reconnect failure",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_sse_listener_reconnect_failure_count\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - accept contention",
+    "combiner": "AND_WITH_MATCHING_RESOURCE",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "accept_contention"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "More than half of at least ten call-offer accepts were already claimed in a five-minute window. This is an initial change detector, not an SLO."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Already-claimed accept ratio above 0.5",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_call_accept_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"already_claimed\"",
+          "denominatorFilter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_call_accept_count\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "300s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM",
+              "groupByFields": ["resource.label.service_name"]
+            }
+          ],
+          "denominatorAggregations": [
+            {
+              "alignmentPeriod": "300s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM",
+              "groupByFields": ["resource.label.service_name"]
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0.5,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "At least ten accepts in five minutes",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_call_accept_count\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "300s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM",
+              "groupByFields": ["resource.label.service_name"]
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 9,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity call center - accept to bridge",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "accept_to_bridge"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "Provider-confirmed accept-to-bridge p95 is above the initial eight-second objective."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Accept-to-bridge p95 above eight seconds",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_accept_to_bridge_seconds\" AND resource.type=\"cloud_run_worker_pool\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_95",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 8,
+          "duration": "60s"
+        }
+      }
+    ]
+  }
+]

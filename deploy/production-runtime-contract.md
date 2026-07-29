@@ -5,6 +5,26 @@ Cloud Run or Cloud SQL environment exists. The machine-readable values live in
 `production-runtime-contract.json`; CI verifies the warm-capacity invariants and
 connection arithmetic.
 
+`cloud-run-commands.example.sh` defaults to the separate non-production
+scale-to-zero profile. Production deployment must be selected explicitly and
+consumes every concurrency, minimum, maximum, pool, and acquisition-timeout
+value from the JSON contract:
+
+```sh
+ACUITY_DEPLOYMENT_PROFILE=production \
+USABLE_DATABASE_CONNECTIONS=80 \
+  ./deploy/cloud-run-commands.example.sh
+```
+
+`USABLE_DATABASE_CONNECTIONS` is a required measured deployment input. The
+script recomputes the contract reservation and stops before any `gcloud` call
+when the input is below the required value.
+
+Request-service minimums and maximums use Cloud Run's service-level `--min` and
+`--max` controls. They remain total bounds while traffic is split across
+revisions; revision-scoped instance flags are not used as database-capacity
+controls.
+
 All Go runtimes and the migration job use one immutable backend image digest.
 Only `ACUITY_RUNTIME_ROLE` and role-specific secrets change. The web runtime
 uses the matching immutable web digest.

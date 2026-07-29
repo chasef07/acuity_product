@@ -66,3 +66,7 @@ Neither the actual `call_id` nor `event_type` should become a metric label.
 Thresholds are starting operating hypotheses. The load/failure workstream must
 replace them with measured baselines before declaring the production gate
 complete.
+
+Deployable Google Cloud `LogMetric` and `AlertPolicy` definitions, their offline
+contract checks, and the live delivery gates are documented in
+[`deploy/observability/README.md`](../../deploy/observability/README.md).
