@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -109,6 +111,7 @@ type Config struct {
 	RecordingBucket        string
 	WebhookPublicKey       ed25519.PublicKey
 	WebhookTolerance       time.Duration
+	Observer               observability.Observer
 }
 
 type ServiceIdentity = access.ServiceIdentity
@@ -158,6 +161,7 @@ type ProviderCommand struct {
 	Action    CommandAction
 	TargetID  string
 	Payload   map[string]any
+	createdAt time.Time
 }
 
 type ProviderResult struct {
@@ -306,15 +310,16 @@ type OperatorTimeline struct {
 }
 
 type TimelineEntry struct {
-	Kind            string
-	OpaqueReference string
-	ErrorCode       string
-	CommandAction   string
-	CommandState    string
-	CommandAttempts int
-	ReceiptState    string
-	AgeSeconds      int64
-	OccurredAt      time.Time
+	Kind              string
+	OpaqueReference   string
+	RecoveryReference string
+	ErrorCode         string
+	CommandAction     string
+	CommandState      string
+	CommandAttempts   int
+	ReceiptState      string
+	AgeSeconds        int64
+	OccurredAt        time.Time
 }
 
 type Disposition string
@@ -337,6 +342,7 @@ type Module struct {
 	config   Config
 	now      func() time.Time
 	tokenKey []byte
+	observer observability.Observer
 }
 
 func New(
@@ -384,6 +390,7 @@ func New(
 		config:   config,
 		now:      now,
 		tokenKey: tokenKey,
+		observer: config.Observer,
 	}
 	if pool != nil && accessModule != nil {
 		module.work = work.New(pool, accessModule, now)
@@ -512,34 +519,42 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	if fact.EventID == "" || fact.Type == "" || fact.OccurredAt.IsZero() {
 		return ErrInvalidInput
 	}
+	var transaction func() error
 	switch fact.Type {
 	case FactCallInitiated:
 		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
 			state.Version == 1 &&
 			state.Leg == "staff" {
-			return m.applyStaffInitiated(ctx, fact, state.CallID)
+			transaction = func() error {
+				return m.applyStaffInitiated(ctx, fact, state.CallID)
+			}
+		} else {
+			transaction = func() error { return m.admitHandoff(ctx, fact) }
 		}
-		return m.admitHandoff(ctx, fact)
 	case FactCallAnswered:
 		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
 			state.Version == 1 &&
 			state.Leg == "staff" {
-			return m.applyStaffInitiated(ctx, fact, state.CallID)
+			transaction = func() error {
+				return m.applyStaffInitiated(ctx, fact, state.CallID)
+			}
+		} else {
+			transaction = func() error { return m.applyCallerAnswered(ctx, fact) }
 		}
-		return m.applyCallerAnswered(ctx, fact)
 	case FactCallBridged:
-		return m.applyBridge(ctx, fact)
+		transaction = func() error { return m.applyBridge(ctx, fact) }
 	case FactCallHangup:
-		return m.applyHangup(ctx, fact)
+		transaction = func() error { return m.applyHangup(ctx, fact) }
 	case FactPlaybackStarted:
-		return m.applyRingbackStarted(ctx, fact)
+		transaction = func() error { return m.applyRingbackStarted(ctx, fact) }
 	case FactRecordingSaved:
-		return m.applyRecordingSaved(ctx, fact)
+		transaction = func() error { return m.applyRecordingSaved(ctx, fact) }
 	case FactRecordingError:
-		return m.applyRecordingError(ctx, fact)
+		transaction = func() error { return m.applyRecordingError(ctx, fact) }
 	default:
 		return nil
 	}
+	return postgres.RetryTransaction(ctx, transaction)
 }
 
 func (m *Module) AcquireSoftphone(
@@ -1083,7 +1098,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 			SET
 				state = 'AMBIGUOUS',
 				last_error_code = 'PROVIDER_STATE_UNAVAILABLE',
-				next_attempt_at = $2 + interval '5 seconds',
+				next_attempt_at = $2::timestamptz + interval '5 seconds',
 				updated_at = $2
 			WHERE id = $1 AND state = 'SENDING'
 		`, command.ID, m.now()); err != nil {
@@ -1092,7 +1107,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 		if err := tx.Commit(ctx); err != nil {
 			return true, fmt.Errorf("commit deferred credential reconciliation: %w", err)
 		}
-		return true, nil
+		return true, fmt.Errorf("query provider credential state: %w", lookupErr)
 	}
 	var authorized bool
 	if err := tx.QueryRow(ctx, `
@@ -1490,6 +1505,21 @@ func (m *Module) ListOffers(
 }
 
 func (m *Module) AcceptOffer(
+	ctx context.Context,
+	identity access.Identity,
+	sessionID string,
+	callID string,
+) (AcceptResult, error) {
+	var result AcceptResult
+	err := postgres.RetryTransaction(ctx, func() error {
+		var err error
+		result, err = m.acceptOfferTransaction(ctx, identity, sessionID, callID)
+		return err
+	})
+	return result, err
+}
+
+func (m *Module) acceptOfferTransaction(
 	ctx context.Context,
 	identity access.Identity,
 	sessionID string,
@@ -2043,10 +2073,11 @@ func (m *Module) ReadOperatorTimeline(
 				COALESCE(command.action, '') AS command_action,
 				COALESCE(command.state, '') AS command_state,
 				COALESCE(command.attempts, 0) AS command_attempts,
-				COALESCE(receipt.state, '') AS receipt_state,
-				COALESCE(command.created_at, receipt.received_at, t.occurred_at) AS started_at,
-				t.occurred_at,
-				t.id::text AS stable_id
+					COALESCE(receipt.state, '') AS receipt_state,
+					COALESCE(command.created_at, receipt.received_at, t.occurred_at) AS started_at,
+					t.occurred_at,
+					t.id::text AS stable_id,
+					COALESCE(receipt.event_id, '') AS recovery_event_id
 			FROM human_calling_timeline t
 			LEFT JOIN human_calling_provider_commands command
 				ON command.id = t.provider_command_id
@@ -2064,9 +2095,10 @@ func (m *Module) ReadOperatorTimeline(
 				command.state,
 				command.attempts,
 				'',
-				command.created_at,
-				command.created_at,
-				command.id::text
+					command.created_at,
+					command.created_at,
+					command.id::text,
+					''
 			FROM human_calling_provider_commands command
 			WHERE command.call_id = $1
 				AND NOT EXISTS (
@@ -2085,9 +2117,10 @@ func (m *Module) ReadOperatorTimeline(
 				'',
 				0,
 				receipt.state,
-				receipt.received_at,
-				COALESCE(receipt.occurred_at, receipt.received_at),
-				receipt.event_id
+					receipt.received_at,
+					COALESCE(receipt.occurred_at, receipt.received_at),
+					receipt.event_id,
+					receipt.event_id
 			FROM human_calling_provider_receipts receipt
 			WHERE receipt.call_id = $1
 				AND NOT EXISTS (
@@ -2107,8 +2140,9 @@ func (m *Module) ReadOperatorTimeline(
 			GREATEST(
 				0,
 				EXTRACT(EPOCH FROM ($2::timestamptz - started_at))::bigint
-			),
-			occurred_at
+				),
+				occurred_at,
+				recovery_event_id
 		FROM entries
 		ORDER BY occurred_at, stable_id
 	`, callID, m.now())
@@ -2118,6 +2152,7 @@ func (m *Module) ReadOperatorTimeline(
 	defer rows.Close()
 	for rows.Next() {
 		var entry TimelineEntry
+		var recoveryEventID string
 		if err := rows.Scan(
 			&entry.Kind,
 			&entry.OpaqueReference,
@@ -2128,8 +2163,12 @@ func (m *Module) ReadOperatorTimeline(
 			&entry.ReceiptState,
 			&entry.AgeSeconds,
 			&entry.OccurredAt,
+			&recoveryEventID,
 		); err != nil {
 			return OperatorTimeline{}, fmt.Errorf("scan operator Call timeline: %w", err)
+		}
+		if entry.ReceiptState == string(ReceiptQuarantined) {
+			entry.RecoveryReference = m.receiptRecoveryReference(recoveryEventID)
 		}
 		result.Entries = append(result.Entries, entry)
 	}
@@ -3073,30 +3112,73 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	var command ProviderCommand
 	var callID, userSubject *string
 	var encoded []byte
+	// The parent Call row is the durable serialization key. Credential commands
+	// have no Call, so they keep their independent SKIP LOCKED claim path.
 	err = tx.QueryRow(ctx, `
-		SELECT
-			id::text,
-			COALESCE(attempt_id::text, ''),
-			call_id::text,
-			user_subject,
-			action,
-			COALESCE(target_id, ''),
-			payload
-		FROM human_calling_provider_commands
-		WHERE state = 'PENDING' AND next_attempt_at <= $1
-			AND action <> 'CREATE_JWT'
-			AND (
-				depends_on_command_id IS NULL
-				OR EXISTS (
-					SELECT 1
-					FROM human_calling_provider_commands dependency
-					WHERE dependency.id = human_calling_provider_commands.depends_on_command_id
-						AND dependency.state IN ('SENT', 'RECONCILED')
+		WITH call_candidate AS MATERIALIZED (
+			SELECT command.id, command.created_at
+			FROM human_calling_provider_commands command
+			JOIN human_calling_calls call ON call.id = command.call_id
+			WHERE command.state = 'PENDING'
+				AND command.next_attempt_at <= $1
+				AND command.action <> 'CREATE_JWT'
+				AND (
+					command.depends_on_command_id IS NULL
+					OR EXISTS (
+						SELECT 1
+						FROM human_calling_provider_commands dependency
+						WHERE dependency.id = command.depends_on_command_id
+							AND dependency.state IN ('SENT', 'RECONCILED')
+					)
 				)
-			)
-		ORDER BY created_at, id
-		FOR UPDATE SKIP LOCKED
-		LIMIT 1
+				AND NOT EXISTS (
+					SELECT 1
+					FROM human_calling_provider_commands active
+					WHERE active.call_id = command.call_id
+						AND active.state IN ('SENDING', 'AMBIGUOUS')
+				)
+			ORDER BY command.created_at, command.id
+			FOR UPDATE OF call, command SKIP LOCKED
+			LIMIT 1
+		),
+		credential_candidate AS MATERIALIZED (
+			SELECT command.id, command.created_at
+			FROM human_calling_provider_commands command
+			WHERE command.call_id IS NULL
+				AND command.state = 'PENDING'
+				AND command.next_attempt_at <= $1
+				AND command.action <> 'CREATE_JWT'
+				AND (
+					command.depends_on_command_id IS NULL
+					OR EXISTS (
+						SELECT 1
+						FROM human_calling_provider_commands dependency
+						WHERE dependency.id = command.depends_on_command_id
+							AND dependency.state IN ('SENT', 'RECONCILED')
+					)
+				)
+			ORDER BY command.created_at, command.id
+			FOR UPDATE OF command SKIP LOCKED
+			LIMIT 1
+		),
+		candidate AS (
+			SELECT id, created_at FROM call_candidate
+			UNION ALL
+			SELECT id, created_at FROM credential_candidate
+			ORDER BY created_at, id
+			LIMIT 1
+		)
+		SELECT
+			command.id::text,
+			COALESCE(command.attempt_id::text, ''),
+			command.call_id::text,
+			command.user_subject,
+			command.action,
+			COALESCE(command.target_id, ''),
+			command.payload,
+			command.created_at
+		FROM candidate
+		JOIN human_calling_provider_commands command ON command.id = candidate.id
 	`, m.now()).Scan(
 		&command.ID,
 		&command.AttemptID,
@@ -3105,6 +3187,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		&command.Action,
 		&command.TargetID,
 		&encoded,
+		&command.createdAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -3129,6 +3212,9 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		WHERE id = $1
 		RETURNING payload
 	`, command.ID, m.now()).Scan(&encoded); err != nil {
+		if isActiveCallCommandConflict(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("mark provider command sending: %w", err)
 	}
 	if err := json.Unmarshal(encoded, &command.Payload); err != nil {
@@ -3138,10 +3224,15 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("commit provider command claim: %w", err)
 	}
 
+	claimedAt := m.now()
+	providerStartedAt := time.Now()
 	result, executeErr := m.provider.Execute(ctx, command)
-	if err := m.finishCommand(ctx, command, callID, userSubject, result, executeErr); err != nil {
+	providerDuration := time.Since(providerStartedAt)
+	state, err := m.finishCommand(ctx, command, callID, userSubject, result, executeErr)
+	if err != nil {
 		return true, err
 	}
+	m.recordProviderCommand(command, state, claimedAt, providerDuration)
 	return true, nil
 }
 
@@ -3166,7 +3257,8 @@ func (m *Module) processCommand(
 			user_subject,
 			action,
 			COALESCE(target_id, ''),
-			payload
+			payload,
+			created_at
 		FROM human_calling_provider_commands
 		WHERE id = $1 AND state = 'PENDING'
 		FOR UPDATE
@@ -3178,6 +3270,7 @@ func (m *Module) processCommand(
 		&command.Action,
 		&command.TargetID,
 		&encoded,
+		&command.createdAt,
 	); err != nil {
 		return ProviderResult{}, fmt.Errorf("claim committed provider command: %w", err)
 	}
@@ -3194,17 +3287,22 @@ func (m *Module) processCommand(
 	if err := tx.Commit(ctx); err != nil {
 		return ProviderResult{}, fmt.Errorf("commit provider command claim: %w", err)
 	}
+	claimedAt := m.now()
+	providerStartedAt := time.Now()
 	result, executeErr := m.provider.Execute(ctx, command)
-	if err := m.finishCommand(
+	providerDuration := time.Since(providerStartedAt)
+	state, err := m.finishCommand(
 		ctx,
 		command,
 		callID,
 		userSubject,
 		result,
 		executeErr,
-	); err != nil {
+	)
+	if err != nil {
 		return ProviderResult{}, err
 	}
+	m.recordProviderCommand(command, state, claimedAt, providerDuration)
 	if executeErr != nil {
 		return ProviderResult{}, executeErr
 	}
@@ -3218,10 +3316,34 @@ func (m *Module) finishCommand(
 	userSubject *string,
 	result ProviderResult,
 	executeErr error,
-) error {
+) (string, error) {
+	var state string
+	err := postgres.RetryTransaction(ctx, func() error {
+		var err error
+		state, err = m.finishCommandTransaction(
+			ctx,
+			command,
+			callID,
+			userSubject,
+			result,
+			executeErr,
+		)
+		return err
+	})
+	return state, err
+}
+
+func (m *Module) finishCommandTransaction(
+	ctx context.Context,
+	command ProviderCommand,
+	callID *string,
+	userSubject *string,
+	result ProviderResult,
+	executeErr error,
+) (string, error) {
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin provider command result: %w", err)
+		return "", fmt.Errorf("begin provider command result: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -3234,8 +3356,8 @@ func (m *Module) finishCommand(
 			FROM human_calling_calls
 			WHERE id = $1
 			FOR UPDATE
-		`, *callID).Scan(&callPracticeID); err != nil {
-			return fmt.Errorf("lock provider command Call: %w", err)
+			`, *callID).Scan(&callPracticeID); err != nil {
+			return "", fmt.Errorf("lock provider command Call: %w", err)
 		}
 	}
 
@@ -3263,10 +3385,13 @@ func (m *Module) finishCommand(
 		WHERE id = $1 AND state = 'SENDING'
 	`, command.ID, state, errorCode, m.now())
 	if err != nil {
-		return fmt.Errorf("record provider command result: %w", err)
+		return "", fmt.Errorf("record provider command result: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return "", err
+		}
+		return "OBSOLETE", nil
 	}
 	if callID != nil && command.Action == CommandAnswerCaller && executeErr != nil {
 		if state == "AMBIGUOUS" {
@@ -3275,7 +3400,7 @@ func (m *Module) finishCommand(
 				SET state = 'RECONCILING', version = version + 1, updated_at = $2
 				WHERE id = $1 AND state IN ('OFFERING', 'CONNECTING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("mark ambiguous caller answer reconciling: %w", err)
+				return "", fmt.Errorf("mark ambiguous caller answer reconciling: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `
@@ -3288,7 +3413,7 @@ func (m *Module) finishCommand(
 					updated_at = $2
 				WHERE id = $1 AND state IN ('OFFERING', 'CONNECTING', 'RECONCILING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("terminate definitively rejected caller answer: %w", err)
+				return "", fmt.Errorf("terminate definitively rejected caller answer: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_connection_attempts
@@ -3302,7 +3427,7 @@ func (m *Module) finishCommand(
 					WHERE id = $1
 				)
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("end rejected connection attempt: %w", err)
+				return "", fmt.Errorf("end rejected connection attempt: %w", err)
 			}
 			if err := insertCommand(
 				ctx,
@@ -3316,7 +3441,7 @@ func (m *Module) finishCommand(
 				},
 				m.now(),
 			); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
@@ -3327,7 +3452,7 @@ func (m *Module) finishCommand(
 				SET state = 'RECONCILING', version = version + 1, updated_at = $2
 				WHERE id = $1 AND state IN ('OFFERING', 'CONNECTING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("mark ambiguous ringback reconciling: %w", err)
+				return "", fmt.Errorf("mark ambiguous ringback reconciling: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `
@@ -3341,7 +3466,7 @@ func (m *Module) finishCommand(
 				WHERE id = $1
 					AND state IN ('OFFERING', 'CONNECTING', 'RECONCILING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("terminate definitively rejected ringback: %w", err)
+				return "", fmt.Errorf("terminate definitively rejected ringback: %w", err)
 			}
 			if err := insertCommand(
 				ctx,
@@ -3355,17 +3480,17 @@ func (m *Module) finishCommand(
 				},
 				m.now(),
 			); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
 	if callID != nil && command.Action == CommandDialStaff {
 		if command.AttemptID == "" {
-			return fmt.Errorf("Dial command omitted connection attempt identity")
+			return "", fmt.Errorf("Dial command omitted connection attempt identity")
 		}
 		if executeErr == nil {
 			if result.CallControlID == "" || result.CallLegID == "" {
-				return fmt.Errorf("successful Dial omitted provider leg identity")
+				return "", fmt.Errorf("successful Dial omitted provider leg identity")
 			}
 			var attemptEndedAt *time.Time
 			if err := tx.QueryRow(ctx, `
@@ -3382,7 +3507,7 @@ func (m *Module) finishCommand(
 				result.CallLegID,
 				m.now(),
 			).Scan(&attemptEndedAt); err != nil {
-				return fmt.Errorf("record connection-attempt staff leg: %w", err)
+				return "", fmt.Errorf("record connection-attempt staff leg: %w", err)
 			}
 			callTag, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
@@ -3406,7 +3531,7 @@ func (m *Module) finishCommand(
 				attemptEndedAt,
 			)
 			if err != nil {
-				return fmt.Errorf("record expected staff provider leg: %w", err)
+				return "", fmt.Errorf("record expected staff provider leg: %w", err)
 			}
 			if callTag.RowsAffected() == 0 {
 				var alreadyConnected bool
@@ -3426,7 +3551,7 @@ func (m *Module) finishCommand(
 					result.CallControlID,
 					result.CallLegID,
 				).Scan(&alreadyConnected); err != nil {
-					return fmt.Errorf("reconcile Dial result after bridge: %w", err)
+					return "", fmt.Errorf("reconcile Dial result after bridge: %w", err)
 				}
 				if !alreadyConnected {
 					cleanupOwner := ""
@@ -3443,7 +3568,7 @@ func (m *Module) finishCommand(
 						"staff",
 						m.now(),
 					); err != nil {
-						return err
+						return "", err
 					}
 				}
 			}
@@ -3455,7 +3580,7 @@ func (m *Module) finishCommand(
 					AND current_attempt_id = $3
 					AND state = 'CONNECTING'
 			`, *callID, m.now(), command.AttemptID); err != nil {
-				return fmt.Errorf("mark ambiguous Call reconciling: %w", err)
+				return "", fmt.Errorf("mark ambiguous Call reconciling: %w", err)
 			}
 		} else {
 			var deadline time.Time
@@ -3464,7 +3589,7 @@ func (m *Module) finishCommand(
 				FROM human_calling_calls
 				WHERE id = $1
 			`, *callID).Scan(&deadline); err != nil {
-				return fmt.Errorf("load definitively failed Call: %w", err)
+				return "", fmt.Errorf("load definitively failed Call: %w", err)
 			}
 			nextState := CallUnanswered
 			if m.now().Before(deadline) {
@@ -3493,7 +3618,7 @@ func (m *Module) finishCommand(
 					AND state = 'CONNECTING'
 			`, *callID, nextState, m.now(), command.AttemptID)
 			if err != nil {
-				return fmt.Errorf("reopen definitively failed Call: %w", err)
+				return "", fmt.Errorf("reopen definitively failed Call: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_connection_attempts
@@ -3503,7 +3628,7 @@ func (m *Module) finishCommand(
 					updated_at = $2
 				WHERE id = $1
 			`, command.AttemptID, m.now()); err != nil {
-				return fmt.Errorf("end rejected connection attempt: %w", err)
+				return "", fmt.Errorf("end rejected connection attempt: %w", err)
 			}
 			if callTag.RowsAffected() == 1 && nextState == CallUnanswered {
 				if err := insertCommand(
@@ -3518,11 +3643,11 @@ func (m *Module) finishCommand(
 					},
 					m.now(),
 				); err != nil {
-					return err
+					return "", err
 				}
 			}
 			if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
@@ -3535,7 +3660,7 @@ func (m *Module) finishCommand(
 				WHERE user_subject = $1
 			)
 		`, *userSubject).Scan(&operational); err != nil {
-			return fmt.Errorf("read credential owner after create: %w", err)
+			return "", fmt.Errorf("read credential owner after create: %w", err)
 		}
 		credentialState := "ACTIVE"
 		credentialError := errorCode
@@ -3548,7 +3673,7 @@ func (m *Module) finishCommand(
 			credentialError = "ACCESS_OBSOLETE_AFTER_CREATE"
 		}
 		if executeErr == nil && (result.CredentialID == "" || result.SIPUsername == "") {
-			return fmt.Errorf("successful credential command omitted provider identity")
+			return "", fmt.Errorf("successful credential command omitted provider identity")
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_credentials
@@ -3573,7 +3698,7 @@ func (m *Module) finishCommand(
 			credentialError,
 			m.now(),
 		); err != nil {
-			return fmt.Errorf("record managed credential result: %w", err)
+			return "", fmt.Errorf("record managed credential result: %w", err)
 		}
 		if credentialState == "DISABLING" {
 			if _, err := tx.Exec(ctx, `
@@ -3589,7 +3714,7 @@ func (m *Module) finishCommand(
 						AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
 				)
 			`, uuid.NewString(), *userSubject, result.CredentialID, m.now()); err != nil {
-				return fmt.Errorf("commit obsolete credential cleanup: %w", err)
+				return "", fmt.Errorf("commit obsolete credential cleanup: %w", err)
 			}
 		}
 	}
@@ -3602,7 +3727,7 @@ func (m *Module) finishCommand(
 				WHERE user_subject = $1
 			)
 		`, *userSubject).Scan(&authorized); err != nil {
-			return fmt.Errorf("read credential owner after disable: %w", err)
+			return "", fmt.Errorf("read credential owner after disable: %w", err)
 		}
 		credentialState := "DISABLED"
 		if state == "AMBIGUOUS" {
@@ -3645,7 +3770,7 @@ func (m *Module) finishCommand(
 			m.now(),
 			clearProviderIdentity,
 		); err != nil {
-			return fmt.Errorf("record disabled credential result: %w", err)
+			return "", fmt.Errorf("record disabled credential result: %w", err)
 		}
 	}
 	if callID != nil {
@@ -3669,7 +3794,7 @@ func (m *Module) finishCommand(
 				WHERE command.id IN (SELECT id FROM descendants)
 					AND command.state = 'PENDING'
 			`, command.ID, m.now()); err != nil {
-				return fmt.Errorf("fail dependent provider commands: %w", err)
+				return "", fmt.Errorf("fail dependent provider commands: %w", err)
 			}
 		}
 		if command.Action == CommandStartRecording && executeErr != nil {
@@ -3682,7 +3807,7 @@ func (m *Module) finishCommand(
 				SET state = 'FAILED', failure_code = $2, updated_at = $3
 				WHERE call_id = $1 AND state IN ('INTENDED', 'RECORDING')
 			`, *callID, recordingError, m.now()); err != nil {
-				return fmt.Errorf("record recording command failure: %w", err)
+				return "", fmt.Errorf("record recording command failure: %w", err)
 			}
 		}
 		if err := appendTimeline(
@@ -3698,16 +3823,16 @@ func (m *Module) finishCommand(
 			errorCode,
 			m.now(),
 		); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit provider command result: %w", err)
+		return "", fmt.Errorf("commit provider command result: %w", err)
 	}
-	return nil
+	return state, nil
 }
 
 func (m *Module) applyStaffInitiated(
@@ -4419,7 +4544,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	}
 
 	var winningAttemptID string
-	var bridgeAt time.Time
+	var acceptedAt, bridgeAt time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			id::text,
@@ -4428,7 +4553,8 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			staff_call_control_id,
 			staff_call_leg_id,
 			bridge_occurred_at,
-			ended_at
+			ended_at,
+			created_at
 		FROM human_calling_connection_attempts
 		WHERE call_id = $1 AND bridge_occurred_at IS NOT NULL
 		ORDER BY bridge_occurred_at, created_at, id
@@ -4442,6 +4568,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		&staffLegID,
 		&bridgeAt,
 		&attemptEndedAt,
+		&acceptedAt,
 	); err != nil {
 		return fmt.Errorf("select provider-confirmed winning attempt: %w", err)
 	}
@@ -4571,6 +4698,12 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit bridge projection: %w", err)
+	}
+	if nextState == CallConnected {
+		observability.Record(
+			m.observer,
+			observability.CallBridged(bridgeAt.Sub(acceptedAt)),
+		)
 	}
 	return nil
 }
@@ -5366,6 +5499,12 @@ func (m *Module) staffMediaToken(callID string, attemptID string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func (m *Module) receiptRecoveryReference(eventID string) string {
+	mac := hmac.New(sha256.New, m.tokenKey)
+	_, _ = mac.Write([]byte("provider-receipt-recovery-v1\x00" + eventID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
 func (m *Module) sipDestination(handoffID string) string {
 	return "sip:" + m.handoffToken(handoffID) + "@" + m.config.HandoffSIPDomain
 }
@@ -5432,6 +5571,13 @@ func managedSIPDestination(username string, domain string) string {
 func isUniqueViolation(err error) bool {
 	var postgresError *pgconn.PgError
 	return errors.As(err, &postgresError) && postgresError.Code == "23505"
+}
+
+func isActiveCallCommandConflict(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) &&
+		postgresError.Code == "23505" &&
+		postgresError.ConstraintName == "human_calling_active_call_commands_idx"
 }
 
 func sanitizeCode(value string) string {

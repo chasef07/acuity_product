@@ -792,6 +792,46 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/requeue:
+    post:
+      operationId: requeueOperatorProviderReceipt
+      summary: Requeue one quarantined provider receipt in Platform Operator Support Mode.
+      parameters:
+        - name: practiceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: receiptReference
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderReceiptRecoveryRequest"
+      responses:
+        "200":
+          description: The persisted receipt was authorized, audited, and requeued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderReceiptRecovery"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -1098,6 +1138,25 @@ components:
           type: integer
           minimum: 1
           maximum: 240
+    ProviderReceiptRecoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [supportSessionId]
+      properties:
+        supportSessionId:
+          type: string
+          format: uuid
+    ProviderReceiptRecovery:
+      type: object
+      additionalProperties: false
+      required: [receiptReference, state]
+      properties:
+        receiptReference:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        state:
+          type: string
+          enum: [PENDING]
     AddLocationRequest:
       type: object
       additionalProperties: false
@@ -1808,6 +1867,9 @@ components:
           type: string
         opaqueReference:
           type: string
+        recoveryReference:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
         errorCode:
           type: string
         commandAction:

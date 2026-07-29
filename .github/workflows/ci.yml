@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
-      - run: go test ./backend/... -count=1
+      - run: go test ./backend/... ./deploy -count=1
       - run: npm run lint
         working-directory: web
       - run: npm run typecheck

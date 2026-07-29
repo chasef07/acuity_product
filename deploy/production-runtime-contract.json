@@ -1,0 +1,63 @@
+{
+  "workerPoolRevisionOverlap": 2,
+  "migration": {
+    "tasks": 1,
+    "poolMaximum": 2,
+    "acquisitionTimeoutMilliseconds": 5000,
+    "maximumRetries": 0
+  },
+  "operatorHeadroom": 10,
+  "requiredDatabaseConnections": 50,
+  "runtimes": [
+    {
+      "name": "web",
+      "kind": "service",
+      "concurrency": 40,
+      "minimumInstances": 1,
+      "maximumInstances": 2,
+      "poolMaximum": 3,
+      "dedicatedConnections": 0,
+      "acquisitionTimeoutMilliseconds": 1500
+    },
+    {
+      "name": "portal-api",
+      "kind": "service",
+      "concurrency": 20,
+      "minimumInstances": 2,
+      "maximumInstances": 3,
+      "poolMaximum": 4,
+      "dedicatedConnections": 0,
+      "acquisitionTimeoutMilliseconds": 1500
+    },
+    {
+      "name": "provider-ingress",
+      "kind": "service",
+      "concurrency": 20,
+      "minimumInstances": 2,
+      "maximumInstances": 2,
+      "poolMaximum": 2,
+      "dedicatedConnections": 0,
+      "acquisitionTimeoutMilliseconds": 1500
+    },
+    {
+      "name": "realtime",
+      "kind": "service",
+      "concurrency": 50,
+      "minimumInstances": 2,
+      "maximumInstances": 2,
+      "poolMaximum": 3,
+      "dedicatedConnections": 1,
+      "acquisitionTimeoutMilliseconds": 1500
+    },
+    {
+      "name": "worker",
+      "kind": "worker-pool",
+      "concurrency": 0,
+      "minimumInstances": 2,
+      "maximumInstances": 2,
+      "poolMaximum": 2,
+      "dedicatedConnections": 0,
+      "acquisitionTimeoutMilliseconds": 1500
+    }
+  ]
+}

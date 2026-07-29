@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -26,6 +27,7 @@ type Config struct {
 	RevalidateInterval time.Duration
 	ReconnectMin       time.Duration
 	ReconnectMax       time.Duration
+	Observer           observability.Observer
 }
 
 type Hint struct {
@@ -36,8 +38,9 @@ type Hint struct {
 // Hub turns PostgreSQL notifications into disposable, authorized SSE hints.
 // PostgreSQL rows remain authoritative and reconnect always causes a refetch.
 type Hub struct {
-	config Config
-	access *access.Module
+	config   Config
+	access   *access.Module
+	observer observability.Observer
 
 	mu          sync.RWMutex
 	subscribers map[string]map[chan Hint]struct{}
@@ -59,6 +62,7 @@ func New(config Config, accessModule *access.Module) (*Hub, error) {
 	return &Hub{
 		config:      config,
 		access:      accessModule,
+		observer:    config.Observer,
 		subscribers: map[string]map[chan Hint]struct{}{},
 	}, nil
 }
@@ -71,10 +75,15 @@ func (hub *Hub) Ready() bool {
 // exponential backoff and jitter. Notifications are never treated as state.
 func (hub *Hub) Run(ctx context.Context) {
 	backoff := hub.config.ReconnectMin
+	connectedOnce := false
 	for ctx.Err() == nil {
 		connection, err := pgx.Connect(ctx, hub.config.DatabaseURL)
 		if err != nil {
 			hub.ready.Store(false)
+			observability.Record(
+				hub.observer,
+				observability.SSEListenerReconnectFailed(),
+			)
 			if !wait(ctx, jitter(backoff)) {
 				return
 			}
@@ -83,6 +92,10 @@ func (hub *Hub) Run(ctx context.Context) {
 		}
 		if _, err := connection.Exec(ctx, "LISTEN "+notificationChannel); err != nil {
 			hub.ready.Store(false)
+			observability.Record(
+				hub.observer,
+				observability.SSEListenerReconnectFailed(),
+			)
 			_ = connection.Close(ctx)
 			if !wait(ctx, jitter(backoff)) {
 				return
@@ -92,6 +105,11 @@ func (hub *Hub) Run(ctx context.Context) {
 		}
 
 		hub.ready.Store(true)
+		observability.Record(
+			hub.observer,
+			observability.SSEListenerConnected(connectedOnce),
+		)
+		connectedOnce = true
 		backoff = hub.config.ReconnectMin
 		for ctx.Err() == nil {
 			notification, err := connection.WaitForNotification(ctx)
@@ -107,6 +125,10 @@ func (hub *Hub) Run(ctx context.Context) {
 			hub.publish(hint)
 		}
 		hub.ready.Store(false)
+		observability.Record(
+			hub.observer,
+			observability.SSEListenerDisconnected(),
+		)
 		_ = connection.Close(context.Background())
 		if ctx.Err() == nil && !wait(ctx, jitter(backoff)) {
 			return
@@ -134,6 +156,14 @@ func (hub *Hub) Stream(
 	}
 	hints, unsubscribe := hub.subscribe(practiceID)
 	defer unsubscribe()
+	closeReason := observability.SSEClientClosed
+	observability.Record(hub.observer, observability.SSEStreamOpened())
+	defer func() {
+		observability.Record(
+			hub.observer,
+			observability.SSEStreamClosed(closeReason),
+		)
+	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Connection", "keep-alive")
@@ -143,6 +173,7 @@ func (hub *Hub) Stream(
 		PracticeID: practiceID,
 		Version:    authorization.Practice.Version,
 	}); err != nil {
+		closeReason = observability.SSEWriteFailed
 		return nil
 	}
 	flusher.Flush()
@@ -159,14 +190,17 @@ func (hub *Hub) Stream(
 		case <-r.Context().Done():
 			return nil
 		case <-lifetime.C:
+			closeReason = observability.SSELifetimeEnded
 			return nil
 		case hint := <-hints:
 			if err := writeEvent(w, "hint", hint); err != nil {
+				closeReason = observability.SSEWriteFailed
 				return nil
 			}
 			flusher.Flush()
 		case <-heartbeat.C:
 			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+				closeReason = observability.SSEWriteFailed
 				return nil
 			}
 			flusher.Flush()
@@ -175,6 +209,7 @@ func (hub *Hub) Stream(
 			_, err := hub.access.ResolveActor(accessContext, identity, practiceID, locationID)
 			cancelAccess()
 			if err != nil {
+				closeReason = observability.SSERevalidationFailed
 				return nil
 			}
 		}

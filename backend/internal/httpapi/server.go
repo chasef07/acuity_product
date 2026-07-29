@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,6 +46,7 @@ type ServiceAuthenticator interface {
 type Config struct {
 	AllowedOrigin  string
 	AcquireTimeout time.Duration
+	Observer       observability.Observer
 }
 
 type PortalDependencies struct {
@@ -70,6 +73,7 @@ type Server struct {
 	calling       *humancalling.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
+	observer      observability.Observer
 }
 
 type serverDependencies struct {
@@ -155,6 +159,7 @@ func newServer(
 		calling:       dependencies.calling,
 		work:          dependencies.work,
 		serviceAuth:   dependencies.serviceAuth,
+		observer:      config.Observer,
 	}
 	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
@@ -552,25 +557,40 @@ func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Reques
 		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
 		return
 	}
+	startedAt := time.Now()
+	outcome := observability.WebhookUnavailable
+	defer func() {
+		observability.Record(
+			server.observer,
+			observability.WebhookAcknowledged(outcome, time.Since(startedAt)),
+		)
+	}()
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 256*1024+1))
 	if err != nil || len(raw) > 256*1024 {
+		outcome = observability.WebhookInvalid
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
 		return
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	if _, err := server.calling.ReceiveWebhook(
+	receipt, err := server.calling.ReceiveWebhook(
 		ctx,
 		raw,
 		r.Header.Get("telnyx-timestamp"),
 		r.Header.Get("telnyx-signature-ed25519"),
-	); err != nil {
+	)
+	if err != nil {
 		if errors.Is(err, humancalling.ErrInvalidWebhook) {
+			outcome = observability.WebhookInvalid
 			server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
 			return
 		}
 		server.writeCallingError(w, r, err)
 		return
+	}
+	outcome = observability.WebhookAccepted
+	if receipt.Duplicate {
+		outcome = observability.WebhookDuplicate
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -684,9 +704,26 @@ func (server *Server) AcceptCallingOffer(
 	defer cancel()
 	result, err := server.calling.AcceptOffer(ctx, identity, body.SessionId, callID.String())
 	if err != nil {
+		outcome := observability.AcceptFailed
+		if errors.Is(err, humancalling.ErrDenied) {
+			outcome = observability.AcceptDenied
+		}
+		observability.Record(server.observer, observability.CallAccepted(outcome))
 		server.writeCallingError(w, r, err)
 		return
 	}
+	outcome := observability.AcceptFailed
+	switch result.Status {
+	case humancalling.Accepted:
+		outcome = observability.AcceptWon
+	case humancalling.AlreadyClaimed:
+		outcome = observability.AcceptAlreadyClaimed
+	case humancalling.AcceptExpired:
+		outcome = observability.AcceptExpired
+	case humancalling.AcceptIneligible:
+		outcome = observability.AcceptIneligible
+	}
+	observability.Record(server.observer, observability.CallAccepted(outcome))
 	convertedID, err := uuid.Parse(result.CallID)
 	if err != nil {
 		server.writeCallingError(w, r, err)
@@ -1064,6 +1101,49 @@ func (server *Server) GetOperatorCallingTimeline(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) RequeueOperatorProviderReceipt(
+	w http.ResponseWriter,
+	r *http.Request,
+	practiceID openapi_types.UUID,
+	receiptReference string,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	decodedReference, err := base64.RawURLEncoding.DecodeString(receiptReference)
+	if err != nil || len(decodedReference) != 32 {
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
+	}
+	var body api.ProviderReceiptRecoveryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	result, err := server.calling.RequeueQuarantinedReceipt(
+		ctx,
+		humancalling.RequeueQuarantinedReceiptCommand{
+			Identity:         identity,
+			PracticeID:       practiceID.String(),
+			SupportSessionID: body.SupportSessionId.String(),
+			ReceiptReference: receiptReference,
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.ProviderReceiptRecovery{
+		ReceiptReference: receiptReference,
+		State:            api.ProviderReceiptRecoveryState(result.State),
+	})
+}
+
 func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
 	if server.role == "portal-api" {
 		return true
@@ -1177,7 +1257,11 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, humancalling.ErrDenied),
 		errors.Is(err, humancalling.ErrInvalidHandoff),
-		errors.Is(err, humancalling.ErrIneligible):
+		errors.Is(err, humancalling.ErrIneligible),
+		errors.Is(err, access.ErrSupportRequired),
+		errors.Is(err, access.ErrSupportExpired),
+		errors.Is(err, access.ErrSupportRevoked),
+		errors.Is(err, access.ErrSupportPracticeMismatch):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, humancalling.ErrConflict),
 		errors.Is(err, humancalling.ErrExpired),
@@ -1724,7 +1808,7 @@ func operatorTimelineResponse(
 		Entries:    make([]api.OperatorCallingTimelineEntry, 0, len(timeline.Entries)),
 	}
 	for _, entry := range timeline.Entries {
-		response.Entries = append(response.Entries, api.OperatorCallingTimelineEntry{
+		item := api.OperatorCallingTimelineEntry{
 			Kind:            entry.Kind,
 			OpaqueReference: entry.OpaqueReference,
 			ErrorCode:       entry.ErrorCode,
@@ -1734,7 +1818,11 @@ func operatorTimelineResponse(
 			ReceiptState:    entry.ReceiptState,
 			AgeSeconds:      entry.AgeSeconds,
 			OccurredAt:      entry.OccurredAt,
-		})
+		}
+		if entry.RecoveryReference != "" {
+			item.RecoveryReference = &entry.RecoveryReference
+		}
+		response.Entries = append(response.Entries, item)
 	}
 	return response, nil
 }

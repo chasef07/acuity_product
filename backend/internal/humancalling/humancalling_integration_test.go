@@ -1,10 +1,12 @@
 package humancalling_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -13,8 +15,10 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -724,6 +728,278 @@ func TestLeaseRenewalDoesNotRefreshStaleReadinessProof(t *testing.T) {
 	}
 }
 
+func TestOfferAcceptanceRetriesTheCompleteTransactionOnce(t *testing.T) {
+	provider := &recordingProvider{}
+	calling, identity, offer := readyOffer(t, provider, "accept-transaction-retry")
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open acceptance retry pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var initialWorkspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, offer.PracticeID).Scan(&initialWorkspaceVersion); err != nil {
+		t.Fatalf("read initial workspace version: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE SEQUENCE accept_offer_retry_sequence;
+		CREATE FUNCTION inject_accept_offer_serialization_failure()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $function$
+		BEGIN
+			IF nextval('accept_offer_retry_sequence') = 1 THEN
+				RAISE EXCEPTION 'injected offer serialization failure'
+					USING ERRCODE = '40001';
+			END IF;
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER inject_accept_offer_serialization_failure
+		BEFORE UPDATE OF state ON human_calling_calls
+		FOR EACH ROW
+		WHEN (NEW.state = 'CONNECTING')
+		EXECUTE FUNCTION inject_accept_offer_serialization_failure();
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("install acceptance retry fault: %v", err)
+	}
+
+	result, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		"accept-transaction-retry-browser",
+		offer.ID,
+	)
+	if err != nil || result.Status != humancalling.Accepted {
+		t.Fatalf("accept offer after retry: result=%#v err=%v", result, err)
+	}
+
+	var retryAttempts, attempts, dialCommands, claimedEntries int64
+	var workspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT last_value FROM accept_offer_retry_sequence),
+			(SELECT count(*) FROM human_calling_connection_attempts WHERE call_id = $1),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'DIAL_STAFF'),
+			(SELECT count(*) FROM human_calling_timeline
+				WHERE call_id = $1 AND kind = 'offer.claimed'),
+			(SELECT workspace_version FROM access_practices WHERE id = $2)
+	`, offer.ID, offer.PracticeID).Scan(
+		&retryAttempts,
+		&attempts,
+		&dialCommands,
+		&claimedEntries,
+		&workspaceVersion,
+	); err != nil {
+		t.Fatalf("read acceptance retry outcome: %v", err)
+	}
+	if retryAttempts != 2 ||
+		attempts != 1 ||
+		dialCommands != 1 ||
+		claimedEntries != 1 ||
+		workspaceVersion != initialWorkspaceVersion+1 {
+		t.Fatalf(
+			"retry=%d attempts=%d commands=%d timeline=%d workspace=%d want 2,1,1,1,%d",
+			retryAttempts,
+			attempts,
+			dialCommands,
+			claimedEntries,
+			workspaceVersion,
+			initialWorkspaceVersion+1,
+		)
+	}
+}
+
+func TestProviderFactRetriesWithoutDuplicateProjectionState(t *testing.T) {
+	provider := &recordingProvider{}
+	calling, _, offer := readyOffer(t, provider, "provider-fact-transaction-retry")
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open provider-fact retry pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var initialWorkspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, offer.PracticeID).Scan(&initialWorkspaceVersion); err != nil {
+		t.Fatalf("read provider-fact workspace version: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE SEQUENCE provider_fact_retry_sequence;
+		CREATE FUNCTION inject_provider_fact_serialization_failure()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $function$
+		BEGIN
+			IF nextval('provider_fact_retry_sequence') = 1 THEN
+				RAISE EXCEPTION 'injected provider-fact serialization failure'
+					USING ERRCODE = '40001';
+			END IF;
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER inject_provider_fact_serialization_failure
+		BEFORE INSERT ON human_calling_projected_facts
+		FOR EACH ROW
+		WHEN (NEW.event_id = 'provider-fact-transaction-retry-answered')
+		EXECUTE FUNCTION inject_provider_fact_serialization_failure();
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("install provider-fact retry fault: %v", err)
+	}
+
+	fact := humancalling.ProviderFact{
+		EventID:       "provider-fact-transaction-retry-answered",
+		Type:          humancalling.FactCallAnswered,
+		OccurredAt:    offer.Deadline.Add(-10 * time.Second),
+		CallControlID: "provider-fact-transaction-retry-caller-control",
+		CallLegID:     "provider-fact-transaction-retry-caller-leg",
+		CallSessionID: "provider-fact-transaction-retry-provider-session",
+	}
+	if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		t.Fatalf("apply provider fact after retry: %v", err)
+	}
+
+	var retryAttempts, projectedFacts, timelineEntries int64
+	var workspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT last_value FROM provider_fact_retry_sequence),
+			(SELECT count(*) FROM human_calling_projected_facts WHERE event_id = $1),
+			(SELECT count(*) FROM human_calling_timeline WHERE provider_event_id = $1),
+			(SELECT workspace_version FROM access_practices WHERE id = $2)
+	`, fact.EventID, offer.PracticeID).Scan(
+		&retryAttempts,
+		&projectedFacts,
+		&timelineEntries,
+		&workspaceVersion,
+	); err != nil {
+		t.Fatalf("read provider-fact retry outcome: %v", err)
+	}
+	if retryAttempts != 2 ||
+		projectedFacts != 1 ||
+		timelineEntries != 1 ||
+		workspaceVersion != initialWorkspaceVersion+1 {
+		t.Fatalf(
+			"retry=%d facts=%d timeline=%d workspace=%d want 2,1,1,%d",
+			retryAttempts,
+			projectedFacts,
+			timelineEntries,
+			workspaceVersion,
+			initialWorkspaceVersion+1,
+		)
+	}
+}
+
+func TestProviderCommandFinalizationRetriesWithoutRepeatingProviderEffect(t *testing.T) {
+	provider := &recordingProvider{}
+	calling, identity, offer := readyOffer(t, provider, "command-finish-transaction-retry")
+	if result, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		"command-finish-transaction-retry-browser",
+		offer.ID,
+	); err != nil || result.Status != humancalling.Accepted {
+		t.Fatalf("accept command-finalization offer: result=%#v err=%v", result, err)
+	}
+	for range 2 {
+		if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+			t.Fatalf("process pre-Dial command: processed=%t err=%v", processed, err)
+		}
+	}
+
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open command-finalization retry pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	var initialWorkspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, offer.PracticeID).Scan(&initialWorkspaceVersion); err != nil {
+		t.Fatalf("read command-finalization workspace version: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE SEQUENCE command_finish_retry_sequence;
+		CREATE FUNCTION inject_command_finish_serialization_failure()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $function$
+		BEGIN
+			IF nextval('command_finish_retry_sequence') = 1 THEN
+				RAISE EXCEPTION 'injected command-finalization serialization failure'
+					USING ERRCODE = '40001';
+			END IF;
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER inject_command_finish_serialization_failure
+		BEFORE UPDATE OF state ON human_calling_provider_commands
+		FOR EACH ROW
+		WHEN (
+			OLD.state = 'SENDING'
+			AND NEW.state = 'SENT'
+			AND NEW.action = 'DIAL_STAFF'
+		)
+		EXECUTE FUNCTION inject_command_finish_serialization_failure();
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("install command-finalization retry fault: %v", err)
+	}
+
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("process Dial after finalization retry: processed=%t err=%v", processed, err)
+	}
+	if provider.count(humancalling.CommandDialStaff) != 1 {
+		t.Fatalf("Dial provider executions = %d, want 1", provider.count(humancalling.CommandDialStaff))
+	}
+
+	var retryAttempts, sentCommands, timelineEntries int64
+	var workspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT last_value FROM command_finish_retry_sequence),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'DIAL_STAFF' AND state = 'SENT'),
+			(SELECT count(*)
+				FROM human_calling_timeline timeline
+				JOIN human_calling_provider_commands command
+					ON command.id = timeline.provider_command_id
+				WHERE timeline.call_id = $1
+					AND command.action = 'DIAL_STAFF'
+					AND timeline.kind = 'provider.command.sent'),
+			(SELECT workspace_version FROM access_practices WHERE id = $2)
+	`, offer.ID, offer.PracticeID).Scan(
+		&retryAttempts,
+		&sentCommands,
+		&timelineEntries,
+		&workspaceVersion,
+	); err != nil {
+		t.Fatalf("read command-finalization retry outcome: %v", err)
+	}
+	if retryAttempts != 2 ||
+		sentCommands != 1 ||
+		timelineEntries != 1 ||
+		workspaceVersion != initialWorkspaceVersion+1 {
+		t.Fatalf(
+			"retry=%d sent=%d timeline=%d workspace=%d want 2,1,1,%d",
+			retryAttempts,
+			sentCommands,
+			timelineEntries,
+			workspaceVersion,
+			initialWorkspaceVersion+1,
+		)
+	}
+}
+
 func TestActiveCallTakeoverTransfersControlToTheNewLeaseOwner(t *testing.T) {
 	provider := &recordingProvider{}
 	calling, identity, offer := readyOffer(t, provider, "active-takeover")
@@ -1130,48 +1406,21 @@ func TestConcurrentHangupReconciliationClaimsOneProviderCheck(t *testing.T) {
 func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"worker-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	accessModule := access.New(pool, func() time.Time { return now })
 	const concurrentAgents = 10
-	invitations := make([]access.InvitationProvision, 0, concurrentAgents)
-	identities := make([]access.Identity, 0, concurrentAgents)
-	for index := range concurrentAgents {
-		invitations = append(invitations, access.InvitationProvision{
-			Key:           fmt.Sprintf("claim-staff-%d", index+1),
-			Email:         fmt.Sprintf("staff-%d@claim.test", index+1),
-			Role:          access.RoleStaff,
-			LocationScope: access.LocationScopeAll,
-			ExpiresAt:     now.Add(time.Hour),
-		})
-		identities = append(identities, access.Identity{
-			Subject:       fmt.Sprintf("claim-staff-%d", index+1),
-			Email:         fmt.Sprintf("staff-%d@claim.test", index+1),
-			EmailVerified: true,
-		})
-	}
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment: "test",
-		RequestedBy: "slice-2-claim-test",
-		Practices: []access.PracticeProvision{{
-			Key:         "claim-practice",
-			Name:        "Claim Practice",
-			Locations:   []access.LocationProvision{{Key: "claim-location", Name: "Claim Location"}},
-			Invitations: invitations,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("provision claim fixture: %v", err)
-	}
-	authorizations := make([]access.Authorization, len(identities))
-	for index := range identities {
-		authorizations[index], err = accessModule.AcceptInvitation(
-			context.Background(),
-			identities[index],
-			provisioned.Invitations[index].Token,
-		)
-		if err != nil {
-			t.Fatalf("accept claim invitation %d: %v", index, err)
-		}
-	}
+	authorization, identities := provisionConcurrentStaff(
+		t,
+		accessModule,
+		now,
+		"claim",
+		concurrentAgents,
+	)
 
 	provider := &recordingProvider{}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
@@ -1180,14 +1429,15 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		RecordingBucket:  "synthetic-recordings",
+		Observer:         observer,
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-synthetic",
-			PracticeID: authorizations[0].Practice.ID,
+			PracticeID: authorization.Practice.ID,
 		},
-		LocationID:     authorizations[0].Locations[0].ID,
+		LocationID:     authorization.Locations[0].ID,
 		SourceCallID:   "claim-source-call",
 		IdempotencyKey: "claim-idempotency",
 		Contact: humancalling.ContactContext{
@@ -1213,28 +1463,7 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("admit claim caller: %v", err)
 	}
-	for index, identity := range identities {
-		sessionID := fmt.Sprintf("claim-browser-%d", index+1)
-		if _, err := calling.AcquireSoftphone(
-			context.Background(),
-			identity,
-			sessionID,
-			false,
-		); err != nil {
-			t.Fatalf("acquire claim softphone %d: %v", index, err)
-		}
-		if _, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
-			Identity:        identity,
-			SessionID:       sessionID,
-			Registered:      true,
-			MicrophoneReady: true,
-			AudioReady:      true,
-			SessionHealthy:  true,
-			Available:       true,
-		}); err != nil {
-			t.Fatalf("establish claim readiness %d: %v", index, err)
-		}
-	}
+	readyConcurrentStaff(t, calling, identities, "claim-browser")
 	offers, err := calling.ListOffers(context.Background(), identities[0])
 	if err != nil || len(offers) != 1 {
 		t.Fatalf("claim fixture offers = %#v, err = %v", offers, err)
@@ -1390,12 +1619,24 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		connected.Recording.State != humancalling.RecordingIntended {
 		t.Fatalf("provider-confirmed Call = %#v", connected)
 	}
+	if !strings.Contains(
+		metrics.String(),
+		`"metric":"acuity_call_center_accept_to_bridge"`,
+	) || !strings.Contains(metrics.String(), `"seconds":2`) {
+		t.Fatalf("accept-to-bridge metric = %s", metrics.String())
+	}
 	processed, err := calling.ProcessNextCommand(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process recording command: processed=%t err=%v", processed, err)
 	}
 	if provider.count(humancalling.CommandStartRecording) != 1 {
 		t.Fatalf("recording commands = %#v", provider.commands)
+	}
+	if !strings.Contains(
+		metrics.String(),
+		`"metric":"acuity_call_center_provider_command"`,
+	) || !strings.Contains(metrics.String(), `"outcome":"sent"`) {
+		t.Fatalf("provider command metrics = %s", metrics.String())
 	}
 	provider.mu.Lock()
 	for _, command := range provider.commands {
@@ -2963,6 +3204,50 @@ func TestAmbiguousCredentialWritesReconcileThroughProviderState(t *testing.T) {
 	}
 }
 
+func TestCredentialStateLookupFailureIsDurableAndVisibleToWorker(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, identity := provisionStaff(t, accessModule, now)
+	lookupErr := errors.New("provider credential lookup unavailable")
+	provider := &credentialRecoveryProvider{lookupErr: lookupErr}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "credential-connection-1",
+	}, func() time.Time { return now })
+
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatalf("commit credential creation: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("execute ambiguous credential creation: processed=%t err=%v", processed, err)
+	}
+	now = now.Add(6 * time.Second)
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if !processed || !errors.Is(err, lookupErr) {
+		t.Fatalf("provider lookup failure: processed=%t err=%v", processed, err)
+	}
+
+	var state, errorCode string
+	var nextAttemptAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code, next_attempt_at
+		FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, identity.Subject).Scan(&state, &errorCode, &nextAttemptAt); err != nil {
+		t.Fatalf("read deferred credential reconciliation: %v", err)
+	}
+	if state != "AMBIGUOUS" ||
+		errorCode != "PROVIDER_STATE_UNAVAILABLE" ||
+		!nextAttemptAt.Equal(now.Add(5*time.Second)) {
+		t.Fatalf(
+			"deferred credential reconciliation: state=%s error=%s next=%s",
+			state,
+			errorCode,
+			nextAttemptAt,
+		)
+	}
+}
+
 func TestPlatformOperatorReadsOnlyTheSanitizedDurableTimeline(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
@@ -3438,7 +3723,8 @@ type blockingJWTProvider struct {
 }
 
 type credentialRecoveryProvider struct {
-	present bool
+	present   bool
+	lookupErr error
 }
 
 type reauthorizationProvider struct {
@@ -3522,6 +3808,9 @@ func (provider *credentialRecoveryProvider) FindCredentialByName(
 	_ context.Context,
 	name string,
 ) (humancalling.ProviderResult, bool, error) {
+	if provider.lookupErr != nil {
+		return humancalling.ProviderResult{}, false, provider.lookupErr
+	}
 	if !provider.present {
 		return humancalling.ProviderResult{}, false, nil
 	}
@@ -3844,6 +4133,76 @@ func (provider *recordingProvider) ordered(
 		}
 	}
 	return firstIndex >= 0 && secondIndex > firstIndex
+}
+
+func provisionConcurrentStaff(
+	t *testing.T,
+	accessModule *access.Module,
+	now time.Time,
+	prefix string,
+	count int,
+) (access.Authorization, []access.Identity) {
+	t.Helper()
+	invitations := make([]access.InvitationProvision, count)
+	identities := make([]access.Identity, count)
+	for index := range count {
+		email := fmt.Sprintf("%s-staff-%d@synthetic.test", prefix, index+1)
+		invitations[index] = access.InvitationProvision{
+			Key: fmt.Sprintf("%s-staff-%d", prefix, index+1), Email: email,
+			Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			ExpiresAt: now.Add(time.Hour),
+		}
+		identities[index] = access.Identity{
+			Subject: fmt.Sprintf("%s-staff-%d", prefix, index+1),
+			Email:   email, EmailVerified: true,
+		}
+	}
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: prefix + "-test",
+		Practices: []access.PracticeProvision{{
+			Key: prefix + "-practice", Name: prefix + " practice",
+			Locations: []access.LocationProvision{{
+				Key: prefix + "-location", Name: prefix + " location",
+			}},
+			Invitations: invitations,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision %s staff: %v", prefix, err)
+	}
+	var authorization access.Authorization
+	for index, identity := range identities {
+		authorization, err = accessModule.AcceptInvitation(
+			context.Background(), identity, provisioned.Invitations[index].Token,
+		)
+		if err != nil {
+			t.Fatalf("accept %s invitation %d: %v", prefix, index+1, err)
+		}
+	}
+	return authorization, identities
+}
+
+func readyConcurrentStaff(
+	t *testing.T,
+	calling *humancalling.Module,
+	identities []access.Identity,
+	sessionPrefix string,
+) {
+	t.Helper()
+	for index, identity := range identities {
+		sessionID := fmt.Sprintf("%s-%d", sessionPrefix, index+1)
+		if _, err := calling.AcquireSoftphone(
+			context.Background(), identity, sessionID, false,
+		); err != nil {
+			t.Fatalf("acquire %s softphone %d: %v", sessionPrefix, index+1, err)
+		}
+		if _, err := calling.SetReadiness(
+			context.Background(),
+			ready(identity, sessionID),
+		); err != nil {
+			t.Fatalf("ready %s softphone %d: %v", sessionPrefix, index+1, err)
+		}
+	}
 }
 
 func provisionStaff(

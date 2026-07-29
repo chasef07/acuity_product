@@ -1,0 +1,560 @@
+[
+  {
+    "name": "acuity_call_center_webhook_acknowledgement_count",
+    "description": "Count of durable Telnyx webhook acknowledgements by bounded outcome.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_webhook_acknowledgement\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    }
+  },
+  {
+    "name": "acuity_call_center_webhook_acknowledgement_seconds",
+    "description": "Distribution of durable Telnyx webhook acknowledgement latency.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_webhook_acknowledgement\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_receipt_queue_depth",
+    "description": "Distribution of durable provider receipt queue depth samples.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_queue\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.depth)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 16,
+        "growthFactor": 2,
+        "scale": 1
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_receipt_queue_oldest_age_seconds",
+    "description": "Distribution of oldest durable provider receipt age samples.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_queue\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.oldest_age_seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.25
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_receipt_processing_count",
+    "description": "Count of durable provider receipt projection outcomes.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_processing\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    }
+  },
+  {
+    "name": "acuity_call_center_receipt_queue_seconds",
+    "description": "Distribution of provider receipt queue time before projection starts.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_processing\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.queue_seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_receipt_processing_seconds",
+    "description": "Distribution of provider receipt projection execution time.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_processing\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.processing_seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_provider_command_count",
+    "description": "Count of durable provider command outcomes by bounded action and outcome.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "action", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "action": "EXTRACT(jsonPayload.action)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    }
+  },
+  {
+    "name": "acuity_call_center_provider_command_queue_seconds",
+    "description": "Distribution of durable provider command queue time.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "action", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "action": "EXTRACT(jsonPayload.action)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.queue_seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_provider_command_duration_seconds",
+    "description": "Distribution of Telnyx provider command execution time.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "action", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "action": "EXTRACT(jsonPayload.action)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.duration_seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_database_pool_acquire_count",
+    "description": "Count of PostgreSQL pool acquisition outcomes.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_database_pool_acquire\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    }
+  },
+  {
+    "name": "acuity_call_center_database_pool_acquire_seconds",
+    "description": "Distribution of PostgreSQL pool acquisition latency.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_database_pool_acquire\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.0001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_database_pool_acquired",
+    "description": "Distribution of acquired PostgreSQL connection samples.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_database_pool\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.acquired)",
+    "bucketOptions": {
+      "linearBuckets": {
+        "numFiniteBuckets": 64,
+        "width": 1,
+        "offset": 0
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_database_pool_idle",
+    "description": "Distribution of idle PostgreSQL connection samples.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_database_pool\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.idle)",
+    "bucketOptions": {
+      "linearBuckets": {
+        "numFiniteBuckets": 64,
+        "width": 1,
+        "offset": 0
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_database_pool_max",
+    "description": "Distribution of configured PostgreSQL pool maximum samples.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_database_pool\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.max)",
+    "bucketOptions": {
+      "linearBuckets": {
+        "numFiniteBuckets": 64,
+        "width": 1,
+        "offset": 0
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_database_pool_saturation_ratio",
+    "description": "Distribution of acquired-to-maximum PostgreSQL pool saturation samples.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_database_pool\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.saturation_ratio)",
+    "bucketOptions": {
+      "explicitBuckets": {
+        "bounds": [0, 0.25, 0.5, 0.65, 0.8, 0.9, 0.95, 1]
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_sse_stream_active",
+    "description": "Distribution of active authorized SSE stream samples.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_sse_stream\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.active)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 16,
+        "growthFactor": 2,
+        "scale": 1
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_sse_listener_disconnect_count",
+    "description": "Count of realtime PostgreSQL listener disconnect observations.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_sse_listener\" AND jsonPayload.state=\"disconnected\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    }
+  },
+  {
+    "name": "acuity_call_center_sse_listener_reconnect_failure_count",
+    "description": "Count of realtime PostgreSQL listener reconnect failures.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_sse_listener\" AND jsonPayload.state=\"reconnect_failed\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    }
+  },
+  {
+    "name": "acuity_call_center_call_accept_count",
+    "description": "Count of call-offer accept outcomes.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_call_accept\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "INT64",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    }
+  },
+  {
+    "name": "acuity_call_center_accept_to_bridge_seconds",
+    "description": "Distribution of accepted-offer to provider-confirmed bridge time.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_accept_to_bridge\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.01
+      }
+    }
+  }
+]
