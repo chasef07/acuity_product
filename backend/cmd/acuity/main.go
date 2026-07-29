@@ -22,6 +22,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/worker"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -195,7 +196,6 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 	if err != nil {
 		return fmt.Errorf("worker database dependency: %w", err)
 	}
-	slog.Info("runtime_ready", "role", config.Role)
 
 	provider, err := newTelnyxProvider(config)
 	if err != nil {
@@ -211,56 +211,22 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 	if err := calling.ReconcileCredentials(ctx); err != nil {
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
-
-	workTicker := time.NewTicker(250 * time.Millisecond)
-	defer workTicker.Stop()
-	credentialTicker := time.NewTicker(30 * time.Second)
-	defer credentialTicker.Stop()
-	healthTicker := time.NewTicker(30 * time.Second)
-	defer healthTicker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-workTicker.C:
-			workContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-			if _, err := calling.ProcessNextReceipt(workContext); err != nil {
-				slog.Warn("provider_receipt_processing_failed", "error", err)
-			}
-			if _, err := calling.ProcessNextCommand(workContext); err != nil {
-				slog.Warn("provider_command_processing_failed", "error", err)
-			}
-			if _, err := calling.ProcessNextCredentialReconciliation(workContext); err != nil {
-				slog.Warn("provider_credential_reconciliation_failed", "error", err)
-			}
-			if _, err := calling.ExpireOffers(workContext); err != nil {
-				slog.Warn("calling_offer_expiry_failed", "error", err)
-			}
-			if _, err := calling.ExpireConnections(workContext); err != nil {
-				slog.Warn("calling_connection_expiry_failed", "error", err)
-			}
-			if err := calling.RecoverInterruptedCommands(workContext); err != nil {
-				slog.Warn("provider_command_recovery_failed", "error", err)
-			}
-			if _, err := calling.ReconcileConfirmedHangups(workContext); err != nil {
-				slog.Warn("provider_hangup_reconciliation_failed", "error", err)
-			}
-			cancel()
-		case <-credentialTicker.C:
-			workContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
-			if err := calling.ReconcileCredentials(workContext); err != nil {
-				slog.Warn("calling_credential_reconciliation_failed", "error", err)
-			}
-			cancel()
-		case <-healthTicker.C:
-			pingContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
-			err := pool.Ping(pingContext)
-			cancel()
-			if err != nil {
-				slog.Warn("worker_dependency_unavailable")
-			}
-		}
+	runner, err := worker.New(worker.Config{
+		WorkInterval:       250 * time.Millisecond,
+		WorkTimeout:        10 * time.Second,
+		CredentialInterval: 30 * time.Second,
+		CredentialTimeout:  config.AcquireTimeout,
+		HealthInterval:     30 * time.Second,
+		HealthTimeout:      config.AcquireTimeout,
+		ReceiptBatchSize:   8,
+		CommandBatchSize:   1,
+		CommandWorkers:     2,
+	}, calling, pool)
+	if err != nil {
+		return err
 	}
+	slog.Info("runtime_ready", "role", config.Role)
+	return runner.Run(ctx)
 }
 
 func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
