@@ -109,7 +109,7 @@
     },
     "documentation": {
       "mimeType": "text/markdown",
-      "content": "A verified provider receipt exhausted retryable projection and entered quarantine. Repair the projection boundary before audited requeue."
+      "content": "The periodically sampled durable provider receipt quarantine depth is above zero. Repair the projection boundary before audited requeue; the incident remains active until durable recovery clears the quarantine."
     },
     "alertStrategy": {
       "autoClose": "1800s"
@@ -118,12 +118,12 @@
       {
         "displayName": "Any quarantined provider receipt",
         "conditionThreshold": {
-          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_receipt_processing_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.outcome=\"quarantined\"",
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_receipt_quarantine_depth\" AND resource.type=\"cloud_run_worker_pool\"",
           "aggregations": [
             {
               "alignmentPeriod": "60s",
-              "perSeriesAligner": "ALIGN_SUM",
-              "crossSeriesReducer": "REDUCE_SUM"
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
             }
           ],
           "comparison": "COMPARISON_GT",
@@ -209,7 +209,7 @@
     },
     "documentation": {
       "mimeType": "text/markdown",
-      "content": "A runtime timed out acquiring PostgreSQL or sustained pool saturation above the initial 0.8 threshold."
+      "content": "A runtime exhausted its PostgreSQL acquisition deadline or sustained pool saturation above the initial 0.8 threshold. Client and shutdown cancellation is not a timeout."
     },
     "alertStrategy": {
       "autoClose": "1800s"

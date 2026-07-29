@@ -679,6 +679,30 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 	}
 }
 
+func TestReceiptQueueReportsDurableQuarantineDepth(t *testing.T) {
+	fixture := newQuarantinedReceiptFixture(t)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"receipt-quarantine-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
+	calling := humancalling.New(
+		fixture.pool,
+		nil,
+		nil,
+		humancalling.Config{Observer: observer},
+		func() time.Time { return fixture.now },
+	)
+
+	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+		t.Fatalf("report receipt queue: %v", err)
+	}
+	if !strings.Contains(metrics.String(), `"quarantined_depth":1`) {
+		t.Fatalf("receipt queue metric = %s", metrics.String())
+	}
+}
+
 func TestProviderReceiptRequeueRequiresScopedOperatorSupportMode(t *testing.T) {
 	fixture := newQuarantinedReceiptFixture(t)
 	support := fixture.enterSupportMode(

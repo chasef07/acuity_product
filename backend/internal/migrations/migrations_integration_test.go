@@ -27,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 9 {
-		t.Fatalf("migration count = %d, want 9", migrationCount)
+	if migrationCount != 10 {
+		t.Fatalf("migration count = %d, want 10", migrationCount)
 	}
 	var activeCommandIndexIsUnique bool
 	if err := pool.QueryRow(ctx, `
@@ -40,6 +40,40 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	}
 	if !activeCommandIndexIsUnique {
 		t.Fatal("active Call command index is not unique")
+	}
+	var quarantineIndexValid bool
+	var quarantineIndexColumn string
+	var quarantineIndexPredicate string
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			index_metadata.indisvalid,
+			indexed_column.attname,
+			pg_get_expr(
+				index_metadata.indpred,
+				index_metadata.indrelid
+			)
+		FROM pg_index index_metadata
+		JOIN pg_attribute indexed_column
+			ON indexed_column.attrelid = index_metadata.indrelid
+			AND indexed_column.attnum = index_metadata.indkey[0]
+		WHERE index_metadata.indexrelid =
+			'human_calling_quarantined_receipts_idx'::regclass
+	`).Scan(
+		&quarantineIndexValid,
+		&quarantineIndexColumn,
+		&quarantineIndexPredicate,
+	); err != nil {
+		t.Fatalf("inspect quarantined provider receipt index: %v", err)
+	}
+	if !quarantineIndexValid ||
+		quarantineIndexColumn != "quarantined_at" ||
+		quarantineIndexPredicate != "(state = 'QUARANTINED'::text)" {
+		t.Fatalf(
+			"quarantined provider receipt index = valid:%t column:%q predicate:%q",
+			quarantineIndexValid,
+			quarantineIndexColumn,
+			quarantineIndexPredicate,
+		)
 	}
 
 	for _, table := range []string{

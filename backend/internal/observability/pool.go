@@ -40,8 +40,9 @@ func (tracer *PoolTracer) TraceAcquireEnd(
 		startedAt = time.Now()
 	}
 	outcome := PoolAcquireSucceeded
-	if errors.Is(data.Err, context.Canceled) ||
-		errors.Is(data.Err, context.DeadlineExceeded) {
+	if errors.Is(data.Err, context.Canceled) {
+		outcome = PoolAcquireCanceled
+	} else if errors.Is(data.Err, context.DeadlineExceeded) {
 		outcome = PoolAcquireTimeout
 	} else if data.Err != nil {
 		outcome = PoolAcquireFailed
