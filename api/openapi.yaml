@@ -3,8 +3,8 @@ info:
   title: Acuity Portal API
   version: 2026-07-27
   description: >
-    Acuity Portal Access and HumanCalling interfaces with PostgreSQL authority,
-    durable Telnyx commands and receipts, and disposable realtime hints.
+    Acuity Portal Access, HumanCalling, and Work interfaces with PostgreSQL
+    authority, durable commands and receipts, and disposable realtime hints.
 servers:
   - url: https://api.acuity.example
     description: Deployment-supplied HTTPS origin
@@ -550,6 +550,41 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks:
+    post:
+      operationId: createStaffTask
+      summary: Accept one authenticated current Abita create_staff_task command.
+      security:
+        - serviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStaffTaskRequest"
+      responses:
+        "200":
+          description: Safe replay of an already committed Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTaskReceipt"
+        "201":
+          description: Task and source committed atomically.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTaskReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/tasks/query:
@@ -1442,11 +1477,112 @@ components:
         taskId:
           type: string
           format: uuid
+    StaffTaskCategory:
+      type: string
+      enum:
+        - billing
+        - appointments
+        - documentation
+        - optical
+        - medication
+        - referrals
+        - other
+    StaffTaskUrgency:
+      type: string
+      enum: [high_priority, normal, non_urgent]
+    StaffTaskPatientCompatibility:
+      type: object
+      description: >
+        Compatibility-only fields sent by the existing Abita tool. Acuity may
+        source-label the optional name but never persists the ID or date of birth.
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          maxLength: 255
+        name:
+          type: string
+          maxLength: 200
+        dob:
+          type: string
+          maxLength: 64
+    CreateStaffTaskRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - callId
+        - callerPhone
+        - category
+        - idempotencyKey
+        - message
+        - officeKey
+        - officePhone
+        - source
+        - summary
+        - urgency
+      properties:
+        callId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        callerPhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'
+        inboundOfficePhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2500
+        officeKey:
+          type: string
+          minLength: 1
+          maxLength: 100
+        officePhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        patient:
+          $ref: "#/components/schemas/StaffTaskPatientCompatibility"
+        source:
+          type: string
+          enum: [agent]
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 240
+        urgency:
+          $ref: "#/components/schemas/StaffTaskUrgency"
+    StaffTaskReceipt:
+      type: object
+      additionalProperties: false
+      required: [status, taskId, category, urgency]
+      properties:
+        status:
+          type: string
+          enum: [created, duplicate]
+        taskId:
+          type: string
+          format: uuid
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+        urgency:
+          $ref: "#/components/schemas/StaffTaskUrgency"
     TaskActor:
       type: object
       additionalProperties: false
-      required: [subject, email]
+      required: [kind, subject]
       properties:
+        kind:
+          type: string
+          enum: [HUMAN, SERVICE]
         subject:
           type: string
         email:
@@ -1460,10 +1596,11 @@ components:
         - practiceId
         - locationId
         - locationName
-        - callId
         - phone
         - title
         - state
+        - origin
+        - urgency
         - createdBy
         - createdAt
         - version
@@ -1490,6 +1627,19 @@ components:
         state:
           type: string
           enum: [OPEN, COMPLETED]
+        origin:
+          type: string
+          enum: [HUMAN_CALL_FOLLOW_UP, ABITA_AI]
+        urgency:
+          $ref: "#/components/schemas/StaffTaskUrgency"
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+        callerName:
+          type: string
+        sourceCallId:
+          type: string
+        sourceMessage:
+          type: string
         createdBy:
           $ref: "#/components/schemas/TaskActor"
         createdAt:
@@ -1532,6 +1682,9 @@ components:
         search:
           type: string
           maxLength: 500
+        ordering:
+          type: string
+          enum: [time, priority]
         cursor:
           type: string
         limit:

@@ -256,6 +256,21 @@ func (e CallingRecordingState) Valid() bool {
 	}
 }
 
+// Defines values for CreateStaffTaskRequestSource.
+const (
+	Agent CreateStaffTaskRequestSource = "agent"
+)
+
+// Valid indicates whether the value is a known member of the CreateStaffTaskRequestSource enum.
+func (e CreateStaffTaskRequestSource) Valid() bool {
+	switch e {
+	case Agent:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthRole.
 const (
 	PortalApi       HealthRole = "portal-api"
@@ -442,6 +457,96 @@ func (e OperatorCallingTimelineState) Valid() bool {
 	}
 }
 
+// Defines values for StaffTaskCategory.
+const (
+	Appointments  StaffTaskCategory = "appointments"
+	Billing       StaffTaskCategory = "billing"
+	Documentation StaffTaskCategory = "documentation"
+	Medication    StaffTaskCategory = "medication"
+	Optical       StaffTaskCategory = "optical"
+	Other         StaffTaskCategory = "other"
+	Referrals     StaffTaskCategory = "referrals"
+)
+
+// Valid indicates whether the value is a known member of the StaffTaskCategory enum.
+func (e StaffTaskCategory) Valid() bool {
+	switch e {
+	case Appointments:
+		return true
+	case Billing:
+		return true
+	case Documentation:
+		return true
+	case Medication:
+		return true
+	case Optical:
+		return true
+	case Other:
+		return true
+	case Referrals:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StaffTaskReceiptStatus.
+const (
+	Created   StaffTaskReceiptStatus = "created"
+	Duplicate StaffTaskReceiptStatus = "duplicate"
+)
+
+// Valid indicates whether the value is a known member of the StaffTaskReceiptStatus enum.
+func (e StaffTaskReceiptStatus) Valid() bool {
+	switch e {
+	case Created:
+		return true
+	case Duplicate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StaffTaskUrgency.
+const (
+	HighPriority StaffTaskUrgency = "high_priority"
+	NonUrgent    StaffTaskUrgency = "non_urgent"
+	Normal       StaffTaskUrgency = "normal"
+)
+
+// Valid indicates whether the value is a known member of the StaffTaskUrgency enum.
+func (e StaffTaskUrgency) Valid() bool {
+	switch e {
+	case HighPriority:
+		return true
+	case NonUrgent:
+		return true
+	case Normal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskOrigin.
+const (
+	ABITAAI           TaskOrigin = "ABITA_AI"
+	HUMANCALLFOLLOWUP TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
+)
+
+// Valid indicates whether the value is a known member of the TaskOrigin enum.
+func (e TaskOrigin) Valid() bool {
+	switch e {
+	case ABITAAI:
+		return true
+	case HUMANCALLFOLLOWUP:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskState.
 const (
 	COMPLETED TaskState = "COMPLETED"
@@ -454,6 +559,42 @@ func (e TaskState) Valid() bool {
 	case COMPLETED:
 		return true
 	case OPEN:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskActorKind.
+const (
+	TaskActorKindHUMAN   TaskActorKind = "HUMAN"
+	TaskActorKindSERVICE TaskActorKind = "SERVICE"
+)
+
+// Valid indicates whether the value is a known member of the TaskActorKind enum.
+func (e TaskActorKind) Valid() bool {
+	switch e {
+	case TaskActorKindHUMAN:
+		return true
+	case TaskActorKindSERVICE:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskQueryRequestOrdering.
+const (
+	Priority TaskQueryRequestOrdering = "priority"
+	Time     TaskQueryRequestOrdering = "time"
+)
+
+// Valid indicates whether the value is a known member of the TaskQueryRequestOrdering enum.
+func (e TaskQueryRequestOrdering) Valid() bool {
+	switch e {
+	case Priority:
+		return true
+	case Time:
 		return true
 	default:
 		return false
@@ -696,6 +837,27 @@ type CreateHandoffRequest struct {
 	SourceCallId   string              `json:"sourceCallId"`
 }
 
+// CreateStaffTaskRequest defines model for CreateStaffTaskRequest.
+type CreateStaffTaskRequest struct {
+	CallId             string            `json:"callId"`
+	CallerPhone        string            `json:"callerPhone"`
+	Category           StaffTaskCategory `json:"category"`
+	IdempotencyKey     string            `json:"idempotencyKey"`
+	InboundOfficePhone *string           `json:"inboundOfficePhone,omitempty"`
+	Message            string            `json:"message"`
+	OfficeKey          string            `json:"officeKey"`
+	OfficePhone        string            `json:"officePhone"`
+
+	// Patient Compatibility-only fields sent by the existing Abita tool. Acuity may source-label the optional name but never persists the ID or date of birth.
+	Patient *StaffTaskPatientCompatibility `json:"patient,omitempty"`
+	Source  CreateStaffTaskRequestSource   `json:"source"`
+	Summary string                         `json:"summary"`
+	Urgency StaffTaskUrgency               `json:"urgency"`
+}
+
+// CreateStaffTaskRequestSource defines model for CreateStaffTaskRequest.Source.
+type CreateStaffTaskRequestSource string
+
 // EnterSupportModeRequest defines model for EnterSupportModeRequest.
 type EnterSupportModeRequest struct {
 	DurationMinutes int                `json:"durationMinutes"`
@@ -875,6 +1037,30 @@ type SoftphoneState struct {
 	SessionId      string    `json:"sessionId"`
 }
 
+// StaffTaskCategory defines model for StaffTaskCategory.
+type StaffTaskCategory string
+
+// StaffTaskPatientCompatibility Compatibility-only fields sent by the existing Abita tool. Acuity may source-label the optional name but never persists the ID or date of birth.
+type StaffTaskPatientCompatibility struct {
+	Dob  *string `json:"dob,omitempty"`
+	Id   *string `json:"id,omitempty"`
+	Name *string `json:"name,omitempty"`
+}
+
+// StaffTaskReceipt defines model for StaffTaskReceipt.
+type StaffTaskReceipt struct {
+	Category StaffTaskCategory      `json:"category"`
+	Status   StaffTaskReceiptStatus `json:"status"`
+	TaskId   openapi_types.UUID     `json:"taskId"`
+	Urgency  StaffTaskUrgency       `json:"urgency"`
+}
+
+// StaffTaskReceiptStatus defines model for StaffTaskReceipt.Status.
+type StaffTaskReceiptStatus string
+
+// StaffTaskUrgency defines model for StaffTaskUrgency.
+type StaffTaskUrgency string
+
 // SupportMode defines model for SupportMode.
 type SupportMode struct {
 	ExpiresAt  time.Time          `json:"expiresAt"`
@@ -886,30 +1072,43 @@ type SupportMode struct {
 
 // Task defines model for Task.
 type Task struct {
-	CallId       openapi_types.UUID `json:"callId"`
-	CompletedAt  *time.Time         `json:"completedAt,omitempty"`
-	CompletedBy  *TaskActor         `json:"completedBy,omitempty"`
-	CreatedAt    time.Time          `json:"createdAt"`
-	CreatedBy    TaskActor          `json:"createdBy"`
-	Id           openapi_types.UUID `json:"id"`
-	LocationId   openapi_types.UUID `json:"locationId"`
-	LocationName string             `json:"locationName"`
-	Phone        string             `json:"phone"`
-	PracticeId   openapi_types.UUID `json:"practiceId"`
-	State        TaskState          `json:"state"`
-	Title        string             `json:"title"`
-	UpdatedAt    time.Time          `json:"updatedAt"`
-	Version      int64              `json:"version"`
+	CallId        *openapi_types.UUID `json:"callId,omitempty"`
+	CallerName    *string             `json:"callerName,omitempty"`
+	Category      *StaffTaskCategory  `json:"category,omitempty"`
+	CompletedAt   *time.Time          `json:"completedAt,omitempty"`
+	CompletedBy   *TaskActor          `json:"completedBy,omitempty"`
+	CreatedAt     time.Time           `json:"createdAt"`
+	CreatedBy     TaskActor           `json:"createdBy"`
+	Id            openapi_types.UUID  `json:"id"`
+	LocationId    openapi_types.UUID  `json:"locationId"`
+	LocationName  string              `json:"locationName"`
+	Origin        TaskOrigin          `json:"origin"`
+	Phone         string              `json:"phone"`
+	PracticeId    openapi_types.UUID  `json:"practiceId"`
+	SourceCallId  *string             `json:"sourceCallId,omitempty"`
+	SourceMessage *string             `json:"sourceMessage,omitempty"`
+	State         TaskState           `json:"state"`
+	Title         string              `json:"title"`
+	UpdatedAt     time.Time           `json:"updatedAt"`
+	Urgency       StaffTaskUrgency    `json:"urgency"`
+	Version       int64               `json:"version"`
 }
+
+// TaskOrigin defines model for Task.Origin.
+type TaskOrigin string
 
 // TaskState defines model for Task.State.
 type TaskState string
 
 // TaskActor defines model for TaskActor.
 type TaskActor struct {
-	Email   openapi_types.Email `json:"email"`
-	Subject string              `json:"subject"`
+	Email   *openapi_types.Email `json:"email,omitempty"`
+	Kind    TaskActorKind        `json:"kind"`
+	Subject string               `json:"subject"`
 }
+
+// TaskActorKind defines model for TaskActor.Kind.
+type TaskActorKind string
 
 // TaskPage defines model for TaskPage.
 type TaskPage struct {
@@ -919,12 +1118,16 @@ type TaskPage struct {
 
 // TaskQueryRequest defines model for TaskQueryRequest.
 type TaskQueryRequest struct {
-	Cursor     *string             `json:"cursor,omitempty"`
-	Limit      *int                `json:"limit,omitempty"`
-	LocationId *openapi_types.UUID `json:"locationId,omitempty"`
-	PracticeId openapi_types.UUID  `json:"practiceId"`
-	Search     *string             `json:"search,omitempty"`
+	Cursor     *string                   `json:"cursor,omitempty"`
+	Limit      *int                      `json:"limit,omitempty"`
+	LocationId *openapi_types.UUID       `json:"locationId,omitempty"`
+	Ordering   *TaskQueryRequestOrdering `json:"ordering,omitempty"`
+	PracticeId openapi_types.UUID        `json:"practiceId"`
+	Search     *string                   `json:"search,omitempty"`
 }
+
+// TaskQueryRequestOrdering defines model for TaskQueryRequest.Ordering.
+type TaskQueryRequestOrdering string
 
 // TaskTransitionRequest defines model for TaskTransitionRequest.
 type TaskTransitionRequest struct {
@@ -1031,6 +1234,9 @@ type ReceiveTelnyxWebhookJSONRequestBody ReceiveTelnyxWebhookJSONBody
 // EnterSupportModeJSONRequestBody defines body for EnterSupportMode for application/json ContentType.
 type EnterSupportModeJSONRequestBody = EnterSupportModeRequest
 
+// CreateStaffTaskJSONRequestBody defines body for CreateStaffTask for application/json ContentType.
+type CreateStaffTaskJSONRequestBody = CreateStaffTaskRequest
+
 // QueryTasksJSONRequestBody defines body for QueryTasks for application/json ContentType.
 type QueryTasksJSONRequestBody = TaskQueryRequest
 
@@ -1111,6 +1317,9 @@ type ServerInterface interface {
 	// RevokeSupportMode Revoke the real operator's active Support Mode.
 	// (DELETE /v1/support-mode/{supportSessionId})
 	RevokeSupportMode(w http.ResponseWriter, r *http.Request, supportSessionId openapi_types.UUID)
+	// CreateStaffTask Accept one authenticated current Abita create_staff_task command.
+	// (POST /v1/tasks)
+	CreateStaffTask(w http.ResponseWriter, r *http.Request)
 	// QueryTasks Query the authorized Task rail with protected search input.
 	// (POST /v1/tasks/query)
 	QueryTasks(w http.ResponseWriter, r *http.Request)
@@ -1595,6 +1804,20 @@ func (siw *ServerInterfaceWrapper) RevokeSupportMode(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// CreateStaffTask operation middleware
+func (siw *ServerInterfaceWrapper) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateStaffTask(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // QueryTasks operation middleware
 func (siw *ServerInterfaceWrapper) QueryTasks(w http.ResponseWriter, r *http.Request) {
 
@@ -1943,6 +2166,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/calls/{callId}/hangup", wrapper.RequestCallingHangup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/calling/calls/{callId}/disposition", wrapper.RecordCallingDisposition)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/calling/calls/{callId}/history", wrapper.GetCallingCallHistory)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks", wrapper.CreateStaffTask)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks/query", wrapper.QueryTasks)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tasks/{taskId}", wrapper.ReadTask)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/tasks/{taskId}/title", wrapper.RenameTask)
@@ -1959,90 +2183,99 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"mBN4wMoOeI+fHv8vAAD//w==",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

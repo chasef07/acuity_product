@@ -11,27 +11,33 @@
       "Locations": [
         {
           "Key": "fixture-location-1",
-          "Name": "Fixture Location 1"
+          "Name": "Fixture Location 1",
+          "AbitaOfficeKey": "spring-hill"
         },
         {
           "Key": "fixture-location-2",
-          "Name": "Fixture Location 2"
+          "Name": "Fixture Location 2",
+          "AbitaOfficeKey": "crystal-river"
         },
         {
           "Key": "fixture-location-3",
-          "Name": "Fixture Location 3"
+          "Name": "Fixture Location 3",
+          "AbitaOfficeKey": "hollywood"
         },
         {
           "Key": "fixture-location-4",
-          "Name": "Fixture Location 4"
+          "Name": "Fixture Location 4",
+          "AbitaOfficeKey": "sweetwater"
         },
         {
           "Key": "fixture-location-5",
-          "Name": "Fixture Location 5"
+          "Name": "Fixture Location 5",
+          "AbitaOfficeKey": "north-miami-beach-optical"
         },
         {
           "Key": "fixture-location-6",
-          "Name": "Fixture Location 6"
+          "Name": "Fixture Location 6",
+          "AbitaOfficeKey": "dev"
         }
       ],
       "Invitations": [

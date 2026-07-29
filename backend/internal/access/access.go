@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -43,10 +44,43 @@ var (
 	ErrSupportPracticeMismatch = errors.New("Support Mode belongs to another Practice")
 )
 
+var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
+
 type Identity struct {
 	Subject       string
 	Email         string
 	EmailVerified bool
+}
+
+type ActorKind string
+
+const (
+	ActorHuman   ActorKind = "HUMAN"
+	ActorService ActorKind = "SERVICE"
+)
+
+type ServiceCapability string
+
+const (
+	ServiceCapabilityHumanHandoff ServiceCapability = "HUMAN_HANDOFF"
+	ServiceCapabilityCreateTask   ServiceCapability = "CREATE_TASK"
+)
+
+type ServiceIdentity struct {
+	Subject       string
+	PracticeID    string
+	LocationScope LocationScope
+	Capabilities  []ServiceCapability
+}
+
+func (identity ServiceIdentity) Allows(capability ServiceCapability) bool {
+	return serviceHasCapability(identity, capability)
+}
+
+type ServiceAuthorization struct {
+	Actor      Actor
+	PracticeID string
+	LocationID string
 }
 
 type Provisioning struct {
@@ -64,8 +98,9 @@ type PracticeProvision struct {
 }
 
 type LocationProvision struct {
-	Key  string
-	Name string
+	Key            string
+	Name           string
+	AbitaOfficeKey string
 }
 
 type InvitationProvision struct {
@@ -269,6 +304,16 @@ func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned
 		`, practiceInput.Key, practiceInput.Name).Scan(&practiceID); err != nil {
 			return Provisioned{}, fmt.Errorf("provision practice %q: %w", practiceInput.Key, err)
 		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM access_abita_office_locations
+			WHERE practice_id = $1
+		`, practiceID); err != nil {
+			return Provisioned{}, fmt.Errorf(
+				"reconcile Abita office routes for practice %q: %w",
+				practiceInput.Key,
+				err,
+			)
+		}
 
 		locationIDs := make(map[string]string, len(practiceInput.Locations))
 		for _, locationInput := range practiceInput.Locations {
@@ -283,6 +328,24 @@ func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned
 				return Provisioned{}, fmt.Errorf("provision location %q: %w", locationInput.Key, err)
 			}
 			locationIDs[locationInput.Key] = locationID
+			if locationInput.AbitaOfficeKey != "" {
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO access_abita_office_locations (
+						practice_id,
+						office_key,
+						location_id
+					)
+					VALUES ($1, $2, $3)
+					ON CONFLICT (practice_id, office_key)
+					DO UPDATE SET location_id = EXCLUDED.location_id
+				`, practiceID, locationInput.AbitaOfficeKey, locationID); err != nil {
+					return Provisioned{}, fmt.Errorf(
+						"provision Abita office route %q: %w",
+						locationInput.AbitaOfficeKey,
+						err,
+					)
+				}
+			}
 		}
 
 		for _, invitationInput := range practiceInput.Invitations {
@@ -831,6 +894,53 @@ func (m *Module) LockReadAuthorization(
 		return Authorization{}, err
 	}
 	return authorization, nil
+}
+
+// LockServiceAuthorization binds an authenticated service capability and Abita
+// office key to a current Location inside the caller's transaction.
+func (m *Module) LockServiceAuthorization(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity ServiceIdentity,
+	officeKey string,
+	capability ServiceCapability,
+) (ServiceAuthorization, error) {
+	officeKey = strings.TrimSpace(officeKey)
+	if tx == nil ||
+		strings.TrimSpace(identity.Subject) == "" ||
+		strings.TrimSpace(identity.PracticeID) == "" ||
+		identity.LocationScope != LocationScopeAll ||
+		officeKey == "" ||
+		!identity.Allows(capability) {
+		return ServiceAuthorization{}, ErrDenied
+	}
+	var locationID string
+	if err := tx.QueryRow(ctx, `
+		SELECT route.location_id::text
+		FROM access_abita_office_locations route
+		JOIN access_locations location
+			ON location.practice_id = route.practice_id
+			AND location.id = route.location_id
+		WHERE route.practice_id = $1
+			AND route.office_key = $2
+		FOR SHARE OF location
+	`, identity.PracticeID, officeKey).Scan(&locationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ServiceAuthorization{}, ErrDenied
+		}
+		return ServiceAuthorization{}, fmt.Errorf(
+			"lock service Location authorization: %w",
+			err,
+		)
+	}
+	return ServiceAuthorization{
+		Actor: Actor{
+			Subject: identity.Subject,
+			Type:    string(ActorService),
+		},
+		PracticeID: identity.PracticeID,
+		LocationID: locationID,
+	}, nil
 }
 
 // LockOperationalActor holds the actor's current Memberships against revocation,
@@ -1895,9 +2005,21 @@ func validateProvisioning(input Provisioning, now time.Time) error {
 		if strings.TrimSpace(practice.Key) == "" || strings.TrimSpace(practice.Name) == "" {
 			return fmt.Errorf("%w: practice key and name are required", ErrInvalidInput)
 		}
+		officeKeys := make(map[string]struct{}, len(practice.Locations))
 		for _, location := range practice.Locations {
 			if strings.TrimSpace(location.Key) == "" || strings.TrimSpace(location.Name) == "" {
 				return fmt.Errorf("%w: location key and name are required", ErrInvalidInput)
+			}
+			if location.AbitaOfficeKey != "" &&
+				!abitaOfficeKey.MatchString(location.AbitaOfficeKey) {
+				return fmt.Errorf("%w: invalid Abita office key", ErrInvalidInput)
+			}
+			if _, duplicate := officeKeys[location.AbitaOfficeKey]; duplicate &&
+				location.AbitaOfficeKey != "" {
+				return fmt.Errorf("%w: duplicate Abita office key", ErrInvalidInput)
+			}
+			if location.AbitaOfficeKey != "" {
+				officeKeys[location.AbitaOfficeKey] = struct{}{}
 			}
 			if input.Environment != "test" && input.Environment != "development" &&
 				strings.HasPrefix(strings.ToLower(location.Name), "fixture ") {
@@ -1923,6 +2045,18 @@ func validateProvisioning(input Provisioning, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+func serviceHasCapability(
+	identity ServiceIdentity,
+	capability ServiceCapability,
+) bool {
+	for _, candidate := range identity.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
 }
 
 func newInvitationToken() (string, [32]byte, error) {

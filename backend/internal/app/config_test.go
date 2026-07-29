@@ -60,6 +60,11 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" {
 		t.Fatalf("calling SIP domains = %#v", config.HumanCalling)
 	}
+	if config.Service.Token != "synthetic-service-token" ||
+		config.Service.Subject != "abita-synthetic" ||
+		config.Service.PracticeID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("service config = %#v", config.Service)
+	}
 
 	for _, role := range []Role{
 		RolePortalAPI,

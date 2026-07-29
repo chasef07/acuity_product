@@ -38,7 +38,7 @@ type EventStreamer interface {
 }
 
 type ServiceAuthenticator interface {
-	AuthenticateService(context.Context, string) (humancalling.ServiceIdentity, error)
+	AuthenticateService(context.Context, string) (access.ServiceIdentity, error)
 }
 
 type Config struct {
@@ -449,7 +449,8 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	if service.PracticeID != body.PracticeId.String() {
+	if !service.Allows(access.ServiceCapabilityHumanHandoff) ||
+		service.PracticeID != body.PracticeId.String() {
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 		return
 	}
@@ -482,6 +483,67 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		Id:             handoffID,
 		SipDestination: handoff.SIPDestination,
 		ExpiresAt:      handoff.ExpiresAt,
+	})
+}
+
+func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	service, ok := server.authenticateService(w, r)
+	if !ok {
+		return
+	}
+	var body api.CreateStaffTaskRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Source != api.Agent {
+		server.writeWorkError(w, r, work.ErrInvalidInput)
+		return
+	}
+	var patientID, patientDOB, patientName string
+	if body.Patient != nil {
+		patientID = stringValue(body.Patient.Id)
+		patientDOB = stringValue(body.Patient.Dob)
+		patientName = stringValue(body.Patient.Name)
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, status, err := server.work.CreateAITask(ctx, work.CreateAITaskCommand{
+		Service:                 service,
+		OfficeKey:               body.OfficeKey,
+		OfficePhone:             body.OfficePhone,
+		InboundOfficePhone:      stringValue(body.InboundOfficePhone),
+		SourceCallID:            body.CallId,
+		IdempotencyKey:          body.IdempotencyKey,
+		Phone:                   body.CallerPhone,
+		CallerName:              patientName,
+		CompatibilityPatientID:  patientID,
+		CompatibilityPatientDOB: patientDOB,
+		Summary:                 body.Summary,
+		Message:                 body.Message,
+		Category:                work.TaskCategory(body.Category),
+		Urgency:                 work.TaskUrgency(body.Urgency),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	taskID, err := uuid.Parse(task.ID)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	httpStatus := http.StatusCreated
+	if status == work.TaskDuplicate {
+		httpStatus = http.StatusOK
+	}
+	server.writeJSON(w, httpStatus, api.StaffTaskReceipt{
+		Category: api.StaffTaskCategory(task.Category),
+		Status:   api.StaffTaskReceiptStatus(status),
+		TaskId:   taskID,
+		Urgency:  api.StaffTaskUrgency(task.Urgency),
 	})
 }
 
@@ -785,6 +847,10 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	ordering := work.TaskOrderingTime
+	if body.Ordering != nil {
+		ordering = work.TaskOrdering(*body.Ordering)
+	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	page, err := server.work.QueryTasks(ctx, work.QueryTasksCommand{
@@ -792,6 +858,7 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		PracticeID: body.PracticeId.String(),
 		LocationID: uuidString(body.LocationId),
 		Search:     stringValue(body.Search),
+		Ordering:   ordering,
 		Cursor:     stringValue(body.Cursor),
 		Limit:      intValue(body.Limit),
 	})
@@ -1043,12 +1110,12 @@ func (server *Server) authenticate(w http.ResponseWriter, r *http.Request) (acce
 func (server *Server) authenticateService(
 	w http.ResponseWriter,
 	r *http.Request,
-) (humancalling.ServiceIdentity, bool) {
+) (access.ServiceIdentity, bool) {
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") ||
 		strings.Contains(strings.TrimPrefix(header, "Bearer "), " ") {
 		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
-		return humancalling.ServiceIdentity{}, false
+		return access.ServiceIdentity{}, false
 	}
 	identity, err := server.serviceAuth.AuthenticateService(
 		r.Context(),
@@ -1056,7 +1123,7 @@ func (server *Server) authenticateService(
 	)
 	if err != nil {
 		server.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "A valid credential is required.", false)
-		return humancalling.ServiceIdentity{}, false
+		return access.ServiceIdentity{}, false
 	}
 	return identity, true
 }
@@ -1532,31 +1599,56 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if err != nil {
 		return api.Task{}, err
 	}
-	callID, err := uuid.Parse(task.CallID)
-	if err != nil {
-		return api.Task{}, err
-	}
 	response := api.Task{
 		Id:           id,
 		PracticeId:   practiceID,
 		LocationId:   locationID,
 		LocationName: task.LocationName,
-		CallId:       callID,
 		Phone:        task.Phone,
 		Title:        task.Title,
 		State:        api.TaskState(task.State),
+		Origin:       api.TaskOrigin(task.Origin),
+		Urgency:      api.StaffTaskUrgency(task.Urgency),
 		CreatedBy: api.TaskActor{
+			Kind:    api.TaskActorKind(task.CreatedBy.Kind),
 			Subject: task.CreatedBy.Subject,
-			Email:   apiEmail(task.CreatedBy.Email),
 		},
 		CreatedAt: task.CreatedAt,
 		Version:   task.Version,
 		UpdatedAt: task.UpdatedAt,
 	}
+	if task.CallID != "" {
+		callID, err := uuid.Parse(task.CallID)
+		if err != nil {
+			return api.Task{}, err
+		}
+		response.CallId = &callID
+	}
+	if task.Category != "" {
+		category := api.StaffTaskCategory(task.Category)
+		response.Category = &category
+	}
+	if task.CallerName != "" {
+		response.CallerName = &task.CallerName
+	}
+	if task.SourceCallID != "" {
+		response.SourceCallId = &task.SourceCallID
+	}
+	if task.SourceMessage != "" {
+		response.SourceMessage = &task.SourceMessage
+	}
+	if task.CreatedBy.Email != "" {
+		email := apiEmail(task.CreatedBy.Email)
+		response.CreatedBy.Email = &email
+	}
 	if task.CompletedBy != nil {
 		response.CompletedBy = &api.TaskActor{
+			Kind:    api.TaskActorKind(task.CompletedBy.Kind),
 			Subject: task.CompletedBy.Subject,
-			Email:   apiEmail(task.CompletedBy.Email),
+		}
+		if task.CompletedBy.Email != "" {
+			email := apiEmail(task.CompletedBy.Email)
+			response.CompletedBy.Email = &email
 		}
 	}
 	response.CompletedAt = task.CompletedAt

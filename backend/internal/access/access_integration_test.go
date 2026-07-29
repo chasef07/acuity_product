@@ -116,6 +116,103 @@ func TestProvisionRejectsInvitationThatIsAlreadyExpired(t *testing.T) {
 	}
 }
 
+func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	module := access.New(pool, func() time.Time { return now })
+	provision := func(routeLocation string) {
+		t.Helper()
+		locations := []access.LocationProvision{
+			{Key: "office-1", Name: "Office 1"},
+			{Key: "office-2", Name: "Office 2"},
+		}
+		switch routeLocation {
+		case "office-1":
+			locations[0].AbitaOfficeKey = "spring-hill"
+		case "office-2":
+			locations[1].AbitaOfficeKey = "spring-hill"
+		}
+		if _, err := module.Provision(
+			context.Background(),
+			access.Provisioning{
+				Environment: "test",
+				RequestedBy: "slice-4-access-test",
+				Practices: []access.PracticeProvision{{
+					Key:       "abita-eye-group",
+					Name:      "Abita Eye Group",
+					Locations: locations,
+				}},
+			},
+		); err != nil {
+			t.Fatalf("provision Abita office route: %v", err)
+		}
+	}
+	provision("office-1")
+
+	var practiceID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_practices
+		WHERE provisioning_key = 'abita-eye-group'
+	`).Scan(&practiceID); err != nil {
+		t.Fatalf("load Abita route Practice: %v", err)
+	}
+	service := access.ServiceIdentity{
+		Subject:       "abita-route-test",
+		PracticeID:    practiceID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	authorize := func() (access.ServiceAuthorization, error) {
+		t.Helper()
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin Abita route authorization: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		return module.LockServiceAuthorization(
+			context.Background(),
+			tx,
+			service,
+			"spring-hill",
+			access.ServiceCapabilityCreateTask,
+		)
+	}
+	first, err := authorize()
+	if err != nil {
+		t.Fatalf("authorize first Abita route: %v", err)
+	}
+	var firstLocationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_locations
+		WHERE practice_id = $1 AND provisioning_key = 'office-1'
+	`, practiceID).Scan(&firstLocationID); err != nil {
+		t.Fatalf("load first Abita route Location: %v", err)
+	}
+	if first.LocationID != firstLocationID {
+		t.Fatalf(
+			"first Abita route Location = %q, want %q",
+			first.LocationID,
+			firstLocationID,
+		)
+	}
+
+	provision("office-2")
+	second, err := authorize()
+	if err != nil {
+		t.Fatalf("authorize moved Abita route: %v", err)
+	}
+	if second.LocationID == first.LocationID {
+		t.Fatalf("moved Abita route retained Location %q", second.LocationID)
+	}
+
+	provision("")
+	if _, err := authorize(); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("removed Abita route error = %v, want denied", err)
+	}
+}
+
 func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)

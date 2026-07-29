@@ -33,16 +33,20 @@ type Config struct {
 	ProvisioningInput  string
 	ProvisioningOutput string
 	Realtime           RealtimeConfig
+	Service            ServiceConfig
 	HumanCalling       HumanCallingConfig
+}
+
+type ServiceConfig struct {
+	Token      string
+	Subject    string
+	PracticeID string
 }
 
 type HumanCallingConfig struct {
 	HandoffSIPDomain       string
 	StaffSIPDomain         string
 	HandoffTokenKey        []byte
-	HandoffServiceToken    string
-	HandoffServiceSubject  string
-	HandoffServicePractice string
 	WebhookPublicKey       []byte
 	TelnyxAPIKey           string
 	TelnyxAPIBaseURL       string
@@ -126,6 +130,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		if config.HumanCalling, err = loadHandoffConfig(getenv); err != nil {
 			return Config{}, err
 		}
+		if config.Service, err = loadServiceConfig(getenv); err != nil {
+			return Config{}, err
+		}
 	}
 	if role == RolePortalAPI || role == RoleWorker {
 		if err := loadTelnyxCommandConfig(getenv, &config.HumanCalling); err != nil {
@@ -166,20 +173,26 @@ func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 	); err != nil {
 		return HumanCallingConfig{}, err
 	}
-	if result.HandoffServiceToken, err = required(getenv, "HANDOFF_SERVICE_TOKEN"); err != nil {
-		return HumanCallingConfig{}, err
+	return result, nil
+}
+
+func loadServiceConfig(getenv func(string) string) (ServiceConfig, error) {
+	var result ServiceConfig
+	var err error
+	if result.Token, err = required(getenv, "HANDOFF_SERVICE_TOKEN"); err != nil {
+		return ServiceConfig{}, err
 	}
-	if result.HandoffServiceSubject, err = required(getenv, "HANDOFF_SERVICE_SUBJECT"); err != nil {
-		return HumanCallingConfig{}, err
+	if result.Subject, err = required(getenv, "HANDOFF_SERVICE_SUBJECT"); err != nil {
+		return ServiceConfig{}, err
 	}
-	if result.HandoffServicePractice, err = required(
+	if result.PracticeID, err = required(
 		getenv,
 		"HANDOFF_SERVICE_PRACTICE_ID",
 	); err != nil {
-		return HumanCallingConfig{}, err
+		return ServiceConfig{}, err
 	}
-	if _, err := uuid.Parse(result.HandoffServicePractice); err != nil {
-		return HumanCallingConfig{}, fmt.Errorf("HANDOFF_SERVICE_PRACTICE_ID must be a UUID")
+	if _, err := uuid.Parse(result.PracticeID); err != nil {
+		return ServiceConfig{}, fmt.Errorf("HANDOFF_SERVICE_PRACTICE_ID must be a UUID")
 	}
 	return result, nil
 }

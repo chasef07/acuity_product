@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses } from './types.gen';
+import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -249,6 +249,19 @@ export const getCallingCallHistory = <ThrowOnError extends boolean = false>(opti
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/v1/calling/calls/{callId}/history',
     ...options
+});
+
+/**
+ * Accept one authenticated current Abita create_staff_task command.
+ */
+export const createStaffTask = <ThrowOnError extends boolean = false>(options: Options<CreateStaffTaskData, ThrowOnError>) => (options.client ?? client).post<CreateStaffTaskResponses, CreateStaffTaskErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/tasks',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

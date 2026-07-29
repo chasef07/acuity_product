@@ -1,4 +1,4 @@
-package humancalling
+package access
 
 import (
 	"context"
@@ -24,6 +24,10 @@ func NewServiceAuthenticator(
 	}
 	if _, err := uuid.Parse(identity.PracticeID); err != nil {
 		return nil, fmt.Errorf("service Practice ID must be a UUID")
+	}
+	if identity.LocationScope != LocationScopeAll ||
+		len(identity.Capabilities) == 0 {
+		return nil, fmt.Errorf("service scope and capabilities are required")
 	}
 	return &ServiceAuthenticator{
 		token:    []byte(token),

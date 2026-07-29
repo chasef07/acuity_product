@@ -268,9 +268,46 @@ export type CallingDispositionResult = {
     taskId?: string;
 };
 
+export type StaffTaskCategory = 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
+
+export type StaffTaskUrgency = 'high_priority' | 'normal' | 'non_urgent';
+
+/**
+ * Compatibility-only fields sent by the existing Abita tool. Acuity may source-label the optional name but never persists the ID or date of birth.
+ *
+ */
+export type StaffTaskPatientCompatibility = {
+    id?: string;
+    name?: string;
+    dob?: string;
+};
+
+export type CreateStaffTaskRequest = {
+    callId: string;
+    callerPhone: string;
+    category: StaffTaskCategory;
+    idempotencyKey: string;
+    inboundOfficePhone?: string;
+    message: string;
+    officeKey: string;
+    officePhone: string;
+    patient?: StaffTaskPatientCompatibility;
+    source: 'agent';
+    summary: string;
+    urgency: StaffTaskUrgency;
+};
+
+export type StaffTaskReceipt = {
+    status: 'created' | 'duplicate';
+    taskId: string;
+    category: StaffTaskCategory;
+    urgency: StaffTaskUrgency;
+};
+
 export type TaskActor = {
+    kind: 'HUMAN' | 'SERVICE';
     subject: string;
-    email: string;
+    email?: string;
 };
 
 export type Task = {
@@ -278,10 +315,16 @@ export type Task = {
     practiceId: string;
     locationId: string;
     locationName: string;
-    callId: string;
+    callId?: string;
     phone: string;
     title: string;
     state: 'OPEN' | 'COMPLETED';
+    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI';
+    urgency: StaffTaskUrgency;
+    category?: StaffTaskCategory;
+    callerName?: string;
+    sourceCallId?: string;
+    sourceMessage?: string;
     createdBy: TaskActor;
     createdAt: string;
     completedBy?: TaskActor;
@@ -299,6 +342,7 @@ export type TaskQueryRequest = {
     practiceId: string;
     locationId?: string;
     search?: string;
+    ordering?: 'time' | 'priority';
     cursor?: string;
     limit?: number;
 };
@@ -1124,6 +1168,51 @@ export type GetCallingCallHistoryResponses = {
 };
 
 export type GetCallingCallHistoryResponse = GetCallingCallHistoryResponses[keyof GetCallingCallHistoryResponses];
+
+export type CreateStaffTaskData = {
+    body: CreateStaffTaskRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/tasks';
+};
+
+export type CreateStaffTaskErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CreateStaffTaskError = CreateStaffTaskErrors[keyof CreateStaffTaskErrors];
+
+export type CreateStaffTaskResponses = {
+    /**
+     * Safe replay of an already committed Task.
+     */
+    200: StaffTaskReceipt;
+    /**
+     * Task and source committed atomically.
+     */
+    201: StaffTaskReceipt;
+};
+
+export type CreateStaffTaskResponse = CreateStaffTaskResponses[keyof CreateStaffTaskResponses];
 
 export type QueryTasksData = {
     body: TaskQueryRequest;

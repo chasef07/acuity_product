@@ -64,6 +64,433 @@ func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
 	}
 }
 
+func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	service := access.ServiceIdentity{
+		Subject:       "abita-synthetic",
+		PracticeID:    authorization.Practice.ID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	command := work.CreateAITaskCommand{
+		Service:        service,
+		OfficeKey:      "spring-hill",
+		OfficePhone:    "+17275919997",
+		SourceCallID:   "source-call-1",
+		IdempotencyKey: "staff_task_3f94a1",
+		Phone:          "+17275551212",
+		CallerName:     "Jane Doe",
+		Summary:        "Caller needs records sent.",
+		Message:        "Caller asked the office to send their records to a specialist.",
+		Category:       work.TaskCategoryDocumentation,
+		Urgency:        work.TaskUrgencyNormal,
+	}
+
+	var workspaceVersionBefore int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, authorization.Practice.ID).Scan(&workspaceVersionBefore); err != nil {
+		t.Fatalf("read workspace version before AI Task: %v", err)
+	}
+	first, firstStatus, err := module.CreateAITask(context.Background(), command)
+	if err != nil {
+		t.Fatalf("create AI Task: %v", err)
+	}
+	var workspaceVersionAfterCreate int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, authorization.Practice.ID).Scan(&workspaceVersionAfterCreate); err != nil {
+		t.Fatalf("read workspace version after AI Task: %v", err)
+	}
+	replayed, replayStatus, err := module.CreateAITask(context.Background(), command)
+	if err != nil {
+		t.Fatalf("replay AI Task: %v", err)
+	}
+	if firstStatus != work.TaskCreated ||
+		replayStatus != work.TaskDuplicate ||
+		replayed.ID != first.ID {
+		t.Fatalf(
+			"AI Task receipts = (%q, %q, %q), want created, duplicate, %q",
+			firstStatus,
+			replayStatus,
+			replayed.ID,
+			first.ID,
+		)
+	}
+
+	task, err := module.ReadTask(context.Background(), identity, first.ID)
+	if err != nil {
+		t.Fatalf("read AI Task: %v", err)
+	}
+	if task.Origin != work.TaskOriginAbitaAI ||
+		task.CallID != "" ||
+		task.Urgency != work.TaskUrgencyNormal ||
+		task.Category != work.TaskCategoryDocumentation ||
+		task.SourceCallID != command.SourceCallID ||
+		task.SourceMessage != command.Message ||
+		task.CallerName != command.CallerName ||
+		task.CreatedBy.Kind != access.ActorService ||
+		task.CreatedBy.Subject != service.Subject ||
+		task.CreatedBy.Email != "" {
+		t.Fatalf("created AI Task = %#v", task)
+	}
+	sourceSearch, err := module.QueryTasks(
+		context.Background(),
+		work.QueryTasksCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Search:     "specialist",
+		},
+	)
+	if err != nil {
+		t.Fatalf("search AI Task source detail: %v", err)
+	}
+	if len(sourceSearch.Items) != 0 {
+		t.Fatalf(
+			"immutable AI source detail leaked into Task search: %#v",
+			sourceSearch.Items,
+		)
+	}
+
+	var activityCount int
+	var actorKind, actorSubject string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*), min(actor_kind), min(actor_subject)
+		FROM work_task_activities
+		WHERE task_id = $1 AND kind = 'TASK_CREATED'
+	`, task.ID).Scan(&activityCount, &actorKind, &actorSubject); err != nil {
+		t.Fatalf("read AI Task creation Activity: %v", err)
+	}
+	if activityCount != 1 ||
+		actorKind != string(access.ActorService) ||
+		actorSubject != service.Subject {
+		t.Fatalf(
+			"AI Task creation Activity = (%d, %q, %q)",
+			activityCount,
+			actorKind,
+			actorSubject,
+		)
+	}
+	var workspaceVersionAfterReplay int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, authorization.Practice.ID).Scan(&workspaceVersionAfterReplay); err != nil {
+		t.Fatalf("read workspace version after AI Task replay: %v", err)
+	}
+	if workspaceVersionAfterCreate != workspaceVersionBefore+1 ||
+		workspaceVersionAfterReplay != workspaceVersionAfterCreate {
+		t.Fatalf(
+			"AI Task workspace versions = (%d, %d, %d)",
+			workspaceVersionBefore,
+			workspaceVersionAfterCreate,
+			workspaceVersionAfterReplay,
+		)
+	}
+
+	changed := command
+	changed.Message = "Changed immutable request."
+	if _, _, err := module.CreateAITask(
+		context.Background(),
+		changed,
+	); !errors.Is(err, work.ErrConflict) {
+		t.Fatalf("changed AI Task replay error = %v, want conflict", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE work_tasks
+		SET source_message = 'Direct rewrite'
+		WHERE id = $1
+	`, task.ID); err == nil {
+		t.Fatal("direct AI Task source rewrite unexpectedly succeeded")
+	}
+	unchanged, err := module.ReadTask(context.Background(), identity, task.ID)
+	if err != nil {
+		t.Fatalf("read AI Task after rejected rewrites: %v", err)
+	}
+	if unchanged.SourceMessage != command.Message || unchanged.Version != 1 {
+		t.Fatalf("AI Task changed after rejected rewrites: %#v", unchanged)
+	}
+}
+
+func TestCreateAITaskSupportsMultipleOutcomesAndConcurrentReplay(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	service := access.ServiceIdentity{
+		Subject:       "abita-concurrent",
+		PracticeID:    authorization.Practice.ID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	command := work.CreateAITaskCommand{
+		Service:        service,
+		OfficeKey:      "spring-hill",
+		OfficePhone:    "+17275919997",
+		SourceCallID:   "source-call-shared",
+		IdempotencyKey: "staff_task_concurrent",
+		Phone:          "+17275551212",
+		Summary:        "First accountable outcome",
+		Message:        "Caller requested the first independent staff action.",
+		Category:       work.TaskCategoryDocumentation,
+		Urgency:        work.TaskUrgencyNormal,
+	}
+
+	type result struct {
+		task   work.Task
+		status work.TaskCreateStatus
+		err    error
+	}
+	results := make(chan result, 4)
+	var wait sync.WaitGroup
+	for range 4 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			task, status, err := module.CreateAITask(
+				context.Background(),
+				command,
+			)
+			results <- result{task: task, status: status, err: err}
+		}()
+	}
+	wait.Wait()
+	close(results)
+
+	taskID := ""
+	created := 0
+	duplicates := 0
+	for outcome := range results {
+		if outcome.err != nil {
+			t.Fatalf("concurrent AI Task replay: %v", outcome.err)
+		}
+		if taskID == "" {
+			taskID = outcome.task.ID
+		} else if outcome.task.ID != taskID {
+			t.Fatalf(
+				"concurrent AI Task IDs = %q and %q",
+				taskID,
+				outcome.task.ID,
+			)
+		}
+		switch outcome.status {
+		case work.TaskCreated:
+			created++
+		case work.TaskDuplicate:
+			duplicates++
+		default:
+			t.Fatalf("concurrent AI Task status = %q", outcome.status)
+		}
+	}
+	if created != 1 || duplicates != 3 {
+		t.Fatalf(
+			"concurrent AI Task receipts = %d created, %d duplicate",
+			created,
+			duplicates,
+		)
+	}
+
+	second := command
+	second.IdempotencyKey = "staff_task_second"
+	second.Summary = "Second accountable outcome"
+	second.Message = "Caller requested a separate staff action on the same call."
+	secondTask, status, err := module.CreateAITask(
+		context.Background(),
+		second,
+	)
+	if err != nil ||
+		status != work.TaskCreated ||
+		secondTask.ID == taskID ||
+		secondTask.SourceCallID != command.SourceCallID {
+		t.Fatalf(
+			"second AI Task = %#v, status = %q, err = %v",
+			secondTask,
+			status,
+			err,
+		)
+	}
+
+	var taskCount, activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(DISTINCT task.id),
+			count(activity.id)
+		FROM work_tasks task
+		LEFT JOIN work_task_activities activity
+			ON activity.task_id = task.id
+			AND activity.kind = 'TASK_CREATED'
+		WHERE task.created_by_subject = $1
+	`, service.Subject).Scan(&taskCount, &activityCount); err != nil {
+		t.Fatalf("count AI Task outcomes: %v", err)
+	}
+	if taskCount != 2 || activityCount != 2 {
+		t.Fatalf(
+			"AI Task outcome counts = %d Tasks, %d Activities",
+			taskCount,
+			activityCount,
+		)
+	}
+}
+
+func TestCreateAITaskRejectsInvalidOrUnauthorizedCommandsWithoutEffects(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	command := work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject:       "abita-denied",
+			PracticeID:    authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey:      "spring-hill",
+		OfficePhone:    "+17275919997",
+		SourceCallID:   "source-call-denied",
+		IdempotencyKey: "staff_task_denied",
+		Phone:          "+17275551212",
+		Summary:        "Caller needs staff help",
+		Message:        "Caller supplied a complete request for staff.",
+		Category:       work.TaskCategoryOther,
+		Urgency:        work.TaskUrgencyNormal,
+	}
+
+	missingCapability := command
+	missingCapability.Service.Capabilities = nil
+	unknownOffice := command
+	unknownOffice.OfficeKey = "unknown-office"
+	unknownOffice.IdempotencyKey = "staff_task_unknown_office"
+	wrongPractice := command
+	wrongPractice.Service.PracticeID = uuid.NewString()
+	wrongPractice.IdempotencyKey = "staff_task_wrong_practice"
+	for name, candidate := range map[string]work.CreateAITaskCommand{
+		"missing capability": missingCapability,
+		"unknown office":     unknownOffice,
+		"wrong Practice":     wrongPractice,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := module.CreateAITask(
+				context.Background(),
+				candidate,
+			); !errors.Is(err, work.ErrDenied) {
+				t.Fatalf("CreateAITask error = %v, want denied", err)
+			}
+		})
+	}
+	invalidPhone := command
+	invalidPhone.Phone = "7275551212"
+	if _, _, err := module.CreateAITask(
+		context.Background(),
+		invalidPhone,
+	); !errors.Is(err, work.ErrInvalidInput) {
+		t.Fatalf("invalid AI Task error = %v, want invalid input", err)
+	}
+
+	var taskCount, activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM work_tasks),
+			(SELECT count(*) FROM work_task_activities)
+	`).Scan(&taskCount, &activityCount); err != nil {
+		t.Fatalf("count rejected AI Task effects: %v", err)
+	}
+	if taskCount != 0 || activityCount != 0 {
+		t.Fatalf(
+			"rejected AI Task effects = %d Tasks, %d Activities",
+			taskCount,
+			activityCount,
+		)
+	}
+}
+
+func TestCreateAITaskRollsBackEveryEffectWhenWorkspaceChangeFails(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	command := work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject:       "abita-atomic",
+			PracticeID:    authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey:      "spring-hill",
+		OfficePhone:    "+17275919997",
+		SourceCallID:   "source-call-atomic",
+		IdempotencyKey: "staff_task_atomic",
+		Phone:          "+17275551212",
+		Summary:        "Caller needs atomic follow-up",
+		Message:        "Caller supplied a request that must commit completely.",
+		Category:       work.TaskCategoryOther,
+		Urgency:        work.TaskUrgencyNormal,
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE FUNCTION fail_ai_task_workspace_change()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected workspace failure';
+		END
+		$$;
+		CREATE TRIGGER fail_ai_task_workspace_change
+		BEFORE UPDATE OF workspace_version ON access_practices
+		FOR EACH ROW
+		EXECUTE FUNCTION fail_ai_task_workspace_change();
+	`); err != nil {
+		t.Fatalf("install AI Task workspace failure: %v", err)
+	}
+	if _, _, err := module.CreateAITask(
+		context.Background(),
+		command,
+	); err == nil {
+		t.Fatal("AI Task creation unexpectedly survived workspace failure")
+	}
+	var taskCount, activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM work_tasks),
+			(SELECT count(*) FROM work_task_activities)
+	`).Scan(&taskCount, &activityCount); err != nil {
+		t.Fatalf("count rolled-back AI Task effects: %v", err)
+	}
+	if taskCount != 0 || activityCount != 0 {
+		t.Fatalf(
+			"failed AI Task effects = %d Tasks, %d Activities",
+			taskCount,
+			activityCount,
+		)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		DROP TRIGGER fail_ai_task_workspace_change ON access_practices;
+		DROP FUNCTION fail_ai_task_workspace_change();
+	`); err != nil {
+		t.Fatalf("remove AI Task workspace failure: %v", err)
+	}
+	task, status, err := module.CreateAITask(context.Background(), command)
+	if err != nil || status != work.TaskCreated || task.ID == "" {
+		t.Fatalf(
+			"AI Task recovery = %#v, status = %q, err = %v",
+			task,
+			status,
+			err,
+		)
+	}
+}
+
 func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
@@ -119,6 +546,7 @@ func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing
 	if completed.State != work.TaskCompleted ||
 		completed.Version != 3 ||
 		completed.CompletedBy == nil ||
+		completed.CompletedBy.Kind != access.ActorHuman ||
 		completed.CompletedBy.Subject != identity.Subject ||
 		completed.CompletedBy.Email != identity.Email ||
 		completed.CompletedAt == nil ||
@@ -312,6 +740,125 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 		}
 		assertTaskIDs(t, literalPage.Items)
 	}
+}
+
+func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	service := access.ServiceIdentity{
+		Subject:       "abita-priority",
+		PracticeID:    authorization.Practice.ID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	createAI := func(
+		key string,
+		title string,
+		urgency work.TaskUrgency,
+	) work.Task {
+		t.Helper()
+		task, _, err := module.CreateAITask(
+			context.Background(),
+			work.CreateAITaskCommand{
+				Service:        service,
+				OfficeKey:      "spring-hill",
+				OfficePhone:    "+17275919997",
+				SourceCallID:   "source-" + key,
+				IdempotencyKey: "staff_task_" + key,
+				Phone:          "+17275551212",
+				Summary:        title,
+				Message:        "Caller supplied the complete request for " + title + ".",
+				Category:       work.TaskCategoryOther,
+				Urgency:        urgency,
+			},
+		)
+		if err != nil {
+			t.Fatalf("create %s AI Task: %v", key, err)
+		}
+		return task
+	}
+
+	normalOld := createAI("normal-old", "Normal old", work.TaskUrgencyNormal)
+	now = now.Add(time.Minute)
+	nonUrgent := createAI(
+		"non-urgent",
+		"Non-urgent",
+		work.TaskUrgencyNonUrgent,
+	)
+	now = now.Add(time.Minute)
+	high := createAI("high", "High priority", work.TaskUrgencyHighPriority)
+	now = now.Add(time.Minute)
+	normalNew := createAI("normal-new", "Normal new", work.TaskUrgencyNormal)
+
+	timePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Ordering:   work.TaskOrderingTime,
+	})
+	if err != nil {
+		t.Fatalf("query time-ordered Tasks: %v", err)
+	}
+	assertTaskIDs(
+		t,
+		timePage.Items,
+		normalOld.ID,
+		nonUrgent.ID,
+		high.ID,
+		normalNew.ID,
+	)
+
+	priorityPage, err := module.QueryTasks(
+		context.Background(),
+		work.QueryTasksCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Ordering:   work.TaskOrderingPriority,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query priority-ordered Tasks: %v", err)
+	}
+	assertTaskIDs(
+		t,
+		priorityPage.Items,
+		high.ID,
+		normalOld.ID,
+		normalNew.ID,
+		nonUrgent.ID,
+	)
+	firstPriorityPage, err := module.QueryTasks(
+		context.Background(),
+		work.QueryTasksCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Ordering:   work.TaskOrderingPriority,
+			Limit:      2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query first priority cursor page: %v", err)
+	}
+	assertTaskIDs(t, firstPriorityPage.Items, high.ID, normalOld.ID)
+	if firstPriorityPage.NextCursor == "" {
+		t.Fatal("first priority cursor page has no next cursor")
+	}
+	secondPriorityPage, err := module.QueryTasks(
+		context.Background(),
+		work.QueryTasksCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Ordering:   work.TaskOrderingPriority,
+			Cursor:     firstPriorityPage.NextCursor,
+			Limit:      2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query second priority cursor page: %v", err)
+	}
+	assertTaskIDs(t, secondPriorityPage.Items, normalNew.ID, nonUrgent.ID)
 }
 
 func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.T) {
@@ -752,7 +1299,11 @@ func provisionStaff(
 			Key:  "synthetic-practice",
 			Name: "Synthetic Practice",
 			Locations: []access.LocationProvision{
-				{Key: "synthetic-location-1", Name: "Synthetic Location 1"},
+				{
+					Key:            "synthetic-location-1",
+					Name:           "Synthetic Location 1",
+					AbitaOfficeKey: "spring-hill",
+				},
 				{Key: "synthetic-location-2", Name: "Synthetic Location 2"},
 			},
 			Invitations: []access.InvitationProvision{{

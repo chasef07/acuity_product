@@ -86,6 +86,11 @@ func TestAuthenticatedHandoffCreatesOneCurrentOffer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create handoff: %v", err)
 	}
+	command.Service.LocationScope = access.LocationScopeAll
+	command.Service.Capabilities = []access.ServiceCapability{
+		access.ServiceCapabilityHumanHandoff,
+		access.ServiceCapabilityCreateTask,
+	}
 	replayed, err := calling.CreateHandoff(context.Background(), command)
 	if err != nil {
 		t.Fatalf("replay handoff: %v", err)
