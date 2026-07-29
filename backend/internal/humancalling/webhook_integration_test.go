@@ -1,6 +1,7 @@
 package humancalling_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -527,5 +528,326 @@ func TestWaitingProviderReceiptIsAttachedToOperatorTimeline(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("waiting receipt absent from timeline: %#v", timeline.Entries)
+	}
+}
+
+func TestProviderReceiptRetryBackoffIsCappedAndExhaustionIsQuarantined(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		&recordingProvider{},
+		humancalling.Config{
+			WebhookPublicKey: publicKey,
+			WebhookTolerance: 5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"bounded-retry","occurred_at":"%s","payload":{"call_control_id":"missing-control","call_leg_id":"missing-leg","call_session_id":"missing-session"}}}`,
+		now.Format(time.RFC3339Nano),
+	))
+	receive := func() humancalling.WebhookReceipt {
+		t.Helper()
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		receipt, err := calling.ReceiveWebhook(
+			context.Background(),
+			raw,
+			timestamp,
+			signature,
+		)
+		if err != nil {
+			t.Fatalf("receive bounded retry: %v", err)
+		}
+		return receipt
+	}
+	if receipt := receive(); receipt.State != humancalling.ReceiptPending {
+		t.Fatalf("initial receipt = %#v", receipt)
+	}
+
+	wantDelays := []time.Duration{
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		32 * time.Second,
+		time.Minute,
+		time.Minute,
+		time.Minute,
+	}
+	for attempt, wantDelay := range wantDelays {
+		if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+			t.Fatalf(
+				"process bounded retry attempt %d: processed=%t err=%v",
+				attempt+1,
+				processed,
+				err,
+			)
+		}
+		var state humancalling.ReceiptState
+		var attempts int
+		var errorCode string
+		var lastAttemptAt, nextAttemptAt time.Time
+		var quarantinedAt *time.Time
+		if err := pool.QueryRow(context.Background(), `
+			SELECT
+				state,
+				projection_attempts,
+				projection_error_code,
+				last_attempt_at,
+				next_attempt_at,
+				quarantined_at
+			FROM human_calling_provider_receipts
+			WHERE event_id = 'bounded-retry'
+		`).Scan(
+			&state,
+			&attempts,
+			&errorCode,
+			&lastAttemptAt,
+			&nextAttemptAt,
+			&quarantinedAt,
+		); err != nil {
+			t.Fatalf("read bounded retry attempt %d: %v", attempt+1, err)
+		}
+		if state != humancalling.ReceiptPending ||
+			attempts != attempt+1 ||
+			errorCode != "WAITING_FOR_RELATED_FACT" ||
+			!lastAttemptAt.Equal(now) ||
+			!nextAttemptAt.Equal(now.Add(wantDelay)) ||
+			quarantinedAt != nil {
+			t.Fatalf(
+				"bounded retry attempt %d: state=%s attempts=%d error=%s last=%s next=%s want_next=%s quarantined=%v",
+				attempt+1,
+				state,
+				attempts,
+				errorCode,
+				lastAttemptAt,
+				nextAttemptAt,
+				now.Add(wantDelay),
+				quarantinedAt,
+			)
+		}
+		if attempt == 0 {
+			if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || processed {
+				t.Fatalf("retry before due: processed=%t err=%v", processed, err)
+			}
+		}
+		now = nextAttemptAt
+	}
+
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("exhaust bounded retry: processed=%t err=%v", processed, err)
+	}
+	var state humancalling.ReceiptState
+	var attempts, duplicateCount int
+	var errorCode string
+	var lastAttemptAt, projectedAt, quarantinedAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			state,
+			projection_attempts,
+			duplicate_count,
+			projection_error_code,
+			last_attempt_at,
+			projected_at,
+			quarantined_at
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'bounded-retry'
+	`).Scan(
+		&state,
+		&attempts,
+		&duplicateCount,
+		&errorCode,
+		&lastAttemptAt,
+		&projectedAt,
+		&quarantinedAt,
+	); err != nil {
+		t.Fatalf("read exhausted bounded retry: %v", err)
+	}
+	if state != humancalling.ReceiptQuarantined ||
+		attempts != 10 ||
+		duplicateCount != 0 ||
+		errorCode != "RELATED_FACT_RETRY_EXHAUSTED" ||
+		!lastAttemptAt.Equal(now) ||
+		!projectedAt.Equal(now) ||
+		!quarantinedAt.Equal(now) {
+		t.Fatalf(
+			"exhausted receipt: state=%s attempts=%d duplicates=%d error=%s last=%s projected=%s quarantined=%s",
+			state,
+			attempts,
+			duplicateCount,
+			errorCode,
+			lastAttemptAt,
+			projectedAt,
+			quarantinedAt,
+		)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || processed {
+		t.Fatalf("quarantined receipt retried: processed=%t err=%v", processed, err)
+	}
+	if receipt := receive(); !receipt.Duplicate ||
+		receipt.State != humancalling.ReceiptQuarantined ||
+		receipt.DuplicateCount != 1 {
+		t.Fatalf("duplicate quarantined receipt = %#v", receipt)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT projection_attempts, duplicate_count
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'bounded-retry'
+	`).Scan(&attempts, &duplicateCount); err != nil {
+		t.Fatalf("read duplicate quarantined receipt: %v", err)
+	}
+	if attempts != 10 || duplicateCount != 1 {
+		t.Fatalf(
+			"duplicate quarantined attempts=%d duplicates=%d",
+			attempts,
+			duplicateCount,
+		)
+	}
+}
+
+func TestProviderReceiptRetryReplaysSignedEvidenceAfterRelatedFactArrives(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionStaff(t, accessModule, now)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		&recordingProvider{},
+		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			WebhookPublicKey: publicKey,
+			WebhookTolerance: 5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject:    "abita-late-related-fact",
+			PracticeID: authorization.Practice.ID,
+		},
+		LocationID:     authorization.Locations[0].ID,
+		SourceCallID:   "late-related-fact-source",
+		IdempotencyKey: "late-related-fact-idempotency",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create late-related-fact handoff: %v", err)
+	}
+	handoffToken := strings.SplitN(
+		strings.TrimPrefix(handoff.SIPDestination, "sip:"),
+		"@",
+		2,
+	)[0]
+	receive := func(raw []byte) {
+		t.Helper()
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(),
+			raw,
+			timestamp,
+			signature,
+		); err != nil {
+			t.Fatalf("receive late-related-fact webhook: %v", err)
+		}
+	}
+	answeredRaw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"answered-before-call","occurred_at":"%s","payload":{"call_control_id":"late-related-control","call_leg_id":"late-related-leg","call_session_id":"late-related-session"}}}`,
+		now.Format(time.RFC3339Nano),
+	))
+	receive(answeredRaw)
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process answer before Call: processed=%t err=%v", processed, err)
+	}
+
+	now = now.Add(500 * time.Millisecond)
+	initiatedRaw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"call-after-answer","occurred_at":"%s","payload":{"call_control_id":"late-related-control","call_leg_id":"late-related-leg","call_session_id":"late-related-session","custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]}}}`,
+		now.Format(time.RFC3339Nano),
+		handoffToken,
+	))
+	receive(initiatedRaw)
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process Call after answer: processed=%t err=%v", processed, err)
+	}
+
+	now = now.Add(500 * time.Millisecond)
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("replay answer after Call: processed=%t err=%v", processed, err)
+	}
+	var state humancalling.ReceiptState
+	var attempts int
+	var errorCode *string
+	var storedRaw []byte
+	var callID string
+	var quarantinedAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			state,
+			projection_attempts,
+			projection_error_code,
+			raw_body,
+			call_id::text,
+			quarantined_at
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'answered-before-call'
+	`).Scan(
+		&state,
+		&attempts,
+		&errorCode,
+		&storedRaw,
+		&callID,
+		&quarantinedAt,
+	); err != nil {
+		t.Fatalf("read converged receipt: %v", err)
+	}
+	if state != humancalling.ReceiptApplied ||
+		attempts != 2 ||
+		errorCode != nil ||
+		!bytes.Equal(storedRaw, answeredRaw) ||
+		callID == "" ||
+		quarantinedAt != nil {
+		t.Fatalf(
+			"converged receipt: state=%s attempts=%d error=%v raw_equal=%t call=%s quarantined=%v",
+			state,
+			attempts,
+			errorCode,
+			bytes.Equal(storedRaw, answeredRaw),
+			callID,
+			quarantinedAt,
+		)
+	}
+	var projectedFacts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_projected_facts
+		WHERE event_id = 'answered-before-call'
+	`).Scan(&projectedFacts); err != nil {
+		t.Fatalf("count replayed projected facts: %v", err)
+	}
+	if projectedFacts != 1 {
+		t.Fatalf("replayed projected fact count = %d, want 1", projectedFacts)
 	}
 }

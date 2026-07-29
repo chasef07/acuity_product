@@ -21,11 +21,15 @@ import (
 type ReceiptState string
 
 const (
-	ReceiptPending    ReceiptState = "PENDING"
-	ReceiptProcessing ReceiptState = "PROCESSING"
-	ReceiptApplied    ReceiptState = "APPLIED"
-	ReceiptUnknown    ReceiptState = "UNKNOWN"
-	ReceiptFailed     ReceiptState = "FAILED"
+	ReceiptPending     ReceiptState = "PENDING"
+	ReceiptProcessing  ReceiptState = "PROCESSING"
+	ReceiptApplied     ReceiptState = "APPLIED"
+	ReceiptUnknown     ReceiptState = "UNKNOWN"
+	ReceiptFailed      ReceiptState = "FAILED"
+	ReceiptQuarantined ReceiptState = "QUARANTINED"
+
+	maxReceiptProjectionAttempts = 10
+	maxReceiptRetryDelay         = time.Minute
 )
 
 type WebhookReceipt struct {
@@ -169,6 +173,7 @@ func (m *Module) ReceiveWebhook(
 }
 
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
+	now := m.now()
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin provider receipt claim: %w", err)
@@ -192,7 +197,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		ORDER BY next_attempt_at, received_at, event_id
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
-	`, m.now()).Scan(&eventID, &eventType, &raw, &receivedAt)
+	`, now).Scan(&eventID, &eventType, &raw, &receivedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
@@ -203,7 +208,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("claim provider receipt: %w", err)
 	}
 	if eventType == string(FactCallHangup) &&
-		m.now().Before(receivedAt.Add(2*time.Second)) {
+		now.Before(receivedAt.Add(2*time.Second)) {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_provider_receipts
 			SET
@@ -218,45 +223,37 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
-	if _, err := tx.Exec(ctx, `
+	var projectionAttempts int
+	if err := tx.QueryRow(ctx, `
 		UPDATE human_calling_provider_receipts
-		SET state = 'PROCESSING', processing_started_at = $2
+		SET
+			state = 'PROCESSING',
+			projection_attempts = projection_attempts + 1,
+			processing_started_at = $2,
+			last_attempt_at = $2
 		WHERE event_id = $1
-	`, eventID, m.now()); err != nil {
+		RETURNING projection_attempts
+	`, eventID, now).Scan(&projectionAttempts); err != nil {
 		return false, fmt.Errorf("mark provider receipt processing: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit provider receipt claim: %w", err)
 	}
 
-	fact, known, normalizeErr := normalizeTelnyxFact(raw)
-	state := ReceiptApplied
-	errorCode := ""
-	nextAttemptAt := m.now()
-	if normalizeErr != nil {
-		state = ReceiptFailed
-		errorCode = "INVALID_PROVIDER_EVENT"
-	} else if !known {
-		state = ReceiptUnknown
-	} else {
-		projectionErr := m.attachReceiptCall(ctx, eventID, fact)
-		if projectionErr == nil {
-			projectionErr = m.ApplyProviderFact(ctx, fact)
-		}
-		if projectionErr != nil {
-			switch {
-			case errors.Is(projectionErr, ErrConflict):
-				state = ReceiptPending
-				errorCode = "WAITING_FOR_RELATED_FACT"
-				nextAttemptAt = m.now().Add(time.Second)
-			case errors.Is(projectionErr, ErrInvalidHandoff):
-				state = ReceiptFailed
-				errorCode = "HANDOFF_REJECTED"
+	state, errorCode := m.replayProviderReceipt(ctx, eventID, raw)
+	completedAt := m.now()
+	nextAttemptAt := completedAt
+	if state == ReceiptPending {
+		if projectionAttempts >= maxReceiptProjectionAttempts {
+			state = ReceiptQuarantined
+			switch errorCode {
+			case "WAITING_FOR_RELATED_FACT":
+				errorCode = "RELATED_FACT_RETRY_EXHAUSTED"
 			default:
-				state = ReceiptPending
-				errorCode = "PROJECTION_RETRY"
-				nextAttemptAt = m.now().Add(time.Second)
+				errorCode = "PROJECTION_RETRY_EXHAUSTED"
 			}
+		} else {
+			nextAttemptAt = completedAt.Add(receiptRetryDelay(projectionAttempts))
 		}
 	}
 	if _, err := m.pool.Exec(ctx, `
@@ -267,14 +264,59 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			processing_started_at = NULL,
 			next_attempt_at = $4,
 			projected_at = CASE
-				WHEN $2 IN ('APPLIED', 'UNKNOWN', 'FAILED') THEN $5
+				WHEN $2 IN ('APPLIED', 'UNKNOWN', 'FAILED', 'QUARANTINED') THEN $5
 				ELSE projected_at
+			END,
+			quarantined_at = CASE
+				WHEN $2 = 'QUARANTINED' THEN $5
+				ELSE NULL
 			END
-		WHERE event_id = $1 AND state = 'PROCESSING'
-	`, eventID, state, errorCode, nextAttemptAt, m.now()); err != nil {
+		WHERE event_id = $1
+			AND state = 'PROCESSING'
+			AND projection_attempts = $6
+	`, eventID, state, errorCode, nextAttemptAt, completedAt, projectionAttempts); err != nil {
 		return true, fmt.Errorf("record provider receipt projection: %w", err)
 	}
 	return true, nil
+}
+
+func (m *Module) replayProviderReceipt(
+	ctx context.Context,
+	eventID string,
+	raw []byte,
+) (ReceiptState, string) {
+	fact, known, err := normalizeTelnyxFact(raw)
+	if err != nil {
+		return ReceiptFailed, "INVALID_PROVIDER_EVENT"
+	}
+	if !known {
+		return ReceiptUnknown, ""
+	}
+	err = m.attachReceiptCall(ctx, eventID, fact)
+	if err == nil {
+		err = m.ApplyProviderFact(ctx, fact)
+	}
+	switch {
+	case err == nil:
+		return ReceiptApplied, ""
+	case errors.Is(err, ErrConflict):
+		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
+	case errors.Is(err, ErrInvalidHandoff):
+		return ReceiptFailed, "HANDOFF_REJECTED"
+	default:
+		return ReceiptPending, "PROJECTION_RETRY"
+	}
+}
+
+func receiptRetryDelay(attempt int) time.Duration {
+	delay := time.Second
+	for current := 1; current < attempt && delay < maxReceiptRetryDelay; current++ {
+		delay *= 2
+	}
+	if delay > maxReceiptRetryDelay {
+		return maxReceiptRetryDelay
+	}
+	return delay
 }
 
 func (m *Module) attachReceiptCall(
