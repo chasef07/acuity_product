@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -724,6 +725,278 @@ func TestLeaseRenewalDoesNotRefreshStaleReadinessProof(t *testing.T) {
 	)
 	if err != nil || result.Status != humancalling.Accepted {
 		t.Fatalf("accept with current readiness = %#v, err = %v", result, err)
+	}
+}
+
+func TestOfferAcceptanceRetriesTheCompleteTransactionOnce(t *testing.T) {
+	provider := &recordingProvider{}
+	calling, identity, offer := readyOffer(t, provider, "accept-transaction-retry")
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open acceptance retry pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var initialWorkspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, offer.PracticeID).Scan(&initialWorkspaceVersion); err != nil {
+		t.Fatalf("read initial workspace version: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE SEQUENCE accept_offer_retry_sequence;
+		CREATE FUNCTION inject_accept_offer_serialization_failure()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $function$
+		BEGIN
+			IF nextval('accept_offer_retry_sequence') = 1 THEN
+				RAISE EXCEPTION 'injected offer serialization failure'
+					USING ERRCODE = '40001';
+			END IF;
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER inject_accept_offer_serialization_failure
+		BEFORE UPDATE OF state ON human_calling_calls
+		FOR EACH ROW
+		WHEN (NEW.state = 'CONNECTING')
+		EXECUTE FUNCTION inject_accept_offer_serialization_failure();
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("install acceptance retry fault: %v", err)
+	}
+
+	result, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		"accept-transaction-retry-browser",
+		offer.ID,
+	)
+	if err != nil || result.Status != humancalling.Accepted {
+		t.Fatalf("accept offer after retry: result=%#v err=%v", result, err)
+	}
+
+	var retryAttempts, attempts, dialCommands, claimedEntries int64
+	var workspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT last_value FROM accept_offer_retry_sequence),
+			(SELECT count(*) FROM human_calling_connection_attempts WHERE call_id = $1),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'DIAL_STAFF'),
+			(SELECT count(*) FROM human_calling_timeline
+				WHERE call_id = $1 AND kind = 'offer.claimed'),
+			(SELECT workspace_version FROM access_practices WHERE id = $2)
+	`, offer.ID, offer.PracticeID).Scan(
+		&retryAttempts,
+		&attempts,
+		&dialCommands,
+		&claimedEntries,
+		&workspaceVersion,
+	); err != nil {
+		t.Fatalf("read acceptance retry outcome: %v", err)
+	}
+	if retryAttempts != 2 ||
+		attempts != 1 ||
+		dialCommands != 1 ||
+		claimedEntries != 1 ||
+		workspaceVersion != initialWorkspaceVersion+1 {
+		t.Fatalf(
+			"retry=%d attempts=%d commands=%d timeline=%d workspace=%d want 2,1,1,1,%d",
+			retryAttempts,
+			attempts,
+			dialCommands,
+			claimedEntries,
+			workspaceVersion,
+			initialWorkspaceVersion+1,
+		)
+	}
+}
+
+func TestProviderFactRetriesWithoutDuplicateProjectionState(t *testing.T) {
+	provider := &recordingProvider{}
+	calling, _, offer := readyOffer(t, provider, "provider-fact-transaction-retry")
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open provider-fact retry pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var initialWorkspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, offer.PracticeID).Scan(&initialWorkspaceVersion); err != nil {
+		t.Fatalf("read provider-fact workspace version: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE SEQUENCE provider_fact_retry_sequence;
+		CREATE FUNCTION inject_provider_fact_serialization_failure()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $function$
+		BEGIN
+			IF nextval('provider_fact_retry_sequence') = 1 THEN
+				RAISE EXCEPTION 'injected provider-fact serialization failure'
+					USING ERRCODE = '40001';
+			END IF;
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER inject_provider_fact_serialization_failure
+		BEFORE INSERT ON human_calling_projected_facts
+		FOR EACH ROW
+		WHEN (NEW.event_id = 'provider-fact-transaction-retry-answered')
+		EXECUTE FUNCTION inject_provider_fact_serialization_failure();
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("install provider-fact retry fault: %v", err)
+	}
+
+	fact := humancalling.ProviderFact{
+		EventID:       "provider-fact-transaction-retry-answered",
+		Type:          humancalling.FactCallAnswered,
+		OccurredAt:    offer.Deadline.Add(-10 * time.Second),
+		CallControlID: "provider-fact-transaction-retry-caller-control",
+		CallLegID:     "provider-fact-transaction-retry-caller-leg",
+		CallSessionID: "provider-fact-transaction-retry-provider-session",
+	}
+	if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		t.Fatalf("apply provider fact after retry: %v", err)
+	}
+
+	var retryAttempts, projectedFacts, timelineEntries int64
+	var workspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT last_value FROM provider_fact_retry_sequence),
+			(SELECT count(*) FROM human_calling_projected_facts WHERE event_id = $1),
+			(SELECT count(*) FROM human_calling_timeline WHERE provider_event_id = $1),
+			(SELECT workspace_version FROM access_practices WHERE id = $2)
+	`, fact.EventID, offer.PracticeID).Scan(
+		&retryAttempts,
+		&projectedFacts,
+		&timelineEntries,
+		&workspaceVersion,
+	); err != nil {
+		t.Fatalf("read provider-fact retry outcome: %v", err)
+	}
+	if retryAttempts != 2 ||
+		projectedFacts != 1 ||
+		timelineEntries != 1 ||
+		workspaceVersion != initialWorkspaceVersion+1 {
+		t.Fatalf(
+			"retry=%d facts=%d timeline=%d workspace=%d want 2,1,1,%d",
+			retryAttempts,
+			projectedFacts,
+			timelineEntries,
+			workspaceVersion,
+			initialWorkspaceVersion+1,
+		)
+	}
+}
+
+func TestProviderCommandFinalizationRetriesWithoutRepeatingProviderEffect(t *testing.T) {
+	provider := &recordingProvider{}
+	calling, identity, offer := readyOffer(t, provider, "command-finish-transaction-retry")
+	if result, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		"command-finish-transaction-retry-browser",
+		offer.ID,
+	); err != nil || result.Status != humancalling.Accepted {
+		t.Fatalf("accept command-finalization offer: result=%#v err=%v", result, err)
+	}
+	for range 2 {
+		if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+			t.Fatalf("process pre-Dial command: processed=%t err=%v", processed, err)
+		}
+	}
+
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open command-finalization retry pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	var initialWorkspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, offer.PracticeID).Scan(&initialWorkspaceVersion); err != nil {
+		t.Fatalf("read command-finalization workspace version: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		CREATE SEQUENCE command_finish_retry_sequence;
+		CREATE FUNCTION inject_command_finish_serialization_failure()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $function$
+		BEGIN
+			IF nextval('command_finish_retry_sequence') = 1 THEN
+				RAISE EXCEPTION 'injected command-finalization serialization failure'
+					USING ERRCODE = '40001';
+			END IF;
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER inject_command_finish_serialization_failure
+		BEFORE UPDATE OF state ON human_calling_provider_commands
+		FOR EACH ROW
+		WHEN (
+			OLD.state = 'SENDING'
+			AND NEW.state = 'SENT'
+			AND NEW.action = 'DIAL_STAFF'
+		)
+		EXECUTE FUNCTION inject_command_finish_serialization_failure();
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("install command-finalization retry fault: %v", err)
+	}
+
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("process Dial after finalization retry: processed=%t err=%v", processed, err)
+	}
+	if provider.count(humancalling.CommandDialStaff) != 1 {
+		t.Fatalf("Dial provider executions = %d, want 1", provider.count(humancalling.CommandDialStaff))
+	}
+
+	var retryAttempts, sentCommands, timelineEntries int64
+	var workspaceVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT last_value FROM command_finish_retry_sequence),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'DIAL_STAFF' AND state = 'SENT'),
+			(SELECT count(*)
+				FROM human_calling_timeline timeline
+				JOIN human_calling_provider_commands command
+					ON command.id = timeline.provider_command_id
+				WHERE timeline.call_id = $1
+					AND command.action = 'DIAL_STAFF'
+					AND timeline.kind = 'provider.command.sent'),
+			(SELECT workspace_version FROM access_practices WHERE id = $2)
+	`, offer.ID, offer.PracticeID).Scan(
+		&retryAttempts,
+		&sentCommands,
+		&timelineEntries,
+		&workspaceVersion,
+	); err != nil {
+		t.Fatalf("read command-finalization retry outcome: %v", err)
+	}
+	if retryAttempts != 2 ||
+		sentCommands != 1 ||
+		timelineEntries != 1 ||
+		workspaceVersion != initialWorkspaceVersion+1 {
+		t.Fatalf(
+			"retry=%d sent=%d timeline=%d workspace=%d want 2,1,1,%d",
+			retryAttempts,
+			sentCommands,
+			timelineEntries,
+			workspaceVersion,
+			initialWorkspaceVersion+1,
+		)
 	}
 }
 

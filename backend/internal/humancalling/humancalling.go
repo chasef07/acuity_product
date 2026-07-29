@@ -18,6 +18,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -518,34 +519,42 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	if fact.EventID == "" || fact.Type == "" || fact.OccurredAt.IsZero() {
 		return ErrInvalidInput
 	}
+	var transaction func() error
 	switch fact.Type {
 	case FactCallInitiated:
 		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
 			state.Version == 1 &&
 			state.Leg == "staff" {
-			return m.applyStaffInitiated(ctx, fact, state.CallID)
+			transaction = func() error {
+				return m.applyStaffInitiated(ctx, fact, state.CallID)
+			}
+		} else {
+			transaction = func() error { return m.admitHandoff(ctx, fact) }
 		}
-		return m.admitHandoff(ctx, fact)
 	case FactCallAnswered:
 		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
 			state.Version == 1 &&
 			state.Leg == "staff" {
-			return m.applyStaffInitiated(ctx, fact, state.CallID)
+			transaction = func() error {
+				return m.applyStaffInitiated(ctx, fact, state.CallID)
+			}
+		} else {
+			transaction = func() error { return m.applyCallerAnswered(ctx, fact) }
 		}
-		return m.applyCallerAnswered(ctx, fact)
 	case FactCallBridged:
-		return m.applyBridge(ctx, fact)
+		transaction = func() error { return m.applyBridge(ctx, fact) }
 	case FactCallHangup:
-		return m.applyHangup(ctx, fact)
+		transaction = func() error { return m.applyHangup(ctx, fact) }
 	case FactPlaybackStarted:
-		return m.applyRingbackStarted(ctx, fact)
+		transaction = func() error { return m.applyRingbackStarted(ctx, fact) }
 	case FactRecordingSaved:
-		return m.applyRecordingSaved(ctx, fact)
+		transaction = func() error { return m.applyRecordingSaved(ctx, fact) }
 	case FactRecordingError:
-		return m.applyRecordingError(ctx, fact)
+		transaction = func() error { return m.applyRecordingError(ctx, fact) }
 	default:
 		return nil
 	}
+	return postgres.RetryTransaction(ctx, transaction)
 }
 
 func (m *Module) AcquireSoftphone(
@@ -1496,6 +1505,21 @@ func (m *Module) ListOffers(
 }
 
 func (m *Module) AcceptOffer(
+	ctx context.Context,
+	identity access.Identity,
+	sessionID string,
+	callID string,
+) (AcceptResult, error) {
+	var result AcceptResult
+	err := postgres.RetryTransaction(ctx, func() error {
+		var err error
+		result, err = m.acceptOfferTransaction(ctx, identity, sessionID, callID)
+		return err
+	})
+	return result, err
+}
+
+func (m *Module) acceptOfferTransaction(
 	ctx context.Context,
 	identity access.Identity,
 	sessionID string,
@@ -3286,6 +3310,30 @@ func (m *Module) processCommand(
 }
 
 func (m *Module) finishCommand(
+	ctx context.Context,
+	command ProviderCommand,
+	callID *string,
+	userSubject *string,
+	result ProviderResult,
+	executeErr error,
+) (string, error) {
+	var state string
+	err := postgres.RetryTransaction(ctx, func() error {
+		var err error
+		state, err = m.finishCommandTransaction(
+			ctx,
+			command,
+			callID,
+			userSubject,
+			result,
+			executeErr,
+		)
+		return err
+	})
+	return state, err
+}
+
+func (m *Module) finishCommandTransaction(
 	ctx context.Context,
 	command ProviderCommand,
 	callID *string,
