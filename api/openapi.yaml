@@ -1,10 +1,11 @@
 openapi: 3.0.3
 info:
   title: Acuity Portal API
-  version: 2026-07-27
+  version: 2026-07-29
   description: >
-    Acuity Portal Access, HumanCalling, and Work interfaces with PostgreSQL
-    authority, durable commands and receipts, and disposable realtime hints.
+    Acuity Portal Access, HumanCalling, Work, and Messaging interfaces with
+    PostgreSQL authority, durable commands and receipts, and disposable
+    realtime hints.
 servers:
   - url: https://api.acuity.example
     description: Deployment-supplied HTTPS origin
@@ -768,6 +769,370 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/message-threads/query:
+    post:
+      operationId: queryMessageThreads
+      summary: Query phone-led Message Threads in one authorized Location.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageThreadQueryRequest"
+      responses:
+        "200":
+          description: Newest authorized Message Threads.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageThreadPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/message-threads/{threadId}/timeline:
+    get:
+      operationId: getMessageThreadTimeline
+      summary: Read one authorized living conversation timeline.
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Oldest-to-newest authorized conversation page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationTimelinePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/message-threads/{threadId}/read:
+    post:
+      operationId: markMessageThreadRead
+      summary: Clear the real User's unread marker for one Thread.
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkMessageThreadReadRequest"
+      responses:
+        "204":
+          description: The User's Thread marker is clear.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/messages:
+    post:
+      operationId: sendMessage
+      summary: Durably accept one location-derived outbound Message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "200":
+          description: Idempotent replay of an existing Message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageReceipt"
+        "201":
+          description: New durable Sending Message and provider command.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/attachments:
+    post:
+      operationId: uploadMessageAttachment
+      summary: Store one private Location-scoped pending Message attachment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadMessageAttachmentRequest"
+      responses:
+        "201":
+          description: Private pending attachment ready for one-time consumption.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageAttachment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/attachments/{attachmentId}:
+    get:
+      operationId: getMessageAttachment
+      summary: Read one stored attachment after current Location authorization.
+      parameters:
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Authorized attachment bytes with safe response headers.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/attachments/{attachmentId}/retry-copy:
+    post:
+      operationId: retryInboundMessageAttachment
+      summary: Retry storage of one unavailable inbound attachment in place.
+      parameters:
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryMessageAttachmentRequest"
+      responses:
+        "200":
+          description: The same attachment is Processing again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageAttachment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/messages/{messageId}/send-again:
+    post:
+      operationId: sendMessageAgain
+      summary: Create an explicit new attempt while preserving the original Message.
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageAgainRequest"
+      responses:
+        "200":
+          description: Idempotent replay of the explicit new attempt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageReceipt"
+        "201":
+          description: New immutable Message attempt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/messages/{messageId}/follow-up-task:
+    post:
+      operationId: createMessageFollowUpTask
+      summary: Create at most one OPEN follow-up Task from one Message.
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessageFollowUpTaskRequest"
+      responses:
+        "200":
+          description: Existing Task returned for a replayed source Message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "201":
+          description: New Message-derived Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/provider/telnyx/messaging-webhooks:
+    post:
+      operationId: receiveTelnyxMessagingWebhook
+      summary: Verify and durably receipt an inbound Telnyx Message event.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "204":
+          description: Receipt durably committed or accepted duplicate.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/provider/telnyx/messaging-webhooks/{callbackToken}:
+    post:
+      operationId: receiveCorrelatedTelnyxMessagingWebhook
+      summary: Verify and receipt callback-correlated outbound Message evidence.
+      security: []
+      parameters:
+        - name: callbackToken
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 40
+            maxLength: 100
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "204":
+          description: Receipt durably committed or accepted duplicate.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/provider/messaging-media/{attachmentId}:
+    get:
+      operationId: getProviderMessageMedia
+      summary: Serve one short-lived signed outbound attachment to Telnyx.
+      security: []
+      parameters:
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: expires
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: signature
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Intended attachment bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "403":
+          $ref: "#/components/responses/Denied"
   /v1/operator/calls/{callId}/timeline:
     get:
       operationId: getOperatorCallingTimeline
@@ -1117,7 +1482,7 @@ components:
       properties:
         id:
           type: string
-          enum: [tasks, call-center, recordings, settings]
+          enum: [tasks, messages, call-center, recordings, settings]
         label:
           type: string
         enabled:
@@ -1662,6 +2027,7 @@ components:
         - urgency
         - createdBy
         - createdAt
+        - unread
         - version
         - updatedAt
       properties:
@@ -1688,7 +2054,7 @@ components:
           enum: [OPEN, COMPLETED]
         origin:
           type: string
-          enum: [HUMAN_CALL_FOLLOW_UP, ABITA_AI]
+          enum: [HUMAN_CALL_FOLLOW_UP, ABITA_AI, STAFF_MESSAGE_FOLLOW_UP]
         urgency:
           $ref: "#/components/schemas/StaffTaskUrgency"
         category:
@@ -1699,6 +2065,17 @@ components:
           type: string
         sourceMessage:
           type: string
+        messageId:
+          type: string
+          format: uuid
+        messageThreadId:
+          type: string
+          format: uuid
+        conversationThreadId:
+          type: string
+          format: uuid
+        unread:
+          type: boolean
         createdBy:
           $ref: "#/components/schemas/TaskActor"
         createdAt:
@@ -1778,6 +2155,355 @@ components:
         supportSessionId:
           type: string
           format: uuid
+    MessageDirection:
+      type: string
+      enum: [INBOUND, OUTBOUND]
+    MessageDeliveryState:
+      type: string
+      enum: [Sending, Sent, Delivered, Failed, Status unknown]
+    MessageThread:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - officePhone
+        - externalPhone
+        - outboundBlocked
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        officePhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        externalPhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        displayName:
+          type: string
+        nameSource:
+          type: string
+        outboundBlocked:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MessageThreadSummary:
+      allOf:
+        - $ref: "#/components/schemas/MessageThread"
+        - type: object
+          additionalProperties: false
+          required:
+            - preview
+            - latestDirection
+            - latestDelivery
+            - latestActivity
+            - unread
+          properties:
+            preview:
+              type: string
+            latestDirection:
+              $ref: "#/components/schemas/MessageDirection"
+            latestDelivery:
+              $ref: "#/components/schemas/MessageDeliveryState"
+            latestActivity:
+              type: string
+              format: date-time
+            unread:
+              type: boolean
+    MessageThreadPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageThreadSummary"
+        nextCursor:
+          type: string
+    MessageThreadQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        search:
+          type: string
+          maxLength: 40
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+    Message:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - thread
+        - direction
+        - body
+        - sender
+        - destination
+        - delivery
+        - createdAt
+        - updatedAt
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        thread:
+          $ref: "#/components/schemas/MessageThread"
+        direction:
+          $ref: "#/components/schemas/MessageDirection"
+        body:
+          type: string
+        sender:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        destination:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        delivery:
+          $ref: "#/components/schemas/MessageDeliveryState"
+        safeFailureCode:
+          type: string
+        providerMessageId:
+          type: string
+        taskId:
+          type: string
+          format: uuid
+        retryOfMessageId:
+          type: string
+          format: uuid
+        attachment:
+          $ref: "#/components/schemas/MessageAttachment"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    MessageReceipt:
+      type: object
+      additionalProperties: false
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [created, duplicate]
+        message:
+          $ref: "#/components/schemas/Message"
+    SendMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, body, idempotencyKey]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        threadId:
+          type: string
+          format: uuid
+        destination:
+          type: string
+          maxLength: 40
+        body:
+          type: string
+          maxLength: 1600
+        attachmentId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 200
+        supportSessionId:
+          type: string
+          format: uuid
+    MessageAttachment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - direction
+        - state
+        - fileName
+        - contentType
+        - byteSize
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        messageId:
+          type: string
+          format: uuid
+        direction:
+          $ref: "#/components/schemas/MessageDirection"
+        state:
+          type: string
+          enum: [Pending, Processing, Stored, Attachment unavailable]
+        fileName:
+          type: string
+        contentType:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/gif
+            - image/webp
+            - application/pdf
+        byteSize:
+          type: integer
+          minimum: 0
+          maximum: 614400
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    UploadMessageAttachmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - practiceId
+        - locationId
+        - fileName
+        - contentType
+        - contentBase64
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        contentType:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/gif
+            - image/webp
+            - application/pdf
+        contentBase64:
+          type: string
+          minLength: 1
+          maxLength: 819200
+        supportSessionId:
+          type: string
+          format: uuid
+    RetryMessageAttachmentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        supportSessionId:
+          type: string
+          format: uuid
+    SendMessageAgainRequest:
+      type: object
+      additionalProperties: false
+      required: [idempotencyKey, duplicateRiskAcknowledged]
+      properties:
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 200
+        duplicateRiskAcknowledged:
+          type: boolean
+        supportSessionId:
+          type: string
+          format: uuid
+    MarkMessageThreadReadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        supportSessionId:
+          type: string
+          format: uuid
+    CreateMessageFollowUpTaskRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        supportSessionId:
+          type: string
+          format: uuid
+    ConversationTimelineItem:
+      type: object
+      additionalProperties: false
+      required: [type, id, occurredAt]
+      properties:
+        type:
+          type: string
+          enum: [MESSAGE, CALL, TASK]
+        id:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        message:
+          $ref: "#/components/schemas/Message"
+        task:
+          $ref: "#/components/schemas/Task"
+        call:
+          $ref: "#/components/schemas/CallHistoryItem"
+    ConversationTimelinePage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationTimelineItem"
+        nextCursor:
+          type: string
     CallHistoryItem:
       type: object
       additionalProperties: false

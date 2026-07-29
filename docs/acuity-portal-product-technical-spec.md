@@ -18,7 +18,7 @@ The product must make unresolved patient work durable without turning every comm
 
 Acuity Portal is the operating workspace for patient work and discussion.
 
-The existing AI receptionist remains in place. It either completes the caller's request, creates an asynchronous follow-up task, or transfers the caller to an available human. A live transfer does not create a task by itself. After an answered call, staff records `Resolved on call` or creates a follow-up task. Voicemails, meaningful unanswered calls, new inbound texts, and manual staff actions may also create tasks.
+The existing AI receptionist remains in place. It either completes the caller's request, creates an asynchronous follow-up task, or transfers the caller to an available human. A live transfer does not create a task by itself. After an answered call, staff records `Resolved on call` or creates a follow-up task. Voicemails, meaningful unanswered calls, explicit message follow-up actions, and manual staff actions may also create tasks.
 
 **Task is the primary product object.** A task contains one accountable piece of patient work. Calls, voicemails, recordings, transcripts, texts, notes, assignments, and status changes form its activity timeline. Opening a task also shows the practice/location's complete engagement history for the same normalized phone number while visually distinguishing older phone-number history from interactions attached to the current task.
 
@@ -83,9 +83,9 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 42. As a staff member, I want to place a standalone outbound call from the Call Center, so that I can contact a patient before a task exists.
 43. As a staff member, I want a standalone outbound call to create a call record but not an automatic task, so that completed conversations do not pollute the queue.
 44. As a staff member, I want to record `Resolved on call` or create a prefilled follow-up task after a human call, so that every answered call receives an explicit disposition.
-45. As a staff member, I want an inbound patient text to create a task when it is not a reply to an existing task thread, so that new requests enter the shared queue.
-46. As a staff member, I want a reply to a message sent from a task attached automatically to that task, so that the conversation stays coherent.
-47. As a staff member, I want to send an SMS from the task timeline and see delivery state, so that patient communication is visible to the team.
+45. As a staff member, I want every inbound patient text captured in its exact Location-scoped conversation without automatically creating work, so that communication is durable without adding queue noise.
+46. As a staff member, I want to create at most one follow-up Task explicitly from a Message, so that accountability is a human decision with a durable source.
+47. As a staff member, I want to send SMS/MMS from a conversation or linked Task and see provider-backed delivery state, so that patient communication is visible to the team.
 48. As a staff member, I want AI to draft a patient response while requiring my confirmation before send, so that writing is faster without silently sending consequential content.
 49. As an administrator, I want to invite staff and assign authorized locations, so that access matches operational responsibility.
 50. As an administrator, I want to see all tasks across the practice's locations, so that I can supervise the complete workload.
@@ -155,8 +155,12 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 - The AI task tool creates a task immediately only when the AI chooses asynchronous follow-up. It does not create a task for a live human transfer of the same need.
 - A voicemail creates an Open task with recording and transcription.
 - A meaningful unanswered call without voicemail creates an Open Return missed call task.
-- A new inbound SMS attaches to an existing task only when the sender/portal-number pair has exactly one open SMS conversation. Zero or multiple candidates create a new unassigned task.
-- An inbound SMS received after the related task was completed creates a new task rather than reopening or rewriting completed work.
+- An inbound SMS/MMS creates or appends to the exact Practice, Location,
+  configured office sender, and normalized external-phone conversation. It
+  never creates or reopens a Task automatically.
+- Staff may explicitly create at most one follow-up Task from one Message.
+  Repeating that action returns the same Task; completed Tasks remain completed
+  unless a human reopens them.
 - A human may create a task manually through the quick composer.
 - Human inbound and outbound calls do not blindly generate tasks from every transcript.
 - A live AI-to-human transfer creates a call and offer, not a task.
@@ -245,13 +249,28 @@ Visual system:
 ### 8. SMS behavior
 
 - Telnyx sends signed inbound and delivery webhooks to the Go backend.
-- An inbound message attaches automatically only when its sender/portal-number pair has exactly one open SMS conversation in the practice and location.
-- Zero or multiple candidates create a new unassigned task rather than guessing.
-- A reply received after task completion creates a new task; the engagement timeline still shows both tasks and the complete phone-number conversation.
-- Staff send SMS from the task timeline through an authenticated HTTP command.
-- Sending from an unassigned task atomically claims it and moves it to `IN_PROGRESS` before the provider request is issued.
+- One conversation is keyed by Practice, Location, configured office sender,
+  and normalized external phone. The same external phone at two Locations is
+  never one thread.
+- Signed inbound SMS/MMS is durably receipted before asynchronous projection.
+  It appends to the exact conversation and creates no Task automatically.
+- Staff send SMS/MMS from the Message workspace or an `OPEN` linked Task through
+  one authenticated durable command. The configured office sender is
+  server-owned and cannot be supplied by the browser.
+- The visible delivery states are `Sending`, `Sent`, `Delivered`, `Failed`, and
+  `Status unknown`. Only provider evidence advances acceptance or delivery.
+- Interrupted or ambiguous provider writes become `Status unknown` and are not
+  blindly retried. Reconciliation is read-only when provider identity exists;
+  `Send again` is a new immutable attempt and requires duplicate-risk
+  acknowledgment for an unknown outcome.
+- One JPEG, PNG, GIF, WebP, or PDF attachment up to 600 KB is copied into
+  protected application storage. Provider URLs are short-lived and signed.
+- `STOP` immediately blocks later outbound commands and fails commands that
+  have not begun their provider write. `START` removes the block. A write
+  already in progress remains evidence-driven.
+- Opening a conversation marks it read only for the current user. An `OPEN`
+  linked Task shows the same unread state; completed Tasks never show unread.
 - AI may draft a message, but staff confirms before sending in this release.
-- Message delivery state is projected from provider webhooks.
 
 ### 9. Service architecture
 
@@ -286,7 +305,10 @@ PostgreSQL
 - `Access` owns human and service principals, invitations, memberships, roles, location scope, and authorization decisions.
 - `Work` owns task creation, assignment, priority, status, completion, reopening, task activity, and queue projections.
 - `HumanCalling` owns availability, call offers, winner election, logical call state, bridge confirmation, disposition, and recording readiness. Telnyx voice behavior stays behind its provider adapter.
-- `Messaging` owns inbound correlation, send intent, delivery state, and retries. It asks `Work` to create a task when a new message needs accountable work.
+- `Messaging` owns Location-scoped conversations, inbound correlation, durable
+  send intent, delivery evidence, attachment state, per-user unread state, and
+  explicit send-again attempts. It asks `Work` to create a Task only after an
+  authorized human explicitly chooses a source Message.
 - `EvidenceArchive` owns protected recording/transcript availability, access grants, audit, retention, and deletion.
 - `ContactContext` is a small value object used by tasks and interactions, not an independent identity service.
 - The modules expose behavior-oriented interfaces. HTTP handlers, SQL, Telnyx, Better Auth/JWKS, object storage, SSE, and durable jobs remain replaceable adapters around them.
@@ -503,7 +525,9 @@ This is the highest useful seam because it proves the product promise while allo
 14. `Resolved on call` creates no task; `Create follow-up task` creates one prefilled, assigned, `IN_PROGRESS` task.
 15. A standalone completed outbound call creates a call record but no task.
 16. A task-originated outbound call attaches to the task and copies its contact snapshot.
-17. Inbound SMS attaches only when exactly one open conversation matches; ambiguous or post-completion messages create new work.
+17. Inbound SMS/MMS appends only to the exact Location/sender/phone
+    conversation, creates no Task automatically, and supports one explicit
+    Message-derived follow-up Task.
 18. Two concurrent actions on an unassigned task produce one owner and at most one provider side effect.
 19. Completion records linked outcome evidence or an explicit completion reason.
 20. Logs and error responses remain free of protected content.
@@ -534,7 +558,9 @@ This is the highest useful seam because it proves the product promise while allo
 The August 6 release does not ship until all conditions are proven:
 
 1. Staff can sign in and see only authorized practice/location data.
-2. Tasks can be created manually, by the asynchronous AI task tool, inbound SMS, voicemail, unanswered calls, and the post-call follow-up action.
+2. Tasks can be created manually, by the asynchronous AI task tool, an explicit
+   Message follow-up action, voicemail, unanswered calls, and the post-call
+   follow-up action.
 3. Staff can prioritize, assign, claim, edit, move between Open and In progress, complete, reopen, filter, sort, and search tasks.
 4. Completed tasks move to the bottom without disappearing.
 5. Opening a task shows its linked activity and the complete practice/location phone-number engagement history without merging identities.
@@ -543,7 +569,9 @@ The August 6 release does not ship until all conditions are proven:
 8. Unanswered transfers fall back after 20 seconds and create the correct voicemail or missed-call task.
 9. Human inbound and outbound calls record and transcribe successfully under the configured retention policy.
 10. Outbound calls started from a task attach to that task and preserve its contact snapshot.
-11. Staff can receive and send SMS from the task timeline, with ambiguous and post-completion replies creating new work.
+11. Staff can receive and send SMS/MMS from a Location-scoped conversation or
+    linked `OPEN` Task, see provider-backed delivery state, and explicitly
+    create follow-up work from a Message.
 12. Provider events and AI task requests are authenticated, idempotent, and cannot create duplicates when retried.
 13. Concurrent task actions cannot overwrite ownership or issue duplicate patient contact.
 14. Cross-practice/location data access is denied and ordinary logs contain no protected content.
@@ -576,7 +604,7 @@ The August 6 release does not ship until all conditions are proven:
 | Sun Jul 26 | Manual task loop works end to end | `Work` model, commands, optimistic concurrency, audit, queries | Queue, quick create, assignment/status/completion/reopen UI | Create → assign → In progress → evidence/reason → Complete → bottom → Reopen |
 | Mon Jul 27 | Living engagement workspace and realtime coordination work | Task activity, phone-history query, isolated `realtime`, SSE/versioning | SMS-first workspace, unified timeline, reconnect/refetch behavior | Two authorized browsers see current task; SSE restart reconstructs the authoritative snapshot |
 | Tue Jul 28 | AI-created asynchronous tasks work | Scoped service identity, idempotent AI command | AI source and handoff presentation | Replay the same AI request; exactly one unassigned Open task appears |
-| Wed Jul 29 | SMS works through the task timeline | `Messaging`, webhooks, exact-one-open correlation, send/delivery state | Inbound tasks, composer, delivery rendering, AI draft confirmation | Exact match attaches; ambiguous/completed reply creates new task; stale concurrent send is blocked |
+| Wed Jul 29 | Location-scoped SMS/MMS conversations work | `Messaging`, signed webhooks, durable send/reconciliation, delivery and attachment state | Message rail, mixed timeline, composer, explicit Message-derived Task | Exact Location/sender/phone thread; inbound creates no Task; explicit Task link; no blind retry |
 | Thu Jul 30 | No-answer and call-disposition recovery work | 20-second fallback, voicemail, missed call, durable `NEEDS_DISPOSITION` | Recovery UI, post-call outcomes, prefilled follow-up task | Timeout falls back; browser loss preserves disposition; both outcome paths pass |
 | Fri Jul 31 | Outbound calling and call controls work | Task-originated and standalone outbound commands and linkage | Dialer, mute, keypad, hold, transfer, end, persistent active-call workspace | Task call links to task; standalone resolved call creates no task |
 | Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Recordings navigation, playback, transcript, failure states | Inbound/outbound/voicemail evidence appears and unauthorized access fails |

@@ -8,17 +8,17 @@ import {
   BotIcon,
   CheckCircle2Icon,
   LogOutIcon,
+  MessageSquareIcon,
   MoonIcon,
   PhoneCallIcon,
+  PlusIcon,
   SearchIcon,
   SunIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select"
+import { Button } from "@/components/ui/button"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
   Sidebar,
   SidebarContent,
@@ -36,6 +36,7 @@ import { Spinner } from "@/components/ui/spinner"
 import type {
   AccessDiscovery,
   CallingOffer,
+  MessageThreadSummary,
   PracticeAccess,
   Task,
 } from "@/lib/api/generated/types.gen"
@@ -43,6 +44,7 @@ import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
 export type ConnectionState = "connecting" | "connected" | "disconnected"
+export type RailMode = "tasks" | "messages"
 
 type TaskRailProps = {
   discovery: AccessDiscovery
@@ -50,19 +52,28 @@ type TaskRailProps = {
   practiceID: string
   locationScopeID: string
   tasks: Task[]
+  messages: MessageThreadSummary[]
+  mode: RailMode
   selectedTaskID: string
+  selectedThreadID: string
   search: string
   ordering: "time" | "priority"
   loading: boolean
+  messageLoading: boolean
   nextCursor: string
+  messageNextCursor: string
   connection: ConnectionState
   callingOffers: CallingOffer[]
   onPracticeChange: (practiceID: string) => void
   onLocationScopeChange: (locationID: string) => void
+  onModeChange: (mode: RailMode) => void
   onSearchChange: (search: string) => void
   onOrderingChange: (ordering: "time" | "priority") => void
   onTaskSelect: (task: Task) => void
+  onThreadSelect: (thread: MessageThreadSummary) => void
+  onNewText: () => void
   onLoadMore: () => void
+  onMessageLoadMore: () => void
 }
 
 export function TaskRail({
@@ -71,19 +82,28 @@ export function TaskRail({
   practiceID,
   locationScopeID,
   tasks,
+  messages,
+  mode,
   selectedTaskID,
+  selectedThreadID,
   search,
   ordering,
   loading,
+  messageLoading,
   nextCursor,
+  messageNextCursor,
   connection,
   callingOffers,
   onPracticeChange,
   onLocationScopeChange,
+  onModeChange,
   onSearchChange,
   onOrderingChange,
   onTaskSelect,
+  onThreadSelect,
+  onNewText,
   onLoadMore,
+  onMessageLoadMore,
 }: TaskRailProps) {
   const open = tasks.filter((task) => task.state === "OPEN")
   const completed = tasks.filter((task) => task.state === "COMPLETED")
@@ -101,10 +121,31 @@ export function TaskRail({
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">Acuity Health</p>
             <p className="text-[0.625rem] uppercase tracking-[0.18em] text-muted-foreground">
-              Follow-up work
+              {mode === "tasks" ? "Follow-up work" : "Patient correspondence"}
             </p>
           </div>
           <ConnectionMark state={connection} />
+        </div>
+        <div
+          aria-label="Workspace rail"
+          className="grid grid-cols-2 rounded-sm border bg-muted/30 p-0.5"
+        >
+          <Button
+            size="sm"
+            variant={mode === "tasks" ? "secondary" : "ghost"}
+            className="h-7 rounded-sm text-xs"
+            onClick={() => onModeChange("tasks")}
+          >
+            Tasks
+          </Button>
+          <Button
+            size="sm"
+            variant={mode === "messages" ? "secondary" : "ghost"}
+            className="h-7 rounded-sm text-xs"
+            onClick={() => onModeChange("messages")}
+          >
+            Messages
+          </Button>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <NativeSelect
@@ -123,7 +164,7 @@ export function TaskRail({
             value={locationScopeID}
             onChange={(event) => onLocationScopeChange(event.target.value)}
           >
-            {practice.locations.length > 1 && (
+            {mode === "tasks" && practice.locations.length > 1 && (
               <NativeSelectOption value="">All offices</NativeSelectOption>
             )}
             {practice.locations.map((location) => (
@@ -137,26 +178,36 @@ export function TaskRail({
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <SidebarInput
-              aria-label="Search tasks"
+              aria-label={mode === "tasks" ? "Search tasks" : "Search messages"}
               autoComplete="off"
-              placeholder="Search title or phone"
+              inputMode={mode === "messages" ? "tel" : undefined}
+              placeholder={
+                mode === "tasks" ? "Search title or phone" : "Search phone"
+              }
               value={search}
               onChange={(event) => onSearchChange(event.target.value)}
               className="pl-7"
             />
           </div>
-          <NativeSelect
-            aria-label="Order tasks"
-            size="sm"
-            value={ordering}
-            onChange={(event) =>
-              onOrderingChange(event.target.value as "time" | "priority")
-            }
-            className="w-20"
-          >
-            <NativeSelectOption value="time">Time</NativeSelectOption>
-            <NativeSelectOption value="priority">Priority</NativeSelectOption>
-          </NativeSelect>
+          {mode === "tasks" ? (
+            <NativeSelect
+              aria-label="Order tasks"
+              size="sm"
+              value={ordering}
+              onChange={(event) =>
+                onOrderingChange(event.target.value as "time" | "priority")
+              }
+              className="w-20"
+            >
+              <NativeSelectOption value="time">Time</NativeSelectOption>
+              <NativeSelectOption value="priority">Priority</NativeSelectOption>
+            </NativeSelect>
+          ) : (
+            <Button size="sm" className="h-8" onClick={onNewText}>
+              <PlusIcon />
+              New text
+            </Button>
+          )}
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
@@ -173,36 +224,52 @@ export function TaskRail({
             </Badge>
           </div>
         )}
-        <TaskGroup
-          label="Open"
-          tasks={open}
-          selectedTaskID={selectedTaskID}
-          showOffice={showOffice}
-          onTaskSelect={onTaskSelect}
-        />
-        <TaskGroup
-          label="Completed"
-          tasks={completed}
-          selectedTaskID={selectedTaskID}
-          showOffice={showOffice}
-          onTaskSelect={onTaskSelect}
-        />
-        {loading && (
-          <div className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
-            <Spinner />
-            Refreshing tasks
-          </div>
+        {mode === "tasks" ? (
+          <>
+            <TaskGroup
+              label="Open"
+              tasks={open}
+              selectedTaskID={selectedTaskID}
+              showOffice={showOffice}
+              onTaskSelect={onTaskSelect}
+            />
+            <TaskGroup
+              label="Completed"
+              tasks={completed}
+              selectedTaskID={selectedTaskID}
+              showOffice={showOffice}
+              onTaskSelect={onTaskSelect}
+            />
+            {loading && <RailLoading label="Refreshing tasks" />}
+            {!loading && tasks.length === 0 && (
+              <RailEmpty>No follow-up tasks</RailEmpty>
+            )}
+            <RailLoadSentinel
+              label="Loading more tasks"
+              cursor={nextCursor}
+              loading={loading}
+              onLoadMore={onLoadMore}
+            />
+          </>
+        ) : (
+          <>
+            <MessageThreadGroup
+              threads={messages}
+              selectedThreadID={selectedThreadID}
+              onThreadSelect={onThreadSelect}
+            />
+            {messageLoading && <RailLoading label="Refreshing messages" />}
+            {!messageLoading && messages.length === 0 && (
+              <RailEmpty>No conversations at this office</RailEmpty>
+            )}
+            <RailLoadSentinel
+              label="Loading more conversations"
+              cursor={messageNextCursor}
+              loading={messageLoading}
+              onLoadMore={onMessageLoadMore}
+            />
+          </>
         )}
-        {!loading && tasks.length === 0 && (
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No follow-up tasks
-          </p>
-        )}
-        <TaskLoadSentinel
-          cursor={nextCursor}
-          loading={loading}
-          onLoadMore={onLoadMore}
-        />
       </SidebarContent>
       <SidebarFooter className="border-t p-2">
         <SidebarMenu>
@@ -225,9 +292,7 @@ export function TaskRail({
             <SidebarMenuButton
               tooltip="Sign out"
               onClick={() =>
-                void authClient
-                  .signOut()
-                  .then(() => router.push("/sign-in"))
+                void authClient.signOut().then(() => router.push("/sign-in"))
               }
             >
               <LogOutIcon />
@@ -275,6 +340,12 @@ function TaskGroup({
               >
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                   <span className="flex min-w-0 items-center gap-2">
+                    {task.unread && task.state === "OPEN" && (
+                      <span
+                        aria-label="Unread conversation"
+                        className="size-1.5 shrink-0 rounded-full bg-primary"
+                      />
+                    )}
                     {task.state === "COMPLETED" && (
                       <CheckCircle2Icon className="size-3.5 shrink-0 text-muted-foreground" />
                     )}
@@ -335,11 +406,112 @@ function TaskGroup({
   )
 }
 
-function TaskLoadSentinel({
+function MessageThreadGroup({
+  threads,
+  selectedThreadID,
+  onThreadSelect,
+}: {
+  threads: MessageThreadSummary[]
+  selectedThreadID: string
+  onThreadSelect: (thread: MessageThreadSummary) => void
+}) {
+  if (threads.length === 0) return null
+  return (
+    <SidebarGroup className="p-0">
+      <SidebarGroupLabel className="h-8 border-b px-3 text-[0.625rem] uppercase tracking-[0.16em]">
+        Correspondence ledger
+      </SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu className="gap-0">
+          {threads.map((thread) => (
+            <SidebarMenuItem key={thread.id}>
+              <SidebarMenuButton
+                isActive={thread.id === selectedThreadID}
+                className={cn(
+                  "h-auto min-h-20 animate-in rounded-none border-b px-3 py-2.5 fade-in slide-in-from-top-1 duration-200",
+                  "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
+                )}
+                tooltip={thread.externalPhone}
+                onClick={() => onThreadSelect(thread)}
+              >
+                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="flex min-w-0 items-center gap-2">
+                    {thread.unread && (
+                      <span
+                        aria-label="Unread message"
+                        className="size-1.5 shrink-0 rounded-full bg-primary"
+                      />
+                    )}
+                    <MessageSquareIcon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
+                      {formatPhone(thread.externalPhone)}
+                    </span>
+                    <time
+                      dateTime={thread.latestActivity}
+                      className="font-mono text-[0.625rem] text-muted-foreground"
+                    >
+                      {relativeTime(thread.latestActivity)}
+                    </time>
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {thread.displayName
+                      ? `${thread.displayName} · ${formatNameSource(thread.nameSource)}`
+                      : "No sourced name"}
+                  </span>
+                  <span className="flex items-center gap-1.5 font-mono text-[0.625rem] text-muted-foreground">
+                    <span>
+                      {thread.latestDirection === "OUTBOUND"
+                        ? "Outbound"
+                        : "Inbound"}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="truncate">
+                      {thread.preview || "Attachment"}
+                    </span>
+                    {thread.latestDirection === "OUTBOUND" && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span>{thread.latestDelivery}</span>
+                      </>
+                    )}
+                  </span>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  )
+}
+
+function RailLoading({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
+      <Spinner />
+      {label}
+    </div>
+  )
+}
+
+function RailEmpty({ children }: { children: string }) {
+  return (
+    <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+      {children}
+    </p>
+  )
+}
+
+function RailLoadSentinel({
+  label,
   cursor,
   loading,
   onLoadMore,
 }: {
+  label: string
   cursor: string
   loading: boolean
   onLoadMore: () => void
@@ -363,7 +535,7 @@ function TaskLoadSentinel({
   return (
     <div
       ref={sentinel}
-      aria-label="Loading more tasks"
+      aria-label={label}
       className="flex h-8 items-center justify-center text-muted-foreground"
     >
       {loading && <Spinner />}
@@ -414,13 +586,18 @@ function relativeTime(value: string) {
 function taskRelativeAt(task: Task) {
   return task.state === "OPEN"
     ? task.createdAt
-    : task.completedAt ?? task.updatedAt
+    : (task.completedAt ?? task.updatedAt)
 }
 
 function formatPhone(phone: string) {
   const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
   if (!match) return phone
   return `(${match[1]}) ${match[2]}-${match[3]}`
+}
+
+function formatNameSource(source: string | undefined) {
+  if (!source) return "source unavailable"
+  return source.replaceAll("_", " ").toLowerCase()
 }
 
 function railUrgency(urgency: Task["urgency"]) {

@@ -19,6 +19,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
@@ -82,11 +83,29 @@ func run() error {
 			humanCallingConfig(config, observer),
 			nil,
 		)
-		handler, err := httpapi.NewProviderIngress(httpapi.Config{
+		attachmentStore, err := newAttachmentStore(config)
+		if err != nil {
+			return err
+		}
+		messages := messaging.New(
+			pool,
+			nil,
+			nil,
+			nil,
+			messaging.Config{
+				WebhookPublicKey: ed25519.PublicKey(
+					config.Messaging.WebhookPublicKey,
+				),
+				AttachmentStore: attachmentStore,
+				MediaSigningKey: config.Messaging.MediaSigningKey,
+			},
+			nil,
+		)
+		handler, err := httpapi.NewProviderIngressWithMessaging(httpapi.Config{
 			AllowedOrigin:  config.BrowserOrigin,
 			AcquireTimeout: config.AcquireTimeout,
 			Observer:       observer,
-		}, pool, calling)
+		}, pool, calling, messages)
 		if err != nil {
 			return err
 		}
@@ -203,6 +222,19 @@ func runAuthorizedHTTP(
 			humanCallingConfig(config, observer),
 			nil,
 		)
+		attachmentStore, err := newAttachmentStore(config)
+		if err != nil {
+			return err
+		}
+		workModule := work.New(pool, accessModule, nil)
+		messages := messaging.New(
+			pool,
+			accessModule,
+			workModule,
+			nil,
+			messaging.Config{AttachmentStore: attachmentStore},
+			nil,
+		)
 		serviceAuth, err := access.NewServiceAuthenticator(
 			config.Service.Token,
 			access.ServiceIdentity{
@@ -226,7 +258,8 @@ func runAuthorizedHTTP(
 			Access:               accessModule,
 			Authenticator:        authenticator,
 			Calling:              calling,
-			Work:                 work.New(pool, accessModule, nil),
+			Messaging:            messages,
+			Work:                 workModule,
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {
@@ -260,10 +293,31 @@ func runWorker(
 		humanCallingConfig(config, observer),
 		nil,
 	)
+	messagingProvider, err := newTelnyxMessagingProvider(config)
+	if err != nil {
+		return err
+	}
+	attachmentStore, err := newAttachmentStore(config)
+	if err != nil {
+		return err
+	}
+	accessModule := access.New(pool, nil)
+	messages := messaging.New(
+		pool,
+		accessModule,
+		work.New(pool, accessModule, nil),
+		messagingProvider,
+		messaging.Config{
+			AttachmentStore:    attachmentStore,
+			MediaPublicBaseURL: config.Messaging.MediaPublicBaseURL,
+			MediaSigningKey:    config.Messaging.MediaSigningKey,
+		},
+		nil,
+	)
 	if err := calling.ReconcileCredentials(ctx); err != nil {
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
-	runner, err := worker.New(worker.Config{
+	runner, err := worker.NewWithMessaging(worker.Config{
 		WorkInterval:       250 * time.Millisecond,
 		WorkTimeout:        10 * time.Second,
 		CredentialInterval: 30 * time.Second,
@@ -277,7 +331,7 @@ func runWorker(
 		CommandWorkers:     2,
 		ErrorBackoffMin:    250 * time.Millisecond,
 		ErrorBackoffMax:    10 * time.Second,
-	}, calling, pool)
+	}, calling, messages, pool)
 	if err != nil {
 		return err
 	}
@@ -290,6 +344,24 @@ func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
 		APIKey:  config.HumanCalling.TelnyxAPIKey,
 		BaseURL: config.HumanCalling.TelnyxAPIBaseURL,
 	})
+}
+
+func newTelnyxMessagingProvider(
+	config app.Config,
+) (*messaging.TelnyxAdapter, error) {
+	return messaging.NewTelnyxAdapter(messaging.TelnyxConfig{
+		APIKey:         config.HumanCalling.TelnyxAPIKey,
+		BaseURL:        config.HumanCalling.TelnyxAPIBaseURL,
+		WebhookBaseURL: config.Messaging.WebhookBaseURL,
+	})
+}
+
+func newAttachmentStore(
+	config app.Config,
+) (*messaging.FileAttachmentStore, error) {
+	return messaging.NewFileAttachmentStore(
+		config.Messaging.AttachmentDirectory,
+	)
 }
 
 func humanCallingConfig(
@@ -355,6 +427,29 @@ func runMigrate(
 	}()
 	provisioned, err := access.New(pool, nil).Provision(ctx, input)
 	if err != nil {
+		return err
+	}
+	messageLocations := make([]messaging.LocationProvision, 0)
+	for _, practice := range input.Practices {
+		for _, location := range practice.Locations {
+			if location.MessagingSender == "" &&
+				location.MessagingProfileID == "" {
+				continue
+			}
+			messageLocations = append(
+				messageLocations,
+				messaging.LocationProvision{
+					PracticeKey:        practice.Key,
+					LocationKey:        location.Key,
+					Sender:             location.MessagingSender,
+					MessagingProfileID: location.MessagingProfileID,
+					Active:             location.MessagingActive,
+				},
+			)
+		}
+	}
+	if err := messaging.New(pool, nil, nil, nil, messaging.Config{}, nil).
+		Provision(ctx, messageLocations); err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)

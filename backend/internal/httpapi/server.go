@@ -17,6 +17,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -53,6 +54,7 @@ type PortalDependencies struct {
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
 	Calling              *humancalling.Module
+	Messaging            *messaging.Module
 	Work                 *work.Module
 	ServiceAuthenticator ServiceAuthenticator
 }
@@ -71,6 +73,7 @@ type Server struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	messaging     *messaging.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
 	observer      observability.Observer
@@ -81,6 +84,7 @@ type serverDependencies struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	messaging     *messaging.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
 }
@@ -101,6 +105,7 @@ func NewPortal(
 		access:        dependencies.Access,
 		authenticator: dependencies.Authenticator,
 		calling:       dependencies.Calling,
+		messaging:     dependencies.Messaging,
 		work:          dependencies.Work,
 		serviceAuth:   dependencies.ServiceAuthenticator,
 	})
@@ -128,11 +133,21 @@ func NewProviderIngress(
 	pool *pgxpool.Pool,
 	calling *humancalling.Module,
 ) (http.Handler, error) {
+	return NewProviderIngressWithMessaging(config, pool, calling, nil)
+}
+
+func NewProviderIngressWithMessaging(
+	config Config,
+	pool *pgxpool.Pool,
+	calling *humancalling.Module,
+	messagingModule *messaging.Module,
+) (http.Handler, error) {
 	if calling == nil {
 		return nil, fmt.Errorf("provider-ingress calling module is required")
 	}
 	return newServer("provider-ingress", config, pool, serverDependencies{
-		calling: calling,
+		calling:   calling,
+		messaging: messagingModule,
 	})
 }
 
@@ -157,6 +172,7 @@ func newServer(
 		authenticator: dependencies.authenticator,
 		events:        dependencies.events,
 		calling:       dependencies.calling,
+		messaging:     dependencies.messaging,
 		work:          dependencies.work,
 		serviceAuth:   dependencies.serviceAuth,
 		observer:      config.Observer,
@@ -903,6 +919,12 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		server.writeWorkError(w, r, err)
 		return
 	}
+	if server.messaging != nil {
+		if err := server.messaging.ApplyTaskUnread(ctx, identity, page.Items); err != nil {
+			server.writeMessagingError(w, r, err)
+			return
+		}
+	}
 	response, err := taskPageResponse(page)
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -926,6 +948,14 @@ func (server *Server) ReadTask(
 	if err != nil {
 		server.writeWorkError(w, r, err)
 		return
+	}
+	if server.messaging != nil {
+		projected := []work.Task{task}
+		if err := server.messaging.ApplyTaskUnread(ctx, identity, projected); err != nil {
+			server.writeMessagingError(w, r, err)
+			return
+		}
+		task = projected[0]
 	}
 	response, err := taskResponse(task)
 	if err != nil {
@@ -1074,6 +1104,395 @@ func (server *Server) GetTaskCallHistory(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.MessageThreadQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	page, err := server.messaging.QueryThreads(
+		ctx,
+		messaging.QueryThreadsCommand{
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			LocationID: body.LocationId.String(),
+			Search:     stringValue(body.Search),
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := messageThreadPageResponse(page)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetMessageThreadTimeline(
+	w http.ResponseWriter,
+	r *http.Request,
+	threadID openapi_types.UUID,
+	params api.GetMessageThreadTimelineParams,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	page, err := server.messaging.QueryTimeline(
+		ctx,
+		messaging.QueryTimelineCommand{
+			Identity: identity,
+			ThreadID: threadID.String(),
+			Cursor:   stringValue(params.Cursor),
+			Limit:    intValue(params.Limit),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := conversationTimelineResponse(page)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) MarkMessageThreadRead(
+	w http.ResponseWriter,
+	r *http.Request,
+	threadID openapi_types.UUID,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.MarkMessageThreadReadRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if err := server.messaging.MarkRead(ctx, messaging.MarkReadCommand{
+		Identity:         identity,
+		ThreadID:         threadID.String(),
+		SupportSessionID: uuidString(body.SupportSessionId),
+	}); err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) SendMessage(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.SendMessageRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	message, status, err := server.messaging.Send(ctx, messaging.SendCommand{
+		Identity:         identity,
+		PracticeID:       body.PracticeId.String(),
+		LocationID:       body.LocationId.String(),
+		ThreadID:         uuidString(body.ThreadId),
+		Destination:      stringValue(body.Destination),
+		Body:             body.Body,
+		TaskID:           uuidString(body.TaskId),
+		AttachmentID:     uuidString(body.AttachmentId),
+		IdempotencyKey:   body.IdempotencyKey,
+		SupportSessionID: uuidString(body.SupportSessionId),
+	})
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	converted, err := messageResponse(message)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	httpStatus := http.StatusCreated
+	if status == messaging.MessageDuplicate {
+		httpStatus = http.StatusOK
+	}
+	server.writeJSON(w, httpStatus, api.MessageReceipt{
+		Message: converted,
+		Status:  api.MessageReceiptStatus(status),
+	})
+}
+
+func (server *Server) UploadMessageAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.UploadMessageAttachmentRequest
+	if !server.decodeJSONLimit(w, r, &body, 900*1024) {
+		return
+	}
+	content, err := base64.StdEncoding.DecodeString(body.ContentBase64)
+	if err != nil {
+		server.writeMessagingError(w, r, messaging.ErrInvalidInput)
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	attachment, err := server.messaging.UploadAttachment(
+		ctx,
+		messaging.UploadAttachmentCommand{
+			Identity:         identity,
+			PracticeID:       body.PracticeId.String(),
+			LocationID:       body.LocationId.String(),
+			FileName:         body.FileName,
+			DeclaredType:     string(body.ContentType),
+			Content:          content,
+			SupportSessionID: uuidString(body.SupportSessionId),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := messageAttachmentResponse(attachment)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, response)
+}
+
+func (server *Server) GetMessageAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+	attachmentID openapi_types.UUID,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	content, err := server.messaging.OpenAttachment(
+		ctx,
+		identity,
+		attachmentID.String(),
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	writeAttachmentContent(w, content)
+}
+
+func (server *Server) RetryInboundMessageAttachment(
+	w http.ResponseWriter,
+	r *http.Request,
+	attachmentID openapi_types.UUID,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.RetryMessageAttachmentRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	attachment, err := server.messaging.RetryAttachment(
+		ctx,
+		messaging.RetryAttachmentCommand{
+			Identity:         identity,
+			AttachmentID:     attachmentID.String(),
+			SupportSessionID: uuidString(body.SupportSessionId),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := messageAttachmentResponse(attachment)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) SendMessageAgain(
+	w http.ResponseWriter,
+	r *http.Request,
+	messageID openapi_types.UUID,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.SendMessageAgainRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	message, status, err := server.messaging.SendAgain(
+		ctx,
+		messaging.SendAgainCommand{
+			Identity:                  identity,
+			MessageID:                 messageID.String(),
+			IdempotencyKey:            body.IdempotencyKey,
+			DuplicateRiskAcknowledged: body.DuplicateRiskAcknowledged,
+			SupportSessionID:          uuidString(body.SupportSessionId),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := messageResponse(message)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	httpStatus := http.StatusCreated
+	if status == messaging.MessageDuplicate {
+		httpStatus = http.StatusOK
+	}
+	server.writeJSON(w, httpStatus, api.MessageReceipt{
+		Message: response,
+		Status:  api.MessageReceiptStatus(status),
+	})
+}
+
+func (server *Server) CreateMessageFollowUpTask(
+	w http.ResponseWriter,
+	r *http.Request,
+	messageID openapi_types.UUID,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CreateMessageFollowUpTaskRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, status, err := server.messaging.CreateFollowUpTask(
+		ctx,
+		messaging.CreateFollowUpTaskCommand{
+			Identity:         identity,
+			MessageID:        messageID.String(),
+			Title:            stringValue(body.Title),
+			SupportSessionID: uuidString(body.SupportSessionId),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	httpStatus := http.StatusCreated
+	if status == work.TaskDuplicate {
+		httpStatus = http.StatusOK
+	}
+	server.writeJSON(w, httpStatus, response)
+}
+
+func (server *Server) ReceiveTelnyxMessagingWebhook(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	server.receiveMessagingWebhook(w, r, "")
+}
+
+func (server *Server) ReceiveCorrelatedTelnyxMessagingWebhook(
+	w http.ResponseWriter,
+	r *http.Request,
+	callbackToken string,
+) {
+	server.receiveMessagingWebhook(w, r, callbackToken)
+}
+
+func (server *Server) GetProviderMessageMedia(
+	w http.ResponseWriter,
+	r *http.Request,
+	attachmentID openapi_types.UUID,
+	params api.GetProviderMessageMediaParams,
+) {
+	if server.role != "provider-ingress" || server.messaging == nil {
+		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	content, err := server.messaging.OpenProviderAttachment(
+		ctx,
+		attachmentID.String(),
+		params.Expires,
+		params.Signature,
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	writeAttachmentContent(w, content)
+}
+
+func (server *Server) receiveMessagingWebhook(
+	w http.ResponseWriter,
+	r *http.Request,
+	callbackToken string,
+) {
+	if server.role != "provider-ingress" || server.messaging == nil {
+		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024+1))
+	if err != nil || len(raw) > 2*1024*1024 {
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if _, err := server.messaging.ReceiveWebhook(
+		ctx,
+		callbackToken,
+		raw,
+		r.Header.Get("telnyx-timestamp"),
+		r.Header.Get("telnyx-signature-ed25519"),
+	); err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (server *Server) GetOperatorCallingTimeline(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1172,6 +1591,16 @@ func (server *Server) taskIdentity(
 	return server.authenticate(w, r)
 }
 
+func (server *Server) messagingIdentity(
+	w http.ResponseWriter,
+	r *http.Request,
+) (access.Identity, bool) {
+	if !server.portalOnly(w, r) || server.messaging == nil {
+		return access.Identity{}, false
+	}
+	return server.authenticate(w, r)
+}
+
 func (server *Server) authenticate(w http.ResponseWriter, r *http.Request) (access.Identity, bool) {
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") || strings.Contains(strings.TrimPrefix(header, "Bearer "), " ") {
@@ -1213,11 +1642,20 @@ func (server *Server) databaseContext(r *http.Request) (context.Context, context
 }
 
 func (server *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	return server.decodeJSONLimit(w, r, target, 32*1024)
+}
+
+func (server *Server) decodeJSONLimit(
+	w http.ResponseWriter,
+	r *http.Request,
+	target any,
+	maximumBytes int64,
+) bool {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "A JSON request body is required.", false)
 		return false
 	}
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 32*1024))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maximumBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The JSON request body is invalid.", false)
@@ -1228,6 +1666,42 @@ func (server *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target 
 		return false
 	}
 	return true
+}
+
+func writeAttachmentContent(
+	w http.ResponseWriter,
+	content messaging.AttachmentContent,
+) {
+	w.Header().Set("Content-Type", content.Attachment.ContentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content.Content)))
+	disposition := "inline"
+	if content.Attachment.ContentType == "application/pdf" {
+		disposition = "attachment"
+		w.Header().Set("Content-Security-Policy", "sandbox")
+	}
+	w.Header().Set(
+		"Content-Disposition",
+		disposition+`; filename="`+safeAttachmentFileName(
+			content.Attachment.ContentType,
+		)+`"`,
+	)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content.Content)
+}
+
+func safeAttachmentFileName(contentType string) string {
+	switch contentType {
+	case "image/jpeg":
+		return "attachment.jpg"
+	case "image/png":
+		return "attachment.png"
+	case "image/gif":
+		return "attachment.gif"
+	case "image/webp":
+		return "attachment.webp"
+	default:
+		return "attachment.pdf"
+	}
 }
 
 func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, err error) {
@@ -1284,6 +1758,29 @@ func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, work.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
+func (server *Server) writeMessagingError(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+) {
+	switch {
+	case errors.Is(err, messaging.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, messaging.ErrDenied),
+		errors.Is(err, access.ErrSupportRequired),
+		errors.Is(err, access.ErrSupportExpired),
+		errors.Is(err, access.ErrSupportRevoked),
+		errors.Is(err, access.ErrSupportPracticeMismatch):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, messaging.ErrBlocked):
+		server.writeError(w, r, http.StatusConflict, "MESSAGE_BLOCKED", "This conversation has opted out of outbound Messages.", false)
+	case errors.Is(err, messaging.ErrConflict):
+		server.writeError(w, r, http.StatusConflict, "MESSAGE_CONFLICT", "The Message state changed. Refresh and try again.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}
@@ -1492,6 +1989,7 @@ func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapsho
 		SupportMode:      converted.SupportMode,
 		Navigation: []api.NavigationItem{
 			{Id: api.Tasks, Label: "Tasks", Enabled: true},
+			{Id: api.Messages, Label: "Messages", Enabled: true},
 			{Id: api.CallCenter, Label: "Call Center", Enabled: false},
 			{Id: api.Recordings, Label: "Recordings", Enabled: false},
 			{Id: api.Settings, Label: "Settings", Enabled: false},
@@ -1698,6 +2196,7 @@ func taskResponse(task work.Task) (api.Task, error) {
 			Subject: task.CreatedBy.Subject,
 		},
 		CreatedAt: task.CreatedAt,
+		Unread:    task.Unread,
 		Version:   task.Version,
 		UpdatedAt: task.UpdatedAt,
 	}
@@ -1721,6 +2220,27 @@ func taskResponse(task work.Task) (api.Task, error) {
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
 	}
+	if task.MessageID != "" {
+		messageID, err := uuid.Parse(task.MessageID)
+		if err != nil {
+			return api.Task{}, err
+		}
+		response.MessageId = &messageID
+	}
+	if task.MessageThreadID != "" {
+		threadID, err := uuid.Parse(task.MessageThreadID)
+		if err != nil {
+			return api.Task{}, err
+		}
+		response.MessageThreadId = &threadID
+	}
+	if task.ConversationThreadID != "" {
+		threadID, err := uuid.Parse(task.ConversationThreadID)
+		if err != nil {
+			return api.Task{}, err
+		}
+		response.ConversationThreadId = &threadID
+	}
 	if task.CreatedBy.Email != "" {
 		email := apiEmail(task.CreatedBy.Email)
 		response.CreatedBy.Email = &email
@@ -1737,6 +2257,224 @@ func taskResponse(task work.Task) (api.Task, error) {
 	}
 	response.CompletedAt = task.CompletedAt
 	return response, nil
+}
+
+func messageThreadResponse(thread messaging.Thread) (api.MessageThread, error) {
+	id, err := uuid.Parse(thread.ID)
+	if err != nil {
+		return api.MessageThread{}, err
+	}
+	practiceID, err := uuid.Parse(thread.PracticeID)
+	if err != nil {
+		return api.MessageThread{}, err
+	}
+	locationID, err := uuid.Parse(thread.LocationID)
+	if err != nil {
+		return api.MessageThread{}, err
+	}
+	response := api.MessageThread{
+		Id:              id,
+		PracticeId:      practiceID,
+		LocationId:      locationID,
+		LocationName:    thread.LocationName,
+		OfficePhone:     thread.OfficePhone,
+		ExternalPhone:   thread.ExternalPhone,
+		OutboundBlocked: thread.OutboundBlocked,
+		CreatedAt:       thread.CreatedAt,
+		UpdatedAt:       thread.UpdatedAt,
+	}
+	if thread.DisplayName != "" {
+		response.DisplayName = &thread.DisplayName
+	}
+	if thread.NameSource != "" {
+		response.NameSource = &thread.NameSource
+	}
+	return response, nil
+}
+
+func messageThreadPageResponse(
+	page messaging.ThreadPage,
+) (api.MessageThreadPage, error) {
+	response := api.MessageThreadPage{
+		Items:      make([]api.MessageThreadSummary, 0, len(page.Items)),
+		NextCursor: page.NextCursor,
+	}
+	for _, item := range page.Items {
+		thread, err := messageThreadResponse(item.Thread)
+		if err != nil {
+			return api.MessageThreadPage{}, err
+		}
+		summary := api.MessageThreadSummary{
+			Id:              thread.Id,
+			PracticeId:      thread.PracticeId,
+			LocationId:      thread.LocationId,
+			LocationName:    thread.LocationName,
+			OfficePhone:     thread.OfficePhone,
+			ExternalPhone:   thread.ExternalPhone,
+			DisplayName:     thread.DisplayName,
+			NameSource:      thread.NameSource,
+			OutboundBlocked: thread.OutboundBlocked,
+			CreatedAt:       thread.CreatedAt,
+			UpdatedAt:       thread.UpdatedAt,
+			Preview:         item.Preview,
+			LatestDirection: api.MessageDirection(item.LatestDirection),
+			LatestDelivery:  visibleDelivery(item.LatestDelivery),
+			LatestActivity:  item.LatestActivity,
+			Unread:          item.Unread,
+		}
+		response.Items = append(response.Items, summary)
+	}
+	return response, nil
+}
+
+func messageResponse(message messaging.Message) (api.Message, error) {
+	id, err := uuid.Parse(message.ID)
+	if err != nil {
+		return api.Message{}, err
+	}
+	thread, err := messageThreadResponse(message.Thread)
+	if err != nil {
+		return api.Message{}, err
+	}
+	response := api.Message{
+		Id:          id,
+		Thread:      thread,
+		Direction:   api.MessageDirection(message.Direction),
+		Body:        message.Body,
+		Sender:      message.Sender,
+		Destination: message.Destination,
+		Delivery:    visibleDelivery(message.Delivery),
+		CreatedAt:   message.CreatedAt,
+		UpdatedAt:   message.UpdatedAt,
+		Version:     message.Version,
+	}
+	if message.SafeFailureCode != "" {
+		response.SafeFailureCode = &message.SafeFailureCode
+	}
+	if message.ProviderMessageID != "" {
+		response.ProviderMessageId = &message.ProviderMessageID
+	}
+	if message.TaskID != "" {
+		taskID, err := uuid.Parse(message.TaskID)
+		if err != nil {
+			return api.Message{}, err
+		}
+		response.TaskId = &taskID
+	}
+	if message.RetryOfMessageID != "" {
+		retryID, err := uuid.Parse(message.RetryOfMessageID)
+		if err != nil {
+			return api.Message{}, err
+		}
+		response.RetryOfMessageId = &retryID
+	}
+	if message.Attachment != nil {
+		attachment, err := messageAttachmentResponse(*message.Attachment)
+		if err != nil {
+			return api.Message{}, err
+		}
+		response.Attachment = &attachment
+	}
+	return response, nil
+}
+
+func messageAttachmentResponse(
+	attachment messaging.Attachment,
+) (api.MessageAttachment, error) {
+	id, err := uuid.Parse(attachment.ID)
+	if err != nil {
+		return api.MessageAttachment{}, err
+	}
+	response := api.MessageAttachment{
+		Id:          id,
+		Direction:   api.MessageDirection(attachment.Direction),
+		State:       visibleAttachmentState(attachment.State),
+		FileName:    attachment.FileName,
+		ContentType: api.MessageAttachmentContentType(attachment.ContentType),
+		ByteSize:    attachment.ByteSize,
+		CreatedAt:   attachment.CreatedAt,
+		UpdatedAt:   attachment.UpdatedAt,
+	}
+	if attachment.MessageID != "" {
+		messageID, err := uuid.Parse(attachment.MessageID)
+		if err != nil {
+			return api.MessageAttachment{}, err
+		}
+		response.MessageId = &messageID
+	}
+	return response, nil
+}
+
+func visibleAttachmentState(
+	state messaging.AttachmentState,
+) api.MessageAttachmentState {
+	switch state {
+	case messaging.AttachmentProcessing:
+		return api.Processing
+	case messaging.AttachmentStored:
+		return api.Stored
+	case messaging.AttachmentUnavailable:
+		return api.AttachmentUnavailable
+	default:
+		return api.Pending
+	}
+}
+
+func conversationTimelineResponse(
+	page messaging.TimelinePage,
+) (api.ConversationTimelinePage, error) {
+	response := api.ConversationTimelinePage{
+		Items:      make([]api.ConversationTimelineItem, 0, len(page.Items)),
+		NextCursor: page.NextCursor,
+	}
+	for _, item := range page.Items {
+		id, err := uuid.Parse(item.ID)
+		if err != nil {
+			return api.ConversationTimelinePage{}, err
+		}
+		converted := api.ConversationTimelineItem{
+			Id:         id,
+			Type:       api.ConversationTimelineItemType(item.Type),
+			OccurredAt: item.OccurredAt,
+		}
+		switch item.Type {
+		case "MESSAGE":
+			message, err := messageResponse(item.Message)
+			if err != nil {
+				return api.ConversationTimelinePage{}, err
+			}
+			converted.Message = &message
+		case "TASK":
+			task, err := taskResponse(item.Task)
+			if err != nil {
+				return api.ConversationTimelinePage{}, err
+			}
+			converted.Task = &task
+		case "CALL":
+			call, err := callHistoryItemResponse(item.Call)
+			if err != nil {
+				return api.ConversationTimelinePage{}, err
+			}
+			converted.Call = &call
+		}
+		response.Items = append(response.Items, converted)
+	}
+	return response, nil
+}
+
+func visibleDelivery(state messaging.DeliveryState) api.MessageDeliveryState {
+	switch state {
+	case messaging.DeliverySent:
+		return api.Sent
+	case messaging.DeliveryDelivered:
+		return api.Delivered
+	case messaging.DeliveryFailed:
+		return api.Failed
+	case messaging.DeliveryUnknown:
+		return api.StatusUnknown
+	default:
+		return api.Sending
+	}
 }
 
 func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
@@ -1762,31 +2500,41 @@ func callHistoryResponse(
 		NextCursor: history.NextCursor,
 	}
 	for _, item := range history.Items {
-		id, err := uuid.Parse(item.ID)
+		converted, err := callHistoryItemResponse(item)
 		if err != nil {
 			return api.CallHistoryPage{}, err
 		}
-		locationID, err := uuid.Parse(item.LocationID)
-		if err != nil {
-			return api.CallHistoryPage{}, err
-		}
-		response.Items = append(response.Items, api.CallHistoryItem{
-			Id:              id,
-			Type:            api.CallHistoryItemType(item.Type),
-			Direction:       api.CallHistoryItemDirection(item.Direction),
-			StartedAt:       item.StartedAt,
-			EndedAt:         item.EndedAt,
-			DurationSeconds: item.DurationSeconds,
-			LocationId:      locationID,
-			LocationName:    item.LocationName,
-			AnsweredByEmail: item.AnsweredByEmail,
-			TransferReason:  item.TransferReason,
-			Outcome:         api.CallHistoryItemOutcome(item.Outcome),
-			Current:         item.Current,
-			Originating:     item.Originating,
-		})
+		response.Items = append(response.Items, converted)
 	}
 	return response, nil
+}
+
+func callHistoryItemResponse(
+	item humancalling.CallHistoryItem,
+) (api.CallHistoryItem, error) {
+	id, err := uuid.Parse(item.ID)
+	if err != nil {
+		return api.CallHistoryItem{}, err
+	}
+	locationID, err := uuid.Parse(item.LocationID)
+	if err != nil {
+		return api.CallHistoryItem{}, err
+	}
+	return api.CallHistoryItem{
+		Id:              id,
+		Type:            api.CallHistoryItemType(item.Type),
+		Direction:       api.CallHistoryItemDirection(item.Direction),
+		StartedAt:       item.StartedAt,
+		EndedAt:         item.EndedAt,
+		DurationSeconds: item.DurationSeconds,
+		LocationId:      locationID,
+		LocationName:    item.LocationName,
+		AnsweredByEmail: item.AnsweredByEmail,
+		TransferReason:  item.TransferReason,
+		Outcome:         api.CallHistoryItemOutcome(item.Outcome),
+		Current:         item.Current,
+		Originating:     item.Originating,
+	}, nil
 }
 
 func operatorTimelineResponse(

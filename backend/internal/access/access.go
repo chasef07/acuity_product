@@ -98,9 +98,12 @@ type PracticeProvision struct {
 }
 
 type LocationProvision struct {
-	Key            string
-	Name           string
-	AbitaOfficeKey string
+	Key                string
+	Name               string
+	AbitaOfficeKey     string
+	MessagingSender    string
+	MessagingProfileID string
+	MessagingActive    *bool
 }
 
 type InvitationProvision struct {

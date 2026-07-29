@@ -421,6 +421,11 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
 		"human_calling_timeline",
+		"messaging_attachments",
+		"messaging_location_configurations",
+		"messaging_messages",
+		"messaging_thread_unreads",
+		"messaging_threads",
 		"work_task_activities",
 		"work_tasks",
 	}
@@ -437,6 +442,10 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_commands",
 		"human_calling_softphone_leases",
 		"human_calling_timeline",
+		"messaging_attachments",
+		"messaging_messages",
+		"messaging_provider_commands",
+		"messaging_threads",
 		"work_task_activities",
 		"work_tasks",
 	)
@@ -454,6 +463,9 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_softphone_leases",
 		"work_tasks",
 	)
+	grant("acuity_portal", "DELETE", "messaging_thread_unreads")
+
+	grant("acuity_provider", "SELECT", "messaging_attachments")
 
 	grant("acuity_realtime", "SELECT",
 		"access_locations",
@@ -465,6 +477,8 @@ func expectedTablePrivileges() map[string]bool {
 	)
 
 	grant("acuity_worker", "SELECT",
+		"access_membership_locations",
+		"access_memberships",
 		"access_operational_users",
 		"access_practices",
 		"human_calling_calls",
@@ -475,6 +489,13 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
+		"messaging_attachments",
+		"messaging_location_configurations",
+		"messaging_messages",
+		"messaging_provider_commands",
+		"messaging_provider_receipts",
+		"messaging_thread_unreads",
+		"messaging_threads",
 	)
 	grant("acuity_worker", "INSERT",
 		"human_calling_calls",
@@ -483,6 +504,10 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_commands",
 		"human_calling_recordings",
 		"human_calling_timeline",
+		"messaging_attachments",
+		"messaging_messages",
+		"messaging_thread_unreads",
+		"messaging_threads",
 	)
 	grant("acuity_worker", "UPDATE",
 		"access_practices",
@@ -495,6 +520,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
 	)
+	grant("acuity_worker", "DELETE", "messaging_attachments")
 
 	for _, relation := range []string{"user", "session", "account", "verification", "jwks"} {
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
@@ -511,6 +537,129 @@ func expectedColumnPrivileges() map[string]bool {
 			result[columnPrivilegeKey(role, relation, column, privilege)] = true
 		}
 	}
+	grant(
+		"acuity_provider",
+		"public.messaging_provider_receipts",
+		"INSERT",
+		"event_id",
+		"event_type",
+		"callback_token",
+		"occurred_at",
+		"received_at",
+		"signature_timestamp",
+		"raw_body",
+	)
+	grant(
+		"acuity_provider",
+		"public.messaging_provider_receipts",
+		"SELECT",
+		"event_id",
+		"event_type",
+		"callback_token",
+		"occurred_at",
+		"signature_timestamp",
+		"raw_body",
+		"duplicate_count",
+	)
+	grant(
+		"acuity_portal",
+		"public.messaging_provider_commands",
+		"SELECT",
+		"message_id",
+		"practice_id",
+		"actor_subject",
+		"idempotency_key",
+		"input_fingerprint",
+	)
+	grant(
+		"acuity_portal",
+		"public.messaging_threads",
+		"UPDATE",
+		"updated_at",
+	)
+	grant(
+		"acuity_portal",
+		"public.messaging_messages",
+		"UPDATE",
+		"task_id",
+		"version",
+		"updated_at",
+	)
+	grant(
+		"acuity_portal",
+		"public.messaging_attachments",
+		"UPDATE",
+		"message_id",
+		"state",
+		"expires_at",
+		"copy_started_at",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_threads",
+		"UPDATE",
+		"outbound_blocked",
+		"opt_out_evidence_at",
+		"opt_out_evidence_event_id",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_messages",
+		"UPDATE",
+		"delivery_state",
+		"safe_failure_code",
+		"provider_message_id",
+		"version",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_attachments",
+		"UPDATE",
+		"state",
+		"content_type",
+		"byte_size",
+		"object_key",
+		"copy_started_at",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_thread_unreads",
+		"UPDATE",
+		"unread_since",
+		"latest_message_id",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_provider_commands",
+		"UPDATE",
+		"state",
+		"provider_message_id",
+		"write_started_at",
+		"completed_at",
+		"next_attempt_at",
+		"reconcile_until",
+		"last_error_code",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_provider_receipts",
+		"UPDATE",
+		"state",
+		"processing_started_at",
+		"projected_at",
+		"projection_error_code",
+	)
+	grant(
+		"acuity_provider",
+		"public.messaging_provider_receipts",
+		"UPDATE",
+		"duplicate_count",
+	)
 	grant(
 		"acuity_provider",
 		"public.human_calling_provider_receipts",

@@ -2,9 +2,12 @@ import { generateKeyPairSync, sign } from "node:crypto"
 import { writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 
-const ingressURL =
+const callingIngressURL =
   process.env.TELNYX_FIXTURE_INGRESS_URL ??
   "http://127.0.0.1:18082/v1/provider/telnyx/webhooks"
+const messagingIngressURL =
+  process.env.TELNYX_FIXTURE_MESSAGING_INGRESS_URL ??
+  "http://127.0.0.1:18082/v1/provider/telnyx/messaging-webhooks"
 const publicKeyOutput = process.env.TELNYX_FIXTURE_PUBLIC_KEY_OUTPUT
 if (!publicKeyOutput) throw new Error("TELNYX_FIXTURE_PUBLIC_KEY_OUTPUT is required")
 
@@ -15,7 +18,37 @@ writeFileSync(publicKeyOutput, publicDER.subarray(publicDER.length - 32).toStrin
 })
 
 let credentialSequence = 0
+let messageSequence = 0
 const credentials = new Map()
+const messages = new Map()
+
+async function deliverWebhook(url, event) {
+  const raw = Buffer.from(JSON.stringify({
+    data: {
+      record_type: "event",
+      event_type: event.eventType,
+      id: event.eventId,
+      occurred_at: event.occurredAt,
+      payload: event.payload,
+    },
+    meta: { fixture: true },
+  }))
+  const timestamp = String(Math.floor(Date.now() / 1000))
+  const signature = sign(
+    null,
+    Buffer.concat([Buffer.from(`${timestamp}|`), raw]),
+    privateKey,
+  ).toString("base64")
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "telnyx-signature-ed25519": signature,
+      "telnyx-timestamp": timestamp,
+    },
+    body: raw,
+  })
+}
 
 createServer(async (request, response) => {
   if (request.url === "/health") {
@@ -32,29 +65,73 @@ createServer(async (request, response) => {
       return
     }
     const event = JSON.parse(requestBody.toString("utf8"))
-    const raw = Buffer.from(JSON.stringify({
-      data: {
-        record_type: "event",
-        event_type: event.eventType,
-        id: event.eventId,
-        occurred_at: event.occurredAt,
-        payload: event.payload,
+    const delivered = await deliverWebhook(callingIngressURL, event)
+    response.writeHead(delivered.status, { "content-type": "application/json" })
+    response.end(await delivered.text())
+    return
+  }
+  if (
+    request.method === "GET" &&
+    request.url === "/fixture/messages"
+  ) {
+    if (request.headers.authorization !== "Bearer fixture-control") {
+      response.writeHead(401).end()
+      return
+    }
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(JSON.stringify({ data: [...messages.values()] }))
+    return
+  }
+  const statusMatch = request.url?.match(
+    /^\/fixture\/messages\/([^/]+)\/status$/,
+  )
+  if (request.method === "POST" && statusMatch) {
+    if (request.headers.authorization !== "Bearer fixture-control") {
+      response.writeHead(401).end()
+      return
+    }
+    const message = messages.get(decodeURIComponent(statusMatch[1]))
+    if (!message) {
+      response.writeHead(404).end()
+      return
+    }
+    const status = JSON.parse(requestBody.toString("utf8")).status
+    const callbackToken = new URL(message.webhook_url).pathname.split("/").pop()
+    const delivered = await deliverWebhook(
+      `${messagingIngressURL}/${encodeURIComponent(callbackToken)}`,
+      {
+      eventType: "message.finalized",
+      eventId: `fixture-status-${message.id}-${status}`,
+      occurredAt: new Date().toISOString(),
+      payload: {
+        id: message.id,
+        from: { phone_number: message.from },
+        to: [{ phone_number: message.to, status }],
+        delivery_status: status,
       },
-    }))
-    const timestamp = String(Math.floor(Date.now() / 1000))
-    const signature = sign(
-      null,
-      Buffer.concat([Buffer.from(`${timestamp}|`), raw]),
-      privateKey,
-    ).toString("base64")
-    const delivered = await fetch(ingressURL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "telnyx-signature-ed25519": signature,
-        "telnyx-timestamp": timestamp,
+    })
+    response.writeHead(delivered.status, { "content-type": "application/json" })
+    response.end(await delivered.text())
+    return
+  }
+  if (request.method === "POST" && request.url === "/fixture/message-inbound") {
+    if (request.headers.authorization !== "Bearer fixture-control") {
+      response.writeHead(401).end()
+      return
+    }
+    const payload = JSON.parse(requestBody.toString("utf8"))
+    const eventID = payload.eventId ?? `fixture-inbound-${Date.now()}`
+    const delivered = await deliverWebhook(messagingIngressURL, {
+      eventType: "message.received",
+      eventId: eventID,
+      occurredAt: payload.occurredAt ?? new Date().toISOString(),
+      payload: {
+        id: payload.providerMessageId ?? eventID,
+        from: { phone_number: payload.from },
+        to: [{ phone_number: payload.to, status: "delivered" }],
+        text: payload.text ?? "",
+        media: payload.media ?? [],
       },
-      body: raw,
     })
     response.writeHead(delivered.status, { "content-type": "application/json" })
     response.end(await delivered.text())
@@ -113,6 +190,17 @@ createServer(async (request, response) => {
         call_leg_id: "fixture-staff-leg",
       },
     }))
+    return
+  }
+  if (request.method === "POST" && request.url === "/v2/messages") {
+    const payload = JSON.parse(requestBody.toString("utf8"))
+    messageSequence += 1
+    const message = {
+      id: `fixture-message-${messageSequence}`,
+      ...payload,
+    }
+    messages.set(message.id, message)
+    response.writeHead(200).end(JSON.stringify({ data: { id: message.id } }))
     return
   }
   if (request.method === "POST" && request.url?.includes("/actions/")) {

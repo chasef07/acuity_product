@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t *testing.T) {
+func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 
@@ -27,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 9 {
-		t.Fatalf("migration count = %d, want 9", migrationCount)
+	if migrationCount != 10 {
+		t.Fatalf("migration count = %d, want 10", migrationCount)
 	}
 	var activeCommandIndexIsUnique bool
 	if err := pool.QueryRow(ctx, `
@@ -73,6 +73,13 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 		"access_abita_office_locations",
 		"work_tasks",
 		"work_task_activities",
+		"messaging_location_configurations",
+		"messaging_threads",
+		"messaging_messages",
+		"messaging_attachments",
+		"messaging_thread_unreads",
+		"messaging_provider_commands",
+		"messaging_provider_receipts",
 	} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `

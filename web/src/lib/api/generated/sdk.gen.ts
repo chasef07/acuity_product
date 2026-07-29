@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses } from './types.gen';
+import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetMessageThreadTimelineData, GetMessageThreadTimelineErrors, GetMessageThreadTimelineResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, MarkMessageThreadReadData, MarkMessageThreadReadErrors, MarkMessageThreadReadResponses, QueryMessageThreadsData, QueryMessageThreadsErrors, QueryMessageThreadsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -333,6 +333,144 @@ export const getTaskCallHistory = <ThrowOnError extends boolean = false>(options
     url: '/v1/tasks/{taskId}/history',
     ...options
 });
+
+/**
+ * Query phone-led Message Threads in one authorized Location.
+ */
+export const queryMessageThreads = <ThrowOnError extends boolean = false>(options: Options<QueryMessageThreadsData, ThrowOnError>) => (options.client ?? client).post<QueryMessageThreadsResponses, QueryMessageThreadsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/message-threads/query',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one authorized living conversation timeline.
+ */
+export const getMessageThreadTimeline = <ThrowOnError extends boolean = false>(options: Options<GetMessageThreadTimelineData, ThrowOnError>) => (options.client ?? client).get<GetMessageThreadTimelineResponses, GetMessageThreadTimelineErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/message-threads/{threadId}/timeline',
+    ...options
+});
+
+/**
+ * Clear the real User's unread marker for one Thread.
+ */
+export const markMessageThreadRead = <ThrowOnError extends boolean = false>(options: Options<MarkMessageThreadReadData, ThrowOnError>) => (options.client ?? client).post<MarkMessageThreadReadResponses, MarkMessageThreadReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/message-threads/{threadId}/read',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Durably accept one location-derived outbound Message.
+ */
+export const sendMessage = <ThrowOnError extends boolean = false>(options: Options<SendMessageData, ThrowOnError>) => (options.client ?? client).post<SendMessageResponses, SendMessageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Store one private Location-scoped pending Message attachment.
+ */
+export const uploadMessageAttachment = <ThrowOnError extends boolean = false>(options: Options<UploadMessageAttachmentData, ThrowOnError>) => (options.client ?? client).post<UploadMessageAttachmentResponses, UploadMessageAttachmentErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/attachments',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one stored attachment after current Location authorization.
+ */
+export const getMessageAttachment = <ThrowOnError extends boolean = false>(options: Options<GetMessageAttachmentData, ThrowOnError>) => (options.client ?? client).get<GetMessageAttachmentResponses, GetMessageAttachmentErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/attachments/{attachmentId}',
+    ...options
+});
+
+/**
+ * Retry storage of one unavailable inbound attachment in place.
+ */
+export const retryInboundMessageAttachment = <ThrowOnError extends boolean = false>(options: Options<RetryInboundMessageAttachmentData, ThrowOnError>) => (options.client ?? client).post<RetryInboundMessageAttachmentResponses, RetryInboundMessageAttachmentErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/attachments/{attachmentId}/retry-copy',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Create an explicit new attempt while preserving the original Message.
+ */
+export const sendMessageAgain = <ThrowOnError extends boolean = false>(options: Options<SendMessageAgainData, ThrowOnError>) => (options.client ?? client).post<SendMessageAgainResponses, SendMessageAgainErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/messages/{messageId}/send-again',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Create at most one OPEN follow-up Task from one Message.
+ */
+export const createMessageFollowUpTask = <ThrowOnError extends boolean = false>(options: Options<CreateMessageFollowUpTaskData, ThrowOnError>) => (options.client ?? client).post<CreateMessageFollowUpTaskResponses, CreateMessageFollowUpTaskErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/v1/messages/{messageId}/follow-up-task',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Verify and durably receipt an inbound Telnyx Message event.
+ */
+export const receiveTelnyxMessagingWebhook = <ThrowOnError extends boolean = false>(options: Options<ReceiveTelnyxMessagingWebhookData, ThrowOnError>) => (options.client ?? client).post<ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookErrors, ThrowOnError>({
+    url: '/v1/provider/telnyx/messaging-webhooks',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Verify and receipt callback-correlated outbound Message evidence.
+ */
+export const receiveCorrelatedTelnyxMessagingWebhook = <ThrowOnError extends boolean = false>(options: Options<ReceiveCorrelatedTelnyxMessagingWebhookData, ThrowOnError>) => (options.client ?? client).post<ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ThrowOnError>({
+    url: '/v1/provider/telnyx/messaging-webhooks/{callbackToken}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Serve one short-lived signed outbound attachment to Telnyx.
+ */
+export const getProviderMessageMedia = <ThrowOnError extends boolean = false>(options: Options<GetProviderMessageMediaData, ThrowOnError>) => (options.client ?? client).get<GetProviderMessageMediaResponses, GetProviderMessageMediaErrors, ThrowOnError>({ url: '/v1/provider/messaging-media/{attachmentId}', ...options });
 
 /**
  * Read one sanitized durable Call timeline as a Platform Operator.

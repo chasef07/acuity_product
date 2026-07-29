@@ -101,6 +101,14 @@ Each runtime uses its own service account and database credential.
 column-scoped receipt authority. `realtime` receives no HumanCalling or Work
 table authority. The web runtime receives only Better Auth schema authority.
 
+Messaging adds one shared private Cloud Storage volume mounted at
+`MESSAGING_ATTACHMENT_DIRECTORY` by `portal-api`, `provider-ingress`, and
+`worker`. Those three service accounts need only the object permissions their
+runtime path exercises. The provider ingress receives the media-signing secret;
+the worker receives that secret plus the public media and webhook bases.
+Production rollout must verify cross-runtime attachment visibility, bucket
+retention/backup policy, and signed URL expiry before traffic shifts.
+
 Actual Cloud SQL failover/restore rehearsal, production load evidence, and
 alert-delivery smoke tests remain release gates. This contract does not claim
 those gates are complete.

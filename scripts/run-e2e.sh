@@ -22,6 +22,15 @@ provider_pid=""
 worker_pid=""
 telnyx_pid=""
 cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    for log in portal realtime provider worker web telnyx; do
+      if [ -f "$runtime_dir/$log.log" ]; then
+        echo "----- $log.log -----" >&2
+        tail -80 "$runtime_dir/$log.log" >&2
+      fi
+    done
+  fi
   if [ -f "$replacement_realtime_pid_file" ]; then
     replacement_realtime_pid="$(cat "$replacement_realtime_pid_file")"
     case "$replacement_realtime_pid" in
@@ -118,6 +127,8 @@ TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
 TELNYX_FROM_NUMBER=+15555550100 \
 TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
 TELNYX_RECORDING_BUCKET=synthetic-recordings \
+MESSAGING_WEBHOOK_BASE_URL=https://messaging.e2e.invalid/v1/provider/telnyx/messaging-webhooks \
+MESSAGING_ATTACHMENT_DIRECTORY="$runtime_dir/messaging-attachments" \
 "$runtime_dir/acuity" >"$runtime_dir/portal.log" 2>&1 &
 portal_pid=$!
 
@@ -144,6 +155,8 @@ DATABASE_POOL_MAX=2 \
 DATABASE_ACQUIRE_TIMEOUT_MS=1500 \
 HTTP_PORT=18082 \
 TELNYX_WEBHOOK_PUBLIC_KEY="$(cat "$runtime_dir/telnyx-public-key")" \
+MESSAGING_ATTACHMENT_DIRECTORY="$runtime_dir/messaging-attachments" \
+MESSAGING_MEDIA_SIGNING_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
 "$runtime_dir/acuity" >"$runtime_dir/provider.log" 2>&1 &
 provider_pid=$!
 
@@ -158,6 +171,10 @@ TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
 TELNYX_FROM_NUMBER=+15555550100 \
 TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
 TELNYX_RECORDING_BUCKET=synthetic-recordings \
+MESSAGING_WEBHOOK_BASE_URL=https://messaging.e2e.invalid/v1/provider/telnyx/messaging-webhooks \
+MESSAGING_ATTACHMENT_DIRECTORY="$runtime_dir/messaging-attachments" \
+MESSAGING_MEDIA_PUBLIC_BASE_URL=https://media.e2e.invalid/v1/provider/messaging-media \
+MESSAGING_MEDIA_SIGNING_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
 HUMAN_CALLING_OFFER_SECONDS=20 \
 HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS=15 \
 HUMAN_CALLING_LEASE_SECONDS=30 \
@@ -195,4 +212,4 @@ E2E_REALTIME_REPLACEMENT_PID_FILE="$replacement_realtime_pid_file" \
 E2E_RUNTIME_BINARY="$runtime_dir/acuity" \
 E2E_DATABASE_URL="$E2E_DATABASE_URL" \
 E2E_TELNYX_FIXTURE_URL=http://127.0.0.1:19000 \
-npx playwright test --project=chromium
+npx playwright test --project=chromium "$@"

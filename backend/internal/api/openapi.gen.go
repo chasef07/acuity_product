@@ -102,13 +102,13 @@ func (e ActorType) Valid() bool {
 
 // Defines values for CallHistoryItemDirection.
 const (
-	INBOUND CallHistoryItemDirection = "INBOUND"
+	CallHistoryItemDirectionINBOUND CallHistoryItemDirection = "INBOUND"
 )
 
 // Valid indicates whether the value is a known member of the CallHistoryItemDirection enum.
 func (e CallHistoryItemDirection) Valid() bool {
 	switch e {
-	case INBOUND:
+	case CallHistoryItemDirectionINBOUND:
 		return true
 	default:
 		return false
@@ -153,13 +153,13 @@ func (e CallHistoryItemOutcome) Valid() bool {
 
 // Defines values for CallHistoryItemType.
 const (
-	CALL CallHistoryItemType = "CALL"
+	CallHistoryItemTypeCALL CallHistoryItemType = "CALL"
 )
 
 // Valid indicates whether the value is a known member of the CallHistoryItemType enum.
 func (e CallHistoryItemType) Valid() bool {
 	switch e {
-	case CALL:
+	case CallHistoryItemTypeCALL:
 		return true
 	default:
 		return false
@@ -250,6 +250,27 @@ func (e CallingRecordingState) Valid() bool {
 	case READY:
 		return true
 	case RECORDING:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConversationTimelineItemType.
+const (
+	ConversationTimelineItemTypeCALL    ConversationTimelineItemType = "CALL"
+	ConversationTimelineItemTypeMESSAGE ConversationTimelineItemType = "MESSAGE"
+	ConversationTimelineItemTypeTASK    ConversationTimelineItemType = "TASK"
+)
+
+// Valid indicates whether the value is a known member of the ConversationTimelineItemType enum.
+func (e ConversationTimelineItemType) Valid() bool {
+	switch e {
+	case ConversationTimelineItemTypeCALL:
+		return true
+	case ConversationTimelineItemTypeMESSAGE:
+		return true
+	case ConversationTimelineItemTypeTASK:
 		return true
 	default:
 		return false
@@ -397,9 +418,124 @@ func (e MembershipRole) Valid() bool {
 	}
 }
 
+// Defines values for MessageAttachmentContentType.
+const (
+	MessageAttachmentContentTypeApplicationpdf MessageAttachmentContentType = "application/pdf"
+	MessageAttachmentContentTypeImagegif       MessageAttachmentContentType = "image/gif"
+	MessageAttachmentContentTypeImagejpeg      MessageAttachmentContentType = "image/jpeg"
+	MessageAttachmentContentTypeImagepng       MessageAttachmentContentType = "image/png"
+	MessageAttachmentContentTypeImagewebp      MessageAttachmentContentType = "image/webp"
+)
+
+// Valid indicates whether the value is a known member of the MessageAttachmentContentType enum.
+func (e MessageAttachmentContentType) Valid() bool {
+	switch e {
+	case MessageAttachmentContentTypeApplicationpdf:
+		return true
+	case MessageAttachmentContentTypeImagegif:
+		return true
+	case MessageAttachmentContentTypeImagejpeg:
+		return true
+	case MessageAttachmentContentTypeImagepng:
+		return true
+	case MessageAttachmentContentTypeImagewebp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageAttachmentState.
+const (
+	AttachmentUnavailable MessageAttachmentState = "Attachment unavailable"
+	Pending               MessageAttachmentState = "Pending"
+	Processing            MessageAttachmentState = "Processing"
+	Stored                MessageAttachmentState = "Stored"
+)
+
+// Valid indicates whether the value is a known member of the MessageAttachmentState enum.
+func (e MessageAttachmentState) Valid() bool {
+	switch e {
+	case AttachmentUnavailable:
+		return true
+	case Pending:
+		return true
+	case Processing:
+		return true
+	case Stored:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageDeliveryState.
+const (
+	Delivered     MessageDeliveryState = "Delivered"
+	Failed        MessageDeliveryState = "Failed"
+	Sending       MessageDeliveryState = "Sending"
+	Sent          MessageDeliveryState = "Sent"
+	StatusUnknown MessageDeliveryState = "Status unknown"
+)
+
+// Valid indicates whether the value is a known member of the MessageDeliveryState enum.
+func (e MessageDeliveryState) Valid() bool {
+	switch e {
+	case Delivered:
+		return true
+	case Failed:
+		return true
+	case Sending:
+		return true
+	case Sent:
+		return true
+	case StatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageDirection.
+const (
+	MessageDirectionINBOUND  MessageDirection = "INBOUND"
+	MessageDirectionOUTBOUND MessageDirection = "OUTBOUND"
+)
+
+// Valid indicates whether the value is a known member of the MessageDirection enum.
+func (e MessageDirection) Valid() bool {
+	switch e {
+	case MessageDirectionINBOUND:
+		return true
+	case MessageDirectionOUTBOUND:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageReceiptStatus.
+const (
+	MessageReceiptStatusCreated   MessageReceiptStatus = "created"
+	MessageReceiptStatusDuplicate MessageReceiptStatus = "duplicate"
+)
+
+// Valid indicates whether the value is a known member of the MessageReceiptStatus enum.
+func (e MessageReceiptStatus) Valid() bool {
+	switch e {
+	case MessageReceiptStatusCreated:
+		return true
+	case MessageReceiptStatusDuplicate:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NavigationItemId.
 const (
 	CallCenter NavigationItemId = "call-center"
+	Messages   NavigationItemId = "messages"
 	Recordings NavigationItemId = "recordings"
 	Settings   NavigationItemId = "settings"
 	Tasks      NavigationItemId = "tasks"
@@ -409,6 +545,8 @@ const (
 func (e NavigationItemId) Valid() bool {
 	switch e {
 	case CallCenter:
+		return true
+	case Messages:
 		return true
 	case Recordings:
 		return true
@@ -507,16 +645,16 @@ func (e StaffTaskCategory) Valid() bool {
 
 // Defines values for StaffTaskReceiptStatus.
 const (
-	Created   StaffTaskReceiptStatus = "created"
-	Duplicate StaffTaskReceiptStatus = "duplicate"
+	StaffTaskReceiptStatusCreated   StaffTaskReceiptStatus = "created"
+	StaffTaskReceiptStatusDuplicate StaffTaskReceiptStatus = "duplicate"
 )
 
 // Valid indicates whether the value is a known member of the StaffTaskReceiptStatus enum.
 func (e StaffTaskReceiptStatus) Valid() bool {
 	switch e {
-	case Created:
+	case StaffTaskReceiptStatusCreated:
 		return true
-	case Duplicate:
+	case StaffTaskReceiptStatusDuplicate:
 		return true
 	default:
 		return false
@@ -546,8 +684,9 @@ func (e StaffTaskUrgency) Valid() bool {
 
 // Defines values for TaskOrigin.
 const (
-	ABITAAI           TaskOrigin = "ABITA_AI"
-	HUMANCALLFOLLOWUP TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
+	ABITAAI              TaskOrigin = "ABITA_AI"
+	HUMANCALLFOLLOWUP    TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
+	STAFFMESSAGEFOLLOWUP TaskOrigin = "STAFF_MESSAGE_FOLLOW_UP"
 )
 
 // Valid indicates whether the value is a known member of the TaskOrigin enum.
@@ -556,6 +695,8 @@ func (e TaskOrigin) Valid() bool {
 	case ABITAAI:
 		return true
 	case HUMANCALLFOLLOWUP:
+		return true
+	case STAFFMESSAGEFOLLOWUP:
 		return true
 	default:
 		return false
@@ -610,6 +751,33 @@ func (e TaskQueryRequestOrdering) Valid() bool {
 	case Priority:
 		return true
 	case Time:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UploadMessageAttachmentRequestContentType.
+const (
+	UploadMessageAttachmentRequestContentTypeApplicationpdf UploadMessageAttachmentRequestContentType = "application/pdf"
+	UploadMessageAttachmentRequestContentTypeImagegif       UploadMessageAttachmentRequestContentType = "image/gif"
+	UploadMessageAttachmentRequestContentTypeImagejpeg      UploadMessageAttachmentRequestContentType = "image/jpeg"
+	UploadMessageAttachmentRequestContentTypeImagepng       UploadMessageAttachmentRequestContentType = "image/png"
+	UploadMessageAttachmentRequestContentTypeImagewebp      UploadMessageAttachmentRequestContentType = "image/webp"
+)
+
+// Valid indicates whether the value is a known member of the UploadMessageAttachmentRequestContentType enum.
+func (e UploadMessageAttachmentRequestContentType) Valid() bool {
+	switch e {
+	case UploadMessageAttachmentRequestContentTypeApplicationpdf:
+		return true
+	case UploadMessageAttachmentRequestContentTypeImagegif:
+		return true
+	case UploadMessageAttachmentRequestContentTypeImagejpeg:
+		return true
+	case UploadMessageAttachmentRequestContentTypeImagepng:
+		return true
+	case UploadMessageAttachmentRequestContentTypeImagewebp:
 		return true
 	default:
 		return false
@@ -843,6 +1011,25 @@ type ContactContextInput struct {
 	TransferReason *string `json:"transferReason,omitempty"`
 }
 
+// ConversationTimelineItem defines model for ConversationTimelineItem.
+type ConversationTimelineItem struct {
+	Call       *CallHistoryItem             `json:"call,omitempty"`
+	Id         openapi_types.UUID           `json:"id"`
+	Message    *Message                     `json:"message,omitempty"`
+	OccurredAt time.Time                    `json:"occurredAt"`
+	Task       *Task                        `json:"task,omitempty"`
+	Type       ConversationTimelineItemType `json:"type"`
+}
+
+// ConversationTimelineItemType defines model for ConversationTimelineItem.Type.
+type ConversationTimelineItemType string
+
+// ConversationTimelinePage defines model for ConversationTimelinePage.
+type ConversationTimelinePage struct {
+	Items      []ConversationTimelineItem `json:"items"`
+	NextCursor string                     `json:"nextCursor"`
+}
+
 // CreateHandoffRequest defines model for CreateHandoffRequest.
 type CreateHandoffRequest struct {
 	Contact        ContactContextInput `json:"contact"`
@@ -850,6 +1037,12 @@ type CreateHandoffRequest struct {
 	LocationId     openapi_types.UUID  `json:"locationId"`
 	PracticeId     openapi_types.UUID  `json:"practiceId"`
 	SourceCallId   string              `json:"sourceCallId"`
+}
+
+// CreateMessageFollowUpTaskRequest defines model for CreateMessageFollowUpTaskRequest.
+type CreateMessageFollowUpTaskRequest struct {
+	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
+	Title            *string             `json:"title,omitempty"`
 }
 
 // CreateStaffTaskRequest defines model for CreateStaffTaskRequest.
@@ -948,6 +1141,11 @@ type LocationMutation struct {
 	PracticeVersion int64      `json:"practiceVersion"`
 }
 
+// MarkMessageThreadReadRequest defines model for MarkMessageThreadReadRequest.
+type MarkMessageThreadReadRequest struct {
+	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
+}
+
 // MediaToken defines model for MediaToken.
 type MediaToken struct {
 	ExpiresAt time.Time `json:"expiresAt"`
@@ -971,6 +1169,109 @@ type MembershipLocationScope string
 
 // MembershipRole defines model for Membership.Role.
 type MembershipRole string
+
+// Message defines model for Message.
+type Message struct {
+	Attachment        *MessageAttachment   `json:"attachment,omitempty"`
+	Body              string               `json:"body"`
+	CreatedAt         time.Time            `json:"createdAt"`
+	Delivery          MessageDeliveryState `json:"delivery"`
+	Destination       string               `json:"destination"`
+	Direction         MessageDirection     `json:"direction"`
+	Id                openapi_types.UUID   `json:"id"`
+	ProviderMessageId *string              `json:"providerMessageId,omitempty"`
+	RetryOfMessageId  *openapi_types.UUID  `json:"retryOfMessageId,omitempty"`
+	SafeFailureCode   *string              `json:"safeFailureCode,omitempty"`
+	Sender            string               `json:"sender"`
+	TaskId            *openapi_types.UUID  `json:"taskId,omitempty"`
+	Thread            MessageThread        `json:"thread"`
+	UpdatedAt         time.Time            `json:"updatedAt"`
+	Version           int64                `json:"version"`
+}
+
+// MessageAttachment defines model for MessageAttachment.
+type MessageAttachment struct {
+	ByteSize    int                          `json:"byteSize"`
+	ContentType MessageAttachmentContentType `json:"contentType"`
+	CreatedAt   time.Time                    `json:"createdAt"`
+	Direction   MessageDirection             `json:"direction"`
+	FileName    string                       `json:"fileName"`
+	Id          openapi_types.UUID           `json:"id"`
+	MessageId   *openapi_types.UUID          `json:"messageId,omitempty"`
+	State       MessageAttachmentState       `json:"state"`
+	UpdatedAt   time.Time                    `json:"updatedAt"`
+}
+
+// MessageAttachmentContentType defines model for MessageAttachment.ContentType.
+type MessageAttachmentContentType string
+
+// MessageAttachmentState defines model for MessageAttachment.State.
+type MessageAttachmentState string
+
+// MessageDeliveryState defines model for MessageDeliveryState.
+type MessageDeliveryState string
+
+// MessageDirection defines model for MessageDirection.
+type MessageDirection string
+
+// MessageReceipt defines model for MessageReceipt.
+type MessageReceipt struct {
+	Message Message              `json:"message"`
+	Status  MessageReceiptStatus `json:"status"`
+}
+
+// MessageReceiptStatus defines model for MessageReceipt.Status.
+type MessageReceiptStatus string
+
+// MessageThread defines model for MessageThread.
+type MessageThread struct {
+	CreatedAt       time.Time          `json:"createdAt"`
+	DisplayName     *string            `json:"displayName,omitempty"`
+	ExternalPhone   string             `json:"externalPhone"`
+	Id              openapi_types.UUID `json:"id"`
+	LocationId      openapi_types.UUID `json:"locationId"`
+	LocationName    string             `json:"locationName"`
+	NameSource      *string            `json:"nameSource,omitempty"`
+	OfficePhone     string             `json:"officePhone"`
+	OutboundBlocked bool               `json:"outboundBlocked"`
+	PracticeId      openapi_types.UUID `json:"practiceId"`
+	UpdatedAt       time.Time          `json:"updatedAt"`
+}
+
+// MessageThreadPage defines model for MessageThreadPage.
+type MessageThreadPage struct {
+	Items      []MessageThreadSummary `json:"items"`
+	NextCursor string                 `json:"nextCursor"`
+}
+
+// MessageThreadQueryRequest defines model for MessageThreadQueryRequest.
+type MessageThreadQueryRequest struct {
+	Cursor     *string            `json:"cursor,omitempty"`
+	Limit      *int               `json:"limit,omitempty"`
+	LocationId openapi_types.UUID `json:"locationId"`
+	PracticeId openapi_types.UUID `json:"practiceId"`
+	Search     *string            `json:"search,omitempty"`
+}
+
+// MessageThreadSummary defines model for MessageThreadSummary.
+type MessageThreadSummary struct {
+	CreatedAt       time.Time            `json:"createdAt"`
+	DisplayName     *string              `json:"displayName,omitempty"`
+	ExternalPhone   string               `json:"externalPhone"`
+	Id              openapi_types.UUID   `json:"id"`
+	LatestActivity  time.Time            `json:"latestActivity"`
+	LatestDelivery  MessageDeliveryState `json:"latestDelivery"`
+	LatestDirection MessageDirection     `json:"latestDirection"`
+	LocationId      openapi_types.UUID   `json:"locationId"`
+	LocationName    string               `json:"locationName"`
+	NameSource      *string              `json:"nameSource,omitempty"`
+	OfficePhone     string               `json:"officePhone"`
+	OutboundBlocked bool                 `json:"outboundBlocked"`
+	PracticeId      openapi_types.UUID   `json:"practiceId"`
+	Preview         string               `json:"preview"`
+	Unread          bool                 `json:"unread"`
+	UpdatedAt       time.Time            `json:"updatedAt"`
+}
 
 // NavigationItem defines model for NavigationItem.
 type NavigationItem struct {
@@ -1045,6 +1346,31 @@ type RenameTaskRequest struct {
 	Title            string              `json:"title"`
 }
 
+// RetryMessageAttachmentRequest defines model for RetryMessageAttachmentRequest.
+type RetryMessageAttachmentRequest struct {
+	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
+}
+
+// SendMessageAgainRequest defines model for SendMessageAgainRequest.
+type SendMessageAgainRequest struct {
+	DuplicateRiskAcknowledged bool                `json:"duplicateRiskAcknowledged"`
+	IdempotencyKey            string              `json:"idempotencyKey"`
+	SupportSessionId          *openapi_types.UUID `json:"supportSessionId,omitempty"`
+}
+
+// SendMessageRequest defines model for SendMessageRequest.
+type SendMessageRequest struct {
+	AttachmentId     *openapi_types.UUID `json:"attachmentId,omitempty"`
+	Body             string              `json:"body"`
+	Destination      *string             `json:"destination,omitempty"`
+	IdempotencyKey   string              `json:"idempotencyKey"`
+	LocationId       openapi_types.UUID  `json:"locationId"`
+	PracticeId       openapi_types.UUID  `json:"practiceId"`
+	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
+	TaskId           *openapi_types.UUID `json:"taskId,omitempty"`
+	ThreadId         *openapi_types.UUID `json:"threadId,omitempty"`
+}
+
 // SignUpEligibilityRequest defines model for SignUpEligibilityRequest.
 type SignUpEligibilityRequest struct {
 	Email           openapi_types.Email `json:"email"`
@@ -1102,26 +1428,30 @@ type SupportMode struct {
 
 // Task defines model for Task.
 type Task struct {
-	CallId        *openapi_types.UUID `json:"callId,omitempty"`
-	CallerName    *string             `json:"callerName,omitempty"`
-	Category      *StaffTaskCategory  `json:"category,omitempty"`
-	CompletedAt   *time.Time          `json:"completedAt,omitempty"`
-	CompletedBy   *TaskActor          `json:"completedBy,omitempty"`
-	CreatedAt     time.Time           `json:"createdAt"`
-	CreatedBy     TaskActor           `json:"createdBy"`
-	Id            openapi_types.UUID  `json:"id"`
-	LocationId    openapi_types.UUID  `json:"locationId"`
-	LocationName  string              `json:"locationName"`
-	Origin        TaskOrigin          `json:"origin"`
-	Phone         string              `json:"phone"`
-	PracticeId    openapi_types.UUID  `json:"practiceId"`
-	SourceCallId  *string             `json:"sourceCallId,omitempty"`
-	SourceMessage *string             `json:"sourceMessage,omitempty"`
-	State         TaskState           `json:"state"`
-	Title         string              `json:"title"`
-	UpdatedAt     time.Time           `json:"updatedAt"`
-	Urgency       StaffTaskUrgency    `json:"urgency"`
-	Version       int64               `json:"version"`
+	CallId               *openapi_types.UUID `json:"callId,omitempty"`
+	CallerName           *string             `json:"callerName,omitempty"`
+	Category             *StaffTaskCategory  `json:"category,omitempty"`
+	CompletedAt          *time.Time          `json:"completedAt,omitempty"`
+	CompletedBy          *TaskActor          `json:"completedBy,omitempty"`
+	ConversationThreadId *openapi_types.UUID `json:"conversationThreadId,omitempty"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	CreatedBy            TaskActor           `json:"createdBy"`
+	Id                   openapi_types.UUID  `json:"id"`
+	LocationId           openapi_types.UUID  `json:"locationId"`
+	LocationName         string              `json:"locationName"`
+	MessageId            *openapi_types.UUID `json:"messageId,omitempty"`
+	MessageThreadId      *openapi_types.UUID `json:"messageThreadId,omitempty"`
+	Origin               TaskOrigin          `json:"origin"`
+	Phone                string              `json:"phone"`
+	PracticeId           openapi_types.UUID  `json:"practiceId"`
+	SourceCallId         *string             `json:"sourceCallId,omitempty"`
+	SourceMessage        *string             `json:"sourceMessage,omitempty"`
+	State                TaskState           `json:"state"`
+	Title                string              `json:"title"`
+	Unread               bool                `json:"unread"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
+	Urgency              StaffTaskUrgency    `json:"urgency"`
+	Version              int64               `json:"version"`
 }
 
 // TaskOrigin defines model for Task.Origin.
@@ -1164,6 +1494,19 @@ type TaskTransitionRequest struct {
 	ExpectedVersion  int64               `json:"expectedVersion"`
 	SupportSessionId *openapi_types.UUID `json:"supportSessionId,omitempty"`
 }
+
+// UploadMessageAttachmentRequest defines model for UploadMessageAttachmentRequest.
+type UploadMessageAttachmentRequest struct {
+	ContentBase64    string                                    `json:"contentBase64"`
+	ContentType      UploadMessageAttachmentRequestContentType `json:"contentType"`
+	FileName         string                                    `json:"fileName"`
+	LocationId       openapi_types.UUID                        `json:"locationId"`
+	PracticeId       openapi_types.UUID                        `json:"practiceId"`
+	SupportSessionId *openapi_types.UUID                       `json:"supportSessionId,omitempty"`
+}
+
+// UploadMessageAttachmentRequestContentType defines model for UploadMessageAttachmentRequest.ContentType.
+type UploadMessageAttachmentRequestContentType string
 
 // WorkspaceSnapshot defines model for WorkspaceSnapshot.
 type WorkspaceSnapshot struct {
@@ -1211,6 +1554,24 @@ type GetEventsParams struct {
 	LocationId openapi_types.UUID `form:"locationId" json:"locationId"`
 }
 
+// GetMessageThreadTimelineParams defines parameters for GetMessageThreadTimeline.
+type GetMessageThreadTimelineParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetProviderMessageMediaParams defines parameters for GetProviderMessageMedia.
+type GetProviderMessageMediaParams struct {
+	Expires   string `form:"expires" json:"expires"`
+	Signature string `form:"signature" json:"signature"`
+}
+
+// ReceiveTelnyxMessagingWebhookJSONBody defines parameters for ReceiveTelnyxMessagingWebhook.
+type ReceiveTelnyxMessagingWebhookJSONBody map[string]interface{}
+
+// ReceiveCorrelatedTelnyxMessagingWebhookJSONBody defines parameters for ReceiveCorrelatedTelnyxMessagingWebhook.
+type ReceiveCorrelatedTelnyxMessagingWebhookJSONBody map[string]interface{}
+
 // ReceiveTelnyxWebhookJSONBody defines parameters for ReceiveTelnyxWebhook.
 type ReceiveTelnyxWebhookJSONBody map[string]interface{}
 
@@ -1227,6 +1588,12 @@ type GetWorkspaceParams struct {
 
 // InspectSignUpEligibilityJSONRequestBody defines body for InspectSignUpEligibility for application/json ContentType.
 type InspectSignUpEligibilityJSONRequestBody = SignUpEligibilityRequest
+
+// UploadMessageAttachmentJSONRequestBody defines body for UploadMessageAttachment for application/json ContentType.
+type UploadMessageAttachmentJSONRequestBody = UploadMessageAttachmentRequest
+
+// RetryInboundMessageAttachmentJSONRequestBody defines body for RetryInboundMessageAttachment for application/json ContentType.
+type RetryInboundMessageAttachmentJSONRequestBody = RetryMessageAttachmentRequest
 
 // RecordCallingDispositionJSONRequestBody defines body for RecordCallingDisposition for application/json ContentType.
 type RecordCallingDispositionJSONRequestBody = CallingDispositionRequest
@@ -1255,11 +1622,32 @@ type AcceptInvitationJSONRequestBody = InvitationCredentialRequest
 // InspectInvitationJSONRequestBody defines body for InspectInvitation for application/json ContentType.
 type InspectInvitationJSONRequestBody = InvitationCredentialRequest
 
+// QueryMessageThreadsJSONRequestBody defines body for QueryMessageThreads for application/json ContentType.
+type QueryMessageThreadsJSONRequestBody = MessageThreadQueryRequest
+
+// MarkMessageThreadReadJSONRequestBody defines body for MarkMessageThreadRead for application/json ContentType.
+type MarkMessageThreadReadJSONRequestBody = MarkMessageThreadReadRequest
+
+// SendMessageJSONRequestBody defines body for SendMessage for application/json ContentType.
+type SendMessageJSONRequestBody = SendMessageRequest
+
+// CreateMessageFollowUpTaskJSONRequestBody defines body for CreateMessageFollowUpTask for application/json ContentType.
+type CreateMessageFollowUpTaskJSONRequestBody = CreateMessageFollowUpTaskRequest
+
+// SendMessageAgainJSONRequestBody defines body for SendMessageAgain for application/json ContentType.
+type SendMessageAgainJSONRequestBody = SendMessageAgainRequest
+
 // RequeueOperatorProviderReceiptJSONRequestBody defines body for RequeueOperatorProviderReceipt for application/json ContentType.
 type RequeueOperatorProviderReceiptJSONRequestBody = ProviderReceiptRecoveryRequest
 
 // AddLocationJSONRequestBody defines body for AddLocation for application/json ContentType.
 type AddLocationJSONRequestBody = AddLocationRequest
+
+// ReceiveTelnyxMessagingWebhookJSONRequestBody defines body for ReceiveTelnyxMessagingWebhook for application/json ContentType.
+type ReceiveTelnyxMessagingWebhookJSONRequestBody ReceiveTelnyxMessagingWebhookJSONBody
+
+// ReceiveCorrelatedTelnyxMessagingWebhookJSONRequestBody defines body for ReceiveCorrelatedTelnyxMessagingWebhook for application/json ContentType.
+type ReceiveCorrelatedTelnyxMessagingWebhookJSONRequestBody ReceiveCorrelatedTelnyxMessagingWebhookJSONBody
 
 // ReceiveTelnyxWebhookJSONRequestBody defines body for ReceiveTelnyxWebhook for application/json ContentType.
 type ReceiveTelnyxWebhookJSONRequestBody ReceiveTelnyxWebhookJSONBody
@@ -1296,6 +1684,15 @@ type ServerInterface interface {
 	// InspectSignUpEligibility Validate an invitation or provisioned Platform Operator email.
 	// (POST /v1/access/sign-up-eligibility)
 	InspectSignUpEligibility(w http.ResponseWriter, r *http.Request)
+	// UploadMessageAttachment Store one private Location-scoped pending Message attachment.
+	// (POST /v1/attachments)
+	UploadMessageAttachment(w http.ResponseWriter, r *http.Request)
+	// GetMessageAttachment Read one stored attachment after current Location authorization.
+	// (GET /v1/attachments/{attachmentId})
+	GetMessageAttachment(w http.ResponseWriter, r *http.Request, attachmentId openapi_types.UUID)
+	// RetryInboundMessageAttachment Retry storage of one unavailable inbound attachment in place.
+	// (POST /v1/attachments/{attachmentId}/retry-copy)
+	RetryInboundMessageAttachment(w http.ResponseWriter, r *http.Request, attachmentId openapi_types.UUID)
 	// GetCallingCall Read the winning User's durable active or disposition Call.
 	// (GET /v1/calling/calls/{callId})
 	GetCallingCall(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
@@ -1335,6 +1732,24 @@ type ServerInterface interface {
 	// InspectInvitation Inspect only the scope attached to the presented invitation.
 	// (POST /v1/invitations/inspect)
 	InspectInvitation(w http.ResponseWriter, r *http.Request)
+	// QueryMessageThreads Query phone-led Message Threads in one authorized Location.
+	// (POST /v1/message-threads/query)
+	QueryMessageThreads(w http.ResponseWriter, r *http.Request)
+	// MarkMessageThreadRead Clear the real User's unread marker for one Thread.
+	// (POST /v1/message-threads/{threadId}/read)
+	MarkMessageThreadRead(w http.ResponseWriter, r *http.Request, threadId openapi_types.UUID)
+	// GetMessageThreadTimeline Read one authorized living conversation timeline.
+	// (GET /v1/message-threads/{threadId}/timeline)
+	GetMessageThreadTimeline(w http.ResponseWriter, r *http.Request, threadId openapi_types.UUID, params GetMessageThreadTimelineParams)
+	// SendMessage Durably accept one location-derived outbound Message.
+	// (POST /v1/messages)
+	SendMessage(w http.ResponseWriter, r *http.Request)
+	// CreateMessageFollowUpTask Create at most one OPEN follow-up Task from one Message.
+	// (POST /v1/messages/{messageId}/follow-up-task)
+	CreateMessageFollowUpTask(w http.ResponseWriter, r *http.Request, messageId openapi_types.UUID)
+	// SendMessageAgain Create an explicit new attempt while preserving the original Message.
+	// (POST /v1/messages/{messageId}/send-again)
+	SendMessageAgain(w http.ResponseWriter, r *http.Request, messageId openapi_types.UUID)
 	// GetOperatorCallingTimeline Read one sanitized durable Call timeline as a Platform Operator.
 	// (GET /v1/operator/calls/{callId}/timeline)
 	GetOperatorCallingTimeline(w http.ResponseWriter, r *http.Request, callId openapi_types.UUID)
@@ -1344,6 +1759,15 @@ type ServerInterface interface {
 	// AddLocation Add a Location as a Platform Operator in Support Mode.
 	// (POST /v1/practices/{practiceId}/locations)
 	AddLocation(w http.ResponseWriter, r *http.Request, practiceId openapi_types.UUID)
+	// GetProviderMessageMedia Serve one short-lived signed outbound attachment to Telnyx.
+	// (GET /v1/provider/messaging-media/{attachmentId})
+	GetProviderMessageMedia(w http.ResponseWriter, r *http.Request, attachmentId openapi_types.UUID, params GetProviderMessageMediaParams)
+	// ReceiveTelnyxMessagingWebhook Verify and durably receipt an inbound Telnyx Message event.
+	// (POST /v1/provider/telnyx/messaging-webhooks)
+	ReceiveTelnyxMessagingWebhook(w http.ResponseWriter, r *http.Request)
+	// ReceiveCorrelatedTelnyxMessagingWebhook Verify and receipt callback-correlated outbound Message evidence.
+	// (POST /v1/provider/telnyx/messaging-webhooks/{callbackToken})
+	ReceiveCorrelatedTelnyxMessagingWebhook(w http.ResponseWriter, r *http.Request, callbackToken string)
 	// ReceiveTelnyxWebhook Verify and durably receipt one raw Telnyx webhook.
 	// (POST /v1/provider/telnyx/webhooks)
 	ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request)
@@ -1435,6 +1859,72 @@ func (siw *ServerInterfaceWrapper) InspectSignUpEligibility(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.InspectSignUpEligibility(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadMessageAttachment operation middleware
+func (siw *ServerInterfaceWrapper) UploadMessageAttachment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadMessageAttachment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMessageAttachment operation middleware
+func (siw *ServerInterfaceWrapper) GetMessageAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", r.PathValue("attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMessageAttachment(w, r, attachmentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryInboundMessageAttachment operation middleware
+func (siw *ServerInterfaceWrapper) RetryInboundMessageAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", r.PathValue("attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryInboundMessageAttachment(w, r, attachmentId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1734,6 +2224,167 @@ func (siw *ServerInterfaceWrapper) InspectInvitation(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// QueryMessageThreads operation middleware
+func (siw *ServerInterfaceWrapper) QueryMessageThreads(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QueryMessageThreads(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkMessageThreadRead operation middleware
+func (siw *ServerInterfaceWrapper) MarkMessageThreadRead(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "threadId" -------------
+	var threadId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "threadId", r.PathValue("threadId"), &threadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkMessageThreadRead(w, r, threadId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMessageThreadTimeline operation middleware
+func (siw *ServerInterfaceWrapper) GetMessageThreadTimeline(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "threadId" -------------
+	var threadId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "threadId", r.PathValue("threadId"), &threadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetMessageThreadTimelineParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMessageThreadTimeline(w, r, threadId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SendMessage operation middleware
+func (siw *ServerInterfaceWrapper) SendMessage(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SendMessage(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateMessageFollowUpTask operation middleware
+func (siw *ServerInterfaceWrapper) CreateMessageFollowUpTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", r.PathValue("messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMessageFollowUpTask(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SendMessageAgain operation middleware
+func (siw *ServerInterfaceWrapper) SendMessageAgain(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", r.PathValue("messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SendMessageAgain(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOperatorCallingTimeline operation middleware
 func (siw *ServerInterfaceWrapper) GetOperatorCallingTimeline(w http.ResponseWriter, r *http.Request) {
 
@@ -1812,6 +2463,101 @@ func (siw *ServerInterfaceWrapper) AddLocation(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddLocation(w, r, practiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProviderMessageMedia operation middleware
+func (siw *ServerInterfaceWrapper) GetProviderMessageMedia(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", r.PathValue("attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProviderMessageMediaParams
+
+	// ------------- Required query parameter "expires" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "expires", r.URL.Query(), &params.Expires, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expires"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expires", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "signature" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "signature", r.URL.Query(), &params.Signature, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "signature"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "signature", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProviderMessageMedia(w, r, attachmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReceiveTelnyxMessagingWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveTelnyxMessagingWebhook(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveTelnyxMessagingWebhook(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReceiveCorrelatedTelnyxMessagingWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveCorrelatedTelnyxMessagingWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "callbackToken" -------------
+	var callbackToken string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "callbackToken", r.PathValue("callbackToken"), &callbackToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "callbackToken", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveCorrelatedTelnyxMessagingWebhook(w, r, callbackToken)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2244,6 +2990,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks/{taskId}/complete", wrapper.CompleteTask)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tasks/{taskId}/reopen", wrapper.ReopenTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tasks/{taskId}/history", wrapper.GetTaskCallHistory)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/message-threads/query", wrapper.QueryMessageThreads)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/message-threads/{threadId}/timeline", wrapper.GetMessageThreadTimeline)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/message-threads/{threadId}/read", wrapper.MarkMessageThreadRead)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/messages", wrapper.SendMessage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/attachments", wrapper.UploadMessageAttachment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/attachments/{attachmentId}", wrapper.GetMessageAttachment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/attachments/{attachmentId}/retry-copy", wrapper.RetryInboundMessageAttachment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/messages/{messageId}/send-again", wrapper.SendMessageAgain)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/messages/{messageId}/follow-up-task", wrapper.CreateMessageFollowUpTask)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/provider/telnyx/messaging-webhooks", wrapper.ReceiveTelnyxMessagingWebhook)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/provider/telnyx/messaging-webhooks/{callbackToken}", wrapper.ReceiveCorrelatedTelnyxMessagingWebhook)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/provider/messaging-media/{attachmentId}", wrapper.GetProviderMessageMedia)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/operator/calls/{callId}/timeline", wrapper.GetOperatorCallingTimeline)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/requeue", wrapper.RequeueOperatorProviderReceipt)
 
@@ -2255,102 +3013,130 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"/wkAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

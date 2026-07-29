@@ -28,8 +28,9 @@ const (
 type TaskOrigin string
 
 const (
-	TaskOriginHumanCallFollowUp TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
-	TaskOriginAbitaAI           TaskOrigin = "ABITA_AI"
+	TaskOriginHumanCallFollowUp    TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
+	TaskOriginAbitaAI              TaskOrigin = "ABITA_AI"
+	TaskOriginStaffMessageFollowUp TaskOrigin = "STAFF_MESSAGE_FOLLOW_UP"
 )
 
 type TaskUrgency string
@@ -85,26 +86,30 @@ type ActorSnapshot struct {
 }
 
 type Task struct {
-	ID            string
-	PracticeID    string
-	LocationID    string
-	LocationName  string
-	CallID        string
-	Phone         string
-	Title         string
-	State         TaskState
-	Origin        TaskOrigin
-	Urgency       TaskUrgency
-	Category      TaskCategory
-	CallerName    string
-	SourceCallID  string
-	SourceMessage string
-	CreatedBy     ActorSnapshot
-	CreatedAt     time.Time
-	CompletedBy   *ActorSnapshot
-	CompletedAt   *time.Time
-	Version       int64
-	UpdatedAt     time.Time
+	ID                   string
+	PracticeID           string
+	LocationID           string
+	LocationName         string
+	CallID               string
+	Phone                string
+	Title                string
+	State                TaskState
+	Origin               TaskOrigin
+	Urgency              TaskUrgency
+	Category             TaskCategory
+	CallerName           string
+	SourceCallID         string
+	SourceMessage        string
+	MessageID            string
+	MessageThreadID      string
+	ConversationThreadID string
+	Unread               bool
+	CreatedBy            ActorSnapshot
+	CreatedAt            time.Time
+	CompletedBy          *ActorSnapshot
+	CompletedAt          *time.Time
+	Version              int64
+	UpdatedAt            time.Time
 }
 
 type CreateAITaskCommand struct {
@@ -130,6 +135,16 @@ type EnsureCallFollowUpCommand struct {
 	LocationID string
 	Phone      string
 	Reason     string
+	Creator    access.Actor
+}
+
+type EnsureMessageFollowUpCommand struct {
+	MessageID  string
+	ThreadID   string
+	PracticeID string
+	LocationID string
+	Phone      string
+	Title      string
 	Creator    access.Actor
 }
 
@@ -240,6 +255,144 @@ func (m *Module) EnsureCallFollowUp(
 	}
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
 		return Task{}, err
+	}
+	return task, nil
+}
+
+// EnsureMessageFollowUp creates at most one Task from one source Message. The
+// caller owns the transaction so Messaging authorization, Work creation, and a
+// required Support Mode audit can commit or roll back together.
+func (m *Module) EnsureMessageFollowUp(
+	ctx context.Context,
+	tx pgx.Tx,
+	command EnsureMessageFollowUpCommand,
+) (Task, TaskCreateStatus, error) {
+	title := strings.TrimSpace(command.Title)
+	if title == "" {
+		title = "Follow up on text"
+	}
+	command.Creator.Email = strings.ToLower(strings.TrimSpace(command.Creator.Email))
+	if tx == nil ||
+		m.access == nil ||
+		strings.TrimSpace(command.MessageID) == "" ||
+		strings.TrimSpace(command.ThreadID) == "" ||
+		strings.TrimSpace(command.PracticeID) == "" ||
+		strings.TrimSpace(command.LocationID) == "" ||
+		!canonicalPhone.MatchString(command.Phone) ||
+		!textLengthBetween(title, 1, 500) ||
+		strings.TrimSpace(command.Creator.Subject) == "" ||
+		command.Creator.Email == "" {
+		return Task{}, "", ErrInvalidInput
+	}
+	createdAt := m.now()
+	var taskID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO work_tasks (
+			practice_id,
+			location_id,
+			call_id,
+			phone,
+			title,
+			state,
+			origin,
+			urgency,
+			created_by_kind,
+			created_by_subject,
+			created_by_email,
+			created_at,
+			source_message_id,
+			message_thread_id,
+			updated_at
+		)
+		VALUES (
+			$1, $2, NULL, $3, $4, 'OPEN', 'STAFF_MESSAGE_FOLLOW_UP',
+			'normal', 'HUMAN', $5, $6, $7, $8, $9, $7
+		)
+		ON CONFLICT (source_message_id)
+			WHERE source_message_id IS NOT NULL
+		DO NOTHING
+		RETURNING id::text
+	`, command.PracticeID, command.LocationID, command.Phone, title,
+		command.Creator.Subject, command.Creator.Email, createdAt,
+		command.MessageID, command.ThreadID,
+	).Scan(&taskID)
+	status := TaskCreated
+	if errors.Is(err, pgx.ErrNoRows) {
+		status = TaskDuplicate
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text
+			FROM work_tasks
+			WHERE source_message_id = $1
+			FOR SHARE
+		`, command.MessageID).Scan(&taskID); err != nil {
+			return Task{}, "", fmt.Errorf("load replayed Message Task: %w", err)
+		}
+	} else if err != nil {
+		return Task{}, "", fmt.Errorf("create Message follow-up Task: %w", err)
+	}
+	task, err := loadTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, "", err
+	}
+	if task.PracticeID != command.PracticeID ||
+		task.LocationID != command.LocationID ||
+		task.Phone != command.Phone ||
+		task.MessageThreadID != command.ThreadID {
+		return Task{}, "", ErrConflict
+	}
+	if status == TaskDuplicate {
+		return task, status, nil
+	}
+	if err := appendActivity(
+		ctx,
+		tx,
+		task,
+		"TASK_CREATED",
+		task.CreatedBy,
+		createdAt,
+	); err != nil {
+		return Task{}, "", err
+	}
+	if _, err := m.access.RecordWorkspaceChange(
+		ctx,
+		tx,
+		task.PracticeID,
+	); err != nil {
+		return Task{}, "", err
+	}
+	return task, status, nil
+}
+
+// LockOpenMessageTask validates the exact destination exposed by a Task
+// composer while serializing against completion. Messaging owns the provider
+// effect; Work owns whether the Task can currently originate it.
+func (m *Module) LockOpenMessageTask(
+	ctx context.Context,
+	tx pgx.Tx,
+	taskID string,
+	practiceID string,
+	locationID string,
+	threadID string,
+	phone string,
+) (Task, error) {
+	if tx == nil ||
+		strings.TrimSpace(taskID) == "" ||
+		strings.TrimSpace(practiceID) == "" ||
+		strings.TrimSpace(locationID) == "" ||
+		strings.TrimSpace(threadID) == "" ||
+		!canonicalPhone.MatchString(phone) {
+		return Task{}, ErrInvalidInput
+	}
+	task, err := lockTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.State != TaskOpen ||
+		task.PracticeID != practiceID ||
+		task.LocationID != locationID ||
+		task.Phone != phone ||
+		(task.MessageThreadID != "" && task.MessageThreadID != threadID) {
+		return Task{}, ErrConflict
 	}
 	return task, nil
 }
@@ -698,6 +851,8 @@ func (m *Module) QueryTasks(
 			task.caller_name,
 			task.source_call_id,
 			task.source_message,
+			task.source_message_id::text,
+			task.message_thread_id::text,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1036,6 +1191,7 @@ func insertTask(
 ) (Task, bool, error) {
 	var task Task
 	var category, callerName, sourceCall, sourceMessage *string
+	var messageID, messageThreadID *string
 	var createdEmail, completedSubject, completedEmail *string
 	var inserted bool
 	err := tx.QueryRow(ctx, `
@@ -1077,6 +1233,8 @@ func insertTask(
 			task.caller_name,
 			task.source_call_id,
 			task.source_message,
+			task.source_message_id::text,
+			task.message_thread_id::text,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1115,6 +1273,8 @@ func insertTask(
 		&callerName,
 		&sourceCall,
 		&sourceMessage,
+		&messageID,
+		&messageThreadID,
 		&task.CreatedBy.Kind,
 		&task.CreatedBy.Subject,
 		&createdEmail,
@@ -1129,7 +1289,16 @@ func insertTask(
 	if err != nil {
 		return Task{}, false, fmt.Errorf("ensure Call follow-up Task: %w", err)
 	}
-	setTaskSource(&task, category, callerName, sourceCall, sourceMessage, createdEmail)
+	setTaskSource(
+		&task,
+		category,
+		callerName,
+		sourceCall,
+		sourceMessage,
+		messageID,
+		messageThreadID,
+		createdEmail,
+	)
 	setCompletionActor(&task, completedSubject, completedEmail)
 	return task, inserted, nil
 }
@@ -1155,6 +1324,8 @@ func loadTask(
 			task.caller_name,
 			task.source_call_id,
 			task.source_message,
+			task.source_message_id::text,
+			task.message_thread_id::text,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1200,6 +1371,8 @@ func lockTask(
 			task.caller_name,
 			task.source_call_id,
 			task.source_message,
+			task.source_message_id::text,
+			task.message_thread_id::text,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1232,6 +1405,7 @@ type taskScanner interface {
 func scanTask(scanner taskScanner) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
+	var messageID, messageThreadID *string
 	var createdEmail, completedSubject, completedEmail *string
 	if err := scanner.Scan(
 		&task.ID,
@@ -1248,6 +1422,8 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&callerName,
 		&sourceCall,
 		&sourceMessage,
+		&messageID,
+		&messageThreadID,
 		&task.CreatedBy.Kind,
 		&task.CreatedBy.Subject,
 		&createdEmail,
@@ -1269,6 +1445,8 @@ func scanTask(scanner taskScanner) (Task, error) {
 		callerName,
 		sourceCall,
 		sourceMessage,
+		messageID,
+		messageThreadID,
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
@@ -1281,6 +1459,8 @@ func setTaskSource(
 	callerName *string,
 	sourceCall *string,
 	sourceMessage *string,
+	messageID *string,
+	messageThreadID *string,
 	createdEmail *string,
 ) {
 	if category != nil {
@@ -1294,6 +1474,12 @@ func setTaskSource(
 	}
 	if sourceMessage != nil {
 		task.SourceMessage = *sourceMessage
+	}
+	if messageID != nil {
+		task.MessageID = *messageID
+	}
+	if messageThreadID != nil {
+		task.MessageThreadID = *messageThreadID
 	}
 	if createdEmail != nil {
 		task.CreatedBy.Email = *createdEmail

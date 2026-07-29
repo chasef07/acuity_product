@@ -33,6 +33,10 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"TELNYX_RINGBACK_URL":                      "https://assets.example/ringback.wav",
 		"TELNYX_RECORDING_BUCKET":                  "synthetic-recordings",
 		"TELNYX_WEBHOOK_PUBLIC_KEY":                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"MESSAGING_WEBHOOK_BASE_URL":               "https://ingress.example/v1/provider/telnyx/messaging-webhooks",
+		"MESSAGING_ATTACHMENT_DIRECTORY":           "/tmp/acuity-message-attachments",
+		"MESSAGING_MEDIA_PUBLIC_BASE_URL":          "https://ingress.example/v1/provider/messaging-media",
+		"MESSAGING_MEDIA_SIGNING_KEY":              "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"REALTIME_HEARTBEAT_SECONDS":               "15",
 		"REALTIME_STREAM_SECONDS":                  "300",
 		"REALTIME_REVALIDATE_SECONDS":              "30",
@@ -87,6 +91,9 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 			delete(values, "TELNYX_FROM_NUMBER")
 			delete(values, "TELNYX_RINGBACK_URL")
 			delete(values, "TELNYX_RECORDING_BUCKET")
+			if role != RoleProviderIngress {
+				delete(values, "MESSAGING_WEBHOOK_BASE_URL")
+			}
 		}
 		if role == RoleProviderIngress || role == RoleWorker || role == RoleRealtime || role == RoleMigrate {
 			delete(values, "HUMAN_CALLING_SIP_DOMAIN")
@@ -98,6 +105,17 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		}
 		if role != RoleProviderIngress {
 			delete(values, "TELNYX_WEBHOOK_PUBLIC_KEY")
+		}
+		if role != RoleWorker {
+			delete(values, "MESSAGING_MEDIA_PUBLIC_BASE_URL")
+		}
+		if role != RoleWorker && role != RoleProviderIngress {
+			delete(values, "MESSAGING_MEDIA_SIGNING_KEY")
+		}
+		if role != RolePortalAPI &&
+			role != RoleWorker &&
+			role != RoleProviderIngress {
+			delete(values, "MESSAGING_ATTACHMENT_DIRECTORY")
 		}
 		if _, err := LoadConfig(func(name string) string { return values[name] }); err != nil {
 			t.Fatalf("load %s config: %v", role, err)

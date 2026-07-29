@@ -12,32 +12,44 @@
         {
           "Key": "fixture-location-1",
           "Name": "Fixture Location 1",
-          "AbitaOfficeKey": "spring-hill"
+          "AbitaOfficeKey": "spring-hill",
+          "MessagingSender": "+17275550101",
+          "MessagingProfileID": "fixture-messaging-profile-1"
         },
         {
           "Key": "fixture-location-2",
           "Name": "Fixture Location 2",
-          "AbitaOfficeKey": "crystal-river"
+          "AbitaOfficeKey": "crystal-river",
+          "MessagingSender": "+17275550102",
+          "MessagingProfileID": "fixture-messaging-profile-2"
         },
         {
           "Key": "fixture-location-3",
           "Name": "Fixture Location 3",
-          "AbitaOfficeKey": "hollywood"
+          "AbitaOfficeKey": "hollywood",
+          "MessagingSender": "+17275550103",
+          "MessagingProfileID": "fixture-messaging-profile-3"
         },
         {
           "Key": "fixture-location-4",
           "Name": "Fixture Location 4",
-          "AbitaOfficeKey": "sweetwater"
+          "AbitaOfficeKey": "sweetwater",
+          "MessagingSender": "+17275550104",
+          "MessagingProfileID": "fixture-messaging-profile-4"
         },
         {
           "Key": "fixture-location-5",
           "Name": "Fixture Location 5",
-          "AbitaOfficeKey": "north-miami-beach-optical"
+          "AbitaOfficeKey": "north-miami-beach-optical",
+          "MessagingSender": "+17275550105",
+          "MessagingProfileID": "fixture-messaging-profile-5"
         },
         {
           "Key": "fixture-location-6",
           "Name": "Fixture Location 6",
-          "AbitaOfficeKey": "dev"
+          "AbitaOfficeKey": "dev",
+          "MessagingSender": "+17275550106",
+          "MessagingProfileID": "fixture-messaging-profile-6"
         }
       ],
       "Invitations": [
@@ -61,6 +73,16 @@
         {
           "Key": "fixture-secondary-staff",
           "Email": "secondary@abita.test",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": [
+            "fixture-location-1"
+          ],
+          "ExpiresAt": "2027-07-24T00:00:00Z"
+        },
+        {
+          "Key": "fixture-messaging-staff",
+          "Email": "messaging@abita.test",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
           "SelectedLocationKeys": [
