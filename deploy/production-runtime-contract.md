@@ -80,5 +80,5 @@ column-scoped receipt authority. `realtime` receives no HumanCalling or Work
 table authority. The web runtime receives only Better Auth schema authority.
 
 Actual Cloud SQL failover/restore rehearsal, production load evidence, and
-whole-transaction retry for serialization/deadlock failures remain release
-gates. This contract does not claim those gates are complete.
+alert-delivery smoke tests remain release gates. This contract does not claim
+those gates are complete.
