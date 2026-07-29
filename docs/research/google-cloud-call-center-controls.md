@@ -47,7 +47,7 @@ The [`LogMetric` REST resource](https://cloud.google.com/logging/docs/reference/
 - one `labelExtractors` entry for every label declared in `metricDescriptor.labels`; and
 - required `bucketOptions` for distributions. Linear, exponential, and explicit layouts have the same JSON shapes used here. [`Distribution metric buckets`](https://cloud.google.com/logging/docs/logs-based-metrics/distribution-metrics#histogram-buckets)
 
-The current `deploy/observability/log-metrics.json` contains 21 metrics: 7 counters and 14 distributions. Static validation found:
+The current `deploy/observability/log-metrics.json` contains 22 metrics: 7 counters and 15 distributions. Static validation found:
 
 - every metric label has a matching extractor and no extractor lacks a descriptor label;
 - every counter omits `valueExtractor` and `bucketOptions`;

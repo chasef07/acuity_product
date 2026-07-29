@@ -1,4 +1,4 @@
--- Slice 5: location-scoped SMS/MMS conversations and delivery state.
+-- Slice 5 Messaging: location-scoped SMS/MMS conversations and delivery state.
 ALTER TABLE work_tasks
     ADD CONSTRAINT work_tasks_id_practice_location_key
     UNIQUE (id, practice_id, location_id);

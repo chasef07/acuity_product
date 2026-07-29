@@ -57,7 +57,7 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 
 	observer.Observe(observability.WebhookAcknowledged(
 		observability.WebhookDuplicate, 18*time.Millisecond))
-	observer.Observe(observability.ReceiptQueue(12, 7*time.Second))
+	observer.Observe(observability.ReceiptQueue(12, 7*time.Second, 1))
 	observer.Observe(observability.ReceiptProcessed(
 		observability.ReceiptQuarantined, 7*time.Second, 80*time.Millisecond))
 	observer.Observe(observability.DatabasePoolState(4, 1, 4))
@@ -71,6 +71,8 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	assertField(t, logs, "acuity_call_center_webhook_acknowledgement",
 		"seconds", 0.018)
 	assertField(t, logs, "acuity_call_center_receipt_queue", "depth", float64(12))
+	assertField(t, logs, "acuity_call_center_receipt_queue",
+		"quarantined_depth", float64(1))
 	assertField(t, logs, "acuity_call_center_receipt_processing",
 		"outcome", "quarantined")
 	assertField(t, logs, "acuity_call_center_database_pool",
@@ -104,6 +106,30 @@ func TestPoolTracerClassifiesBoundedAcquisitionOutcome(t *testing.T) {
 	entry := findMetric(t, entries(t, output.String()),
 		"acuity_call_center_database_pool_acquire")
 	if entry["outcome"] != "timeout" {
+		t.Fatalf("pool acquisition metric = %#v", entry)
+	}
+}
+
+func TestPoolTracerClassifiesCanceledAcquisitionSeparatelyFromTimeout(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"portal-api-00009",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	)
+	tracer := observability.NewPoolTracer(observer)
+	ctx := tracer.TraceAcquireStart(
+		context.Background(),
+		nil,
+		pgxpool.TraceAcquireStartData{},
+	)
+	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{
+		Err: context.Canceled,
+	})
+
+	entry := findMetric(t, entries(t, output.String()),
+		"acuity_call_center_database_pool_acquire")
+	if entry["outcome"] != "canceled" {
 		t.Fatalf("pool acquisition metric = %#v", entry)
 	}
 }

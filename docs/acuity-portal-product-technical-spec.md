@@ -447,26 +447,29 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 
 ### 15. Infrastructure
 
-- Deploy the web and all Go runtime roles to Google Cloud in one production region.
-- Use Cloud SQL Enterprise Plus for PostgreSQL with regional high availability, automated backups, point-in-time recovery, deletion protection, and a rehearsed restore procedure.
-- Keep latency-critical `portal-api` and `provider-ingress` capacity warm. Production scaling must preserve zonal redundancy and avoid scale-to-zero on the human-call path.
+- Default the web, all Go runtime roles, Cloud SQL, recording storage, and dependent regional resources to `us-east1` (South Carolina) for current Florida users. Geography is only the starting assumption; measured Florida-to-`us-east1` latency remains a live acceptance gate.
+- Use Cloud SQL PostgreSQL 16 Enterprise edition, single-zone, at 2 vCPU / 8 GiB with 50 GiB SSD initially. Enable storage auto-increase, automated backups in `us-east1`, seven days of point-in-time recovery, deletion protection, and a rehearsed restore procedure. Do not use Enterprise Plus or data cache.
+- Accept the single-zone tradeoff explicitly: a database or zone outage does not automatically fail over. Telnyx retries and durable receipt/command recovery protect correctness, but portal and call control may remain unavailable until database recovery or restore.
+- Keep one `portal-api`, one `provider-ingress`, and one `realtime` instance warm, and one worker fixed. Web may scale to zero because it does not own provider acknowledgment, call control, realtime freshness, or durable recovery.
+- Pin every request role and worker initially to 1 vCPU / 512 MiB. Request roles use request-based billing; the worker and migration job use instance-based billing.
 - Give every runtime role its own explicit Cloud Run concurrency, minimum-instance, maximum-instance, and `pgxpool` limits.
 - Give every runtime role a distinct Google service identity and least-privilege database role. Only `migrate` receives DDL authority.
 - `migrate` applies version-controlled product SQL and reviewed Better Auth schema SQL. Runtime Go modules never read or mutate Better Auth-owned tables.
 - Before sizing, record the 12-month capacity envelope: peak concurrent staff, active calls, open SSE streams, command rate, webhook burst rate, daily messages, PostgreSQL data volume, and evidence-retention volume.
-- Calculate the PostgreSQL connection ceiling before deployment:
+- Calculate the PostgreSQL connection reservation before deployment:
 
   ```text
   sum(each service's maximum instances × its pool maximum)
     + fixed worker connections
     + Next.js and Better Auth connections
     + dedicated LISTEN connections
-    + migration and operator headroom
+    + migration, autoscaler-overshoot, and operator headroom
   ```
 
-- Normal maximum application pools must leave explicit headroom for overlapping revisions, failover reconnects, migrations, autovacuum, and operator access.
+- The checked pilot reservation is exactly 22 usable client connections: 11 across configured request-service maxima, 2 for one old plus one new worker revision, 1 migration connection, 5 for one extra instance of every request role, and 3 operator/recovery connections. Cloud Run may temporarily exceed a configured maximum during rapid spikes or maintenance, so live overshoot and saturation remain release gates rather than a claimed hard platform ceiling. Retain the existing maximum service burst bounds and recalculate the reservation after every pool or instance change.
+- Normal maximum application pools must leave explicit headroom for overlapping revisions, recovery reconnects, migrations, and operator access.
 - Use small direct `pgxpool` pools initially. Do not add managed transaction pooling until measurements justify it; `LISTEN/NOTIFY` retains a dedicated direct connection.
-- Cloud SQL regional failover closes existing connections and may cause roughly one minute of database unavailability. Every role uses bounded acquisition, exponential backoff with jitter, and only safe idempotent retries from the beginning of the operation.
+- Every role uses bounded acquisition, exponential backoff with jitter, and only safe idempotent retries from the beginning of the operation. A zonal database outage is visible until recovery; no runtime may convert it into false success.
 - Store secrets in Secret Manager.
 - Generate internal application credentials through approved tooling or deployment automation. Do not commit them, paste them into product configuration, or ask an operator to invent them manually.
 - Store recordings in approved protected object storage; expose them only through short-lived, location-authorized access and audit each grant.
@@ -532,9 +535,9 @@ This is the highest useful seam because it proves the product promise while allo
 19. Completion records linked outcome evidence or an explicit completion reason.
 20. Logs and error responses remain free of protected content.
 21. Killing `portal-api` after database commit but before or after a Telnyx request converges through the durable provider command without duplicate effect.
-22. A webhook burst cannot starve staff commands, exceed the connection ceiling, acknowledge uncommitted data, or corrupt event order.
-23. Overlapping Cloud Run revisions stay within the PostgreSQL connection budget.
-24. Cloud SQL failover produces visible transient failure and automatic recovery without false success or lost durable work.
+22. At least ten repeated production-shaped PostgreSQL runs send 25 simultaneous correctly signed webhooks through the real handler under the 1.5-second deadline; every response is `204`, acknowledgement p99 is below one second, duplicates converge, one worker advances receipt and command lanes, 10 concurrent Staff commands complete, and portal/realtime database paths remain responsive under ingress pressure.
+23. The 22-connection reservation covers configured service bounds, one-old/one-new worker overlap, one extra instance of each request role, migration, and operator recovery. A failed reduction records pool wait and transaction latency, then retains the smallest passing capacity.
+24. Cloud SQL outage and restore produce visible failure and controlled recovery without false success or lost acknowledged work.
 25. SSE timeout, instance death, and revision rollout reconnect to an authoritative snapshot without losing state.
 26. Killing a worker mid-job releases or expires its lease and safely resumes without double-applying the effect.
 27. Adding a location immediately grants access to Admin and `ALL`-scope Staff memberships but not `SELECTED`-scope Staff memberships.
@@ -578,7 +581,7 @@ The August 6 release does not ship until all conditions are proven:
 15. Scoped staff invitations, short-lived evidence access, deployment, backups, rollback, monitoring, and the complete production journey are tested before launch.
 16. API commands, provider ingress, realtime streams, durable workers, and migrations run in their specified isolated runtime roles from one tested backend image.
 17. The maximum connection budget holds under peak traffic, webhook bursts, worker backlog, SSE load, and an overlapping rollout.
-18. Cloud SQL failover, runtime termination, webhook retry, worker recovery, SSE reconnect, and traffic rollback are rehearsed without data loss or false success.
+18. Cloud SQL outage/restore, runtime termination, webhook retry, worker recovery, SSE reconnect, and traffic rollback are rehearsed without data loss or false success.
 19. The approved capacity envelope and burst factor are exercised successfully with measurable database, pool, runtime, and provider headroom.
 20. Invite-only access, dynamic location scope, Platform Operator Support Mode, and the persistent sidebar workspace pass their authorization and browser acceptance journeys.
 
@@ -610,7 +613,7 @@ The August 6 release does not ship until all conditions are proven:
 | Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Recordings navigation, playback, transcript, failure states | Inbound/outbound/voicemail evidence appears and unauthorized access fails |
 | Sun Aug 2 | Administration and complete access boundaries work | Invitations, memberships, service scope, authorization audit | Staff/location settings and access-denied states | Email-bound invite activates exact scope; cross-location reads/writes/streams fail |
 | Mon Aug 3 | Feature complete; scope closes | Failure recovery, durable jobs, audit, tenant authorization | Empty/error/reconnect states, accessibility, full journey cleanup | All release-bar journeys pass in simulation |
-| Tue Aug 4 | Production hardening complete | Load/concurrency, connection ceiling, Cloud SQL failover, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, SSE/runtime termination, performance, operator runbook | Peak load, role isolation, failover, replay, backup, rollback, and observability gates pass |
+| Tue Aug 4 | Production hardening complete | Load/concurrency, connection ceiling, Cloud SQL outage/restore, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, SSE/runtime termination, performance, operator runbook | Peak load, role isolation, restore, replay, backup, rollback, and observability gates pass |
 | Wed Aug 5 | Release candidate frozen and rehearsed | Production deployment rehearsal and provider configuration audit | Full staff rehearsal and UI blocker fixes only | Live Telnyx, SMS, recording, transcription, and AI-tool acceptance pass twice |
 | Thu Aug 6 | Full production release | Deploy, monitor backend/provider/database | Launch smoke, operator support, UI monitoring | All gates green; enable production routing; rollback immediately on release blocker |
 

@@ -5,7 +5,7 @@ set -eu
 # profile whose capacity values come only from production-runtime-contract.json.
 
 : "${GCP_PROJECT:?required}"
-: "${GCP_REGION:?required}"
+: "${GCP_REGION:=us-east1}"
 : "${CLOUD_SQL_INSTANCE:?required project:region:instance connection name}"
 : "${BACKEND_IMAGE_DIGEST:?required}"
 : "${WEB_IMAGE_DIGEST:?required; build with the two NEXT_PUBLIC origins below}"
@@ -42,10 +42,12 @@ set -eu
 : "${TELNYX_FROM_NUMBER:?required}"
 : "${TELNYX_RINGBACK_URL:?required}"
 : "${TELNYX_RECORDING_BUCKET:?required private GCS bucket name}"
+: "${RECORDING_BUCKET_LOCATION:?required measured GCS bucket location}"
 : "${TELNYX_WEBHOOK_PUBLIC_KEY:?required base64 Ed25519 public key}"
 : "${MESSAGING_WEBHOOK_BASE_URL:?required provider-ingress messaging webhook URL}"
 : "${MESSAGING_MEDIA_PUBLIC_BASE_URL:?required provider-ingress messaging media URL}"
 : "${MESSAGING_ATTACHMENT_BUCKET:?required private shared Cloud Storage bucket}"
+: "${MESSAGING_ATTACHMENT_BUCKET_LOCATION:?required measured Cloud Storage bucket location}"
 : "${MESSAGING_ATTACHMENT_DIRECTORY:=/mnt/acuity-messaging}"
 : "${HUMAN_CALLING_OFFER_SECONDS:=20}"
 : "${HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS:=15}"
@@ -56,6 +58,39 @@ set -eu
 CALLING_TIMING_ENV="HUMAN_CALLING_OFFER_SECONDS=${HUMAN_CALLING_OFFER_SECONDS},HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS=${HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS},HUMAN_CALLING_LEASE_SECONDS=${HUMAN_CALLING_LEASE_SECONDS},HUMAN_CALLING_READINESS_GRACE_SECONDS=${HUMAN_CALLING_READINESS_GRACE_SECONDS}"
 
 SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+load_contract_row() {
+  requested_runtime="$1"
+  rendered_row=$(
+    printf '%s\n' "$CONTRACT_ROWS" |
+      awk -F '\t' -v requested_runtime="$requested_runtime" \
+        '$1 == requested_runtime { print }'
+  )
+  if ! IFS="$(printf '\t')" read -r \
+    runtime_name \
+    runtime_kind \
+    runtime_concurrency \
+    runtime_minimum \
+    runtime_maximum \
+    runtime_pool \
+    runtime_dedicated \
+    runtime_timeout \
+    runtime_retries \
+    runtime_vcpus \
+    runtime_memory_mib \
+    runtime_billing_mode \
+    runtime_region <<EOF
+$rendered_row
+EOF
+  then
+    echo "runtime contract row is missing: ${requested_runtime}" >&2
+    exit 1
+  fi
+  if [ "$runtime_name" != "$requested_runtime" ]; then
+    echo "runtime contract row does not match ${requested_runtime}" >&2
+    exit 1
+  fi
+}
+
 case "$ACUITY_DEPLOYMENT_PROFILE" in
   production)
     : "${USABLE_DATABASE_CONNECTIONS:?required measured usable Cloud SQL connections}"
@@ -63,10 +98,12 @@ case "$ACUITY_DEPLOYMENT_PROFILE" in
       node "$SCRIPT_DIRECTORY/render-production-runtime-contract.mjs" \
         "$SCRIPT_DIRECTORY/production-runtime-contract.json"
     )
-    required_connections=$(
-      printf '%s\n' "$CONTRACT_ROWS" |
-        awk -F '\t' '$1 == "capacity" { print $5 }'
-    )
+    load_contract_row capacity
+    required_connections="$runtime_maximum"
+    if [ "$GCP_REGION" != "$runtime_region" ]; then
+      echo "production region must be ${runtime_region}; configured ${GCP_REGION}" >&2
+      exit 1
+    fi
     case "$USABLE_DATABASE_CONNECTIONS" in
       ''|*[!0-9]*)
         echo "USABLE_DATABASE_CONNECTIONS must be a positive integer" >&2
@@ -79,12 +116,14 @@ case "$ACUITY_DEPLOYMENT_PROFILE" in
     fi
     ;;
   nonproduction)
-    CONTRACT_ROWS='web	service	40	0	2	3	0	1500	0
-portal-api	service	20	0	3	4	0	1500	0
-provider-ingress	service	20	0	2	2	0	1500	0
-realtime	service	50	0	2	3	1	1500	0
-worker	worker-pool	0	2	2	2	0	1500	0
-migrate	job	0	0	1	2	0	5000	0'
+    CONTRACT_ROWS=$(
+      printf 'web\tservice\t40\t0\t2\t3\t0\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'portal-api\tservice\t20\t0\t3\t4\t0\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'provider-ingress\tservice\t20\t0\t2\t2\t0\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'realtime\tservice\t50\t0\t2\t3\t1\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'worker\tworker-pool\t0\t2\t2\t2\t0\t1500\t0\t1\t512\tinstance-based\t%s\n' "$GCP_REGION"
+      printf 'migrate\tjob\t0\t0\t1\t2\t0\t5000\t0\t1\t512\tinstance-based\t%s\n' "$GCP_REGION"
+    )
     ;;
   *)
     echo "ACUITY_DEPLOYMENT_PROFILE must be production or nonproduction" >&2
@@ -92,45 +131,61 @@ migrate	job	0	0	1	2	0	5000	0'
     ;;
 esac
 
-contract_row() {
-  runtime_name="$1"
-  printf '%s\n' "$CONTRACT_ROWS" |
-    awk -F '\t' -v runtime_name="$runtime_name" '$1 == runtime_name { print }'
-}
+case "$CLOUD_SQL_INSTANCE" in
+  *":${GCP_REGION}:"*) ;;
+  *)
+    echo "Cloud SQL instance must be in ${GCP_REGION}: ${CLOUD_SQL_INSTANCE}" >&2
+    exit 1
+    ;;
+esac
+if [ "$RECORDING_BUCKET_LOCATION" != "$GCP_REGION" ]; then
+  echo "recording bucket must be in ${GCP_REGION}; measured ${RECORDING_BUCKET_LOCATION}" >&2
+  exit 1
+fi
+if [ "$MESSAGING_ATTACHMENT_BUCKET_LOCATION" != "$GCP_REGION" ]; then
+  echo "messaging attachment bucket must be in ${GCP_REGION}; measured ${MESSAGING_ATTACHMENT_BUCKET_LOCATION}" >&2
+  exit 1
+fi
 
 deploy_service() {
-  role="$1"
-  concurrency="$2"
-  minimum="$3"
-  maximum="$4"
-  pool="$5"
-  acquire_timeout="$6"
-  database_secret="$7"
-  invocation="$8"
-  role_secrets="$9"
-  shift 9
-  role_env="$1"
+  database_secret="$1"
+  invocation="$2"
+  role_secrets="$3"
+  role_env="$4"
+  minimum="$runtime_minimum"
+  maximum="$runtime_maximum"
+  pool="$runtime_pool"
+  case "$runtime_billing_mode" in
+    request-based) billing_flag=--cpu-throttling ;;
+    *)
+      echo "request service ${runtime_name} must use request-based billing" >&2
+      exit 1
+      ;;
+  esac
   secrets="DATABASE_URL=${database_secret}:latest"
-  env_vars="ACUITY_RUNTIME_ROLE=${role},HTTP_PORT=8080,DATABASE_POOL_MAX=${pool},DATABASE_ACQUIRE_TIMEOUT_MS=${acquire_timeout}"
+  env_vars="ACUITY_RUNTIME_ROLE=${runtime_name},HTTP_PORT=8080,DATABASE_POOL_MAX=${pool},DATABASE_ACQUIRE_TIMEOUT_MS=${runtime_timeout}"
   if [ -n "$role_secrets" ]; then
     secrets="${secrets},${role_secrets}"
   fi
   if [ -n "$role_env" ]; then
     env_vars="${env_vars},${role_env}"
   fi
-  set -- gcloud run deploy "acuity-${role}" \
+  set -- gcloud run deploy "acuity-${runtime_name}" \
     --project "$GCP_PROJECT" \
     --region "$GCP_REGION" \
     --image "$BACKEND_IMAGE_DIGEST" \
-    --service-account "${RUNTIME_SERVICE_ACCOUNT_PREFIX}-${role}@${GCP_PROJECT}.iam.gserviceaccount.com" \
+    --service-account "${RUNTIME_SERVICE_ACCOUNT_PREFIX}-${runtime_name}@${GCP_PROJECT}.iam.gserviceaccount.com" \
     --set-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
-    --concurrency "$concurrency" \
+    --cpu "$runtime_vcpus" \
+    --memory "${runtime_memory_mib}Mi" \
+    "$billing_flag" \
+    --concurrency "$runtime_concurrency" \
     --min "$minimum" \
     --max "$maximum" \
     --set-secrets "$secrets" \
     --set-env-vars "$env_vars" \
     "$invocation"
-  case "$role" in
+  case "$runtime_name" in
     portal-api)
       set -- "$@" \
         --add-volume "name=messaging-attachments,type=cloud-storage,bucket=${MESSAGING_ATTACHMENT_BUCKET}" \
@@ -145,56 +200,63 @@ deploy_service() {
   "$@"
 }
 
-set -- $(contract_row portal-api)
-deploy_service "$1" "$3" "$4" "$5" "$6" "$8" "$PORTAL_DATABASE_URL_SECRET" --no-invoker-iam-check \
+load_contract_row portal-api
+deploy_service "$PORTAL_DATABASE_URL_SECRET" --no-invoker-iam-check \
   "HUMAN_CALLING_HANDOFF_TOKEN_KEY=${HANDOFF_TOKEN_KEY_SECRET}:latest,HANDOFF_SERVICE_TOKEN=${HANDOFF_SERVICE_TOKEN_SECRET}:latest,TELNYX_API_KEY=${TELNYX_API_KEY_SECRET}:latest" \
   "BROWSER_ORIGIN=${BROWSER_ORIGIN},BETTER_AUTH_JWKS_URL=${BETTER_AUTH_JWKS_URL},BETTER_AUTH_ISSUER=${BETTER_AUTH_ISSUER},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},HUMAN_CALLING_SIP_DOMAIN=${HUMAN_CALLING_SIP_DOMAIN},HUMAN_CALLING_STAFF_SIP_DOMAIN=${HUMAN_CALLING_STAFF_SIP_DOMAIN},HANDOFF_SERVICE_SUBJECT=${HANDOFF_SERVICE_SUBJECT},HANDOFF_SERVICE_PRACTICE_ID=${HANDOFF_SERVICE_PRACTICE_ID},TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},MESSAGING_WEBHOOK_BASE_URL=${MESSAGING_WEBHOOK_BASE_URL},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY},${CALLING_TIMING_ENV}"
-set -- $(contract_row provider-ingress)
-deploy_service "$1" "$3" "$4" "$5" "$6" "$8" "$PROVIDER_DATABASE_URL_SECRET" --no-invoker-iam-check \
+load_contract_row provider-ingress
+deploy_service "$PROVIDER_DATABASE_URL_SECRET" --no-invoker-iam-check \
   "MESSAGING_MEDIA_SIGNING_KEY=${MESSAGING_MEDIA_SIGNING_KEY_SECRET}:latest" \
   "TELNYX_WEBHOOK_PUBLIC_KEY=${TELNYX_WEBHOOK_PUBLIC_KEY},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY}"
-set -- $(contract_row realtime)
-deploy_service "$1" "$3" "$4" "$5" "$6" "$8" "$REALTIME_DATABASE_URL_SECRET" --no-invoker-iam-check \
+load_contract_row realtime
+deploy_service "$REALTIME_DATABASE_URL_SECRET" --no-invoker-iam-check \
   "" \
   "BROWSER_ORIGIN=${BROWSER_ORIGIN},BETTER_AUTH_JWKS_URL=${BETTER_AUTH_JWKS_URL},BETTER_AUTH_ISSUER=${BETTER_AUTH_ISSUER},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},REALTIME_HEARTBEAT_SECONDS=15,REALTIME_STREAM_SECONDS=300,REALTIME_REVALIDATE_SECONDS=30,REALTIME_RECONNECT_MIN_MS=250,REALTIME_RECONNECT_MAX_SECONDS=5"
 
 # WEB_IMAGE_DIGEST must already contain the required NEXT_PUBLIC origins;
 # Next.js embeds them during the image build rather than at runtime.
-set -- $(contract_row web)
+load_contract_row web
 gcloud run deploy acuity-web \
   --project "$GCP_PROJECT" \
   --region "$GCP_REGION" \
   --image "$WEB_IMAGE_DIGEST" \
   --service-account "${RUNTIME_SERVICE_ACCOUNT_PREFIX}-web@${GCP_PROJECT}.iam.gserviceaccount.com" \
   --set-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
-  --concurrency "$3" \
-  --min "$4" \
-  --max "$5" \
+  --cpu "$runtime_vcpus" \
+  --memory "${runtime_memory_mib}Mi" \
+  --cpu-throttling \
+  --concurrency "$runtime_concurrency" \
+  --min "$runtime_minimum" \
+  --max "$runtime_maximum" \
   --set-secrets "AUTH_DATABASE_URL=${WEB_AUTH_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET_SECRET}:latest,SMTP_PASSWORD=${SMTP_PASSWORD_SECRET}:latest" \
-  --set-env-vars "AUTH_DB_POOL_MAX=$6,AUTH_DB_ACQUIRE_TIMEOUT_MS=$8,BETTER_AUTH_URL=${BROWSER_ORIGIN},BETTER_AUTH_TRUSTED_ORIGINS=${BROWSER_ORIGIN},PORTAL_API_INTERNAL_URL=${PORTAL_API_INTERNAL_URL},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},AUTH_EMAIL_MODE=smtp,SMTP_HOST=${SMTP_HOST},SMTP_PORT=${SMTP_PORT},SMTP_USER=${SMTP_USER},AUTH_EMAIL_FROM=${AUTH_EMAIL_FROM}" \
+  --set-env-vars "AUTH_DB_POOL_MAX=${runtime_pool},AUTH_DB_ACQUIRE_TIMEOUT_MS=${runtime_timeout},BETTER_AUTH_URL=${BROWSER_ORIGIN},BETTER_AUTH_TRUSTED_ORIGINS=${BROWSER_ORIGIN},PORTAL_API_INTERNAL_URL=${PORTAL_API_INTERNAL_URL},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},AUTH_EMAIL_MODE=smtp,SMTP_HOST=${SMTP_HOST},SMTP_PORT=${SMTP_PORT},SMTP_USER=${SMTP_USER},AUTH_EMAIL_FROM=${AUTH_EMAIL_FROM}" \
   --no-invoker-iam-check
 
-set -- $(contract_row worker)
+load_contract_row worker
 gcloud run worker-pools deploy acuity-worker \
   --project "$GCP_PROJECT" \
   --region "$GCP_REGION" \
   --image "$BACKEND_IMAGE_DIGEST" \
-  --instances "$5" \
+  --instances "$runtime_maximum" \
   --service-account "${RUNTIME_SERVICE_ACCOUNT_PREFIX}-worker@${GCP_PROJECT}.iam.gserviceaccount.com" \
   --set-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
+  --cpu "$runtime_vcpus" \
+  --memory "${runtime_memory_mib}Mi" \
   --set-secrets "DATABASE_URL=${WORKER_DATABASE_URL_SECRET}:latest,TELNYX_API_KEY=${TELNYX_API_KEY_SECRET}:latest,MESSAGING_MEDIA_SIGNING_KEY=${MESSAGING_MEDIA_SIGNING_KEY_SECRET}:latest" \
-  --set-env-vars "ACUITY_RUNTIME_ROLE=worker,DATABASE_POOL_MAX=$6,DATABASE_ACQUIRE_TIMEOUT_MS=$8,TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},MESSAGING_WEBHOOK_BASE_URL=${MESSAGING_WEBHOOK_BASE_URL},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY},MESSAGING_MEDIA_PUBLIC_BASE_URL=${MESSAGING_MEDIA_PUBLIC_BASE_URL},${CALLING_TIMING_ENV}" \
+  --set-env-vars "ACUITY_RUNTIME_ROLE=worker,DATABASE_POOL_MAX=${runtime_pool},DATABASE_ACQUIRE_TIMEOUT_MS=${runtime_timeout},TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},MESSAGING_WEBHOOK_BASE_URL=${MESSAGING_WEBHOOK_BASE_URL},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY},MESSAGING_MEDIA_PUBLIC_BASE_URL=${MESSAGING_MEDIA_PUBLIC_BASE_URL},${CALLING_TIMING_ENV}" \
   --add-volume "name=messaging-attachments,type=cloud-storage,bucket=${MESSAGING_ATTACHMENT_BUCKET}" \
   --add-volume-mount "volume=messaging-attachments,mount-path=${MESSAGING_ATTACHMENT_DIRECTORY}"
 
-set -- $(contract_row migrate)
+load_contract_row migrate
 gcloud run jobs deploy acuity-migrate \
   --project "$GCP_PROJECT" \
   --region "$GCP_REGION" \
   --image "$BACKEND_IMAGE_DIGEST" \
-  --tasks "$5" \
-  --max-retries "$9" \
+  --tasks "$runtime_maximum" \
+  --max-retries "$runtime_retries" \
   --service-account "${RUNTIME_SERVICE_ACCOUNT_PREFIX}-migrate@${GCP_PROJECT}.iam.gserviceaccount.com" \
   --set-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
+  --cpu "$runtime_vcpus" \
+  --memory "${runtime_memory_mib}Mi" \
   --set-secrets "DATABASE_URL=${MIGRATE_DATABASE_URL_SECRET}:latest" \
-  --set-env-vars "ACUITY_RUNTIME_ROLE=migrate,DATABASE_POOL_MAX=$6,DATABASE_ACQUIRE_TIMEOUT_MS=$8"
+  --set-env-vars "ACUITY_RUNTIME_ROLE=migrate,DATABASE_POOL_MAX=${runtime_pool},DATABASE_ACQUIRE_TIMEOUT_MS=${runtime_timeout}"
