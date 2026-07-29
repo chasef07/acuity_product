@@ -771,6 +771,31 @@ func TestSupportedProviderReceiptRequeueIsAuditedAndReplaysImmutableEvidence(t *
 	fixture := newQuarantinedReceiptFixture(t)
 	reason := "Retry verified receipt after projection repair"
 	support := fixture.enterSupportMode(t, fixture.practiceID, reason)
+	var callID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT call_id::text
+		FROM human_calling_provider_receipts
+		WHERE event_id = $1
+	`, fixture.eventID).Scan(&callID); err != nil {
+		t.Fatalf("read quarantined receipt Call: %v", err)
+	}
+	timeline, err := fixture.calling.ReadOperatorTimeline(
+		context.Background(),
+		fixture.operator,
+		callID,
+	)
+	if err != nil {
+		t.Fatalf("read quarantined receipt timeline: %v", err)
+	}
+	recoveryReference := ""
+	for _, entry := range timeline.Entries {
+		if entry.ReceiptState == string(humancalling.ReceiptQuarantined) {
+			recoveryReference = entry.RecoveryReference
+		}
+	}
+	if recoveryReference == "" {
+		t.Fatalf("quarantined receipt recovery reference absent: %#v", timeline)
+	}
 
 	requeued, err := fixture.calling.RequeueQuarantinedReceipt(
 		context.Background(),
@@ -778,7 +803,7 @@ func TestSupportedProviderReceiptRequeueIsAuditedAndReplaysImmutableEvidence(t *
 			Identity:         fixture.operator,
 			PracticeID:       fixture.practiceID,
 			SupportSessionID: support.ID,
-			EventID:          fixture.eventID,
+			ReceiptReference: recoveryReference,
 		},
 	)
 	if err != nil {

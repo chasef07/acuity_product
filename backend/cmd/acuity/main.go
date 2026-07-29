@@ -270,6 +270,8 @@ func runWorker(
 		CredentialTimeout:  config.AcquireTimeout,
 		HealthInterval:     30 * time.Second,
 		HealthTimeout:      config.AcquireTimeout,
+		MetricInterval:     30 * time.Second,
+		MetricTimeout:      config.AcquireTimeout,
 		ReceiptBatchSize:   8,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,

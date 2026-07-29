@@ -115,6 +115,15 @@ export type EnterSupportModeRequest = {
     durationMinutes: number;
 };
 
+export type ProviderReceiptRecoveryRequest = {
+    supportSessionId: string;
+};
+
+export type ProviderReceiptRecovery = {
+    receiptReference: string;
+    state: 'PENDING';
+};
+
 export type AddLocationRequest = {
     supportSessionId: string;
     key: string;
@@ -382,6 +391,7 @@ export type CallHistoryPage = {
 export type OperatorCallingTimelineEntry = {
     kind: string;
     opaqueReference: string;
+    recoveryReference?: string;
     errorCode: string;
     commandAction: string;
     commandState: string;
@@ -1490,3 +1500,47 @@ export type GetOperatorCallingTimelineResponses = {
 };
 
 export type GetOperatorCallingTimelineResponse = GetOperatorCallingTimelineResponses[keyof GetOperatorCallingTimelineResponses];
+
+export type RequeueOperatorProviderReceiptData = {
+    body: ProviderReceiptRecoveryRequest;
+    path: {
+        practiceId: string;
+        receiptReference: string;
+    };
+    query?: never;
+    url: '/v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/requeue';
+};
+
+export type RequeueOperatorProviderReceiptErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RequeueOperatorProviderReceiptError = RequeueOperatorProviderReceiptErrors[keyof RequeueOperatorProviderReceiptErrors];
+
+export type RequeueOperatorProviderReceiptResponses = {
+    /**
+     * The persisted receipt was authorized, audited, and requeued.
+     */
+    200: ProviderReceiptRecovery;
+};
+
+export type RequeueOperatorProviderReceiptResponse = RequeueOperatorProviderReceiptResponses[keyof RequeueOperatorProviderReceiptResponses];

@@ -34,6 +34,7 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 	}()
 
 	waitForSignal(t, work.slowCommandStarted, "slow provider command to start")
+	waitForSignal(t, work.receiptQueueReported, "receipt queue metric")
 	waitForSignal(t, work.reconciliationStarted, "slow provider reconciliation to start")
 	waitForSignal(t, work.receiptProjected, "receipt projection during slow provider command")
 	waitForSignal(t, work.readyCommandFinished, "another ready provider command")
@@ -280,6 +281,7 @@ type controlledWork struct {
 	maintenanceStarted    chan struct{}
 	offerExpiryStarted    chan struct{}
 	reconciliationStarted chan struct{}
+	receiptQueueReported  chan struct{}
 	blockOfferExpiry      bool
 	blockReconciliation   bool
 }
@@ -307,7 +309,18 @@ func newControlledWork() *controlledWork {
 		releaseSlowCommand:   make(chan struct{}),
 		readyCommandFinished: make(chan struct{}, 1),
 		receiptProjected:     make(chan struct{}, 1),
+		receiptQueueReported: make(chan struct{}, 1),
 	}
+}
+
+func (work *controlledWork) ReportReceiptQueue(context.Context) error {
+	if work.receiptQueueReported != nil {
+		select {
+		case work.receiptQueueReported <- struct{}{}:
+		default:
+		}
+	}
+	return nil
 }
 
 func (work *controlledWork) ProcessNextReceipt(context.Context) (bool, error) {

@@ -309,15 +309,16 @@ type OperatorTimeline struct {
 }
 
 type TimelineEntry struct {
-	Kind            string
-	OpaqueReference string
-	ErrorCode       string
-	CommandAction   string
-	CommandState    string
-	CommandAttempts int
-	ReceiptState    string
-	AgeSeconds      int64
-	OccurredAt      time.Time
+	Kind              string
+	OpaqueReference   string
+	RecoveryReference string
+	ErrorCode         string
+	CommandAction     string
+	CommandState      string
+	CommandAttempts   int
+	ReceiptState      string
+	AgeSeconds        int64
+	OccurredAt        time.Time
 }
 
 type Disposition string
@@ -2048,10 +2049,11 @@ func (m *Module) ReadOperatorTimeline(
 				COALESCE(command.action, '') AS command_action,
 				COALESCE(command.state, '') AS command_state,
 				COALESCE(command.attempts, 0) AS command_attempts,
-				COALESCE(receipt.state, '') AS receipt_state,
-				COALESCE(command.created_at, receipt.received_at, t.occurred_at) AS started_at,
-				t.occurred_at,
-				t.id::text AS stable_id
+					COALESCE(receipt.state, '') AS receipt_state,
+					COALESCE(command.created_at, receipt.received_at, t.occurred_at) AS started_at,
+					t.occurred_at,
+					t.id::text AS stable_id,
+					COALESCE(receipt.event_id, '') AS recovery_event_id
 			FROM human_calling_timeline t
 			LEFT JOIN human_calling_provider_commands command
 				ON command.id = t.provider_command_id
@@ -2069,9 +2071,10 @@ func (m *Module) ReadOperatorTimeline(
 				command.state,
 				command.attempts,
 				'',
-				command.created_at,
-				command.created_at,
-				command.id::text
+					command.created_at,
+					command.created_at,
+					command.id::text,
+					''
 			FROM human_calling_provider_commands command
 			WHERE command.call_id = $1
 				AND NOT EXISTS (
@@ -2090,9 +2093,10 @@ func (m *Module) ReadOperatorTimeline(
 				'',
 				0,
 				receipt.state,
-				receipt.received_at,
-				COALESCE(receipt.occurred_at, receipt.received_at),
-				receipt.event_id
+					receipt.received_at,
+					COALESCE(receipt.occurred_at, receipt.received_at),
+					receipt.event_id,
+					receipt.event_id
 			FROM human_calling_provider_receipts receipt
 			WHERE receipt.call_id = $1
 				AND NOT EXISTS (
@@ -2112,8 +2116,9 @@ func (m *Module) ReadOperatorTimeline(
 			GREATEST(
 				0,
 				EXTRACT(EPOCH FROM ($2::timestamptz - started_at))::bigint
-			),
-			occurred_at
+				),
+				occurred_at,
+				recovery_event_id
 		FROM entries
 		ORDER BY occurred_at, stable_id
 	`, callID, m.now())
@@ -2123,6 +2128,7 @@ func (m *Module) ReadOperatorTimeline(
 	defer rows.Close()
 	for rows.Next() {
 		var entry TimelineEntry
+		var recoveryEventID string
 		if err := rows.Scan(
 			&entry.Kind,
 			&entry.OpaqueReference,
@@ -2133,8 +2139,12 @@ func (m *Module) ReadOperatorTimeline(
 			&entry.ReceiptState,
 			&entry.AgeSeconds,
 			&entry.OccurredAt,
+			&recoveryEventID,
 		); err != nil {
 			return OperatorTimeline{}, fmt.Errorf("scan operator Call timeline: %w", err)
+		}
+		if entry.ReceiptState == string(ReceiptQuarantined) {
+			entry.RecoveryReference = opaqueReference(recoveryEventID)
 		}
 		result.Entries = append(result.Entries, entry)
 	}
@@ -3190,6 +3200,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("commit provider command claim: %w", err)
 	}
 
+	claimedAt := m.now()
 	providerStartedAt := time.Now()
 	result, executeErr := m.provider.Execute(ctx, command)
 	providerDuration := time.Since(providerStartedAt)
@@ -3197,7 +3208,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	m.recordProviderCommand(command, state, m.now(), providerDuration)
+	m.recordProviderCommand(command, state, claimedAt, providerDuration)
 	return true, nil
 }
 
@@ -3252,6 +3263,7 @@ func (m *Module) processCommand(
 	if err := tx.Commit(ctx); err != nil {
 		return ProviderResult{}, fmt.Errorf("commit provider command claim: %w", err)
 	}
+	claimedAt := m.now()
 	providerStartedAt := time.Now()
 	result, executeErr := m.provider.Execute(ctx, command)
 	providerDuration := time.Since(providerStartedAt)
@@ -3266,7 +3278,7 @@ func (m *Module) processCommand(
 	if err != nil {
 		return ProviderResult{}, err
 	}
-	m.recordProviderCommand(command, state, m.now(), providerDuration)
+	m.recordProviderCommand(command, state, claimedAt, providerDuration)
 	if executeErr != nil {
 		return ProviderResult{}, executeErr
 	}

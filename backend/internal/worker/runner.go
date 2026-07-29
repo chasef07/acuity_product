@@ -12,6 +12,7 @@ import (
 // CallingWork is the existing durable HumanCalling work consumed by the worker.
 type CallingWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
+	ReportReceiptQueue(context.Context) error
 	ProcessNextCommand(context.Context) (bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
 	ExpireOffers(context.Context) (int, error)
@@ -32,6 +33,8 @@ type Config struct {
 	CredentialTimeout  time.Duration
 	HealthInterval     time.Duration
 	HealthTimeout      time.Duration
+	MetricInterval     time.Duration
+	MetricTimeout      time.Duration
 	ReceiptBatchSize   int
 	CommandBatchSize   int
 	CommandWorkers     int
@@ -71,9 +74,18 @@ func New(config Config, work CallingWork, dependency Dependency) (*Runner, error
 			config.ErrorBackoffMax = config.ErrorBackoffMin
 		}
 	}
+	if config.MetricInterval == 0 {
+		config.MetricInterval = 30 * time.Second
+	}
+	if config.MetricTimeout == 0 {
+		config.MetricTimeout = config.HealthTimeout
+	}
 	if config.ErrorBackoffMin < 0 ||
 		config.ErrorBackoffMax < config.ErrorBackoffMin {
 		return nil, fmt.Errorf("valid worker error backoff bounds are required")
+	}
+	if config.MetricInterval < 0 || config.MetricTimeout < 0 {
+		return nil, fmt.Errorf("positive worker metric limits are required")
 	}
 	return &Runner{
 		config:     config,
@@ -157,6 +169,7 @@ func (runner *Runner) runMaintenanceLane(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	runner.reportReceiptQueue(ctx)
 	backoff := newFailureBackoff(
 		runner.config.ErrorBackoffMin,
 		runner.config.ErrorBackoffMax,
@@ -172,6 +185,8 @@ func (runner *Runner) runMaintenanceLane(ctx context.Context) {
 	defer credentialTicker.Stop()
 	healthTicker := time.NewTicker(runner.config.HealthInterval)
 	defer healthTicker.Stop()
+	metricTicker := time.NewTicker(runner.config.MetricInterval)
+	defer metricTicker.Stop()
 
 	for {
 		select {
@@ -187,6 +202,8 @@ func (runner *Runner) runMaintenanceLane(ctx context.Context) {
 			runner.reconcileCredentials(ctx)
 		case <-healthTicker.C:
 			runner.checkDependency(ctx)
+		case <-metricTicker.C:
+			runner.reportReceiptQueue(ctx)
 		}
 	}
 }
@@ -260,6 +277,16 @@ func (runner *Runner) reconcileCredentials(ctx context.Context) {
 func (runner *Runner) checkDependency(ctx context.Context) {
 	if err := runWork(ctx, runner.config.HealthTimeout, runner.dependency.Ping); err != nil {
 		warn(ctx, "worker_dependency_unavailable", err)
+	}
+}
+
+func (runner *Runner) reportReceiptQueue(ctx context.Context) {
+	if err := runWork(
+		ctx,
+		runner.config.MetricTimeout,
+		runner.work.ReportReceiptQueue,
+	); err != nil {
+		warn(ctx, "provider_receipt_queue_observation_failed", err)
 	}
 }
 

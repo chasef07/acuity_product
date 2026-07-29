@@ -1220,6 +1220,160 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 }
 
+func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 19, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	operator := access.Identity{
+		Subject:       "http-recovery-operator",
+		Email:         "http-recovery@acuity.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "http-recovery-test",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{{
+			Key:       "http-recovery-practice",
+			Name:      "HTTP Recovery Practice",
+			Locations: []access.LocationProvision{{Key: "office", Name: "Office"}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision HTTP recovery fixture: %v", err)
+	}
+	discovery, err := accessModule.DiscoverActor(context.Background(), operator)
+	if err != nil || len(discovery.Practices) != 1 ||
+		len(discovery.Practices[0].Locations) != 1 {
+		t.Fatalf("discover HTTP recovery scope = %#v, err = %v", discovery, err)
+	}
+	practiceID := discovery.Practices[0].ID
+	locationID := discovery.Practices[0].Locations[0].ID
+	support, err := accessModule.EnterSupportMode(
+		context.Background(),
+		access.EnterSupportModeCommand{
+			Identity:   operator,
+			PracticeID: practiceID,
+			Reason:     "Repair quarantined provider receipt",
+			Duration:   time.Hour,
+		},
+	)
+	if err != nil {
+		t.Fatalf("enter HTTP recovery Support Mode: %v", err)
+	}
+
+	const callID = "00000000-0000-0000-0000-000000000701"
+	const handoffID = "00000000-0000-0000-0000-000000000702"
+	const eventID = "http-quarantined-receipt"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, expires_at
+		)
+		VALUES ($1, 'http-recovery-service', $2, $3, 'source', 'idempotency',
+			'\x01', '\x02', $4)
+	`, handoffID, practiceID, locationID, now.Add(time.Hour)); err != nil {
+		t.Fatalf("seed HTTP recovery handoff: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id
+		)
+		VALUES ($1, $2, $3, $4, 'OFFERING', $5,
+			'http-recovery-control', 'http-recovery-leg', 'http-recovery-session')
+	`, callID, handoffID, practiceID, locationID, now.Add(time.Hour)); err != nil {
+		t.Fatalf("seed HTTP recovery Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_receipts (
+			event_id, call_id, event_type, occurred_at, received_at,
+			signature_timestamp, raw_body, state, projection_attempts,
+			last_attempt_at, next_attempt_at, projected_at, quarantined_at
+		)
+		VALUES ($1, $2, 'call.answered', $3, $3, 1, '{}'::bytea,
+			'QUARANTINED', 10, $3, $3, $3, $3)
+	`, eventID, callID, now); err != nil {
+		t.Fatalf("seed HTTP recovery receipt: %v", err)
+	}
+
+	handler, err := newPortalHandler(t, httpapi.Config{
+		AllowedOrigin:  "http://localhost:3000",
+		AcquireTimeout: 500 * time.Millisecond,
+	}, pool, accessModule, staticAuthenticator{"operator-token": operator})
+	if err != nil {
+		t.Fatalf("new HTTP recovery portal: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	timelineResponse := request(
+		t,
+		server.Client(),
+		http.MethodGet,
+		server.URL+"/v1/operator/calls/"+callID+"/timeline",
+		"operator-token",
+		nil,
+	)
+	if timelineResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"operator timeline status = %d, body = %s",
+			timelineResponse.StatusCode,
+			readBody(t, timelineResponse),
+		)
+	}
+	var timeline api.OperatorCallingTimeline
+	decode(t, timelineResponse, &timeline)
+	recoveryReference := ""
+	for _, entry := range timeline.Entries {
+		if entry.RecoveryReference != nil {
+			recoveryReference = *entry.RecoveryReference
+		}
+	}
+	if recoveryReference == "" || strings.Contains(recoveryReference, eventID) {
+		t.Fatalf("HTTP recovery reference = %q", recoveryReference)
+	}
+
+	body, _ := json.Marshal(api.ProviderReceiptRecoveryRequest{
+		SupportSessionId: uuid.MustParse(support.ID),
+	})
+	requeued := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		fmt.Sprintf(
+			"%s/v1/operator/practices/%s/provider-receipts/%s/requeue",
+			server.URL,
+			practiceID,
+			recoveryReference,
+		),
+		"operator-token",
+		body,
+	)
+	if requeued.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"operator receipt requeue status = %d, body = %s",
+			requeued.StatusCode,
+			readBody(t, requeued),
+		)
+	}
+	var result api.ProviderReceiptRecovery
+	decode(t, requeued, &result)
+	if result.ReceiptReference != recoveryReference || result.State != api.PENDING {
+		t.Fatalf("operator receipt requeue = %#v", result)
+	}
+	var state humancalling.ReceiptState
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state
+		FROM human_calling_provider_receipts
+		WHERE event_id = $1
+	`, eventID).Scan(&state); err != nil {
+		t.Fatalf("read HTTP recovery result: %v", err)
+	}
+	if state != humancalling.ReceiptPending {
+		t.Fatalf("HTTP recovery receipt state = %q", state)
+	}
+}
+
 type staticAuthenticator map[string]access.Identity
 
 func (adapter staticAuthenticator) Authenticate(_ context.Context, token string) (access.Identity, error) {

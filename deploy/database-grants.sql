@@ -33,12 +33,38 @@ GRANT SELECT ON TABLE
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_provider_commands,
-    public.human_calling_provider_receipts,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
     public.human_calling_timeline,
     public.work_task_activities,
     public.work_tasks
+TO acuity_portal;
+
+GRANT SELECT (
+    event_id,
+    event_type,
+    occurred_at,
+    received_at,
+    call_id,
+    state,
+    projection_attempts,
+    projection_error_code,
+    duplicate_count
+)
+ON TABLE public.human_calling_provider_receipts
+TO acuity_portal;
+
+GRANT UPDATE (
+    state,
+    projection_attempts,
+    projection_error_code,
+    processing_started_at,
+    last_attempt_at,
+    next_attempt_at,
+    projected_at,
+    quarantined_at
+)
+ON TABLE public.human_calling_provider_receipts
 TO acuity_portal;
 
 GRANT INSERT ON TABLE

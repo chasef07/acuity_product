@@ -49,7 +49,7 @@ func (m *Module) recordReceiptProcessed(
 		m.observer,
 		observability.ReceiptProcessed(
 			outcome,
-			completedAt.Sub(receivedAt),
+			startedAt.Sub(receivedAt),
 			completedAt.Sub(startedAt),
 		),
 	)
@@ -58,7 +58,7 @@ func (m *Module) recordReceiptProcessed(
 func (m *Module) recordProviderCommand(
 	command ProviderCommand,
 	state string,
-	startedAt time.Time,
+	claimedAt time.Time,
 	duration time.Duration,
 ) {
 	action := observability.CommandAction(command.Action)
@@ -96,7 +96,7 @@ func (m *Module) recordProviderCommand(
 		observability.ProviderCommandCompleted(
 			action,
 			outcome,
-			startedAt.Sub(command.createdAt),
+			claimedAt.Sub(command.createdAt),
 			duration,
 		),
 	)

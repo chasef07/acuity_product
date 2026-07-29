@@ -169,9 +169,30 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		"acuity_portal": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
 			`SELECT id, expires_at, input_fingerprint
-			 FROM human_calling_handoffs
-			 WHERE false
-			 FOR UPDATE`,
+				 FROM human_calling_handoffs
+				 WHERE false
+				 FOR UPDATE`,
+			`SELECT
+					receipt.event_id,
+					receipt.event_type,
+					receipt.state,
+					receipt.duplicate_count,
+					receipt.projection_attempts
+				 FROM human_calling_provider_receipts receipt
+				 JOIN human_calling_calls call ON call.id = receipt.call_id
+				 WHERE false
+				 FOR UPDATE OF receipt`,
+			`UPDATE human_calling_provider_receipts
+				 SET
+					state = 'PENDING',
+					projection_attempts = 0,
+					projection_error_code = 'MANUALLY_REQUEUED',
+					processing_started_at = NULL,
+					last_attempt_at = NULL,
+					next_attempt_at = now(),
+					projected_at = NULL,
+					quarantined_at = NULL
+				 WHERE false`,
 		},
 		"acuity_provider": {
 			`INSERT INTO human_calling_provider_receipts (
@@ -397,7 +418,6 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_provider_commands",
-		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
 		"human_calling_timeline",
@@ -518,6 +538,33 @@ func expectedColumnPrivileges() map[string]bool {
 		"public.human_calling_provider_receipts",
 		"UPDATE",
 		"duplicate_count",
+	)
+	grant(
+		"acuity_portal",
+		"public.human_calling_provider_receipts",
+		"SELECT",
+		"event_id",
+		"event_type",
+		"occurred_at",
+		"received_at",
+		"call_id",
+		"state",
+		"projection_attempts",
+		"projection_error_code",
+		"duplicate_count",
+	)
+	grant(
+		"acuity_portal",
+		"public.human_calling_provider_receipts",
+		"UPDATE",
+		"state",
+		"projection_attempts",
+		"projection_error_code",
+		"processing_started_at",
+		"last_attempt_at",
+		"next_attempt_at",
+		"projected_at",
+		"quarantined_at",
 	)
 	grant(
 		"acuity_portal",

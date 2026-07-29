@@ -47,6 +47,7 @@ type RequeueQuarantinedReceiptCommand struct {
 	PracticeID       string
 	SupportSessionID string
 	EventID          string
+	ReceiptReference string
 }
 
 type telnyxEnvelope struct {
@@ -187,9 +188,11 @@ func (m *Module) RequeueQuarantinedReceipt(
 	ctx context.Context,
 	command RequeueQuarantinedReceiptCommand,
 ) (WebhookReceipt, error) {
+	eventID := strings.TrimSpace(command.EventID)
+	receiptReference := strings.TrimSpace(command.ReceiptReference)
 	if m.access == nil ||
 		strings.TrimSpace(command.PracticeID) == "" ||
-		strings.TrimSpace(command.EventID) == "" {
+		(eventID == "") == (receiptReference == "") {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -237,6 +240,17 @@ func (m *Module) RequeueQuarantinedReceipt(
 	if !authorization.PlatformOperator || authorization.SupportMode == nil {
 		return WebhookReceipt{}, ErrDenied
 	}
+	if receiptReference != "" {
+		eventID, err = resolveQuarantinedReceiptReference(
+			ctx,
+			tx,
+			command.PracticeID,
+			receiptReference,
+		)
+		if err != nil {
+			return WebhookReceipt{}, err
+		}
+	}
 
 	var result WebhookReceipt
 	var state ReceiptState
@@ -253,7 +267,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 		WHERE receipt.event_id = $1
 			AND call.practice_id::text = $2
 		FOR UPDATE OF receipt
-	`, command.EventID, command.PracticeID).Scan(
+	`, eventID, command.PracticeID).Scan(
 		&result.EventID,
 		&result.EventType,
 		&state,
@@ -292,7 +306,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 			quarantined_at = NULL
 		WHERE event_id = $1 AND state = 'QUARANTINED'
 		RETURNING state
-	`, command.EventID, requeuedAt).Scan(&result.State)
+	`, eventID, requeuedAt).Scan(&result.State)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WebhookReceipt{}, fmt.Errorf(
 			"%w: provider receipt is not quarantined",
@@ -312,7 +326,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 		access.SupportedMutationAudit{
 			Action:          "provider_receipt.requeued",
 			ResourceType:    "provider_receipt",
-			ResourceID:      command.EventID,
+			ResourceID:      eventID,
 			ResourceVersion: projectionAttempts,
 			OccurredAt:      requeuedAt,
 		},
@@ -326,6 +340,38 @@ func (m *Module) RequeueQuarantinedReceipt(
 		)
 	}
 	return result, nil
+}
+
+func resolveQuarantinedReceiptReference(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	reference string,
+) (string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT receipt.event_id
+		FROM human_calling_provider_receipts receipt
+		JOIN human_calling_calls call ON call.id = receipt.call_id
+		WHERE call.practice_id::text = $1
+			AND receipt.state = 'QUARANTINED'
+	`, practiceID)
+	if err != nil {
+		return "", fmt.Errorf("list quarantined provider receipts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var eventID string
+		if err := rows.Scan(&eventID); err != nil {
+			return "", fmt.Errorf("scan quarantined provider receipt: %w", err)
+		}
+		if opaqueReference(eventID) == reference {
+			return eventID, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate quarantined provider receipts: %w", err)
+	}
+	return "", fmt.Errorf("%w: provider receipt recovery reference is unavailable", ErrConflict)
 }
 
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
