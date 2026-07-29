@@ -2,10 +2,13 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t *testing.T) {
@@ -90,4 +93,89 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 			t.Fatalf("operational Users view %s is missing", view)
 		}
 	}
+}
+
+func TestProviderReceiptRetryMigrationEnforcesAttemptAndQuarantineState(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+
+	var retryColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'human_calling_provider_receipts'
+			AND column_name IN (
+				'projection_attempts',
+				'last_attempt_at',
+				'quarantined_at'
+			)
+	`).Scan(&retryColumns); err != nil {
+		t.Fatalf("inspect provider receipt retry columns: %v", err)
+	}
+	if retryColumns != 3 {
+		t.Fatalf("provider receipt retry column count = %d, want 3", retryColumns)
+	}
+
+	assertCheckViolation := func(
+		eventID string,
+		state string,
+		attempts int,
+		lastAttemptAt *time.Time,
+		quarantinedAt *time.Time,
+		wantConstraint string,
+	) {
+		t.Helper()
+		_, err := pool.Exec(ctx, `
+			INSERT INTO human_calling_provider_receipts (
+				event_id,
+				event_type,
+				occurred_at,
+				received_at,
+				signature_timestamp,
+				raw_body,
+				state,
+				projection_attempts,
+				last_attempt_at,
+				quarantined_at
+			)
+			VALUES ($1, 'call.answered', $2, $2, $3, $4, $5, $6, $7, $8)
+		`,
+			eventID,
+			now,
+			now.Unix(),
+			[]byte("{}"),
+			state,
+			attempts,
+			lastAttemptAt,
+			quarantinedAt,
+		)
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) ||
+			databaseError.ConstraintName != wantConstraint {
+			t.Fatalf(
+				"insert %s error = %v, want constraint %s",
+				eventID,
+				err,
+				wantConstraint,
+			)
+		}
+	}
+	assertCheckViolation(
+		"invalid-attempt-visibility",
+		"PENDING",
+		1,
+		nil,
+		nil,
+		"human_calling_provider_receipts_attempt_visibility_check",
+	)
+	assertCheckViolation(
+		"invalid-quarantine-state",
+		"QUARANTINED",
+		0,
+		nil,
+		nil,
+		"human_calling_provider_receipts_quarantine_check",
+	)
 }

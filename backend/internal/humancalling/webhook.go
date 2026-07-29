@@ -28,8 +28,9 @@ const (
 	ReceiptFailed      ReceiptState = "FAILED"
 	ReceiptQuarantined ReceiptState = "QUARANTINED"
 
-	maxReceiptProjectionAttempts = 10
-	maxReceiptRetryDelay         = time.Minute
+	fastReceiptProjectionAttempts = 10
+	maxFastReceiptRetryDelay      = time.Minute
+	slowRelatedFactRetryDelay     = 15 * time.Minute
 )
 
 type WebhookReceipt struct {
@@ -172,6 +173,50 @@ func (m *Module) ReceiveWebhook(
 	return result, nil
 }
 
+// RequeueQuarantinedReceipt schedules persisted, previously verified evidence
+// for replay. Callers must enforce operator authorization and audit.
+func (m *Module) RequeueQuarantinedReceipt(
+	ctx context.Context,
+	eventID string,
+) (WebhookReceipt, error) {
+	if strings.TrimSpace(eventID) == "" {
+		return WebhookReceipt{}, ErrInvalidInput
+	}
+	var result WebhookReceipt
+	err := m.pool.QueryRow(ctx, `
+		UPDATE human_calling_provider_receipts
+		SET
+			state = 'PENDING',
+			projection_attempts = 0,
+			projection_error_code = 'MANUALLY_REQUEUED',
+			processing_started_at = NULL,
+			last_attempt_at = NULL,
+			next_attempt_at = $2,
+			projected_at = NULL,
+			quarantined_at = NULL
+		WHERE event_id = $1 AND state = 'QUARANTINED'
+		RETURNING event_id, event_type, state, duplicate_count
+	`, eventID, m.now()).Scan(
+		&result.EventID,
+		&result.EventType,
+		&result.State,
+		&result.DuplicateCount,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WebhookReceipt{}, fmt.Errorf(
+			"%w: provider receipt is not quarantined",
+			ErrConflict,
+		)
+	}
+	if err != nil {
+		return WebhookReceipt{}, fmt.Errorf(
+			"requeue quarantined provider receipt: %w",
+			err,
+		)
+	}
+	return result, nil
+}
+
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	now := m.now()
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -244,12 +289,13 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	completedAt := m.now()
 	nextAttemptAt := completedAt
 	if state == ReceiptPending {
-		if projectionAttempts >= maxReceiptProjectionAttempts {
-			state = ReceiptQuarantined
+		if projectionAttempts >= fastReceiptProjectionAttempts {
 			switch errorCode {
 			case "WAITING_FOR_RELATED_FACT":
-				errorCode = "RELATED_FACT_RETRY_EXHAUSTED"
+				errorCode = "WAITING_FOR_RELATED_FACT_SLOW_RETRY"
+				nextAttemptAt = completedAt.Add(slowRelatedFactRetryDelay)
 			default:
+				state = ReceiptQuarantined
 				errorCode = "PROJECTION_RETRY_EXHAUSTED"
 			}
 		} else {
@@ -310,11 +356,11 @@ func (m *Module) replayProviderReceipt(
 
 func receiptRetryDelay(attempt int) time.Duration {
 	delay := time.Second
-	for current := 1; current < attempt && delay < maxReceiptRetryDelay; current++ {
+	for current := 1; current < attempt && delay < maxFastReceiptRetryDelay; current++ {
 		delay *= 2
 	}
-	if delay > maxReceiptRetryDelay {
-		return maxReceiptRetryDelay
+	if delay > maxFastReceiptRetryDelay {
+		return maxFastReceiptRetryDelay
 	}
 	return delay
 }
