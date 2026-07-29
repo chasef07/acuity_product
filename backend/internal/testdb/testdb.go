@@ -45,25 +45,27 @@ func Open(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	lock, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("acquire test database lock connection: %v", err)
-	}
+	var lock *pgxpool.Conn
 	for {
+		candidate, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire test database lock connection: %v", err)
+		}
 		var acquired bool
-		if err := lock.QueryRow(
+		if err := candidate.QueryRow(
 			ctx,
 			`SELECT pg_try_advisory_lock(4524)`,
 		).Scan(&acquired); err != nil {
-			lock.Release()
+			candidate.Release()
 			t.Fatalf("lock test database: %v", err)
 		}
 		if acquired {
+			lock = candidate
 			break
 		}
+		candidate.Release()
 		select {
 		case <-ctx.Done():
-			lock.Release()
 			t.Fatalf("lock test database: %v", ctx.Err())
 		case <-time.After(10 * time.Millisecond):
 		}
