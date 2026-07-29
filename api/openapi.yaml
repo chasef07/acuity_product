@@ -808,7 +808,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: '^[a-f0-9]{16}$'
+            pattern: '^[A-Za-z0-9_-]{43}$'
       requestBody:
         required: true
         content:
@@ -1153,7 +1153,7 @@ components:
       properties:
         receiptReference:
           type: string
-          pattern: '^[a-f0-9]{16}$'
+          pattern: '^[A-Za-z0-9_-]{43}$'
         state:
           type: string
           enum: [PENDING]
@@ -1869,7 +1869,7 @@ components:
           type: string
         recoveryReference:
           type: string
-          pattern: '^[a-f0-9]{16}$'
+          pattern: '^[A-Za-z0-9_-]{43}$'
         errorCode:
           type: string
         commandAction:

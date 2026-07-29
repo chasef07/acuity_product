@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1113,11 +1114,8 @@ func (server *Server) RequeueOperatorProviderReceipt(
 	if !ok {
 		return
 	}
-	if len(receiptReference) != 16 {
-		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
-		return
-	}
-	if _, err := hex.DecodeString(receiptReference); err != nil {
+	decodedReference, err := base64.RawURLEncoding.DecodeString(receiptReference)
+	if err != nil || len(decodedReference) != 32 {
 		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
 		return
 	}

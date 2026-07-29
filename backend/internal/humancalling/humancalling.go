@@ -2144,7 +2144,7 @@ func (m *Module) ReadOperatorTimeline(
 			return OperatorTimeline{}, fmt.Errorf("scan operator Call timeline: %w", err)
 		}
 		if entry.ReceiptState == string(ReceiptQuarantined) {
-			entry.RecoveryReference = opaqueReference(recoveryEventID)
+			entry.RecoveryReference = m.receiptRecoveryReference(recoveryEventID)
 		}
 		result.Entries = append(result.Entries, entry)
 	}
@@ -5448,6 +5448,12 @@ func (m *Module) handoffToken(handoffID string) string {
 func (m *Module) staffMediaToken(callID string, attemptID string) string {
 	mac := hmac.New(sha256.New, m.tokenKey)
 	_, _ = mac.Write([]byte("staff-media-v1\x00" + callID + "\x00" + attemptID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (m *Module) receiptRecoveryReference(eventID string) string {
+	mac := hmac.New(sha256.New, m.tokenKey)
+	_, _ = mac.Write([]byte("provider-receipt-recovery-v1\x00" + eventID))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 

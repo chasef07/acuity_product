@@ -241,7 +241,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 		return WebhookReceipt{}, ErrDenied
 	}
 	if receiptReference != "" {
-		eventID, err = resolveQuarantinedReceiptReference(
+		eventID, err = m.resolveQuarantinedReceiptReference(
 			ctx,
 			tx,
 			command.PracticeID,
@@ -342,7 +342,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 	return result, nil
 }
 
-func resolveQuarantinedReceiptReference(
+func (m *Module) resolveQuarantinedReceiptReference(
 	ctx context.Context,
 	tx pgx.Tx,
 	practiceID string,
@@ -364,7 +364,7 @@ func resolveQuarantinedReceiptReference(
 		if err := rows.Scan(&eventID); err != nil {
 			return "", fmt.Errorf("scan quarantined provider receipt: %w", err)
 		}
-		if opaqueReference(eventID) == reference {
+		if m.receiptRecoveryReference(eventID) == reference {
 			return eventID, nil
 		}
 	}
