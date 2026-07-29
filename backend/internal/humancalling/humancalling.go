@@ -62,6 +62,12 @@ const (
 	CommandCreateJWT         CommandAction = "CREATE_JWT"
 )
 
+const (
+	interruptedCommandTimeout = 30 * time.Second
+	safeProviderRetryWindow   = 55 * time.Second
+	hangupReconciliationDelay = 5 * time.Second
+)
+
 var (
 	ErrDenied                    = errors.New("human calling access denied")
 	ErrInvalidInput              = errors.New("invalid human calling input")
@@ -2692,13 +2698,8 @@ func (m *Module) ExpireConnections(ctx context.Context) (int, error) {
 }
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin interrupted provider command recovery: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, `
+	now := m.now()
+	if _, err := m.pool.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET
 			state = 'PENDING',
@@ -2708,52 +2709,52 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		WHERE state = 'AMBIGUOUS'
 			AND action = 'HANGUP'
 			AND next_attempt_at <= $1
-	`, m.now()); err != nil {
+	`, now); err != nil {
 		return fmt.Errorf("schedule ambiguous Hangup reconciliation: %w", err)
 	}
 
-	rows, err := tx.Query(ctx, `
-		UPDATE human_calling_provider_commands
-		SET
-			state = CASE WHEN call_id IS NULL THEN 'AMBIGUOUS' ELSE 'PENDING' END,
-			last_error_code = CASE
-				WHEN call_id IS NULL THEN 'WORKER_INTERRUPTED'
-				ELSE 'SAFE_SAME_ID_RETRY'
-			END,
-			next_attempt_at = CASE WHEN call_id IS NULL THEN next_attempt_at ELSE $1 END,
-			updated_at = $1
-		WHERE state = 'SENDING'
-			AND updated_at <= $1::timestamptz - interval '30 seconds'
-		RETURNING id::text, call_id::text, action
-	`, m.now())
-	if err != nil {
-		return fmt.Errorf("mark interrupted provider commands ambiguous: %w", err)
-	}
 	type interruptedCommand struct {
-		id     string
-		callID *string
-		action CommandAction
+		id        string
+		callID    *string
+		attemptID string
+		action    CommandAction
+		updatedAt time.Time
 	}
-	interrupted := []interruptedCommand{}
-	for rows.Next() {
-		var command interruptedCommand
-		if err := rows.Scan(&command.id, &command.callID, &command.action); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan interrupted provider command: %w", err)
-		}
-		interrupted = append(interrupted, command)
+	var command interruptedCommand
+	err := m.pool.QueryRow(ctx, `
+		SELECT
+			id::text,
+			call_id::text,
+			COALESCE(attempt_id::text, ''),
+			action,
+			updated_at
+		FROM human_calling_provider_commands
+		WHERE state = 'SENDING'
+			AND updated_at <= $1
+		ORDER BY updated_at, id
+		LIMIT 1
+	`, now.Add(-interruptedCommandTimeout)).Scan(
+		&command.id,
+		&command.callID,
+		&command.attemptID,
+		&command.action,
+		&command.updatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("iterate interrupted provider commands: %w", err)
+	if err != nil {
+		return fmt.Errorf("find interrupted provider command: %w", err)
 	}
-	rows.Close()
 
-	for _, command := range interrupted {
-		if command.callID == nil {
-			continue
-		}
-		var practiceID string
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin interrupted provider command recovery: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	practiceID := ""
+	if command.callID != nil {
 		if err := tx.QueryRow(ctx, `
 			SELECT practice_id::text
 			FROM human_calling_calls
@@ -2762,18 +2763,67 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		`, *command.callID).Scan(&practiceID); err != nil {
 			return fmt.Errorf("load interrupted provider Call: %w", err)
 		}
+	}
+
+	safeRetry := command.callID != nil &&
+		(command.action == CommandHangup ||
+			!command.updatedAt.Before(now.Add(-safeProviderRetryWindow)))
+	nextState := "AMBIGUOUS"
+	errorCode := "DUPLICATE_SUPPRESSION_EXPIRED"
+	timelineKind := "provider.command.retry_window_expired"
+	if command.callID == nil {
+		errorCode = "WORKER_INTERRUPTED"
+		timelineKind = "provider.command.interrupted"
+	} else if safeRetry {
+		nextState = "PENDING"
+		errorCode = "SAFE_SAME_ID_RETRY"
+		timelineKind = "provider.command.safe_same_id_retry"
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET
+			state = $2,
+			last_error_code = $3,
+			next_attempt_at = CASE WHEN $2 = 'PENDING' THEN $4 ELSE next_attempt_at END,
+			updated_at = $4
+		WHERE id = $1
+			AND state = 'SENDING'
+			AND updated_at = $5
+	`, command.id, nextState, errorCode, now, command.updatedAt)
+	if err != nil {
+		return fmt.Errorf("recover interrupted provider command: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return tx.Commit(ctx)
+	}
+
+	if command.callID != nil &&
+		command.action == CommandDialStaff &&
+		!safeRetry {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET state = 'RECONCILING', version = version + 1, updated_at = $2
+			WHERE id = $1
+				AND current_attempt_id = NULLIF($3, '')::uuid
+				AND state = 'CONNECTING'
+		`, *command.callID, now, command.attemptID); err != nil {
+			return fmt.Errorf("mark expired interrupted Dial reconciling: %w", err)
+		}
+	}
+
+	if command.callID != nil {
 		if err := appendTimeline(
 			ctx,
 			tx,
 			*command.callID,
 			practiceID,
-			"provider.command.safe_same_id_retry",
+			timelineKind,
 			"",
 			"",
 			command.id,
 			"",
-			"SAFE_SAME_ID_RETRY",
-			m.now(),
+			errorCode,
+			now,
 		); err != nil {
 			return err
 		}
@@ -2792,133 +2842,138 @@ func (m *Module) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
 	if !ok {
 		return 0, nil
 	}
-	rows, err := m.pool.Query(ctx, `
-		SELECT
-			call.id::text,
-			call.practice_id::text,
-			call.current_attempt_id::text,
-			command.id::text,
-			command.target_id,
-			command.updated_at
-		FROM human_calling_calls call
-		JOIN LATERAL (
-			SELECT id, target_id, updated_at
-			FROM human_calling_provider_commands
-			WHERE call_id = call.id
-				AND action = 'HANGUP'
-				AND state = 'SENT'
-				AND target_id = COALESCE(
-					call.expected_staff_call_control_id,
-					call.caller_call_control_id
-				)
-				AND attempt_id = call.current_attempt_id
-			ORDER BY updated_at, id
-			LIMIT 1
-		) command ON true
-		WHERE call.state = 'CONNECTED'
-			AND command.updated_at <= $1::timestamptz - interval '5 seconds'
-		ORDER BY command.updated_at, command.id
-		LIMIT 100
-	`, m.now())
+	now := m.now()
+	claim, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("list Hangups awaiting provider state: %w", err)
+		return 0, fmt.Errorf("begin Hangup reconciliation claim: %w", err)
 	}
+	defer func() { _ = claim.Rollback(ctx) }()
 	type pendingHangup struct {
 		callID      string
-		practiceID  string
 		attemptID   string
 		commandID   string
 		targetID    string
 		commandSent time.Time
 	}
-	pending := []pendingHangup{}
-	for rows.Next() {
-		var item pendingHangup
-		if err := rows.Scan(
-			&item.callID,
-			&item.practiceID,
-			&item.attemptID,
-			&item.commandID,
-			&item.targetID,
-			&item.commandSent,
-		); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("scan Hangup awaiting provider state: %w", err)
+	var item pendingHangup
+	err = claim.QueryRow(ctx, `
+		WITH candidate AS (
+			SELECT command.id
+			FROM human_calling_provider_commands command
+			JOIN human_calling_calls call ON call.id = command.call_id
+			WHERE command.action = 'HANGUP'
+				AND command.state = 'SENT'
+				AND command.updated_at <= $1
+				AND command.next_attempt_at <= $2
+				AND call.state = 'CONNECTED'
+				AND command.target_id = COALESCE(
+					call.expected_staff_call_control_id,
+					call.caller_call_control_id
+				)
+				AND command.attempt_id = call.current_attempt_id
+			ORDER BY command.next_attempt_at, command.updated_at, command.id
+			FOR UPDATE OF command SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE human_calling_provider_commands command
+		SET next_attempt_at = $3
+		FROM candidate
+		WHERE command.id = candidate.id
+		RETURNING
+			command.call_id::text,
+			command.attempt_id::text,
+			command.id::text,
+			command.target_id,
+			command.updated_at
+	`,
+		now.Add(-hangupReconciliationDelay),
+		now,
+		now.Add(hangupReconciliationDelay),
+	).Scan(
+		&item.callID,
+		&item.attemptID,
+		&item.commandID,
+		&item.targetID,
+		&item.commandSent,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := claim.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("commit empty Hangup reconciliation claim: %w", err)
 		}
-		pending = append(pending, item)
+		return 0, nil
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("iterate Hangups awaiting provider state: %w", err)
+	if err != nil {
+		return 0, fmt.Errorf("claim Hangup awaiting provider state: %w", err)
 	}
-	rows.Close()
+	if err := claim.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit Hangup reconciliation claim: %w", err)
+	}
 
-	reconciled := 0
-	for _, item := range pending {
-		alive, err := provider.IsCallAlive(ctx, item.targetID)
-		if err != nil {
-			return reconciled, fmt.Errorf("read exact provider Call state: %w", err)
-		}
-		if alive {
-			continue
-		}
-		tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-		if err != nil {
-			return reconciled, fmt.Errorf("begin absent provider Call projection: %w", err)
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-		tag, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET
-				state = 'NEEDS_DISPOSITION',
-				provider_termination = 'PROVIDER_CONFIRMED_NOT_ALIVE',
-				ended_at = $2,
-				version = version + 1,
-				updated_at = $2
-			WHERE id = $1
-				AND current_attempt_id = $3
-				AND state = 'CONNECTED'
-		`, item.callID, m.now(), item.attemptID)
-		if err != nil {
-			return reconciled, fmt.Errorf("project absent provider Call: %w", err)
-		}
-		if tag.RowsAffected() == 0 {
-			if err := tx.Commit(ctx); err != nil {
-				return reconciled, fmt.Errorf("commit superseded provider Call state: %w", err)
-			}
-			continue
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_provider_commands
-			SET state = 'RECONCILED', last_error_code = NULL, updated_at = $2
-			WHERE id = $1 AND state = 'SENT'
-		`, item.commandID, m.now()); err != nil {
-			return reconciled, fmt.Errorf("reconcile provider-confirmed Hangup: %w", err)
-		}
-		if err := appendTimeline(
-			ctx,
-			tx,
-			item.callID,
-			item.practiceID,
-			"call.hangup_provider_confirmed",
-			"",
-			"",
-			item.commandID,
-			"",
-			"PROVIDER_CONFIRMED_NOT_ALIVE",
-			item.commandSent,
-		); err != nil {
-			return reconciled, err
-		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, item.practiceID); err != nil {
-			return reconciled, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return reconciled, fmt.Errorf("commit provider-confirmed Hangup: %w", err)
-		}
-		reconciled++
+	alive, err := provider.IsCallAlive(ctx, item.targetID)
+	if err != nil {
+		return 0, fmt.Errorf("read exact provider Call state: %w", err)
 	}
-	return reconciled, nil
+	if alive {
+		return 0, nil
+	}
+
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("begin absent provider Call projection: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var practiceID string
+	err = tx.QueryRow(ctx, `
+		UPDATE human_calling_calls
+		SET
+			state = 'NEEDS_DISPOSITION',
+			provider_termination = 'PROVIDER_CONFIRMED_NOT_ALIVE',
+			ended_at = $2,
+			version = version + 1,
+			updated_at = $2
+		WHERE id = $1
+			AND current_attempt_id = $3
+			AND state = 'CONNECTED'
+		RETURNING practice_id::text
+	`, item.callID, now, item.attemptID).Scan(&practiceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("commit superseded provider Call state: %w", err)
+		}
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("project absent provider Call: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'RECONCILED', last_error_code = NULL, updated_at = $2
+		WHERE id = $1 AND state = 'SENT'
+	`, item.commandID, now); err != nil {
+		return 0, fmt.Errorf("reconcile provider-confirmed Hangup: %w", err)
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		item.callID,
+		practiceID,
+		"call.hangup_provider_confirmed",
+		"",
+		"",
+		item.commandID,
+		"",
+		"PROVIDER_CONFIRMED_NOT_ALIVE",
+		item.commandSent,
+	); err != nil {
+		return 0, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit provider-confirmed Hangup: %w", err)
+	}
+	return 1, nil
 }
 
 func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
@@ -3170,6 +3225,20 @@ func (m *Module) finishCommand(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	callPracticeID := ""
+	if callID != nil {
+		// Provider facts and command results always lock Call first. Keeping one
+		// order prevents concurrent webhooks and completions from deadlocking.
+		if err := tx.QueryRow(ctx, `
+			SELECT practice_id::text
+			FROM human_calling_calls
+			WHERE id = $1
+			FOR UPDATE
+		`, *callID).Scan(&callPracticeID); err != nil {
+			return fmt.Errorf("lock provider command Call: %w", err)
+		}
+	}
+
 	state := "SENT"
 	errorCode := ""
 	if executeErr != nil {
@@ -3390,13 +3459,11 @@ func (m *Module) finishCommand(
 			}
 		} else {
 			var deadline time.Time
-			var practiceID string
 			if err := tx.QueryRow(ctx, `
-				SELECT offer_deadline, practice_id::text
+				SELECT offer_deadline
 				FROM human_calling_calls
 				WHERE id = $1
-				FOR UPDATE
-			`, *callID).Scan(&deadline, &practiceID); err != nil {
+			`, *callID).Scan(&deadline); err != nil {
 				return fmt.Errorf("load definitively failed Call: %w", err)
 			}
 			nextState := CallUnanswered
@@ -3454,7 +3521,7 @@ func (m *Module) finishCommand(
 					return err
 				}
 			}
-			if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+			if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
 				return err
 			}
 		}
@@ -3582,14 +3649,6 @@ func (m *Module) finishCommand(
 		}
 	}
 	if callID != nil {
-		var practiceID string
-		if err := tx.QueryRow(ctx, `
-			SELECT practice_id::text
-			FROM human_calling_calls
-			WHERE id = $1
-		`, *callID).Scan(&practiceID); err != nil {
-			return fmt.Errorf("load provider command Call: %w", err)
-		}
 		if state == "FAILED" {
 			if _, err := tx.Exec(ctx, `
 				WITH RECURSIVE descendants AS (
@@ -3630,7 +3689,7 @@ func (m *Module) finishCommand(
 			ctx,
 			tx,
 			*callID,
-			practiceID,
+			callPracticeID,
 			"provider.command."+strings.ToLower(state),
 			"",
 			"",
@@ -3641,7 +3700,7 @@ func (m *Module) finishCommand(
 		); err != nil {
 			return err
 		}
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
 			return err
 		}
 	}

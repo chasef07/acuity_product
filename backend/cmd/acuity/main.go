@@ -224,6 +224,15 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 			return nil
 		case <-workTicker.C:
 			workContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := calling.ProcessNextReceipt(workContext); err != nil {
+				slog.Warn("provider_receipt_processing_failed", "error", err)
+			}
+			if _, err := calling.ProcessNextCommand(workContext); err != nil {
+				slog.Warn("provider_command_processing_failed", "error", err)
+			}
+			if _, err := calling.ProcessNextCredentialReconciliation(workContext); err != nil {
+				slog.Warn("provider_credential_reconciliation_failed", "error", err)
+			}
 			if _, err := calling.ExpireOffers(workContext); err != nil {
 				slog.Warn("calling_offer_expiry_failed", "error", err)
 			}
@@ -235,15 +244,6 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 			}
 			if _, err := calling.ReconcileConfirmedHangups(workContext); err != nil {
 				slog.Warn("provider_hangup_reconciliation_failed", "error", err)
-			}
-			if _, err := calling.ProcessNextReceipt(workContext); err != nil {
-				slog.Warn("provider_receipt_processing_failed", "error", err)
-			}
-			if _, err := calling.ProcessNextCredentialReconciliation(workContext); err != nil {
-				slog.Warn("provider_credential_reconciliation_failed", "error", err)
-			}
-			if _, err := calling.ProcessNextCommand(workContext); err != nil {
-				slog.Warn("provider_command_processing_failed", "error", err)
 			}
 			cancel()
 		case <-credentialTicker.C:
