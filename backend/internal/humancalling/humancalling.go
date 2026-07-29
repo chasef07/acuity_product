@@ -3073,30 +3073,72 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	var command ProviderCommand
 	var callID, userSubject *string
 	var encoded []byte
+	// The parent Call row is the durable serialization key. Credential commands
+	// have no Call, so they keep their independent SKIP LOCKED claim path.
 	err = tx.QueryRow(ctx, `
-		SELECT
-			id::text,
-			COALESCE(attempt_id::text, ''),
-			call_id::text,
-			user_subject,
-			action,
-			COALESCE(target_id, ''),
-			payload
-		FROM human_calling_provider_commands
-		WHERE state = 'PENDING' AND next_attempt_at <= $1
-			AND action <> 'CREATE_JWT'
-			AND (
-				depends_on_command_id IS NULL
-				OR EXISTS (
-					SELECT 1
-					FROM human_calling_provider_commands dependency
-					WHERE dependency.id = human_calling_provider_commands.depends_on_command_id
-						AND dependency.state IN ('SENT', 'RECONCILED')
+		WITH call_candidate AS MATERIALIZED (
+			SELECT command.id, command.created_at
+			FROM human_calling_provider_commands command
+			JOIN human_calling_calls call ON call.id = command.call_id
+			WHERE command.state = 'PENDING'
+				AND command.next_attempt_at <= $1
+				AND command.action <> 'CREATE_JWT'
+				AND (
+					command.depends_on_command_id IS NULL
+					OR EXISTS (
+						SELECT 1
+						FROM human_calling_provider_commands dependency
+						WHERE dependency.id = command.depends_on_command_id
+							AND dependency.state IN ('SENT', 'RECONCILED')
+					)
 				)
-			)
-		ORDER BY created_at, id
-		FOR UPDATE SKIP LOCKED
-		LIMIT 1
+				AND NOT EXISTS (
+					SELECT 1
+					FROM human_calling_provider_commands active
+					WHERE active.call_id = command.call_id
+						AND active.state IN ('SENDING', 'AMBIGUOUS')
+				)
+			ORDER BY command.created_at, command.id
+			FOR UPDATE OF call, command SKIP LOCKED
+			LIMIT 1
+		),
+		credential_candidate AS MATERIALIZED (
+			SELECT command.id, command.created_at
+			FROM human_calling_provider_commands command
+			WHERE command.call_id IS NULL
+				AND command.state = 'PENDING'
+				AND command.next_attempt_at <= $1
+				AND command.action <> 'CREATE_JWT'
+				AND (
+					command.depends_on_command_id IS NULL
+					OR EXISTS (
+						SELECT 1
+						FROM human_calling_provider_commands dependency
+						WHERE dependency.id = command.depends_on_command_id
+							AND dependency.state IN ('SENT', 'RECONCILED')
+					)
+				)
+			ORDER BY command.created_at, command.id
+			FOR UPDATE OF command SKIP LOCKED
+			LIMIT 1
+		),
+		candidate AS (
+			SELECT id, created_at FROM call_candidate
+			UNION ALL
+			SELECT id, created_at FROM credential_candidate
+			ORDER BY created_at, id
+			LIMIT 1
+		)
+		SELECT
+			command.id::text,
+			COALESCE(command.attempt_id::text, ''),
+			command.call_id::text,
+			command.user_subject,
+			command.action,
+			COALESCE(command.target_id, ''),
+			command.payload
+		FROM candidate
+		JOIN human_calling_provider_commands command ON command.id = candidate.id
 	`, m.now()).Scan(
 		&command.ID,
 		&command.AttemptID,

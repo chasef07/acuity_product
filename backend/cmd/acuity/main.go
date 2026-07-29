@@ -221,6 +221,8 @@ func runWorker(ctx context.Context, config app.Config, pool *pgxpool.Pool) error
 		ReceiptBatchSize:   8,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
+		ErrorBackoffMin:    250 * time.Millisecond,
+		ErrorBackoffMax:    10 * time.Second,
 	}, calling, pool)
 	if err != nil {
 		return err

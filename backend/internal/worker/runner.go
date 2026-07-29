@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 )
@@ -34,12 +35,16 @@ type Config struct {
 	ReceiptBatchSize   int
 	CommandBatchSize   int
 	CommandWorkers     int
+	ErrorBackoffMin    time.Duration
+	ErrorBackoffMax    time.Duration
 }
 
 type Runner struct {
 	config     Config
 	work       CallingWork
 	dependency Dependency
+	jitter     func(time.Duration) time.Duration
+	wait       func(context.Context, time.Duration) bool
 }
 
 func New(config Config, work CallingWork, dependency Dependency) (*Runner, error) {
@@ -57,7 +62,26 @@ func New(config Config, work CallingWork, dependency Dependency) (*Runner, error
 		config.CommandWorkers <= 0 {
 		return nil, fmt.Errorf("positive worker limits are required")
 	}
-	return &Runner{config: config, work: work, dependency: dependency}, nil
+	if config.ErrorBackoffMin == 0 {
+		config.ErrorBackoffMin = config.WorkInterval
+	}
+	if config.ErrorBackoffMax == 0 {
+		config.ErrorBackoffMax = 10 * time.Second
+		if config.ErrorBackoffMin > config.ErrorBackoffMax {
+			config.ErrorBackoffMax = config.ErrorBackoffMin
+		}
+	}
+	if config.ErrorBackoffMin < 0 ||
+		config.ErrorBackoffMax < config.ErrorBackoffMin {
+		return nil, fmt.Errorf("valid worker error backoff bounds are required")
+	}
+	return &Runner{
+		config:     config,
+		work:       work,
+		dependency: dependency,
+		jitter:     equalJitter,
+		wait:       wait,
+	}, nil
 }
 
 func (runner *Runner) Run(ctx context.Context) error {
@@ -97,7 +121,12 @@ func (runner *Runner) runQueueLane(
 	failureEvent string,
 	process func(context.Context) (bool, error),
 ) {
+	backoff := newFailureBackoff(
+		runner.config.ErrorBackoffMin,
+		runner.config.ErrorBackoffMax,
+	)
 	for ctx.Err() == nil {
+		failed := false
 		for range batchSize {
 			processed, err := runBoolWork(
 				ctx,
@@ -106,13 +135,19 @@ func (runner *Runner) runQueueLane(
 			)
 			if err != nil {
 				warn(ctx, failureEvent, err)
+				failed = true
 				break
 			}
+			backoff.reset()
 			if !processed {
 				break
 			}
 		}
-		if !wait(ctx, runner.config.WorkInterval) {
+		delay := runner.config.WorkInterval
+		if failed {
+			delay = backoff.fail(runner.jitter)
+		}
+		if !runner.wait(ctx, delay) {
 			return
 		}
 	}
@@ -122,13 +157,17 @@ func (runner *Runner) runMaintenanceLane(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	runner.runMaintenance(ctx)
+	backoff := newFailureBackoff(
+		runner.config.ErrorBackoffMin,
+		runner.config.ErrorBackoffMax,
+	)
+	delay := runner.runMaintenanceAndDelay(ctx, backoff)
 	if ctx.Err() != nil {
 		return
 	}
 
-	workTicker := time.NewTicker(runner.config.WorkInterval)
-	defer workTicker.Stop()
+	workTimer := time.NewTimer(delay)
+	defer workTimer.Stop()
 	credentialTicker := time.NewTicker(runner.config.CredentialInterval)
 	defer credentialTicker.Stop()
 	healthTicker := time.NewTicker(runner.config.HealthInterval)
@@ -138,8 +177,12 @@ func (runner *Runner) runMaintenanceLane(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-workTicker.C:
-			runner.runMaintenance(ctx)
+		case <-workTimer.C:
+			delay = runner.runMaintenanceAndDelay(ctx, backoff)
+			if ctx.Err() != nil {
+				return
+			}
+			workTimer.Reset(delay)
 		case <-credentialTicker.C:
 			runner.reconcileCredentials(ctx)
 		case <-healthTicker.C:
@@ -148,24 +191,39 @@ func (runner *Runner) runMaintenanceLane(ctx context.Context) {
 	}
 }
 
-func (runner *Runner) runMaintenance(ctx context.Context) {
+func (runner *Runner) runMaintenanceAndDelay(
+	ctx context.Context,
+	backoff *failureBackoff,
+) time.Duration {
+	if runner.runMaintenance(ctx) {
+		return backoff.fail(runner.jitter)
+	}
+	backoff.reset()
+	return runner.config.WorkInterval
+}
+
+func (runner *Runner) runMaintenance(ctx context.Context) bool {
+	failed := false
 	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireOffers); err != nil {
 		warn(ctx, "calling_offer_expiry_failed", err)
+		failed = ctx.Err() == nil
 	}
 	if ctx.Err() != nil {
-		return
+		return failed
 	}
 	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireConnections); err != nil {
 		warn(ctx, "calling_connection_expiry_failed", err)
+		failed = true
 	}
 	if ctx.Err() != nil {
-		return
+		return failed
 	}
 	if err := runWork(ctx, runner.config.WorkTimeout, runner.work.RecoverInterruptedCommands); err != nil {
 		warn(ctx, "provider_command_recovery_failed", err)
+		failed = true
 	}
 	if ctx.Err() != nil {
-		return
+		return failed
 	}
 	if _, err := runCountWork(
 		ctx,
@@ -173,9 +231,10 @@ func (runner *Runner) runMaintenance(ctx context.Context) {
 		runner.work.ReconcileConfirmedHangups,
 	); err != nil {
 		warn(ctx, "provider_hangup_reconciliation_failed", err)
+		failed = true
 	}
 	if ctx.Err() != nil {
-		return
+		return failed
 	}
 	if _, err := runBoolWork(
 		ctx,
@@ -183,7 +242,9 @@ func (runner *Runner) runMaintenance(ctx context.Context) {
 		runner.work.ProcessNextCredentialReconciliation,
 	); err != nil {
 		warn(ctx, "provider_credential_reconciliation_failed", err)
+		failed = true
 	}
+	return failed
 }
 
 func (runner *Runner) reconcileCredentials(ctx context.Context) {
@@ -247,4 +308,41 @@ func wait(ctx context.Context, duration time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+type failureBackoff struct {
+	min  time.Duration
+	max  time.Duration
+	next time.Duration
+}
+
+func newFailureBackoff(minimum, maximum time.Duration) *failureBackoff {
+	return &failureBackoff{min: minimum, max: maximum, next: minimum}
+}
+
+func (backoff *failureBackoff) fail(
+	jitter func(time.Duration) time.Duration,
+) time.Duration {
+	delay := backoff.next
+	if backoff.next < backoff.max {
+		if backoff.next > backoff.max/2 {
+			backoff.next = backoff.max
+		} else {
+			backoff.next *= 2
+		}
+	}
+	return jitter(delay)
+}
+
+func (backoff *failureBackoff) reset() {
+	backoff.next = backoff.min
+}
+
+func equalJitter(delay time.Duration) time.Duration {
+	minimum := delay/2 + delay%2
+	spread := delay - minimum
+	if spread == 0 {
+		return delay
+	}
+	return minimum + time.Duration(rand.Int64N(int64(spread)+1))
 }

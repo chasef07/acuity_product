@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -166,6 +167,107 @@ func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 	}
 }
 
+func TestQueueLaneBacksOffConsecutiveErrorsAndResetsAfterProgress(t *testing.T) {
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval:    10 * time.Millisecond,
+			WorkTimeout:     time.Second,
+			ErrorBackoffMin: 100 * time.Millisecond,
+			ErrorBackoffMax: 400 * time.Millisecond,
+		},
+		jitter: func(delay time.Duration) time.Duration {
+			return delay - time.Millisecond
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return len(delays) < 7
+		},
+	}
+	results := []struct {
+		processed bool
+		err       error
+	}{
+		{err: errors.New("first failure")},
+		{err: errors.New("second failure")},
+		{err: errors.New("third failure")},
+		{err: errors.New("bounded failure")},
+		{processed: true},
+		{},
+		{err: errors.New("failure after progress")},
+	}
+	next := 0
+	runner.runQueueLane(
+		context.Background(),
+		1,
+		"test_failure",
+		func(context.Context) (bool, error) {
+			result := results[next]
+			next++
+			return result.processed, result.err
+		},
+	)
+
+	want := []time.Duration{
+		99 * time.Millisecond,
+		199 * time.Millisecond,
+		399 * time.Millisecond,
+		399 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		99 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("delays = %v, want %v", delays, want)
+		}
+	}
+}
+
+func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
+	work := &maintenanceFailureWork{controlledWork: newControlledWork()}
+	runner := &Runner{
+		config: Config{
+			WorkInterval:    10 * time.Millisecond,
+			WorkTimeout:     time.Second,
+			ErrorBackoffMin: 100 * time.Millisecond,
+			ErrorBackoffMax: 400 * time.Millisecond,
+		},
+		work: work,
+		jitter: func(delay time.Duration) time.Duration {
+			return delay - time.Millisecond
+		},
+	}
+	backoff := newFailureBackoff(
+		runner.config.ErrorBackoffMin,
+		runner.config.ErrorBackoffMax,
+	)
+	var delays []time.Duration
+	for range 4 {
+		delays = append(
+			delays,
+			runner.runMaintenanceAndDelay(context.Background(), backoff),
+		)
+	}
+	want := []time.Duration{
+		99 * time.Millisecond,
+		199 * time.Millisecond,
+		10 * time.Millisecond,
+		99 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("delays = %v, want %v", delays, want)
+		}
+	}
+}
+
 type controlledWork struct {
 	commandCalls          atomic.Int32
 	receiptCalls          atomic.Int32
@@ -178,6 +280,19 @@ type controlledWork struct {
 	reconciliationStarted chan struct{}
 	blockOfferExpiry      bool
 	blockReconciliation   bool
+}
+
+type maintenanceFailureWork struct {
+	*controlledWork
+	offerCalls int
+}
+
+func (work *maintenanceFailureWork) ExpireOffers(context.Context) (int, error) {
+	work.offerCalls++
+	if work.offerCalls == 1 || work.offerCalls == 2 || work.offerCalls == 4 {
+		return 0, errors.New("maintenance database unavailable")
+	}
+	return 0, nil
 }
 
 func newControlledWork() *controlledWork {
