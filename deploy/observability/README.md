@@ -50,12 +50,12 @@ These thresholds are operating hypotheses, not SLOs:
 | Webhook acknowledgement p99 above one second | p99 over 10 minutes |
 | Oldest receipt above 30 seconds | p99 over 10 minutes for 60 seconds |
 | Receipt depth above 64 for five minutes | p99 over 10 minutes for 5 minutes |
-| Any quarantined provider receipt | any in 60 seconds |
+| Any quarantined provider receipt | durable depth above zero in 60 seconds, until audited requeue |
 | Dial command queue p95 above one second | p95 over 10 minutes for 60 seconds |
 | Ambiguous service provider command | any in 60 seconds |
 | Ambiguous worker provider command | any in 60 seconds |
-| Service database acquisition timeout | any in 60 seconds |
-| Worker database acquisition timeout | any in 60 seconds |
+| Service database acquisition timeout | any deadline exhaustion in 60 seconds |
+| Worker database acquisition timeout | any deadline exhaustion in 60 seconds |
 | Service database saturation above 0.8 | p99 over 10 minutes for 5 minutes |
 | Worker database saturation above 0.8 | p99 over 10 minutes for 5 minutes |
 | More than three listener disconnects in five minutes | four in 5 minutes |

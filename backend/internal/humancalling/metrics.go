@@ -11,12 +11,24 @@ import (
 func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	now := m.now()
 	var depth int64
+	var quarantinedDepth int64
 	var oldest *time.Time
 	if err := m.pool.QueryRow(ctx, `
-		SELECT count(*), min(received_at)
-		FROM human_calling_provider_receipts
-		WHERE state IN ('PENDING', 'PROCESSING')
-	`).Scan(&depth, &oldest); err != nil {
+		SELECT
+			pending.depth,
+			pending.oldest,
+			quarantined.depth
+		FROM (
+			SELECT count(*) AS depth, min(received_at) AS oldest
+			FROM human_calling_provider_receipts
+			WHERE state IN ('PENDING', 'PROCESSING')
+		) pending
+		CROSS JOIN (
+			SELECT count(*) AS depth
+			FROM human_calling_provider_receipts
+			WHERE state = 'QUARANTINED'
+		) quarantined
+	`).Scan(&depth, &oldest, &quarantinedDepth); err != nil {
 		return fmt.Errorf("read provider receipt queue: %w", err)
 	}
 	oldestAge := time.Duration(0)
@@ -25,7 +37,7 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	}
 	observability.Record(
 		m.observer,
-		observability.ReceiptQueue(depth, oldestAge),
+		observability.ReceiptQueue(depth, oldestAge, quarantinedDepth),
 	)
 	return nil
 }

@@ -66,6 +66,7 @@ type PoolAcquireOutcome string
 
 const (
 	PoolAcquireSucceeded PoolAcquireOutcome = "succeeded"
+	PoolAcquireCanceled  PoolAcquireOutcome = "canceled"
 	PoolAcquireTimeout   PoolAcquireOutcome = "timeout"
 	PoolAcquireFailed    PoolAcquireOutcome = "failed"
 )
@@ -105,9 +106,15 @@ func WebhookAcknowledged(outcome WebhookOutcome, duration time.Duration) Event {
 		"seconds", positive(duration).Seconds())
 }
 
-func ReceiptQueue(depth int64, oldestAge time.Duration) Event {
+func ReceiptQueue(
+	depth int64,
+	oldestAge time.Duration,
+	quarantinedDepth int64,
+) Event {
 	return event("acuity_call_center_receipt_queue",
-		"depth", max(depth, 0), "oldest_age_seconds", positive(oldestAge).Seconds())
+		"depth", max(depth, 0),
+		"oldest_age_seconds", positive(oldestAge).Seconds(),
+		"quarantined_depth", max(quarantinedDepth, 0))
 }
 
 func ReceiptProcessed(outcome ReceiptOutcome, queueAge, duration time.Duration) Event {
@@ -132,7 +139,7 @@ func ProviderCommandCompleted(
 
 func DatabasePoolAcquired(outcome PoolAcquireOutcome, duration time.Duration) Event {
 	return event("acuity_call_center_database_pool_acquire",
-		"outcome", bounded(string(outcome), "succeeded", "timeout", "failed"),
+		"outcome", bounded(string(outcome), "succeeded", "canceled", "timeout", "failed"),
 		"seconds", positive(duration).Seconds())
 }
 
