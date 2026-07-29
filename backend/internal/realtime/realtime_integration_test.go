@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -322,6 +323,138 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	}
 }
 
+func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "realtime-burst-test",
+		Practices: []access.PracticeProvision{{
+			Key:       "realtime-burst-practice",
+			Name:      "Realtime Burst Practice",
+			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
+			Invitations: []access.InvitationProvision{{
+				Key:           "realtime-burst-member",
+				Email:         "member@realtime-burst.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision realtime burst fixture: %v", err)
+	}
+	member := access.Identity{
+		Subject:       "realtime-burst-member",
+		Email:         "member@realtime-burst.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		member,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept realtime burst invitation: %v", err)
+	}
+
+	hubContext, stopHub := context.WithCancel(context.Background())
+	t.Cleanup(stopHub)
+	hub, err := realtime.New(realtime.Config{
+		DatabaseURL:        testDatabaseURL(t),
+		AccessTimeout:      500 * time.Millisecond,
+		HeartbeatInterval:  time.Second,
+		StreamLifetime:     3 * time.Second,
+		RevalidateInterval: time.Second,
+		ReconnectMin:       10 * time.Millisecond,
+		ReconnectMax:       50 * time.Millisecond,
+	}, accessModule)
+	if err != nil {
+		t.Fatalf("new realtime burst adapter: %v", err)
+	}
+	go hub.Run(hubContext)
+	deadline := time.Now().Add(time.Second)
+	for !hub.Ready() {
+		if time.Now().After(deadline) {
+			t.Fatal("realtime burst adapter did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	writer := newGatedSSEWriter()
+	streamContext, stopStream := context.WithCancel(context.Background())
+	defer stopStream()
+	request := httptest.NewRequest(http.MethodGet, "/v1/events", nil).
+		WithContext(streamContext)
+	streamDone := make(chan error, 1)
+	go func() {
+		streamDone <- hub.Stream(
+			writer,
+			request,
+			member,
+			authorization.Practice.ID,
+			authorization.Locations[0].ID,
+		)
+	}()
+	select {
+	case <-writer.ready:
+	case <-time.After(time.Second):
+		t.Fatal("realtime burst stream did not become ready")
+	}
+
+	publishChange := func() int64 {
+		t.Helper()
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin realtime burst change: %v", err)
+		}
+		version, err := accessModule.RecordWorkspaceChange(
+			context.Background(),
+			tx,
+			authorization.Practice.ID,
+		)
+		if err != nil {
+			_ = tx.Rollback(context.Background())
+			t.Fatalf("record realtime burst change: %v", err)
+		}
+		if err := tx.Commit(context.Background()); err != nil {
+			t.Fatalf("commit realtime burst change: %v", err)
+		}
+		return version
+	}
+	publishChange()
+	select {
+	case <-writer.blocked:
+	case <-time.After(time.Second):
+		t.Fatal("realtime burst stream did not block on its first hint")
+	}
+	var newestVersion int64
+	for range 16 {
+		newestVersion = publishChange()
+	}
+	time.Sleep(250 * time.Millisecond)
+	close(writer.release)
+
+	deadline = time.Now().Add(time.Second)
+	for writer.maxHintVersion() < newestVersion && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	stopStream()
+	select {
+	case err := <-streamDone:
+		if err != nil {
+			t.Fatalf("realtime burst stream: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("realtime burst stream did not stop")
+	}
+	if got := writer.maxHintVersion(); got != newestVersion {
+		t.Fatalf("newest realtime burst version = %d, want %d", got, newestVersion)
+	}
+}
+
 func waitForReady(t *testing.T, client *http.Client, target string) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
@@ -364,6 +497,77 @@ type sseEvent struct {
 		PracticeID string `json:"practiceId"`
 		Version    int64  `json:"version"`
 	}
+}
+
+type gatedSSEWriter struct {
+	header  http.Header
+	ready   chan struct{}
+	blocked chan struct{}
+	release chan struct{}
+
+	mu          sync.Mutex
+	readyOnce   sync.Once
+	blockedOnce sync.Once
+	writes      []string
+}
+
+func newGatedSSEWriter() *gatedSSEWriter {
+	return &gatedSSEWriter{
+		header:  http.Header{},
+		ready:   make(chan struct{}),
+		blocked: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (writer *gatedSSEWriter) Header() http.Header {
+	return writer.header
+}
+
+func (writer *gatedSSEWriter) WriteHeader(int) {}
+
+func (writer *gatedSSEWriter) Write(body []byte) (int, error) {
+	event := string(body)
+	if strings.Contains(event, "event: ready") {
+		writer.readyOnce.Do(func() { close(writer.ready) })
+	}
+	if strings.Contains(event, "event: hint") {
+		block := false
+		writer.blockedOnce.Do(func() {
+			close(writer.blocked)
+			block = true
+		})
+		if block {
+			<-writer.release
+		}
+	}
+	writer.mu.Lock()
+	writer.writes = append(writer.writes, event)
+	writer.mu.Unlock()
+	return len(body), nil
+}
+
+func (writer *gatedSSEWriter) Flush() {}
+
+func (writer *gatedSSEWriter) maxHintVersion() int64 {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	var maximum int64
+	for _, event := range writer.writes {
+		if !strings.Contains(event, "event: hint") {
+			continue
+		}
+		parts := strings.SplitN(event, "data: ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		var hint realtime.Hint
+		data := strings.TrimSpace(parts[1])
+		if err := json.Unmarshal([]byte(data), &hint); err == nil && hint.Version > maximum {
+			maximum = hint.Version
+		}
+	}
+	return maximum
 }
 
 func readSSEEvent(t *testing.T, reader *bufio.Reader) sseEvent {

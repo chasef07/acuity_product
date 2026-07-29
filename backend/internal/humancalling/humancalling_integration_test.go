@@ -1004,41 +1004,162 @@ func TestAmbiguousHangupRetriesOneIdentityAndConvergesFromProviderState(t *testi
 	}
 }
 
-func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
+func TestConcurrentHangupReconciliationClaimsOneProviderCheck(t *testing.T) {
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	alive := true
+	provider := &recordingProvider{
+		callAlive:        &alive,
+		callStateEntered: make(chan struct{}, 1),
+		callStateRelease: make(chan struct{}),
+	}
+	calling, identity, offer := readyOfferAt(
+		t,
+		provider,
+		"hangup-reconciliation-claim",
+		func() time.Time { return now },
+	)
+	if _, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		"hangup-reconciliation-claim-browser",
+		offer.ID,
+	); err != nil {
+		t.Fatalf("accept Hangup reconciliation offer: %v", err)
+	}
+	for {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil {
+			t.Fatalf("process Hangup reconciliation setup: %v", err)
+		}
+		if !processed {
+			break
+		}
+	}
+	var clientState string
+	provider.mu.Lock()
+	for _, command := range provider.commands {
+		if command.Action == humancalling.CommandDialStaff {
+			clientState, _ = command.Payload["client_state"].(string)
+			break
+		}
+	}
+	provider.mu.Unlock()
+	for _, fact := range []humancalling.ProviderFact{
+		{
+			EventID:       "hangup-reconciliation-staff",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    now.Add(time.Second),
+			CallControlID: "staff-control-1",
+			CallLegID:     "staff-leg-1",
+			CallSessionID: "hangup-reconciliation-claim-provider-session",
+			ClientState:   clientState,
+		},
+		{
+			EventID:       "hangup-reconciliation-bridge",
+			Type:          humancalling.FactCallBridged,
+			OccurredAt:    now.Add(2 * time.Second),
+			CallControlID: "staff-control-1",
+			CallLegID:     "staff-leg-1",
+			CallSessionID: "hangup-reconciliation-claim-provider-session",
+			ClientState:   clientState,
+		},
+	} {
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("connect Hangup reconciliation Call: %v", err)
+		}
+	}
+	for {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil {
+			t.Fatalf("process post-bridge command: %v", err)
+		}
+		if !processed {
+			break
+		}
+	}
+	if _, err := calling.RequestHangup(
+		context.Background(),
+		identity,
+		"hangup-reconciliation-claim-browser",
+		offer.ID,
+	); err != nil {
+		t.Fatalf("request Hangup reconciliation: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("send Hangup before reconciliation: processed=%t err=%v", processed, err)
+	}
+
+	now = now.Add(6 * time.Second)
+	type result struct {
+		count int
+		err   error
+	}
+	first := make(chan result, 1)
+	go func() {
+		count, err := calling.ReconcileConfirmedHangups(context.Background())
+		first <- result{count: count, err: err}
+	}()
+	<-provider.callStateEntered
+	second := make(chan result, 1)
+	go func() {
+		count, err := calling.ReconcileConfirmedHangups(context.Background())
+		second <- result{count: count, err: err}
+	}()
+
+	select {
+	case outcome := <-second:
+		if outcome.err != nil || outcome.count != 0 {
+			t.Fatalf("second Hangup reconciliation = %#v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Hangup reconciliation waited on the claimed provider check")
+	}
+	close(provider.callStateRelease)
+	firstOutcome := <-first
+	if firstOutcome.err != nil || firstOutcome.count != 0 {
+		t.Fatalf("first Hangup reconciliation = %#v", firstOutcome)
+	}
+	provider.mu.Lock()
+	checks := provider.callAliveChecks
+	provider.mu.Unlock()
+	if checks != 1 {
+		t.Fatalf("concurrent provider Call checks = %d, want one", checks)
+	}
+}
+
+func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
+	const concurrentAgents = 10
+	invitations := make([]access.InvitationProvision, 0, concurrentAgents)
+	identities := make([]access.Identity, 0, concurrentAgents)
+	for index := range concurrentAgents {
+		invitations = append(invitations, access.InvitationProvision{
+			Key:           fmt.Sprintf("claim-staff-%d", index+1),
+			Email:         fmt.Sprintf("staff-%d@claim.test", index+1),
+			Role:          access.RoleStaff,
+			LocationScope: access.LocationScopeAll,
+			ExpiresAt:     now.Add(time.Hour),
+		})
+		identities = append(identities, access.Identity{
+			Subject:       fmt.Sprintf("claim-staff-%d", index+1),
+			Email:         fmt.Sprintf("staff-%d@claim.test", index+1),
+			EmailVerified: true,
+		})
+	}
 	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-2-claim-test",
 		Practices: []access.PracticeProvision{{
-			Key:       "claim-practice",
-			Name:      "Claim Practice",
-			Locations: []access.LocationProvision{{Key: "claim-location", Name: "Claim Location"}},
-			Invitations: []access.InvitationProvision{
-				{
-					Key:           "claim-staff-one",
-					Email:         "one@claim.test",
-					Role:          access.RoleStaff,
-					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
-				},
-				{
-					Key:           "claim-staff-two",
-					Email:         "two@claim.test",
-					Role:          access.RoleStaff,
-					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
-				},
-			},
+			Key:         "claim-practice",
+			Name:        "Claim Practice",
+			Locations:   []access.LocationProvision{{Key: "claim-location", Name: "Claim Location"}},
+			Invitations: invitations,
 		}},
 	})
 	if err != nil {
 		t.Fatalf("provision claim fixture: %v", err)
-	}
-	identities := []access.Identity{
-		{Subject: "claim-one", Email: "one@claim.test", EmailVerified: true},
-		{Subject: "claim-two", Email: "two@claim.test", EmailVerified: true},
 	}
 	authorizations := make([]access.Authorization, len(identities))
 	for index := range identities {
@@ -1093,7 +1214,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		t.Fatalf("admit claim caller: %v", err)
 	}
 	for index, identity := range identities {
-		sessionID := "claim-browser-" + string(rune('1'+index))
+		sessionID := fmt.Sprintf("claim-browser-%d", index+1)
 		if _, err := calling.AcquireSoftphone(
 			context.Background(),
 			identity,
@@ -1125,7 +1246,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		index  int
 	}
 	start := make(chan struct{})
-	outcomes := make(chan acceptOutcome, 2)
+	outcomes := make(chan acceptOutcome, concurrentAgents)
 	for index, identity := range identities {
 		index := index
 		identity := identity
@@ -1134,7 +1255,7 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 			result, err := calling.AcceptOffer(
 				context.Background(),
 				identity,
-				"claim-browser-"+string(rune('1'+index)),
+				fmt.Sprintf("claim-browser-%d", index+1),
 				offers[0].ID,
 			)
 			outcomes <- acceptOutcome{result: result, err: err, index: index}
@@ -1153,10 +1274,11 @@ func TestConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		statuses[outcome.result.Status]++
 		if outcome.result.Status == humancalling.Accepted {
 			winner = identities[outcome.index]
-			winnerSession = "claim-browser-" + string(rune('1'+outcome.index))
+			winnerSession = fmt.Sprintf("claim-browser-%d", outcome.index+1)
 		}
 	}
-	if statuses[humancalling.Accepted] != 1 || statuses[humancalling.AlreadyClaimed] != 1 {
+	if statuses[humancalling.Accepted] != 1 ||
+		statuses[humancalling.AlreadyClaimed] != concurrentAgents-1 {
 		t.Fatalf("concurrent accept statuses = %#v", statuses)
 	}
 
@@ -1707,6 +1829,59 @@ func TestWorkerRestartRepairsInterruptedDialWithTheSameProviderIdentity(t *testi
 			provider.dialCount,
 			provider.commandIDs,
 		)
+	}
+}
+
+func TestWorkerRestartDoesNotRedialAfterTelnyxDedupeWindow(t *testing.T) {
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	provider := &interruptibleDialProvider{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	calling, identity, offer := readyOfferAt(
+		t,
+		provider,
+		"expired-interrupted",
+		func() time.Time { return now },
+	)
+	if _, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		"expired-interrupted-browser",
+		offer.ID,
+	); err != nil {
+		t.Fatalf("accept expired interrupted offer: %v", err)
+	}
+	for range 2 {
+		if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+			t.Fatalf("process pre-Dial command: processed=%t err=%v", processed, err)
+		}
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := calling.ProcessNextCommand(context.Background())
+		result <- err
+	}()
+	<-provider.entered
+
+	now = now.Add(61 * time.Second)
+	if err := calling.RecoverInterruptedCommands(context.Background()); err != nil {
+		t.Fatalf("recover expired interrupted Dial: %v", err)
+	}
+	close(provider.release)
+	if err := <-result; err != nil {
+		t.Fatalf("finish expired interrupted worker: %v", err)
+	}
+
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || processed {
+		t.Fatalf("expired interrupted Dial retried: processed=%t err=%v", processed, err)
+	}
+	call, err := calling.ReadCall(context.Background(), identity, offer.ID)
+	if err != nil || call.State != humancalling.CallReconciling {
+		t.Fatalf("expired interrupted Call = %#v, err = %v", call, err)
+	}
+	if provider.dialCount != 1 {
+		t.Fatalf("expired interrupted Dial attempts = %d, want one", provider.dialCount)
 	}
 }
 
@@ -3231,15 +3406,18 @@ func TestHistoricalBridgeCannotRegressADispositionedCall(t *testing.T) {
 }
 
 type recordingProvider struct {
-	mu            sync.Mutex
-	commands      []humancalling.ProviderCommand
-	answerError   error
-	dialError     error
-	hangupErrors  []error
-	disableErrors []error
-	dialResults   []humancalling.ProviderResult
-	jwtResult     *humancalling.ProviderResult
-	callAlive     *bool
+	mu               sync.Mutex
+	commands         []humancalling.ProviderCommand
+	answerError      error
+	dialError        error
+	hangupErrors     []error
+	disableErrors    []error
+	dialResults      []humancalling.ProviderResult
+	jwtResult        *humancalling.ProviderResult
+	callAlive        *bool
+	callAliveChecks  int
+	callStateEntered chan struct{}
+	callStateRelease chan struct{}
 }
 
 type interruptibleDialProvider struct {
@@ -3437,11 +3615,24 @@ func (provider *recordingProvider) IsCallAlive(
 	_ string,
 ) (bool, error) {
 	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	if provider.callAlive == nil {
-		return true, nil
+	provider.callAliveChecks++
+	alive := true
+	if provider.callAlive != nil {
+		alive = *provider.callAlive
 	}
-	return *provider.callAlive, nil
+	entered := provider.callStateEntered
+	release := provider.callStateRelease
+	provider.mu.Unlock()
+	if entered != nil {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
+	if release != nil {
+		<-release
+	}
+	return alive, nil
 }
 
 func assertCallControlWaitsForIdentityFence(

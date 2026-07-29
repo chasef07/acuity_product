@@ -182,7 +182,7 @@ func (hub *Hub) Stream(
 }
 
 func (hub *Hub) subscribe(practiceID string) (<-chan Hint, func()) {
-	channel := make(chan Hint, 8)
+	channel := make(chan Hint, 1)
 	hub.mu.Lock()
 	if hub.subscribers[practiceID] == nil {
 		hub.subscribers[practiceID] = map[chan Hint]struct{}{}
@@ -204,9 +204,21 @@ func (hub *Hub) publish(hint Hint) {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 	for subscriber := range hub.subscribers[hint.PracticeID] {
+		latest := hint
 		select {
-		case subscriber <- hint:
+		case subscriber <- latest:
 		default:
+			select {
+			case queued := <-subscriber:
+				if queued.Version > latest.Version {
+					latest = queued
+				}
+			default:
+			}
+			select {
+			case subscriber <- latest:
+			default:
+			}
 		}
 	}
 }
