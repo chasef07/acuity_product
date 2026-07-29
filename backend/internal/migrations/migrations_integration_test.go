@@ -24,8 +24,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 8 {
-		t.Fatalf("migration count = %d, want 8", migrationCount)
+	if migrationCount != 9 {
+		t.Fatalf("migration count = %d, want 9", migrationCount)
 	}
 
 	for _, table := range []string{
