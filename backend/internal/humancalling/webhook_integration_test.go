@@ -1,12 +1,14 @@
 package humancalling_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
 
@@ -38,6 +41,12 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"webhook-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
@@ -45,6 +54,7 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		RecordingBucket:  "synthetic-recordings",
 		WebhookPublicKey: publicKey,
 		WebhookTolerance: 5 * time.Minute,
+		Observer:         observer,
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -127,6 +137,19 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	}
 	if projectedState != humancalling.ReceiptApplied || duplicateCount != 1 {
 		t.Fatalf("projected receipt state = %q, duplicates = %d", projectedState, duplicateCount)
+	}
+	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+		t.Fatalf("report receipt queue: %v", err)
+	}
+	if !strings.Contains(
+		metrics.String(),
+		`"metric":"acuity_call_center_receipt_processing"`,
+	) || !strings.Contains(metrics.String(), `"outcome":"applied"`) ||
+		!strings.Contains(
+			metrics.String(),
+			`"metric":"acuity_call_center_receipt_queue"`,
+		) {
+		t.Fatalf("receipt metrics = %s", metrics.String())
 	}
 
 	if _, err := calling.AcquireSoftphone(

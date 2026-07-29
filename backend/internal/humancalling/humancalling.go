@@ -160,6 +160,7 @@ type ProviderCommand struct {
 	Action    CommandAction
 	TargetID  string
 	Payload   map[string]any
+	createdAt time.Time
 }
 
 type ProviderResult struct {
@@ -3140,7 +3141,8 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 			command.user_subject,
 			command.action,
 			COALESCE(command.target_id, ''),
-			command.payload
+			command.payload,
+			command.created_at
 		FROM candidate
 		JOIN human_calling_provider_commands command ON command.id = candidate.id
 	`, m.now()).Scan(
@@ -3151,6 +3153,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		&command.Action,
 		&command.TargetID,
 		&encoded,
+		&command.createdAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -3184,10 +3187,14 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("commit provider command claim: %w", err)
 	}
 
+	providerStartedAt := time.Now()
 	result, executeErr := m.provider.Execute(ctx, command)
-	if err := m.finishCommand(ctx, command, callID, userSubject, result, executeErr); err != nil {
+	providerDuration := time.Since(providerStartedAt)
+	state, err := m.finishCommand(ctx, command, callID, userSubject, result, executeErr)
+	if err != nil {
 		return true, err
 	}
+	m.recordProviderCommand(command, state, m.now(), providerDuration)
 	return true, nil
 }
 
@@ -3212,7 +3219,8 @@ func (m *Module) processCommand(
 			user_subject,
 			action,
 			COALESCE(target_id, ''),
-			payload
+			payload,
+			created_at
 		FROM human_calling_provider_commands
 		WHERE id = $1 AND state = 'PENDING'
 		FOR UPDATE
@@ -3224,6 +3232,7 @@ func (m *Module) processCommand(
 		&command.Action,
 		&command.TargetID,
 		&encoded,
+		&command.createdAt,
 	); err != nil {
 		return ProviderResult{}, fmt.Errorf("claim committed provider command: %w", err)
 	}
@@ -3240,17 +3249,21 @@ func (m *Module) processCommand(
 	if err := tx.Commit(ctx); err != nil {
 		return ProviderResult{}, fmt.Errorf("commit provider command claim: %w", err)
 	}
+	providerStartedAt := time.Now()
 	result, executeErr := m.provider.Execute(ctx, command)
-	if err := m.finishCommand(
+	providerDuration := time.Since(providerStartedAt)
+	state, err := m.finishCommand(
 		ctx,
 		command,
 		callID,
 		userSubject,
 		result,
 		executeErr,
-	); err != nil {
+	)
+	if err != nil {
 		return ProviderResult{}, err
 	}
+	m.recordProviderCommand(command, state, m.now(), providerDuration)
 	if executeErr != nil {
 		return ProviderResult{}, executeErr
 	}
@@ -3264,10 +3277,10 @@ func (m *Module) finishCommand(
 	userSubject *string,
 	result ProviderResult,
 	executeErr error,
-) error {
+) (string, error) {
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin provider command result: %w", err)
+		return "", fmt.Errorf("begin provider command result: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -3280,8 +3293,8 @@ func (m *Module) finishCommand(
 			FROM human_calling_calls
 			WHERE id = $1
 			FOR UPDATE
-		`, *callID).Scan(&callPracticeID); err != nil {
-			return fmt.Errorf("lock provider command Call: %w", err)
+			`, *callID).Scan(&callPracticeID); err != nil {
+			return "", fmt.Errorf("lock provider command Call: %w", err)
 		}
 	}
 
@@ -3309,10 +3322,13 @@ func (m *Module) finishCommand(
 		WHERE id = $1 AND state = 'SENDING'
 	`, command.ID, state, errorCode, m.now())
 	if err != nil {
-		return fmt.Errorf("record provider command result: %w", err)
+		return "", fmt.Errorf("record provider command result: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return "", err
+		}
+		return "OBSOLETE", nil
 	}
 	if callID != nil && command.Action == CommandAnswerCaller && executeErr != nil {
 		if state == "AMBIGUOUS" {
@@ -3321,7 +3337,7 @@ func (m *Module) finishCommand(
 				SET state = 'RECONCILING', version = version + 1, updated_at = $2
 				WHERE id = $1 AND state IN ('OFFERING', 'CONNECTING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("mark ambiguous caller answer reconciling: %w", err)
+				return "", fmt.Errorf("mark ambiguous caller answer reconciling: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `
@@ -3334,7 +3350,7 @@ func (m *Module) finishCommand(
 					updated_at = $2
 				WHERE id = $1 AND state IN ('OFFERING', 'CONNECTING', 'RECONCILING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("terminate definitively rejected caller answer: %w", err)
+				return "", fmt.Errorf("terminate definitively rejected caller answer: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_connection_attempts
@@ -3348,7 +3364,7 @@ func (m *Module) finishCommand(
 					WHERE id = $1
 				)
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("end rejected connection attempt: %w", err)
+				return "", fmt.Errorf("end rejected connection attempt: %w", err)
 			}
 			if err := insertCommand(
 				ctx,
@@ -3362,7 +3378,7 @@ func (m *Module) finishCommand(
 				},
 				m.now(),
 			); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
@@ -3373,7 +3389,7 @@ func (m *Module) finishCommand(
 				SET state = 'RECONCILING', version = version + 1, updated_at = $2
 				WHERE id = $1 AND state IN ('OFFERING', 'CONNECTING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("mark ambiguous ringback reconciling: %w", err)
+				return "", fmt.Errorf("mark ambiguous ringback reconciling: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `
@@ -3387,7 +3403,7 @@ func (m *Module) finishCommand(
 				WHERE id = $1
 					AND state IN ('OFFERING', 'CONNECTING', 'RECONCILING')
 			`, *callID, m.now()); err != nil {
-				return fmt.Errorf("terminate definitively rejected ringback: %w", err)
+				return "", fmt.Errorf("terminate definitively rejected ringback: %w", err)
 			}
 			if err := insertCommand(
 				ctx,
@@ -3401,17 +3417,17 @@ func (m *Module) finishCommand(
 				},
 				m.now(),
 			); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
 	if callID != nil && command.Action == CommandDialStaff {
 		if command.AttemptID == "" {
-			return fmt.Errorf("Dial command omitted connection attempt identity")
+			return "", fmt.Errorf("Dial command omitted connection attempt identity")
 		}
 		if executeErr == nil {
 			if result.CallControlID == "" || result.CallLegID == "" {
-				return fmt.Errorf("successful Dial omitted provider leg identity")
+				return "", fmt.Errorf("successful Dial omitted provider leg identity")
 			}
 			var attemptEndedAt *time.Time
 			if err := tx.QueryRow(ctx, `
@@ -3428,7 +3444,7 @@ func (m *Module) finishCommand(
 				result.CallLegID,
 				m.now(),
 			).Scan(&attemptEndedAt); err != nil {
-				return fmt.Errorf("record connection-attempt staff leg: %w", err)
+				return "", fmt.Errorf("record connection-attempt staff leg: %w", err)
 			}
 			callTag, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
@@ -3452,7 +3468,7 @@ func (m *Module) finishCommand(
 				attemptEndedAt,
 			)
 			if err != nil {
-				return fmt.Errorf("record expected staff provider leg: %w", err)
+				return "", fmt.Errorf("record expected staff provider leg: %w", err)
 			}
 			if callTag.RowsAffected() == 0 {
 				var alreadyConnected bool
@@ -3472,7 +3488,7 @@ func (m *Module) finishCommand(
 					result.CallControlID,
 					result.CallLegID,
 				).Scan(&alreadyConnected); err != nil {
-					return fmt.Errorf("reconcile Dial result after bridge: %w", err)
+					return "", fmt.Errorf("reconcile Dial result after bridge: %w", err)
 				}
 				if !alreadyConnected {
 					cleanupOwner := ""
@@ -3489,7 +3505,7 @@ func (m *Module) finishCommand(
 						"staff",
 						m.now(),
 					); err != nil {
-						return err
+						return "", err
 					}
 				}
 			}
@@ -3501,7 +3517,7 @@ func (m *Module) finishCommand(
 					AND current_attempt_id = $3
 					AND state = 'CONNECTING'
 			`, *callID, m.now(), command.AttemptID); err != nil {
-				return fmt.Errorf("mark ambiguous Call reconciling: %w", err)
+				return "", fmt.Errorf("mark ambiguous Call reconciling: %w", err)
 			}
 		} else {
 			var deadline time.Time
@@ -3510,7 +3526,7 @@ func (m *Module) finishCommand(
 				FROM human_calling_calls
 				WHERE id = $1
 			`, *callID).Scan(&deadline); err != nil {
-				return fmt.Errorf("load definitively failed Call: %w", err)
+				return "", fmt.Errorf("load definitively failed Call: %w", err)
 			}
 			nextState := CallUnanswered
 			if m.now().Before(deadline) {
@@ -3539,7 +3555,7 @@ func (m *Module) finishCommand(
 					AND state = 'CONNECTING'
 			`, *callID, nextState, m.now(), command.AttemptID)
 			if err != nil {
-				return fmt.Errorf("reopen definitively failed Call: %w", err)
+				return "", fmt.Errorf("reopen definitively failed Call: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_connection_attempts
@@ -3549,7 +3565,7 @@ func (m *Module) finishCommand(
 					updated_at = $2
 				WHERE id = $1
 			`, command.AttemptID, m.now()); err != nil {
-				return fmt.Errorf("end rejected connection attempt: %w", err)
+				return "", fmt.Errorf("end rejected connection attempt: %w", err)
 			}
 			if callTag.RowsAffected() == 1 && nextState == CallUnanswered {
 				if err := insertCommand(
@@ -3564,11 +3580,11 @@ func (m *Module) finishCommand(
 					},
 					m.now(),
 				); err != nil {
-					return err
+					return "", err
 				}
 			}
 			if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
@@ -3581,7 +3597,7 @@ func (m *Module) finishCommand(
 				WHERE user_subject = $1
 			)
 		`, *userSubject).Scan(&operational); err != nil {
-			return fmt.Errorf("read credential owner after create: %w", err)
+			return "", fmt.Errorf("read credential owner after create: %w", err)
 		}
 		credentialState := "ACTIVE"
 		credentialError := errorCode
@@ -3594,7 +3610,7 @@ func (m *Module) finishCommand(
 			credentialError = "ACCESS_OBSOLETE_AFTER_CREATE"
 		}
 		if executeErr == nil && (result.CredentialID == "" || result.SIPUsername == "") {
-			return fmt.Errorf("successful credential command omitted provider identity")
+			return "", fmt.Errorf("successful credential command omitted provider identity")
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_credentials
@@ -3619,7 +3635,7 @@ func (m *Module) finishCommand(
 			credentialError,
 			m.now(),
 		); err != nil {
-			return fmt.Errorf("record managed credential result: %w", err)
+			return "", fmt.Errorf("record managed credential result: %w", err)
 		}
 		if credentialState == "DISABLING" {
 			if _, err := tx.Exec(ctx, `
@@ -3635,7 +3651,7 @@ func (m *Module) finishCommand(
 						AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
 				)
 			`, uuid.NewString(), *userSubject, result.CredentialID, m.now()); err != nil {
-				return fmt.Errorf("commit obsolete credential cleanup: %w", err)
+				return "", fmt.Errorf("commit obsolete credential cleanup: %w", err)
 			}
 		}
 	}
@@ -3648,7 +3664,7 @@ func (m *Module) finishCommand(
 				WHERE user_subject = $1
 			)
 		`, *userSubject).Scan(&authorized); err != nil {
-			return fmt.Errorf("read credential owner after disable: %w", err)
+			return "", fmt.Errorf("read credential owner after disable: %w", err)
 		}
 		credentialState := "DISABLED"
 		if state == "AMBIGUOUS" {
@@ -3691,7 +3707,7 @@ func (m *Module) finishCommand(
 			m.now(),
 			clearProviderIdentity,
 		); err != nil {
-			return fmt.Errorf("record disabled credential result: %w", err)
+			return "", fmt.Errorf("record disabled credential result: %w", err)
 		}
 	}
 	if callID != nil {
@@ -3715,7 +3731,7 @@ func (m *Module) finishCommand(
 				WHERE command.id IN (SELECT id FROM descendants)
 					AND command.state = 'PENDING'
 			`, command.ID, m.now()); err != nil {
-				return fmt.Errorf("fail dependent provider commands: %w", err)
+				return "", fmt.Errorf("fail dependent provider commands: %w", err)
 			}
 		}
 		if command.Action == CommandStartRecording && executeErr != nil {
@@ -3728,7 +3744,7 @@ func (m *Module) finishCommand(
 				SET state = 'FAILED', failure_code = $2, updated_at = $3
 				WHERE call_id = $1 AND state IN ('INTENDED', 'RECORDING')
 			`, *callID, recordingError, m.now()); err != nil {
-				return fmt.Errorf("record recording command failure: %w", err)
+				return "", fmt.Errorf("record recording command failure: %w", err)
 			}
 		}
 		if err := appendTimeline(
@@ -3744,16 +3760,16 @@ func (m *Module) finishCommand(
 			errorCode,
 			m.now(),
 		); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit provider command result: %w", err)
+		return "", fmt.Errorf("commit provider command result: %w", err)
 	}
-	return nil
+	return state, nil
 }
 
 func (m *Module) applyStaffInitiated(

@@ -266,6 +266,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		if err := tx.Commit(ctx); err != nil {
 			return false, fmt.Errorf("commit deferred provider hangup receipt: %w", err)
 		}
+		m.recordReceiptProcessed(ReceiptPending, receivedAt, now, m.now())
 		return true, nil
 	}
 	var projectionAttempts int
@@ -302,7 +303,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			nextAttemptAt = completedAt.Add(receiptRetryDelay(projectionAttempts))
 		}
 	}
-	if _, err := m.pool.Exec(ctx, `
+	tag, err := m.pool.Exec(ctx, `
 		UPDATE human_calling_provider_receipts
 		SET
 			state = $2,
@@ -320,8 +321,12 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		WHERE event_id = $1
 			AND state = 'PROCESSING'
 			AND projection_attempts = $6
-	`, eventID, state, errorCode, nextAttemptAt, completedAt, projectionAttempts); err != nil {
+	`, eventID, state, errorCode, nextAttemptAt, completedAt, projectionAttempts)
+	if err != nil {
 		return true, fmt.Errorf("record provider receipt projection: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		m.recordReceiptProcessed(state, receivedAt, now, completedAt)
 	}
 	return true, nil
 }

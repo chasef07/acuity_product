@@ -1413,6 +1413,12 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	if provider.count(humancalling.CommandStartRecording) != 1 {
 		t.Fatalf("recording commands = %#v", provider.commands)
 	}
+	if !strings.Contains(
+		metrics.String(),
+		`"metric":"acuity_call_center_provider_command"`,
+	) || !strings.Contains(metrics.String(), `"outcome":"sent"`) {
+		t.Fatalf("provider command metrics = %s", metrics.String())
+	}
 	provider.mu.Lock()
 	for _, command := range provider.commands {
 		if command.Action != humancalling.CommandStartRecording {
