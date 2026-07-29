@@ -11,6 +11,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestForwardMigrationsAreRepeatableAndIncludeReviewedAuthAndCallingSchemas(t *testing.T) {
@@ -196,6 +197,18 @@ func TestProviderReceiptRetryMigrationEnforcesAttemptAndQuarantineState(t *testi
 func TestCommandLaneMigrationRejectsDuplicateActiveCommands(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
+	prepareDuplicateActiveCommands(t, pool)
+
+	err := migrations.Apply(ctx, pool)
+	if err == nil ||
+		!strings.Contains(err.Error(), "cannot enforce one active provider command per Call") {
+		t.Fatalf("duplicate active command migration error = %v", err)
+	}
+}
+
+func prepareDuplicateActiveCommands(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		DROP INDEX human_calling_active_call_commands_idx;
 		DELETE FROM schema_migrations
@@ -263,10 +276,134 @@ func TestCommandLaneMigrationRejectsDuplicateActiveCommands(t *testing.T) {
 	`, pgx.QueryExecModeSimpleProtocol); err != nil {
 		t.Fatalf("prepare duplicate active commands: %v", err)
 	}
+}
 
-	err := migrations.Apply(ctx, pool)
-	if err == nil ||
-		!strings.Contains(err.Error(), "cannot enforce one active provider command per Call") {
-		t.Fatalf("duplicate active command migration error = %v", err)
+func TestCommandLaneMigrationRepairsInvalidConcurrentIndex(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	prepareDuplicateActiveCommands(t, pool)
+
+	if _, err := pool.Exec(ctx, `
+		CREATE UNIQUE INDEX CONCURRENTLY human_calling_active_call_commands_idx
+		ON human_calling_provider_commands (call_id)
+		WHERE call_id IS NOT NULL
+			AND state IN ('SENDING', 'AMBIGUOUS')
+	`); err == nil {
+		t.Fatal("duplicate active commands unexpectedly produced a unique index")
+	}
+	var valid bool
+	if err := pool.QueryRow(ctx, `
+		SELECT indisvalid
+		FROM pg_index
+		WHERE indexrelid = 'human_calling_active_call_commands_idx'::regclass
+	`).Scan(&valid); err != nil {
+		t.Fatalf("inspect failed concurrent index: %v", err)
+	}
+	if valid {
+		t.Fatal("failed concurrent index is unexpectedly valid")
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED'
+		WHERE target_id = 'duplicate-command-two'
+	`); err != nil {
+		t.Fatalf("reconcile duplicate active command: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("repair failed concurrent index: %v", err)
+	}
+	assertActiveCommandIndexValid(t, pool)
+}
+
+func TestCommandLaneMigrationDoesNotBlockProviderCommandWrites(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	prepareDuplicateActiveCommands(t, pool)
+	if _, err := pool.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED'
+		WHERE target_id = 'duplicate-command-two'
+	`); err != nil {
+		t.Fatalf("prepare one active provider command: %v", err)
+	}
+
+	blockingTransaction, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin old provider-command write: %v", err)
+	}
+	defer func() { _ = blockingTransaction.Rollback(ctx) }()
+	if _, err := blockingTransaction.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET attempts = attempts
+		WHERE target_id = 'duplicate-command-one'
+	`); err != nil {
+		t.Fatalf("hold old provider-command write: %v", err)
+	}
+
+	applyDone := make(chan error, 1)
+	go func() {
+		applyDone <- migrations.Apply(ctx, pool)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var building bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity
+				WHERE pid <> pg_backend_pid()
+					AND state = 'active'
+					AND query LIKE
+						'CREATE UNIQUE INDEX CONCURRENTLY human_calling_active_call_commands_idx%'
+			)
+		`).Scan(&building); err != nil {
+			t.Fatalf("inspect concurrent index build: %v", err)
+		}
+		if building {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("concurrent index build did not wait for the old writer")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	writeContext, cancelWrite := context.WithTimeout(ctx, time.Second)
+	defer cancelWrite()
+	if _, err := pool.Exec(writeContext, `
+		UPDATE human_calling_provider_commands
+		SET attempts = attempts + 1
+		WHERE target_id = 'duplicate-command-two'
+	`); err != nil {
+		t.Fatalf("provider-command write blocked by concurrent index: %v", err)
+	}
+	if err := blockingTransaction.Commit(ctx); err != nil {
+		t.Fatalf("commit old provider-command write: %v", err)
+	}
+
+	select {
+	case err := <-applyDone:
+		if err != nil {
+			t.Fatalf("finish concurrent command-lane migration: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent command-lane migration did not finish")
+	}
+	assertActiveCommandIndexValid(t, pool)
+}
+
+func assertActiveCommandIndexValid(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	var valid, unique bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT indisvalid, indisunique
+		FROM pg_index
+		WHERE indexrelid = 'human_calling_active_call_commands_idx'::regclass
+	`).Scan(&valid, &unique); err != nil {
+		t.Fatalf("inspect active provider-command index: %v", err)
+	}
+	if !valid || !unique {
+		t.Fatalf("active provider-command index valid=%t unique=%t", valid, unique)
 	}
 }

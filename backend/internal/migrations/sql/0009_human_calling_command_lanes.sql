@@ -1,5 +1,7 @@
-LOCK TABLE human_calling_provider_commands IN SHARE MODE;
+-- acuity:no-transaction
+DROP INDEX CONCURRENTLY IF EXISTS human_calling_active_call_commands_idx;
 
+-- acuity:next-statement
 DO $migration$
 DECLARE
     duplicate_call_ids text;
@@ -26,7 +28,8 @@ BEGIN
 END
 $migration$;
 
-CREATE UNIQUE INDEX human_calling_active_call_commands_idx
+-- acuity:next-statement
+CREATE UNIQUE INDEX CONCURRENTLY human_calling_active_call_commands_idx
     ON human_calling_provider_commands (call_id)
     WHERE call_id IS NOT NULL
         AND state IN ('SENDING', 'AMBIGUOUS');
