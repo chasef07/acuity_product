@@ -35,6 +35,7 @@ type Config struct {
 	Realtime           RealtimeConfig
 	Service            ServiceConfig
 	HumanCalling       HumanCallingConfig
+	Messaging          MessagingConfig
 }
 
 type ServiceConfig struct {
@@ -59,6 +60,14 @@ type HumanCallingConfig struct {
 	ConnectionTimeout      time.Duration
 	LeaseDuration          time.Duration
 	ReadinessGrace         time.Duration
+}
+
+type MessagingConfig struct {
+	WebhookBaseURL      string
+	WebhookPublicKey    []byte
+	AttachmentDirectory string
+	MediaPublicBaseURL  string
+	MediaSigningKey     []byte
 }
 
 type RealtimeConfig struct {
@@ -138,6 +147,37 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		if err := loadTelnyxCommandConfig(getenv, &config.HumanCalling); err != nil {
 			return Config{}, err
 		}
+		if config.Messaging.WebhookBaseURL, err = required(
+			getenv,
+			"MESSAGING_WEBHOOK_BASE_URL",
+		); err != nil {
+			return Config{}, err
+		}
+	}
+	if role == RolePortalAPI || role == RoleWorker || role == RoleProviderIngress {
+		if config.Messaging.AttachmentDirectory, err = required(
+			getenv,
+			"MESSAGING_ATTACHMENT_DIRECTORY",
+		); err != nil {
+			return Config{}, err
+		}
+	}
+	if role == RoleWorker {
+		if config.Messaging.MediaPublicBaseURL, err = required(
+			getenv,
+			"MESSAGING_MEDIA_PUBLIC_BASE_URL",
+		); err != nil {
+			return Config{}, err
+		}
+	}
+	if role == RoleWorker || role == RoleProviderIngress {
+		if config.Messaging.MediaSigningKey, err = requiredBase64Key(
+			getenv,
+			"MESSAGING_MEDIA_SIGNING_KEY",
+			32,
+		); err != nil {
+			return Config{}, err
+		}
 	}
 	if role == RoleProviderIngress {
 		if config.HumanCalling.WebhookPublicKey, err = requiredBase64Key(
@@ -147,6 +187,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		); err != nil {
 			return Config{}, err
 		}
+		config.Messaging.WebhookPublicKey = config.HumanCalling.WebhookPublicKey
 	}
 	if role == RoleMigrate && (config.ProvisioningInput == "") != (config.ProvisioningOutput == "") {
 		return Config{}, fmt.Errorf("PROVISIONING_INPUT and PROVISIONING_OUTPUT must be set together")

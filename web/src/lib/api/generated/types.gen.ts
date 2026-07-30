@@ -104,7 +104,7 @@ export type WorkspaceSnapshot = {
 };
 
 export type NavigationItem = {
-    id: 'tasks' | 'call-center' | 'recordings' | 'settings';
+    id: 'tasks' | 'messages' | 'call-center' | 'recordings' | 'settings';
     label: string;
     enabled: boolean;
 };
@@ -328,12 +328,16 @@ export type Task = {
     phone: string;
     title: string;
     state: 'OPEN' | 'COMPLETED';
-    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI';
+    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP';
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
     sourceCallId?: string;
     sourceMessage?: string;
+    messageId?: string;
+    messageThreadId?: string;
+    conversationThreadId?: string;
+    unread: boolean;
     createdBy: TaskActor;
     createdAt: string;
     completedBy?: TaskActor;
@@ -365,6 +369,134 @@ export type RenameTaskRequest = {
 export type TaskTransitionRequest = {
     expectedVersion: number;
     supportSessionId?: string;
+};
+
+export type MessageDirection = 'INBOUND' | 'OUTBOUND';
+
+export type MessageDeliveryState = 'Sending' | 'Sent' | 'Delivered' | 'Failed' | 'Status unknown';
+
+export type MessageThread = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    officePhone: string;
+    externalPhone: string;
+    displayName?: string;
+    nameSource?: string;
+    outboundBlocked: boolean;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type MessageThreadSummary = MessageThread & {
+    preview: string;
+    latestDirection: MessageDirection;
+    latestDelivery: MessageDeliveryState;
+    latestActivity: string;
+    unread: boolean;
+};
+
+export type MessageThreadPage = {
+    items: Array<MessageThreadSummary>;
+    nextCursor: string;
+};
+
+export type MessageThreadQueryRequest = {
+    practiceId: string;
+    locationId: string;
+    search?: string;
+    cursor?: string;
+    limit?: number;
+};
+
+export type Message = {
+    id: string;
+    thread: MessageThread;
+    direction: MessageDirection;
+    body: string;
+    sender: string;
+    destination: string;
+    delivery: MessageDeliveryState;
+    safeFailureCode?: string;
+    providerMessageId?: string;
+    taskId?: string;
+    retryOfMessageId?: string;
+    attachment?: MessageAttachment;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type MessageReceipt = {
+    status: 'created' | 'duplicate';
+    message: Message;
+};
+
+export type SendMessageRequest = {
+    practiceId: string;
+    locationId: string;
+    threadId?: string;
+    destination?: string;
+    body: string;
+    attachmentId?: string;
+    taskId?: string;
+    idempotencyKey: string;
+    supportSessionId?: string;
+};
+
+export type MessageAttachment = {
+    id: string;
+    messageId?: string;
+    direction: MessageDirection;
+    state: 'Pending' | 'Processing' | 'Stored' | 'Attachment unavailable';
+    fileName: string;
+    contentType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' | 'application/pdf';
+    byteSize: number;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type UploadMessageAttachmentRequest = {
+    practiceId: string;
+    locationId: string;
+    fileName: string;
+    contentType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' | 'application/pdf';
+    contentBase64: string;
+    supportSessionId?: string;
+};
+
+export type RetryMessageAttachmentRequest = {
+    supportSessionId?: string;
+};
+
+export type SendMessageAgainRequest = {
+    idempotencyKey: string;
+    duplicateRiskAcknowledged: boolean;
+    supportSessionId?: string;
+};
+
+export type MarkMessageThreadReadRequest = {
+    supportSessionId?: string;
+};
+
+export type CreateMessageFollowUpTaskRequest = {
+    title?: string;
+    supportSessionId?: string;
+};
+
+export type ConversationTimelineItem = {
+    type: 'MESSAGE' | 'CALL' | 'TASK';
+    id: string;
+    occurredAt: string;
+    message?: Message;
+    task?: Task;
+    call?: CallHistoryItem;
+};
+
+export type ConversationTimelinePage = {
+    items: Array<ConversationTimelineItem>;
+    nextCursor: string;
 };
 
 export type CallHistoryItem = {
@@ -1465,6 +1597,472 @@ export type GetTaskCallHistoryResponses = {
 };
 
 export type GetTaskCallHistoryResponse = GetTaskCallHistoryResponses[keyof GetTaskCallHistoryResponses];
+
+export type QueryMessageThreadsData = {
+    body: MessageThreadQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/message-threads/query';
+};
+
+export type QueryMessageThreadsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryMessageThreadsError = QueryMessageThreadsErrors[keyof QueryMessageThreadsErrors];
+
+export type QueryMessageThreadsResponses = {
+    /**
+     * Newest authorized Message Threads.
+     */
+    200: MessageThreadPage;
+};
+
+export type QueryMessageThreadsResponse = QueryMessageThreadsResponses[keyof QueryMessageThreadsResponses];
+
+export type GetMessageThreadTimelineData = {
+    body?: never;
+    path: {
+        threadId: string;
+    };
+    query?: {
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/message-threads/{threadId}/timeline';
+};
+
+export type GetMessageThreadTimelineErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetMessageThreadTimelineError = GetMessageThreadTimelineErrors[keyof GetMessageThreadTimelineErrors];
+
+export type GetMessageThreadTimelineResponses = {
+    /**
+     * Oldest-to-newest authorized conversation page.
+     */
+    200: ConversationTimelinePage;
+};
+
+export type GetMessageThreadTimelineResponse = GetMessageThreadTimelineResponses[keyof GetMessageThreadTimelineResponses];
+
+export type MarkMessageThreadReadData = {
+    body: MarkMessageThreadReadRequest;
+    path: {
+        threadId: string;
+    };
+    query?: never;
+    url: '/v1/message-threads/{threadId}/read';
+};
+
+export type MarkMessageThreadReadErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type MarkMessageThreadReadError = MarkMessageThreadReadErrors[keyof MarkMessageThreadReadErrors];
+
+export type MarkMessageThreadReadResponses = {
+    /**
+     * The User's Thread marker is clear.
+     */
+    204: void;
+};
+
+export type MarkMessageThreadReadResponse = MarkMessageThreadReadResponses[keyof MarkMessageThreadReadResponses];
+
+export type SendMessageData = {
+    body: SendMessageRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/messages';
+};
+
+export type SendMessageErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type SendMessageError = SendMessageErrors[keyof SendMessageErrors];
+
+export type SendMessageResponses = {
+    /**
+     * Idempotent replay of an existing Message.
+     */
+    200: MessageReceipt;
+    /**
+     * New durable Sending Message and provider command.
+     */
+    201: MessageReceipt;
+};
+
+export type SendMessageResponse = SendMessageResponses[keyof SendMessageResponses];
+
+export type UploadMessageAttachmentData = {
+    body: UploadMessageAttachmentRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/attachments';
+};
+
+export type UploadMessageAttachmentErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type UploadMessageAttachmentError = UploadMessageAttachmentErrors[keyof UploadMessageAttachmentErrors];
+
+export type UploadMessageAttachmentResponses = {
+    /**
+     * Private pending attachment ready for one-time consumption.
+     */
+    201: MessageAttachment;
+};
+
+export type UploadMessageAttachmentResponse = UploadMessageAttachmentResponses[keyof UploadMessageAttachmentResponses];
+
+export type GetMessageAttachmentData = {
+    body?: never;
+    path: {
+        attachmentId: string;
+    };
+    query?: never;
+    url: '/v1/attachments/{attachmentId}';
+};
+
+export type GetMessageAttachmentErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetMessageAttachmentError = GetMessageAttachmentErrors[keyof GetMessageAttachmentErrors];
+
+export type GetMessageAttachmentResponses = {
+    /**
+     * Authorized attachment bytes with safe response headers.
+     */
+    200: Blob | File;
+};
+
+export type GetMessageAttachmentResponse = GetMessageAttachmentResponses[keyof GetMessageAttachmentResponses];
+
+export type RetryInboundMessageAttachmentData = {
+    body: RetryMessageAttachmentRequest;
+    path: {
+        attachmentId: string;
+    };
+    query?: never;
+    url: '/v1/attachments/{attachmentId}/retry-copy';
+};
+
+export type RetryInboundMessageAttachmentErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RetryInboundMessageAttachmentError = RetryInboundMessageAttachmentErrors[keyof RetryInboundMessageAttachmentErrors];
+
+export type RetryInboundMessageAttachmentResponses = {
+    /**
+     * The same attachment is Processing again.
+     */
+    200: MessageAttachment;
+};
+
+export type RetryInboundMessageAttachmentResponse = RetryInboundMessageAttachmentResponses[keyof RetryInboundMessageAttachmentResponses];
+
+export type SendMessageAgainData = {
+    body: SendMessageAgainRequest;
+    path: {
+        messageId: string;
+    };
+    query?: never;
+    url: '/v1/messages/{messageId}/send-again';
+};
+
+export type SendMessageAgainErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type SendMessageAgainError = SendMessageAgainErrors[keyof SendMessageAgainErrors];
+
+export type SendMessageAgainResponses = {
+    /**
+     * Idempotent replay of the explicit new attempt.
+     */
+    200: MessageReceipt;
+    /**
+     * New immutable Message attempt.
+     */
+    201: MessageReceipt;
+};
+
+export type SendMessageAgainResponse = SendMessageAgainResponses[keyof SendMessageAgainResponses];
+
+export type CreateMessageFollowUpTaskData = {
+    body: CreateMessageFollowUpTaskRequest;
+    path: {
+        messageId: string;
+    };
+    query?: never;
+    url: '/v1/messages/{messageId}/follow-up-task';
+};
+
+export type CreateMessageFollowUpTaskErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CreateMessageFollowUpTaskError = CreateMessageFollowUpTaskErrors[keyof CreateMessageFollowUpTaskErrors];
+
+export type CreateMessageFollowUpTaskResponses = {
+    /**
+     * Existing Task returned for a replayed source Message.
+     */
+    200: Task;
+    /**
+     * New Message-derived Task.
+     */
+    201: Task;
+};
+
+export type CreateMessageFollowUpTaskResponse = CreateMessageFollowUpTaskResponses[keyof CreateMessageFollowUpTaskResponses];
+
+export type ReceiveTelnyxMessagingWebhookData = {
+    body: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/provider/telnyx/messaging-webhooks';
+};
+
+export type ReceiveTelnyxMessagingWebhookErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReceiveTelnyxMessagingWebhookError = ReceiveTelnyxMessagingWebhookErrors[keyof ReceiveTelnyxMessagingWebhookErrors];
+
+export type ReceiveTelnyxMessagingWebhookResponses = {
+    /**
+     * Receipt durably committed or accepted duplicate.
+     */
+    204: void;
+};
+
+export type ReceiveTelnyxMessagingWebhookResponse = ReceiveTelnyxMessagingWebhookResponses[keyof ReceiveTelnyxMessagingWebhookResponses];
+
+export type ReceiveCorrelatedTelnyxMessagingWebhookData = {
+    body: {
+        [key: string]: unknown;
+    };
+    path: {
+        callbackToken: string;
+    };
+    query?: never;
+    url: '/v1/provider/telnyx/messaging-webhooks/{callbackToken}';
+};
+
+export type ReceiveCorrelatedTelnyxMessagingWebhookErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReceiveCorrelatedTelnyxMessagingWebhookError = ReceiveCorrelatedTelnyxMessagingWebhookErrors[keyof ReceiveCorrelatedTelnyxMessagingWebhookErrors];
+
+export type ReceiveCorrelatedTelnyxMessagingWebhookResponses = {
+    /**
+     * Receipt durably committed or accepted duplicate.
+     */
+    204: void;
+};
+
+export type ReceiveCorrelatedTelnyxMessagingWebhookResponse = ReceiveCorrelatedTelnyxMessagingWebhookResponses[keyof ReceiveCorrelatedTelnyxMessagingWebhookResponses];
+
+export type GetProviderMessageMediaData = {
+    body?: never;
+    path: {
+        attachmentId: string;
+    };
+    query: {
+        expires: string;
+        signature: string;
+    };
+    url: '/v1/provider/messaging-media/{attachmentId}';
+};
+
+export type GetProviderMessageMediaErrors = {
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+};
+
+export type GetProviderMessageMediaError = GetProviderMessageMediaErrors[keyof GetProviderMessageMediaErrors];
+
+export type GetProviderMessageMediaResponses = {
+    /**
+     * Intended attachment bytes.
+     */
+    200: Blob | File;
+};
+
+export type GetProviderMessageMediaResponse = GetProviderMessageMediaResponses[keyof GetProviderMessageMediaResponses];
 
 export type GetOperatorCallingTimelineData = {
     body?: never;

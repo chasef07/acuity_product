@@ -326,6 +326,9 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--min\t1",
 		"--max\t3",
 		"DATABASE_POOL_MAX=1",
+		"MESSAGING_WEBHOOK_BASE_URL=https://ingress.example/v1/provider/telnyx/messaging-webhooks",
+		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging",
+		"--add-volume-mount\tvolume=messaging-attachments,mount-path=/mnt/acuity-messaging",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--region\tus-east1",
@@ -336,6 +339,10 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--min\t1",
 		"--max\t2",
 		"DATABASE_POOL_MAX=1",
+		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
+		"MESSAGING_ATTACHMENT_DIRECTORY=/mnt/acuity-messaging",
+		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging,readonly=true",
+		"--add-volume-mount\tvolume=messaging-attachments,mount-path=/mnt/acuity-messaging",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-realtime",
 		"--region\tus-east1",
@@ -363,6 +370,10 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--cpu\t1",
 		"--memory\t512Mi",
 		"DATABASE_POOL_MAX=1",
+		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
+		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",
+		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging",
+		"--add-volume-mount\tvolume=messaging-attachments,mount-path=/mnt/acuity-messaging",
 	)
 	assertCapturedCommand(t, commands, "run\tjobs\tdeploy\tacuity-migrate",
 		"--region\tus-east1",
@@ -399,6 +410,12 @@ func TestProductionCloudRunCommandsFailClosed(t *testing.T) {
 			key:     "RECORDING_BUCKET_LOCATION",
 			value:   "us-central1",
 			message: "recording bucket must be in us-east1",
+		},
+		{
+			name:    "messaging attachment bucket",
+			key:     "MESSAGING_ATTACHMENT_BUCKET_LOCATION",
+			value:   "us-central1",
+			message: "messaging attachment bucket must be in us-east1",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -598,6 +615,7 @@ func productionRuntimeEnvironment() []string {
 		"BETTER_AUTH_SECRET_SECRET=better-auth-secret",
 		"SMTP_PASSWORD_SECRET=smtp-password",
 		"TELNYX_API_KEY_SECRET=telnyx-api-key",
+		"MESSAGING_MEDIA_SIGNING_KEY_SECRET=messaging-media-signing-key",
 		"HANDOFF_TOKEN_KEY_SECRET=handoff-token-key",
 		"HANDOFF_SERVICE_TOKEN_SECRET=handoff-service-token",
 		"BROWSER_ORIGIN=https://portal.example",
@@ -622,6 +640,11 @@ func productionRuntimeEnvironment() []string {
 		"TELNYX_RECORDING_BUCKET=acuity-recordings",
 		"RECORDING_BUCKET_LOCATION=us-east1",
 		"TELNYX_WEBHOOK_PUBLIC_KEY=test-public-key",
+		"MESSAGING_WEBHOOK_BASE_URL=https://ingress.example/v1/provider/telnyx/messaging-webhooks",
+		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",
+		"MESSAGING_ATTACHMENT_BUCKET=acuity-messaging",
+		"MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1",
+		"MESSAGING_ATTACHMENT_DIRECTORY=/mnt/acuity-messaging",
 		"ACUITY_DEPLOYMENT_PROFILE=production",
 		"USABLE_DATABASE_CONNECTIONS=22",
 	}

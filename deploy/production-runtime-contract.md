@@ -132,15 +132,29 @@ Production runtime rendering and its fail-closed capacity check:
 ACUITY_DEPLOYMENT_PROFILE=production \
 USABLE_DATABASE_CONNECTIONS=22 \
 RECORDING_BUCKET_LOCATION=us-east1 \
+MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1 \
   ./deploy/cloud-run-commands.example.sh
 ```
 
 The command also rejects a Cloud SQL connection name or recording-bucket
-location outside `us-east1`. See `production-runbook.md` for the deployment,
-restore rehearsal, rollback, and live acceptance sequence, and
-`production-cost-estimate.md` for the rate-card model.
+location outside `us-east1`, and applies the same region check to the Messaging
+attachment bucket.
+
+Messaging adds one shared private Cloud Storage volume mounted at
+`MESSAGING_ATTACHMENT_DIRECTORY` by `portal-api`, `provider-ingress`, and
+`worker`. Those three service accounts need only the object permissions their
+runtime path exercises. Provider ingress mounts the volume read-only and
+receives the media-signing secret; the worker receives that secret plus the
+public media and webhook bases. Production rollout must verify cross-runtime
+attachment visibility, bucket IAM, retention/backup policy, and signed URL
+expiry before traffic shifts.
+
+See `production-runbook.md` for the deployment, restore rehearsal, rollback,
+and live acceptance sequence, and `production-cost-estimate.md` for the
+rate-card model.
 
 Remaining release gates are live Cloud Run/Cloud SQL load and latency, measured
 Florida-to-`us-east1` portal/call-control latency, Cloud SQL backup/PITR restore,
-actual usable connection capacity, rolling-revision behavior, and live Telnyx
-delivery/retry/reconciliation. This contract claims none of those are complete.
+actual usable connection capacity, rolling-revision behavior, cross-runtime
+Messaging storage, and live Telnyx delivery/retry/reconciliation. This contract
+claims none of those are complete.

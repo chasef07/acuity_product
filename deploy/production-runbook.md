@@ -30,9 +30,10 @@ measured constraint and recalculate the connection reservation.
    ```
 
 2. Confirm `us-east1` for Cloud SQL, every Cloud Run service, the worker pool,
-   the recording bucket, Artifact Registry, and any dependent regional
-   resources. The runtime command independently rejects a mismatched Cloud SQL
-   connection name or `RECORDING_BUCKET_LOCATION`.
+   the recording and Messaging attachment buckets, Artifact Registry, and any
+   dependent regional resources. The runtime command independently rejects a
+   mismatched Cloud SQL connection name, `RECORDING_BUCKET_LOCATION`, or
+   `MESSAGING_ATTACHMENT_BUCKET_LOCATION`.
 3. Record the current Cloud SQL settings and query:
 
    ```sql
@@ -48,8 +49,9 @@ measured constraint and recalculate the connection reservation.
    Prove at least 22 connections remain usable by the application and operator
    identities. Do not infer capacity from the machine size alone.
 4. Confirm immutable backend and web image digests, exact database credentials
-   per role, Secret Manager references, recording-bucket retention, alert
-   notification delivery, and a deployable prior revision.
+   per role, Secret Manager references, recording and Messaging attachment
+   bucket IAM/retention, cross-runtime attachment visibility, alert notification
+   delivery, and a deployable prior revision.
 5. Confirm a current successful automated backup and a PITR recovery window.
 6. Confirm Telnyx webhook retry/failover configuration and the rollback owner.
 
@@ -121,6 +123,8 @@ The checked configuration alone is not restore evidence.
   responsive while ingress is pressured.
 - With one worker, prove receipt and command lanes continue moving, including a
   held/uncertain provider command and rolling-revision overlap.
+- Prove outbound and inbound Messaging attachments cross the portal, worker,
+  and read-only provider-ingress mounts without broadening object access.
 - Confirm the live Cloud SQL connection reservation, Cloud Run maximum-instance
   overshoot, pool wait, transaction latency, CPU, memory, storage growth,
   backup, PITR, and restore results.

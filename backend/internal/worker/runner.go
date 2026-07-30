@@ -22,6 +22,15 @@ type CallingWork interface {
 	ReconcileCredentials(context.Context) error
 }
 
+type MessagingWork interface {
+	ProcessNextReceipt(context.Context) (bool, error)
+	ProcessNextCommand(context.Context) (bool, error)
+	RecoverInterruptedCommands(context.Context) error
+	ReconcileNextCommand(context.Context) (bool, error)
+	ProcessNextAttachment(context.Context) (bool, error)
+	ExpirePendingAttachments(context.Context) error
+}
+
 type Dependency interface {
 	Ping(context.Context) error
 }
@@ -45,12 +54,34 @@ type Config struct {
 type Runner struct {
 	config     Config
 	work       CallingWork
+	messages   MessagingWork
 	dependency Dependency
 	jitter     func(time.Duration) time.Duration
 	wait       func(context.Context, time.Duration) bool
 }
 
 func New(config Config, work CallingWork, dependency Dependency) (*Runner, error) {
+	return newRunner(config, work, nil, dependency)
+}
+
+func NewWithMessaging(
+	config Config,
+	work CallingWork,
+	messages MessagingWork,
+	dependency Dependency,
+) (*Runner, error) {
+	if messages == nil {
+		return nil, fmt.Errorf("messaging worker dependency is required")
+	}
+	return newRunner(config, work, messages, dependency)
+}
+
+func newRunner(
+	config Config,
+	work CallingWork,
+	messages MessagingWork,
+	dependency Dependency,
+) (*Runner, error) {
 	if work == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
 	}
@@ -90,6 +121,7 @@ func New(config Config, work CallingWork, dependency Dependency) (*Runner, error
 	return &Runner{
 		config:     config,
 		work:       work,
+		messages:   messages,
 		dependency: dependency,
 		jitter:     equalJitter,
 		wait:       wait,
@@ -98,7 +130,11 @@ func New(config Config, work CallingWork, dependency Dependency) (*Runner, error
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	lanes.Add(2 + runner.config.CommandWorkers)
+	laneCount := 2 + runner.config.CommandWorkers
+	if runner.messages != nil {
+		laneCount += 2
+	}
+	lanes.Add(laneCount)
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLane(
@@ -116,6 +152,26 @@ func (runner *Runner) Run(ctx context.Context) error {
 				runner.config.CommandBatchSize,
 				"provider_command_processing_failed",
 				runner.work.ProcessNextCommand,
+			)
+		}()
+	}
+	if runner.messages != nil {
+		go func() {
+			defer lanes.Done()
+			runner.runQueueLane(
+				ctx,
+				runner.config.ReceiptBatchSize,
+				"messaging_receipt_processing_failed",
+				runner.messages.ProcessNextReceipt,
+			)
+		}()
+		go func() {
+			defer lanes.Done()
+			runner.runQueueLane(
+				ctx,
+				runner.config.CommandBatchSize,
+				"messaging_command_processing_failed",
+				runner.messages.ProcessNextCommand,
 			)
 		}()
 	}
@@ -259,6 +315,50 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 		runner.work.ProcessNextCredentialReconciliation,
 	); err != nil {
 		warn(ctx, "provider_credential_reconciliation_failed", err)
+		failed = true
+	}
+	if runner.messages == nil || ctx.Err() != nil {
+		return failed
+	}
+	if err := runWork(
+		ctx,
+		runner.config.WorkTimeout,
+		runner.messages.RecoverInterruptedCommands,
+	); err != nil {
+		warn(ctx, "messaging_command_recovery_failed", err)
+		failed = true
+	}
+	if ctx.Err() != nil {
+		return failed
+	}
+	if _, err := runBoolWork(
+		ctx,
+		runner.config.WorkTimeout,
+		runner.messages.ReconcileNextCommand,
+	); err != nil {
+		warn(ctx, "messaging_command_reconciliation_failed", err)
+		failed = true
+	}
+	if ctx.Err() != nil {
+		return failed
+	}
+	if _, err := runBoolWork(
+		ctx,
+		runner.config.WorkTimeout,
+		runner.messages.ProcessNextAttachment,
+	); err != nil {
+		warn(ctx, "messaging_attachment_processing_failed", err)
+		failed = true
+	}
+	if ctx.Err() != nil {
+		return failed
+	}
+	if err := runWork(
+		ctx,
+		runner.config.WorkTimeout,
+		runner.messages.ExpirePendingAttachments,
+	); err != nil {
+		warn(ctx, "messaging_attachment_expiry_failed", err)
 		failed = true
 	}
 	return failed

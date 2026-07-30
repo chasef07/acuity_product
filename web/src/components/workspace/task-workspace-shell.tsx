@@ -1,12 +1,6 @@
 "use client"
 
-import {
-  type FormEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react"
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ShieldCheckIcon, WifiOffIcon } from "lucide-react"
 
@@ -29,10 +23,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
   SidebarInset,
   SidebarProvider,
@@ -42,15 +33,19 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { CallingDock } from "@/components/workspace/calling-dock"
 import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
+import { MessageWorkspace } from "@/components/workspace/message-workspace"
 import {
   type ConnectionState,
+  type RailMode,
   TaskRail,
 } from "@/components/workspace/task-rail"
 import { portalClient, realtimeURL } from "@/lib/api/client"
 import {
   discoverAccess,
   enterSupportMode,
+  getCallingCall,
   getWorkspace,
+  queryMessageThreads,
   queryTasks,
   readTask,
   revokeSupportMode,
@@ -60,13 +55,15 @@ import type {
   CallingCall,
   CallingDispositionResult,
   CallingOffer,
+  Message,
+  MessageThreadSummary,
   Task,
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
-type View = "none" | "task" | "call"
+type View = "none" | "task" | "call" | "message"
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
@@ -78,8 +75,7 @@ export function TaskWorkspaceShell() {
   const router = useRouter()
   const session = authClient.useSession()
   const [loadState, setLoadState] = useState<LoadState>("loading")
-  const [connection, setConnection] =
-    useState<ConnectionState>("connecting")
+  const [connection, setConnection] = useState<ConnectionState>("connecting")
   const [discovery, setDiscovery] = useState<AccessDiscovery>()
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>()
   const [practiceID, setPracticeID] = useState("")
@@ -88,28 +84,51 @@ export function TaskWorkspaceShell() {
   const [search, setSearch] = useState("")
   const [settledSearch, setSettledSearch] = useState("")
   const [ordering, setOrdering] = useState<TaskOrdering>("time")
+  const [railMode, setRailMode] = useState<RailMode>("tasks")
   const [tasks, setTasks] = useState<Task[]>([])
   const [nextCursor, setNextCursor] = useState("")
   const [tasksLoading, setTasksLoading] = useState(false)
+  const [messageThreads, setMessageThreads] = useState<MessageThreadSummary[]>(
+    [],
+  )
+  const [messageNextCursor, setMessageNextCursor] = useState("")
+  const [messagesLoading, setMessagesLoading] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task>()
+  const [selectedThread, setSelectedThread] = useState<MessageThreadSummary>()
+  const [committedMessage, setCommittedMessage] = useState<Message>()
+  const [composingNew, setComposingNew] = useState(false)
   const [view, setView] = useState<View>("none")
   const [activeCall, setActiveCall] = useState<CallingCall>()
+  const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [callingHint, setCallingHint] = useState(0)
   const [callingOffers, setCallingOffers] = useState<CallingOffer[]>([])
   const selectedTaskRef = useRef<Task | undefined>(undefined)
+  const selectedThreadRef = useRef<MessageThreadSummary | undefined>(undefined)
+  const composingNewRef = useRef(false)
   const tasksRef = useRef<Task[]>([])
+  const messageThreadsRef = useRef<MessageThreadSummary[]>([])
   const hasLoadedTasksRef = useRef(false)
+  const hasLoadedThreadsRef = useRef(false)
   const taskQueryGenerationRef = useRef(0)
+  const messageQueryGenerationRef = useRef(0)
   const snapshotGenerationRef = useRef(0)
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
   const connectionRef = useRef<ConnectionState>("connecting")
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
+  const activeCallIDRef = useRef("")
+  const callDetailGenerationRef = useRef(0)
 
   useEffect(() => {
     selectedTaskRef.current = selectedTask
   }, [selectedTask])
+  useEffect(() => {
+    selectedThreadRef.current = selectedThread
+  }, [selectedThread])
+  useEffect(() => {
+    composingNewRef.current = composingNew
+  }, [composingNew])
   useEffect(() => {
     viewRef.current = view
   }, [view])
@@ -231,6 +250,74 @@ export function TaskWorkspaceShell() {
     },
     [locationScopeID, ordering, practiceID, settledSearch],
   )
+  const loadMessageThreads = useCallback(
+    async (cursor = "", append = false) => {
+      if (!practiceID || !locationID) return
+      const requestGeneration = ++messageQueryGenerationRef.current
+      setMessagesLoading(true)
+      const token = await getAccessToken()
+      if (!token) {
+        setMessagesLoading(false)
+        setLoadState("unauthorized")
+        return
+      }
+      const result = await queryMessageThreads({
+        client: portalClient(token),
+        body: {
+          practiceId: practiceID,
+          locationId: locationID,
+          ...(settledSearch ? { search: settledSearch } : {}),
+          ...(cursor ? { cursor } : {}),
+          limit: 50,
+        },
+      }).catch(() => undefined)
+      if (requestGeneration !== messageQueryGenerationRef.current) return
+      setMessagesLoading(false)
+      if (!result?.data) {
+        if (
+          result?.response?.status === 401 ||
+          result?.response?.status === 403
+        ) {
+          messageThreadsRef.current = []
+          setMessageThreads([])
+          setSelectedThread(undefined)
+          setComposingNew(false)
+          if (viewRef.current === "message") setView("none")
+          setLoadState("unauthorized")
+        }
+        return
+      }
+      const firstLoad = !hasLoadedThreadsRef.current
+      hasLoadedThreadsRef.current = true
+      const next = append
+        ? [...messageThreadsRef.current, ...result.data.items]
+        : result.data.items
+      messageThreadsRef.current = next
+      setMessageThreads(next)
+      setMessageNextCursor(result.data.nextCursor)
+
+      const selected = selectedThreadRef.current
+      if (selected) {
+        const current = next.find((item) => item.id === selected.id)
+        if (current) setSelectedThread(current)
+      } else if (
+        firstLoad &&
+        !composingNewRef.current &&
+        next[0] &&
+        viewRef.current !== "call"
+      ) {
+        setSelectedThread(next[0])
+        setView("message")
+      } else if (
+        !next[0] &&
+        !composingNewRef.current &&
+        viewRef.current === "message"
+      ) {
+        setView("none")
+      }
+    },
+    [locationID, practiceID, settledSearch],
+  )
   const refreshSelectedTask = useCallback(async () => {
     const current = selectedTaskRef.current
     if (!current) return
@@ -240,8 +327,7 @@ export function TaskWorkspaceShell() {
       client: portalClient(token),
       path: { taskId: current.id },
     }).catch(() => undefined)
-    const isStillSelected =
-      selectedTaskRef.current?.id === current.id
+    const isStillSelected = selectedTaskRef.current?.id === current.id
     if (result?.data) {
       const refreshedTask = result.data
       const next = tasksRef.current.map((task) =>
@@ -252,10 +338,7 @@ export function TaskWorkspaceShell() {
       if (isStillSelected) setSelectedTask(refreshedTask)
       return
     }
-    if (
-      result?.response?.status === 401 ||
-      result?.response?.status === 403
-    ) {
+    if (result?.response?.status === 401 || result?.response?.status === 403) {
       const next = tasksRef.current.filter((task) => task.id !== current.id)
       tasksRef.current = next
       setTasks(next)
@@ -268,6 +351,7 @@ export function TaskWorkspaceShell() {
 
   const snapshotRef = useRef(loadSnapshot)
   const taskRefetchRef = useRef(loadTasks)
+  const messageRefetchRef = useRef(loadMessageThreads)
   const selectedRefetchRef = useRef(refreshSelectedTask)
   useEffect(() => {
     snapshotRef.current = loadSnapshot
@@ -275,6 +359,9 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     taskRefetchRef.current = loadTasks
   }, [loadTasks])
+  useEffect(() => {
+    messageRefetchRef.current = loadMessageThreads
+  }, [loadMessageThreads])
   useEffect(() => {
     selectedRefetchRef.current = refreshSelectedTask
   }, [refreshSelectedTask])
@@ -315,11 +402,9 @@ export function TaskWorkspaceShell() {
       practice.locations.length === 1
         ? location.id
         : practice.locations.some((item) => item.id === storedScope)
-          ? storedScope ?? ""
+          ? (storedScope ?? "")
           : ""
-    setOrdering(
-      readTaskOrdering(result.data.actor.subject, practice.id),
-    )
+    setOrdering(readTaskOrdering(result.data.actor.subject, practice.id))
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -345,6 +430,19 @@ export function TaskWorkspaceShell() {
     const timeout = window.setTimeout(() => void loadTasks(), 0)
     return () => window.clearTimeout(timeout)
   }, [loadState, loadTasks, practiceID])
+
+  useEffect(() => {
+    if (
+      railMode !== "messages" ||
+      !practiceID ||
+      !locationID ||
+      loadState !== "ready"
+    ) {
+      return
+    }
+    const timeout = window.setTimeout(() => void loadMessageThreads(), 0)
+    return () => window.clearTimeout(timeout)
+  }, [loadMessageThreads, loadState, locationID, practiceID, railMode])
 
   useEffect(() => {
     if (!practiceID || !locationID || loadState !== "ready") return
@@ -392,6 +490,7 @@ export function TaskWorkspaceShell() {
             if (events.some((event) => event.includes("data:"))) {
               await snapshotRef.current(practiceID, locationID, false)
               await taskRefetchRef.current()
+              await messageRefetchRef.current()
               await selectedRefetchRef.current()
               setCallingHint((current) => current + 1)
             }
@@ -417,6 +516,7 @@ export function TaskWorkspaceShell() {
     const interval = window.setInterval(() => {
       if (connectionRef.current === "connected") return
       void taskRefetchRef.current()
+      void messageRefetchRef.current()
       void selectedRefetchRef.current()
     }, 1_500)
     return () => window.clearInterval(interval)
@@ -424,7 +524,9 @@ export function TaskWorkspaceShell() {
 
   function selectPractice(nextPracticeID: string) {
     if (!discovery) return
+    callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
+    messageQueryGenerationRef.current += 1
     const practice = discovery.practices.find(
       (item) => item.id === nextPracticeID,
     )
@@ -437,13 +539,19 @@ export function TaskWorkspaceShell() {
       practice.locations.length === 1
         ? location.id
         : practice.locations.some((item) => item.id === storedScope)
-          ? storedScope ?? ""
+          ? (storedScope ?? "")
           : ""
     setOrdering(readTaskOrdering(discovery.actor.subject, practice.id))
     tasksRef.current = []
+    messageThreadsRef.current = []
     hasLoadedTasksRef.current = false
+    hasLoadedThreadsRef.current = false
     setTasks([])
+    setMessageThreads([])
     setSelectedTask(undefined)
+    setSelectedThread(undefined)
+    setHistoricalCall(undefined)
+    setComposingNew(false)
     setView(activeCall ? "call" : "none")
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -455,11 +563,19 @@ export function TaskWorkspaceShell() {
   }
 
   function selectLocationScope(nextLocationID: string) {
+    callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
+    messageQueryGenerationRef.current += 1
     hasLoadedTasksRef.current = false
+    hasLoadedThreadsRef.current = false
     tasksRef.current = []
+    messageThreadsRef.current = []
     setTasks([])
+    setMessageThreads([])
     setSelectedTask(undefined)
+    setSelectedThread(undefined)
+    setHistoricalCall(undefined)
+    setComposingNew(false)
     if (viewRef.current !== "call") setView("none")
     setLocationScopeID(nextLocationID)
     window.localStorage.setItem(
@@ -474,16 +590,77 @@ export function TaskWorkspaceShell() {
     }
   }
 
+  function selectRailMode(mode: RailMode) {
+    if (mode === railMode) return
+    setRailMode(mode)
+    setSearch("")
+    setSettledSearch("")
+    if (mode === "messages") {
+      const messageLocationID = locationScopeID || locationID
+      if (messageLocationID !== locationScopeID) {
+        setLocationScopeID(messageLocationID)
+        window.localStorage.setItem(
+          `${taskScopeStorageKey}.${practiceID}`,
+          messageLocationID,
+        )
+      }
+      hasLoadedThreadsRef.current = false
+      setView(
+        activeCall
+          ? "call"
+          : selectedThreadRef.current || composingNewRef.current
+            ? "message"
+            : "none",
+      )
+      return
+    }
+    setView(
+      activeCall
+        ? "call"
+        : selectedTaskRef.current
+          ? "task"
+          : tasksRef.current[0]
+            ? "task"
+            : "none",
+    )
+    if (!selectedTaskRef.current && tasksRef.current[0]) {
+      setSelectedTask(tasksRef.current[0])
+    }
+  }
+
   function selectTask(task: Task) {
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
     setSelectedTask(task)
     if (activeCall) returnTaskIDRef.current = task.id
     setView("task")
   }
 
+  function selectMessageThread(thread: MessageThreadSummary) {
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
+    setCommittedMessage(undefined)
+    setSelectedThread(thread)
+    setComposingNew(false)
+    setView("message")
+  }
+
+  function composeNewMessage() {
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
+    setCommittedMessage(undefined)
+    setSelectedThread(undefined)
+    setComposingNew(true)
+    setView("message")
+  }
+
   function updateTaskProjection(task: Task, select = true) {
-    const next = tasksRef.current.map((current) =>
-      current.id === task.id ? task : current,
-    )
+    const exists = tasksRef.current.some((current) => current.id === task.id)
+    const next = exists
+      ? tasksRef.current.map((current) =>
+          current.id === task.id ? task : current,
+        )
+      : [task, ...tasksRef.current]
     tasksRef.current = next
     setTasks(next)
     if (select) {
@@ -493,14 +670,56 @@ export function TaskWorkspaceShell() {
     }
   }
 
-  function handleCallChanged(call: CallingCall | undefined) {
-    setActiveCall(call)
-    if (!call || call.id === focusedCallIDRef.current) return
-    focusedCallIDRef.current = call.id
-    returnTaskIDRef.current =
-      viewRef.current === "task" ? selectedTaskRef.current?.id ?? "" : ""
+  function handleMessageSent(message: Message) {
+    setCommittedMessage(message)
+    const summary: MessageThreadSummary = {
+      ...message.thread,
+      preview: message.body || message.attachment?.fileName || "Attachment",
+      latestDirection: message.direction,
+      latestDelivery: message.delivery,
+      latestActivity: message.createdAt,
+      unread: false,
+    }
+    setSelectedThread(summary)
+    setComposingNew(false)
+    setView("message")
+    void loadMessageThreads()
+  }
+
+  async function openCallDetail(callID: string) {
+    const requestGeneration = ++callDetailGenerationRef.current
+    const requestScope = snapshotScopeRef.current
+    const token = await getAccessToken()
+    if (!token) return
+    const result = await getCallingCall({
+      client: portalClient(token),
+      path: { callId: callID },
+    }).catch(() => undefined)
+    if (
+      !result?.data ||
+      requestGeneration !== callDetailGenerationRef.current ||
+      requestScope !== snapshotScopeRef.current
+    ) {
+      return
+    }
+    focusedCallIDRef.current = callID
+    setHistoricalCall(result.data)
     setView("call")
   }
+
+  const handleCallChanged = useCallback((call: CallingCall | undefined) => {
+    setActiveCall(call)
+    const previousCallID = activeCallIDRef.current
+    activeCallIDRef.current = call?.id ?? ""
+    if (!call || call.id === previousCallID) return
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
+    if (call.id === focusedCallIDRef.current) return
+    focusedCallIDRef.current = call.id
+    returnTaskIDRef.current =
+      viewRef.current === "task" ? (selectedTaskRef.current?.id ?? "") : ""
+    setView("call")
+  }, [])
 
   async function handleDisposition(result: CallingDispositionResult) {
     focusedCallIDRef.current = ""
@@ -513,6 +732,9 @@ export function TaskWorkspaceShell() {
         path: { taskId: result.taskId },
       }).catch(() => undefined)
       if (task?.data) {
+        setRailMode("tasks")
+        setSearch("")
+        setSettledSearch("")
         updateTaskProjection(task.data)
         return
       }
@@ -566,15 +788,21 @@ export function TaskWorkspaceShell() {
         practiceID={practiceID}
         locationScopeID={locationScopeID}
         tasks={tasks}
+        messages={messageThreads}
+        mode={railMode}
         selectedTaskID={selectedTask?.id ?? ""}
+        selectedThreadID={selectedThread?.id ?? ""}
         search={search}
         ordering={ordering}
         loading={tasksLoading}
+        messageLoading={messagesLoading}
         nextCursor={nextCursor}
+        messageNextCursor={messageNextCursor}
         connection={connection}
         callingOffers={callingOffers}
         onPracticeChange={selectPractice}
         onLocationScopeChange={selectLocationScope}
+        onModeChange={selectRailMode}
         onSearchChange={(value) => {
           taskQueryGenerationRef.current += 1
           setSearch(value)
@@ -588,7 +816,12 @@ export function TaskWorkspaceShell() {
           )
         }}
         onTaskSelect={selectTask}
+        onThreadSelect={selectMessageThread}
+        onNewText={composeNewMessage}
         onLoadMore={() => void loadTasks(nextCursor, true)}
+        onMessageLoadMore={() =>
+          void loadMessageThreads(messageNextCursor, true)
+        }
       />
       <SidebarInset
         data-testid="mounted-workspace"
@@ -598,20 +831,22 @@ export function TaskWorkspaceShell() {
         {workspace.supportMode && (
           <SupportBanner
             supportMode={workspace.supportMode}
-            onChanged={() =>
-              void loadSnapshot(practiceID, locationID, false)
-            }
+            onChanged={() => void loadSnapshot(practiceID, locationID, false)}
           />
         )}
         <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
           <SidebarTrigger />
           <span className="min-w-0 truncate text-xs text-muted-foreground">
             {workspace.practice.name} ·{" "}
-            {locationScopeID
+            {railMode === "messages"
               ? practice.locations.find(
-                  (location) => location.id === locationScopeID,
+                  (location) => location.id === locationID,
                 )?.name
-              : "All offices"}
+              : locationScopeID
+                ? practice.locations.find(
+                    (location) => location.id === locationScopeID,
+                  )?.name
+                : "All offices"}
           </span>
           <span className="ml-auto font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
             {workspace.platformOperator ? "Platform operator" : "Practice user"}
@@ -619,9 +854,7 @@ export function TaskWorkspaceShell() {
           {workspace.platformOperator && !workspace.supportMode && (
             <SupportDialog
               practiceID={practiceID}
-              onEntered={() =>
-                void loadSnapshot(practiceID, locationID, false)
-              }
+              onEntered={() => void loadSnapshot(practiceID, locationID, false)}
             />
           )}
         </header>
@@ -632,24 +865,72 @@ export function TaskWorkspaceShell() {
           onCallChanged={handleCallChanged}
           onDisposition={(result) => void handleDisposition(result)}
         />
-        <InteractionWorkspace
-          task={selectedTask}
-          activeCall={activeCall}
-          view={view}
-          supportSessionID={workspace.supportMode?.id ?? ""}
-          canMutate={!workspace.platformOperator || Boolean(workspace.supportMode)}
-          historyHint={callingHint}
-          onTaskUpdated={(task) => {
-            updateTaskProjection(
-              task,
-              selectedTaskRef.current?.id === task.id,
-            )
-            void loadTasks()
-          }}
-          onReturnToCall={() => {
-            if (activeCall) setView("call")
-          }}
-        />
+        {railMode === "messages" && view !== "call" ? (
+          <MessageWorkspace
+            thread={selectedThread}
+            composingNew={composingNew}
+            practiceID={practiceID}
+            locationID={locationID}
+            locationName={
+              practice.locations.find((location) => location.id === locationID)
+                ?.name ?? "Office"
+            }
+            supportSessionID={workspace.supportMode?.id ?? ""}
+            canMutate={
+              !workspace.platformOperator || Boolean(workspace.supportMode)
+            }
+            revision={callingHint}
+            initialMessage={committedMessage}
+            onMessageSent={handleMessageSent}
+            onThreadRead={(threadID) => {
+              const nextThreads = messageThreadsRef.current.map((thread) =>
+                thread.id === threadID ? { ...thread, unread: false } : thread,
+              )
+              messageThreadsRef.current = nextThreads
+              setMessageThreads(nextThreads)
+              const nextTasks = tasksRef.current.map((task) =>
+                task.conversationThreadId === threadID ||
+                task.messageThreadId === threadID
+                  ? { ...task, unread: false }
+                  : task,
+              )
+              tasksRef.current = nextTasks
+              setTasks(nextTasks)
+            }}
+            onTaskCreated={(task) => {
+              updateTaskProjection(task, false)
+              void loadTasks()
+            }}
+            onTaskOpen={(task) => {
+              setRailMode("tasks")
+              setSearch("")
+              setSettledSearch("")
+              updateTaskProjection(task)
+            }}
+            onCallOpen={(callID) => void openCallDetail(callID)}
+          />
+        ) : (
+          <InteractionWorkspace
+            task={selectedTask}
+            activeCall={historicalCall ?? activeCall}
+            view={view === "message" ? "none" : view}
+            supportSessionID={workspace.supportMode?.id ?? ""}
+            canMutate={
+              !workspace.platformOperator || Boolean(workspace.supportMode)
+            }
+            historyHint={callingHint}
+            onTaskUpdated={(task) => {
+              updateTaskProjection(
+                task,
+                selectedTaskRef.current?.id === task.id,
+              )
+              void loadTasks()
+            }}
+            onReturnToCall={() => {
+              if (activeCall) setView("call")
+            }}
+          />
+        )}
       </SidebarInset>
     </SidebarProvider>
   )

@@ -19,6 +19,7 @@ set -eu
 : "${BETTER_AUTH_SECRET_SECRET:?required Secret Manager secret name}"
 : "${SMTP_PASSWORD_SECRET:?required Secret Manager secret name}"
 : "${TELNYX_API_KEY_SECRET:?required Secret Manager secret name}"
+: "${MESSAGING_MEDIA_SIGNING_KEY_SECRET:?required Secret Manager secret name}"
 : "${HANDOFF_TOKEN_KEY_SECRET:?required Secret Manager secret name}"
 : "${HANDOFF_SERVICE_TOKEN_SECRET:?required Secret Manager secret name}"
 : "${BROWSER_ORIGIN:?required}"
@@ -43,6 +44,11 @@ set -eu
 : "${TELNYX_RECORDING_BUCKET:?required private GCS bucket name}"
 : "${RECORDING_BUCKET_LOCATION:?required measured GCS bucket location}"
 : "${TELNYX_WEBHOOK_PUBLIC_KEY:?required base64 Ed25519 public key}"
+: "${MESSAGING_WEBHOOK_BASE_URL:?required provider-ingress messaging webhook URL}"
+: "${MESSAGING_MEDIA_PUBLIC_BASE_URL:?required provider-ingress messaging media URL}"
+: "${MESSAGING_ATTACHMENT_BUCKET:?required private shared Cloud Storage bucket}"
+: "${MESSAGING_ATTACHMENT_BUCKET_LOCATION:?required measured Cloud Storage bucket location}"
+: "${MESSAGING_ATTACHMENT_DIRECTORY:=/mnt/acuity-messaging}"
 : "${HUMAN_CALLING_OFFER_SECONDS:=20}"
 : "${HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS:=15}"
 : "${HUMAN_CALLING_LEASE_SECONDS:=30}"
@@ -136,6 +142,10 @@ if [ "$RECORDING_BUCKET_LOCATION" != "$GCP_REGION" ]; then
   echo "recording bucket must be in ${GCP_REGION}; measured ${RECORDING_BUCKET_LOCATION}" >&2
   exit 1
 fi
+if [ "$MESSAGING_ATTACHMENT_BUCKET_LOCATION" != "$GCP_REGION" ]; then
+  echo "messaging attachment bucket must be in ${GCP_REGION}; measured ${MESSAGING_ATTACHMENT_BUCKET_LOCATION}" >&2
+  exit 1
+fi
 
 deploy_service() {
   database_secret="$1"
@@ -160,7 +170,7 @@ deploy_service() {
   if [ -n "$role_env" ]; then
     env_vars="${env_vars},${role_env}"
   fi
-  gcloud run deploy "acuity-${runtime_name}" \
+  set -- gcloud run deploy "acuity-${runtime_name}" \
     --project "$GCP_PROJECT" \
     --region "$GCP_REGION" \
     --image "$BACKEND_IMAGE_DIGEST" \
@@ -175,16 +185,29 @@ deploy_service() {
     --set-secrets "$secrets" \
     --set-env-vars "$env_vars" \
     "$invocation"
+  case "$runtime_name" in
+    portal-api)
+      set -- "$@" \
+        --add-volume "name=messaging-attachments,type=cloud-storage,bucket=${MESSAGING_ATTACHMENT_BUCKET}" \
+        --add-volume-mount "volume=messaging-attachments,mount-path=${MESSAGING_ATTACHMENT_DIRECTORY}"
+      ;;
+    provider-ingress)
+      set -- "$@" \
+        --add-volume "name=messaging-attachments,type=cloud-storage,bucket=${MESSAGING_ATTACHMENT_BUCKET},readonly=true" \
+        --add-volume-mount "volume=messaging-attachments,mount-path=${MESSAGING_ATTACHMENT_DIRECTORY}"
+      ;;
+  esac
+  "$@"
 }
 
 load_contract_row portal-api
 deploy_service "$PORTAL_DATABASE_URL_SECRET" --no-invoker-iam-check \
   "HUMAN_CALLING_HANDOFF_TOKEN_KEY=${HANDOFF_TOKEN_KEY_SECRET}:latest,HANDOFF_SERVICE_TOKEN=${HANDOFF_SERVICE_TOKEN_SECRET}:latest,TELNYX_API_KEY=${TELNYX_API_KEY_SECRET}:latest" \
-  "BROWSER_ORIGIN=${BROWSER_ORIGIN},BETTER_AUTH_JWKS_URL=${BETTER_AUTH_JWKS_URL},BETTER_AUTH_ISSUER=${BETTER_AUTH_ISSUER},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},HUMAN_CALLING_SIP_DOMAIN=${HUMAN_CALLING_SIP_DOMAIN},HUMAN_CALLING_STAFF_SIP_DOMAIN=${HUMAN_CALLING_STAFF_SIP_DOMAIN},HANDOFF_SERVICE_SUBJECT=${HANDOFF_SERVICE_SUBJECT},HANDOFF_SERVICE_PRACTICE_ID=${HANDOFF_SERVICE_PRACTICE_ID},TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},${CALLING_TIMING_ENV}"
+  "BROWSER_ORIGIN=${BROWSER_ORIGIN},BETTER_AUTH_JWKS_URL=${BETTER_AUTH_JWKS_URL},BETTER_AUTH_ISSUER=${BETTER_AUTH_ISSUER},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},HUMAN_CALLING_SIP_DOMAIN=${HUMAN_CALLING_SIP_DOMAIN},HUMAN_CALLING_STAFF_SIP_DOMAIN=${HUMAN_CALLING_STAFF_SIP_DOMAIN},HANDOFF_SERVICE_SUBJECT=${HANDOFF_SERVICE_SUBJECT},HANDOFF_SERVICE_PRACTICE_ID=${HANDOFF_SERVICE_PRACTICE_ID},TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},MESSAGING_WEBHOOK_BASE_URL=${MESSAGING_WEBHOOK_BASE_URL},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY},${CALLING_TIMING_ENV}"
 load_contract_row provider-ingress
 deploy_service "$PROVIDER_DATABASE_URL_SECRET" --no-invoker-iam-check \
-  "" \
-  "TELNYX_WEBHOOK_PUBLIC_KEY=${TELNYX_WEBHOOK_PUBLIC_KEY}"
+  "MESSAGING_MEDIA_SIGNING_KEY=${MESSAGING_MEDIA_SIGNING_KEY_SECRET}:latest" \
+  "TELNYX_WEBHOOK_PUBLIC_KEY=${TELNYX_WEBHOOK_PUBLIC_KEY},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY}"
 load_contract_row realtime
 deploy_service "$REALTIME_DATABASE_URL_SECRET" --no-invoker-iam-check \
   "" \
@@ -219,8 +242,10 @@ gcloud run worker-pools deploy acuity-worker \
   --set-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
   --cpu "$runtime_vcpus" \
   --memory "${runtime_memory_mib}Mi" \
-  --set-secrets "DATABASE_URL=${WORKER_DATABASE_URL_SECRET}:latest,TELNYX_API_KEY=${TELNYX_API_KEY_SECRET}:latest" \
-  --set-env-vars "ACUITY_RUNTIME_ROLE=worker,DATABASE_POOL_MAX=${runtime_pool},DATABASE_ACQUIRE_TIMEOUT_MS=${runtime_timeout},TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},${CALLING_TIMING_ENV}"
+  --set-secrets "DATABASE_URL=${WORKER_DATABASE_URL_SECRET}:latest,TELNYX_API_KEY=${TELNYX_API_KEY_SECRET}:latest,MESSAGING_MEDIA_SIGNING_KEY=${MESSAGING_MEDIA_SIGNING_KEY_SECRET}:latest" \
+  --set-env-vars "ACUITY_RUNTIME_ROLE=worker,DATABASE_POOL_MAX=${runtime_pool},DATABASE_ACQUIRE_TIMEOUT_MS=${runtime_timeout},TELNYX_CALL_CONTROL_ID=${TELNYX_CALL_CONTROL_ID},TELNYX_CREDENTIAL_CONNECTION_ID=${TELNYX_CREDENTIAL_CONNECTION_ID},TELNYX_FROM_NUMBER=${TELNYX_FROM_NUMBER},TELNYX_RINGBACK_URL=${TELNYX_RINGBACK_URL},TELNYX_RECORDING_BUCKET=${TELNYX_RECORDING_BUCKET},MESSAGING_WEBHOOK_BASE_URL=${MESSAGING_WEBHOOK_BASE_URL},MESSAGING_ATTACHMENT_DIRECTORY=${MESSAGING_ATTACHMENT_DIRECTORY},MESSAGING_MEDIA_PUBLIC_BASE_URL=${MESSAGING_MEDIA_PUBLIC_BASE_URL},${CALLING_TIMING_ENV}" \
+  --add-volume "name=messaging-attachments,type=cloud-storage,bucket=${MESSAGING_ATTACHMENT_BUCKET}" \
+  --add-volume-mount "volume=messaging-attachments,mount-path=${MESSAGING_ATTACHMENT_DIRECTORY}"
 
 load_contract_row migrate
 gcloud run jobs deploy acuity-migrate \

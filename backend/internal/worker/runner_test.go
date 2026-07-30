@@ -51,6 +51,48 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 	}
 }
 
+func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
+	calling := newControlledWork()
+	messages := &controlledMessagingWork{
+		receiptProcessed:    make(chan struct{}, 1),
+		commandProcessed:    make(chan struct{}, 1),
+		attachmentProcessed: make(chan struct{}, 1),
+	}
+	runner, err := NewWithMessaging(Config{
+		WorkInterval:       time.Millisecond,
+		WorkTimeout:        time.Second,
+		CredentialInterval: time.Hour,
+		CredentialTimeout:  time.Second,
+		HealthInterval:     time.Hour,
+		HealthTimeout:      time.Second,
+		ReceiptBatchSize:   1,
+		CommandBatchSize:   1,
+		CommandWorkers:     1,
+	}, calling, messages, healthyDependency{})
+	if err != nil {
+		t.Fatalf("create messaging worker runner: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runner.Run(ctx)
+	}()
+
+	waitForSignal(t, messages.receiptProcessed, "Message receipt")
+	waitForSignal(t, messages.commandProcessed, "Message command")
+	waitForSignal(t, messages.attachmentProcessed, "Message attachment")
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("run messaging worker: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("messaging worker did not stop after cancellation")
+	}
+}
+
 func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 	work := newControlledWork()
 	work.maintenanceStarted = make(chan struct{}, 1)
@@ -407,6 +449,51 @@ func (*controlledWork) ReconcileCredentials(context.Context) error {
 type healthyDependency struct{}
 
 func (healthyDependency) Ping(context.Context) error {
+	return nil
+}
+
+type controlledMessagingWork struct {
+	receiptProcessed    chan struct{}
+	commandProcessed    chan struct{}
+	attachmentProcessed chan struct{}
+}
+
+func (work *controlledMessagingWork) ProcessNextReceipt(context.Context) (bool, error) {
+	select {
+	case work.receiptProcessed <- struct{}{}:
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func (work *controlledMessagingWork) ProcessNextCommand(context.Context) (bool, error) {
+	select {
+	case work.commandProcessed <- struct{}{}:
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func (*controlledMessagingWork) RecoverInterruptedCommands(context.Context) error {
+	return nil
+}
+
+func (*controlledMessagingWork) ReconcileNextCommand(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (work *controlledMessagingWork) ProcessNextAttachment(context.Context) (bool, error) {
+	select {
+	case work.attachmentProcessed <- struct{}{}:
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func (*controlledMessagingWork) ExpirePendingAttachments(context.Context) error {
 	return nil
 }
 

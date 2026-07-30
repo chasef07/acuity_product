@@ -45,7 +45,7 @@ The Go runtime contains five deep modules. Each module has one behavior-oriented
 | `Access` | Human and service principals, invitations, memberships, Platform Operators, Support Mode, roles, location scope, authorization decisions | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
 | `HumanCalling` | Availability, simultaneous offers, winner election, logical call state, bridge confirmation, post-call disposition, recording readiness | Task lifecycle, SMS correlation, protected evidence access |
-| `Messaging` | Inbound correlation, send intent, delivery state, retries | Task lifecycle, contact identity, call state |
+| `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts | Task lifecycle, contact identity, call state |
 | `EvidenceArchive` | Recording/transcript availability, protected grants, access audit, retention, deletion | Call control, task completion, provider routing |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
@@ -234,9 +234,9 @@ flowchart TD
     Answered{"Answered within 20s?"}
     Disposition{"Staff disposition"}
     Voicemail["Voicemail or meaningful missed call"]
-    InboundSMS["New inbound SMS"]
-    SMSMatch{"Exactly one open conversation?"}
-    Append["Messaging appends to existing task"]
+    InboundSMS["New inbound SMS/MMS"]
+    Conversation["Messaging appends to exact Location/sender/phone conversation"]
+    Explicit{"Staff chooses Create Task?"}
     Work["Work creates new task"]
     NoTask["No task"]
 
@@ -254,12 +254,16 @@ flowchart TD
     Disposition -->|"Create follow-up task"| Work
     Voicemail --> Work
 
-    InboundSMS --> SMSMatch
-    SMSMatch -->|"yes"| Append
-    SMSMatch -->|"no"| Work
+    InboundSMS --> Conversation
+    Conversation --> Explicit
+    Explicit -->|"yes"| Work
+    Explicit -->|"no"| NoTask
 ```
 
-An ambiguous or post-completion inbound SMS creates a new unassigned task. An exact match stays on the existing task.
+Inbound messaging is durable communication evidence, not an automatic work
+classifier. It creates no Task by itself. Staff may create at most one `OPEN`
+follow-up Task from a specific Message, and that Task retains the exact
+conversation link.
 
 ## Staff command lifecycle
 
