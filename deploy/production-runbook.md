@@ -3,6 +3,32 @@
 This runbook operates the checked lean production contract. It does not assert
 that any Google Cloud or Telnyx resource has been deployed or accepted.
 
+## Current automated release
+
+The currently deployed pilot runs in `acuity-health-prod` / `us-central1`.
+That is an in-place release target, not a database or regional migration to the
+checked `us-east1` production contract below.
+
+Every push to GitHub `main` now follows one release path:
+
+1. GitHub Actions runs the Go, web, generated-contract, and browser suites.
+2. GitHub exchanges its `main`-bound identity for the
+   `acuity-product-cloud-deploy` Google service account; there is no stored
+   Google service-account key.
+3. Cloud Build creates backend and web images tagged with the full Git commit
+   SHA and resolves them to immutable digests.
+4. `acuity-migrate` applies forward migrations and the reviewed runtime grants.
+5. Backend services and the worker stage on the digest, become ready, and
+   promote before web is released last.
+6. Any post-promotion smoke failure returns request traffic and the worker split
+   to the revisions captured at the start of the release. Expanded migrations
+   remain in place.
+
+Operators do not run `pnpm` or a deployment script for an ordinary release.
+Push the reviewed commit to `main`, then follow the GitHub Actions run and its
+linked Cloud Build. The web URL is
+`https://acuity-web-cbuqwpsdsq-uc.a.run.app`.
+
 ## Owners and stop conditions
 
 - `provider-ingress` owns signature verification and durable receipt before
@@ -96,9 +122,10 @@ The checked configuration alone is not restore evidence.
 ## Release sequence
 
 1. Build and validate one immutable backend image and one immutable web image.
-2. Run the single migration job with pool max 1 and no automatic retry.
-3. Apply exact database grants. A new relation has no runtime authority until
-   its role grant is reviewed.
+2. Run the single migration job with pool max 1 and no automatic retry. It
+   reapplies the exact reviewed database grants after all forward migrations.
+   A new relation has no runtime authority until its role grant is added to
+   `backend/internal/migrations/database-grants.sql`.
 4. Deploy tagged `portal-api`, `provider-ingress`, and `realtime` revisions with
    no traffic at 1 vCPU / 512 MiB and request-based billing.
 5. Exercise readiness and database paths on each tagged revision.

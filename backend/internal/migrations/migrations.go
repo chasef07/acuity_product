@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed sql/*.sql
+//go:embed sql/*.sql database-grants.sql
 var migrationFiles embed.FS
 
 const (
@@ -92,6 +92,27 @@ func Apply(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit migration %s: %w", entry.Name(), err)
 		}
+	}
+	return nil
+}
+
+// ApplyRuntimeGrants reapplies the reviewed least-privilege runtime authority
+// after forward migrations add or change relations.
+func ApplyRuntimeGrants(ctx context.Context, pool *pgxpool.Pool) error {
+	sql, err := migrationFiles.ReadFile("database-grants.sql")
+	if err != nil {
+		return fmt.Errorf("read database grants: %w", err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin database grants: %w", err)
+	}
+	if _, err := tx.Exec(ctx, string(sql)); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("apply database grants: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit database grants: %w", err)
 	}
 	return nil
 }

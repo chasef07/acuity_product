@@ -51,6 +51,25 @@ psql "$E2E_DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
 DROP SCHEMA IF EXISTS auth CASCADE;
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
+DO $$
+DECLARE
+  role_name text;
+BEGIN
+  FOREACH role_name IN ARRAY ARRAY[
+    'acuity_auth',
+    'acuity_migrate',
+    'acuity_portal',
+    'acuity_provider',
+    'acuity_realtime',
+    'acuity_worker'
+  ]
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+      EXECUTE format('CREATE ROLE %I NOLOGIN', role_name);
+    END IF;
+  END LOOP;
+END
+$$;
 SQL
 
 cd "$root"

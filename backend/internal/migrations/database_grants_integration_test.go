@@ -1,14 +1,10 @@
 package migrations_test
 
 import (
-	"bufio"
 	"context"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 
+	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -289,36 +285,7 @@ func createDatabaseRoles(t *testing.T, pool *pgxpool.Pool) {
 
 func applyDatabaseGrants(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate grant integration test")
-	}
-	raw, err := os.Open(filepath.Join(
-		filepath.Dir(filename),
-		"..",
-		"..",
-		"..",
-		"deploy",
-		"database-grants.sql",
-	))
-	if err != nil {
-		t.Fatalf("open database grant contract: %v", err)
-	}
-	defer raw.Close()
-
-	var serverSQL strings.Builder
-	scanner := bufio.NewScanner(raw)
-	for scanner.Scan() {
-		if strings.HasPrefix(strings.TrimSpace(scanner.Text()), `\`) {
-			continue
-		}
-		serverSQL.WriteString(scanner.Text())
-		serverSQL.WriteByte('\n')
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("read database grant contract: %v", err)
-	}
-	if _, err := pool.Exec(context.Background(), serverSQL.String()); err != nil {
+	if err := migrations.ApplyRuntimeGrants(context.Background(), pool); err != nil {
 		t.Fatalf("apply database grant contract: %v", err)
 	}
 }

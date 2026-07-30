@@ -394,6 +394,9 @@ func runMigrate(
 	if err := migrations.Apply(ctx, pool); err != nil {
 		return err
 	}
+	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
+		return err
+	}
 	if config.ProvisioningInput == "" {
 		slog.Info("migrations_applied", "provisioning", false)
 		return nil
