@@ -214,7 +214,7 @@ for service in "${backend_services[@]}"; do
     --revision-suffix "$DEPLOYMENT_ID" \
     --no-traffic \
     --startup-probe "httpGet.path=/health/live,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
-    --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
+    --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=3" \
     --quiet
   verify_service_revision "$revision" "$backend_digest"
 done
