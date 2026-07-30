@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
+  AudioLinesIcon,
   BotIcon,
   CheckIcon,
   CheckCircle2Icon,
   Clock3Icon,
   HistoryIcon,
+  MessageSquareIcon,
   PencilIcon,
   PhoneCallIcon,
   RefreshCwIcon,
@@ -23,18 +25,24 @@ import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { TaskMessageConversation } from "@/components/workspace/message-workspace"
-import { portalClient } from "@/lib/api/client"
+import { portalAPIURL, portalClient } from "@/lib/api/client"
 import {
   completeTask,
+  getCallingCall,
+  getCallingEngagementHistory,
   getCallingCallHistory,
+  getTaskOutboundEligibility,
   getTaskCallHistory,
+  issueCallingVoicemailPlayback,
   readTask,
   renameTask,
   reopenTask,
+  sendMessage,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   CallHistoryItem,
   CallingCall,
+  ConversationTimelineItem,
   Task,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
@@ -47,7 +55,10 @@ type InteractionWorkspaceProps = {
   supportSessionID: string
   canMutate: boolean
   historyHint: number
+  taskCallPending: boolean
+  taskCallError: string
   onTaskUpdated: (task: Task) => void
+  onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
 }
 
@@ -58,7 +69,10 @@ export function InteractionWorkspace({
   supportSessionID,
   canMutate,
   historyHint,
+  taskCallPending,
+  taskCallError,
   onTaskUpdated,
+  onStartTaskCall,
   onReturnToCall,
 }: InteractionWorkspaceProps) {
   if (view === "call" && activeCall) {
@@ -68,6 +82,8 @@ export function InteractionWorkspace({
         historyHint={historyHint}
         returnTask={task}
         onReturnToTask={task ? () => onTaskUpdated(task) : undefined}
+        supportSessionID={supportSessionID}
+        canMutate={canMutate}
       />
     )
   }
@@ -80,7 +96,10 @@ export function InteractionWorkspace({
         supportSessionID={supportSessionID}
         canMutate={canMutate}
         historyHint={historyHint}
+        taskCallPending={taskCallPending}
+        taskCallError={taskCallError}
         onTaskUpdated={onTaskUpdated}
+        onStartTaskCall={onStartTaskCall}
         onReturnToCall={onReturnToCall}
       />
     )
@@ -94,7 +113,10 @@ function TaskWorkspace({
   supportSessionID,
   canMutate,
   historyHint,
+  taskCallPending,
+  taskCallError,
   onTaskUpdated,
+  onStartTaskCall,
   onReturnToCall,
 }: {
   task: Task
@@ -102,13 +124,42 @@ function TaskWorkspace({
   supportSessionID: string
   canMutate: boolean
   historyHint: number
+  taskCallPending: boolean
+  taskCallError: string
   onTaskUpdated: (task: Task) => void
+  onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const [callEligible, setCallEligible] = useState(false)
+  const [callReason, setCallReason] = useState("Checking Call route…")
+
+  useEffect(() => {
+    let current = true
+    const timeout = window.setTimeout(async () => {
+      const token = await getAccessToken()
+      if (!token || !current) return
+      const result = await getTaskOutboundEligibility({
+        client: portalClient(token),
+        path: { taskId: task.id },
+      }).catch(() => undefined)
+      if (!current) return
+      if (!result?.data) {
+        setCallEligible(false)
+        setCallReason("Call eligibility is temporarily unavailable.")
+        return
+      }
+      setCallEligible(result.data.eligible)
+      setCallReason(result.data.reason)
+    }, 0)
+    return () => {
+      current = false
+      window.clearTimeout(timeout)
+    }
+  }, [historyHint, task.id, task.state, task.version])
 
   async function refreshTask() {
     const token = await getAccessToken()
@@ -285,13 +336,26 @@ function TaskWorkspace({
             {!canMutate ? (
               <Badge variant="outline">Read only · enter Support Mode to change</Badge>
             ) : task.state === "OPEN" ? (
-              <Button
-                onClick={() => void transition("complete")}
-                disabled={pending}
-              >
-                {pending ? <Spinner /> : <CheckCircle2Icon />}
-                Complete
-              </Button>
+              <>
+                {!activeCall && (
+                  <Button
+                    variant="outline"
+                    disabled={!callEligible || taskCallPending}
+                    title={callEligible ? "Call this Task" : callReason}
+                    onClick={() => onStartTaskCall(task)}
+                  >
+                    <PhoneCallIcon />
+                    {taskCallPending ? "Preparing…" : "Call"}
+                  </Button>
+                )}
+                <Button
+                  onClick={() => void transition("complete")}
+                  disabled={pending}
+                >
+                  {pending ? <Spinner /> : <CheckCircle2Icon />}
+                  Complete
+                </Button>
+              </>
             ) : (
               <Button
                 variant="outline"
@@ -309,6 +373,11 @@ function TaskWorkspace({
             <AlertTitle>Task changed</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
+        )}
+        {(taskCallError || (!callEligible && callReason)) && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {taskCallError || callReason}
+          </p>
         )}
         {editing && task.state === "COMPLETED" && (
           <Alert className="mt-3">
@@ -353,6 +422,10 @@ function TaskWorkspace({
         </div>
       </header>
       {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
+      {(task.origin === "VOICEMAIL_RECOVERY" ||
+        task.origin === "MISSED_CALL_RECOVERY") && (
+        <RecoveryTaskSource task={task} revision={historyHint} />
+      )}
       <TaskMessageConversation
         key={task.id}
         task={task}
@@ -421,6 +494,167 @@ function AITaskSource({ task }: { task: Task }) {
   )
 }
 
+function RecoveryTaskSource({
+  task,
+  revision,
+}: {
+  task: Task
+  revision: number
+}) {
+  const [call, setCall] = useState<CallingCall>()
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!task.callId) return
+    let current = true
+    const timeout = window.setTimeout(async () => {
+      const token = await getAccessToken()
+      if (!token || !current) return
+      const result = await getCallingCall({
+        client: portalClient(token),
+        path: { callId: task.callId! },
+      }).catch(() => undefined)
+      if (!current) return
+      if (result?.data) {
+        setCall(result.data)
+        setError("")
+      } else {
+        setError("Recovery source is temporarily unavailable.")
+      }
+    }, 0)
+    return () => {
+      current = false
+      window.clearTimeout(timeout)
+    }
+  }, [revision, task.callId, task.version])
+
+  return (
+    <section
+      aria-label="Call recovery source"
+      className="border-b bg-muted/20 px-5 py-4"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className="gap-1.5">
+          <AudioLinesIcon className="size-3.5" aria-hidden="true" />
+          {task.recoveryOutcome === "VOICEMAIL" ? "Voicemail" : "Missed call"}
+        </Badge>
+        <span className="text-xs text-muted-foreground">
+          Contact Context · {formatPhone(task.phone)} · {task.locationName}
+        </span>
+      </div>
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      {call?.voicemail && <VoicemailSource call={call} compact />}
+    </section>
+  )
+}
+
+function VoicemailSource({
+  call,
+  compact = false,
+}: {
+  call: CallingCall
+  compact?: boolean
+}) {
+  const [audioURL, setAudioURL] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const voicemail = call.voicemail
+
+  useEffect(
+    () => () => {
+      if (audioURL) URL.revokeObjectURL(audioURL)
+    },
+    [audioURL],
+  )
+
+  if (!voicemail) return null
+  const stateLabel =
+    voicemail.outcome === "MISSED_CALL"
+      ? "No recording was produced."
+      : voicemail.audioState === "READY"
+        ? "Ready"
+        : voicemail.audioState === "UNAVAILABLE"
+          ? "Recording unavailable"
+          : "Processing"
+
+  async function loadAudio() {
+    const token = await getAccessToken()
+    if (!token) return
+    setLoading(true)
+    setError("")
+    const issued = await issueCallingVoicemailPlayback({
+      client: portalClient(token),
+      path: { callId: call.id },
+    }).catch(() => undefined)
+    if (!issued?.data) {
+      setLoading(false)
+      setError("Playback authorization is unavailable.")
+      return
+    }
+    const response = await fetch(
+      new URL(
+        `/v1/calling/voicemail-playback/${encodeURIComponent(issued.data.token)}`,
+        portalAPIURL(),
+      ),
+      {
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      },
+    ).catch(() => undefined)
+    if (!response?.ok) {
+      setLoading(false)
+      setError("The voicemail could not be opened.")
+      return
+    }
+    const objectURL = URL.createObjectURL(await response.blob())
+    setAudioURL((current) => {
+      if (current) URL.revokeObjectURL(current)
+      return objectURL
+    })
+    setLoading(false)
+  }
+
+  return (
+    <div className={compact ? "mt-3" : "border-b bg-muted/20 px-5 py-4"}>
+      {!compact && (
+        <div className="mb-2 flex items-center gap-2">
+          <AudioLinesIcon className="size-4" />
+          <h2 className="text-sm font-semibold">Voicemail source</h2>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="secondary">{stateLabel}</Badge>
+        {voicemail.durationSeconds > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {formatDuration(voicemail.durationSeconds)}
+          </span>
+        )}
+        {voicemail.audioState === "READY" && !audioURL && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={loading}
+            onClick={() => void loadAudio()}
+          >
+            {loading ? <Spinner /> : "Load recording"}
+          </Button>
+        )}
+        {audioURL && (
+          <audio
+            aria-label="Voicemail recording"
+            controls
+            controlsList="nodownload"
+            preload="metadata"
+            src={audioURL}
+            className="h-9 max-w-full"
+          />
+        )}
+      </div>
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
+
 function actorLabel(actor: Task["createdBy"]) {
   if (actor.email) return actor.email
   return actor.kind === "SERVICE" ? "Abita AI" : actor.subject
@@ -446,12 +680,17 @@ function CallWorkspace({
   historyHint,
   returnTask,
   onReturnToTask,
+  supportSessionID,
+  canMutate,
 }: {
   call: CallingCall
   historyHint: number
   returnTask: Task | undefined
   onReturnToTask: (() => void) | undefined
+  supportSessionID: string
+  canMutate: boolean
 }) {
+  const [localRevision, setLocalRevision] = useState(0)
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="border-b px-5 py-4">
@@ -463,8 +702,11 @@ function CallWorkspace({
                 {callStateLabel(call.state)}
               </span>
             </div>
+            <p className="text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
+              Contact Context
+            </p>
             <h1 className="truncate text-xl font-semibold tracking-tight">
-              {call.displayName || "Caller"}
+              {call.displayName || formatPhone(call.phone)}
             </h1>
             <p className="mt-2 font-mono text-sm text-muted-foreground">
               {formatPhone(call.phone)} · {call.locationName}
@@ -496,13 +738,337 @@ function CallWorkspace({
           />
         </div>
       </header>
-      <CallHistory
-        key={`call:${call.id}`}
-        source={{ kind: "call", id: call.id }}
-        revision={historyHint + call.version}
+      {call.voicemail && <VoicemailSource call={call} />}
+      <LockedCallMessageComposer
+        call={call}
+        canMutate={canMutate}
+        supportSessionID={supportSessionID}
+        onSent={() => setLocalRevision((current) => current + 1)}
+      />
+      <EngagementHistory
+        key={`engagement:${call.id}`}
+        call={call}
+        revision={historyHint + call.version + localRevision}
       />
     </section>
   )
+}
+
+function LockedCallMessageComposer({
+  call,
+  canMutate,
+  supportSessionID,
+  onSent,
+}: {
+  call: CallingCall
+  canMutate: boolean
+  supportSessionID: string
+  onSent: () => void
+}) {
+  const [body, setBody] = useState("")
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  const attempt = useRef<{ body: string; key: string } | undefined>(undefined)
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmed = body.trim()
+    if (!trimmed || pending || !canMutate) return
+    if (attempt.current?.body !== trimmed) {
+      attempt.current = { body: trimmed, key: crypto.randomUUID() }
+    }
+    setPending(true)
+    setError("")
+    const token = await getAccessToken()
+    if (!token) {
+      setPending(false)
+      return
+    }
+    const result = await sendMessage({
+      client: portalClient(token),
+      body: {
+        practiceId: call.practiceId,
+        locationId: call.locationId,
+        destination: call.phone,
+        body: trimmed,
+        idempotencyKey: attempt.current.key,
+        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
+      },
+    }).catch(() => undefined)
+    setPending(false)
+    if (!result?.data) {
+      setError(
+        result?.response?.status === 409
+          ? "This contact cannot be messaged from this office."
+          : "The message was not queued. Nothing was sent.",
+      )
+      return
+    }
+    setBody("")
+    attempt.current = undefined
+    onSent()
+  }
+
+  return (
+    <form
+      aria-label="Call message composer"
+      className="border-b bg-background px-5 py-3"
+      onSubmit={(event) => void submit(event)}
+    >
+      <div className="mx-auto max-w-4xl">
+        <p className="mb-2 text-xs text-muted-foreground">
+          Message from{" "}
+          <strong className="font-medium text-foreground">
+            {call.locationName}
+          </strong>
+          {" · "}
+          destination locked to {formatPhone(call.phone)}
+        </p>
+        <div className="flex items-end gap-2">
+          <textarea
+            aria-label="Message"
+            rows={2}
+            maxLength={1600}
+            placeholder="Write a message"
+            className="flex min-h-16 min-w-0 flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+            value={body}
+            disabled={!canMutate || pending}
+            onChange={(event) => setBody(event.target.value)}
+          />
+          <Button
+            type="submit"
+            disabled={!canMutate || pending || !body.trim()}
+          >
+            {pending ? <Spinner /> : <MessageSquareIcon />}
+            Send
+          </Button>
+        </div>
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      </div>
+    </form>
+  )
+}
+
+function EngagementHistory({
+  call,
+  revision,
+}: {
+  call: CallingCall
+  revision: number
+}) {
+  const [items, setItems] = useState<ConversationTimelineItem[]>([])
+  const [nextCursor, setNextCursor] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const generation = useRef(0)
+  const scrollContainer = useRef<HTMLDivElement | null>(null)
+
+  const load = useCallback(
+    async (cursor = "") => {
+      const requestGeneration = ++generation.current
+      setLoading(true)
+      setError("")
+      const token = await getAccessToken()
+      if (!token) {
+        setLoading(false)
+        return
+      }
+      const result = await getCallingEngagementHistory({
+        client: portalClient(token),
+        path: { callId: call.id },
+        query: cursor ? { cursor } : undefined,
+      }).catch(() => undefined)
+      if (requestGeneration !== generation.current) return
+      setLoading(false)
+      if (!result?.data) {
+        setError("Engagement history is temporarily unavailable.")
+        return
+      }
+      setItems((current) =>
+        cursor ? [...result.data.items, ...current] : result.data.items,
+      )
+      setNextCursor(result.data.nextCursor)
+      window.requestAnimationFrame(() => {
+        const current = scrollContainer.current
+        if (current && !cursor) current.scrollTop = current.scrollHeight
+      })
+    },
+    [call.id],
+  )
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void load(), 0)
+    return () => {
+      window.clearTimeout(timeout)
+      generation.current += 1
+    }
+  }, [load, revision])
+
+  return (
+    <div ref={scrollContainer} className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-4xl px-5 py-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <HistoryIcon className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Engagement history</h2>
+          <span className="text-xs text-muted-foreground">
+            Exact phone · authorized offices
+          </span>
+        </div>
+        <Separator className="my-4" />
+        {nextCursor && (
+          <div className="mb-4 flex justify-center">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={loading}
+              onClick={() => void load(nextCursor)}
+            >
+              {loading ? <Spinner /> : <HistoryIcon />}
+              Load older
+            </Button>
+          </div>
+        )}
+        {loading && items.length === 0 && (
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        )}
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>History unavailable</AlertTitle>
+            <AlertDescription className="flex items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                <RefreshCwIcon />
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        {!loading && !error && items.length === 0 && (
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            No earlier engagement for this phone.
+          </p>
+        )}
+        <ol className="relative ml-2 border-l">
+          {items.map((item) => (
+            <li
+              key={`${item.type}:${item.id}`}
+              className="relative pb-4 pl-6 last:pb-0"
+            >
+              <span className="absolute top-4 -left-[0.31rem] size-2.5 rounded-full border-2 border-background bg-muted-foreground" />
+              <EngagementHistoryItem item={item} currentCallID={call.id} />
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  )
+}
+
+function EngagementHistoryItem({
+  item,
+  currentCallID,
+}: {
+  item: ConversationTimelineItem
+  currentCallID: string
+}) {
+  if (item.type === "MESSAGE" && item.message) {
+    const message = item.message
+    return (
+      <article className="border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">
+            {message.direction === "INBOUND" ? "Inbound" : "Outbound"} message
+          </span>
+          <Badge variant="outline">{message.delivery}</Badge>
+          <time
+            dateTime={item.occurredAt}
+            className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+          >
+            {formatDateTime(item.occurredAt)}
+          </time>
+        </div>
+        <p className="mt-3 whitespace-pre-wrap text-sm">
+          {message.body || "Attachment"}
+        </p>
+        <p className="mt-3 border-t pt-2 text-xs text-muted-foreground">
+          Office · {message.thread.locationName}
+        </p>
+      </article>
+    )
+  }
+  if (item.type === "CALL" && item.call) {
+    const historyCall = item.call
+    return (
+      <article
+        className={cn(
+          "border bg-card px-4 py-3",
+          historyCall.id === currentCallID && "border-primary/50",
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">
+            {historyCall.direction === "INBOUND" ? "Inbound" : "Outbound"} call
+          </span>
+          {historyCall.id === currentCallID && (
+            <Badge variant="secondary">Current</Badge>
+          )}
+          <time
+            dateTime={item.occurredAt}
+            className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+          >
+            {formatDateTime(item.occurredAt)}
+          </time>
+        </div>
+        <div className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
+          <HistoryField label="Office" value={historyCall.locationName} />
+          <HistoryField
+            label="Duration"
+            value={formatDuration(historyCall.durationSeconds)}
+          />
+          <HistoryField
+            label="Answered by"
+            value={historyCall.answeredByEmail || "Not answered"}
+          />
+          <HistoryField
+            label="Outcome"
+            value={historyOutcome(historyCall.outcome)}
+          />
+        </div>
+      </article>
+    )
+  }
+  if (item.type === "TASK" && item.task) {
+    const task = item.task
+    return (
+      <article className="border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">Task</span>
+          <Badge variant={task.state === "OPEN" ? "secondary" : "outline"}>
+            {task.state}
+          </Badge>
+          {task.recoveryOutcome && (
+            <Badge variant="outline">
+              {task.recoveryOutcome.replaceAll("_", " ")}
+            </Badge>
+          )}
+          <time
+            dateTime={item.occurredAt}
+            className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+          >
+            {formatDateTime(item.occurredAt)}
+          </time>
+        </div>
+        <p className="mt-3 text-sm">{task.title}</p>
+        <p className="mt-3 border-t pt-2 text-xs text-muted-foreground">
+          Office · {task.locationName}
+        </p>
+      </article>
+    )
+  }
+  return null
 }
 
 type HistorySource = { kind: "task" | "call"; id: string }

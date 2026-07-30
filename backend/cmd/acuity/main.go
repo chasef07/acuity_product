@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -215,17 +217,19 @@ func runAuthorizedHTTP(
 		if err != nil {
 			return err
 		}
-		calling := humancalling.New(
-			pool,
-			accessModule,
-			provider,
-			humanCallingConfig(config, observer),
-			nil,
-		)
 		attachmentStore, err := newAttachmentStore(config)
 		if err != nil {
 			return err
 		}
+		callingConfig := humanCallingConfig(config, observer)
+		callingConfig.VoicemailStore = attachmentStore
+		calling := humancalling.New(
+			pool,
+			accessModule,
+			provider,
+			callingConfig,
+			nil,
+		)
 		workModule := work.New(pool, accessModule, nil)
 		messages := messaging.New(
 			pool,
@@ -286,18 +290,31 @@ func runWorker(
 	if err != nil {
 		return err
 	}
+	attachmentStore, err := newAttachmentStore(config)
+	if err != nil {
+		return err
+	}
+	recordingClient, err := recordingHTTPClient(
+		config.HumanCalling.RecordingCAFile,
+	)
+	if err != nil {
+		return err
+	}
+	callingConfig := humanCallingConfig(config, observer)
+	callingConfig.VoicemailStore = attachmentStore
+	callingConfig.RecordingDownloader =
+		humancalling.NewHTTPRecordingDownloader(
+			recordingClient,
+			config.HumanCalling.RecordingAllowedHosts...,
+		)
 	calling := humancalling.New(
 		pool,
 		access.New(pool, nil),
 		provider,
-		humanCallingConfig(config, observer),
+		callingConfig,
 		nil,
 	)
 	messagingProvider, err := newTelnyxMessagingProvider(config)
-	if err != nil {
-		return err
-	}
-	attachmentStore, err := newAttachmentStore(config)
 	if err != nil {
 		return err
 	}
@@ -337,6 +354,33 @@ func runWorker(
 	}
 	slog.Info("runtime_ready", "role", config.Role)
 	return runner.Run(ctx)
+}
+
+func recordingHTTPClient(certificateFile string) (*http.Client, error) {
+	if certificateFile == "" {
+		return nil, nil
+	}
+	certificate, err := os.ReadFile(certificateFile)
+	if err != nil {
+		return nil, fmt.Errorf("read recording CA file: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("load system recording roots: %w", err)
+	}
+	if !roots.AppendCertsFromPEM(certificate) {
+		return nil, errors.New("recording CA file contains no certificates")
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("default HTTP transport is unavailable")
+	}
+	recordingTransport := transport.Clone()
+	recordingTransport.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    roots,
+	}
+	return &http.Client{Transport: recordingTransport}, nil
 }
 
 func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
@@ -381,6 +425,8 @@ func humanCallingConfig(
 		FromNumber:             config.HumanCalling.FromNumber,
 		RingbackURL:            config.HumanCalling.RingbackURL,
 		RecordingBucket:        config.HumanCalling.RecordingBucket,
+		SafeGreetingURL:        config.HumanCalling.SafeGreetingURL,
+		PlaybackSigningKey:     config.HumanCalling.PlaybackSigningKey,
 		WebhookPublicKey:       ed25519.PublicKey(config.HumanCalling.WebhookPublicKey),
 		Observer:               observer,
 	}
@@ -453,6 +499,38 @@ func runMigrate(
 	}
 	if err := messaging.New(pool, nil, nil, nil, messaging.Config{}, nil).
 		Provision(ctx, messageLocations); err != nil {
+		return err
+	}
+	voiceLocations := make([]humancalling.LocationVoiceProvision, 0)
+	for _, practice := range input.Practices {
+		for _, location := range practice.Locations {
+			if location.VoiceNumber == "" {
+				if location.VoicemailGreeting != "" {
+					return fmt.Errorf(
+						"Location %q has a voicemail greeting without a voice number",
+						location.Key,
+					)
+				}
+				continue
+			}
+			enabled := true
+			if location.VoiceEnabled != nil {
+				enabled = *location.VoiceEnabled
+			}
+			voiceLocations = append(
+				voiceLocations,
+				humancalling.LocationVoiceProvision{
+					PracticeKey:       practice.Key,
+					LocationKey:       location.Key,
+					Number:            location.VoiceNumber,
+					Enabled:           enabled,
+					VoicemailGreeting: location.VoicemailGreeting,
+				},
+			)
+		}
+	}
+	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
+		ProvisionLocationVoices(ctx, voiceLocations); err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)

@@ -27,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 11 {
-		t.Fatalf("migration count = %d, want 11", migrationCount)
+	if migrationCount != 12 {
+		t.Fatalf("migration count = %d, want 12", migrationCount)
 	}
 	var activeCommandIndexIsUnique bool
 	if err := pool.QueryRow(ctx, `
@@ -104,6 +104,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_timeline",
+		"human_calling_location_voice_numbers",
+		"human_calling_voicemails",
 		"access_abita_office_locations",
 		"work_tasks",
 		"work_task_activities",

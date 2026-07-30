@@ -405,6 +405,10 @@ func (*controlledWork) ProcessNextCredentialReconciliation(context.Context) (boo
 	return false, nil
 }
 
+func (*controlledWork) ProcessNextVoicemailCopy(context.Context) (bool, error) {
+	return false, nil
+}
+
 func (work *controlledWork) ExpireOffers(ctx context.Context) (int, error) {
 	if work.offerExpiryStarted != nil {
 		work.offerExpiryStarted <- struct{}{}
@@ -424,6 +428,10 @@ func (work *controlledWork) signalMaintenance() {
 
 func (work *controlledWork) ExpireConnections(context.Context) (int, error) {
 	work.signalMaintenance()
+	return 0, nil
+}
+
+func (*controlledWork) ExpireVoicemailFailures(context.Context) (int, error) {
 	return 0, nil
 }
 

@@ -104,6 +104,9 @@ type LocationProvision struct {
 	MessagingSender    string
 	MessagingProfileID string
 	MessagingActive    *bool
+	VoiceNumber        string
+	VoiceEnabled       *bool
+	VoicemailGreeting  string
 }
 
 type InvitationProvision struct {

@@ -21,10 +21,11 @@ realtime_pid=""
 provider_pid=""
 worker_pid=""
 telnyx_pid=""
+recording_pid=""
 cleanup() {
   status=$?
   if [ "$status" -ne 0 ]; then
-    for log in portal realtime provider worker web telnyx; do
+    for log in portal realtime provider worker web telnyx recording; do
       if [ -f "$runtime_dir/$log.log" ]; then
         echo "----- $log.log -----" >&2
         tail -80 "$runtime_dir/$log.log" >&2
@@ -38,7 +39,7 @@ cleanup() {
       *) kill "$replacement_realtime_pid" 2>/dev/null || true ;;
     esac
   fi
-  for pid in "$worker_pid" "$provider_pid" "$realtime_pid" "$portal_pid" "$web_pid" "$telnyx_pid"; do
+  for pid in "$worker_pid" "$provider_pid" "$realtime_pid" "$portal_pid" "$web_pid" "$telnyx_pid" "$recording_pid"; do
     if [ -n "$pid" ]; then
       kill "$pid" 2>/dev/null || true
     fi
@@ -97,6 +98,29 @@ until [ -s "$runtime_dir/telnyx-public-key" ]; do
   sleep 0.1
 done
 
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$runtime_dir/recording-fixture-key.pem" \
+  -out "$runtime_dir/recording-fixture-cert.pem" \
+  -days 1 \
+  -subj "/CN=recordings.telnyx.test" \
+  -addext "subjectAltName=DNS:recordings.telnyx.test" \
+  >/dev/null 2>&1
+RECORDING_FIXTURE_CERTIFICATE="$runtime_dir/recording-fixture-cert.pem" \
+RECORDING_FIXTURE_PRIVATE_KEY="$runtime_dir/recording-fixture-key.pem" \
+RECORDING_FIXTURE_READY_OUTPUT="$runtime_dir/recording-fixture-ready" \
+node "$root/scripts/recording-fixture.mjs" \
+  >"$runtime_dir/recording.log" 2>&1 &
+recording_pid=$!
+attempts=0
+until [ -s "$runtime_dir/recording-fixture-ready" ]; do
+  attempts=$((attempts + 1))
+  if [ "$attempts" -ge 50 ]; then
+    echo "recording fixture did not become ready" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
 cd "$root/web"
 NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
 NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
@@ -132,6 +156,7 @@ PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
 HUMAN_CALLING_SIP_DOMAIN=synthetic.sip.telnyx.com \
 HUMAN_CALLING_STAFF_SIP_DOMAIN=sip.telnyx.com \
 HUMAN_CALLING_HANDOFF_TOKEN_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+HUMAN_CALLING_PLAYBACK_SIGNING_KEY=YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk= \
 HUMAN_CALLING_OFFER_SECONDS=20 \
 HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS=15 \
 HUMAN_CALLING_LEASE_SECONDS=30 \
@@ -146,6 +171,7 @@ TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
 TELNYX_FROM_NUMBER=+15555550100 \
 TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
 TELNYX_RECORDING_BUCKET=synthetic-recordings \
+HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.synthetic.test/voicemail.wav \
 MESSAGING_WEBHOOK_BASE_URL=https://messaging.e2e.invalid/v1/provider/telnyx/messaging-webhooks \
 MESSAGING_ATTACHMENT_DIRECTORY="$runtime_dir/messaging-attachments" \
 "$runtime_dir/acuity" >"$runtime_dir/portal.log" 2>&1 &
@@ -190,6 +216,9 @@ TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
 TELNYX_FROM_NUMBER=+15555550100 \
 TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
 TELNYX_RECORDING_BUCKET=synthetic-recordings \
+HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.synthetic.test/voicemail.wav \
+HUMAN_CALLING_RECORDING_HOSTS=recordings.telnyx.test:19443 \
+HUMAN_CALLING_RECORDING_CA_FILE="$runtime_dir/recording-fixture-cert.pem" \
 MESSAGING_WEBHOOK_BASE_URL=https://messaging.e2e.invalid/v1/provider/telnyx/messaging-webhooks \
 MESSAGING_ATTACHMENT_DIRECTORY="$runtime_dir/messaging-attachments" \
 MESSAGING_MEDIA_PUBLIC_BASE_URL=https://media.e2e.invalid/v1/provider/messaging-media \
@@ -198,6 +227,7 @@ HUMAN_CALLING_OFFER_SECONDS=20 \
 HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS=15 \
 HUMAN_CALLING_LEASE_SECONDS=30 \
 HUMAN_CALLING_READINESS_GRACE_SECONDS=15 \
+HTTPS_PROXY=http://127.0.0.1:19444 \
 "$runtime_dir/acuity" >"$runtime_dir/worker.log" 2>&1 &
 worker_pid=$!
 

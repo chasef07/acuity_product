@@ -32,8 +32,9 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
 
   await page.getByRole("button", { name: "Messages", exact: true }).click()
   await expect(page.getByLabel("Location")).toHaveValue(/.+/)
-  await expect(page.getByText("No conversations at this office")).toBeVisible()
-  await page.getByRole("button", { name: "New text" }).click()
+  const newText = page.getByRole("button", { name: "New text" })
+  await expect(newText).toBeVisible()
+  await newText.click()
 
   const outgoingText = "Your records are ready for pickup."
   await page.getByLabel("Destination phone number").fill("+1 (727) 555-0199")

@@ -18,6 +18,7 @@ writeFileSync(publicKeyOutput, publicDER.subarray(publicDER.length - 32).toStrin
 })
 
 let credentialSequence = 0
+let callSequence = 0
 let messageSequence = 0
 const credentials = new Map()
 const messages = new Map()
@@ -184,10 +185,25 @@ createServer(async (request, response) => {
     return
   }
   if (request.method === "POST" && request.url === "/v2/calls") {
+    const payload = JSON.parse(requestBody.toString("utf8"))
+    if (
+      !payload.media_prep &&
+      payload.answering_machine_detection !== "disabled"
+    ) {
+      response.writeHead(200).end(JSON.stringify({
+        data: {
+          call_control_id: "fixture-staff-control",
+          call_leg_id: "fixture-staff-leg",
+        },
+      }))
+      return
+    }
+    callSequence += 1
+    const leg = payload.media_prep ? "outbound-staff" : "outbound-destination"
     response.writeHead(200).end(JSON.stringify({
       data: {
-        call_control_id: "fixture-staff-control",
-        call_leg_id: "fixture-staff-leg",
+        call_control_id: `fixture-${leg}-control-${callSequence}`,
+        call_leg_id: `fixture-${leg}-leg-${callSequence}`,
       },
     }))
     return

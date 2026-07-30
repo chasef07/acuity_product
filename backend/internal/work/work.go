@@ -31,6 +31,15 @@ const (
 	TaskOriginHumanCallFollowUp    TaskOrigin = "HUMAN_CALL_FOLLOW_UP"
 	TaskOriginAbitaAI              TaskOrigin = "ABITA_AI"
 	TaskOriginStaffMessageFollowUp TaskOrigin = "STAFF_MESSAGE_FOLLOW_UP"
+	TaskOriginVoicemail            TaskOrigin = "VOICEMAIL_RECOVERY"
+	TaskOriginMissedCall           TaskOrigin = "MISSED_CALL_RECOVERY"
+)
+
+type RecoveryOutcome string
+
+const (
+	RecoveryOutcomeVoicemail  RecoveryOutcome = "VOICEMAIL"
+	RecoveryOutcomeMissedCall RecoveryOutcome = "MISSED_CALL"
 )
 
 type TaskUrgency string
@@ -103,6 +112,7 @@ type Task struct {
 	MessageID            string
 	MessageThreadID      string
 	ConversationThreadID string
+	RecoveryOutcome      RecoveryOutcome
 	Unread               bool
 	CreatedBy            ActorSnapshot
 	CreatedAt            time.Time
@@ -146,6 +156,16 @@ type EnsureMessageFollowUpCommand struct {
 	Phone      string
 	Title      string
 	Creator    access.Actor
+}
+
+type EnsureRecoveryTaskCommand struct {
+	CallID     string
+	PracticeID string
+	LocationID string
+	Phone      string
+	CallerName string
+	Outcome    RecoveryOutcome
+	OccurredAt time.Time
 }
 
 type RenameTaskCommand struct {
@@ -363,6 +383,120 @@ func (m *Module) EnsureMessageFollowUp(
 	return task, status, nil
 }
 
+// EnsureRecoveryTask creates the one immutable recovery Task for a voicemail or
+// missed-call outcome. HumanCalling owns the caller outcome transaction; Work
+// owns the Task row and Activity written inside it.
+func (m *Module) EnsureRecoveryTask(
+	ctx context.Context,
+	tx pgx.Tx,
+	command EnsureRecoveryTaskCommand,
+) (Task, error) {
+	command.CallID = strings.TrimSpace(command.CallID)
+	command.PracticeID = strings.TrimSpace(command.PracticeID)
+	command.LocationID = strings.TrimSpace(command.LocationID)
+	command.Phone = strings.TrimSpace(command.Phone)
+	command.CallerName = strings.TrimSpace(command.CallerName)
+	if command.OccurredAt.IsZero() {
+		command.OccurredAt = m.now()
+	}
+	title := ""
+	origin := TaskOrigin("")
+	switch command.Outcome {
+	case RecoveryOutcomeVoicemail:
+		title = "Review voicemail"
+		origin = TaskOriginVoicemail
+	case RecoveryOutcomeMissedCall:
+		title = "Return missed call"
+		origin = TaskOriginMissedCall
+	default:
+		return Task{}, ErrInvalidInput
+	}
+	if tx == nil ||
+		m.access == nil ||
+		command.CallID == "" ||
+		command.PracticeID == "" ||
+		command.LocationID == "" ||
+		!canonicalPhone.MatchString(command.Phone) ||
+		!textLengthBetween(command.CallerName, 0, 200) {
+		return Task{}, ErrInvalidInput
+	}
+
+	var taskID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO work_tasks (
+			practice_id,
+			location_id,
+			call_id,
+			phone,
+			title,
+			state,
+			origin,
+			urgency,
+			caller_name,
+			created_by_kind,
+			created_by_subject,
+			created_at,
+			recovery_outcome,
+			updated_at
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, 'OPEN', $6, 'normal',
+			NULLIF($7, ''), 'SERVICE', 'human-calling', $8, $9, $8
+		)
+		ON CONFLICT (call_id) DO NOTHING
+		RETURNING id::text
+	`, command.PracticeID, command.LocationID, command.CallID, command.Phone,
+		title, origin, command.CallerName, command.OccurredAt, command.Outcome,
+	).Scan(&taskID)
+	inserted := true
+	if errors.Is(err, pgx.ErrNoRows) {
+		inserted = false
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text
+			FROM work_tasks
+			WHERE call_id = $1
+			FOR SHARE
+		`, command.CallID).Scan(&taskID); err != nil {
+			return Task{}, fmt.Errorf("load replayed recovery Task: %w", err)
+		}
+	} else if err != nil {
+		return Task{}, fmt.Errorf("create recovery Task: %w", err)
+	}
+	task, err := loadTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.PracticeID != command.PracticeID ||
+		task.LocationID != command.LocationID ||
+		task.Phone != command.Phone ||
+		task.CallID != command.CallID ||
+		task.Origin != origin ||
+		task.RecoveryOutcome != command.Outcome {
+		return Task{}, ErrConflict
+	}
+	if !inserted {
+		return task, nil
+	}
+	if err := appendActivity(
+		ctx,
+		tx,
+		task,
+		"TASK_CREATED",
+		task.CreatedBy,
+		command.OccurredAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(
+		ctx,
+		tx,
+		task.PracticeID,
+	); err != nil {
+		return Task{}, err
+	}
+	return task, nil
+}
+
 // LockOpenMessageTask validates the exact destination exposed by a Task
 // composer while serializing against completion. Messaging owns the provider
 // effect; Work owns whether the Task can currently originate it.
@@ -393,6 +527,90 @@ func (m *Module) LockOpenMessageTask(
 		task.Phone != phone ||
 		(task.MessageThreadID != "" && task.MessageThreadID != threadID) {
 		return Task{}, ErrConflict
+	}
+	return task, nil
+}
+
+// LockOpenOutboundTask resolves the immutable Location and destination used by
+// HumanCalling. The caller owns the transaction and must apply current Access
+// authorization before committing a Call.
+func (m *Module) LockOpenOutboundTask(
+	ctx context.Context,
+	tx pgx.Tx,
+	taskID string,
+) (Task, error) {
+	if tx == nil || strings.TrimSpace(taskID) == "" {
+		return Task{}, ErrInvalidInput
+	}
+	task, err := lockTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.State != TaskOpen {
+		return Task{}, ErrConflict
+	}
+	return task, nil
+}
+
+// ApplyCallTaskDisposition atomically completes the existing Task or preserves
+// it open after a connected Task-originated Call. It never creates another
+// piece of work.
+func (m *Module) ApplyCallTaskDisposition(
+	ctx context.Context,
+	tx pgx.Tx,
+	taskID string,
+	complete bool,
+	actor access.Actor,
+	occurredAt time.Time,
+) (Task, error) {
+	if tx == nil || strings.TrimSpace(taskID) == "" {
+		return Task{}, ErrInvalidInput
+	}
+	task, err := lockTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if !complete || task.State == TaskCompleted {
+		return task, nil
+	}
+	if task.State != TaskOpen {
+		return Task{}, ErrConflict
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE work_tasks
+		SET
+			state = 'COMPLETED',
+			completed_by_subject = $2,
+			completed_by_email = $3,
+			completed_at = $4,
+			version = version + 1,
+			updated_at = $4
+		WHERE id = $1
+	`, task.ID, actor.Subject, actor.Email, occurredAt); err != nil {
+		return Task{}, fmt.Errorf("complete Call Task: %w", err)
+	}
+	task.State = TaskCompleted
+	task.Version++
+	task.UpdatedAt = occurredAt
+	task.CompletedAt = &occurredAt
+	completedBy := humanActorSnapshot(actor)
+	task.CompletedBy = &completedBy
+	if err := appendActivity(
+		ctx,
+		tx,
+		task,
+		"TASK_COMPLETED",
+		completedBy,
+		occurredAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(
+		ctx,
+		tx,
+		task.PracticeID,
+	); err != nil {
+		return Task{}, err
 	}
 	return task, nil
 }
@@ -853,6 +1071,7 @@ func (m *Module) QueryTasks(
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
+			task.recovery_outcome,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1191,7 +1410,7 @@ func insertTask(
 ) (Task, bool, error) {
 	var task Task
 	var category, callerName, sourceCall, sourceMessage *string
-	var messageID, messageThreadID *string
+	var messageID, messageThreadID, recoveryOutcome *string
 	var createdEmail, completedSubject, completedEmail *string
 	var inserted bool
 	err := tx.QueryRow(ctx, `
@@ -1235,6 +1454,7 @@ func insertTask(
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
+			task.recovery_outcome,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1275,6 +1495,7 @@ func insertTask(
 		&sourceMessage,
 		&messageID,
 		&messageThreadID,
+		&recoveryOutcome,
 		&task.CreatedBy.Kind,
 		&task.CreatedBy.Subject,
 		&createdEmail,
@@ -1297,6 +1518,7 @@ func insertTask(
 		sourceMessage,
 		messageID,
 		messageThreadID,
+		recoveryOutcome,
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
@@ -1326,6 +1548,7 @@ func loadTask(
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
+			task.recovery_outcome,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1373,6 +1596,7 @@ func lockTask(
 			task.source_message,
 			task.source_message_id::text,
 			task.message_thread_id::text,
+			task.recovery_outcome,
 			task.created_by_kind,
 			task.created_by_subject,
 			task.created_by_email,
@@ -1405,7 +1629,7 @@ type taskScanner interface {
 func scanTask(scanner taskScanner) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
-	var messageID, messageThreadID *string
+	var messageID, messageThreadID, recoveryOutcome *string
 	var createdEmail, completedSubject, completedEmail *string
 	if err := scanner.Scan(
 		&task.ID,
@@ -1424,6 +1648,7 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&sourceMessage,
 		&messageID,
 		&messageThreadID,
+		&recoveryOutcome,
 		&task.CreatedBy.Kind,
 		&task.CreatedBy.Subject,
 		&createdEmail,
@@ -1447,6 +1672,7 @@ func scanTask(scanner taskScanner) (Task, error) {
 		sourceMessage,
 		messageID,
 		messageThreadID,
+		recoveryOutcome,
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
@@ -1461,6 +1687,7 @@ func setTaskSource(
 	sourceMessage *string,
 	messageID *string,
 	messageThreadID *string,
+	recoveryOutcome *string,
 	createdEmail *string,
 ) {
 	if category != nil {
@@ -1480,6 +1707,9 @@ func setTaskSource(
 	}
 	if messageThreadID != nil {
 		task.MessageThreadID = *messageThreadID
+	}
+	if recoveryOutcome != nil {
+		task.RecoveryOutcome = RecoveryOutcome(*recoveryOutcome)
 	}
 	if createdEmail != nil {
 		task.CreatedBy.Email = *createdEmail

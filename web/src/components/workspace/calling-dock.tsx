@@ -8,6 +8,7 @@ import {
   MicOffIcon,
   PhoneCallIcon,
   PhoneOffIcon,
+  RotateCcwIcon,
   ShieldAlertIcon,
 } from "lucide-react"
 
@@ -15,21 +16,26 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
   acceptCallingOffer,
   acquireSoftphone,
+  confirmCallingMediaReady,
   getCallingCall,
   getOperatorCallingTimeline,
   issueCallingMediaToken,
   listCallingOffers,
   recordCallingDisposition,
   requestCallingHangup,
+  retryOutboundCall,
   setCallingReadiness,
+  startOutboundCall,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   CallingCall,
   CallingDispositionResult,
   CallingOffer,
+  Location,
   OperatorCallingTimeline,
   SoftphoneState,
 } from "@/lib/api/generated/types.gen"
@@ -40,11 +46,16 @@ import {
   type IncomingMediaLeg,
   type MediaState,
 } from "@/lib/calling/media-adapter"
+import { providerOutcomeLabel } from "@/lib/calling/outcomes"
 import { portalClient } from "@/lib/api/client"
 
 type CallingDockProps = {
   platformOperator: boolean
+  practiceID: string
+  locations: Location[]
   hint: number
+  taskCallRequest?: { id: string; taskID: string }
+  onTaskCallHandled: (requestID: string, error?: string) => void
   onOffersChanged: (offers: CallingOffer[]) => void
   onCallChanged: (call: CallingCall | undefined) => void
   onDisposition: (result: CallingDispositionResult) => void
@@ -56,7 +67,11 @@ const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
 
 export function CallingDock({
   platformOperator,
+  practiceID,
+  locations,
   hint,
+  taskCallRequest,
+  onTaskCallHandled,
   onOffersChanged,
   onCallChanged,
   onDisposition,
@@ -71,6 +86,10 @@ export function CallingDock({
   const [mediaAttached, setMediaAttached] = useState(false)
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState("")
+  const [showDialer, setShowDialer] = useState(false)
+  const [dialLocationID, setDialLocationID] = useState("")
+  const [dialDestination, setDialDestination] = useState("")
+  const [outboundPending, setOutboundPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const adapterRef = useRef<CallingMediaAdapter | null>(null)
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
@@ -83,7 +102,13 @@ export function CallingDock({
   const pendingMediaLegsRef = useRef(new Map<string, string>())
   const ringtoneRef = useRef<(() => void) | null>(null)
   const connectingRef = useRef(false)
+  const handledTaskCallRef = useRef("")
   const notificationsRef = useRef(new Map<string, Notification>())
+  const resolvedDialLocationID = locations.some(
+    (location) => location.id === dialLocationID,
+  )
+    ? dialLocationID
+    : (locations[0]?.id ?? "")
 
   useEffect(() => {
     expectedCallRef.current = expectedCallID
@@ -145,6 +170,73 @@ export function CallingDock({
       String(nextAvailable),
     )
   }, [])
+
+  const commitOutbound = useCallback(
+    async (
+      idempotencyKey: string,
+      route:
+        | { taskId: string }
+        | {
+            practiceId: string
+            locationId: string
+            destination: string
+          },
+    ) => {
+      if (!lease?.owner) return "Enable or take over calling first."
+      if (mediaState !== "ready") return "Browser calling audio is not ready."
+      if (activeCall || expectedCallRef.current) {
+        return "Finish the active Call before starting another."
+      }
+      const token = await getAccessToken()
+      if (!token) return "Your authentication needs to be refreshed."
+      setOutboundPending(true)
+      setError("")
+      const result = await startOutboundCall({
+        client: portalClient(token),
+        body: {
+          sessionId: sessionID,
+          idempotencyKey,
+          ...route,
+        },
+      }).catch(() => undefined)
+      setOutboundPending(false)
+      if (!result?.data) {
+        const status = result?.response?.status
+        if (status === 409) {
+          return "The Call route or active softphone state changed. Refresh and try again."
+        }
+        if (status === 400) {
+          return "The destination is not supported for outbound calling."
+        }
+        if (status === 403) {
+          return "Current Access does not permit this Call."
+        }
+        return "The outbound Call could not be committed."
+      }
+      expectedCallRef.current = result.data.id
+      setExpectedCallID(result.data.id)
+      setActiveCall(result.data)
+      setAvailable(false)
+      availabilityRef.current = false
+      setShowDialer(false)
+      setDialDestination("")
+      return undefined
+    },
+    [activeCall, lease?.owner, mediaState, sessionID],
+  )
+
+  useEffect(() => {
+    if (!taskCallRequest || handledTaskCallRef.current === taskCallRequest.id) {
+      return
+    }
+    handledTaskCallRef.current = taskCallRequest.id
+    void commitOutbound(taskCallRequest.id, {
+      taskId: taskCallRequest.taskID,
+    }).then((requestError) => {
+      onTaskCallHandled(taskCallRequest.id, requestError)
+      if (requestError) setError(requestError)
+    })
+  }, [commitOutbound, onTaskCallHandled, taskCallRequest])
 
   const handleIncoming = useCallback(
     async (leg: IncomingMediaLeg) => {
@@ -232,12 +324,52 @@ export function CallingDock({
               return
             }
             await leg.answer()
+            let attachedCall = current.data
+            if (
+              current.data.direction === "OUTBOUND" &&
+              (current.data.state === "PREPARING" ||
+                current.data.state === "RECONCILING")
+            ) {
+              let confirmed = false
+              for (
+                let confirmationAttempt = 0;
+                confirmationAttempt < 100;
+                confirmationAttempt += 1
+              ) {
+                const result = await confirmCallingMediaReady({
+                  client: portalClient(token),
+                  path: { callId: current.data.id },
+                  body: {
+                    sessionId: sessionID,
+                    mediaToken: leg.mediaToken,
+                    providerLegId: leg.providerLegID,
+                  },
+                }).catch(() => undefined)
+                if (result?.data) {
+                  attachedCall = result.data
+                  confirmed = true
+                  break
+                }
+                if (
+                  result?.response?.status === 401 ||
+                  result?.response?.status === 403
+                ) {
+                  break
+                }
+                await new Promise((resolve) => window.setTimeout(resolve, 100))
+              }
+              if (!confirmed) {
+                throw new Error("staff media readiness was not committed")
+              }
+            }
             mediaLegRef.current = leg
             setMediaAttached(true)
-            setActiveCall(current.data)
+            setActiveCall(attachedCall)
             return
           }
           if (
+            current.data.state !== "PREPARING" &&
+            current.data.state !== "RINGING" &&
             current.data.state !== "CONNECTING" &&
             current.data.state !== "RECONCILING" &&
             current.data.state !== "CONNECTED"
@@ -295,7 +427,18 @@ export function CallingDock({
       return
     }
     setLease(acquired.data)
-    if (!acquired.data.owner) return
+    if (!acquired.data.owner) {
+      if (acquired.data.activeCallId) {
+        expectedCallRef.current = acquired.data.activeCallId
+        setExpectedCallID(acquired.data.activeCallId)
+        const observed = await getCallingCall({
+          client: portalClient(token),
+          path: { callId: acquired.data.activeCallId },
+        }).catch(() => undefined)
+        if (observed?.data) setActiveCall(observed.data)
+      }
+      return
+    }
     if (acquired.data.activeCallId) {
       expectedCallRef.current = acquired.data.activeCallId
       setExpectedCallID(acquired.data.activeCallId)
@@ -406,6 +549,8 @@ export function CallingDock({
       setActiveCall(result.data)
       if (
         result.data.state === "UNANSWERED" ||
+        result.data.state === "MISSED" ||
+        result.data.state === "VOICEMAIL" ||
         result.data.state === "NEEDS_DISPOSITION" ||
         result.data.state === "RESOLVED" ||
         result.data.state === "FOLLOW_UP_REQUIRED"
@@ -462,6 +607,19 @@ export function CallingDock({
     }).catch(() => undefined)
     if (!result?.data?.owner) {
       setLease(result?.data)
+      if (result?.data?.activeCallId) {
+        expectedCallRef.current = result.data.activeCallId
+        setExpectedCallID(result.data.activeCallId)
+        const observed = await getCallingCall({
+          client: portalClient(token),
+          path: { callId: result.data.activeCallId },
+        }).catch(() => undefined)
+        if (observed?.data) setActiveCall(observed.data)
+      } else {
+        expectedCallRef.current = ""
+        setExpectedCallID("")
+        setActiveCall(undefined)
+      }
       setAvailable(false)
       availabilityRef.current = false
       ownerRef.current = false
@@ -661,7 +819,55 @@ export function CallingDock({
     setMuted(!muted)
   }
 
-  async function dispose(outcome: "RESOLVED" | "FOLLOW_UP_REQUIRED") {
+  function sendDTMF(digit: string) {
+    if (!mediaLegRef.current?.sendDTMF(digit)) {
+      setError(
+        "The keypad is available only on the current connected media leg.",
+      )
+    }
+  }
+
+  async function retryCall() {
+    if (!activeCall?.retryAllowed) return
+    const token = await getAccessToken()
+    if (!token) return
+    setOutboundPending(true)
+    setError("")
+    const result = await retryOutboundCall({
+      client: portalClient(token),
+      path: { callId: activeCall.id },
+      body: {
+        sessionId: sessionID,
+        idempotencyKey: window.crypto.randomUUID(),
+      },
+    }).catch(() => undefined)
+    setOutboundPending(false)
+    if (!result?.data) {
+      setError("The retry could not be committed as a new Call attempt.")
+      return
+    }
+    await adapterRef.current?.disconnect()
+    adapterRef.current = null
+    mediaLegRef.current = null
+    setMediaAttached(false)
+    setMuted(false)
+    expectedCallRef.current = result.data.id
+    setExpectedCallID(result.data.id)
+    setActiveCall(result.data)
+    setAvailable(false)
+    availabilityRef.current = false
+    await connectMedia()
+  }
+
+  async function dispose(
+    outcome:
+      | "RESOLVED"
+      | "FOLLOW_UP_REQUIRED"
+      | "COMPLETE_TASK"
+      | "KEEP_OPEN"
+      | "CREATE_TASK"
+      | "NO_FOLLOW_UP",
+  ) {
     if (!activeCall) return
     const token = await getAccessToken()
     if (!token) return
@@ -734,6 +940,16 @@ export function CallingDock({
             >
               {available ? "Pause calls" : "Become available"}
             </Button>
+            {!activeCall && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowDialer((current) => !current)}
+              >
+                <PhoneCallIcon />
+                New call
+              </Button>
+            )}
           </>
         )}
         {earliest && !activeCall && (
@@ -761,6 +977,61 @@ export function CallingDock({
           </div>
         )}
       </div>
+      {showDialer && lease?.owner && mediaState === "ready" && !activeCall && (
+        <form
+          aria-label="Standalone outbound call"
+          className="mt-2 flex flex-wrap items-end gap-2 rounded-md border bg-background p-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void commitOutbound(window.crypto.randomUUID(), {
+              practiceId: practiceID,
+              locationId: resolvedDialLocationID,
+              destination: dialDestination.trim(),
+            }).then((requestError) => {
+              if (requestError) setError(requestError)
+            })
+          }}
+        >
+          <label className="grid gap-1 text-xs">
+            <span className="text-muted-foreground">Call office</span>
+            <NativeSelect
+              aria-label="Call office"
+              className="h-8 min-w-48"
+              value={resolvedDialLocationID}
+              onChange={(event) => setDialLocationID(event.target.value)}
+            >
+              {locations.map((location) => (
+                <NativeSelectOption key={location.id} value={location.id}>
+                  {location.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+          <label className="grid min-w-56 flex-1 gap-1 text-xs">
+            <span className="text-muted-foreground">
+              Destination · US +1 E.164
+            </span>
+            <Input
+              aria-label="Outbound destination"
+              className="h-8 font-mono"
+              placeholder="+15555550100"
+              value={dialDestination}
+              onChange={(event) => setDialDestination(event.target.value)}
+            />
+          </label>
+          <Button
+            size="sm"
+            type="submit"
+            disabled={
+              outboundPending ||
+              !resolvedDialLocationID ||
+              !/^\+1[2-9][0-9]{2}[2-9][0-9]{6}$/.test(dialDestination.trim())
+            }
+          >
+            {outboundPending ? "Preparing…" : "Call"}
+          </Button>
+        </form>
+      )}
       {offers.length > 1 && !activeCall && (
         <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
           {offers.slice(1).map((offer) => (
@@ -790,8 +1061,11 @@ export function CallingDock({
           now={now}
           muted={muted}
           onMute={toggleMute}
+          onDTMF={sendDTMF}
           onHangup={() => void hangup()}
           onDispose={(outcome) => void dispose(outcome)}
+          onRetry={() => void retryCall()}
+          retryPending={outboundPending}
           onClose={() => {
             setActiveCall(undefined)
             setExpectedCallID("")
@@ -903,8 +1177,11 @@ function ActiveCallControls({
   now,
   muted,
   onMute,
+  onDTMF,
   onHangup,
   onDispose,
+  onRetry,
+  retryPending,
   onClose,
 }: {
   call: CallingCall
@@ -914,14 +1191,35 @@ function ActiveCallControls({
   now: number
   muted: boolean
   onMute: () => void
+  onDTMF: (digit: string) => void
   onHangup: () => void
-  onDispose: (outcome: "RESOLVED" | "FOLLOW_UP_REQUIRED") => void
+  onDispose: (
+    outcome:
+      | "RESOLVED"
+      | "FOLLOW_UP_REQUIRED"
+      | "COMPLETE_TASK"
+      | "KEEP_OPEN"
+      | "CREATE_TASK"
+      | "NO_FOLLOW_UP",
+  ) => void
+  onRetry: () => void
+  retryPending: boolean
   onClose: () => void
 }) {
+  const [keypadOpen, setKeypadOpen] = useState(false)
   const ended = call.state === "NEEDS_DISPOSITION"
   const terminal =
     call.state === "RESOLVED" || call.state === "FOLLOW_UP_REQUIRED"
-  const closedWithoutDisposition = call.state === "UNANSWERED"
+  const closedWithoutDisposition =
+    call.state === "UNANSWERED" ||
+    call.state === "VOICEMAIL" ||
+    call.state === "MISSED"
+  const keypadEligible =
+    owner &&
+    call.state === "CONNECTED" &&
+    mediaState === "ready" &&
+    mediaAttached
+  const dispositionChoices = callDispositionChoices(call)
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2">
       <Badge variant={call.state === "CONNECTED" ? "secondary" : "outline"}>
@@ -929,7 +1227,9 @@ function ActiveCallControls({
       </Badge>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">
-          {call.displayName || "Caller"} · {call.locationName}
+          {call.displayName ||
+            (call.direction === "OUTBOUND" ? "Outbound call" : "Caller")}{" "}
+          · {call.locationName}
         </p>
         <p className="truncate text-xs text-muted-foreground">
           {call.phone || "Phone unavailable"}
@@ -942,6 +1242,10 @@ function ActiveCallControls({
           Audio: {mediaAttached ? "attached" : mediaState === "ready" ? "waiting for exact leg" : mediaState}
           {call.connectedAt
             ? ` · ${Math.max(0, Math.floor((now - new Date(call.connectedAt).getTime()) / 1000))}s`
+            : ""}
+          {call.callerId ? ` · Caller ID ${call.callerId}` : ""}
+          {call.providerTermination
+            ? ` · ${providerOutcomeLabel(call.providerTermination)}`
             : ""}
         </p>
       </div>
@@ -959,25 +1263,49 @@ function ActiveCallControls({
         </Button>
       )}
       {owner && call.state === "CONNECTED" && (
-        <Button size="sm" variant="destructive" onClick={onHangup}>
-          <PhoneOffIcon />
-          Hang up
-        </Button>
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!keypadEligible}
+            onClick={() => setKeypadOpen((current) => !current)}
+          >
+            Keypad
+          </Button>
+          <Button size="sm" variant="destructive" onClick={onHangup}>
+            <PhoneOffIcon />
+            Hang up
+          </Button>
+        </>
       )}
       {owner && ended && (
         <>
-          <Button size="sm" onClick={() => onDispose("RESOLVED")}>
+          <Button
+            size="sm"
+            onClick={() => onDispose(dispositionChoices[0].outcome)}
+          >
             <CheckIcon />
-            Resolved
+            {dispositionChoices[0].label}
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => onDispose("FOLLOW_UP_REQUIRED")}
+            onClick={() => onDispose(dispositionChoices[1].outcome)}
           >
-            Create task
+            {dispositionChoices[1].label}
           </Button>
         </>
+      )}
+      {call.retryAllowed && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={retryPending}
+          onClick={onRetry}
+        >
+          <RotateCcwIcon />
+          {retryPending ? "Preparing…" : "Try again"}
+        </Button>
       )}
       {(terminal || closedWithoutDisposition) && (
         <>
@@ -991,8 +1319,67 @@ function ActiveCallControls({
           </Button>
         </>
       )}
+      {keypadOpen && (
+        <div className="basis-full border-t pt-2">
+          <div className="grid w-48 grid-cols-3 gap-1">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"].map(
+              (digit) => (
+                <Button
+                  key={digit}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!keypadEligible}
+                  aria-label={`Send ${digit}`}
+                  onClick={() => onDTMF(digit)}
+                >
+                  {digit}
+                </Button>
+              ),
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+type DispositionChoice = {
+  outcome:
+    | "RESOLVED"
+    | "FOLLOW_UP_REQUIRED"
+    | "COMPLETE_TASK"
+    | "KEEP_OPEN"
+    | "CREATE_TASK"
+    | "NO_FOLLOW_UP"
+  label: string
+}
+
+function callDispositionChoices(
+  call: CallingCall,
+): [DispositionChoice, DispositionChoice] {
+  if (call.direction !== "OUTBOUND") {
+    return [
+      { outcome: "RESOLVED", label: "Resolved" },
+      { outcome: "FOLLOW_UP_REQUIRED", label: "Create task" },
+    ]
+  }
+  if (call.entryPoint === "TASK") {
+    return [
+      { outcome: "COMPLETE_TASK", label: "Complete task" },
+      { outcome: "KEEP_OPEN", label: "Keep open" },
+    ]
+  }
+  if (call.connectedAt) {
+    return [
+      { outcome: "RESOLVED", label: "Resolved" },
+      { outcome: "CREATE_TASK", label: "Create task" },
+    ]
+  }
+  return [
+    { outcome: "NO_FOLLOW_UP", label: "No follow-up" },
+    { outcome: "CREATE_TASK", label: "Create task" },
+  ]
 }
 
 function browserSessionID() {
@@ -1021,6 +1408,10 @@ function acceptanceMessage(status: string) {
 
 function callStateLabel(state: CallingCall["state"]) {
   switch (state) {
+    case "PREPARING":
+      return "Preparing"
+    case "RINGING":
+      return "Ringing"
     case "CONNECTING":
       return "Connecting"
     case "RECONCILING":
@@ -1031,6 +1422,10 @@ function callStateLabel(state: CallingCall["state"]) {
       return "Call ended"
     case "UNANSWERED":
       return "Not connected"
+    case "VOICEMAIL":
+      return "Voicemail"
+    case "MISSED":
+      return "Missed call"
     case "RESOLVED":
       return "Resolved"
     case "FOLLOW_UP_REQUIRED":
