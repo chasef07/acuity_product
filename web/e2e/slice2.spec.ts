@@ -304,6 +304,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     const handoff = (await handoffResponse.json()) as {
       sipDestination: string
     }
+    expect(handoff.sipDestination).toBe(
+      "sip:acuity-handoff@synthetic.sip.telnyx.com",
+    )
 
     await deliverProviderEvent(selectedPage, {
       eventType: "call.initiated",
@@ -314,7 +317,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         call_leg_id: "fixture-caller-leg",
         call_session_id: "fixture-call-session",
         client_state: "",
-        to: handoff.sipDestination,
+        from: "+15555550100",
+        to: "+14843336938",
       },
     })
     const secondHandoffResponse = await selectedPage.request.post(
@@ -341,6 +345,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     const secondHandoff = (await secondHandoffResponse.json()) as {
       sipDestination: string
     }
+    expect(secondHandoff.sipDestination).toBe(
+      "sip:acuity-handoff@synthetic.sip.telnyx.com",
+    )
     await deliverProviderEvent(selectedPage, {
       eventType: "call.initiated",
       eventId: "e2e-caller-initiated-2",
@@ -350,7 +357,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         call_leg_id: "fixture-caller-leg-2",
         call_session_id: "fixture-call-session-2",
         client_state: "",
-        to: secondHandoff.sipDestination,
+        from: "+15555550101",
+        to: "+14843336938",
       },
     })
     await Promise.all([
@@ -792,6 +800,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     const recoveryHandoff = (await recoveryHandoffResponse.json()) as {
       sipDestination: string
     }
+    expect(recoveryHandoff.sipDestination).toBe(
+      "sip:acuity-handoff@synthetic.sip.telnyx.com",
+    )
     await deliverProviderEvent(takeoverPage, {
       eventType: "call.initiated",
       eventId: "e2e-recovery-caller-initiated",
@@ -801,7 +812,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         call_leg_id: "fixture-recovery-caller-leg",
         call_session_id: "fixture-recovery-session",
         client_state: "",
-        to: recoveryHandoff.sipDestination,
+        from: "+15555550102",
+        to: "+14843336938",
       },
     })
     await expect(
