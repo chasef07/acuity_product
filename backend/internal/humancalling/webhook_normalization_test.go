@@ -3,45 +3,9 @@ package humancalling
 import (
 	"encoding/base64"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 )
-
-func TestHandoffTokenHeaderNormalization(t *testing.T) {
-	token := strings.Repeat("a", 43)
-	headers := []telnyxCustomHeader{
-		{Name: "X-Unrelated", Value: "ignored"},
-		{Name: "x-acuity-handoff-token", Value: token},
-	}
-
-	got, err := handoffTokenFromHeaders(headers)
-	if err != nil {
-		t.Fatalf("normalize handoff token header: %v", err)
-	}
-	if got != token {
-		t.Fatalf("handoff token = %q, want %q", got, token)
-	}
-}
-
-func TestHandoffTokenHeaderNormalizationFailsClosed(t *testing.T) {
-	token := strings.Repeat("a", 43)
-	for name, headers := range map[string][]telnyxCustomHeader{
-		"malformed": {
-			{Name: "X-Acuity-Handoff-Token", Value: "not-a-valid-token"},
-		},
-		"duplicate": {
-			{Name: "X-Acuity-Handoff-Token", Value: token},
-			{Name: "x-acuity-handoff-token", Value: token},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := handoffTokenFromHeaders(headers); err != ErrInvalidWebhook {
-				t.Fatalf("normalize invalid handoff token header: %v", err)
-			}
-		})
-	}
-}
 
 func TestRecordingSavedNormalizationRequiresAnExactGCSObject(t *testing.T) {
 	raw := []byte(`{

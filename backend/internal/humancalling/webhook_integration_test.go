@@ -77,16 +77,12 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	if err != nil {
 		t.Fatalf("create webhook handoff: %v", err)
 	}
-	handoffToken := strings.SplitN(
-		strings.TrimPrefix(handoff.SIPDestination, "sip:"),
-		"@",
-		2,
-	)[0]
-
+	if handoff.SIPDestination != "sip:acuity-handoff@synthetic.sip.telnyx.com" {
+		t.Fatalf("handoff SIP destination = %q", handoff.SIPDestination)
+	}
 	raw := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.initiated","id":"webhook-event-1","occurred_at":"%s","payload":{"call_control_id":"webhook-caller-control","call_leg_id":"webhook-caller-leg","call_session_id":"webhook-session","client_state":"","to":"+14843336938","custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]}}}`,
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"webhook-event-1","occurred_at":"%s","payload":{"call_control_id":"webhook-caller-control","call_leg_id":"webhook-caller-leg","call_session_id":"webhook-session","client_state":"","from":"+15555550100","to":"+14843336938"}}}`,
 		now.Format(time.RFC3339Nano),
-		handoffToken,
 	))
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
@@ -183,7 +179,8 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		CallControlID: "webhook-caller-control",
 		CallLegID:     "webhook-caller-leg",
 		CallSessionID: "webhook-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("replay projected fact: %v", err)
 	}
@@ -282,6 +279,95 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	}
 }
 
+func TestSignedReferRejectsAmbiguousReservations(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionStaff(t, accessModule, now)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		&recordingProvider{},
+		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			WebhookPublicKey: publicKey,
+			WebhookTolerance: 5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	for index := range 2 {
+		key := fmt.Sprintf("ambiguous-refer-%d", index+1)
+		if _, err := calling.CreateHandoff(
+			context.Background(),
+			humancalling.CreateHandoffCommand{
+				Service: humancalling.ServiceIdentity{
+					Subject:    "abita-ambiguous-refer",
+					PracticeID: authorization.Practice.ID,
+				},
+				LocationID:     authorization.Locations[0].ID,
+				SourceCallID:   key,
+				IdempotencyKey: key,
+				Contact: humancalling.ContactContext{
+					Phone: "+15555550100",
+				},
+			},
+		); err != nil {
+			t.Fatalf("create reservation %d: %v", index+1, err)
+		}
+	}
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"ambiguous-refer","occurred_at":"%s","payload":{"call_control_id":"ambiguous-control","call_leg_id":"ambiguous-leg","call_session_id":"ambiguous-session","from":"+15555550100","to":"+14843336938"}}}`,
+		now.Format(time.RFC3339Nano),
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(),
+		raw,
+		timestamp,
+		signature,
+	); err != nil {
+		t.Fatalf("receive ambiguous REFER: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process ambiguous REFER: processed=%t err=%v", processed, err)
+	}
+	var state humancalling.ReceiptState
+	var errorCode string
+	var calls, consumed int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			receipt.state,
+			receipt.projection_error_code,
+			(SELECT count(*) FROM human_calling_calls),
+			(SELECT count(*) FROM human_calling_handoffs WHERE consumed_at IS NOT NULL)
+		FROM human_calling_provider_receipts receipt
+		WHERE receipt.event_id = 'ambiguous-refer'
+	`).Scan(&state, &errorCode, &calls, &consumed); err != nil {
+		t.Fatalf("read ambiguous REFER outcome: %v", err)
+	}
+	if state != humancalling.ReceiptFailed ||
+		errorCode != "HANDOFF_REJECTED" ||
+		calls != 0 ||
+		consumed != 0 {
+		t.Fatalf(
+			"ambiguous REFER state=%s error=%s calls=%d consumed=%d",
+			state,
+			errorCode,
+			calls,
+			consumed,
+		)
+	}
+}
+
 func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
@@ -318,7 +404,7 @@ func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set readiness: %v", err)
 	}
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err = calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-non-starved-handoff",
 			PracticeID: authorization.Practice.ID,
@@ -334,11 +420,6 @@ func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create handoff: %v", err)
 	}
-	handoffToken := strings.SplitN(
-		strings.TrimPrefix(handoff.SIPDestination, "sip:"),
-		"@",
-		2,
-	)[0]
 	receive := func(raw []byte) {
 		t.Helper()
 		timestamp := strconv.FormatInt(now.Unix(), 10)
@@ -365,9 +446,8 @@ func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
 
 	now = now.Add(500 * time.Millisecond)
 	receive([]byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.initiated","id":"new-handoff-behind-retry","occurred_at":"%s","payload":{"call_control_id":"new-handoff-control","call_leg_id":"new-handoff-leg","call_session_id":"new-handoff-session","custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]}}}`,
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"new-handoff-behind-retry","occurred_at":"%s","payload":{"call_control_id":"new-handoff-control","call_leg_id":"new-handoff-leg","call_session_id":"new-handoff-session","from":"+15555550100","to":"+14843336938"}}}`,
 		now.Format(time.RFC3339Nano),
-		handoffToken,
 	)))
 	now = now.Add(600 * time.Millisecond)
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
@@ -481,7 +561,8 @@ func TestSlowRelatedFactReceiptIsVisibleInOperatorTimeline(t *testing.T) {
 		CallControlID: "waiting-receipt-caller-control",
 		CallLegID:     "waiting-receipt-caller-leg",
 		CallSessionID: "waiting-receipt-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit waiting receipt Call: %v", err)
 	}
@@ -582,7 +663,7 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 		},
 		func() time.Time { return now },
 	)
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err = calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-late-related-fact",
 			PracticeID: authorization.Practice.ID,
@@ -597,11 +678,6 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create late-related-fact handoff: %v", err)
 	}
-	handoffToken := strings.SplitN(
-		strings.TrimPrefix(handoff.SIPDestination, "sip:"),
-		"@",
-		2,
-	)[0]
 	receive := func(raw []byte) humancalling.WebhookReceipt {
 		t.Helper()
 		timestamp := strconv.FormatInt(now.Unix(), 10)
@@ -660,9 +736,8 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 	}
 
 	initiatedRaw := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.initiated","id":"call-after-answer","occurred_at":"%s","payload":{"call_control_id":"late-related-control","call_leg_id":"late-related-leg","call_session_id":"late-related-session","custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]}}}`,
+		`{"data":{"record_type":"event","event_type":"call.initiated","id":"call-after-answer","occurred_at":"%s","payload":{"call_control_id":"late-related-control","call_leg_id":"late-related-leg","call_session_id":"late-related-session","from":"+15555550100","to":"+14843336938"}}}`,
 		now.Format(time.RFC3339Nano),
-		handoffToken,
 	))
 	receive(initiatedRaw)
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
@@ -1049,7 +1124,7 @@ func newQuarantinedReceiptFixture(t *testing.T) *quarantinedReceiptFixture {
 		},
 		func() time.Time { return fixture.now },
 	)
-	handoff, err := fixture.calling.CreateHandoff(
+	_, err = fixture.calling.CreateHandoff(
 		context.Background(),
 		humancalling.CreateHandoffCommand{
 			Service: humancalling.ServiceIdentity{
@@ -1076,7 +1151,8 @@ func newQuarantinedReceiptFixture(t *testing.T) *quarantinedReceiptFixture {
 			CallControlID: "receipt-requeue-control",
 			CallLegID:     "receipt-requeue-leg",
 			CallSessionID: "receipt-requeue-session",
-			To:            handoff.SIPDestination,
+			From:          "+15555550100",
+			To:            "+14843336938",
 		},
 	); err != nil {
 		t.Fatalf("admit receipt-requeue Call: %v", err)
