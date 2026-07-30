@@ -6,10 +6,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -365,7 +365,7 @@ func createLoadHandoff(
 			LocationID:   authorization.Locations[0].ID,
 			SourceCallID: "load-" + key, IdempotencyKey: "load-" + key,
 			Contact: humancalling.ContactContext{
-				Phone: "+15555550100", DisplayName: "Load Caller",
+				Phone: loadCallerPhone(key), DisplayName: "Load Caller",
 				TransferReason: "Mixed-role load proof",
 			},
 		},
@@ -379,18 +379,23 @@ func createLoadHandoff(
 func loadWebhook(
 	occurredAt time.Time, eventType, eventID, key, destination string,
 ) []byte {
-	headers := ""
+	referIdentity := ""
 	if destination != "" {
-		token := strings.SplitN(strings.TrimPrefix(destination, "sip:"), "@", 2)[0]
-		headers = fmt.Sprintf(
-			`,"custom_headers":[{"name":"X-Acuity-Handoff-Token","value":"%s"}]`,
-			token,
+		referIdentity = fmt.Sprintf(
+			`,"from":"%s","to":"+14843336938"`,
+			loadCallerPhone(key),
 		)
 	}
 	return []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"call_control_id":"load-%s-control","call_leg_id":"load-%s-leg","call_session_id":"load-%s-session"%s}}}`,
-		eventType, eventID, occurredAt.Format(time.RFC3339Nano), key, key, key, headers,
+		eventType, eventID, occurredAt.Format(time.RFC3339Nano), key, key, key, referIdentity,
 	))
+}
+
+func loadCallerPhone(key string) string {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(key))
+	return fmt.Sprintf("+1555%07d", hash.Sum32()%10_000_000)
 }
 
 func loadPercentile(values []time.Duration, percentile int) time.Duration {

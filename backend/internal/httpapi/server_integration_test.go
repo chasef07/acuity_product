@@ -1120,8 +1120,8 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		ExpiresAt      time.Time `json:"expiresAt"`
 	}
 	decode(t, created, &handoff)
-	if strings.Contains(handoff.SIPDestination, "HTTP Caller") ||
-		!strings.HasPrefix(handoff.SIPDestination, "sip:") {
+	if handoff.SIPDestination !=
+		"sip:acuity-handoff@synthetic.sip.telnyx.com" {
 		t.Fatalf("handoff response = %#v", handoff)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -1131,7 +1131,8 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		CallControlID: "http-caller-control",
 		CallLegID:     "http-caller-leg",
 		CallSessionID: "http-call-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit HTTP caller: %v", err)
 	}

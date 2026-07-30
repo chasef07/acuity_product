@@ -77,7 +77,7 @@ var (
 	ErrExpired                   = errors.New("human calling deadline expired")
 	ErrAlreadyClaimed            = errors.New("call already claimed")
 	ErrIneligible                = errors.New("user is not currently call eligible")
-	ErrInvalidHandoff            = errors.New("invalid handoff token")
+	ErrInvalidHandoff            = errors.New("invalid handoff")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
 	ErrDefinitiveProviderFailure = errors.New("provider effect definitely failed")
 	ErrProviderTargetAbsent      = errors.New("provider target is absent")
@@ -147,8 +147,8 @@ type ProviderFact struct {
 	CallLegID          string
 	CallSessionID      string
 	ClientState        string
+	From               string
 	To                 string
-	HandoffToken       string
 	HangupCause        string
 	RecordingID        string
 	RecordingBucket    string
@@ -432,7 +432,7 @@ func (m *Module) CreateHandoff(
 		if !hmac.Equal(existingFingerprint, fingerprint[:]) {
 			return Handoff{}, fmt.Errorf("%w: idempotency key belongs to another handoff", ErrConflict)
 		}
-		existing.SIPDestination = m.sipDestination(existing.ID)
+		existing.SIPDestination = m.sipDestination()
 		if err := tx.Commit(ctx); err != nil {
 			return Handoff{}, fmt.Errorf("commit replayed handoff: %w", err)
 		}
@@ -442,22 +442,25 @@ func (m *Module) CreateHandoff(
 		return Handoff{}, fmt.Errorf("find replayed handoff: %w", err)
 	}
 
+	issuedAt := m.now()
 	result := Handoff{
 		ID:        uuid.NewString(),
-		ExpiresAt: m.now().Add(m.config.HandoffLifetime),
+		ExpiresAt: issuedAt.Add(m.config.HandoffLifetime),
 	}
-	tokenHash := sha256.Sum256([]byte(m.handoffToken(result.ID)))
+	reservationHash := sha256.Sum256([]byte(result.ID))
 	var insertedID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO human_calling_handoffs (
 			id, service_subject, practice_id, location_id, source_call_id,
 			idempotency_key, input_fingerprint, token_hash, phone, phone_source,
-			display_name, name_source, transfer_reason, reason_source, expires_at
+			display_name, name_source, transfer_reason, reason_source, expires_at,
+			created_at
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, NULLIF($9, ''), NULLIF($10, ''),
-			NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), $15
+			NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), $15,
+			$16
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING id::text
@@ -469,7 +472,7 @@ func (m *Module) CreateHandoff(
 		command.SourceCallID,
 		command.IdempotencyKey,
 		fingerprint[:],
-		tokenHash[:],
+		reservationHash[:],
 		command.Contact.Phone,
 		command.Contact.PhoneSource,
 		command.Contact.DisplayName,
@@ -477,6 +480,7 @@ func (m *Module) CreateHandoff(
 		command.Contact.TransferReason,
 		command.Contact.ReasonSource,
 		result.ExpiresAt,
+		issuedAt,
 	).Scan(&insertedID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Handoff{}, fmt.Errorf("create handoff: %w", err)
@@ -511,7 +515,7 @@ func (m *Module) CreateHandoff(
 	if err := tx.Commit(ctx); err != nil {
 		return Handoff{}, fmt.Errorf("commit handoff: %w", err)
 	}
-	result.SIPDestination = m.sipDestination(result.ID)
+	result.SIPDestination = m.sipDestination()
 	return result, nil
 }
 
@@ -5177,15 +5181,6 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 }
 
 func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
-	token := fact.HandoffToken
-	if token == "" {
-		var err error
-		token, err = tokenFromDestination(fact.To)
-		if err != nil {
-			return err
-		}
-	}
-	tokenHash := sha256.Sum256([]byte(token))
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin handoff admission: %w", err)
@@ -5199,20 +5194,13 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		return tx.Commit(ctx)
 	}
 
-	var handoffID, practiceID, locationID string
-	err = tx.QueryRow(ctx, `
-		SELECT id::text, practice_id::text, location_id::text
-		FROM human_calling_handoffs
-		WHERE token_hash = $1
-			AND consumed_at IS NULL
-			AND expires_at > $2
-		FOR UPDATE
-	`, tokenHash[:], m.now()).Scan(&handoffID, &practiceID, &locationID)
+	handoffID, practiceID, locationID, err := m.resolveHandoffForRefer(
+		ctx,
+		tx,
+		fact,
+	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrInvalidHandoff
-		}
-		return fmt.Errorf("resolve handoff admission: %w", err)
+		return err
 	}
 
 	callID := uuid.NewString()
@@ -5286,6 +5274,51 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		return fmt.Errorf("commit handoff admission: %w", err)
 	}
 	return nil
+}
+
+func (m *Module) resolveHandoffForRefer(
+	ctx context.Context,
+	tx pgx.Tx,
+	fact ProviderFact,
+) (string, string, string, error) {
+	if !canonicalE164.MatchString(fact.From) ||
+		!canonicalE164.MatchString(fact.To) {
+		return "", "", "", ErrInvalidHandoff
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id::text, practice_id::text, location_id::text
+		FROM human_calling_handoffs
+		WHERE phone = $1
+			AND consumed_at IS NULL
+			AND created_at <= $2
+			AND expires_at > $2
+		ORDER BY created_at, id
+		LIMIT 2
+		FOR UPDATE
+	`,
+		fact.From,
+		fact.OccurredAt,
+	)
+	if err != nil {
+		return "", "", "", fmt.Errorf("correlate handoff admission: %w", err)
+	}
+	defer rows.Close()
+
+	var handoffID, practiceID, locationID string
+	candidateCount := 0
+	for rows.Next() {
+		candidateCount++
+		if err := rows.Scan(&handoffID, &practiceID, &locationID); err != nil {
+			return "", "", "", fmt.Errorf("scan handoff admission: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", "", fmt.Errorf("read handoff admission: %w", err)
+	}
+	if candidateCount != 1 {
+		return "", "", "", ErrInvalidHandoff
+	}
+	return handoffID, practiceID, locationID, nil
 }
 
 func insertCommand(
@@ -5487,12 +5520,6 @@ func handoffFingerprint(command CreateHandoffCommand) ([32]byte, error) {
 	return sha256.Sum256(encoded), nil
 }
 
-func (m *Module) handoffToken(handoffID string) string {
-	mac := hmac.New(sha256.New, m.tokenKey)
-	_, _ = mac.Write([]byte(handoffID))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
 func (m *Module) staffMediaToken(callID string, attemptID string) string {
 	mac := hmac.New(sha256.New, m.tokenKey)
 	_, _ = mac.Write([]byte("staff-media-v1\x00" + callID + "\x00" + attemptID))
@@ -5505,27 +5532,8 @@ func (m *Module) receiptRecoveryReference(eventID string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (m *Module) sipDestination(handoffID string) string {
-	return "sip:" + m.handoffToken(handoffID) + "@" + m.config.HandoffSIPDomain
-}
-
-func tokenFromDestination(destination string) (string, error) {
-	value := strings.TrimSpace(destination)
-	if !strings.HasPrefix(strings.ToLower(value), "sip:") {
-		return "", ErrInvalidHandoff
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Opaque == "" {
-		return "", ErrInvalidHandoff
-	}
-	token := parsed.Opaque
-	if at := strings.IndexByte(token, '@'); at >= 0 {
-		token = token[:at]
-	}
-	if token == "" {
-		return "", ErrInvalidHandoff
-	}
-	return token, nil
+func (m *Module) sipDestination() string {
+	return "sip:acuity-handoff@" + m.config.HandoffSIPDomain
 }
 
 func opaqueClientState(callID string, leg string, attemptID ...string) string {

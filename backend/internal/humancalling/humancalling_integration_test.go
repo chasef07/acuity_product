@@ -110,7 +110,8 @@ func TestAuthenticatedHandoffCreatesOneCurrentOffer(t *testing.T) {
 		CallControlID: "caller-control-1",
 		CallLegID:     "caller-leg-1",
 		CallSessionID: "caller-session-1",
-		To:            first.SIPDestination,
+		From:          command.Contact.Phone,
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit synthetic caller: %v", err)
 	}
@@ -418,7 +419,7 @@ func TestCallHistoryUsesExactPhoneAndCurrentAuthorizedLocations(t *testing.T) {
 	) string {
 		t.Helper()
 		now = at
-		handoff, err := calling.CreateHandoff(
+		_, err := calling.CreateHandoff(
 			context.Background(),
 			humancalling.CreateHandoffCommand{
 				Service: humancalling.ServiceIdentity{
@@ -450,7 +451,8 @@ func TestCallHistoryUsesExactPhoneAndCurrentAuthorizedLocations(t *testing.T) {
 				CallControlID: key + "-control",
 				CallLegID:     key + "-leg",
 				CallSessionID: key + "-session",
-				To:            handoff.SIPDestination,
+				From:          phone,
+				To:            "+14843336938",
 			},
 		); err != nil {
 			t.Fatalf("admit %s history Call: %v", key, err)
@@ -1432,7 +1434,7 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		Observer:         observer,
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-synthetic",
 			PracticeID: authorization.Practice.ID,
@@ -1459,7 +1461,8 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		CallControlID: "claim-caller-control",
 		CallLegID:     "claim-caller-leg",
 		CallSessionID: "claim-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550123",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit claim caller: %v", err)
 	}
@@ -2333,7 +2336,7 @@ func TestDelayedHistoricalWinnerDoesNotConflictWithANewerActiveCall(t *testing.T
 	}
 	admit := func(key string) string {
 		t.Helper()
-		handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 			Service: humancalling.ServiceIdentity{
 				Subject:    "abita-historical",
 				PracticeID: authorizations[0].Practice.ID,
@@ -2359,7 +2362,8 @@ func TestDelayedHistoricalWinnerDoesNotConflictWithANewerActiveCall(t *testing.T
 			CallControlID: key + "-caller-control",
 			CallLegID:     key + "-caller-leg",
 			CallSessionID: key + "-session",
-			To:            handoff.SIPDestination,
+			From:          "+15555550100",
+			To:            "+14843336938",
 		}); err != nil {
 			t.Fatalf("admit %s Call: %v", key, err)
 		}
@@ -2807,7 +2811,7 @@ func TestPlatformOperatorPromotionRevokesOperationalCalling(t *testing.T) {
 		CredentialConnectionID: "credential-connection-1",
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-operator-promotion",
 			PracticeID: authorization.Practice.ID,
@@ -2829,7 +2833,8 @@ func TestPlatformOperatorPromotionRevokesOperationalCalling(t *testing.T) {
 		CallControlID: "operator-promotion-caller-control",
 		CallLegID:     "operator-promotion-caller-leg",
 		CallSessionID: "operator-promotion-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit operator promotion Call: %v", err)
 	}
@@ -3280,7 +3285,8 @@ func TestPlatformOperatorReadsOnlyTheSanitizedDurableTimeline(t *testing.T) {
 		CallControlID: "operator-timeline-control",
 		CallLegID:     "operator-timeline-leg",
 		CallSessionID: "operator-timeline-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit operator timeline call: %v", err)
 	}
@@ -3563,11 +3569,12 @@ func TestHistoricalBridgeCannotRegressADispositionedCall(t *testing.T) {
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "terminal-bridge-caller",
 		Type:          humancalling.FactCallInitiated,
-		OccurredAt:    now,
+		OccurredAt:    now.Add(time.Hour),
 		CallControlID: "terminal-bridge-caller-control",
 		CallLegID:     "terminal-bridge-caller-leg",
 		CallSessionID: "terminal-bridge-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit terminal bridge Call: %v", err)
 	}
@@ -4030,7 +4037,7 @@ func readyOfferAt(
 		RecordingBucket:  "synthetic-recordings",
 	}, clock)
 	prepareCredentials(t, calling)
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-" + key,
 			PracticeID: authorization.Practice.ID,
@@ -4057,7 +4064,8 @@ func readyOfferAt(
 		CallControlID: key + "-caller-control",
 		CallLegID:     key + "-caller-leg",
 		CallSessionID: key + "-provider-session",
-		To:            handoff.SIPDestination,
+		From:          "+15555550100",
+		To:            "+14843336938",
 	}); err != nil {
 		t.Fatalf("admit %s caller: %v", key, err)
 	}
