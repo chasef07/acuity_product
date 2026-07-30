@@ -166,7 +166,7 @@ verify_service_revision() {
     gcloud run revisions describe "$revision" \
       --project "$PROJECT_ID" \
       --region "$REGION" \
-      --format 'value(status.conditions[?type=Ready].status)'
+      --format 'value(status.conditions[0].status)'
   )"
   if [[ "$actual_image" != "$expected_image" || "$ready" != "True" ]]; then
     echo "$revision is not ready on the expected immutable image." >&2
@@ -247,7 +247,7 @@ worker_ready="$(
   gcloud run worker-pools describe acuity-worker \
     --project "$PROJECT_ID" \
     --region "$REGION" \
-    --format 'value(status.conditions[?type=Ready].status)'
+    --format 'value(status.conditions[0].status)'
 )"
 if [[ "$worker_ready" != "True" ]]; then
   echo "$worker_revision did not become ready." >&2
