@@ -78,6 +78,7 @@ const (
 	SSELifetimeEnded      SSECloseReason = "lifetime"
 	SSEWriteFailed        SSECloseReason = "write_failed"
 	SSERevalidationFailed SSECloseReason = "revalidation_failed"
+	SSEListenerChanged    SSECloseReason = "listener_changed"
 	SSEShutdown           SSECloseReason = "shutdown"
 )
 
@@ -160,7 +161,7 @@ func SSEStreamOpened() Event {
 func SSEStreamClosed(reason SSECloseReason) Event {
 	return Event{signal: "acuity_call_center_sse_stream", fields: []any{
 		"state", "closed", "reason", bounded(string(reason),
-			"client", "lifetime", "write_failed", "revalidation_failed", "shutdown"),
+			"client", "lifetime", "write_failed", "revalidation_failed", "listener_changed", "shutdown"),
 	}, sseDelta: -1}
 }
 

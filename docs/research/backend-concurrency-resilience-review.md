@@ -151,12 +151,23 @@ Cloud Run treats long-lived streams as requests. A request defaults to a five-mi
 
 The realtime contract should therefore be:
 
-- configure a bounded stream lifetime below the Cloud Run maximum;
+- configure a jittered application stream lifetime with explicit margin below
+  the Cloud Run request timeout;
 - send heartbeats so dead connections are detected;
-- reconnect with jitter;
-- fetch a full authorized snapshot at initial connection and after every reconnect;
+- connect through `ready`, then perform exactly one full authorized
+  reconciliation at initial connection and after every reconnect;
+- coalesce disposable hints to the highest observed Practice version with one
+  reconciliation in flight, never applying an older snapshot;
+- retry a failed stream immediately once, then use exponential full jitter with
+  a bounded cap; only after a short grace expose degraded freshness and begin
+  bounded jittered HTTP fallback polling;
 - send stable IDs and row versions only, never treat an SSE event as durable state; and
 - count every open stream against the realtime service's concurrency and capacity.
+
+Loss or recovery of a runtime's PostgreSQL listener changes the listener
+generation and closes every stream from the old generation. This prevents a
+browser from appearing live while its runtime is blind; the reconnect path is
+the resynchronization path.
 
 `LISTEN/NOTIFY` is acceptable only as cross-instance wake-up. PostgreSQL delivers notifications to sessions listening at that moment, after transaction commit, and can fold identical notifications from one transaction. The durable rows must remain the recovery mechanism. [`NOTIFY`](https://www.postgresql.org/docs/current/sql-notify.html)
 

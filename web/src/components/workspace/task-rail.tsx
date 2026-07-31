@@ -55,7 +55,7 @@ import type {
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
-export type ConnectionState = "connecting" | "connected" | "disconnected"
+export type ConnectionState = "connecting" | "connected" | "degraded"
 export type RailMode = "tasks" | "messages"
 
 type TaskRailProps = {
@@ -571,15 +571,15 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
           ? "Live updates connected"
           : state === "connecting"
             ? "Connecting live updates"
-            : "Live updates disconnected"
+            : "Live updates delayed"
       }
-      variant={state === "disconnected" ? "destructive" : "outline"}
+      variant="outline"
     >
       {state === "connected"
         ? "Live"
         : state === "connecting"
           ? "Sync"
-          : "Disconnected"}
+          : "Updates delayed"}
     </Badge>
   )
 }

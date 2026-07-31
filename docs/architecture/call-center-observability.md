@@ -59,8 +59,8 @@ Neither the actual `call_id` nor `event_type` should become a metric label.
   durable state.
 - Alert if Dial queue p95 exceeds one second, provider-command ambiguity rises,
   or pool saturation remains at or above 0.8.
-- Alert if any pool acquisition exhausts its deadline, the SSE listener remains
-  disconnected for one minute, or reconnect failures repeat. Client and
+- Alert if any pool acquisition exhausts its deadline, the SSE listener
+  repeatedly disconnects, or any reconnect attempt fails. Client and
   shutdown cancellation is reported as `canceled`, not `timeout`.
 - Track `already_claimed` accepts as expected contention, but alert on a sharp
   change in its ratio to `won`.

@@ -34,6 +34,9 @@ type runtimeCapacity struct {
 	PoolMaximum                    int    `json:"poolMaximum"`
 	DedicatedConnections           int    `json:"dedicatedConnections"`
 	AcquisitionTimeoutMilliseconds int    `json:"acquisitionTimeoutMilliseconds"`
+	RequestTimeoutSeconds          int    `json:"requestTimeoutSeconds"`
+	StreamMaximumSeconds           int    `json:"streamMaximumSeconds"`
+	StreamJitterSeconds            int    `json:"streamJitterSeconds"`
 }
 
 type migrationCapacity struct {
@@ -158,6 +161,9 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 			PoolMaximum:                    1,
 			DedicatedConnections:           1,
 			AcquisitionTimeoutMilliseconds: 1500,
+			RequestTimeoutSeconds:          300,
+			StreamMaximumSeconds:           270,
+			StreamJitterSeconds:            30,
 		},
 		"worker": {
 			Name:                           "worker",
@@ -278,14 +284,14 @@ func TestProductionRendererIncludesAuditableResourceAndRegionRows(t *testing.T) 
 	}
 	rows := strings.Split(strings.TrimSpace(string(output)), "\n")
 	expected := []string{
-		"capacity\tmeta\t0\t0\t22\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
-		"web\tservice\t40\t0\t2\t1\t0\t1500\t0\t1\t512\trequest-based\tus-east1",
-		"portal-api\tservice\t20\t1\t3\t1\t0\t1500\t0\t1\t512\trequest-based\tus-east1",
-		"provider-ingress\tservice\t20\t1\t2\t1\t0\t1500\t0\t1\t512\trequest-based\tus-east1",
-		"realtime\tservice\t50\t1\t2\t1\t1\t1500\t0\t1\t512\trequest-based\tus-east1",
-		"worker\tworker-pool\t0\t1\t1\t1\t0\t1500\t0\t1\t512\tinstance-based\tus-east1",
-		"migrate\tjob\t0\t0\t1\t1\t0\t5000\t0\t1\t512\tinstance-based\tus-east1",
-		"database\tdatabase\t0\t0\t1\t0\t0\t0\t0\t2\t8192\tinstance-based\tus-east1\tPOSTGRES_16\tENTERPRISE\tZONAL\t50\tSSD\t04:00\t7\t7\t1\t1\t1\t0\t1\tus-east1",
+		"capacity\tmeta\t0\t0\t22\t0\t0\t0\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
+		"web\tservice\t40\t0\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
+		"portal-api\tservice\t20\t1\t3\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
+		"provider-ingress\tservice\t20\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
+		"realtime\tservice\t50\t1\t2\t1\t1\t1500\t300\t270\t30\t0\t1\t512\trequest-based\tus-east1",
+		"worker\tworker-pool\t0\t1\t1\t1\t0\t1500\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
+		"migrate\tjob\t0\t0\t1\t1\t0\t5000\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
+		"database\tdatabase\t0\t0\t1\t0\t0\t0\t0\t0\t0\t0\t2\t8192\tinstance-based\tus-east1\tPOSTGRES_16\tENTERPRISE\tZONAL\t50\tSSD\t04:00\t7\t7\t1\t1\t1\t0\t1\tus-east1",
 	}
 	if len(rows) != len(expected) {
 		t.Fatalf("rendered row count = %d, want %d\n%s", len(rows), len(expected), output)
@@ -349,11 +355,14 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--region\tus-east1",
 		"--cpu\t1",
 		"--memory\t512Mi",
+		"--timeout\t300",
 		"--cpu-throttling",
 		"--concurrency\t50",
 		"--min\t1",
 		"--max\t2",
 		"DATABASE_POOL_MAX=1",
+		"REALTIME_STREAM_SECONDS=270",
+		"REALTIME_STREAM_JITTER_SECONDS=30",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-web",
 		"--region\tus-east1",

@@ -20,14 +20,15 @@ import (
 const notificationChannel = "acuity_workspace_hints"
 
 type Config struct {
-	DatabaseURL        string
-	AccessTimeout      time.Duration
-	HeartbeatInterval  time.Duration
-	StreamLifetime     time.Duration
-	RevalidateInterval time.Duration
-	ReconnectMin       time.Duration
-	ReconnectMax       time.Duration
-	Observer           observability.Observer
+	DatabaseURL          string
+	AccessTimeout        time.Duration
+	HeartbeatInterval    time.Duration
+	StreamLifetime       time.Duration
+	StreamLifetimeJitter time.Duration
+	RevalidateInterval   time.Duration
+	ReconnectMin         time.Duration
+	ReconnectMax         time.Duration
+	Observer             observability.Observer
 }
 
 type Hint struct {
@@ -44,6 +45,7 @@ type Hub struct {
 
 	mu          sync.RWMutex
 	subscribers map[string]map[chan Hint]struct{}
+	listener    chan struct{}
 	ready       atomic.Bool
 }
 
@@ -53,7 +55,8 @@ func New(config Config, accessModule *access.Module) (*Hub, error) {
 	}
 	if config.AccessTimeout <= 0 ||
 		config.HeartbeatInterval <= 0 ||
-		config.StreamLifetime <= config.HeartbeatInterval ||
+		config.StreamLifetimeJitter < 0 ||
+		config.StreamLifetime-config.StreamLifetimeJitter <= config.HeartbeatInterval ||
 		config.RevalidateInterval <= 0 ||
 		config.ReconnectMin <= 0 ||
 		config.ReconnectMax < config.ReconnectMin {
@@ -64,6 +67,7 @@ func New(config Config, accessModule *access.Module) (*Hub, error) {
 		access:      accessModule,
 		observer:    config.Observer,
 		subscribers: map[string]map[chan Hint]struct{}{},
+		listener:    make(chan struct{}),
 	}, nil
 }
 
@@ -104,6 +108,9 @@ func (hub *Hub) Run(ctx context.Context) {
 			continue
 		}
 
+		if connectedOnce {
+			hub.rotateListener()
+		}
 		hub.ready.Store(true)
 		observability.Record(
 			hub.observer,
@@ -125,6 +132,7 @@ func (hub *Hub) Run(ctx context.Context) {
 			hub.publish(hint)
 		}
 		hub.ready.Store(false)
+		hub.rotateListener()
 		observability.Record(
 			hub.observer,
 			observability.SSEListenerDisconnected(),
@@ -144,6 +152,9 @@ func (hub *Hub) Stream(
 	practiceID string,
 	locationID string,
 ) error {
+	if !hub.Ready() {
+		return errors.New("realtime listener is unavailable")
+	}
 	accessContext, cancelAccess := context.WithTimeout(r.Context(), hub.config.AccessTimeout)
 	authorization, err := hub.access.ResolveActor(accessContext, identity, practiceID, locationID)
 	cancelAccess()
@@ -154,8 +165,16 @@ func (hub *Hub) Stream(
 	if !ok {
 		return errors.New("streaming response is unavailable")
 	}
+	listener, ready := hub.listenerSnapshot()
+	if !ready {
+		return errors.New("realtime listener is unavailable")
+	}
 	hints, unsubscribe := hub.subscribe(practiceID)
 	defer unsubscribe()
+	currentListener, ready := hub.listenerSnapshot()
+	if !ready || currentListener != listener {
+		return errors.New("realtime listener is unavailable")
+	}
 	closeReason := observability.SSEClientClosed
 	observability.Record(hub.observer, observability.SSEStreamOpened())
 	defer func() {
@@ -182,7 +201,10 @@ func (hub *Hub) Stream(
 	defer heartbeat.Stop()
 	revalidate := time.NewTicker(hub.config.RevalidateInterval)
 	defer revalidate.Stop()
-	lifetime := time.NewTimer(hub.config.StreamLifetime)
+	lifetime := time.NewTimer(jitterBelow(
+		hub.config.StreamLifetime,
+		hub.config.StreamLifetimeJitter,
+	))
 	defer lifetime.Stop()
 
 	for {
@@ -191,6 +213,9 @@ func (hub *Hub) Stream(
 			return nil
 		case <-lifetime.C:
 			closeReason = observability.SSELifetimeEnded
+			return nil
+		case <-listener:
+			closeReason = observability.SSEListenerChanged
 			return nil
 		case hint := <-hints:
 			if err := writeEvent(w, "hint", hint); err != nil {
@@ -214,6 +239,19 @@ func (hub *Hub) Stream(
 			}
 		}
 	}
+}
+
+func (hub *Hub) listenerSnapshot() (<-chan struct{}, bool) {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return hub.listener, hub.ready.Load()
+}
+
+func (hub *Hub) rotateListener() {
+	hub.mu.Lock()
+	close(hub.listener)
+	hub.listener = make(chan struct{})
+	hub.mu.Unlock()
 }
 
 func (hub *Hub) subscribe(practiceID string) (<-chan Hint, func()) {
@@ -289,4 +327,16 @@ func jitter(base time.Duration) time.Duration {
 	spread := base / 2
 	offset := time.Duration(binary.LittleEndian.Uint64(value[:]) % uint64(spread))
 	return base - spread/2 + offset
+}
+
+func jitterBelow(maximum, spread time.Duration) time.Duration {
+	if spread <= 0 {
+		return maximum
+	}
+	var value [8]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return maximum
+	}
+	offset := time.Duration(binary.LittleEndian.Uint64(value[:]) % uint64(spread))
+	return maximum - offset
 }

@@ -29,8 +29,9 @@ The vertical path is:
    Practice-scoped workspace hint. A replay returns the same Task ID.
 5. The winning browser selects the returned Task. Other browsers treat the SSE
    message only as a hint, refetch the protected Task query, and preserve their
-   current selection. If realtime is unavailable, the visible disconnected
-   shell uses a bounded authoritative refetch until the stream recovers.
+   current selection. If realtime remains unavailable past its grace period,
+   the shell marks updates as delayed and uses bounded jittered authoritative
+   polling until the stream recovers.
 6. Rename, complete, and reopen commands lock current Access and Task state in
    one transaction, compare the expected Task version, append one Activity, and
    then publish a refetch hint.

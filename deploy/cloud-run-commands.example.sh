@@ -75,6 +75,9 @@ load_contract_row() {
     runtime_pool \
     runtime_dedicated \
     runtime_timeout \
+    runtime_request_timeout \
+    runtime_stream_maximum \
+    runtime_stream_jitter \
     runtime_retries \
     runtime_vcpus \
     runtime_memory_mib \
@@ -118,12 +121,12 @@ case "$ACUITY_DEPLOYMENT_PROFILE" in
     ;;
   nonproduction)
     CONTRACT_ROWS=$(
-      printf 'web\tservice\t40\t0\t2\t3\t0\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
-      printf 'portal-api\tservice\t20\t0\t3\t4\t0\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
-      printf 'provider-ingress\tservice\t20\t0\t2\t2\t0\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
-      printf 'realtime\tservice\t50\t0\t2\t3\t1\t1500\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
-      printf 'worker\tworker-pool\t0\t2\t2\t2\t0\t1500\t0\t1\t512\tinstance-based\t%s\n' "$GCP_REGION"
-      printf 'migrate\tjob\t0\t0\t1\t2\t0\t5000\t0\t1\t512\tinstance-based\t%s\n' "$GCP_REGION"
+      printf 'web\tservice\t40\t0\t2\t3\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'portal-api\tservice\t20\t0\t3\t4\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'provider-ingress\tservice\t20\t0\t2\t2\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'realtime\tservice\t50\t0\t2\t3\t1\t1500\t300\t30\t5\t0\t1\t512\trequest-based\t%s\n' "$GCP_REGION"
+      printf 'worker\tworker-pool\t0\t2\t2\t2\t0\t1500\t0\t0\t0\t0\t1\t512\tinstance-based\t%s\n' "$GCP_REGION"
+      printf 'migrate\tjob\t0\t0\t1\t2\t0\t5000\t0\t0\t0\t0\t1\t512\tinstance-based\t%s\n' "$GCP_REGION"
     )
     ;;
   *)
@@ -184,8 +187,11 @@ deploy_service() {
     --min "$minimum" \
     --max "$maximum" \
     --set-secrets "$secrets" \
-    --set-env-vars "$env_vars" \
-    "$invocation"
+    --set-env-vars "$env_vars"
+  if [ "$runtime_request_timeout" -gt 0 ]; then
+    set -- "$@" --timeout "$runtime_request_timeout"
+  fi
+  set -- "$@" "$invocation"
   case "$runtime_name" in
     portal-api)
       set -- "$@" \
@@ -212,7 +218,7 @@ deploy_service "$PROVIDER_DATABASE_URL_SECRET" --no-invoker-iam-check \
 load_contract_row realtime
 deploy_service "$REALTIME_DATABASE_URL_SECRET" --no-invoker-iam-check \
   "" \
-  "BROWSER_ORIGIN=${BROWSER_ORIGIN},BETTER_AUTH_JWKS_URL=${BETTER_AUTH_JWKS_URL},BETTER_AUTH_ISSUER=${BETTER_AUTH_ISSUER},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},REALTIME_HEARTBEAT_SECONDS=15,REALTIME_STREAM_SECONDS=300,REALTIME_REVALIDATE_SECONDS=30,REALTIME_RECONNECT_MIN_MS=250,REALTIME_RECONNECT_MAX_SECONDS=5"
+  "BROWSER_ORIGIN=${BROWSER_ORIGIN},BETTER_AUTH_JWKS_URL=${BETTER_AUTH_JWKS_URL},BETTER_AUTH_ISSUER=${BETTER_AUTH_ISSUER},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},REALTIME_HEARTBEAT_SECONDS=15,REALTIME_STREAM_SECONDS=${runtime_stream_maximum},REALTIME_STREAM_JITTER_SECONDS=${runtime_stream_jitter},REALTIME_REVALIDATE_SECONDS=30,REALTIME_RECONNECT_MIN_MS=250,REALTIME_RECONNECT_MAX_SECONDS=5"
 
 # WEB_IMAGE_DIGEST must already contain the required NEXT_PUBLIC origins;
 # Next.js embeds them during the image build rather than at runtime.
