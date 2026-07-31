@@ -40,7 +40,7 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_WEB_IMAGE}:${_IMAGE_TAG}
 
   - id: deploy
-    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:578.0.0-slim
     waitFor: [push-backend, push-web]
     entrypoint: /bin/bash
     args: [deploy/deploy-production-release.sh]
