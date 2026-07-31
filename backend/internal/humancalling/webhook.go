@@ -500,15 +500,83 @@ func (m *Module) replayProviderReceipt(
 	if err == nil {
 		err = m.ApplyProviderFact(ctx, fact)
 	}
+	if errors.Is(err, ErrInvalidHandoff) {
+		if err := m.rememberRejectedProviderLeg(ctx, fact); err != nil {
+			return ReceiptPending, "PROJECTION_RETRY"
+		}
+		return ReceiptFailed, "HANDOFF_REJECTED"
+	}
+	if errors.Is(err, ErrConflict) && rejectedHandoffLifecycle(fact.Type) {
+		rejected, lookupErr := m.providerLegWasRejected(ctx, fact)
+		if lookupErr != nil {
+			return ReceiptPending, "PROJECTION_RETRY"
+		}
+		if rejected {
+			return ReceiptFailed, "RELATED_HANDOFF_REJECTED"
+		}
+	}
 	switch {
 	case err == nil:
 		return ReceiptApplied, ""
 	case errors.Is(err, ErrConflict):
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
-	case errors.Is(err, ErrInvalidHandoff):
-		return ReceiptFailed, "HANDOFF_REJECTED"
 	default:
 		return ReceiptPending, "PROJECTION_RETRY"
+	}
+}
+
+func (m *Module) rememberRejectedProviderLeg(
+	ctx context.Context,
+	fact ProviderFact,
+) error {
+	_, err := m.pool.Exec(ctx, `
+		INSERT INTO human_calling_rejected_provider_legs (
+			call_control_id,
+			call_leg_id,
+			call_session_id,
+			initiated_event_id,
+			rejected_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING
+	`,
+		fact.CallControlID,
+		fact.CallLegID,
+		fact.CallSessionID,
+		fact.EventID,
+		m.now(),
+	)
+	if err != nil {
+		return fmt.Errorf("remember rejected provider leg: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) providerLegWasRejected(
+	ctx context.Context,
+	fact ProviderFact,
+) (bool, error) {
+	var rejected bool
+	if err := m.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM human_calling_rejected_provider_legs
+			WHERE call_control_id = $1
+				AND call_leg_id = $2
+				AND call_session_id = $3
+		)
+	`, fact.CallControlID, fact.CallLegID, fact.CallSessionID).Scan(&rejected); err != nil {
+		return false, fmt.Errorf("find rejected provider leg: %w", err)
+	}
+	return rejected, nil
+}
+
+func rejectedHandoffLifecycle(factType FactType) bool {
+	switch factType {
+	case FactCallAnswered, FactCallBridged, FactCallHangup:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -27,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 12 {
-		t.Fatalf("migration count = %d, want 12", migrationCount)
+	if migrationCount != 13 {
+		t.Fatalf("migration count = %d, want 13", migrationCount)
 	}
 	var activeCommandIndexIsUnique bool
 	if err := pool.QueryRow(ctx, `
@@ -149,6 +149,59 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 		if !exists {
 			t.Fatalf("operational Users view %s is missing", view)
 		}
+	}
+}
+
+func TestRejectedProviderLegMigrationBackfillsFailedHandoffs(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE human_calling_rejected_provider_legs;
+		DELETE FROM schema_migrations
+		WHERE name = '0013_rejected_provider_legs.sql';
+		INSERT INTO human_calling_provider_receipts (
+			event_id,
+			event_type,
+			occurred_at,
+			received_at,
+			signature_timestamp,
+			raw_body,
+			state,
+			projection_error_code,
+			projected_at
+		)
+		VALUES (
+			'backfilled-rejected-initiation',
+			'call.initiated',
+			'2026-07-31T12:00:00Z',
+			'2026-07-31T12:00:01Z',
+			1,
+			convert_to(
+				'{"data":{"payload":{"call_control_id":"backfilled-control","call_leg_id":"backfilled-leg","call_session_id":"backfilled-session"}}}',
+				'UTF8'
+			),
+			'FAILED',
+			'HANDOFF_REJECTED',
+			'2026-07-31T12:00:02Z'
+		)
+	`); err != nil {
+		t.Fatalf("prepare rejected provider leg backfill: %v", err)
+	}
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply rejected provider leg migration: %v", err)
+	}
+	var eventID string
+	if err := pool.QueryRow(ctx, `
+		SELECT initiated_event_id
+		FROM human_calling_rejected_provider_legs
+		WHERE call_control_id = 'backfilled-control'
+			AND call_leg_id = 'backfilled-leg'
+			AND call_session_id = 'backfilled-session'
+	`).Scan(&eventID); err != nil {
+		t.Fatalf("read backfilled rejected provider leg: %v", err)
+	}
+	if eventID != "backfilled-rejected-initiation" {
+		t.Fatalf("backfilled rejected provider event = %q", eventID)
 	}
 }
 

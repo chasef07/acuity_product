@@ -368,6 +368,89 @@ func TestSignedReferRejectsAmbiguousReservations(t *testing.T) {
 	}
 }
 
+func TestRejectedHandoffTerminalizesRelatedLifecycleReceipts(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		&recordingProvider{},
+		humancalling.Config{
+			WebhookPublicKey: publicKey,
+			WebhookTolerance: 5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	receive := func(raw []byte) humancalling.WebhookReceipt {
+		t.Helper()
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		receipt, err := calling.ReceiveWebhook(
+			context.Background(),
+			raw,
+			timestamp,
+			signature,
+		)
+		if err != nil {
+			t.Fatalf("receive rejected-leg webhook: %v", err)
+		}
+		return receipt
+	}
+	process := func(label string) {
+		t.Helper()
+		if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+			t.Fatalf("process %s: processed=%t err=%v", label, processed, err)
+		}
+	}
+	raw := func(eventID, eventType string) []byte {
+		t.Helper()
+		extra := ""
+		if eventType == "call.initiated" {
+			extra = `,"from":"+15555550100","to":"+14843336938"`
+		}
+		if eventType == "call.hangup" {
+			extra = `,"hangup_cause":"normal_clearing"`
+		}
+		return []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"call_control_id":"rejected-control","call_leg_id":"rejected-leg","call_session_id":"rejected-session"%s}}}`,
+			eventType,
+			eventID,
+			now.Format(time.RFC3339Nano),
+			extra,
+		))
+	}
+
+	initiated := raw("rejected-initiated", "call.initiated")
+	receive(initiated)
+	process("rejected initiation")
+	if receipt := receive(initiated); receipt.State != humancalling.ReceiptFailed {
+		t.Fatalf("rejected initiation receipt = %#v", receipt)
+	}
+
+	for _, eventType := range []string{"call.answered", "call.bridged", "call.hangup"} {
+		event := raw("rejected-"+strings.TrimPrefix(eventType, "call."), eventType)
+		receive(event)
+		process(eventType)
+		if eventType == "call.hangup" {
+			now = now.Add(3 * time.Second)
+			process(eventType + " after reorder hold")
+		}
+		if receipt := receive(event); receipt.State != humancalling.ReceiptFailed {
+			t.Fatalf("%s receipt = %#v", eventType, receipt)
+		}
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || processed {
+		t.Fatalf("rejected leg retained retrying receipts: processed=%t err=%v", processed, err)
+	}
+}
+
 func TestRetryingReceiptDoesNotStarveNewHandoff(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
