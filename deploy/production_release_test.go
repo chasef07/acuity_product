@@ -156,6 +156,7 @@ func TestCloudBuildReleaseBuildsBothImagesBeforeDeploy(t *testing.T) {
 		"id: push-backend",
 		"id: push-web",
 		"id: deploy",
+		"gcr.io/google.com/cloudsdktool/google-cloud-cli:578.0.0-slim",
 		"deploy/deploy-production-release.sh",
 		"IMAGE_TAG=${_IMAGE_TAG}",
 	} {
