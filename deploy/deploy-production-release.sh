@@ -210,6 +210,7 @@ gcloud run jobs update acuity-migrate \
   --image "$backend_digest" \
   --tasks 1 \
   --max-retries 0 \
+  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000" \
   --quiet
 gcloud run jobs execute acuity-migrate \
   --project "$PROJECT_ID" \
@@ -231,6 +232,7 @@ for service in "${backend_services[@]}"; do
     --concurrency "$concurrency" \
     --min "$minimum" \
     --max "$maximum" \
+    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500" \
     --startup-probe "httpGet.path=/health/live,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
     --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=3" \
     --quiet
@@ -247,6 +249,7 @@ gcloud run worker-pools deploy acuity-worker \
   --cpu 1 \
   --memory 512Mi \
   --instances 1 \
+  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500" \
   --quiet
 worker_image="$(
   gcloud run worker-pools revisions describe "$worker_revision" \
@@ -299,6 +302,7 @@ gcloud run deploy acuity-web \
   --concurrency "$concurrency" \
   --min "$minimum" \
   --max "$maximum" \
+  --update-env-vars "AUTH_DB_POOL_MAX=1,AUTH_DB_ACQUIRE_TIMEOUT_MS=1500" \
   --quiet
 verify_service_revision "$web_revision" "$web_digest"
 gcloud run services update-traffic acuity-web \

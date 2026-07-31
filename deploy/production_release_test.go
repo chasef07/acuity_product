@@ -35,6 +35,9 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		firstServiceDeploy <= migrationExecute {
 		t.Fatalf("migration was not completed before service staging:\n%s", strings.Join(commands, "\n"))
 	}
+	assertCapturedCommand(t, commands, "run\tjobs\tupdate\tacuity-migrate",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000",
+	)
 
 	for _, service := range []string{
 		"acuity-portal-api",
@@ -60,6 +63,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t20",
 		"--min\t1",
 		"--max\t3",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--cpu\t1",
@@ -67,6 +71,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t20",
 		"--min\t1",
 		"--max\t2",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-realtime",
 		"--cpu\t1",
@@ -74,6 +79,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t50",
 		"--min\t1",
 		"--max\t2",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
 	)
 
 	assertCapturedCommand(t, commands, "run\tworker-pools\tdeploy\tacuity-worker",
@@ -83,6 +89,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--cpu\t1",
 		"--memory\t512Mi",
 		"--instances\t1",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate-instance-split\tacuity-worker",
 		"--to-revisions\tacuity-worker-release-1234=100",
@@ -96,6 +103,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t40",
 		"--min\t0",
 		"--max\t2",
+		"--update-env-vars\tAUTH_DB_POOL_MAX=1,AUTH_DB_ACQUIRE_TIMEOUT_MS=1500",
 	)
 	assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\tacuity-web",
 		"--to-revisions\tacuity-web-release-1234=100",
