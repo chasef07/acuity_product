@@ -1,10 +1,14 @@
-FROM node:24.4.1-alpine AS dependencies
+FROM node:24.4.1-alpine AS base
+
+RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
+
+FROM base AS dependencies
 
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
-FROM node:24.4.1-alpine AS build
+FROM base AS build
 
 WORKDIR /app
 ARG NEXT_PUBLIC_PORTAL_API_URL
@@ -14,7 +18,7 @@ ENV NEXT_PUBLIC_REALTIME_URL=$NEXT_PUBLIC_REALTIME_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN pnpm build
 
 FROM node:24.4.1-alpine AS runtime
 

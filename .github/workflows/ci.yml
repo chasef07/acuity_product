@@ -6,11 +6,15 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
-  verify:
+  backend:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -28,29 +32,77 @@ jobs:
           --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/acuity_test?sslmode=disable
-      NEXT_PUBLIC_PORTAL_API_URL: http://127.0.0.1:18080
-      NEXT_PUBLIC_REALTIME_URL: http://127.0.0.1:18081
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.5"
           cache: true
+      - run: go test ./backend/... ./deploy -count=1
+
+  web:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_PORTAL_API_URL: http://127.0.0.1:18080
+      NEXT_PUBLIC_REALTIME_URL: http://127.0.0.1:18081
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.34.3"
       - uses: actions/setup-node@v7
         with:
           node-version: "24.4.1"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
         working-directory: web
-      - run: go test ./backend/... ./deploy -count=1
-      - run: npm run lint
+      - uses: actions/cache@v5
+        with:
+          path: web/.next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-${{ hashFiles('web/src/**', 'web/public/**', 'web/next.config.ts') }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-
+      - run: pnpm lint
         working-directory: web
-      - run: npm run typecheck
+      - run: pnpm typecheck
         working-directory: web
-      - run: npm run test:unit
+      - run: pnpm test:unit
         working-directory: web
-      - run: npm run build
+      - run: pnpm build
+        working-directory: web
+
+  contracts:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: acuity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d acuity_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.34.3"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.4.1"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
         working-directory: web
       - name: Check generated contracts
         run: |
@@ -59,7 +111,7 @@ jobs:
             --username postgres \
             acuity_schema_check
           go generate ./backend/internal/api
-          npm --prefix web run api:generate
+          pnpm --dir web api:generate
           AUTH_SCHEMA_CHECK_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/acuity_schema_check?sslmode=disable \
             ./scripts/check-auth-schema.sh
           git diff --exit-code -- \
@@ -91,20 +143,29 @@ jobs:
         with:
           go-version: "1.26.5"
           cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.34.3"
       - uses: actions/setup-node@v7
         with:
           node-version: "24.4.1"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
         working-directory: web
-      - run: npx playwright install --with-deps chromium
+      - uses: actions/cache@v5
+        with:
+          path: web/.next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-${{ hashFiles('web/src/**', 'web/public/**', 'web/next.config.ts') }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-
+      - run: pnpm playwright install --with-deps chromium
         working-directory: web
       - run: ./scripts/run-e2e.sh
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [verify, browser]
+    needs: [backend, web, contracts, browser]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

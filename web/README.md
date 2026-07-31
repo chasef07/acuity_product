@@ -6,8 +6,9 @@ Product authorization remains in the Go `Access` module and PostgreSQL.
 Use Node 24. Install dependencies and run the development server:
 
 ```bash
-npm ci
-npm run dev
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 Required server configuration:
@@ -31,4 +32,4 @@ Required build-time browser origins:
 The captured email adapter is test-only and requires both
 `AUTH_EMAIL_MODE=test` and `AUTH_ALLOW_TEST_EMAIL=true`.
 
-Run `npm run lint`, `npm run typecheck`, and `npm run build` before committing.
+Run `pnpm lint`, `pnpm typecheck`, and `pnpm build` before committing.
