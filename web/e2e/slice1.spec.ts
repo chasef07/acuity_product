@@ -313,7 +313,9 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     const coarsePage = await coarseContext.newPage()
     await coarsePage.goto("/workspace")
     await expect(coarsePage.getByText("No follow-up tasks")).toBeVisible()
-    await expect(coarsePage.getByLabel("Practice")).toBeVisible()
+    await expect(
+      coarsePage.getByText("Abita Eye Group", { exact: true }).first(),
+    ).toBeVisible()
     await coarsePage.screenshot({
       path: testInfo.outputPath("workspace-coarse-pointer.png"),
       fullPage: true,
