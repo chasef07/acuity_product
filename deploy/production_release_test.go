@@ -248,6 +248,7 @@ func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 	for _, required := range []string{
 		"deploy:",
 		"needs: [backend, web, contracts, browser]",
+		"go test -p 1 ./backend/... ./deploy -count=1",
 		"github.event_name == 'push'",
 		"github.ref == 'refs/heads/main'",
 		"id-token: write",
