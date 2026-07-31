@@ -100,7 +100,7 @@ done
 cd "$root/web"
 NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
 NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
-npm run build
+pnpm build
 
 PORT=13000 \
 HOSTNAME=127.0.0.1 \
@@ -116,7 +116,7 @@ AUTH_EMAIL_MODE=test \
 AUTH_ALLOW_TEST_EMAIL=true \
 NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
 NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
-npm start >"$runtime_dir/web.log" 2>&1 &
+pnpm start >"$runtime_dir/web.log" 2>&1 &
 web_pid=$!
 
 cd "$root"
@@ -231,4 +231,4 @@ E2E_REALTIME_REPLACEMENT_PID_FILE="$replacement_realtime_pid_file" \
 E2E_RUNTIME_BINARY="$runtime_dir/acuity" \
 E2E_DATABASE_URL="$E2E_DATABASE_URL" \
 E2E_TELNYX_FIXTURE_URL=http://127.0.0.1:19000 \
-npx playwright test --project=chromium "$@"
+pnpm test:e2e -- --project=chromium "$@"

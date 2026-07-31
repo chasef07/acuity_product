@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.34.3",
   "engines": {
     "node": ">=24"
   },
@@ -13,8 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "node --experimental-strip-types --test src/lib/calling/*.test.ts",
     "api:generate": "openapi-ts -i ../api/openapi.yaml -o src/lib/api/generated -c @hey-api/client-fetch",
-    "api:check": "npm run api:generate && git diff --exit-code -- src/lib/api/generated",
-    "test:e2e": "playwright test"
+    "api:check": "pnpm api:generate && git diff --exit-code -- src/lib/api/generated",
+    "playwright": "node ./node_modules/@playwright/test/cli.js",
+    "test:e2e": "pnpm playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -45,11 +47,5 @@
     "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",
     "typescript": "^5"
-  },
-  "overrides": {
-    "js-yaml": "4.3.0",
-    "postcss": "8.5.22",
-    "sharp": "0.35.3",
-    "uuid": "11.1.1"
   }
 }
