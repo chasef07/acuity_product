@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/api/generated/client"
 
-function portalAPIURL(): string {
+export function portalAPIURL(): string {
   const value = process.env.NEXT_PUBLIC_PORTAL_API_URL
   if (!value) {
     throw new Error("NEXT_PUBLIC_PORTAL_API_URL is required")

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -277,6 +278,134 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		task.MessageThreadId == nil ||
 		task.State != api.OPEN {
 		t.Fatalf("HTTP Message Task = %#v", task)
+	}
+	var engagementCallID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id,
+			location_id,
+			state,
+			offer_deadline,
+			connection_deadline,
+			claimant_subject,
+			winner_subject,
+			claimant_session_id,
+			provider_termination,
+			connected_at,
+			ended_at,
+			direction,
+			entry_point,
+			destination_phone,
+			outbound_caller_id,
+			initiating_subject,
+			outbound_idempotency_key,
+			outbound_input_fingerprint,
+			prior_availability_intent,
+			created_at,
+			updated_at
+		)
+		VALUES (
+			$1, $2, 'RESOLVED', $3, $3, $4, $4, 'history-session',
+			'NO_ANSWER', $3, $3, 'OUTBOUND', 'STANDALONE', $5,
+			'+17275550100', $4, 'history-call', $6, true, $3, $3
+		)
+		RETURNING id::text
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now,
+		identity.Subject, "+17275550199", make([]byte, 32),
+	).Scan(&engagementCallID); err != nil {
+		t.Fatalf("create Engagement History Call: %v", err)
+	}
+	engagementResponse := request(
+		t,
+		portal.Client(),
+		http.MethodGet,
+		portal.URL+"/v1/calling/calls/"+engagementCallID+"/engagement-history",
+		"message-token",
+		nil,
+	)
+	if engagementResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"Engagement History status = %d, body = %s",
+			engagementResponse.StatusCode,
+			readBody(t, engagementResponse),
+		)
+	}
+	var engagement api.ConversationTimelinePage
+	decode(t, engagementResponse, &engagement)
+	types := map[api.ConversationTimelineItemType]bool{}
+	for _, item := range engagement.Items {
+		types[item.Type] = true
+		switch item.Type {
+		case api.ConversationTimelineItemTypeMESSAGE:
+			if item.Message == nil ||
+				item.Message.Thread.LocationName != authorization.Locations[0].Name {
+				t.Fatalf("Location-labeled Message history = %#v", item)
+			}
+		case api.ConversationTimelineItemTypeCALL:
+			if item.Call == nil ||
+				item.Call.LocationName != authorization.Locations[0].Name {
+				t.Fatalf("Location-labeled Call history = %#v", item)
+			}
+		case api.ConversationTimelineItemTypeTASK:
+			if item.Task == nil ||
+				item.Task.LocationName != authorization.Locations[0].Name {
+				t.Fatalf("Location-labeled Task history = %#v", item)
+			}
+		}
+	}
+	if !types[api.ConversationTimelineItemTypeMESSAGE] ||
+		!types[api.ConversationTimelineItemTypeCALL] ||
+		!types[api.ConversationTimelineItemTypeTASK] {
+		t.Fatalf("combined Engagement History = %#v", engagement)
+	}
+	pagedIDs := map[string]bool{}
+	cursor := ""
+	for pageNumber := 0; pageNumber < 10; pageNumber++ {
+		endpoint := portal.URL + "/v1/calling/calls/" + engagementCallID +
+			"/engagement-history?limit=2"
+		if cursor != "" {
+			endpoint += "&cursor=" + url.QueryEscape(cursor)
+		}
+		pageResponse := request(
+			t,
+			portal.Client(),
+			http.MethodGet,
+			endpoint,
+			"message-token",
+			nil,
+		)
+		if pageResponse.StatusCode != http.StatusOK {
+			t.Fatalf(
+				"paged Engagement History cursor %q status = %d, body = %s",
+				cursor,
+				pageResponse.StatusCode,
+				readBody(t, pageResponse),
+			)
+		}
+		var page api.ConversationTimelinePage
+		decode(t, pageResponse, &page)
+		for index, item := range page.Items {
+			key := string(item.Type) + ":" + item.Id.String()
+			if pagedIDs[key] {
+				t.Fatalf("duplicate paged Engagement History item %s", key)
+			}
+			pagedIDs[key] = true
+			if index > 0 &&
+				page.Items[index-1].OccurredAt.After(item.OccurredAt) {
+				t.Fatalf("Engagement History page is not chronological: %#v", page)
+			}
+		}
+		cursor = page.NextCursor
+		if cursor == "" {
+			break
+		}
+	}
+	if len(pagedIDs) != len(engagement.Items) {
+		t.Fatalf(
+			"paged Engagement History items = %d, want %d",
+			len(pagedIDs),
+			len(engagement.Items),
+		)
 	}
 
 	png := append(

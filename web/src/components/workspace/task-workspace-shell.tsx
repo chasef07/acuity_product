@@ -102,6 +102,11 @@ export function TaskWorkspaceShell() {
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [callingHint, setCallingHint] = useState(0)
   const [callingOffers, setCallingOffers] = useState<CallingOffer[]>([])
+  const [taskCallRequest, setTaskCallRequest] = useState<{
+    id: string
+    taskID: string
+  }>()
+  const [taskCallError, setTaskCallError] = useState("")
   const selectedTaskRef = useRef<Task | undefined>(undefined)
   const selectedThreadRef = useRef<MessageThreadSummary | undefined>(undefined)
   const composingNewRef = useRef(false)
@@ -711,10 +716,14 @@ export function TaskWorkspaceShell() {
     setActiveCall(call)
     const previousCallID = activeCallIDRef.current
     activeCallIDRef.current = call?.id ?? ""
-    if (!call || call.id === previousCallID) return
-    callDetailGenerationRef.current += 1
-    setHistoricalCall(undefined)
-    if (call.id === focusedCallIDRef.current) return
+    if (!call) return
+    const canFocus =
+      call.state === "CONNECTED" || call.state === "NEEDS_DISPOSITION"
+    if (!canFocus || call.id === focusedCallIDRef.current) return
+    if (call.id !== previousCallID) {
+      callDetailGenerationRef.current += 1
+      setHistoricalCall(undefined)
+    }
     focusedCallIDRef.current = call.id
     returnTaskIDRef.current =
       viewRef.current === "task" ? (selectedTaskRef.current?.id ?? "") : ""
@@ -860,7 +869,16 @@ export function TaskWorkspaceShell() {
         </header>
         <CallingDock
           platformOperator={workspace.platformOperator}
+          practiceID={practiceID}
+          locations={practice.locations}
           hint={callingHint}
+          taskCallRequest={taskCallRequest}
+          onTaskCallHandled={(requestID, requestError) => {
+            setTaskCallRequest((current) =>
+              current?.id === requestID ? undefined : current,
+            )
+            setTaskCallError(requestError ?? "")
+          }}
           onOffersChanged={setCallingOffers}
           onCallChanged={handleCallChanged}
           onDisposition={(result) => void handleDisposition(result)}
@@ -919,12 +937,18 @@ export function TaskWorkspaceShell() {
               !workspace.platformOperator || Boolean(workspace.supportMode)
             }
             historyHint={callingHint}
+            taskCallPending={Boolean(taskCallRequest)}
+            taskCallError={taskCallError}
             onTaskUpdated={(task) => {
-              updateTaskProjection(
-                task,
-                selectedTaskRef.current?.id === task.id,
-              )
+              updateTaskProjection(task)
               void loadTasks()
+            }}
+            onStartTaskCall={(task) => {
+              setTaskCallError("")
+              setTaskCallRequest({
+                id: window.crypto.randomUUID(),
+                taskID: task.id,
+              })
             }}
             onReturnToCall={() => {
               if (activeCall) setView("call")

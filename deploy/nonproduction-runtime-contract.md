@@ -1,4 +1,4 @@
-# Slice 1 and 2 non-production runtime contract
+# Slice 1 through 6 non-production runtime contract
 
 This is a deployable contract, not a claim that an external environment exists.
 Project, image, domain, service accounts, database capacity, and email sender
@@ -70,7 +70,9 @@ Required service configuration:
 
 - `portal-api`: database settings, browser origin, Better Auth JWKS HTTPS URL,
   exact issuer and audience, SIP domain, handoff-token key, scoped Abita service
-  credential and Practice, Telnyx command configuration, and the shared
+  credential and Practice, Telnyx command configuration, the private
+  voicemail-playback signing key, the safe voicemail greeting HTTPS URL, the
+  private voicemail object-store mount, and the shared
   `HUMAN_CALLING_OFFER_SECONDS`,
   `HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS`,
   `HUMAN_CALLING_LEASE_SECONDS`, and
@@ -82,8 +84,15 @@ Required service configuration:
   reach it; exact-body signature and timestamp verification are the application
   authentication boundary.
 - `worker`: database settings, Telnyx command configuration, the same four
-  Human Calling timing values as `portal-api`, and the expected direct-recording
-  GCS bucket name.
+  Human Calling timing values and safe voicemail greeting URL as `portal-api`,
+  the historical direct-recording GCS bucket name, and the same private
+  object-store mount used by `portal-api` for asynchronous voicemail copy and
+  authorized playback. `HUMAN_CALLING_RECORDING_HOSTS` is an optional
+  comma-separated override for the exact HTTPS recording hosts; the default is
+  Telnyx's documented `s3.amazonaws.com` recording host.
+  `HUMAN_CALLING_RECORDING_CA_FILE` may add a private test CA to the system
+  roots in controlled non-production environments; production should use the
+  provider endpoint's publicly trusted certificate chain.
 - `migrate`: database settings and, only for initial provisioning, paired
   input/output paths. The output contains one-time invitation credentials and
   must be captured as a `0600` secret artifact. An invitation link uses
@@ -105,7 +114,9 @@ refetches the authoritative snapshot.
 
 The shared Telnyx Call Control Application and Credential Connection remain
 deployment inputs. Its webhook target must be the public `provider-ingress`
-route, and its custom recording storage must point directly at the dedicated
-private GCS bucket named by `TELNYX_RECORDING_BUCKET`. GCS access, lifecycle,
-retention, consent, and release approval are external gates; the application
-does not proxy recording bytes or create transcripts.
+route. Historical connected-call recording rows may still reference the
+dedicated private GCS bucket named by `TELNYX_RECORDING_BUCKET`, but Slice 6
+issues no new connected-call recording commands. Provider voicemail artifacts
+are copied by the worker into Acuity's private object store; playback rechecks
+current Location access and returns no public object URL. GCS access, lifecycle,
+retention, and release approval remain external gates.

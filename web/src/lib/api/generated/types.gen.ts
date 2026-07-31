@@ -229,6 +229,31 @@ export type CallingControlRequest = {
     sessionId: string;
 };
 
+export type StartOutboundCallRequest = {
+    sessionId: string;
+    idempotencyKey: string;
+    taskId?: string;
+    practiceId?: string;
+    locationId?: string;
+    destination?: string;
+};
+
+export type RetryOutboundCallRequest = {
+    sessionId: string;
+    idempotencyKey: string;
+};
+
+export type ConfirmCallingMediaRequest = {
+    sessionId: string;
+    mediaToken: string;
+    providerLegId: string;
+};
+
+export type OutboundCallEligibility = {
+    eligible: boolean;
+    reason: string;
+};
+
 export type AcceptCallingOfferResult = {
     status: 'ACCEPTED' | 'ALREADY_CLAIMED' | 'EXPIRED' | 'INELIGIBLE';
     callId: string;
@@ -240,12 +265,27 @@ export type CallingRecording = {
     failureCode?: string;
 };
 
+export type CallingVoicemail = {
+    outcome: 'VOICEMAIL' | 'MISSED_CALL';
+    audioState?: 'PROCESSING' | 'READY' | 'UNAVAILABLE';
+    taskId: string;
+    durationSeconds: number;
+};
+
+export type VoicemailPlaybackCapability = {
+    token: string;
+    expiresAt: string;
+};
+
 export type CallingCall = {
     id: string;
     practiceId: string;
     locationId: string;
     locationName: string;
-    state: 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    direction: 'INBOUND' | 'OUTBOUND';
+    entryPoint: 'AI_HANDOFF' | 'TASK' | 'STANDALONE';
+    taskId?: string;
+    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     deadline: string;
     phone: string;
     phoneSource: string;
@@ -262,14 +302,18 @@ export type CallingCall = {
      */
     expectedMediaToken: string;
     providerTermination: string;
+    callerId: string;
+    retryOfCallId?: string;
+    retryAllowed: boolean;
     connectedAt?: string;
     version: number;
     recording?: CallingRecording;
+    voicemail?: CallingVoicemail;
 };
 
 export type CallingDispositionRequest = {
     sessionId: string;
-    outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
 };
 
 export type CallingDispositionResult = {
@@ -328,7 +372,8 @@ export type Task = {
     phone: string;
     title: string;
     state: 'OPEN' | 'COMPLETED';
-    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP';
+    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
+    recoveryOutcome?: 'VOICEMAIL' | 'MISSED_CALL';
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
@@ -502,7 +547,7 @@ export type ConversationTimelinePage = {
 export type CallHistoryItem = {
     id: string;
     type: 'CALL';
-    direction: 'INBOUND';
+    direction: 'INBOUND' | 'OUTBOUND';
     startedAt: string;
     endedAt?: string;
     durationSeconds: number;
@@ -1153,6 +1198,82 @@ export type AcceptCallingOfferResponses = {
 
 export type AcceptCallingOfferResponse = AcceptCallingOfferResponses[keyof AcceptCallingOfferResponses];
 
+export type StartOutboundCallData = {
+    body: StartOutboundCallRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/calling/outbound-calls';
+};
+
+export type StartOutboundCallErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type StartOutboundCallError = StartOutboundCallErrors[keyof StartOutboundCallErrors];
+
+export type StartOutboundCallResponses = {
+    /**
+     * Durable outbound Call attempt.
+     */
+    201: CallingCall;
+};
+
+export type StartOutboundCallResponse = StartOutboundCallResponses[keyof StartOutboundCallResponses];
+
+export type GetTaskOutboundEligibilityData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/calling/tasks/{taskId}/eligibility';
+};
+
+export type GetTaskOutboundEligibilityErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetTaskOutboundEligibilityError = GetTaskOutboundEligibilityErrors[keyof GetTaskOutboundEligibilityErrors];
+
+export type GetTaskOutboundEligibilityResponses = {
+    /**
+     * Current server-derived Task call eligibility.
+     */
+    200: OutboundCallEligibility;
+};
+
+export type GetTaskOutboundEligibilityResponse = GetTaskOutboundEligibilityResponses[keyof GetTaskOutboundEligibilityResponses];
+
 export type GetCallingCallData = {
     body?: never;
     path: {
@@ -1187,6 +1308,92 @@ export type GetCallingCallResponses = {
 };
 
 export type GetCallingCallResponse = GetCallingCallResponses[keyof GetCallingCallResponses];
+
+export type ConfirmCallingMediaReadyData = {
+    body: ConfirmCallingMediaRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/media-ready';
+};
+
+export type ConfirmCallingMediaReadyErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ConfirmCallingMediaReadyError = ConfirmCallingMediaReadyErrors[keyof ConfirmCallingMediaReadyErrors];
+
+export type ConfirmCallingMediaReadyResponses = {
+    /**
+     * The outbound Call after destination dialing was safely committed.
+     */
+    200: CallingCall;
+};
+
+export type ConfirmCallingMediaReadyResponse = ConfirmCallingMediaReadyResponses[keyof ConfirmCallingMediaReadyResponses];
+
+export type RetryOutboundCallData = {
+    body: RetryOutboundCallRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/retry';
+};
+
+export type RetryOutboundCallErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RetryOutboundCallError = RetryOutboundCallErrors[keyof RetryOutboundCallErrors];
+
+export type RetryOutboundCallResponses = {
+    /**
+     * New linked outbound Call attempt.
+     */
+    201: CallingCall;
+};
+
+export type RetryOutboundCallResponse = RetryOutboundCallResponses[keyof RetryOutboundCallResponses];
 
 export type RequestCallingHangupData = {
     body: CallingControlRequest;
@@ -1310,6 +1517,122 @@ export type GetCallingCallHistoryResponses = {
 };
 
 export type GetCallingCallHistoryResponse = GetCallingCallHistoryResponses[keyof GetCallingCallHistoryResponses];
+
+export type GetCallingEngagementHistoryData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: {
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/calling/calls/{callId}/engagement-history';
+};
+
+export type GetCallingEngagementHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetCallingEngagementHistoryError = GetCallingEngagementHistoryErrors[keyof GetCallingEngagementHistoryErrors];
+
+export type GetCallingEngagementHistoryResponses = {
+    /**
+     * Chronological Contact Context Engagement History.
+     */
+    200: ConversationTimelinePage;
+};
+
+export type GetCallingEngagementHistoryResponse = GetCallingEngagementHistoryResponses[keyof GetCallingEngagementHistoryResponses];
+
+export type IssueCallingVoicemailPlaybackData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/voicemail-playback';
+};
+
+export type IssueCallingVoicemailPlaybackErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type IssueCallingVoicemailPlaybackError = IssueCallingVoicemailPlaybackErrors[keyof IssueCallingVoicemailPlaybackErrors];
+
+export type IssueCallingVoicemailPlaybackResponses = {
+    /**
+     * Short-lived authorized playback capability.
+     */
+    200: VoicemailPlaybackCapability;
+};
+
+export type IssueCallingVoicemailPlaybackResponse = IssueCallingVoicemailPlaybackResponses[keyof IssueCallingVoicemailPlaybackResponses];
+
+export type GetCallingVoicemailPlaybackData = {
+    body?: never;
+    path: {
+        token: string;
+    };
+    query?: never;
+    url: '/v1/calling/voicemail-playback/{token}';
+};
+
+export type GetCallingVoicemailPlaybackErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetCallingVoicemailPlaybackError = GetCallingVoicemailPlaybackErrors[keyof GetCallingVoicemailPlaybackErrors];
+
+export type GetCallingVoicemailPlaybackResponses = {
+    /**
+     * Authorized voicemail audio.
+     */
+    200: Blob | File;
+};
+
+export type GetCallingVoicemailPlaybackResponse = GetCallingVoicemailPlaybackResponses[keyof GetCallingVoicemailPlaybackResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;

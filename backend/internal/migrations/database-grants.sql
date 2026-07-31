@@ -30,10 +30,12 @@ GRANT SELECT ON TABLE
     public.human_calling_connection_attempts,
     public.human_calling_credentials,
     public.human_calling_handoffs,
+    public.human_calling_location_voice_numbers,
     public.human_calling_provider_commands,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
     public.human_calling_timeline,
+    public.human_calling_voicemails,
     public.messaging_attachments,
     public.messaging_location_configurations,
     public.messaging_messages,
@@ -77,6 +79,7 @@ GRANT INSERT ON TABLE
     public.access_memberships,
     public.access_support_sessions,
     public.human_calling_connection_attempts,
+    public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_provider_commands,
@@ -214,6 +217,7 @@ TO acuity_realtime;
 
 -- worker: durable receipt projection, command execution, and reconciliation.
 GRANT SELECT ON TABLE
+    public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
     public.access_operational_users,
@@ -222,17 +226,21 @@ GRANT SELECT ON TABLE
     public.human_calling_connection_attempts,
     public.human_calling_credentials,
     public.human_calling_handoffs,
+    public.human_calling_location_voice_numbers,
     public.human_calling_provider_commands,
     public.human_calling_provider_receipts,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
+    public.human_calling_voicemails,
     public.messaging_attachments,
     public.messaging_location_configurations,
     public.messaging_messages,
     public.messaging_provider_commands,
     public.messaging_provider_receipts,
     public.messaging_thread_unreads,
-    public.messaging_threads
+    public.messaging_threads,
+    public.work_task_activities,
+    public.work_tasks
 TO acuity_worker;
 
 GRANT INSERT ON TABLE
@@ -242,10 +250,13 @@ GRANT INSERT ON TABLE
     public.human_calling_provider_commands,
     public.human_calling_recordings,
     public.human_calling_timeline,
+    public.human_calling_voicemails,
     public.messaging_attachments,
     public.messaging_messages,
     public.messaging_thread_unreads,
-    public.messaging_threads
+    public.messaging_threads,
+    public.work_task_activities,
+    public.work_tasks
 TO acuity_worker;
 
 GRANT SELECT (event_id)
@@ -261,7 +272,9 @@ GRANT UPDATE ON TABLE
     public.human_calling_provider_commands,
     public.human_calling_provider_receipts,
     public.human_calling_recordings,
-    public.human_calling_softphone_leases
+    public.human_calling_softphone_leases,
+    public.human_calling_voicemails,
+    public.work_tasks
 TO acuity_worker;
 
 GRANT UPDATE (outbound_blocked, opt_out_evidence_at, opt_out_evidence_event_id, updated_at)

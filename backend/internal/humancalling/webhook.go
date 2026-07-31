@@ -60,15 +60,17 @@ type telnyxEnvelope struct {
 }
 
 type telnyxVoicePayload struct {
-	CallControlID      string `json:"call_control_id"`
-	CallLegID          string `json:"call_leg_id"`
-	CallSessionID      string `json:"call_session_id"`
-	ClientState        string `json:"client_state"`
-	From               string `json:"from"`
-	To                 string `json:"to"`
-	HangupCause        string `json:"hangup_cause"`
-	RecordingID        string `json:"recording_id"`
-	RecordingObjectKey string `json:"recording_object_key"`
+	CallControlID      string    `json:"call_control_id"`
+	CallLegID          string    `json:"call_leg_id"`
+	CallSessionID      string    `json:"call_session_id"`
+	ClientState        string    `json:"client_state"`
+	From               string    `json:"from"`
+	To                 string    `json:"to"`
+	HangupCause        string    `json:"hangup_cause"`
+	RecordingID        string    `json:"recording_id"`
+	RecordingObjectKey string    `json:"recording_object_key"`
+	RecordingStartedAt time.Time `json:"recording_started_at"`
+	RecordingEndedAt   time.Time `json:"recording_ended_at"`
 	RecordingURLs      struct {
 		WAV string `json:"wav"`
 	} `json:"recording_urls"`
@@ -611,6 +613,7 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 		FactCallBridged,
 		FactCallHangup,
 		FactPlaybackStarted,
+		FactPlaybackEnded,
 		FactRecordingSaved,
 		FactRecordingError:
 	default:
@@ -629,6 +632,8 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	fact.HangupCause = payload.HangupCause
 	fact.RecordingID = payload.RecordingID
 	fact.RecordingObjectKey = payload.RecordingObjectKey
+	fact.RecordingStartedAt = payload.RecordingStartedAt
+	fact.RecordingEndedAt = payload.RecordingEndedAt
 	if fact.CallControlID == "" ||
 		fact.CallLegID == "" ||
 		fact.CallSessionID == "" {
@@ -640,13 +645,16 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 			state.Version != 1 ||
 			(state.Leg != "caller" &&
 				state.Leg != "staff" &&
-				state.Leg != "recording") ||
+				state.Leg != "recording" &&
+				state.Leg != "voicemail" &&
+				state.Leg != "destination") ||
 			!validUUID(state.CallID) ||
 			(state.AttemptID != "" && !validUUID(state.AttemptID)) {
 			return ProviderFact{}, false, ErrInvalidWebhook
 		}
 	}
 	if fact.Type == FactRecordingSaved {
+		fact.RecordingURL = payload.RecordingURLs.WAV
 		fact.RecordingBucket, fact.RecordingObjectKey = gcsObject(
 			payload.RecordingURLs.WAV,
 		)

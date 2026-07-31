@@ -70,20 +70,44 @@ func (adapter *TelnyxAdapter) Execute(
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = callActionPath(command.TargetID, "playback_start")
+	case CommandPlayVoicemailGreeting:
+		if command.TargetID == "" ||
+			emptyString(payload["audio_url"]) ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		path = callActionPath(command.TargetID, "playback_start")
 	case CommandDialStaff:
+		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
+		mediaPrep := payload["media_prep"] == true
+		if emptyString(payload["to"]) ||
+			emptyString(payload["connection_id"]) ||
+			emptyString(payload["from"]) ||
+			emptyString(payload["client_state"]) ||
+			!validMediaTokenHeader(payload["custom_headers"]) ||
+			!validTimeout ||
+			timeoutSeconds <= 0 ||
+			timeoutSeconds != float64(int(timeoutSeconds)) ||
+			(!mediaPrep &&
+				(emptyString(payload["link_to"]) ||
+					payload["bridge_intent"] != true ||
+					payload["bridge_on_answer"] != true ||
+					payload["prevent_double_bridge"] != true)) {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		path = "/calls"
+	case CommandDialDestination:
 		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
 		if emptyString(payload["to"]) ||
 			emptyString(payload["connection_id"]) ||
 			emptyString(payload["from"]) ||
 			emptyString(payload["link_to"]) ||
 			emptyString(payload["client_state"]) ||
-			!validMediaTokenHeader(payload["custom_headers"]) ||
 			!validTimeout ||
-			timeoutSeconds <= 0 ||
-			timeoutSeconds != float64(int(timeoutSeconds)) ||
+			timeoutSeconds != 30 ||
 			payload["bridge_intent"] != true ||
 			payload["bridge_on_answer"] != true ||
-			payload["prevent_double_bridge"] != true {
+			payload["answering_machine_detection"] != "disabled" {
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = "/calls"
@@ -98,6 +122,20 @@ func (adapter *TelnyxAdapter) Execute(
 			payload["channels"] != "dual" ||
 			payload["recording_track"] != "both" ||
 			payload["transcription"] != false ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		path = callActionPath(command.TargetID, "record_start")
+	case CommandStartVoicemailRecording:
+		maxLength, validMaxLength := payload["max_length"].(float64)
+		if command.TargetID == "" ||
+			payload["format"] != "wav" ||
+			payload["channels"] != "single" ||
+			payload["recording_track"] != "inbound" ||
+			payload["transcription"] != false ||
+			payload["play_beep"] != true ||
+			!validMaxLength ||
+			maxLength != 120 ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}
@@ -137,7 +175,7 @@ func (adapter *TelnyxAdapter) Execute(
 		return ProviderResult{}, err
 	}
 	switch command.Action {
-	case CommandDialStaff:
+	case CommandDialStaff, CommandDialDestination:
 		var response struct {
 			Data struct {
 				CallControlID string `json:"call_control_id"`

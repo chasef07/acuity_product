@@ -776,6 +776,249 @@ func (server *Server) GetCallingCall(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) GetCallingEngagementHistory(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+	params api.GetCallingEngagementHistoryParams,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.ReadCall(ctx, identity, callID.String())
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	timeline, err := server.messaging.QueryPhoneTimeline(
+		ctx,
+		messaging.QueryPhoneTimelineCommand{
+			Identity:   identity,
+			PracticeID: call.PracticeID,
+			Phone:      call.Phone,
+			Cursor:     stringValue(params.Cursor),
+			Limit:      intValue(params.Limit),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := conversationTimelineResponse(timeline)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) StartOutboundCall(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.StartOutboundCallRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.StartOutboundCall(
+		ctx,
+		humancalling.StartOutboundCallCommand{
+			Identity:       identity,
+			SessionID:      body.SessionId,
+			IdempotencyKey: body.IdempotencyKey,
+			TaskID:         uuidString(body.TaskId),
+			PracticeID:     uuidString(body.PracticeId),
+			LocationID:     uuidString(body.LocationId),
+			Destination:    stringValue(body.Destination),
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callingCallResponse(call)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, response)
+}
+
+func (server *Server) ConfirmCallingMediaReady(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.ConfirmCallingMediaRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	call, err := server.calling.ConfirmOutboundMedia(
+		ctx,
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity:      identity,
+			SessionID:     body.SessionId,
+			CallID:        callID.String(),
+			MediaToken:    body.MediaToken,
+			ProviderLegID: body.ProviderLegId,
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callingCallResponse(call)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetTaskOutboundEligibility(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	eligibility, err := server.calling.TaskOutboundEligibility(
+		ctx,
+		identity,
+		taskID.String(),
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.OutboundCallEligibility{
+		Eligible: eligibility.Eligible,
+		Reason:   eligibility.Reason,
+	})
+}
+
+func (server *Server) RetryOutboundCall(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.RetryOutboundCallRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	previous, err := server.calling.ReadCall(ctx, identity, callID.String())
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	command := humancalling.StartOutboundCallCommand{
+		Identity:       identity,
+		SessionID:      body.SessionId,
+		IdempotencyKey: body.IdempotencyKey,
+		RetryOfCallID:  previous.ID,
+	}
+	switch previous.EntryPoint {
+	case humancalling.CallEntryTask:
+		command.TaskID = previous.TaskID
+	case humancalling.CallEntryStandalone:
+		command.PracticeID = previous.PracticeID
+		command.LocationID = previous.LocationID
+		command.Destination = previous.Phone
+	default:
+		server.writeCallingError(w, r, humancalling.ErrConflict)
+		return
+	}
+	call, err := server.calling.StartOutboundCall(ctx, command)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := callingCallResponse(call)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, response)
+}
+
+func (server *Server) IssueCallingVoicemailPlayback(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	capability, err := server.calling.IssueVoicemailPlayback(
+		ctx,
+		identity,
+		callID.String(),
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.VoicemailPlaybackCapability{
+		Token:     capability.Token,
+		ExpiresAt: capability.ExpiresAt,
+	})
+}
+
+func (server *Server) GetCallingVoicemailPlayback(
+	w http.ResponseWriter,
+	r *http.Request,
+	token string,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	content, err := server.calling.OpenVoicemailPlayback(
+		ctx,
+		identity,
+		token,
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", content.ContentType)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content.Content)
+}
+
 func (server *Server) RequestCallingHangup(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2140,9 +2383,12 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		PracticeId:          practiceID,
 		LocationId:          locationID,
 		LocationName:        call.LocationName,
+		Direction:           api.CallingCallDirection(call.Direction),
+		EntryPoint:          api.CallingCallEntryPoint(call.EntryPoint),
 		State:               api.CallingCallState(call.State),
 		Deadline:            call.Deadline,
 		Phone:               call.Phone,
+		CallerId:            call.CallerID,
 		PhoneSource:         call.PhoneSource,
 		DisplayName:         call.DisplayName,
 		NameSource:          call.NameSource,
@@ -2151,7 +2397,22 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		ExpectedStaffLegId:  call.ExpectedStaffLegID,
 		ExpectedMediaToken:  call.ExpectedMediaToken,
 		ProviderTermination: call.ProviderTermination,
+		RetryAllowed:        call.RetryAllowed,
 		Version:             call.Version,
+	}
+	if call.TaskID != "" {
+		taskID, err := uuid.Parse(call.TaskID)
+		if err != nil {
+			return api.CallingCall{}, err
+		}
+		response.TaskId = &taskID
+	}
+	if call.RetryOfCallID != "" {
+		retryID, err := uuid.Parse(call.RetryOfCallID)
+		if err != nil {
+			return api.CallingCall{}, err
+		}
+		response.RetryOfCallId = &retryID
 	}
 	if call.ConnectedAt != nil {
 		response.ConnectedAt = call.ConnectedAt
@@ -2164,6 +2425,26 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 			recording.FailureCode = &call.Recording.FailureCode
 		}
 		response.Recording = &recording
+	}
+	if call.Voicemail.Outcome != "" {
+		taskID, err := uuid.Parse(call.Voicemail.TaskID)
+		if err != nil {
+			return api.CallingCall{}, err
+		}
+		voicemail := api.CallingVoicemail{
+			Outcome: api.CallingVoicemailOutcome(
+				call.Voicemail.Outcome,
+			),
+			TaskId:          taskID,
+			DurationSeconds: call.Voicemail.DurationSeconds,
+		}
+		if call.Voicemail.AudioState != "" {
+			audioState := api.CallingVoicemailAudioState(
+				call.Voicemail.AudioState,
+			)
+			voicemail.AudioState = &audioState
+		}
+		response.Voicemail = &voicemail
 	}
 	return response, nil
 }
@@ -2219,6 +2500,10 @@ func taskResponse(task work.Task) (api.Task, error) {
 	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
+	}
+	if task.RecoveryOutcome != "" {
+		outcome := api.TaskRecoveryOutcome(task.RecoveryOutcome)
+		response.RecoveryOutcome = &outcome
 	}
 	if task.MessageID != "" {
 		messageID, err := uuid.Parse(task.MessageID)

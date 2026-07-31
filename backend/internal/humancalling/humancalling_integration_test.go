@@ -1619,7 +1619,7 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	}
 	if connected.State != humancalling.CallConnected ||
 		connected.WinnerSubject != winner.Subject ||
-		connected.Recording.State != humancalling.RecordingIntended {
+		connected.Recording.State != "" {
 		t.Fatalf("provider-confirmed Call = %#v", connected)
 	}
 	if !strings.Contains(
@@ -1628,43 +1628,8 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	) || !strings.Contains(metrics.String(), `"seconds":2`) {
 		t.Fatalf("accept-to-bridge metric = %s", metrics.String())
 	}
-	processed, err := calling.ProcessNextCommand(context.Background())
-	if err != nil || !processed {
-		t.Fatalf("process recording command: processed=%t err=%v", processed, err)
-	}
-	if provider.count(humancalling.CommandStartRecording) != 1 {
-		t.Fatalf("recording commands = %#v", provider.commands)
-	}
-	if !strings.Contains(
-		metrics.String(),
-		`"metric":"acuity_call_center_provider_command"`,
-	) || !strings.Contains(metrics.String(), `"outcome":"sent"`) {
-		t.Fatalf("provider command metrics = %s", metrics.String())
-	}
-	provider.mu.Lock()
-	for _, command := range provider.commands {
-		if command.Action != humancalling.CommandStartRecording {
-			continue
-		}
-		customName, _ := command.Payload["custom_file_name"].(string)
-		if customName != "call-"+strings.ReplaceAll(offers[0].ID, "-", "") {
-			provider.mu.Unlock()
-			t.Fatalf("recording custom filename = %q", customName)
-		}
-	}
-	provider.mu.Unlock()
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
-		EventID:            "claim-recording-event",
-		Type:               humancalling.FactRecordingSaved,
-		OccurredAt:         now.Add(4 * time.Second),
-		CallControlID:      "staff-control-1",
-		CallLegID:          "staff-leg-1",
-		CallSessionID:      "claim-session",
-		RecordingID:        "recording-1",
-		RecordingBucket:    "synthetic-recordings",
-		RecordingObjectKey: "synthetic/call.wav",
-	}); err != nil {
-		t.Fatalf("apply recording evidence: %v", err)
+	if provider.count(humancalling.CommandStartRecording) != 0 {
+		t.Fatalf("connected human Call recording commands = %#v", provider.commands)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "claim-hangup-event",
@@ -1682,7 +1647,7 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		t.Fatalf("read ended Call: %v", err)
 	}
 	if ended.State != humancalling.CallNeedsDisposition ||
-		ended.Recording.State != humancalling.RecordingReady ||
+		ended.Recording.State != "" ||
 		ended.ExpectedMediaToken != "" {
 		t.Fatalf("ended Call = %#v", ended)
 	}
@@ -1698,21 +1663,6 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	}
 	if resolved.Call.State != humancalling.CallResolved {
 		t.Fatalf("resolved Call = %#v", resolved)
-	}
-	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
-		EventID:       "claim-delayed-recording-error",
-		Type:          humancalling.FactRecordingError,
-		OccurredAt:    now.Add(3 * time.Second),
-		CallControlID: "staff-control-1",
-		CallLegID:     "staff-leg-1",
-		CallSessionID: "claim-session",
-		RecordingID:   "recording-1",
-	}); err != nil {
-		t.Fatalf("apply older recording error after READY: %v", err)
-	}
-	stillReady, err := calling.ReadCall(context.Background(), winner, offers[0].ID)
-	if err != nil || stillReady.Recording.State != humancalling.RecordingReady {
-		t.Fatalf("arrival-order-independent recording = %#v, err = %v", stillReady, err)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "claim-delayed-staff-answered-after-disposition",
@@ -1899,6 +1849,128 @@ func TestCallerHangupFencesPendingSetupCommands(t *testing.T) {
 		provider.count(humancalling.CommandStartRingback) != 0 ||
 		provider.count(humancalling.CommandDialStaff) != 0 {
 		t.Fatalf("terminal Call executed setup commands: %#v", provider.commands)
+	}
+}
+
+func TestCallerHangupBeforeVoicemailCreatesMissedCallTask(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		key          string
+		dialError    error
+		accept       bool
+		processSetup bool
+		wantBefore   humancalling.CallState
+	}{
+		{
+			name:       "offering",
+			key:        "hangup-recovery-offering",
+			wantBefore: humancalling.CallOffering,
+		},
+		{
+			name:       "connecting",
+			key:        "hangup-recovery-connecting",
+			accept:     true,
+			wantBefore: humancalling.CallConnecting,
+		},
+		{
+			name:         "reconciling",
+			key:          "hangup-recovery-reconciling",
+			dialError:    humancalling.ErrAmbiguousEffect,
+			accept:       true,
+			processSetup: true,
+			wantBefore:   humancalling.CallReconciling,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &recordingProvider{dialError: test.dialError}
+			calling, identity, offer := readyOffer(t, provider, test.key)
+			if test.accept {
+				if _, err := calling.AcceptOffer(
+					context.Background(),
+					identity,
+					test.key+"-browser",
+					offer.ID,
+				); err != nil {
+					t.Fatalf("accept %s offer: %v", test.name, err)
+				}
+			}
+			if test.processSetup {
+				processCallingCommands(t, calling)
+			}
+			if test.accept {
+				before, err := calling.ReadCall(
+					context.Background(),
+					identity,
+					offer.ID,
+				)
+				if err != nil || before.State != test.wantBefore {
+					t.Fatalf(
+						"%s Call before caller hangup = %#v, err=%v",
+						test.name,
+						before,
+						err,
+					)
+				}
+			} else if offer.State != test.wantBefore {
+				t.Fatalf(
+					"%s offer before caller hangup = %#v",
+					test.name,
+					offer,
+				)
+			}
+			hangup := humancalling.ProviderFact{
+				EventID:       test.key + "-caller-hangup",
+				Type:          humancalling.FactCallHangup,
+				OccurredAt:    offer.Deadline.Add(-10 * time.Second),
+				CallControlID: test.key + "-caller-control",
+				CallLegID:     test.key + "-caller-leg",
+				CallSessionID: test.key + "-provider-session",
+				HangupCause:   "caller_hangup",
+			}
+			if err := calling.ApplyProviderFact(
+				context.Background(),
+				hangup,
+			); err != nil {
+				t.Fatalf("apply %s caller hangup: %v", test.name, err)
+			}
+			recovered, err := calling.ReadCall(
+				context.Background(),
+				identity,
+				offer.ID,
+			)
+			if err != nil ||
+				recovered.State != humancalling.CallMissed ||
+				recovered.Voicemail.Outcome !=
+					humancalling.RecoveryMissedCall ||
+				recovered.Voicemail.TaskID == "" {
+				t.Fatalf(
+					"%s caller-hangup recovery = %#v, err=%v",
+					test.name,
+					recovered,
+					err,
+				)
+			}
+			if err := calling.ApplyProviderFact(
+				context.Background(),
+				hangup,
+			); err != nil {
+				t.Fatalf("replay %s caller hangup: %v", test.name, err)
+			}
+			replayed, err := calling.ReadCall(
+				context.Background(),
+				identity,
+				offer.ID,
+			)
+			if err != nil ||
+				replayed.Voicemail.TaskID != recovered.Voicemail.TaskID {
+				t.Fatalf(
+					"%s replayed recovery = %#v, err=%v",
+					test.name,
+					replayed,
+					err,
+				)
+			}
+		})
 	}
 }
 
@@ -2249,7 +2321,10 @@ func TestLateSuccessfulDialAfterCallerHangupCleansUpTheExactStaffLeg(t *testing.
 		t.Fatalf("process exact late-leg cleanup: processed=%t err=%v", processed, err)
 	}
 	call, err := calling.ReadCall(context.Background(), identity, offer.ID)
-	if err != nil || call.State != humancalling.CallUnanswered {
+	if err != nil ||
+		call.State != humancalling.CallMissed ||
+		call.Voicemail.Outcome != humancalling.RecoveryMissedCall ||
+		call.Voicemail.TaskID == "" {
 		t.Fatalf("late-Dial terminal Call = %#v, err = %v", call, err)
 	}
 	if len(provider.hangupTargets) != 1 ||
@@ -3338,7 +3413,7 @@ func TestPlatformOperatorReadsOnlyTheSanitizedDurableTimeline(t *testing.T) {
 	}
 }
 
-func TestOfferExpiryCommitsOneProviderHangupWithoutAClaim(t *testing.T) {
+func TestOfferExpiryStartsOneProviderVoicemailWithoutAClaim(t *testing.T) {
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	provider := &recordingProvider{}
 	calling, identity, _ := readyOfferAt(
@@ -3361,8 +3436,9 @@ func TestOfferExpiryCommitsOneProviderHangupWithoutAClaim(t *testing.T) {
 			break
 		}
 	}
-	if provider.count(humancalling.CommandHangup) != 1 {
-		t.Fatalf("expiry hangup commands = %#v", provider.commands)
+	if provider.count(humancalling.CommandPlayVoicemailGreeting) != 1 ||
+		provider.count(humancalling.CommandHangup) != 0 {
+		t.Fatalf("expiry voicemail commands = %#v", provider.commands)
 	}
 	offers, err := calling.ListOffers(context.Background(), identity)
 	if err != nil || len(offers) != 0 {
@@ -3446,7 +3522,8 @@ func TestConnectionTimeoutEndsTheClaimAndHangsUpExactKnownLegs(t *testing.T) {
 		}
 	}
 	if provider.count(humancalling.CommandDialStaff) != 1 ||
-		provider.count(humancalling.CommandHangup) != 2 {
+		provider.count(humancalling.CommandHangup) != 1 ||
+		provider.count(humancalling.CommandPlayVoicemailGreeting) != 1 {
 		t.Fatalf("connection-expiry provider commands = %#v", provider.commands)
 	}
 }
@@ -3698,18 +3775,20 @@ func TestHistoricalBridgeCannotRegressADispositionedCall(t *testing.T) {
 }
 
 type recordingProvider struct {
-	mu               sync.Mutex
-	commands         []humancalling.ProviderCommand
-	answerError      error
-	dialError        error
-	hangupErrors     []error
-	disableErrors    []error
-	dialResults      []humancalling.ProviderResult
-	jwtResult        *humancalling.ProviderResult
-	callAlive        *bool
-	callAliveChecks  int
-	callStateEntered chan struct{}
-	callStateRelease chan struct{}
+	mu                 sync.Mutex
+	commands           []humancalling.ProviderCommand
+	answerError        error
+	dialError          error
+	recordingError     error
+	hangupErrors       []error
+	disableErrors      []error
+	dialResults        []humancalling.ProviderResult
+	destinationResults []humancalling.ProviderResult
+	jwtResult          *humancalling.ProviderResult
+	callAlive          *bool
+	callAliveChecks    int
+	callStateEntered   chan struct{}
+	callStateRelease   chan struct{}
 }
 
 type interruptibleDialProvider struct {
@@ -3875,6 +3954,20 @@ func (provider *recordingProvider) Execute(
 			CallLegID:     "staff-leg-1",
 		}, provider.dialError
 	}
+	if command.Action == humancalling.CommandDialDestination {
+		if len(provider.destinationResults) > 0 {
+			result := provider.destinationResults[0]
+			provider.destinationResults = provider.destinationResults[1:]
+			return result, provider.dialError
+		}
+		return humancalling.ProviderResult{
+			CallControlID: "destination-control-1",
+			CallLegID:     "destination-leg-1",
+		}, provider.dialError
+	}
+	if command.Action == humancalling.CommandStartVoicemailRecording {
+		return humancalling.ProviderResult{}, provider.recordingError
+	}
 	if command.Action == humancalling.CommandHangup &&
 		len(provider.hangupErrors) > 0 {
 		err := provider.hangupErrors[0]
@@ -4035,6 +4128,7 @@ func readyOfferAt(
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		RecordingBucket:  "synthetic-recordings",
+		SafeGreetingURL:  "https://media.synthetic.test/safe-greeting.wav",
 	}, clock)
 	prepareCredentials(t, calling)
 	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
@@ -4122,6 +4216,19 @@ func (provider *recordingProvider) count(action humancalling.CommandAction) int 
 		}
 	}
 	return count
+}
+
+func (provider *recordingProvider) last(
+	action humancalling.CommandAction,
+) humancalling.ProviderCommand {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	for index := len(provider.commands) - 1; index >= 0; index-- {
+		if provider.commands[index].Action == action {
+			return provider.commands[index]
+		}
+	}
+	return humancalling.ProviderCommand{}
 }
 
 func (provider *recordingProvider) ordered(

@@ -12,6 +12,7 @@ export type IncomingMediaLeg = {
   reject: () => Promise<void>
   mute: () => void
   unmute: () => void
+  sendDTMF: (digit: string) => boolean
 }
 
 type CallingMediaCallbacks = {
@@ -48,6 +49,7 @@ type SDKCall = {
   ) => Promise<void>
   muteAudio: () => void
   unmuteAudio: () => void
+  dtmf: (digit: string) => void
 }
 
 type SDKNotification = {
@@ -261,6 +263,19 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
             this.activeSession = { ...current, desiredMuted: false }
           }
           call.unmuteAudio()
+        },
+        sendDTMF: (digit) => {
+          const current = this.activeSession
+          if (
+            !/^[0-9A-D*#]$/.test(digit) ||
+            call.state !== "active" ||
+            !current?.attachmentCurrent ||
+            !matchesMediaSession(current, providerLegID, mediaToken)
+          ) {
+            return false
+          }
+          call.dtmf(digit)
+          return true
         },
       })
     })

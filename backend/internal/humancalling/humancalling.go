@@ -30,10 +30,14 @@ type CallState string
 
 const (
 	CallOffering         CallState = "OFFERING"
+	CallPreparing        CallState = "PREPARING"
+	CallRinging          CallState = "RINGING"
 	CallConnecting       CallState = "CONNECTING"
 	CallConnected        CallState = "CONNECTED"
 	CallReconciling      CallState = "RECONCILING"
 	CallUnanswered       CallState = "UNANSWERED"
+	CallVoicemail        CallState = "VOICEMAIL"
+	CallMissed           CallState = "MISSED"
 	CallNeedsDisposition CallState = "NEEDS_DISPOSITION"
 	CallResolved         CallState = "RESOLVED"
 	CallFollowUpRequired CallState = "FOLLOW_UP_REQUIRED"
@@ -47,6 +51,7 @@ const (
 	FactCallBridged     FactType = "call.bridged"
 	FactCallHangup      FactType = "call.hangup"
 	FactPlaybackStarted FactType = "call.playback.started"
+	FactPlaybackEnded   FactType = "call.playback.ended"
 	FactRecordingSaved  FactType = "call.recording.saved"
 	FactRecordingError  FactType = "call.recording.error"
 )
@@ -54,14 +59,17 @@ const (
 type CommandAction string
 
 const (
-	CommandAnswerCaller      CommandAction = "ANSWER_CALLER"
-	CommandStartRingback     CommandAction = "START_RINGBACK"
-	CommandDialStaff         CommandAction = "DIAL_STAFF"
-	CommandHangup            CommandAction = "HANGUP"
-	CommandStartRecording    CommandAction = "START_RECORDING"
-	CommandCreateCredential  CommandAction = "CREATE_CREDENTIAL"
-	CommandDisableCredential CommandAction = "DISABLE_CREDENTIAL"
-	CommandCreateJWT         CommandAction = "CREATE_JWT"
+	CommandAnswerCaller            CommandAction = "ANSWER_CALLER"
+	CommandStartRingback           CommandAction = "START_RINGBACK"
+	CommandDialStaff               CommandAction = "DIAL_STAFF"
+	CommandDialDestination         CommandAction = "DIAL_DESTINATION"
+	CommandPlayVoicemailGreeting   CommandAction = "PLAY_VOICEMAIL_GREETING"
+	CommandStartVoicemailRecording CommandAction = "START_VOICEMAIL_RECORDING"
+	CommandHangup                  CommandAction = "HANGUP"
+	CommandStartRecording          CommandAction = "START_RECORDING"
+	CommandCreateCredential        CommandAction = "CREATE_CREDENTIAL"
+	CommandDisableCredential       CommandAction = "DISABLE_CREDENTIAL"
+	CommandCreateJWT               CommandAction = "CREATE_JWT"
 )
 
 const (
@@ -95,6 +103,21 @@ const (
 	AcceptIneligible AcceptStatus = "INELIGIBLE"
 )
 
+type CallDirection string
+
+const (
+	CallInbound  CallDirection = "INBOUND"
+	CallOutbound CallDirection = "OUTBOUND"
+)
+
+type CallEntryPoint string
+
+const (
+	CallEntryAIHandoff  CallEntryPoint = "AI_HANDOFF"
+	CallEntryTask       CallEntryPoint = "TASK"
+	CallEntryStandalone CallEntryPoint = "STANDALONE"
+)
+
 type Config struct {
 	HandoffSIPDomain       string
 	StaffSIPDomain         string
@@ -109,6 +132,10 @@ type Config struct {
 	FromNumber             string
 	RingbackURL            string
 	RecordingBucket        string
+	SafeGreetingURL        string
+	VoicemailStore         VoicemailObjectStore
+	RecordingDownloader    RecordingDownloader
+	PlaybackSigningKey     []byte
 	WebhookPublicKey       ed25519.PublicKey
 	WebhookTolerance       time.Duration
 	Observer               observability.Observer
@@ -153,6 +180,9 @@ type ProviderFact struct {
 	RecordingID        string
 	RecordingBucket    string
 	RecordingObjectKey string
+	RecordingURL       string
+	RecordingStartedAt time.Time
+	RecordingEndedAt   time.Time
 }
 
 type ProviderCommand struct {
@@ -251,6 +281,9 @@ type Call struct {
 	PracticeID          string
 	LocationID          string
 	LocationName        string
+	Direction           CallDirection
+	EntryPoint          CallEntryPoint
+	TaskID              string
 	State               CallState
 	Deadline            time.Time
 	ClaimantSubject     string
@@ -259,6 +292,7 @@ type Call struct {
 	ExpectedMediaToken  string
 	currentAttemptID    string
 	Phone               string
+	CallerID            string
 	PhoneSource         string
 	DisplayName         string
 	NameSource          string
@@ -268,6 +302,9 @@ type Call struct {
 	ConnectedAt         *time.Time
 	Version             int64
 	Recording           Recording
+	Voicemail           Voicemail
+	RetryOfCallID       string
+	RetryAllowed        bool
 }
 
 type CallHistoryQuery struct {
@@ -327,6 +364,10 @@ type Disposition string
 const (
 	DispositionResolved         Disposition = "RESOLVED"
 	DispositionFollowUpRequired Disposition = "FOLLOW_UP_REQUIRED"
+	DispositionCompleteTask     Disposition = "COMPLETE_TASK"
+	DispositionKeepOpen         Disposition = "KEEP_OPEN"
+	DispositionCreateTask       Disposition = "CREATE_TASK"
+	DispositionNoFollowUp       Disposition = "NO_FOLLOW_UP"
 )
 
 type DispositionResult struct {
@@ -335,14 +376,15 @@ type DispositionResult struct {
 }
 
 type Module struct {
-	pool     *pgxpool.Pool
-	access   *access.Module
-	work     *work.Module
-	provider Provider
-	config   Config
-	now      func() time.Time
-	tokenKey []byte
-	observer observability.Observer
+	pool        *pgxpool.Pool
+	access      *access.Module
+	work        *work.Module
+	provider    Provider
+	config      Config
+	now         func() time.Time
+	tokenKey    []byte
+	playbackKey []byte
+	observer    observability.Observer
 }
 
 func New(
@@ -384,13 +426,17 @@ func New(
 		}
 	}
 	module := &Module{
-		pool:     pool,
-		access:   accessModule,
-		provider: provider,
-		config:   config,
-		now:      now,
-		tokenKey: tokenKey,
-		observer: config.Observer,
+		pool:        pool,
+		access:      accessModule,
+		provider:    provider,
+		config:      config,
+		now:         now,
+		tokenKey:    tokenKey,
+		playbackKey: append([]byte(nil), config.PlaybackSigningKey...),
+		observer:    config.Observer,
+	}
+	if len(module.playbackKey) == 0 {
+		module.playbackKey = append([]byte(nil), tokenKey...)
 	}
 	if pool != nil && accessModule != nil {
 		module.work = work.New(pool, accessModule, now)
@@ -532,6 +578,12 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 			transaction = func() error {
 				return m.applyStaffInitiated(ctx, fact, state.CallID)
 			}
+		} else if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
+			state.Version == 1 &&
+			state.Leg == "destination" {
+			transaction = func() error {
+				return m.applyOutboundDestinationFact(ctx, fact, state.CallID)
+			}
 		} else {
 			transaction = func() error { return m.admitHandoff(ctx, fact) }
 		}
@@ -542,19 +594,71 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 			transaction = func() error {
 				return m.applyStaffInitiated(ctx, fact, state.CallID)
 			}
+		} else if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
+			state.Version == 1 &&
+			state.Leg == "destination" {
+			transaction = func() error {
+				return m.applyOutboundDestinationFact(ctx, fact, state.CallID)
+			}
 		} else {
 			transaction = func() error { return m.applyCallerAnswered(ctx, fact) }
 		}
 	case FactCallBridged:
+		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
+			state.Version == 1 &&
+			(state.Leg == "staff" || state.Leg == "destination") {
+			outbound, err := m.isOutboundCall(ctx, state.CallID)
+			if err != nil {
+				return err
+			}
+			if outbound {
+				transaction = func() error {
+					return m.applyOutboundBridge(ctx, fact, state.CallID)
+				}
+				break
+			}
+		}
 		transaction = func() error { return m.applyBridge(ctx, fact) }
 	case FactCallHangup:
+		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
+			state.Version == 1 &&
+			(state.Leg == "staff" || state.Leg == "destination") {
+			outbound, err := m.isOutboundCall(ctx, state.CallID)
+			if err != nil {
+				return err
+			}
+			if outbound {
+				transaction = func() error {
+					return m.applyOutboundHangup(ctx, fact, state.CallID)
+				}
+				break
+			}
+		}
 		transaction = func() error { return m.applyHangup(ctx, fact) }
 	case FactPlaybackStarted:
 		transaction = func() error { return m.applyRingbackStarted(ctx, fact) }
+	case FactPlaybackEnded:
+		transaction = func() error { return m.applyVoicemailGreetingEnded(ctx, fact) }
 	case FactRecordingSaved:
-		transaction = func() error { return m.applyRecordingSaved(ctx, fact) }
+		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
+			state.Version == 1 &&
+			state.Leg == "voicemail" {
+			transaction = func() error {
+				return m.applyVoicemailRecordingSaved(ctx, fact, state.CallID)
+			}
+		} else {
+			transaction = func() error { return m.applyRecordingSaved(ctx, fact) }
+		}
 	case FactRecordingError:
-		transaction = func() error { return m.applyRecordingError(ctx, fact) }
+		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
+			state.Version == 1 &&
+			state.Leg == "voicemail" {
+			transaction = func() error {
+				return m.applyVoicemailRecordingError(ctx, fact, state.CallID)
+			}
+		} else {
+			transaction = func() error { return m.applyRecordingError(ctx, fact) }
+		}
 	default:
 		return nil
 	}
@@ -591,7 +695,14 @@ func (m *Module) AcquireSoftphone(
 		WHERE
 			(
 				claimant_subject = $1
-				AND state IN ('CONNECTING', 'CONNECTED', 'RECONCILING', 'NEEDS_DISPOSITION')
+				AND state IN (
+					'PREPARING',
+					'RINGING',
+					'CONNECTING',
+					'CONNECTED',
+					'RECONCILING',
+					'NEEDS_DISPOSITION'
+				)
 			)
 			OR (winner_subject = $1 AND state = 'NEEDS_DISPOSITION')
 		FOR UPDATE
@@ -697,7 +808,14 @@ func (m *Module) AcquireSoftphone(
 				OR (winner_subject = $1 AND state = 'NEEDS_DISPOSITION')
 			)
 			AND claimant_session_id IS DISTINCT FROM $2
-			AND state IN ('CONNECTING', 'CONNECTED', 'RECONCILING', 'NEEDS_DISPOSITION')
+			AND state IN (
+				'PREPARING',
+				'RINGING',
+				'CONNECTING',
+				'CONNECTED',
+				'RECONCILING',
+				'NEEDS_DISPOSITION'
+			)
 	`, identity.Subject, sessionID, now); err != nil {
 		return SoftphoneState{}, fmt.Errorf("transfer active Call softphone ownership: %w", err)
 	}
@@ -711,7 +829,14 @@ func (m *Module) AcquireSoftphone(
 				OR (call.winner_subject = $1 AND call.state = 'NEEDS_DISPOSITION')
 			)
 			AND attempt.claimant_session_id IS DISTINCT FROM $2
-			AND call.state IN ('CONNECTING', 'CONNECTED', 'RECONCILING', 'NEEDS_DISPOSITION')
+			AND call.state IN (
+				'PREPARING',
+				'RINGING',
+				'CONNECTING',
+				'CONNECTED',
+				'RECONCILING',
+				'NEEDS_DISPOSITION'
+			)
 	`, identity.Subject, sessionID, now); err != nil {
 		return SoftphoneState{}, fmt.Errorf("transfer current connection attempt ownership: %w", err)
 	}
@@ -756,7 +881,22 @@ func (m *Module) SetReadiness(
 			microphone_ready = $4,
 			audio_ready = $5,
 			session_healthy = $6,
-			desired_available = $7,
+			desired_available = CASE
+				WHEN EXISTS (
+					SELECT 1
+					FROM human_calling_calls call
+					WHERE call.claimant_subject = $1
+						AND call.direction = 'OUTBOUND'
+						AND call.state IN (
+							'PREPARING',
+							'RINGING',
+							'CONNECTED',
+							'RECONCILING',
+							'NEEDS_DISPOSITION'
+						)
+				) THEN false
+				ELSE $7
+			END,
 			readiness_updated_at = $8,
 			lease_expires_at = $8 + $9::interval,
 			version = version + 1,
@@ -814,6 +954,8 @@ func (m *Module) loadCurrentCallCapacity(
 				(
 					claimant_subject = $1
 					AND state IN (
+						'PREPARING',
+						'RINGING',
 						'CONNECTING',
 						'CONNECTED',
 						'RECONCILING',
@@ -1581,21 +1723,19 @@ func (m *Module) acceptOfferTransaction(
 			UPDATE human_calling_calls
 			SET
 				state = 'UNANSWERED',
-				ended_at = $2,
 				version = version + 1,
 				updated_at = $2
 			WHERE id = $1
 		`, callID, m.now()); err != nil {
 			return AcceptResult{}, fmt.Errorf("expire offered Call: %w", err)
 		}
-		if err := insertCommand(
+		if err := m.startVoicemailGreeting(
 			ctx,
 			tx,
 			callID,
-			"",
-			CommandHangup,
+			practiceID,
+			locationID,
 			callerCallControlID,
-			map[string]any{"client_state": opaqueClientState(callID, "caller")},
 			m.now(),
 		); err != nil {
 			return AcceptResult{}, err
@@ -1860,11 +2000,16 @@ func (m *Module) ReadCall(
 	if err != nil || authorization.PlatformOperator {
 		return Call{}, ErrDenied
 	}
-	if call.ClaimantSubject != identity.Subject && call.WinnerSubject != identity.Subject {
+	recoveryVisible := call.State == CallVoicemail || call.State == CallMissed
+	if !recoveryVisible &&
+		call.ClaimantSubject != identity.Subject &&
+		call.WinnerSubject != identity.Subject {
 		return Call{}, ErrDenied
 	}
 	if call.currentAttemptID != "" &&
-		(call.State == CallConnecting ||
+		(call.State == CallPreparing ||
+			call.State == CallRinging ||
+			call.State == CallConnecting ||
 			call.State == CallReconciling ||
 			call.State == CallConnected) {
 		call.ExpectedMediaToken = m.staffMediaToken(call.ID, call.currentAttemptID)
@@ -1885,7 +2030,7 @@ func (m *Module) QueryCallHistory(
 	if limit == 0 {
 		limit = 20
 	}
-	if limit < 1 || limit > 20 {
+	if limit < 1 || limit > 50 {
 		return CallHistoryPage{}, ErrInvalidInput
 	}
 	cursor, err := decodeCallHistoryCursor(query.Cursor)
@@ -1917,6 +2062,7 @@ func (m *Module) QueryCallHistory(
 	rows, err := tx.Query(ctx, `
 		SELECT
 			call.id::text,
+			call.direction,
 			call.created_at,
 			call.ended_at,
 			CASE
@@ -1933,7 +2079,7 @@ func (m *Module) QueryCallHistory(
 			COALESCE(handoff.transfer_reason, ''),
 			call.state
 		FROM human_calling_calls call
-		JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
@@ -1942,7 +2088,7 @@ func (m *Module) QueryCallHistory(
 			AND membership.user_subject = call.winner_subject
 		WHERE call.practice_id = $1
 			AND call.location_id::text = ANY($2::text[])
-			AND handoff.phone = $3
+			AND COALESCE(handoff.phone, call.destination_phone) = $3
 			AND (
 				NOT $4
 				OR call.created_at < $5
@@ -1962,6 +2108,7 @@ func (m *Module) QueryCallHistory(
 		var item CallHistoryItem
 		if err := rows.Scan(
 			&item.ID,
+			&item.Direction,
 			&item.StartedAt,
 			&item.EndedAt,
 			&item.DurationSeconds,
@@ -1974,7 +2121,6 @@ func (m *Module) QueryCallHistory(
 			return CallHistoryPage{}, fmt.Errorf("scan Call history: %w", err)
 		}
 		item.Type = "CALL"
-		item.Direction = "INBOUND"
 		item.Current = item.ID == query.CurrentCallID
 		item.Originating = item.ID == query.OriginatingCallID
 		items = append(items, item)
@@ -2189,10 +2335,7 @@ func (m *Module) RecordDisposition(
 	callID string,
 	disposition Disposition,
 ) (DispositionResult, error) {
-	if sessionID == "" ||
-		m.work == nil ||
-		(disposition != DispositionResolved &&
-			disposition != DispositionFollowUpRequired) {
+	if sessionID == "" || m.work == nil || !validDisposition(disposition) {
 		return DispositionResult{}, ErrInvalidInput
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -2204,37 +2347,55 @@ func (m *Module) RecordDisposition(
 		return DispositionResult{}, ErrDenied
 	}
 
-	var practiceID, locationID, winnerSubject, claimantSessionID string
-	var phone, transferReason string
+	var practiceID, locationID, ownerSubject, claimantSessionID string
+	var phone, transferReason, taskID, currentDisposition string
 	var state CallState
+	var direction CallDirection
+	var entryPoint CallEntryPoint
+	var connectedAt *time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			call.practice_id::text,
 			call.location_id::text,
 			call.state,
-			COALESCE(call.winner_subject, ''),
+			call.direction,
+			call.entry_point,
+			COALESCE(call.task_id::text, ''),
+			COALESCE(
+				call.winner_subject,
+				call.initiating_subject,
+				call.claimant_subject,
+				''
+			),
 			COALESCE(call.claimant_session_id, ''),
-			COALESCE(handoff.phone, ''),
-			COALESCE(handoff.transfer_reason, '')
+			COALESCE(handoff.phone, call.destination_phone, ''),
+			COALESCE(handoff.transfer_reason, ''),
+			call.connected_at,
+			COALESCE(call.disposition_outcome, '')
 		FROM human_calling_calls call
-		JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
 		WHERE call.id = $1
 		FOR UPDATE OF call
 	`, callID).Scan(
 		&practiceID,
 		&locationID,
 		&state,
-		&winnerSubject,
+		&direction,
+		&entryPoint,
+		&taskID,
+		&ownerSubject,
 		&claimantSessionID,
 		&phone,
 		&transferReason,
+		&connectedAt,
+		&currentDisposition,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DispositionResult{}, ErrDenied
 		}
 		return DispositionResult{}, fmt.Errorf("lock Call disposition: %w", err)
 	}
-	if winnerSubject != identity.Subject ||
+	if ownerSubject != identity.Subject ||
 		claimantSessionID != sessionID {
 		return DispositionResult{}, ErrConflict
 	}
@@ -2263,15 +2424,70 @@ func (m *Module) RecordDisposition(
 	if !ownsCurrentLease {
 		return DispositionResult{}, ErrConflict
 	}
+	if !dispositionAllowed(
+		direction,
+		entryPoint,
+		state,
+		connectedAt != nil,
+		disposition,
+	) {
+		return DispositionResult{}, ErrConflict
+	}
+	if currentDisposition != "" {
+		if currentDisposition != string(disposition) {
+			return DispositionResult{}, ErrConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return DispositionResult{}, fmt.Errorf(
+				"commit replayed Call disposition: %w",
+				err,
+			)
+		}
+		call, err := m.ReadCall(ctx, identity, callID)
+		if err != nil {
+			return DispositionResult{}, err
+		}
+		if disposition != DispositionCompleteTask &&
+			disposition != DispositionKeepOpen {
+			taskID = ""
+			if disposition == DispositionCreateTask ||
+				disposition == DispositionFollowUpRequired {
+				if err := m.pool.QueryRow(ctx, `
+					SELECT COALESCE((
+						SELECT id::text
+						FROM work_tasks
+						WHERE call_id = $1
+						ORDER BY created_at, id
+						LIMIT 1
+					), '')
+				`, callID).Scan(&taskID); err != nil {
+					return DispositionResult{}, err
+				}
+			}
+		}
+		return DispositionResult{Call: call, TaskID: taskID}, nil
+	}
 	nextState := CallResolved
 	if disposition == DispositionFollowUpRequired {
 		nextState = CallFollowUpRequired
 	}
-	if state != CallNeedsDisposition && state != nextState {
-		return DispositionResult{}, ErrConflict
+	if disposition == DispositionCompleteTask ||
+		disposition == DispositionKeepOpen {
+		task, err := m.work.ApplyCallTaskDisposition(
+			ctx,
+			tx,
+			taskID,
+			disposition == DispositionCompleteTask,
+			authorization.Actor,
+			m.now(),
+		)
+		if err != nil {
+			return DispositionResult{}, err
+		}
+		taskID = task.ID
 	}
-	taskID := ""
-	if disposition == DispositionFollowUpRequired {
+	if disposition == DispositionFollowUpRequired ||
+		disposition == DispositionCreateTask {
 		task, err := m.work.EnsureCallFollowUp(
 			ctx,
 			tx,
@@ -2289,16 +2505,6 @@ func (m *Module) RecordDisposition(
 		}
 		taskID = task.ID
 	}
-	if state == nextState {
-		if err := tx.Commit(ctx); err != nil {
-			return DispositionResult{}, fmt.Errorf("commit replayed Call disposition: %w", err)
-		}
-		call, err := m.ReadCall(ctx, identity, callID)
-		if err != nil {
-			return DispositionResult{}, err
-		}
-		return DispositionResult{Call: call, TaskID: taskID}, nil
-	}
 	dispositionAt := m.now()
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls
@@ -2306,10 +2512,12 @@ func (m *Module) RecordDisposition(
 			state = $2,
 			disposition_actor_subject = $3,
 			disposition_at = $4,
+			disposition_outcome = $5,
 			version = version + 1,
 			updated_at = $4
 		WHERE id = $1
-	`, callID, nextState, identity.Subject, dispositionAt); err != nil {
+	`, callID, nextState, identity.Subject, dispositionAt,
+		disposition); err != nil {
 		return DispositionResult{}, fmt.Errorf("record Call disposition: %w", err)
 	}
 	if err := appendTimeline(
@@ -2340,6 +2548,52 @@ func (m *Module) RecordDisposition(
 		return DispositionResult{}, err
 	}
 	return DispositionResult{Call: call, TaskID: taskID}, nil
+}
+
+func validDisposition(disposition Disposition) bool {
+	switch disposition {
+	case DispositionResolved,
+		DispositionFollowUpRequired,
+		DispositionCompleteTask,
+		DispositionKeepOpen,
+		DispositionCreateTask,
+		DispositionNoFollowUp:
+		return true
+	default:
+		return false
+	}
+}
+
+func dispositionAllowed(
+	direction CallDirection,
+	entryPoint CallEntryPoint,
+	state CallState,
+	connected bool,
+	disposition Disposition,
+) bool {
+	if state != CallNeedsDisposition &&
+		state != CallResolved &&
+		state != CallFollowUpRequired {
+		return false
+	}
+	if direction == CallInbound {
+		return disposition == DispositionResolved ||
+			disposition == DispositionFollowUpRequired
+	}
+	if entryPoint == CallEntryTask {
+		return connected &&
+			(disposition == DispositionCompleteTask ||
+				disposition == DispositionKeepOpen)
+	}
+	if entryPoint != CallEntryStandalone {
+		return false
+	}
+	if connected {
+		return disposition == DispositionResolved ||
+			disposition == DispositionCreateTask
+	}
+	return disposition == DispositionNoFollowUp ||
+		disposition == DispositionCreateTask
 }
 
 func (m *Module) RequestHangup(
@@ -2475,7 +2729,11 @@ func (m *Module) ExpireOffers(ctx context.Context) (int, error) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, `
-		SELECT id::text, practice_id::text, caller_call_control_id
+		SELECT
+			id::text,
+			practice_id::text,
+			location_id::text,
+			caller_call_control_id
 		FROM human_calling_calls
 		WHERE state IN ('OFFERING', 'RECONCILING')
 			AND claimant_subject IS NULL
@@ -2490,6 +2748,7 @@ func (m *Module) ExpireOffers(ctx context.Context) (int, error) {
 	type expiredOffer struct {
 		callID        string
 		practiceID    string
+		locationID    string
 		callControlID string
 	}
 	expired := []expiredOffer{}
@@ -2498,6 +2757,7 @@ func (m *Module) ExpireOffers(ctx context.Context) (int, error) {
 		if err := rows.Scan(
 			&offer.callID,
 			&offer.practiceID,
+			&offer.locationID,
 			&offer.callControlID,
 		); err != nil {
 			rows.Close()
@@ -2516,7 +2776,6 @@ func (m *Module) ExpireOffers(ctx context.Context) (int, error) {
 			UPDATE human_calling_calls
 			SET
 				state = 'UNANSWERED',
-				ended_at = $2,
 				version = version + 1,
 				updated_at = $2
 			WHERE id = $1
@@ -2525,14 +2784,13 @@ func (m *Module) ExpireOffers(ctx context.Context) (int, error) {
 		`, offer.callID, m.now()); err != nil {
 			return 0, fmt.Errorf("expire offered Call: %w", err)
 		}
-		if err := insertCommand(
+		if err := m.startVoicemailGreeting(
 			ctx,
 			tx,
 			offer.callID,
-			"",
-			CommandHangup,
+			offer.practiceID,
+			offer.locationID,
 			offer.callControlID,
-			map[string]any{"client_state": opaqueClientState(offer.callID, "caller")},
 			m.now(),
 		); err != nil {
 			return 0, err
@@ -2578,7 +2836,8 @@ func (m *Module) ExpireConnections(ctx context.Context) (int, error) {
 			offer_deadline,
 			connection_deadline
 		FROM human_calling_calls
-		WHERE state IN ('CONNECTING', 'RECONCILING')
+		WHERE direction = 'INBOUND'
+			AND state IN ('CONNECTING', 'RECONCILING')
 			AND claimant_subject IS NOT NULL
 			AND connection_deadline <= $1
 		ORDER BY connection_deadline, id
@@ -2737,7 +2996,11 @@ func (m *Module) ExpireConnections(ctx context.Context) (int, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit connection expiry: %w", err)
 	}
-	return len(expired), nil
+	outboundExpired, err := m.expireOutboundCalls(ctx)
+	if err != nil {
+		return len(expired), err
+	}
+	return len(expired) + outboundExpired, nil
 }
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
@@ -2845,12 +3108,32 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		!safeRetry {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
-			SET state = 'RECONCILING', version = version + 1, updated_at = $2
+			SET
+				state = 'RECONCILING',
+				provider_termination = CASE
+					WHEN direction = 'OUTBOUND' THEN 'STATUS_UNKNOWN'
+					ELSE provider_termination
+				END,
+				version = version + 1,
+				updated_at = $2
 			WHERE id = $1
 				AND current_attempt_id = NULLIF($3, '')::uuid
-				AND state = 'CONNECTING'
+				AND state IN ('PREPARING', 'CONNECTING')
 		`, *command.callID, now, command.attemptID); err != nil {
 			return fmt.Errorf("mark expired interrupted Dial reconciling: %w", err)
+		}
+	}
+	if command.callID != nil &&
+		command.action == CommandStartVoicemailRecording &&
+		!safeRetry {
+		if err := m.deferVoicemailFailure(
+			ctx,
+			tx,
+			*command.callID,
+			"provider-command-"+command.id,
+			now,
+		); err != nil {
+			return err
 		}
 	}
 
@@ -3086,7 +3369,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 					AND call.state NOT IN ('OFFERING', 'CONNECTING', 'RECONCILING'))
 				OR (command.action = 'DIAL_STAFF'
 					AND (
-						call.state NOT IN ('CONNECTING', 'RECONCILING')
+						call.state NOT IN ('PREPARING', 'CONNECTING', 'RECONCILING')
 						OR command.attempt_id IS DISTINCT FROM call.current_attempt_id
 						OR EXISTS (
 							SELECT 1
@@ -3095,6 +3378,12 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 								AND attempt.ended_at IS NOT NULL
 						)
 					))
+				OR (command.action = 'DIAL_DESTINATION'
+					AND call.state NOT IN ('RINGING', 'RECONCILING'))
+				OR (command.action = 'PLAY_VOICEMAIL_GREETING'
+					AND call.state <> 'UNANSWERED')
+				OR (command.action = 'START_VOICEMAIL_RECORDING'
+					AND call.state <> 'UNANSWERED')
 				OR (command.action = 'START_RECORDING'
 					AND call.state <> 'CONNECTED')
 			)
@@ -3492,6 +3781,15 @@ func (m *Module) finishCommandTransaction(
 		if command.AttemptID == "" {
 			return "", fmt.Errorf("Dial command omitted connection attempt identity")
 		}
+		var direction CallDirection
+		var entryPoint CallEntryPoint
+		if err := tx.QueryRow(ctx, `
+			SELECT direction, entry_point
+			FROM human_calling_calls
+			WHERE id = $1
+		`, *callID).Scan(&direction, &entryPoint); err != nil {
+			return "", fmt.Errorf("read Dial Call direction: %w", err)
+		}
 		if executeErr == nil {
 			if result.CallControlID == "" || result.CallLegID == "" {
 				return "", fmt.Errorf("successful Dial omitted provider leg identity")
@@ -3524,7 +3822,7 @@ func (m *Module) finishCommandTransaction(
 					updated_at = $4
 				WHERE id = $1
 					AND current_attempt_id = $5
-					AND state IN ('CONNECTING', 'RECONCILING')
+					AND state IN ('PREPARING', 'CONNECTING', 'RECONCILING')
 					AND $6::timestamptz IS NULL
 			`,
 				*callID,
@@ -3545,7 +3843,7 @@ func (m *Module) finishCommandTransaction(
 						FROM human_calling_calls
 						WHERE id = $1
 							AND current_attempt_id = $2
-							AND state = 'CONNECTED'
+							AND state IN ('RINGING', 'CONNECTED')
 							AND expected_staff_call_control_id = $3
 							AND expected_staff_call_leg_id = $4
 					)
@@ -3582,24 +3880,69 @@ func (m *Module) finishCommandTransaction(
 				SET state = 'RECONCILING', version = version + 1, updated_at = $2
 				WHERE id = $1
 					AND current_attempt_id = $3
-					AND state = 'CONNECTING'
+					AND state IN ('PREPARING', 'CONNECTING')
 			`, *callID, m.now(), command.AttemptID); err != nil {
 				return "", fmt.Errorf("mark ambiguous Call reconciling: %w", err)
 			}
 		} else {
-			var deadline time.Time
-			if err := tx.QueryRow(ctx, `
+			if direction == CallOutbound {
+				nextState := CallResolved
+				if entryPoint == CallEntryStandalone {
+					nextState = CallNeedsDisposition
+				}
+				if _, err := tx.Exec(ctx, `
+					UPDATE human_calling_calls
+					SET
+						state = $4,
+						provider_termination = 'MEDIA_READINESS_FAILED',
+						ended_at = $2,
+						version = version + 1,
+						updated_at = $2
+					WHERE id = $1
+						AND current_attempt_id = $3
+						AND state IN ('PREPARING', 'RECONCILING')
+				`, *callID, m.now(), command.AttemptID, nextState); err != nil {
+					return "", fmt.Errorf("terminate failed outbound media preparation: %w", err)
+				}
+				if _, err := tx.Exec(ctx, `
+					UPDATE human_calling_connection_attempts
+					SET
+						ended_at = COALESCE(ended_at, $2),
+						provider_termination = 'MEDIA_READINESS_FAILED',
+						updated_at = $2
+					WHERE id = $1
+				`, command.AttemptID, m.now()); err != nil {
+					return "", fmt.Errorf("end failed outbound media attempt: %w", err)
+				}
+				if err := m.restoreOutboundAvailability(
+					ctx,
+					tx,
+					*callID,
+					m.now(),
+				); err != nil {
+					return "", err
+				}
+				if _, err := m.access.RecordWorkspaceChange(
+					ctx,
+					tx,
+					callPracticeID,
+				); err != nil {
+					return "", err
+				}
+			} else {
+				var deadline time.Time
+				if err := tx.QueryRow(ctx, `
 				SELECT offer_deadline
 				FROM human_calling_calls
 				WHERE id = $1
 			`, *callID).Scan(&deadline); err != nil {
-				return "", fmt.Errorf("load definitively failed Call: %w", err)
-			}
-			nextState := CallUnanswered
-			if m.now().Before(deadline) {
-				nextState = CallOffering
-			}
-			callTag, err := tx.Exec(ctx, `
+					return "", fmt.Errorf("load definitively failed Call: %w", err)
+				}
+				nextState := CallUnanswered
+				if m.now().Before(deadline) {
+					nextState = CallOffering
+				}
+				callTag, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
 				SET
 					state = $2,
@@ -3621,10 +3964,10 @@ func (m *Module) finishCommandTransaction(
 					AND current_attempt_id = $4
 					AND state = 'CONNECTING'
 			`, *callID, nextState, m.now(), command.AttemptID)
-			if err != nil {
-				return "", fmt.Errorf("reopen definitively failed Call: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `
+				if err != nil {
+					return "", fmt.Errorf("reopen definitively failed Call: %w", err)
+				}
+				if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_connection_attempts
 				SET
 					ended_at = COALESCE(ended_at, $2),
@@ -3632,25 +3975,123 @@ func (m *Module) finishCommandTransaction(
 					updated_at = $2
 				WHERE id = $1
 			`, command.AttemptID, m.now()); err != nil {
-				return "", fmt.Errorf("end rejected connection attempt: %w", err)
-			}
-			if callTag.RowsAffected() == 1 && nextState == CallUnanswered {
-				if err := insertCommand(
-					ctx,
-					tx,
-					*callID,
-					"",
-					CommandHangup,
-					command.TargetID,
-					map[string]any{
-						"client_state": opaqueClientState(*callID, "caller"),
-					},
-					m.now(),
-				); err != nil {
+					return "", fmt.Errorf("end rejected connection attempt: %w", err)
+				}
+				if callTag.RowsAffected() == 1 && nextState == CallUnanswered {
+					if err := insertCommand(
+						ctx,
+						tx,
+						*callID,
+						"",
+						CommandHangup,
+						command.TargetID,
+						map[string]any{
+							"client_state": opaqueClientState(*callID, "caller"),
+						},
+						m.now(),
+					); err != nil {
+						return "", err
+					}
+				}
+				if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
 					return "", err
 				}
 			}
-			if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
+		}
+	}
+	if callID != nil && command.Action == CommandDialDestination {
+		if executeErr == nil {
+			if result.CallControlID == "" || result.CallLegID == "" {
+				return "", fmt.Errorf(
+					"successful destination Dial omitted provider leg identity",
+				)
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_calls
+				SET
+					destination_call_control_id = COALESCE(
+						destination_call_control_id,
+						$2
+					),
+					destination_call_leg_id = COALESCE(
+						destination_call_leg_id,
+						$3
+					),
+					provider_termination = NULL,
+					version = version + 1,
+					updated_at = $4
+				WHERE id = $1
+					AND state IN ('RINGING', 'RECONCILING')
+			`, *callID, result.CallControlID, result.CallLegID,
+				m.now(),
+			); err != nil {
+				return "", fmt.Errorf("record outbound destination leg: %w", err)
+			}
+		} else if state == "AMBIGUOUS" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_calls
+				SET
+					state = 'RECONCILING',
+					provider_termination = 'STATUS_UNKNOWN',
+					version = version + 1,
+					updated_at = $2
+				WHERE id = $1 AND state = 'RINGING'
+			`, *callID, m.now()); err != nil {
+				return "", fmt.Errorf("mark outbound destination status unknown: %w", err)
+			}
+		} else {
+			var entryPoint CallEntryPoint
+			if err := tx.QueryRow(ctx, `
+				SELECT entry_point
+				FROM human_calling_calls
+				WHERE id = $1
+			`, *callID).Scan(&entryPoint); err != nil {
+				return "", fmt.Errorf("read failed outbound entry point: %w", err)
+			}
+			nextState := CallNeedsDisposition
+			if entryPoint == CallEntryTask {
+				nextState = CallResolved
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_calls
+				SET
+					state = $2,
+					provider_termination = 'FAILED',
+					ended_at = $3,
+					version = version + 1,
+					updated_at = $3
+				WHERE id = $1
+					AND state IN ('RINGING', 'RECONCILING')
+			`, *callID, nextState, m.now()); err != nil {
+				return "", fmt.Errorf("terminate rejected outbound destination: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_connection_attempts
+				SET
+					ended_at = COALESCE(ended_at, $2),
+					provider_termination = 'FAILED',
+					updated_at = $2
+				WHERE id = (
+					SELECT current_attempt_id
+					FROM human_calling_calls
+					WHERE id = $1
+				)
+			`, *callID, m.now()); err != nil {
+				return "", fmt.Errorf("end rejected outbound attempt: %w", err)
+			}
+			if err := m.restoreOutboundAvailability(
+				ctx,
+				tx,
+				*callID,
+				m.now(),
+			); err != nil {
+				return "", err
+			}
+			if _, err := m.access.RecordWorkspaceChange(
+				ctx,
+				tx,
+				callPracticeID,
+			); err != nil {
 				return "", err
 			}
 		}
@@ -3814,6 +4255,38 @@ func (m *Module) finishCommandTransaction(
 				return "", fmt.Errorf("record recording command failure: %w", err)
 			}
 		}
+		if command.Action == CommandStartVoicemailRecording {
+			eventID := "provider-command-" + command.ID
+			if state == "SENT" {
+				if err := m.watchVoicemailRecording(
+					ctx,
+					tx,
+					*callID,
+					eventID,
+					m.now(),
+				); err != nil {
+					return "", err
+				}
+			} else if state == "FAILED" {
+				if err := m.finalizeVoicemailFailure(
+					ctx,
+					tx,
+					*callID,
+					eventID,
+					m.now(),
+				); err != nil {
+					return "", err
+				}
+			} else if err := m.deferVoicemailFailure(
+				ctx,
+				tx,
+				*callID,
+				eventID,
+				m.now(),
+			); err != nil {
+				return "", err
+			}
+		}
 		if err := appendTimeline(
 			ctx,
 			tx,
@@ -3861,12 +4334,14 @@ func (m *Module) applyStaffInitiated(
 	}
 
 	var practiceID, callSessionID, currentClaimant, currentSession string
+	var direction CallDirection
 	var state CallState
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			practice_id::text,
 			state,
-			call_session_id,
+			COALESCE(call_session_id, ''),
+			direction,
 			COALESCE(claimant_subject, ''),
 			COALESCE(claimant_session_id, '')
 		FROM human_calling_calls
@@ -3876,6 +4351,7 @@ func (m *Module) applyStaffInitiated(
 		&practiceID,
 		&state,
 		&callSessionID,
+		&direction,
 		&currentClaimant,
 		&currentSession,
 	); err != nil {
@@ -3884,8 +4360,18 @@ func (m *Module) applyStaffInitiated(
 		}
 		return fmt.Errorf("correlate initiated staff leg: %w", err)
 	}
-	if callSessionID != fact.CallSessionID {
+	if callSessionID != "" && callSessionID != fact.CallSessionID {
 		return ErrConflict
+	}
+	if direction == CallOutbound && callSessionID == "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET call_session_id = $2, version = version + 1, updated_at = $3
+			WHERE id = $1 AND call_session_id IS NULL
+		`, callID, fact.CallSessionID, m.now()); err != nil {
+			return fmt.Errorf("record outbound staff Call session: %w", err)
+		}
+		callSessionID = fact.CallSessionID
 	}
 	clientState, _ := parseOpaqueClientState(fact.ClientState)
 
@@ -3939,9 +4425,14 @@ func (m *Module) applyStaffInitiated(
 		SET
 			staff_call_control_id = COALESCE(staff_call_control_id, $2),
 			staff_call_leg_id = COALESCE(staff_call_leg_id, $3),
+			staff_answered_at = CASE
+				WHEN $5 THEN COALESCE(staff_answered_at, $6)
+				ELSE staff_answered_at
+			END,
 			updated_at = $4
 		WHERE id = $1
-	`, attemptID, fact.CallControlID, fact.CallLegID, m.now()); err != nil {
+	`, attemptID, fact.CallControlID, fact.CallLegID, m.now(),
+		fact.Type == FactCallAnswered, fact.OccurredAt); err != nil {
 		return fmt.Errorf("project initiated staff attempt: %w", err)
 	}
 
@@ -3955,19 +4446,27 @@ func (m *Module) applyStaffInitiated(
 	}
 	currentActiveAttempt := currentAttemptID == attemptID &&
 		attemptEndedAt == nil &&
-		(state == CallConnecting || state == CallReconciling)
+		(state == CallPreparing ||
+			state == CallConnecting ||
+			state == CallReconciling)
 	if currentActiveAttempt {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET
-				state = CASE WHEN state = 'RECONCILING' THEN 'CONNECTING' ELSE state END,
+				state = CASE
+					WHEN state = 'RECONCILING' AND direction = 'INBOUND'
+						THEN 'CONNECTING'
+					WHEN state = 'RECONCILING' AND direction = 'OUTBOUND'
+						THEN 'PREPARING'
+					ELSE state
+				END,
 				expected_staff_call_control_id = COALESCE(expected_staff_call_control_id, $2),
 				expected_staff_call_leg_id = COALESCE(expected_staff_call_leg_id, $3),
 				version = version + 1,
 				updated_at = $4
 			WHERE id = $1
 				AND current_attempt_id = $5
-				AND state IN ('CONNECTING', 'RECONCILING')
+				AND state IN ('PREPARING', 'CONNECTING', 'RECONCILING')
 		`, callID, fact.CallControlID, fact.CallLegID, m.now(), attemptID); err != nil {
 			return fmt.Errorf("project initiated current staff leg: %w", err)
 		}
@@ -4648,40 +5147,6 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		return fmt.Errorf("project provider-confirmed bridge: %w", err)
 	}
 
-	if attemptEndedAt == nil {
-		objectKey := "calls/" + callID + ".wav"
-		recordingIntent, err := tx.Exec(ctx, `
-			INSERT INTO human_calling_recordings (
-				call_id, practice_id, bucket, object_key, state, started_at
-			)
-			VALUES ($1, $2, $3, $4, 'INTENDED', $5)
-			ON CONFLICT (call_id) DO NOTHING
-		`, callID, practiceID, m.config.RecordingBucket, objectKey, bridgeAt)
-		if err != nil {
-			return fmt.Errorf("commit post-bridge recording intent: %w", err)
-		}
-		if recordingIntent.RowsAffected() == 1 {
-			if err := insertCommand(
-				ctx,
-				tx,
-				callID,
-				claimantSubject,
-				CommandStartRecording,
-				callerControlID,
-				map[string]any{
-					"format":           "wav",
-					"channels":         "dual",
-					"recording_track":  "both",
-					"transcription":    false,
-					"custom_file_name": "call-" + strings.ReplaceAll(callID, "-", ""),
-					"client_state":     opaqueClientState(callID, "recording"),
-				},
-				m.now(),
-			); err != nil {
-				return err
-			}
-		}
-	}
 	if err := appendTimeline(
 		ctx,
 		tx,
@@ -4937,20 +5402,32 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			`, callID, nextState, reopen, fact.HangupCause, fact.OccurredAt); err != nil {
 			return fmt.Errorf("project pre-bridge termination: %w", err)
 		}
-		if nextState == CallUnanswered && fact.CallControlID != callerControlID {
-			if err := insertCommand(
-				ctx,
-				tx,
-				callID,
-				"",
-				CommandHangup,
-				callerControlID,
-				map[string]any{
-					"client_state": opaqueClientState(callID, "caller"),
-				},
-				m.now(),
-			); err != nil {
-				return err
+		if nextState == CallUnanswered {
+			if callerHangup {
+				if _, err := m.ensureRecoveryOutcome(
+					ctx,
+					tx,
+					callID,
+					RecoveryMissedCall,
+					fact,
+				); err != nil {
+					return err
+				}
+			} else {
+				if err := insertCommand(
+					ctx,
+					tx,
+					callID,
+					"",
+					CommandHangup,
+					callerControlID,
+					map[string]any{
+						"client_state": opaqueClientState(callID, "caller"),
+					},
+					m.now(),
+				); err != nil {
+					return err
+				}
 			}
 		}
 	case CallOffering:
@@ -4963,8 +5440,53 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			`, callID, fact.HangupCause, fact.OccurredAt); err != nil {
 				return fmt.Errorf("project caller termination while offering: %w", err)
 			}
+			if _, err := m.ensureRecoveryOutcome(
+				ctx,
+				tx,
+				callID,
+				RecoveryMissedCall,
+				fact,
+			); err != nil {
+				return err
+			}
 		}
-	case CallNeedsDisposition, CallResolved, CallFollowUpRequired, CallUnanswered:
+	case CallUnanswered:
+		if callerHangup {
+			var recordingStarted bool
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM human_calling_provider_commands
+					WHERE call_id = $1
+						AND action = 'START_VOICEMAIL_RECORDING'
+						AND state IN (
+							'PENDING',
+							'SENDING',
+							'SENT',
+							'AMBIGUOUS',
+							'RECONCILED'
+						)
+				)
+			`, callID).Scan(&recordingStarted); err != nil {
+				return fmt.Errorf(
+					"check voicemail recording before caller hangup: %w",
+					err,
+				)
+			}
+			if !recordingStarted {
+				if _, err := m.ensureRecoveryOutcome(
+					ctx,
+					tx,
+					callID,
+					RecoveryMissedCall,
+					fact,
+				); err != nil {
+					return err
+				}
+			}
+		}
+	case CallVoicemail, CallMissed, CallNeedsDisposition, CallResolved,
+		CallFollowUpRequired:
 	}
 	if err := appendTimeline(
 		ctx,
@@ -5120,14 +5642,24 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			c.practice_id::text,
 			c.location_id::text,
 			l.name,
+			c.direction,
+			c.entry_point,
+			COALESCE(c.task_id::text, ''),
 			c.state,
-			c.offer_deadline,
+			CASE
+				WHEN c.direction = 'OUTBOUND' THEN c.connection_deadline
+				ELSE c.offer_deadline
+			END,
 			COALESCE(c.claimant_subject, ''),
 			COALESCE(c.winner_subject, ''),
 			COALESCE(c.expected_staff_call_leg_id, ''),
 			COALESCE(c.current_attempt_id::text, ''),
-			COALESCE(h.phone, ''),
-			COALESCE(h.phone_source, ''),
+			COALESCE(h.phone, c.destination_phone, ''),
+			COALESCE(c.outbound_caller_id, ''),
+			COALESCE(h.phone_source, CASE
+				WHEN c.direction = 'OUTBOUND' THEN 'Staff'
+				ELSE ''
+			END),
 			COALESCE(h.display_name, ''),
 			COALESCE(h.name_source, ''),
 			COALESCE(h.transfer_reason, ''),
@@ -5139,17 +5671,39 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(r.bucket, ''),
 			COALESCE(r.object_key, ''),
 			COALESCE(r.provider_recording_id, ''),
-			COALESCE(r.failure_code, '')
+			COALESCE(r.failure_code, ''),
+			COALESCE(v.outcome, ''),
+			COALESCE(v.audio_state, ''),
+			COALESCE(v.task_id::text, ''),
+			COALESCE(v.duration_millis / 1000, 0),
+			COALESCE(c.retry_of_call_id::text, ''),
+			(
+				c.direction = 'OUTBOUND'
+				AND c.state IN ('RESOLVED', 'RECONCILING')
+				AND (
+					c.entry_point = 'STANDALONE'
+					OR EXISTS (
+						SELECT 1
+						FROM work_tasks task
+						WHERE task.id = c.task_id
+							AND task.state = 'OPEN'
+					)
+				)
+			)
 		FROM human_calling_calls c
-		JOIN human_calling_handoffs h ON h.id = c.handoff_id
+		LEFT JOIN human_calling_handoffs h ON h.id = c.handoff_id
 		JOIN access_locations l ON l.id = c.location_id AND l.practice_id = c.practice_id
 		LEFT JOIN human_calling_recordings r ON r.call_id = c.id
+		LEFT JOIN human_calling_voicemails v ON v.call_id = c.id
 		WHERE c.id = $1
 	`, callID).Scan(
 		&result.ID,
 		&result.PracticeID,
 		&result.LocationID,
 		&result.LocationName,
+		&result.Direction,
+		&result.EntryPoint,
+		&result.TaskID,
 		&result.State,
 		&result.Deadline,
 		&result.ClaimantSubject,
@@ -5157,6 +5711,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.ExpectedStaffLegID,
 		&result.currentAttemptID,
 		&result.Phone,
+		&result.CallerID,
 		&result.PhoneSource,
 		&result.DisplayName,
 		&result.NameSource,
@@ -5170,6 +5725,12 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.Recording.ObjectKey,
 		&result.Recording.ProviderID,
 		&result.Recording.FailureCode,
+		&result.Voicemail.Outcome,
+		&result.Voicemail.AudioState,
+		&result.Voicemail.TaskID,
+		&result.Voicemail.DurationSeconds,
+		&result.RetryOfCallID,
+		&result.RetryAllowed,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

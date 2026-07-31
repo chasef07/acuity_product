@@ -51,10 +51,11 @@ The vertical path is:
    local attachment without sending a provider BYE. Signaling recovery starts
    muted and must pass the same authoritative validation before restoring the
    prior microphone intent.
-8. Only the matching signed `call.bridged` fact marks the Call Connected and
-   commits dual-channel recording intent. Provider-confirmed termination moves
-   the Call to Needs Disposition. The winner records Resolved or Follow-up
-   Required; no Task is created in this slice.
+8. Only the matching signed `call.bridged` fact marks the Call Connected.
+   Slice 6 supersedes Slice 2's connected-recording behavior: new connected
+   human Calls issue no recording command, while historical recording rows
+   remain readable. Provider-confirmed termination moves the Call to Needs
+   Disposition.
 
 The browser and realtime stream are projections. PostgreSQL is the one source
 of truth, and SSE messages are refetch hints.
@@ -93,11 +94,9 @@ of truth, and SSE messages are refetch hints.
 - Browser answer and Dial success are never connection proof. After bridge, the
   claimant is final; reconnect or reload may recover only that provider leg and
   cannot elect another User.
-- Recording intent is impossible before bridge. The Telnyx Call Control
-  Application must be configured for custom private GCS storage. Acuity marks a
-  recording Ready only when the signed provider event names the configured
-  `gs://bucket/object`; otherwise it records a visible failure. No human-call
-  transcription command or schema exists.
+- Historical connected-recording data remains readable, but Slice 6 stops
+  recording new connected human Calls. Voicemail capture is the sole new audio
+  recording path, and no transcription command or schema exists.
 
 ## Deterministic proof
 
@@ -118,8 +117,8 @@ softphones, commits an authenticated Abita handoff, delivers signed webhook
 bodies, and proves that both browsers see the sidebar queue while exactly one
 PostgreSQL claimant and one Dial command exist. Only the winner's exact opaque
 media token answers, even though the browser endpoint leg ID differs from the
-Call Control leg ID. The same journey proves provider-confirmed bridge, post-bridge
-dual-channel/no-transcription recording intent, signed GCS readiness,
+Call Control leg ID. Under the Slice 6 contract, the same journey proves a
+provider-confirmed bridge without a new connected-recording command,
 same-User tab takeover with old-media fencing, provider-confirmed hangup, and
 durable disposition. The browser journey delays the successful Accept response
 until after the matching media invite to prove the committed softphone lease

@@ -88,6 +88,7 @@ function fakeCall(
     hangup: async () => {},
     muteAudio: () => actions.push("mute"),
     unmuteAudio: () => actions.push("unmute"),
+    dtmf: (digit: string) => actions.push(`dtmf:${digit}`),
   }
 }
 
@@ -235,4 +236,28 @@ test("a failed same-instance recovery remains eligible after becoming active", a
 
   assert.deepEqual(actions, ["answer", "unmute", "mute", "unmute"])
   assert.equal(output.plays, 2)
+})
+
+test("DTMF is sent only through the current healthy attachment", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const actions: string[] = []
+  const call = fakeCall("leg-1", "a".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  await legs[0].answer()
+  call.state = "active"
+
+  assert.equal(legs[0].sendDTMF("5"), true)
+  assert.equal(legs[0].sendDTMF("12"), false)
+  sdk.emit("telnyx.socket.close")
+  assert.equal(legs[0].sendDTMF("6"), false)
+
+  assert.deepEqual(actions, ["answer", "unmute", "dtmf:5", "mute"])
 })

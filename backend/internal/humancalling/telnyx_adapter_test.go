@@ -153,6 +153,110 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 	}
 }
 
+func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
+	requests := make(chan map[string]any, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(writer, "invalid", http.StatusBadRequest)
+			return
+		}
+		body["_path"] = request.URL.Path
+		requests <- body
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v2/calls" {
+			_, _ = writer.Write([]byte(
+				`{"data":{"call_control_id":"destination-control","call_leg_id":"destination-leg"}}`,
+			))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"data":{"result":"ok"}}`))
+	}))
+	defer server.Close()
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:     "synthetic-key",
+		BaseURL:    server.URL + "/v2",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := []humancalling.ProviderCommand{
+		{
+			ID:       "voicemail-greeting",
+			Action:   humancalling.CommandPlayVoicemailGreeting,
+			TargetID: "caller-control",
+			Payload: map[string]any{
+				"audio_url":    "https://assets.example/voicemail.wav",
+				"client_state": "opaque-voicemail",
+			},
+		},
+		{
+			ID:       "voicemail-recording",
+			Action:   humancalling.CommandStartVoicemailRecording,
+			TargetID: "caller-control",
+			Payload: map[string]any{
+				"format":           "wav",
+				"channels":         "single",
+				"recording_track":  "inbound",
+				"transcription":    false,
+				"play_beep":        true,
+				"max_length":       float64(120),
+				"custom_file_name": "voicemail-synthetic",
+				"client_state":     "opaque-voicemail",
+			},
+		},
+		{
+			ID:       "destination-dial",
+			Action:   humancalling.CommandDialDestination,
+			TargetID: "staff-control",
+			Payload: map[string]any{
+				"to":                          "+15555550100",
+				"connection_id":               "call-control-app",
+				"from":                        "+15555550199",
+				"link_to":                     "staff-control",
+				"bridge_intent":               true,
+				"bridge_on_answer":            true,
+				"answering_machine_detection": "disabled",
+				"timeout_secs":                float64(30),
+				"client_state":                "opaque-destination",
+			},
+		},
+	}
+	for _, command := range commands {
+		if _, err := adapter.Execute(context.Background(), command); err != nil {
+			t.Fatalf("execute %s: %v", command.Action, err)
+		}
+	}
+	greeting := <-requests
+	recording := <-requests
+	destination := <-requests
+	if greeting["_path"] != "/v2/calls/caller-control/actions/playback_start" ||
+		greeting["audio_url"] != "https://assets.example/voicemail.wav" ||
+		greeting["command_id"] != "voicemail-greeting" {
+		t.Fatalf("voicemail greeting request = %#v", greeting)
+	}
+	if recording["_path"] != "/v2/calls/caller-control/actions/record_start" ||
+		recording["channels"] != "single" ||
+		recording["recording_track"] != "inbound" ||
+		recording["max_length"] != float64(120) ||
+		recording["transcription"] != false {
+		t.Fatalf("voicemail recording request = %#v", recording)
+	}
+	if destination["_path"] != "/v2/calls" ||
+		destination["to"] != "+15555550100" ||
+		destination["from"] != "+15555550199" ||
+		destination["link_to"] != "staff-control" ||
+		destination["bridge_on_answer"] != true ||
+		destination["answering_machine_detection"] != "disabled" ||
+		destination["timeout_secs"] != float64(30) {
+		t.Fatalf("outbound destination request = %#v", destination)
+	}
+}
+
 func TestTelnyxAdapterRejectsIncompleteDurableCommand(t *testing.T) {
 	requested := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(
