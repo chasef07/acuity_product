@@ -234,6 +234,18 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 			 FROM human_calling_softphone_leases
 			 WHERE false
 			 FOR UPDATE`,
+			`INSERT INTO human_calling_projected_facts (
+				event_id,
+				event_type,
+				applied_at
+			)
+			VALUES (
+				'grant-contract-projected-fact',
+				'call.initiated',
+				now()
+			)
+			ON CONFLICT (event_id) DO NOTHING
+			RETURNING event_id`,
 		},
 	}
 
@@ -620,6 +632,12 @@ func expectedColumnPrivileges() map[string]bool {
 		"processing_started_at",
 		"projected_at",
 		"projection_error_code",
+	)
+	grant(
+		"acuity_worker",
+		"public.human_calling_projected_facts",
+		"SELECT",
+		"event_id",
 	)
 	grant(
 		"acuity_provider",

@@ -248,6 +248,10 @@ GRANT INSERT ON TABLE
     public.messaging_threads
 TO acuity_worker;
 
+GRANT SELECT (event_id)
+ON TABLE public.human_calling_projected_facts
+TO acuity_worker;
+
 GRANT UPDATE ON TABLE
     public.access_practices,
     public.human_calling_calls,
