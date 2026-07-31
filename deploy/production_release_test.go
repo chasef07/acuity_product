@@ -118,7 +118,7 @@ func TestProductionReleaseRejectsMutableImageTagBeforeCloudMutation(t *testing.T
 	}
 }
 
-func TestMainPushDeployWaitsForBothCIJobs(t *testing.T) {
+func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
 	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
 	if err != nil {
@@ -127,7 +127,7 @@ func TestMainPushDeployWaitsForBothCIJobs(t *testing.T) {
 	content := string(workflow)
 	for _, required := range []string{
 		"deploy:",
-		"needs: [verify, browser]",
+		"needs: [backend, web, contracts, browser]",
 		"github.event_name == 'push'",
 		"github.ref == 'refs/heads/main'",
 		"id-token: write",
