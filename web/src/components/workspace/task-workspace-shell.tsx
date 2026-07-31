@@ -527,46 +527,6 @@ export function TaskWorkspaceShell() {
     return () => window.clearInterval(interval)
   }, [practiceID])
 
-  function selectPractice(nextPracticeID: string) {
-    if (!discovery) return
-    callDetailGenerationRef.current += 1
-    taskQueryGenerationRef.current += 1
-    messageQueryGenerationRef.current += 1
-    const practice = discovery.practices.find(
-      (item) => item.id === nextPracticeID,
-    )
-    const location = practice?.locations[0]
-    if (!practice || !location) return
-    const storedScope = window.localStorage.getItem(
-      `${taskScopeStorageKey}.${practice.id}`,
-    )
-    const scope =
-      practice.locations.length === 1
-        ? location.id
-        : practice.locations.some((item) => item.id === storedScope)
-          ? (storedScope ?? "")
-          : ""
-    setOrdering(readTaskOrdering(discovery.actor.subject, practice.id))
-    tasksRef.current = []
-    messageThreadsRef.current = []
-    hasLoadedTasksRef.current = false
-    hasLoadedThreadsRef.current = false
-    setTasks([])
-    setMessageThreads([])
-    setSelectedTask(undefined)
-    setSelectedThread(undefined)
-    setHistoricalCall(undefined)
-    setComposingNew(false)
-    setView(activeCall ? "call" : "none")
-    snapshotScopeRef.current = `${practice.id}:${location.id}`
-    setPracticeID(practice.id)
-    setLocationID(location.id)
-    setLocationScopeID(scope)
-    window.localStorage.setItem(practiceStorageKey, practice.id)
-    window.localStorage.setItem(locationStorageKey, location.id)
-    void loadSnapshot(practice.id, location.id)
-  }
-
   function selectLocationScope(nextLocationID: string) {
     callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
@@ -794,7 +754,6 @@ export function TaskWorkspaceShell() {
       <TaskRail
         discovery={discovery}
         practice={practice}
-        practiceID={practiceID}
         locationScopeID={locationScopeID}
         tasks={tasks}
         messages={messageThreads}
@@ -809,7 +768,6 @@ export function TaskWorkspaceShell() {
         messageNextCursor={messageNextCursor}
         connection={connection}
         callingOffers={callingOffers}
-        onPracticeChange={selectPractice}
         onLocationScopeChange={selectLocationScope}
         onModeChange={selectRailMode}
         onSearchChange={(value) => {

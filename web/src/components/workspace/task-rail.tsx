@@ -1,12 +1,13 @@
 "use client"
 
 import { useEffect, useRef } from "react"
+import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
-  ActivityIcon,
   BotIcon,
   CheckCircle2Icon,
+  ListTodoIcon,
   LogOutIcon,
   MessageSquareIcon,
   MoonIcon,
@@ -18,7 +19,19 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
+import { Kbd } from "@/components/ui/kbd"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
   SidebarContent,
@@ -27,7 +40,6 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
-  SidebarInput,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -49,7 +61,6 @@ export type RailMode = "tasks" | "messages"
 type TaskRailProps = {
   discovery: AccessDiscovery
   practice: PracticeAccess
-  practiceID: string
   locationScopeID: string
   tasks: Task[]
   messages: MessageThreadSummary[]
@@ -64,7 +75,6 @@ type TaskRailProps = {
   messageNextCursor: string
   connection: ConnectionState
   callingOffers: CallingOffer[]
-  onPracticeChange: (practiceID: string) => void
   onLocationScopeChange: (locationID: string) => void
   onModeChange: (mode: RailMode) => void
   onSearchChange: (search: string) => void
@@ -79,7 +89,6 @@ type TaskRailProps = {
 export function TaskRail({
   discovery,
   practice,
-  practiceID,
   locationScopeID,
   tasks,
   messages,
@@ -94,7 +103,6 @@ export function TaskRail({
   messageNextCursor,
   connection,
   callingOffers,
-  onPracticeChange,
   onLocationScopeChange,
   onModeChange,
   onSearchChange,
@@ -108,108 +116,117 @@ export function TaskRail({
   const open = tasks.filter((task) => task.state === "OPEN")
   const completed = tasks.filter((task) => task.state === "COMPLETED")
   const showOffice = practice.locations.length > 1 && !locationScopeID
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
 
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") {
+        return
+      }
+      event.preventDefault()
+      searchInputRef.current?.focus()
+    }
+    window.addEventListener("keydown", focusSearch)
+    return () => window.removeEventListener("keydown", focusSearch)
+  }, [])
+
   return (
-    <Sidebar collapsible="offcanvas" className="border-r">
-      <SidebarHeader className="gap-3 border-b px-3 py-3">
+    <Sidebar collapsible="offcanvas">
+      <SidebarHeader className="gap-2 p-2">
         <div className="flex items-center gap-2">
-          <span className="flex size-8 items-center justify-center rounded-sm bg-primary text-primary-foreground">
-            <ActivityIcon className="size-4" aria-hidden="true" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">Acuity Health</p>
-            <p className="text-[0.625rem] uppercase tracking-[0.18em] text-muted-foreground">
-              {mode === "tasks" ? "Follow-up work" : "Patient correspondence"}
-            </p>
-          </div>
+          <Image
+            src="/acuity-health-mark.png"
+            alt=""
+            width={28}
+            height={28}
+            className="size-7 shrink-0 object-contain dark:invert"
+            priority
+          />
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold">
+            Acuity Health
+          </p>
           <ConnectionMark state={connection} />
         </div>
-        <div
-          aria-label="Workspace rail"
-          className="grid grid-cols-2 rounded-sm border bg-muted/30 p-0.5"
-        >
-          <Button
-            size="sm"
-            variant={mode === "tasks" ? "secondary" : "ghost"}
-            className="h-7 rounded-sm text-xs"
-            onClick={() => onModeChange("tasks")}
-          >
-            Tasks
-          </Button>
-          <Button
-            size="sm"
-            variant={mode === "messages" ? "secondary" : "ghost"}
-            className="h-7 rounded-sm text-xs"
-            onClick={() => onModeChange("messages")}
-          >
-            Messages
-          </Button>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <NativeSelect
-            aria-label="Practice"
-            value={practiceID}
-            onChange={(event) => onPracticeChange(event.target.value)}
-          >
-            {discovery.practices.map((item) => (
-              <NativeSelectOption key={item.id} value={item.id}>
-                {item.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <NativeSelect
-            aria-label="Location"
-            value={locationScopeID}
-            onChange={(event) => onLocationScopeChange(event.target.value)}
-          >
-            {mode === "tasks" && practice.locations.length > 1 && (
-              <NativeSelectOption value="">All offices</NativeSelectOption>
-            )}
-            {practice.locations.map((location) => (
-              <NativeSelectOption key={location.id} value={location.id}>
-                {location.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <SidebarInput
-              aria-label={mode === "tasks" ? "Search tasks" : "Search messages"}
-              autoComplete="off"
-              inputMode={mode === "messages" ? "tel" : undefined}
-              placeholder={
-                mode === "tasks" ? "Search title or phone" : "Search phone"
-              }
-              value={search}
-              onChange={(event) => onSearchChange(event.target.value)}
-              className="pl-7"
-            />
-          </div>
-          {mode === "tasks" ? (
-            <NativeSelect
-              aria-label="Order tasks"
-              size="sm"
-              value={ordering}
-              onChange={(event) =>
-                onOrderingChange(event.target.value as "time" | "priority")
-              }
-              className="w-20"
+        <InputGroup>
+          <InputGroupInput
+            ref={searchInputRef}
+            aria-label={mode === "tasks" ? "Search tasks" : "Search messages"}
+            autoComplete="off"
+            inputMode={mode === "messages" ? "tel" : undefined}
+            placeholder="Search"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+          />
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupAddon align="inline-end">
+            <Kbd>⌘K</Kbd>
+          </InputGroupAddon>
+        </InputGroup>
+        <SidebarMenu aria-label="Workspace">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={mode === "tasks"}
+              onClick={() => onModeChange("tasks")}
             >
-              <NativeSelectOption value="time">Time</NativeSelectOption>
-              <NativeSelectOption value="priority">Priority</NativeSelectOption>
+              <ListTodoIcon />
+              <span>Tasks</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={mode === "messages"}
+              onClick={() => onModeChange("messages")}
+            >
+              <MessageSquareIcon />
+              <span>Messages</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        <SidebarGroup className="p-0">
+          <SidebarGroupLabel>{practice.name}</SidebarGroupLabel>
+          <SidebarGroupContent className="flex gap-2">
+            <NativeSelect
+              aria-label="Location"
+              className="min-w-0 flex-1"
+              value={locationScopeID}
+              onChange={(event) => onLocationScopeChange(event.target.value)}
+            >
+              {mode === "tasks" && practice.locations.length > 1 && (
+                <NativeSelectOption value="">All offices</NativeSelectOption>
+              )}
+              {practice.locations.map((location) => (
+                <NativeSelectOption key={location.id} value={location.id}>
+                  {location.name}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
-          ) : (
-            <Button size="sm" className="h-8" onClick={onNewText}>
-              <PlusIcon />
-              New text
-            </Button>
-          )}
-        </div>
+            {mode === "tasks" ? (
+              <NativeSelect
+                aria-label="Order tasks"
+                size="sm"
+                value={ordering}
+                onChange={(event) =>
+                  onOrderingChange(event.target.value as "time" | "priority")
+                }
+                className="shrink-0"
+              >
+                <NativeSelectOption value="time">Time</NativeSelectOption>
+                <NativeSelectOption value="priority">Priority</NativeSelectOption>
+              </NativeSelect>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onNewText}>
+                <PlusIcon data-icon="inline-start" />
+                New text
+              </Button>
+            )}
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarHeader>
+      <Separator />
       <SidebarContent className="gap-0">
         {callingOffers.length > 0 && (
           <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
@@ -271,7 +288,8 @@ export function TaskRail({
           </>
         )}
       </SidebarContent>
-      <SidebarFooter className="border-t p-2">
+      <Separator />
+      <SidebarFooter className="p-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
@@ -320,19 +338,19 @@ function TaskGroup({
 }) {
   if (tasks.length === 0) return null
   return (
-    <SidebarGroup className="p-0">
-      <SidebarGroupLabel className="h-8 border-b px-3 text-[0.625rem] uppercase tracking-[0.16em]">
+    <SidebarGroup>
+      <SidebarGroupLabel>
         {label}
         <span className="ml-auto font-mono tabular-nums">{tasks.length}</span>
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0">
+        <SidebarMenu>
           {tasks.map((task) => (
             <SidebarMenuItem key={task.id}>
               <SidebarMenuButton
                 isActive={task.id === selectedTaskID}
                 className={cn(
-                  "h-auto min-h-16 animate-in rounded-none border-b px-3 py-2 fade-in slide-in-from-top-1 duration-200",
+                  "h-auto min-h-16 animate-in py-2 fade-in slide-in-from-top-1 duration-200",
                   "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
                 )}
                 tooltip={task.title}
@@ -417,18 +435,18 @@ function MessageThreadGroup({
 }) {
   if (threads.length === 0) return null
   return (
-    <SidebarGroup className="p-0">
-      <SidebarGroupLabel className="h-8 border-b px-3 text-[0.625rem] uppercase tracking-[0.16em]">
+    <SidebarGroup>
+      <SidebarGroupLabel>
         Correspondence ledger
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0">
+        <SidebarMenu>
           {threads.map((thread) => (
             <SidebarMenuItem key={thread.id}>
               <SidebarMenuButton
                 isActive={thread.id === selectedThreadID}
                 className={cn(
-                  "h-auto min-h-20 animate-in rounded-none border-b px-3 py-2.5 fade-in slide-in-from-top-1 duration-200",
+                  "h-auto min-h-20 animate-in py-2.5 fade-in slide-in-from-top-1 duration-200",
                   "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
                 )}
                 tooltip={thread.externalPhone}
@@ -499,9 +517,11 @@ function RailLoading({ label }: { label: string }) {
 
 function RailEmpty({ children }: { children: string }) {
   return (
-    <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-      {children}
-    </p>
+    <Empty className="min-h-32">
+      <EmptyHeader>
+        <EmptyTitle>{children}</EmptyTitle>
+      </EmptyHeader>
+    </Empty>
   )
 }
 
@@ -545,7 +565,7 @@ function RailLoadSentinel({
 
 function ConnectionMark({ state }: { state: ConnectionState }) {
   return (
-    <span
+    <Badge
       aria-label={
         state === "connected"
           ? "Live updates connected"
@@ -553,22 +573,14 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
             ? "Connecting live updates"
             : "Live updates disconnected"
       }
-      className="flex items-center gap-1.5 font-mono text-[0.625rem] text-muted-foreground"
+      variant={state === "disconnected" ? "destructive" : "outline"}
     >
-      <span
-        className={cn(
-          "size-2 rounded-full",
-          state === "connected" && "bg-primary",
-          state === "connecting" && "animate-pulse bg-muted-foreground",
-          state === "disconnected" && "bg-destructive",
-        )}
-      />
       {state === "connected"
         ? "Live"
         : state === "connecting"
           ? "Sync"
           : "Disconnected"}
-    </span>
+    </Badge>
   )
 }
 

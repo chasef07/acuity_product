@@ -214,14 +214,31 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await operatorPage.getByLabel("Location").selectOption({
       label: "Fixture Location 1",
     })
+    await expect(
+      operatorPage.getByText("Abita Eye Group", { exact: true }),
+    ).toBeVisible()
 
     const operatorToken = await accessToken(operatorPage)
+    const accessResponse = await operatorPage.request.get(
+      `${portalURL}/v1/access`,
+      {
+        headers: { authorization: `Bearer ${operatorToken}` },
+      },
+    )
+    expect(accessResponse.ok()).toBeTruthy()
+    const access = (await accessResponse.json()) as {
+      practices: Array<{ id: string; name: string }>
+    }
+    const operatorPractice = access.practices.find(
+      (practice) => practice.name === "Abita Eye Group",
+    )
+    expect(operatorPractice?.id).toBeTruthy()
     const snapshotResponse = await operatorPage.request.get(
       `${portalURL}/v1/workspace`,
       {
         headers: { authorization: `Bearer ${operatorToken}` },
         params: {
-          practiceId: await selectedValue(operatorPage, "Practice"),
+          practiceId: operatorPractice!.id,
           locationId: await selectedValue(operatorPage, "Location"),
         },
       },
@@ -313,7 +330,9 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     const coarsePage = await coarseContext.newPage()
     await coarsePage.goto("/workspace")
     await expect(coarsePage.getByText("No follow-up tasks")).toBeVisible()
-    await expect(coarsePage.getByLabel("Practice")).toBeVisible()
+    await expect(
+      coarsePage.getByText("Abita Eye Group", { exact: true }).first(),
+    ).toBeVisible()
     await coarsePage.screenshot({
       path: testInfo.outputPath("workspace-coarse-pointer.png"),
       fullPage: true,

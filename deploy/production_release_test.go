@@ -155,6 +155,89 @@ func TestProductionReleaseRejectsMutableImageTagBeforeCloudMutation(t *testing.T
 	}
 }
 
+func TestProductionReleaseRejectsMissingPlaybackSigningKeyBeforeCloudMutation(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command(
+		"bash",
+		filepath.Join(directory, "deploy-production-release.sh"),
+	)
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+		"GCLOUD_MISSING_PLAYBACK_SIGNING_KEY=true",
+	}, releaseEnvironment()...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("release accepted a portal service without its playback signing key")
+	}
+	if !strings.Contains(
+		string(output),
+		"acuity-portal-api must configure HUMAN_CALLING_PLAYBACK_SIGNING_KEY",
+	) {
+		t.Fatalf("missing-secret error = %q", output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	if commandIndex(commands, "run\tjobs\tupdate\tacuity-migrate") >= 0 {
+		t.Fatal("missing playback signing key reached migration")
+	}
+}
+
+func TestProductionReleaseRestoresStagedServiceTrafficWhenDeployFails(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command(
+		"bash",
+		filepath.Join(directory, "deploy-production-release.sh"),
+	)
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+		"GCLOUD_FAIL_DEPLOY_SERVICE=acuity-portal-api",
+	}, releaseEnvironment()...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("release ignored a failed portal deployment")
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\tacuity-portal-api",
+		"--to-revisions\tacuity-portal-api-old=100",
+	)
+	if commandIndex(commands, "run\tdeploy\tacuity-provider-ingress") >= 0 {
+		t.Fatalf("release continued after portal failure:\n%s\n%s", strings.Join(commands, "\n"), output)
+	}
+}
+
+func TestProductionReleaseRepairsStaleDesiredTrafficBeforeMigration(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command(
+		"bash",
+		filepath.Join(directory, "deploy-production-release.sh"),
+	)
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+		"GCLOUD_STALE_TRAFFIC_SERVICE=acuity-portal-api",
+	}, releaseEnvironment()...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("repair stale desired traffic: %v\n%s", err, output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	repair := commandIndex(commands, "run\tservices\tupdate-traffic\tacuity-portal-api")
+	migration := commandIndex(commands, "run\tjobs\tupdate\tacuity-migrate")
+	if repair < 0 || repair >= migration {
+		t.Fatalf("stale desired traffic was not repaired before migration:\n%s", strings.Join(commands, "\n"))
+	}
+	assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\tacuity-portal-api",
+		"--to-revisions\tacuity-portal-api-old=100",
+	)
+}
+
 func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
 	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
@@ -228,6 +311,13 @@ for argument do
 done
 printf '\n' >>"$GCLOUD_CAPTURE"
 
+if [ -n "${GCLOUD_FAIL_DEPLOY_SERVICE:-}" ] &&
+  [ "$1" = run ] &&
+  [ "$2" = deploy ] &&
+  [ "$3" = "$GCLOUD_FAIL_DEPLOY_SERVICE" ]; then
+  exit 1
+fi
+
 case "$*" in
   "artifacts docker images describe "*"backend:"*)
     printf '%s\n' "us-central1-docker.pkg.dev/acuity-test/acuity-product/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -237,6 +327,21 @@ case "$*" in
     ;;
   "run services describe "*"status.latestReadyRevisionName"*)
     printf '%s-old\n' "$4"
+    ;;
+  "run services describe "*"spec.traffic[].revisionName"*)
+    if [ "${GCLOUD_STALE_TRAFFIC_SERVICE:-}" = "$4" ]; then
+      printf '%s\n' "$4-failed"
+    else
+      printf '%s-old\n' "$4"
+    fi
+    ;;
+  "run services describe "*"spec.traffic[].percent"*)
+    printf '%s\n' "100"
+    ;;
+  "run services describe acuity-portal-api "*"spec.template.spec.containers[0].env[].name"*)
+    if [ "${GCLOUD_MISSING_PLAYBACK_SIGNING_KEY:-}" != true ]; then
+      printf '%s\n' "DATABASE_URL;HUMAN_CALLING_PLAYBACK_SIGNING_KEY"
+    fi
     ;;
   "run services describe acuity-portal-api "*"status.url"*)
     printf '%s\n' "https://portal.example"

@@ -76,6 +76,50 @@ service_runtime() {
       ;;
   esac
 }
+require_service_environment() {
+  local service="$1"
+  local name="$2"
+  local configured_names
+  configured_names="$(
+    gcloud run services describe "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(spec.template.spec.containers[0].env[].name)'
+  )"
+  case ";$configured_names;" in
+    *";$name;"*) ;;
+    *)
+      echo "$service must configure $name before release." >&2
+      return 1
+      ;;
+  esac
+}
+ensure_service_traffic() {
+  local service="$1"
+  local revision="$2"
+  local configured_revisions
+  local configured_percents
+  configured_revisions="$(
+    gcloud run services describe "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(spec.traffic[].revisionName)'
+  )"
+  configured_percents="$(
+    gcloud run services describe "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(spec.traffic[].percent)'
+  )"
+  if [[ "$configured_revisions" == "$revision" && "$configured_percents" == "100" ]]; then
+    return
+  fi
+  gcloud run services update-traffic "$service" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --to-revisions "$revision=100" \
+    --quiet
+}
 previous_portal_revision="$(
   gcloud run services describe acuity-portal-api \
     --project "$PROJECT_ID" \
@@ -120,8 +164,11 @@ if [[ -z "$previous_worker_revision" || "$previous_worker_revision" == *";"* ]];
   echo "acuity-worker must have exactly one active rollback revision." >&2
   exit 1
 fi
+require_service_environment \
+  acuity-portal-api \
+  HUMAN_CALLING_PLAYBACK_SIGNING_KEY
 
-promoted_services=()
+touched_services=()
 worker_promoted=false
 release_complete=false
 previous_service_revision() {
@@ -136,6 +183,9 @@ previous_service_revision() {
       ;;
   esac
 }
+for service in "${services[@]}"; do
+  ensure_service_traffic "$service" "$(previous_service_revision "$service")"
+done
 
 rollback() {
   local exit_code=$?
@@ -144,8 +194,8 @@ rollback() {
     return
   fi
   set +e
-  for ((index = ${#promoted_services[@]} - 1; index >= 0; index--)); do
-    service="${promoted_services[$index]}"
+  for ((index = ${#touched_services[@]} - 1; index >= 0; index--)); do
+    service="${touched_services[$index]}"
     gcloud run services update-traffic "$service" \
       --project "$PROJECT_ID" \
       --region "$REGION" \
@@ -221,6 +271,7 @@ gcloud run jobs execute acuity-migrate \
 for service in "${backend_services[@]}"; do
   read -r concurrency minimum maximum < <(service_runtime "$service")
   revision="$service-$DEPLOYMENT_ID"
+  touched_services+=("$service")
   gcloud run deploy "$service" \
     --project "$PROJECT_ID" \
     --region "$REGION" \
@@ -285,12 +336,12 @@ for service in "${backend_services[@]}"; do
     --region "$REGION" \
     --to-revisions "$revision=100" \
     --quiet
-  promoted_services+=("$service")
   smoke "$(service_url "$service")/health/ready"
 done
 
 read -r concurrency minimum maximum < <(service_runtime acuity-web)
 web_revision="acuity-web-$DEPLOYMENT_ID"
+touched_services+=("acuity-web")
 gcloud run deploy acuity-web \
   --project "$PROJECT_ID" \
   --region "$REGION" \
@@ -310,7 +361,6 @@ gcloud run services update-traffic acuity-web \
   --region "$REGION" \
   --to-revisions "$web_revision=100" \
   --quiet
-promoted_services+=("acuity-web")
 web_url="$(service_url acuity-web)"
 smoke "$web_url/sign-in"
 smoke "$web_url/api/auth/get-session"
