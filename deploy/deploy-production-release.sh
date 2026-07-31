@@ -64,6 +64,18 @@ backend_services=(
   acuity-provider-ingress
   acuity-realtime
 )
+service_runtime() {
+  case "$1" in
+    acuity-portal-api) printf '20 1 3\n' ;;
+    acuity-provider-ingress) printf '20 1 2\n' ;;
+    acuity-realtime) printf '50 1 2\n' ;;
+    acuity-web) printf '40 0 2\n' ;;
+    *)
+      echo "Unknown production service $1." >&2
+      return 1
+      ;;
+  esac
+}
 previous_portal_revision="$(
   gcloud run services describe acuity-portal-api \
     --project "$PROJECT_ID" \
@@ -206,6 +218,7 @@ gcloud run jobs execute acuity-migrate \
   --quiet
 
 for service in "${backend_services[@]}"; do
+  read -r concurrency minimum maximum < <(service_runtime "$service")
   revision="$service-$DEPLOYMENT_ID"
   gcloud run deploy "$service" \
     --project "$PROJECT_ID" \
@@ -213,6 +226,11 @@ for service in "${backend_services[@]}"; do
     --image "$backend_digest" \
     --revision-suffix "$DEPLOYMENT_ID" \
     --no-traffic \
+    --cpu 1 \
+    --memory 512Mi \
+    --concurrency "$concurrency" \
+    --min "$minimum" \
+    --max "$maximum" \
     --startup-probe "httpGet.path=/health/live,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
     --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=3" \
     --quiet
@@ -226,6 +244,9 @@ gcloud run worker-pools deploy acuity-worker \
   --image "$backend_digest" \
   --revision-suffix "$DEPLOYMENT_ID" \
   --no-promote \
+  --cpu 1 \
+  --memory 512Mi \
+  --instances 1 \
   --quiet
 worker_image="$(
   gcloud run worker-pools revisions describe "$worker_revision" \
@@ -265,6 +286,7 @@ for service in "${backend_services[@]}"; do
   smoke "$(service_url "$service")/health/ready"
 done
 
+read -r concurrency minimum maximum < <(service_runtime acuity-web)
 web_revision="acuity-web-$DEPLOYMENT_ID"
 gcloud run deploy acuity-web \
   --project "$PROJECT_ID" \
@@ -272,6 +294,11 @@ gcloud run deploy acuity-web \
   --image "$web_digest" \
   --revision-suffix "$DEPLOYMENT_ID" \
   --no-traffic \
+  --cpu 1 \
+  --memory 512Mi \
+  --concurrency "$concurrency" \
+  --min "$minimum" \
+  --max "$maximum" \
   --quiet
 verify_service_revision "$web_revision" "$web_digest"
 gcloud run services update-traffic acuity-web \

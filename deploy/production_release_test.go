@@ -54,11 +54,35 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 			"--to-revisions\t"+service+"-release-1234=100",
 		)
 	}
+	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
+		"--cpu\t1",
+		"--memory\t512Mi",
+		"--concurrency\t20",
+		"--min\t1",
+		"--max\t3",
+	)
+	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
+		"--cpu\t1",
+		"--memory\t512Mi",
+		"--concurrency\t20",
+		"--min\t1",
+		"--max\t2",
+	)
+	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-realtime",
+		"--cpu\t1",
+		"--memory\t512Mi",
+		"--concurrency\t50",
+		"--min\t1",
+		"--max\t2",
+	)
 
 	assertCapturedCommand(t, commands, "run\tworker-pools\tdeploy\tacuity-worker",
 		"--image\tus-central1-docker.pkg.dev/acuity-test/acuity-product/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"--no-promote",
 		"--revision-suffix\trelease-1234",
+		"--cpu\t1",
+		"--memory\t512Mi",
+		"--instances\t1",
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate-instance-split\tacuity-worker",
 		"--to-revisions\tacuity-worker-release-1234=100",
@@ -67,6 +91,11 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--image\tus-central1-docker.pkg.dev/acuity-test/acuity-product/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"--no-traffic",
 		"--revision-suffix\trelease-1234",
+		"--cpu\t1",
+		"--memory\t512Mi",
+		"--concurrency\t40",
+		"--min\t0",
+		"--max\t2",
 	)
 	assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\tacuity-web",
 		"--to-revisions\tacuity-web-release-1234=100",
