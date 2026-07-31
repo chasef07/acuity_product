@@ -2996,7 +2996,7 @@ func (m *Module) ExpireConnections(ctx context.Context) (int, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit connection expiry: %w", err)
 	}
-	outboundExpired, err := m.expireOutboundRinging(ctx)
+	outboundExpired, err := m.expireOutboundCalls(ctx)
 	if err != nil {
 		return len(expired), err
 	}
@@ -5402,20 +5402,32 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			`, callID, nextState, reopen, fact.HangupCause, fact.OccurredAt); err != nil {
 			return fmt.Errorf("project pre-bridge termination: %w", err)
 		}
-		if nextState == CallUnanswered && fact.CallControlID != callerControlID {
-			if err := insertCommand(
-				ctx,
-				tx,
-				callID,
-				"",
-				CommandHangup,
-				callerControlID,
-				map[string]any{
-					"client_state": opaqueClientState(callID, "caller"),
-				},
-				m.now(),
-			); err != nil {
-				return err
+		if nextState == CallUnanswered {
+			if callerHangup {
+				if _, err := m.ensureRecoveryOutcome(
+					ctx,
+					tx,
+					callID,
+					RecoveryMissedCall,
+					fact,
+				); err != nil {
+					return err
+				}
+			} else {
+				if err := insertCommand(
+					ctx,
+					tx,
+					callID,
+					"",
+					CommandHangup,
+					callerControlID,
+					map[string]any{
+						"client_state": opaqueClientState(callID, "caller"),
+					},
+					m.now(),
+				); err != nil {
+					return err
+				}
 			}
 		}
 	case CallOffering:
@@ -5427,6 +5439,15 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 				WHERE id = $1
 			`, callID, fact.HangupCause, fact.OccurredAt); err != nil {
 				return fmt.Errorf("project caller termination while offering: %w", err)
+			}
+			if _, err := m.ensureRecoveryOutcome(
+				ctx,
+				tx,
+				callID,
+				RecoveryMissedCall,
+				fact,
+			); err != nil {
+				return err
 			}
 		}
 	case CallUnanswered:

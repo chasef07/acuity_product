@@ -1852,6 +1852,128 @@ func TestCallerHangupFencesPendingSetupCommands(t *testing.T) {
 	}
 }
 
+func TestCallerHangupBeforeVoicemailCreatesMissedCallTask(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		key          string
+		dialError    error
+		accept       bool
+		processSetup bool
+		wantBefore   humancalling.CallState
+	}{
+		{
+			name:       "offering",
+			key:        "hangup-recovery-offering",
+			wantBefore: humancalling.CallOffering,
+		},
+		{
+			name:       "connecting",
+			key:        "hangup-recovery-connecting",
+			accept:     true,
+			wantBefore: humancalling.CallConnecting,
+		},
+		{
+			name:         "reconciling",
+			key:          "hangup-recovery-reconciling",
+			dialError:    humancalling.ErrAmbiguousEffect,
+			accept:       true,
+			processSetup: true,
+			wantBefore:   humancalling.CallReconciling,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &recordingProvider{dialError: test.dialError}
+			calling, identity, offer := readyOffer(t, provider, test.key)
+			if test.accept {
+				if _, err := calling.AcceptOffer(
+					context.Background(),
+					identity,
+					test.key+"-browser",
+					offer.ID,
+				); err != nil {
+					t.Fatalf("accept %s offer: %v", test.name, err)
+				}
+			}
+			if test.processSetup {
+				processCallingCommands(t, calling)
+			}
+			if test.accept {
+				before, err := calling.ReadCall(
+					context.Background(),
+					identity,
+					offer.ID,
+				)
+				if err != nil || before.State != test.wantBefore {
+					t.Fatalf(
+						"%s Call before caller hangup = %#v, err=%v",
+						test.name,
+						before,
+						err,
+					)
+				}
+			} else if offer.State != test.wantBefore {
+				t.Fatalf(
+					"%s offer before caller hangup = %#v",
+					test.name,
+					offer,
+				)
+			}
+			hangup := humancalling.ProviderFact{
+				EventID:       test.key + "-caller-hangup",
+				Type:          humancalling.FactCallHangup,
+				OccurredAt:    offer.Deadline.Add(-10 * time.Second),
+				CallControlID: test.key + "-caller-control",
+				CallLegID:     test.key + "-caller-leg",
+				CallSessionID: test.key + "-provider-session",
+				HangupCause:   "caller_hangup",
+			}
+			if err := calling.ApplyProviderFact(
+				context.Background(),
+				hangup,
+			); err != nil {
+				t.Fatalf("apply %s caller hangup: %v", test.name, err)
+			}
+			recovered, err := calling.ReadCall(
+				context.Background(),
+				identity,
+				offer.ID,
+			)
+			if err != nil ||
+				recovered.State != humancalling.CallMissed ||
+				recovered.Voicemail.Outcome !=
+					humancalling.RecoveryMissedCall ||
+				recovered.Voicemail.TaskID == "" {
+				t.Fatalf(
+					"%s caller-hangup recovery = %#v, err=%v",
+					test.name,
+					recovered,
+					err,
+				)
+			}
+			if err := calling.ApplyProviderFact(
+				context.Background(),
+				hangup,
+			); err != nil {
+				t.Fatalf("replay %s caller hangup: %v", test.name, err)
+			}
+			replayed, err := calling.ReadCall(
+				context.Background(),
+				identity,
+				offer.ID,
+			)
+			if err != nil ||
+				replayed.Voicemail.TaskID != recovered.Voicemail.TaskID {
+				t.Fatalf(
+					"%s replayed recovery = %#v, err=%v",
+					test.name,
+					replayed,
+					err,
+				)
+			}
+		})
+	}
+}
+
 func TestAmbiguousDialReconcilesFromExpectedProviderFactWithoutRedial(t *testing.T) {
 	provider := &recordingProvider{dialError: humancalling.ErrAmbiguousEffect}
 	calling, identity, offer := readyOffer(t, provider, "ambiguous")
@@ -2199,7 +2321,10 @@ func TestLateSuccessfulDialAfterCallerHangupCleansUpTheExactStaffLeg(t *testing.
 		t.Fatalf("process exact late-leg cleanup: processed=%t err=%v", processed, err)
 	}
 	call, err := calling.ReadCall(context.Background(), identity, offer.ID)
-	if err != nil || call.State != humancalling.CallUnanswered {
+	if err != nil ||
+		call.State != humancalling.CallMissed ||
+		call.Voicemail.Outcome != humancalling.RecoveryMissedCall ||
+		call.Voicemail.TaskID == "" {
 		t.Fatalf("late-Dial terminal Call = %#v, err = %v", call, err)
 	}
 	if len(provider.hangupTargets) != 1 ||

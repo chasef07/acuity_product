@@ -1283,6 +1283,123 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 			now,
 		)
 	}
+	for _, test := range []struct {
+		name      string
+		dialError error
+		wantState humancalling.CallState
+	}{
+		{
+			name:      "preparing",
+			wantState: humancalling.CallPreparing,
+		},
+		{
+			name:      "reconciling",
+			dialError: humancalling.ErrAmbiguousEffect,
+			wantState: humancalling.CallReconciling,
+		},
+	} {
+		processCallingCommands(t, calling)
+		provider.dialError = test.dialError
+		stalled, err := calling.StartOutboundCall(
+			context.Background(),
+			humancalling.StartOutboundCallCommand{
+				Identity:       identity,
+				SessionID:      sessionID,
+				IdempotencyKey: "stalled-media-" + test.name,
+				PracticeID:     authorization.Practice.ID,
+				LocationID:     authorization.Locations[0].ID,
+				Destination:    task.Phone,
+			},
+		)
+		if err != nil {
+			t.Fatalf("start stalled %s media Call: %v", test.name, err)
+		}
+		if processed, err := calling.ProcessNextCommand(
+			context.Background(),
+		); err != nil || !processed {
+			t.Fatalf(
+				"process stalled %s media Dial: processed=%t err=%v",
+				test.name,
+				processed,
+				err,
+			)
+		}
+		provider.dialError = nil
+		stalled, err = calling.ReadCall(
+			context.Background(),
+			identity,
+			stalled.ID,
+		)
+		if err != nil || stalled.State != test.wantState {
+			t.Fatalf(
+				"stalled %s media Call before expiry = %#v, err=%v",
+				test.name,
+				stalled,
+				err,
+			)
+		}
+		now = now.Add(16 * time.Second)
+		if expired, err := calling.ExpireConnections(
+			context.Background(),
+		); err != nil || expired != 1 {
+			t.Fatalf(
+				"expire stalled %s media Call: expired=%d err=%v",
+				test.name,
+				expired,
+				err,
+			)
+		}
+		stalled, err = calling.ReadCall(
+			context.Background(),
+			identity,
+			stalled.ID,
+		)
+		if err != nil ||
+			stalled.State != humancalling.CallNeedsDisposition ||
+			stalled.ProviderTermination != "MEDIA_READINESS_FAILED" {
+			t.Fatalf(
+				"expired %s media Call = %#v, err=%v",
+				test.name,
+				stalled,
+				err,
+			)
+		}
+		if _, err := calling.RecordDisposition(
+			context.Background(),
+			identity,
+			sessionID,
+			stalled.ID,
+			humancalling.DispositionNoFollowUp,
+		); err != nil {
+			t.Fatalf("dispose stalled %s media Call: %v", test.name, err)
+		}
+		softphone, err := calling.AcquireSoftphone(
+			context.Background(),
+			identity,
+			sessionID,
+			false,
+		)
+		if err != nil || softphone.ActiveCallID != "" {
+			t.Fatalf(
+				"released %s media Call fence = %#v, err=%v",
+				test.name,
+				softphone,
+				err,
+			)
+		}
+		softphone, err = calling.SetReadiness(
+			context.Background(),
+			ready(identity, sessionID),
+		)
+		if err != nil || !softphone.Available {
+			t.Fatalf(
+				"restored %s media availability = %#v, err=%v",
+				test.name,
+				softphone,
+				err,
+			)
+		}
+	}
 	provider.dialError = fmt.Errorf(
 		"%w: synthetic staff media rejection",
 		humancalling.ErrDefinitiveProviderFailure,

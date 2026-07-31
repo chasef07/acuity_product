@@ -796,10 +796,10 @@ func (m *Module) restoreOutboundAvailability(
 	return nil
 }
 
-func (m *Module) expireOutboundRinging(ctx context.Context) (int, error) {
+func (m *Module) expireOutboundCalls(ctx context.Context) (int, error) {
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("begin outbound ring expiry: %w", err)
+		return 0, fmt.Errorf("begin outbound Call expiry: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
@@ -809,17 +809,30 @@ func (m *Module) expireOutboundRinging(ctx context.Context) (int, error) {
 			COALESCE(current_attempt_id::text, ''),
 			initiating_subject,
 			COALESCE(expected_staff_call_control_id, ''),
-			COALESCE(destination_call_control_id, '')
+			COALESCE(destination_call_control_id, ''),
+			state,
+			entry_point
 		FROM human_calling_calls
 		WHERE direction = 'OUTBOUND'
-			AND state = 'RINGING'
 			AND connection_deadline <= $1
+			AND (
+				state = 'RINGING'
+				OR (
+					state IN ('PREPARING', 'RECONCILING')
+					AND NOT EXISTS (
+						SELECT 1
+						FROM human_calling_provider_commands command
+						WHERE command.call_id = human_calling_calls.id
+							AND command.action = 'DIAL_DESTINATION'
+					)
+				)
+			)
 		ORDER BY connection_deadline, id
 		FOR UPDATE SKIP LOCKED
 		LIMIT 100
 	`, m.now())
 	if err != nil {
-		return 0, fmt.Errorf("claim expired outbound ringing Calls: %w", err)
+		return 0, fmt.Errorf("claim expired outbound Calls: %w", err)
 	}
 	type expiredCall struct {
 		id                 string
@@ -828,6 +841,8 @@ func (m *Module) expireOutboundRinging(ctx context.Context) (int, error) {
 		initiatingSubject  string
 		staffControl       string
 		destinationControl string
+		state              CallState
+		entryPoint         CallEntryPoint
 	}
 	expired := []expiredCall{}
 	for rows.Next() {
@@ -839,18 +854,115 @@ func (m *Module) expireOutboundRinging(ctx context.Context) (int, error) {
 			&call.initiatingSubject,
 			&call.staffControl,
 			&call.destinationControl,
+			&call.state,
+			&call.entryPoint,
 		); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("scan expired outbound ringing Call: %w", err)
+			return 0, fmt.Errorf("scan expired outbound Call: %w", err)
 		}
 		expired = append(expired, call)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return 0, fmt.Errorf("iterate expired outbound ringing Calls: %w", err)
+		return 0, fmt.Errorf("iterate expired outbound Calls: %w", err)
 	}
 	rows.Close()
 	for _, call := range expired {
+		if call.state != CallRinging {
+			nextState := CallResolved
+			if call.entryPoint == CallEntryStandalone {
+				nextState = CallNeedsDisposition
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_calls
+				SET
+					state = $2,
+					provider_termination = 'MEDIA_READINESS_FAILED',
+					ended_at = $3,
+					version = version + 1,
+					updated_at = $3
+				WHERE id = $1
+					AND state = $4
+			`, call.id, nextState, m.now(), call.state); err != nil {
+				return 0, fmt.Errorf(
+					"expire outbound media preparation: %w",
+					err,
+				)
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_connection_attempts
+				SET
+					ended_at = COALESCE(ended_at, $2),
+					provider_termination = 'MEDIA_READINESS_FAILED',
+					updated_at = $2
+				WHERE id = NULLIF($1, '')::uuid
+			`, call.attemptID, m.now()); err != nil {
+				return 0, fmt.Errorf(
+					"end expired outbound media attempt: %w",
+					err,
+				)
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_provider_commands
+				SET
+					state = 'FAILED',
+					last_error_code = 'MEDIA_READINESS_TIMEOUT',
+					updated_at = $2
+				WHERE call_id = $1
+					AND action = 'DIAL_STAFF'
+					AND state = 'PENDING'
+			`, call.id, m.now()); err != nil {
+				return 0, fmt.Errorf(
+					"cancel expired outbound staff Dial: %w",
+					err,
+				)
+			}
+			if call.staffControl != "" {
+				if err := ensureHangupCommand(
+					ctx,
+					tx,
+					call.id,
+					call.attemptID,
+					call.initiatingSubject,
+					call.staffControl,
+					"staff",
+					m.now(),
+				); err != nil {
+					return 0, err
+				}
+			}
+			if err := m.restoreOutboundAvailability(
+				ctx,
+				tx,
+				call.id,
+				m.now(),
+			); err != nil {
+				return 0, err
+			}
+			if err := appendTimeline(
+				ctx,
+				tx,
+				call.id,
+				call.practiceID,
+				"outbound.media_readiness_timeout",
+				call.initiatingSubject,
+				"",
+				"",
+				"",
+				"MEDIA_READINESS_FAILED",
+				m.now(),
+			); err != nil {
+				return 0, err
+			}
+			if _, err := m.access.RecordWorkspaceChange(
+				ctx,
+				tx,
+				call.practiceID,
+			); err != nil {
+				return 0, err
+			}
+			continue
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET
@@ -916,7 +1028,7 @@ func (m *Module) expireOutboundRinging(ctx context.Context) (int, error) {
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit outbound ring expiry: %w", err)
+		return 0, fmt.Errorf("commit outbound Call expiry: %w", err)
 	}
 	return len(expired), nil
 }
