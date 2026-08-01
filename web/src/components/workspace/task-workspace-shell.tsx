@@ -127,6 +127,7 @@ export function TaskWorkspaceShell() {
   const snapshotGenerationRef = useRef(0)
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
+  const railModeRef = useRef<RailMode>("tasks")
   const settledSearchRef = useRef("")
   const orderingRef = useRef<TaskOrdering>("time")
   const locationScopeRef = useRef("")
@@ -522,6 +523,7 @@ export function TaskWorkspaceShell() {
               if (current) setSelectedThread(current)
             } else if (
               firstLoad &&
+              railModeRef.current === "messages" &&
               !composingNewRef.current &&
               nextMessages[0] &&
               viewRef.current !== "call"
@@ -727,9 +729,14 @@ export function TaskWorkspaceShell() {
     }
   }
 
+  function updateRailMode(mode: RailMode) {
+    railModeRef.current = mode
+    setRailMode(mode)
+  }
+
   function selectRailMode(mode: RailMode) {
     if (mode === railMode) return
-    setRailMode(mode)
+    updateRailMode(mode)
     setSearch("")
     setSettledSearch("")
     if (mode === "messages") {
@@ -875,7 +882,7 @@ export function TaskWorkspaceShell() {
         path: { taskId: result.taskId },
       }).catch(() => undefined)
       if (task?.data) {
-        setRailMode("tasks")
+        updateRailMode("tasks")
         setSearch("")
         setSettledSearch("")
         updateTaskProjection(task.data)
@@ -1060,7 +1067,7 @@ export function TaskWorkspaceShell() {
               void loadTasks()
             }}
             onTaskOpen={(task) => {
-              setRailMode("tasks")
+              updateRailMode("tasks")
               setSearch("")
               setSettledSearch("")
               updateTaskProjection(task)

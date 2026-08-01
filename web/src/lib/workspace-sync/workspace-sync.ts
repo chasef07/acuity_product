@@ -98,9 +98,14 @@ export function createWorkspaceSync(
     let highestHint = 0
     let reconciliation: Promise<void> | undefined
     let hintedReconciliationQueued = false
+    let hintRetryFailures = 0
+    let hintRetryScheduled = false
+    let hintRetryGeneration = 0
     let consecutiveFailures = 0
     let outage = false
     let outageEpoch = 0
+    let degraded = false
+    let streamReady = false
 
     function beginOutage() {
       if (outage || signal.aborted) return
@@ -109,6 +114,7 @@ export function createWorkspaceSync(
       void (async () => {
         await sleep(timing.degradedGraceMilliseconds, signal)
         if (signal.aborted || !outage || epoch !== outageEpoch) return
+        degraded = true
         options.onStateChange("degraded")
         while (!signal.aborted && outage && epoch === outageEpoch) {
           const pollingDelay =
@@ -122,6 +128,7 @@ export function createWorkspaceSync(
           if (signal.aborted || !outage || epoch !== outageEpoch) return
           try {
             await reconcile(0, true)
+            restoreHealthyStream()
           } catch (error) {
             if (error instanceof WorkspaceSyncUnauthorizedError) {
               options.onUnauthorized?.()
@@ -133,10 +140,28 @@ export function createWorkspaceSync(
       })()
     }
 
+    function resetHintRetry() {
+      hintRetryFailures = 0
+      hintRetryScheduled = false
+      hintRetryGeneration += 1
+    }
+
     function markHealthy() {
+      const wasDegraded = degraded
       outage = false
       outageEpoch += 1
+      degraded = false
       consecutiveFailures = 0
+      resetHintRetry()
+      return wasDegraded
+    }
+
+    function restoreHealthyStream() {
+      if (!streamReady) {
+        resetHintRetry()
+      } else if (markHealthy()) {
+        options.onStateChange("connected")
+      }
     }
 
     function queueHint(version: number) {
@@ -145,7 +170,8 @@ export function createWorkspaceSync(
         signal.aborted ||
         highestHint <= appliedVersion ||
         reconciliation ||
-        hintedReconciliationQueued
+        hintedReconciliationQueued ||
+        hintRetryScheduled
       ) {
         return
       }
@@ -153,15 +179,46 @@ export function createWorkspaceSync(
       setTimeout(() => {
         hintedReconciliationQueued = false
         if (!signal.aborted) {
-          void reconcile(highestHint).catch((error: unknown) => {
-            if (error instanceof WorkspaceSyncUnauthorizedError) {
-              options.onUnauthorized?.()
-              return
-            }
-            beginOutage()
-          })
+          void reconcile(highestHint)
+            .then(() => {
+              restoreHealthyStream()
+            })
+            .catch((error: unknown) => {
+              if (error instanceof WorkspaceSyncUnauthorizedError) {
+                options.onUnauthorized?.()
+                return
+              }
+              beginOutage()
+              scheduleHintRetry()
+            })
         }
       }, 0)
+    }
+
+    function scheduleHintRetry() {
+      if (
+        signal.aborted ||
+        !streamReady ||
+        hintRetryScheduled ||
+        highestHint <= appliedVersion
+      ) {
+        return
+      }
+      const ceiling = Math.min(
+        timing.retryBaseMilliseconds * 2 ** Math.max(0, hintRetryFailures - 1),
+        timing.retryCapMilliseconds,
+      )
+      const delay =
+        hintRetryFailures === 0 ? 0 : Math.floor(random() * ceiling)
+      hintRetryFailures += 1
+      hintRetryScheduled = true
+      const generation = ++hintRetryGeneration
+      void (async () => {
+        await sleep(delay, signal)
+        if (generation !== hintRetryGeneration) return
+        hintRetryScheduled = false
+        if (!signal.aborted && streamReady) queueHint(highestHint)
+      })()
     }
 
     async function reconcile(minimumVersion: number, force = false) {
@@ -185,17 +242,20 @@ export function createWorkspaceSync(
         candidate.apply()
         appliedVersion = candidate.version
       })()
+      let succeeded = false
       try {
         await reconciliation
+        succeeded = true
       } finally {
         reconciliation = undefined
-        if (!signal.aborted && highestHint > appliedVersion) {
+        if (succeeded && !signal.aborted && highestHint > appliedVersion) {
           queueHint(highestHint)
         }
       }
     }
 
     while (!signal.aborted) {
+      streamReady = false
       try {
         const streamToken = await options.getToken()
         if (!streamToken) {
@@ -236,12 +296,14 @@ export function createWorkspaceSync(
           await reconcile(event.version, true)
           if (signal.aborted) return
           ready = true
+          streamReady = true
           markHealthy()
           options.onStateChange("connected")
         }
         if (signal.aborted) return
         throw new Error("realtime stream ended")
       } catch (error) {
+        streamReady = false
         if (signal.aborted) return
         if (error instanceof WorkspaceSyncUnauthorizedError) {
           options.onUnauthorized?.()

@@ -207,6 +207,189 @@ test("hint bursts coalesce to the newest version without regression", async () =
   sync.stop()
 })
 
+test("failed hint reconciliation retries once immediately then backs off", async () => {
+  const clock = new ManualClock()
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  let hintAttempts = 0
+  const requested: number[] = []
+  const applied: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      if (minimumVersion === 2) {
+        hintAttempts += 1
+        if (hintAttempts < 3) throw new Error("portal unavailable")
+      }
+      return {
+        version: minimumVersion,
+        apply: () => applied.push(minimumVersion),
+      }
+    },
+    onStateChange: () => {},
+    random: () => 0.5,
+    sleep: clock.sleep,
+    timing: {
+      retryBaseMilliseconds: 1_000,
+      retryCapMilliseconds: 8_000,
+      degradedGraceMilliseconds: 5_000,
+      pollMinimumMilliseconds: 10_000,
+      pollMaximumMilliseconds: 20_000,
+    },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.ok(stream))
+    stream!.enqueue(readyEvent(1))
+    await eventually(() => assert.deepEqual(applied, [1]))
+
+    stream!.enqueue(hintEvent(2))
+    await eventually(() => assert.deepEqual(requested, [1, 2]))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.deepEqual(requested, [1, 2])
+
+    await clock.advance(0)
+    await eventually(() => assert.deepEqual(requested, [1, 2, 2]))
+    await clock.advance(499)
+    assert.deepEqual(requested, [1, 2, 2])
+    await clock.advance(1)
+    await eventually(() => assert.deepEqual(applied, [1, 2]))
+  } finally {
+    sync.stop()
+  }
+})
+
+test("successful hint retry clears degraded state on the open stream", async () => {
+  const clock = new ManualClock()
+  const recovery = deferred<void>()
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  let hintAttempts = 0
+  const applied: number[] = []
+  const states: string[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      if (minimumVersion === 2) {
+        hintAttempts += 1
+        if (hintAttempts === 1) throw new Error("portal unavailable")
+        await recovery.promise
+      }
+      return {
+        version: minimumVersion,
+        apply: () => applied.push(minimumVersion),
+      }
+    },
+    onStateChange: (state) => states.push(state),
+    random: () => 0.5,
+    sleep: clock.sleep,
+    timing: {
+      retryBaseMilliseconds: 1_000,
+      retryCapMilliseconds: 8_000,
+      degradedGraceMilliseconds: 100,
+      pollMinimumMilliseconds: 10_000,
+      pollMaximumMilliseconds: 20_000,
+    },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.ok(stream))
+    stream!.enqueue(readyEvent(1))
+    await eventually(() => assert.deepEqual(applied, [1]))
+
+    stream!.enqueue(hintEvent(2))
+    await eventually(() => assert.equal(hintAttempts, 1))
+    await clock.advance(0)
+    await eventually(() => assert.equal(hintAttempts, 2))
+    await clock.advance(100)
+    assert.equal(states.at(-1), "degraded")
+
+    recovery.resolve()
+    await eventually(() => assert.deepEqual(applied, [1, 2]))
+    assert.equal(states.at(-1), "connected")
+  } finally {
+    sync.stop()
+  }
+})
+
+test("reconnect cancels stale hint backoff from the previous stream", async () => {
+  const clock = new ManualClock()
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const requested: number[] = []
+  const applied: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      if (requested.length === 2 || requested.length === 3) {
+        throw new Error("portal unavailable")
+      }
+      return {
+        version: minimumVersion,
+        apply: () => applied.push(minimumVersion),
+      }
+    },
+    onStateChange: () => {},
+    random: () => 0.5,
+    sleep: clock.sleep,
+    timing: {
+      retryBaseMilliseconds: 1_000,
+      retryCapMilliseconds: 8_000,
+      degradedGraceMilliseconds: 5_000,
+      pollMinimumMilliseconds: 10_000,
+      pollMaximumMilliseconds: 20_000,
+    },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(streams.length, 1))
+    streams[0]!.enqueue(readyEvent(1))
+    await eventually(() => assert.deepEqual(applied, [1]))
+    streams[0]!.enqueue(hintEvent(2))
+    await eventually(() => assert.deepEqual(requested, [1, 2]))
+    await clock.advance(0)
+    await eventually(() => assert.deepEqual(requested, [1, 2, 2]))
+
+    streams[0]!.close()
+    await eventually(() => assert.equal(streams.length, 2))
+    streams[1]!.enqueue(readyEvent(2))
+    await eventually(() => assert.deepEqual(applied, [1, 2]))
+    streams[1]!.enqueue(hintEvent(3))
+    await eventually(() => assert.deepEqual(requested, [1, 2, 2, 2, 3]))
+  } finally {
+    sync.stop()
+  }
+})
+
 test("sustained outage backs off, degrades after grace, and polls without a storm", async () => {
   const clock = new ManualClock()
   const states: string[] = []
