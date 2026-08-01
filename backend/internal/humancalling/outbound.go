@@ -34,11 +34,10 @@ type StartOutboundCallCommand struct {
 }
 
 type ConfirmOutboundMediaCommand struct {
-	Identity          access.Identity
-	SessionID         string
-	CallID            string
-	MediaToken        string
-	ProviderSessionID string
+	Identity   access.Identity
+	SessionID  string
+	CallID     string
+	MediaToken string
 }
 
 type LocationVoiceProvision struct {
@@ -535,12 +534,10 @@ func (m *Module) ConfirmOutboundMedia(
 	command.SessionID = strings.TrimSpace(command.SessionID)
 	command.CallID = strings.TrimSpace(command.CallID)
 	command.MediaToken = strings.TrimSpace(command.MediaToken)
-	command.ProviderSessionID = strings.TrimSpace(command.ProviderSessionID)
 	if command.Identity.Subject == "" ||
 		command.SessionID == "" ||
 		command.CallID == "" ||
-		command.MediaToken == "" ||
-		command.ProviderSessionID == "" {
+		command.MediaToken == "" {
 		return Call{}, ErrInvalidInput
 	}
 
@@ -559,7 +556,7 @@ func (m *Module) ConfirmOutboundMedia(
 
 	var practiceID, locationID, attemptID string
 	var claimantSubject, claimantSession string
-	var staffControlID, staffLegID, staffSessionID, destination, callerID string
+	var staffControlID, staffLegID, destination, callerID string
 	var state CallState
 	var staffAnsweredAt, mediaReadyAt *time.Time
 	if err := tx.QueryRow(ctx, `
@@ -572,7 +569,6 @@ func (m *Module) ConfirmOutboundMedia(
 			call.claimant_session_id,
 			call.expected_staff_call_control_id,
 			call.expected_staff_call_leg_id,
-			COALESCE(call.call_session_id, ''),
 			call.destination_phone,
 			call.outbound_caller_id,
 			attempt.staff_answered_at,
@@ -592,7 +588,6 @@ func (m *Module) ConfirmOutboundMedia(
 		&claimantSession,
 		&staffControlID,
 		&staffLegID,
-		&staffSessionID,
 		&destination,
 		&callerID,
 		&staffAnsweredAt,
@@ -637,7 +632,6 @@ func (m *Module) ConfirmOutboundMedia(
 	if !ownsLease ||
 		claimantSubject != command.Identity.Subject ||
 		claimantSession != command.SessionID ||
-		staffSessionID != command.ProviderSessionID ||
 		!hmac.Equal([]byte(expectedToken), []byte(command.MediaToken)) ||
 		staffAnsweredAt == nil ||
 		(!confirmationPending && !confirmationComplete) {

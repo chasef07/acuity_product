@@ -74,14 +74,12 @@ function fakeCall(
   mediaToken: string,
   actions: string[],
   hasRemoteStream = true,
-  providerSessionID = "session-1",
 ) {
   return {
     state: "ringing",
     remoteStream: hasRemoteStream ? {} : undefined,
     telnyxIDs: {
       telnyxLegId: providerLegID,
-      telnyxSessionId: providerSessionID,
     },
     options: {
       customHeaders: [{ name: "X-Acuity-Media-Token", value: mediaToken }],
@@ -96,17 +94,11 @@ function fakeCall(
   }
 }
 
-test("incoming media exposes the shared Telnyx session identity", async () => {
+test("incoming media does not require a shared Call Control session", async () => {
   const output = installMediaDOM()
   const sdk = fakeClient()
   const legs: IncomingMediaLeg[] = []
-  const call = fakeCall(
-    "webrtc-leg",
-    "a".repeat(43),
-    [],
-    true,
-    "shared-session",
-  )
+  const call = fakeCall("webrtc-leg", "a".repeat(43), [])
   const adapter = createCallingMediaAdapter(async () => sdk.client)
 
   await adapter.connect("jwt", output.id, {
@@ -115,10 +107,8 @@ test("incoming media exposes the shared Telnyx session identity", async () => {
   })
   sdk.emit("telnyx.notification", { type: "callUpdate", call })
 
-  assert.equal(
-    legs[0].providerSessionID,
-    "shared-session",
-  )
+  assert.equal(legs[0].providerLegID, "webrtc-leg")
+  assert.equal(legs[0].mediaToken, "a".repeat(43))
 })
 
 test("Telnyx media starts with the microphone fenced", () => {
