@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -124,11 +124,13 @@ func (m *Module) ProvisionLocationVoices(
 		provision.VoicemailGreeting = strings.TrimSpace(
 			provision.VoicemailGreeting,
 		)
+		if provision.VoicemailGreeting == "" {
+			provision.VoicemailGreeting = defaultVoicemailGreeting
+		}
 		if provision.PracticeKey == "" ||
 			provision.LocationKey == "" ||
 			!validUSNumber(provision.Number) ||
-			(provision.VoicemailGreeting != "" &&
-				!validHTTPSURL(provision.VoicemailGreeting)) {
+			utf8.RuneCountInString(provision.VoicemailGreeting) > 2000 {
 			return ErrInvalidInput
 		}
 		var practiceID, locationID string
@@ -163,13 +165,13 @@ func (m *Module) ProvisionLocationVoices(
 				location_id,
 				phone,
 				enabled,
-				voicemail_greeting_url
+				voicemail_greeting
 			)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (practice_id, location_id, phone)
 			DO UPDATE SET
 				enabled = EXCLUDED.enabled,
-				voicemail_greeting_url = EXCLUDED.voicemail_greeting_url,
+				voicemail_greeting = EXCLUDED.voicemail_greeting,
 				updated_at = now()
 		`, practiceID, locationID, provision.Number, provision.Enabled,
 			provision.VoicemailGreeting); err != nil {
@@ -180,13 +182,6 @@ func (m *Module) ProvisionLocationVoices(
 		return fmt.Errorf("commit Location voice provisioning: %w", err)
 	}
 	return nil
-}
-
-func validHTTPSURL(value string) bool {
-	parsed, err := url.Parse(value)
-	return err == nil &&
-		parsed.Scheme == "https" &&
-		parsed.Host != ""
 }
 
 func (m *Module) StartOutboundCall(

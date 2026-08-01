@@ -64,6 +64,30 @@ func TestRecordingSavedNormalizationDoesNotTreatTelnyxStorageAsGCSReady(t *testi
 	}
 }
 
+func TestSpeakEventNormalizationRecognizesVoicemailLifecycle(t *testing.T) {
+	for _, eventType := range []FactType{FactSpeakStarted, FactSpeakEnded} {
+		t.Run(string(eventType), func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{
+				"data": {
+					"record_type": "event",
+					"event_type": %q,
+					"id": "speak-event",
+					"occurred_at": "2026-07-31T12:00:00Z",
+					"payload": {
+						"call_control_id": "caller-control",
+						"call_leg_id": "caller-leg",
+						"call_session_id": "provider-session"
+					}
+				}
+			}`, eventType))
+			fact, known, err := normalizeTelnyxFact(raw)
+			if err != nil || !known || fact.Type != eventType {
+				t.Fatalf("normalize %s: fact=%#v known=%t err=%v", eventType, fact, known, err)
+			}
+		})
+	}
+}
+
 func TestKnownEventNormalizationRejectsIrreparablePayloads(t *testing.T) {
 	invalidClientState := base64.StdEncoding.EncodeToString([]byte(
 		`{"v":1,"call":"not-a-uuid","leg":"staff","attempt":"also-not-a-uuid"}`,

@@ -52,6 +52,8 @@ const (
 	FactCallHangup      FactType = "call.hangup"
 	FactPlaybackStarted FactType = "call.playback.started"
 	FactPlaybackEnded   FactType = "call.playback.ended"
+	FactSpeakStarted    FactType = "call.speak.started"
+	FactSpeakEnded      FactType = "call.speak.ended"
 	FactRecordingSaved  FactType = "call.recording.saved"
 	FactRecordingError  FactType = "call.recording.error"
 )
@@ -132,7 +134,6 @@ type Config struct {
 	FromNumber             string
 	RingbackURL            string
 	RecordingBucket        string
-	SafeGreetingURL        string
 	VoicemailStore         VoicemailObjectStore
 	RecordingDownloader    RecordingDownloader
 	PlaybackSigningKey     []byte
@@ -638,6 +639,10 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	case FactPlaybackStarted:
 		transaction = func() error { return m.applyRingbackStarted(ctx, fact) }
 	case FactPlaybackEnded:
+		transaction = func() error { return m.applyVoicemailGreetingEnded(ctx, fact) }
+	case FactSpeakStarted:
+		transaction = func() error { return m.applyVoicemailGreetingStarted(ctx, fact) }
+	case FactSpeakEnded:
 		transaction = func() error { return m.applyVoicemailGreetingEnded(ctx, fact) }
 	case FactRecordingSaved:
 		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&

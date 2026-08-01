@@ -27,8 +27,40 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 13 {
-		t.Fatalf("migration count = %d, want 13", migrationCount)
+	if migrationCount != 14 {
+		t.Fatalf("migration count = %d, want 14", migrationCount)
+	}
+	var greetingRequired bool
+	var greetingDefault string
+	var rollbackColumnExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			is_nullable = 'NO',
+			column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'human_calling_location_voice_numbers'
+			AND column_name = 'voicemail_greeting'
+	`).Scan(&greetingRequired, &greetingDefault); err != nil {
+		t.Fatalf("inspect voicemail greeting column: %v", err)
+	}
+	if !greetingRequired ||
+		!strings.Contains(greetingDefault, "Please leave a message after the beep.") {
+		t.Fatalf("voicemail greeting column = required:%t default:%q", greetingRequired, greetingDefault)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+				AND table_name = 'human_calling_location_voice_numbers'
+				AND column_name = 'voicemail_greeting_url'
+		)
+	`).Scan(&rollbackColumnExists); err != nil {
+		t.Fatalf("inspect rollback-compatible greeting column: %v", err)
+	}
+	if !rollbackColumnExists {
+		t.Fatal("voicemail greeting migration removed the serving revision's column")
 	}
 	var activeCommandIndexIsUnique bool
 	if err := pool.QueryRow(ctx, `

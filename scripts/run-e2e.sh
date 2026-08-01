@@ -171,7 +171,6 @@ TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
 TELNYX_FROM_NUMBER=+15555550100 \
 TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
 TELNYX_RECORDING_BUCKET=synthetic-recordings \
-HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.synthetic.test/voicemail.wav \
 MESSAGING_WEBHOOK_BASE_URL=https://messaging.e2e.invalid/v1/provider/telnyx/messaging-webhooks \
 MESSAGING_ATTACHMENT_DIRECTORY="$runtime_dir/messaging-attachments" \
 "$runtime_dir/acuity" >"$runtime_dir/portal.log" 2>&1 &
@@ -216,7 +215,6 @@ TELNYX_CREDENTIAL_CONNECTION_ID=fixture-credential-connection \
 TELNYX_FROM_NUMBER=+15555550100 \
 TELNYX_RINGBACK_URL=https://assets.example.test/ringback.wav \
 TELNYX_RECORDING_BUCKET=synthetic-recordings \
-HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.synthetic.test/voicemail.wav \
 HUMAN_CALLING_RECORDING_HOSTS=recordings.telnyx.test:19443 \
 HUMAN_CALLING_RECORDING_CA_FILE="$runtime_dir/recording-fixture-cert.pem" \
 MESSAGING_WEBHOOK_BASE_URL=https://messaging.e2e.invalid/v1/provider/telnyx/messaging-webhooks \

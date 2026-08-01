@@ -4128,7 +4128,6 @@ func readyOfferAt(
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
 		RecordingBucket:  "synthetic-recordings",
-		SafeGreetingURL:  "https://media.synthetic.test/safe-greeting.wav",
 	}, clock)
 	prepareCredentials(t, calling)
 	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{

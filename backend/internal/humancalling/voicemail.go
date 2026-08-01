@@ -36,6 +36,7 @@ const (
 	VoicemailUnavailable      VoicemailAudioState = "UNAVAILABLE"
 	voicemailRecordingMaximum                     = 120 * time.Second
 	voicemailCallbackGrace                        = 30 * time.Second
+	defaultVoicemailGreeting                      = "Please leave a message after the beep."
 )
 
 type Voicemail struct {
@@ -192,10 +193,10 @@ func (m *Module) voicemailGreeting(
 	tx pgx.Tx,
 	practiceID string,
 	locationID string,
-) string {
+) (string, error) {
 	var configured string
 	err := tx.QueryRow(ctx, `
-		SELECT COALESCE(voicemail_greeting_url, '')
+		SELECT voicemail_greeting
 		FROM human_calling_location_voice_numbers
 		WHERE practice_id = $1
 			AND location_id = $2
@@ -203,15 +204,13 @@ func (m *Module) voicemailGreeting(
 		ORDER BY id
 		LIMIT 1
 	`, practiceID, locationID).Scan(&configured)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return m.config.SafeGreetingURL
+	if errors.Is(err, pgx.ErrNoRows) {
+		return defaultVoicemailGreeting, nil
 	}
-	configured = strings.TrimSpace(configured)
-	parsed, err := url.Parse(configured)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return m.config.SafeGreetingURL
+	if err != nil {
+		return "", fmt.Errorf("read voicemail greeting: %w", err)
 	}
-	return configured
+	return configured, nil
 }
 
 func (m *Module) startVoicemailGreeting(
@@ -223,8 +222,11 @@ func (m *Module) startVoicemailGreeting(
 	callerCallControlID string,
 	occurredAt time.Time,
 ) error {
-	greetingURL := m.voicemailGreeting(ctx, tx, practiceID, locationID)
-	if strings.TrimSpace(greetingURL) == "" {
+	greeting, err := m.voicemailGreeting(ctx, tx, practiceID, locationID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(greeting) == "" {
 		return fmt.Errorf("%w: safe voicemail greeting is unavailable", ErrConflict)
 	}
 	return insertCommand(
@@ -235,11 +237,29 @@ func (m *Module) startVoicemailGreeting(
 		CommandPlayVoicemailGreeting,
 		callerCallControlID,
 		map[string]any{
-			"audio_url":    greetingURL,
+			"greeting":     greeting,
 			"client_state": opaqueClientState(callID, "voicemail"),
 		},
 		occurredAt,
 	)
+}
+
+func (m *Module) applyVoicemailGreetingStarted(
+	ctx context.Context,
+	fact ProviderFact,
+) error {
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin voicemail greeting start projection: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := claimProviderFact(ctx, tx, fact, m.now()); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit voicemail greeting start: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) applyVoicemailGreetingEnded(

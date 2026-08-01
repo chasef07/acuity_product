@@ -326,7 +326,6 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--min\t1",
 		"--max\t3",
 		"DATABASE_POOL_MAX=1",
-		"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.example/voicemail.wav",
 		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY=playback-signing-key:latest",
 		"MESSAGING_WEBHOOK_BASE_URL=https://ingress.example/v1/provider/telnyx/messaging-webhooks",
 		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging",
@@ -372,7 +371,6 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--cpu\t1",
 		"--memory\t512Mi",
 		"DATABASE_POOL_MAX=1",
-		"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.example/voicemail.wav",
 		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
 		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",
 		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging",
@@ -386,6 +384,11 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--memory\t512Mi",
 		"DATABASE_POOL_MAX=1",
 	)
+	for _, command := range commands {
+		if strings.Contains(command, "HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL") {
+			t.Fatalf("obsolete voicemail greeting URL reached gcloud: %s", command)
+		}
+	}
 }
 
 func TestProductionCloudRunCommandsFailClosed(t *testing.T) {
@@ -419,12 +422,6 @@ func TestProductionCloudRunCommandsFailClosed(t *testing.T) {
 			key:     "MESSAGING_ATTACHMENT_BUCKET_LOCATION",
 			value:   "us-central1",
 			message: "messaging attachment bucket must be in us-east1",
-		},
-		{
-			name:    "safe voicemail greeting",
-			key:     "HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL",
-			value:   "http://assets.example/voicemail.wav",
-			message: "safe voicemail greeting URL must use HTTPS",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -641,7 +638,6 @@ func productionRuntimeEnvironment() []string {
 		"AUTH_EMAIL_FROM=acuity@example.com",
 		"HUMAN_CALLING_SIP_DOMAIN=caller.example",
 		"HUMAN_CALLING_STAFF_SIP_DOMAIN=staff.example",
-		"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL=https://assets.example/voicemail.wav",
 		"HANDOFF_SERVICE_SUBJECT=service",
 		"HANDOFF_SERVICE_PRACTICE_ID=00000000-0000-0000-0000-000000000001",
 		"TELNYX_CALL_CONTROL_ID=call-control",

@@ -425,7 +425,6 @@ func humanCallingConfig(
 		FromNumber:             config.HumanCalling.FromNumber,
 		RingbackURL:            config.HumanCalling.RingbackURL,
 		RecordingBucket:        config.HumanCalling.RecordingBucket,
-		SafeGreetingURL:        config.HumanCalling.SafeGreetingURL,
 		PlaybackSigningKey:     config.HumanCalling.PlaybackSigningKey,
 		WebhookPublicKey:       ed25519.PublicKey(config.HumanCalling.WebhookPublicKey),
 		Observer:               observer,

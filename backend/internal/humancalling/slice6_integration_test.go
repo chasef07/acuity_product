@@ -25,11 +25,23 @@ func TestExpiredHandoffCreatesOneVoicemailTaskBeforeAudioCopy(t *testing.T) {
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
 		HandoffSIPDomain:    "synthetic.sip.telnyx.com",
 		HandoffTokenKey:     []byte("0123456789abcdef0123456789abcdef"),
-		SafeGreetingURL:     "https://media.synthetic.test/safe-greeting.wav",
 		VoicemailStore:      audio,
 		RecordingDownloader: audio,
 		PlaybackSigningKey:  []byte("abcdef0123456789abcdef0123456789"),
 	}, func() time.Time { return now })
+	const customGreeting = "Thank you for calling. Please leave a message after the tone."
+	if err := calling.ProvisionLocationVoices(
+		context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey:       "synthetic-practice",
+			LocationKey:       "synthetic-location",
+			Number:            "+14843336938",
+			Enabled:           true,
+			VoicemailGreeting: customGreeting,
+		}},
+	); err != nil {
+		t.Fatalf("provision custom voicemail greeting: %v", err)
+	}
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-voicemail",
@@ -67,7 +79,7 @@ func TestExpiredHandoffCreatesOneVoicemailTaskBeforeAudioCopy(t *testing.T) {
 	processCallingCommands(t, calling)
 	greeting := provider.last(humancalling.CommandPlayVoicemailGreeting)
 	if greeting.TargetID != "voicemail-caller-control" ||
-		greeting.Payload["audio_url"] != "https://media.synthetic.test/safe-greeting.wav" {
+		greeting.Payload["greeting"] != customGreeting {
 		t.Fatalf("voicemail greeting command = %#v", greeting)
 	}
 	if provider.count(humancalling.CommandStartVoicemailRecording) != 0 {
@@ -76,7 +88,7 @@ func TestExpiredHandoffCreatesOneVoicemailTaskBeforeAudioCopy(t *testing.T) {
 
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "voicemail-greeting-ended",
-		Type:          humancalling.FactPlaybackEnded,
+		Type:          humancalling.FactSpeakEnded,
 		OccurredAt:    now.Add(time.Second),
 		CallControlID: "voicemail-caller-control",
 		CallLegID:     "voicemail-caller-leg",
@@ -248,7 +260,8 @@ func TestExpiredHandoffCreatesOneVoicemailTaskBeforeAudioCopy(t *testing.T) {
 		humancalling.CommandPlayVoicemailGreeting,
 	)
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
-		EventID:       "unavailable-greeting-ended",
+		EventID: "unavailable-greeting-ended",
+		// Accept playback completions emitted by commands from the previous revision.
 		Type:          humancalling.FactPlaybackEnded,
 		OccurredAt:    now,
 		CallControlID: "unavailable-caller-control",
@@ -347,7 +360,6 @@ func TestExpiredHandoffWithoutRecordingCreatesOneMissedCallTask(t *testing.T) {
 	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		SafeGreetingURL:  "https://media.synthetic.test/safe-greeting.wav",
 	}, func() time.Time { return now })
 	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
@@ -425,7 +437,6 @@ func TestReorderedRecordingErrorDoesNotBeatSavedVoicemailArtifact(t *testing.T) 
 		humancalling.Config{
 			HandoffSIPDomain: "synthetic.sip.telnyx.com",
 			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-			SafeGreetingURL:  "https://media.synthetic.test/safe-greeting.wav",
 		},
 		func() time.Time { return now },
 	)
@@ -635,7 +646,6 @@ func TestDefinitiveVoicemailRecordingRejectionCreatesMissedCallTask(t *testing.T
 		humancalling.Config{
 			HandoffSIPDomain: "synthetic.sip.telnyx.com",
 			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-			SafeGreetingURL:  "https://media.synthetic.test/safe-greeting.wav",
 		},
 		func() time.Time { return now },
 	)
@@ -1680,7 +1690,7 @@ func prepareVoicemailRecording(
 		context.Background(),
 		humancalling.ProviderFact{
 			EventID:       suffix + "-mismatched-greeting-ended",
-			Type:          humancalling.FactPlaybackEnded,
+			Type:          humancalling.FactSpeakEnded,
 			OccurredAt:    *now,
 			CallControlID: controlID,
 			CallLegID:     "wrong-caller-leg",
@@ -1702,7 +1712,7 @@ func prepareVoicemailRecording(
 		context.Background(),
 		humancalling.ProviderFact{
 			EventID:       suffix + "-greeting-ended",
-			Type:          humancalling.FactPlaybackEnded,
+			Type:          humancalling.FactSpeakEnded,
 			OccurredAt:    *now,
 			CallControlID: controlID,
 			CallLegID:     suffix + "-caller-leg",

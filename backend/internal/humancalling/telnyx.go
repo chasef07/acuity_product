@@ -72,11 +72,15 @@ func (adapter *TelnyxAdapter) Execute(
 		path = callActionPath(command.TargetID, "playback_start")
 	case CommandPlayVoicemailGreeting:
 		if command.TargetID == "" ||
-			emptyString(payload["audio_url"]) ||
+			emptyString(payload["greeting"]) ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}
-		path = callActionPath(command.TargetID, "playback_start")
+		payload["payload"] = payload["greeting"]
+		payload["voice"] = "Polly.Matthew"
+		payload["language"] = "en-US"
+		delete(payload, "greeting")
+		path = callActionPath(command.TargetID, "speak")
 	case CommandDialStaff:
 		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
 		mediaPrep := payload["media_prep"] == true
