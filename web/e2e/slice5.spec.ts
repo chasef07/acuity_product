@@ -157,17 +157,19 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(
     page.getByRole("heading", { name: "Follow up on text", exact: true }),
   ).toBeVisible()
-  await page.reload()
-  await expect(
-    page.getByRole("heading", { name: "Follow up on text", exact: true }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole("region", { name: "Task conversation" }),
-  ).toContainText(inboundText)
-  const taskReply = "I will call you with the pickup time."
   const taskConversation = page.getByRole("region", {
     name: "Task conversation",
   })
+  await page.reload()
+  await expect(taskConversation).toBeVisible()
+  await page
+    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .click()
+  await expect(
+    page.getByRole("heading", { name: "Follow up on text", exact: true }),
+  ).toBeVisible()
+  await expect(taskConversation).toContainText(inboundText)
+  const taskReply = "I will call you with the pickup time."
   await taskConversation
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(taskReply)
