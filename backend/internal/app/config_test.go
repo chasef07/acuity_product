@@ -7,44 +7,43 @@ import (
 
 func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 	base := map[string]string{
-		"ACUITY_RUNTIME_ROLE":                       "portal-api",
-		"DATABASE_URL":                              "postgres://database.example/acuity",
-		"DATABASE_POOL_MAX":                         "4",
-		"DATABASE_ACQUIRE_TIMEOUT_MS":               "1500",
-		"HTTP_PORT":                                 "8080",
-		"BROWSER_ORIGIN":                            "https://portal.example",
-		"BETTER_AUTH_JWKS_URL":                      "https://portal.example/api/auth/jwks",
-		"BETTER_AUTH_ISSUER":                        "https://portal.example",
-		"PORTAL_API_AUDIENCE":                       "https://api.example",
-		"HUMAN_CALLING_SIP_DOMAIN":                  "synthetic.sip.telnyx.com",
-		"HUMAN_CALLING_STAFF_SIP_DOMAIN":            "sip.telnyx.com",
-		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":           "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY":        "YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=",
-		"HUMAN_CALLING_OFFER_SECONDS":               "20",
-		"HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS":  "15",
-		"HUMAN_CALLING_LEASE_SECONDS":               "30",
-		"HUMAN_CALLING_READINESS_GRACE_SECONDS":     "15",
-		"HANDOFF_SERVICE_TOKEN":                     "synthetic-service-token",
-		"HANDOFF_SERVICE_SUBJECT":                   "abita-synthetic",
-		"HANDOFF_SERVICE_PRACTICE_ID":               "00000000-0000-0000-0000-000000000001",
-		"TELNYX_API_KEY":                            "KEY_synthetic",
-		"TELNYX_CALL_CONTROL_ID":                    "call-control-synthetic",
-		"TELNYX_CREDENTIAL_CONNECTION_ID":           "credential-connection-synthetic",
-		"TELNYX_FROM_NUMBER":                        "+15555550100",
-		"TELNYX_RINGBACK_URL":                       "https://assets.example/ringback.wav",
-		"TELNYX_RECORDING_BUCKET":                   "synthetic-recordings",
-		"HUMAN_CALLING_RECORDING_CA_FILE":           "/tmp/synthetic-recording-ca.pem",
-		"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL": "https://assets.example/voicemail.wav",
-		"TELNYX_WEBHOOK_PUBLIC_KEY":                 "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-		"MESSAGING_WEBHOOK_BASE_URL":                "https://ingress.example/v1/provider/telnyx/messaging-webhooks",
-		"MESSAGING_ATTACHMENT_DIRECTORY":            "/tmp/acuity-message-attachments",
-		"MESSAGING_MEDIA_PUBLIC_BASE_URL":           "https://ingress.example/v1/provider/messaging-media",
-		"MESSAGING_MEDIA_SIGNING_KEY":               "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-		"REALTIME_HEARTBEAT_SECONDS":                "15",
-		"REALTIME_STREAM_SECONDS":                   "300",
-		"REALTIME_REVALIDATE_SECONDS":               "30",
-		"REALTIME_RECONNECT_MIN_MS":                 "250",
-		"REALTIME_RECONNECT_MAX_SECONDS":            "5",
+		"ACUITY_RUNTIME_ROLE":                      "portal-api",
+		"DATABASE_URL":                             "postgres://database.example/acuity",
+		"DATABASE_POOL_MAX":                        "4",
+		"DATABASE_ACQUIRE_TIMEOUT_MS":              "1500",
+		"HTTP_PORT":                                "8080",
+		"BROWSER_ORIGIN":                           "https://portal.example",
+		"BETTER_AUTH_JWKS_URL":                     "https://portal.example/api/auth/jwks",
+		"BETTER_AUTH_ISSUER":                       "https://portal.example",
+		"PORTAL_API_AUDIENCE":                      "https://api.example",
+		"HUMAN_CALLING_SIP_DOMAIN":                 "synthetic.sip.telnyx.com",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN":           "sip.telnyx.com",
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":          "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY":       "YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=",
+		"HUMAN_CALLING_OFFER_SECONDS":              "20",
+		"HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS": "15",
+		"HUMAN_CALLING_LEASE_SECONDS":              "30",
+		"HUMAN_CALLING_READINESS_GRACE_SECONDS":    "15",
+		"HANDOFF_SERVICE_TOKEN":                    "synthetic-service-token",
+		"HANDOFF_SERVICE_SUBJECT":                  "abita-synthetic",
+		"HANDOFF_SERVICE_PRACTICE_ID":              "00000000-0000-0000-0000-000000000001",
+		"TELNYX_API_KEY":                           "KEY_synthetic",
+		"TELNYX_CALL_CONTROL_ID":                   "call-control-synthetic",
+		"TELNYX_CREDENTIAL_CONNECTION_ID":          "credential-connection-synthetic",
+		"TELNYX_FROM_NUMBER":                       "+15555550100",
+		"TELNYX_RINGBACK_URL":                      "https://assets.example/ringback.wav",
+		"TELNYX_RECORDING_BUCKET":                  "synthetic-recordings",
+		"HUMAN_CALLING_RECORDING_CA_FILE":          "/tmp/synthetic-recording-ca.pem",
+		"TELNYX_WEBHOOK_PUBLIC_KEY":                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"MESSAGING_WEBHOOK_BASE_URL":               "https://ingress.example/v1/provider/telnyx/messaging-webhooks",
+		"MESSAGING_ATTACHMENT_DIRECTORY":           "/tmp/acuity-message-attachments",
+		"MESSAGING_MEDIA_PUBLIC_BASE_URL":          "https://ingress.example/v1/provider/messaging-media",
+		"MESSAGING_MEDIA_SIGNING_KEY":              "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"REALTIME_HEARTBEAT_SECONDS":               "15",
+		"REALTIME_STREAM_SECONDS":                  "300",
+		"REALTIME_REVALIDATE_SECONDS":              "30",
+		"REALTIME_RECONNECT_MIN_MS":                "250",
+		"REALTIME_RECONNECT_MAX_SECONDS":           "5",
 	}
 
 	config, err := LoadConfig(func(name string) string { return base[name] })
@@ -74,15 +73,6 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		config.Service.PracticeID != "00000000-0000-0000-0000-000000000001" {
 		t.Fatalf("service config = %#v", config.Service)
 	}
-	invalidGreeting := clone(base)
-	invalidGreeting["HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL"] =
-		"http://assets.example/voicemail.wav"
-	if _, err := LoadConfig(func(name string) string {
-		return invalidGreeting[name]
-	}); err == nil {
-		t.Fatal("expected non-HTTPS safe voicemail greeting to fail closed")
-	}
-
 	for _, role := range []Role{
 		RolePortalAPI,
 		RoleProviderIngress,
@@ -104,7 +94,6 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 			delete(values, "TELNYX_FROM_NUMBER")
 			delete(values, "TELNYX_RINGBACK_URL")
 			delete(values, "TELNYX_RECORDING_BUCKET")
-			delete(values, "HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL")
 			if role != RoleProviderIngress {
 				delete(values, "MESSAGING_WEBHOOK_BASE_URL")
 			}
@@ -140,28 +129,27 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 
 func TestLoadConfigRejectsMalformedHumanCallingKeys(t *testing.T) {
 	base := map[string]string{
-		"ACUITY_RUNTIME_ROLE":                       "portal-api",
-		"DATABASE_URL":                              "postgres://database.example/acuity",
-		"DATABASE_POOL_MAX":                         "4",
-		"DATABASE_ACQUIRE_TIMEOUT_MS":               "1500",
-		"HTTP_PORT":                                 "8080",
-		"BROWSER_ORIGIN":                            "https://portal.example",
-		"BETTER_AUTH_JWKS_URL":                      "https://portal.example/api/auth/jwks",
-		"BETTER_AUTH_ISSUER":                        "https://portal.example",
-		"PORTAL_API_AUDIENCE":                       "https://api.example",
-		"HUMAN_CALLING_SIP_DOMAIN":                  "synthetic.sip.telnyx.com",
-		"HUMAN_CALLING_STAFF_SIP_DOMAIN":            "sip.telnyx.com",
-		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":           "too-short",
-		"HANDOFF_SERVICE_TOKEN":                     "synthetic-service-token",
-		"HANDOFF_SERVICE_SUBJECT":                   "abita-synthetic",
-		"HANDOFF_SERVICE_PRACTICE_ID":               "00000000-0000-0000-0000-000000000001",
-		"TELNYX_API_KEY":                            "KEY_synthetic",
-		"TELNYX_CALL_CONTROL_ID":                    "call-control-synthetic",
-		"TELNYX_CREDENTIAL_CONNECTION_ID":           "credential-connection-synthetic",
-		"TELNYX_FROM_NUMBER":                        "+15555550100",
-		"TELNYX_RINGBACK_URL":                       "https://assets.example/ringback.wav",
-		"TELNYX_RECORDING_BUCKET":                   "synthetic-recordings",
-		"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL": "https://assets.example/voicemail.wav",
+		"ACUITY_RUNTIME_ROLE":             "portal-api",
+		"DATABASE_URL":                    "postgres://database.example/acuity",
+		"DATABASE_POOL_MAX":               "4",
+		"DATABASE_ACQUIRE_TIMEOUT_MS":     "1500",
+		"HTTP_PORT":                       "8080",
+		"BROWSER_ORIGIN":                  "https://portal.example",
+		"BETTER_AUTH_JWKS_URL":            "https://portal.example/api/auth/jwks",
+		"BETTER_AUTH_ISSUER":              "https://portal.example",
+		"PORTAL_API_AUDIENCE":             "https://api.example",
+		"HUMAN_CALLING_SIP_DOMAIN":        "synthetic.sip.telnyx.com",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN":  "sip.telnyx.com",
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY": "too-short",
+		"HANDOFF_SERVICE_TOKEN":           "synthetic-service-token",
+		"HANDOFF_SERVICE_SUBJECT":         "abita-synthetic",
+		"HANDOFF_SERVICE_PRACTICE_ID":     "00000000-0000-0000-0000-000000000001",
+		"TELNYX_API_KEY":                  "KEY_synthetic",
+		"TELNYX_CALL_CONTROL_ID":          "call-control-synthetic",
+		"TELNYX_CREDENTIAL_CONNECTION_ID": "credential-connection-synthetic",
+		"TELNYX_FROM_NUMBER":              "+15555550100",
+		"TELNYX_RINGBACK_URL":             "https://assets.example/ringback.wav",
+		"TELNYX_RECORDING_BUCKET":         "synthetic-recordings",
 	}
 	if _, err := LoadConfig(func(name string) string { return base[name] }); err == nil {
 		t.Fatal("expected malformed handoff token key to fail closed")

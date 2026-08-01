@@ -1042,7 +1042,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       )
       expect(greeting.control_id).toBe(voicemailControl)
       await deliverProviderEvent(takeoverPage, {
-        eventType: "call.playback.ended",
+        eventType: "call.speak.ended",
         eventId: "e2e-voicemail-greeting-ended",
         occurredAt: new Date().toISOString(),
         payload: {

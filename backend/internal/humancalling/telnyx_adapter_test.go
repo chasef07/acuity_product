@@ -190,7 +190,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 			Action:   humancalling.CommandPlayVoicemailGreeting,
 			TargetID: "caller-control",
 			Payload: map[string]any{
-				"audio_url":    "https://assets.example/voicemail.wav",
+				"greeting":     "Please leave a message after the beep.",
 				"client_state": "opaque-voicemail",
 			},
 		},
@@ -234,8 +234,10 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 	greeting := <-requests
 	recording := <-requests
 	destination := <-requests
-	if greeting["_path"] != "/v2/calls/caller-control/actions/playback_start" ||
-		greeting["audio_url"] != "https://assets.example/voicemail.wav" ||
+	if greeting["_path"] != "/v2/calls/caller-control/actions/speak" ||
+		greeting["payload"] != "Please leave a message after the beep." ||
+		greeting["voice"] != "Polly.Matthew" ||
+		greeting["language"] != "en-US" ||
 		greeting["command_id"] != "voicemail-greeting" {
 		t.Fatalf("voicemail greeting request = %#v", greeting)
 	}

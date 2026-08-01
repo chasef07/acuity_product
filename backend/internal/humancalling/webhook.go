@@ -682,6 +682,8 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 		FactCallHangup,
 		FactPlaybackStarted,
 		FactPlaybackEnded,
+		FactSpeakStarted,
+		FactSpeakEnded,
 		FactRecordingSaved,
 		FactRecordingError:
 	default:

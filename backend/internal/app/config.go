@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/base64"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -59,7 +58,6 @@ type HumanCallingConfig struct {
 	RecordingBucket        string
 	RecordingAllowedHosts  []string
 	RecordingCAFile        string
-	SafeGreetingURL        string
 	PlaybackSigningKey     []byte
 	OfferDuration          time.Duration
 	ConnectionTimeout      time.Duration
@@ -264,10 +262,6 @@ func loadTelnyxCommandConfig(
 		{"TELNYX_FROM_NUMBER", &result.FromNumber},
 		{"TELNYX_RINGBACK_URL", &result.RingbackURL},
 		{"TELNYX_RECORDING_BUCKET", &result.RecordingBucket},
-		{
-			"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL",
-			&result.SafeGreetingURL,
-		},
 	}
 	for _, value := range values {
 		loaded, err := required(getenv, value.name)
@@ -275,14 +269,6 @@ func loadTelnyxCommandConfig(
 			return err
 		}
 		*value.target = loaded
-	}
-	greetingURL, err := url.Parse(result.SafeGreetingURL)
-	if err != nil ||
-		greetingURL.Scheme != "https" ||
-		greetingURL.Host == "" {
-		return fmt.Errorf(
-			"HUMAN_CALLING_SAFE_VOICEMAIL_GREETING_URL must be an HTTPS URL",
-		)
 	}
 	result.TelnyxAPIBaseURL = strings.TrimSpace(getenv("TELNYX_API_BASE_URL"))
 	for _, host := range strings.Split(
