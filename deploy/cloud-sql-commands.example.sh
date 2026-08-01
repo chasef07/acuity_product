@@ -26,6 +26,9 @@ if ! IFS="$(printf '\t')" read -r \
   row_pool \
   row_dedicated \
   row_timeout \
+  row_request_timeout \
+  row_stream_maximum \
+  row_stream_jitter \
   row_retries \
   vcpus \
   memory_mib \

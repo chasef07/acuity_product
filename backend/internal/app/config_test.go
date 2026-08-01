@@ -40,7 +40,8 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"MESSAGING_MEDIA_PUBLIC_BASE_URL":          "https://ingress.example/v1/provider/messaging-media",
 		"MESSAGING_MEDIA_SIGNING_KEY":              "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"REALTIME_HEARTBEAT_SECONDS":               "15",
-		"REALTIME_STREAM_SECONDS":                  "300",
+		"REALTIME_STREAM_SECONDS":                  "270",
+		"REALTIME_STREAM_JITTER_SECONDS":           "30",
 		"REALTIME_REVALIDATE_SECONDS":              "30",
 		"REALTIME_RECONNECT_MIN_MS":                "250",
 		"REALTIME_RECONNECT_MAX_SECONDS":           "5",
@@ -121,8 +122,14 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 			role != RoleProviderIngress {
 			delete(values, "MESSAGING_ATTACHMENT_DIRECTORY")
 		}
-		if _, err := LoadConfig(func(name string) string { return values[name] }); err != nil {
+		loaded, err := LoadConfig(func(name string) string { return values[name] })
+		if err != nil {
 			t.Fatalf("load %s config: %v", role, err)
+		}
+		if role == RoleRealtime &&
+			(loaded.Realtime.Lifetime != 270*time.Second ||
+				loaded.Realtime.LifetimeJitter != 30*time.Second) {
+			t.Fatalf("realtime lifecycle = %#v", loaded.Realtime)
 		}
 	}
 }

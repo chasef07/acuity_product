@@ -134,8 +134,8 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     })
 
     process.kill(realtimePID, "SIGKILL")
-    await expect(page.getByText("Disconnected")).toBeVisible()
-    await expect(secondCustomerPage.getByText("Disconnected")).toBeVisible()
+    await expect(page.getByText("Updates delayed")).toBeVisible()
+    await expect(secondCustomerPage.getByText("Updates delayed")).toBeVisible()
 
     const replacementRealtime = spawn(runtimeBinary!, [], {
       env: {
@@ -151,6 +151,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
         PORTAL_API_AUDIENCE: portalURL,
         REALTIME_HEARTBEAT_SECONDS: "2",
         REALTIME_STREAM_SECONDS: "30",
+        REALTIME_STREAM_JITTER_SECONDS: "5",
         REALTIME_REVALIDATE_SECONDS: "2",
         REALTIME_RECONNECT_MIN_MS: "100",
         REALTIME_RECONNECT_MAX_SECONDS: "2",

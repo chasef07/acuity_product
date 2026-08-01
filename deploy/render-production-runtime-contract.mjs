@@ -57,6 +57,40 @@ const rows = contract.runtimes.map((runtime, index) => {
     `${prefix}.acquisitionTimeoutMilliseconds`,
     1,
   )
+  let requestTimeout = 0
+  let streamMaximum = 0
+  let streamJitter = 0
+  if (runtime.name === "realtime") {
+    requestTimeout = integer(
+      runtime.requestTimeoutSeconds,
+      `${prefix}.requestTimeoutSeconds`,
+      1,
+    )
+    streamMaximum = integer(
+      runtime.streamMaximumSeconds,
+      `${prefix}.streamMaximumSeconds`,
+      1,
+    )
+    streamJitter = integer(
+      runtime.streamJitterSeconds,
+      `${prefix}.streamJitterSeconds`,
+      1,
+    )
+    if (
+      streamMaximum >= requestTimeout ||
+      streamJitter >= streamMaximum
+    ) {
+      throw new Error(
+        `${prefix} stream lifetime must keep jitter and an explicit platform-timeout margin`,
+      )
+    }
+  } else if (
+    runtime.requestTimeoutSeconds !== undefined ||
+    runtime.streamMaximumSeconds !== undefined ||
+    runtime.streamJitterSeconds !== undefined
+  ) {
+    throw new Error(`${prefix} must not define realtime lifecycle settings`)
+  }
   if (minimum > maximum) {
     throw new Error(`${prefix} minimumInstances exceeds maximumInstances`)
   }
@@ -82,6 +116,9 @@ const rows = contract.runtimes.map((runtime, index) => {
     pool,
     dedicated,
     timeout,
+    requestTimeout,
+    streamMaximum,
+    streamJitter,
     0,
     vcpus,
     memoryMiB,
@@ -239,6 +276,9 @@ console.log(
     0,
     0,
     0,
+    0,
+    0,
+    0,
     "meta",
     region,
   ].join("\t"),
@@ -256,6 +296,9 @@ console.log(
     migrationPool,
     0,
     migrationTimeout,
+    0,
+    0,
+    0,
     migrationRetries,
     migrationVCPUs,
     migrationMemoryMiB,
@@ -270,6 +313,9 @@ console.log(
     0,
     0,
     1,
+    0,
+    0,
+    0,
     0,
     0,
     0,

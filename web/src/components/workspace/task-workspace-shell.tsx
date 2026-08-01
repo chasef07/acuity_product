@@ -61,6 +61,11 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
+import {
+  createWorkspaceSync,
+  type WorkspaceSync,
+  WorkspaceSyncUnauthorizedError,
+} from "@/lib/workspace-sync/workspace-sync"
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type View = "none" | "task" | "call" | "message"
@@ -109,6 +114,7 @@ export function TaskWorkspaceShell() {
   const [taskCallError, setTaskCallError] = useState("")
   const selectedTaskRef = useRef<Task | undefined>(undefined)
   const selectedThreadRef = useRef<MessageThreadSummary | undefined>(undefined)
+  const workspaceRef = useRef<WorkspaceSnapshot | undefined>(undefined)
   const composingNewRef = useRef(false)
   const tasksRef = useRef<Task[]>([])
   const messageThreadsRef = useRef<MessageThreadSummary[]>([])
@@ -116,21 +122,27 @@ export function TaskWorkspaceShell() {
   const hasLoadedThreadsRef = useRef(false)
   const taskQueryGenerationRef = useRef(0)
   const messageQueryGenerationRef = useRef(0)
+  const taskQueryKeyRef = useRef("")
+  const messageQueryKeyRef = useRef("")
   const snapshotGenerationRef = useRef(0)
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
-  const connectionRef = useRef<ConnectionState>("connecting")
+  const railModeRef = useRef<RailMode>("tasks")
+  const settledSearchRef = useRef("")
+  const orderingRef = useRef<TaskOrdering>("time")
+  const locationScopeRef = useRef("")
+  const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
   const activeCallIDRef = useRef("")
   const callDetailGenerationRef = useRef(0)
 
   useEffect(() => {
-    selectedTaskRef.current = selectedTask
-  }, [selectedTask])
-  useEffect(() => {
     selectedThreadRef.current = selectedThread
   }, [selectedThread])
+  useEffect(() => {
+    workspaceRef.current = workspace
+  }, [workspace])
   useEffect(() => {
     composingNewRef.current = composingNew
   }, [composingNew])
@@ -138,8 +150,14 @@ export function TaskWorkspaceShell() {
     viewRef.current = view
   }, [view])
   useEffect(() => {
-    connectionRef.current = connection
-  }, [connection])
+    settledSearchRef.current = settledSearch
+  }, [settledSearch])
+  useEffect(() => {
+    orderingRef.current = ordering
+  }, [ordering])
+  useEffect(() => {
+    locationScopeRef.current = locationScopeID
+  }, [locationScopeID])
   useEffect(() => {
     const timeout = window.setTimeout(
       () => setSettledSearch(search.trim()),
@@ -157,7 +175,7 @@ export function TaskWorkspaceShell() {
       const scope = `${selectedPractice}:${selectedLocation}`
       if (scope !== snapshotScopeRef.current) return false
       const requestGeneration = ++snapshotGenerationRef.current
-      if (showLoading) setLoadState("loading")
+      if (showLoading && !workspaceRef.current) setLoadState("loading")
       const token = await getAccessToken()
       if (
         requestGeneration !== snapshotGenerationRef.current ||
@@ -184,11 +202,20 @@ export function TaskWorkspaceShell() {
       }
       if (!result?.data) {
         const status = result?.response?.status
-        setLoadState(
-          status === 401 || status === 403 ? "unauthorized" : "unavailable",
-        )
+        if (status === 401 || status === 403) {
+          setLoadState("unauthorized")
+        } else if (!workspaceRef.current) {
+          setLoadState("unavailable")
+        }
         return false
       }
+      if (
+        workspaceRef.current &&
+        result.data.version < workspaceRef.current.version
+      ) {
+        return true
+      }
+      workspaceRef.current = result.data
       setWorkspace(result.data)
       setLoadState("ready")
       return true
@@ -199,6 +226,12 @@ export function TaskWorkspaceShell() {
   const loadTasks = useCallback(
     async (cursor = "", append = false) => {
       if (!practiceID) return
+      const queryKey = workspaceTaskQueryKey(
+        practiceID,
+        locationScopeID,
+        settledSearch,
+        ordering,
+      )
       const requestGeneration = ++taskQueryGenerationRef.current
       setTasksLoading(true)
       const token = await getAccessToken()
@@ -227,7 +260,7 @@ export function TaskWorkspaceShell() {
         ) {
           tasksRef.current = []
           setTasks([])
-          setSelectedTask(undefined)
+          updateSelectedTask(undefined)
           setView("none")
           setLoadState("unauthorized")
         }
@@ -235,6 +268,7 @@ export function TaskWorkspaceShell() {
       }
       const firstLoad = !hasLoadedTasksRef.current
       hasLoadedTasksRef.current = true
+      taskQueryKeyRef.current = queryKey
       const next = append
         ? [...tasksRef.current, ...result.data.items]
         : result.data.items
@@ -245,9 +279,9 @@ export function TaskWorkspaceShell() {
       const selected = selectedTaskRef.current
       if (selected) {
         const current = next.find((task) => task.id === selected.id)
-        if (current) setSelectedTask(current)
+        if (current) updateSelectedTask(current)
       } else if (firstLoad && next[0] && viewRef.current !== "call") {
-        setSelectedTask(next[0])
+        updateSelectedTask(next[0])
         setView("task")
       } else if (!next[0] && viewRef.current !== "call") {
         setView("none")
@@ -258,6 +292,11 @@ export function TaskWorkspaceShell() {
   const loadMessageThreads = useCallback(
     async (cursor = "", append = false) => {
       if (!practiceID || !locationID) return
+      const queryKey = workspaceMessageQueryKey(
+        practiceID,
+        locationID,
+        settledSearch,
+      )
       const requestGeneration = ++messageQueryGenerationRef.current
       setMessagesLoading(true)
       const token = await getAccessToken()
@@ -294,6 +333,7 @@ export function TaskWorkspaceShell() {
       }
       const firstLoad = !hasLoadedThreadsRef.current
       hasLoadedThreadsRef.current = true
+      messageQueryKeyRef.current = queryKey
       const next = append
         ? [...messageThreadsRef.current, ...result.data.items]
         : result.data.items
@@ -323,53 +363,190 @@ export function TaskWorkspaceShell() {
     },
     [locationID, practiceID, settledSearch],
   )
-  const refreshSelectedTask = useCallback(async () => {
-    const current = selectedTaskRef.current
-    if (!current) return
-    const token = await getAccessToken()
-    if (!token) return
-    const result = await readTask({
-      client: portalClient(token),
-      path: { taskId: current.id },
-    }).catch(() => undefined)
-    const isStillSelected = selectedTaskRef.current?.id === current.id
-    if (result?.data) {
-      const refreshedTask = result.data
-      const next = tasksRef.current.map((task) =>
-        task.id === refreshedTask.id ? refreshedTask : task,
+  const reconcileWorkspace = useCallback(
+    async ({
+      scope,
+      token,
+      signal,
+      minimumVersion,
+    }: {
+      scope: { practiceID: string; locationID: string }
+      token: string
+      signal: AbortSignal
+      minimumVersion: number
+    }) => {
+      const taskGeneration = ++taskQueryGenerationRef.current
+      const messageGeneration = ++messageQueryGenerationRef.current
+      const taskLocationID = locationScopeRef.current
+      const taskSearch = settledSearchRef.current
+      const taskOrdering = orderingRef.current
+      const selectedTaskID = selectedTaskRef.current?.id
+      const taskQueryKey = workspaceTaskQueryKey(
+        scope.practiceID,
+        taskLocationID,
+        taskSearch,
+        taskOrdering,
       )
-      tasksRef.current = next
-      setTasks(next)
-      if (isStillSelected) setSelectedTask(refreshedTask)
-      return
-    }
-    if (result?.response?.status === 401 || result?.response?.status === 403) {
-      const next = tasksRef.current.filter((task) => task.id !== current.id)
-      tasksRef.current = next
-      setTasks(next)
-      if (isStillSelected) {
-        setSelectedTask(undefined)
-        if (viewRef.current !== "call") setView("none")
+      const messageQueryKey = workspaceMessageQueryKey(
+        scope.practiceID,
+        scope.locationID,
+        taskSearch,
+      )
+      const client = portalClient(token)
+      const [snapshotResult, taskResult, messageResult, selectedResult] =
+        await Promise.all([
+          getWorkspace({
+            client,
+            query: {
+              practiceId: scope.practiceID,
+              locationId: scope.locationID,
+            },
+            signal,
+          }).catch(() => undefined),
+          queryTasks({
+            client,
+            body: {
+              practiceId: scope.practiceID,
+              ...(taskLocationID ? { locationId: taskLocationID } : {}),
+              ...(taskSearch ? { search: taskSearch } : {}),
+              ordering: taskOrdering,
+              limit: 50,
+            },
+            signal,
+          }).catch(() => undefined),
+          queryMessageThreads({
+            client,
+            body: {
+              practiceId: scope.practiceID,
+              locationId: scope.locationID,
+              ...(taskSearch ? { search: taskSearch } : {}),
+              limit: 50,
+            },
+            signal,
+          }).catch(() => undefined),
+          selectedTaskID
+            ? readTask({
+                client,
+                path: { taskId: selectedTaskID },
+                signal,
+              }).catch(() => undefined)
+            : Promise.resolve(undefined),
+        ])
+      if (
+        [snapshotResult, taskResult, messageResult].some(
+          (result) =>
+            result?.response?.status === 401 ||
+            result?.response?.status === 403,
+        )
+      ) {
+        throw new WorkspaceSyncUnauthorizedError()
       }
-    }
-  }, [])
+      if (!snapshotResult?.data || !taskResult?.data || !messageResult?.data) {
+        throw new Error("workspace authority is unavailable")
+      }
+      if (snapshotResult.data.version < minimumVersion) {
+        throw new Error("workspace authority has not reached the hinted version")
+      }
 
-  const snapshotRef = useRef(loadSnapshot)
-  const taskRefetchRef = useRef(loadTasks)
-  const messageRefetchRef = useRef(loadMessageThreads)
-  const selectedRefetchRef = useRef(refreshSelectedTask)
+      const snapshot = snapshotResult.data
+      const nextTasks = taskResult.data.items
+      const nextMessages = messageResult.data.items
+      return {
+        version: snapshot.version,
+        apply: () => {
+          if (
+            signal.aborted ||
+            snapshotScopeRef.current !==
+              `${scope.practiceID}:${scope.locationID}` ||
+            (workspaceRef.current &&
+              snapshot.version < workspaceRef.current.version)
+          ) {
+            return
+          }
+          workspaceRef.current = snapshot
+          setWorkspace(snapshot)
+          setLoadState("ready")
+
+          if (taskGeneration === taskQueryGenerationRef.current) {
+            const firstLoad = !hasLoadedTasksRef.current
+            hasLoadedTasksRef.current = true
+            taskQueryKeyRef.current = taskQueryKey
+            const refreshed = selectedResult?.data
+            const tasksWithSelection = refreshed
+              ? nextTasks.map((task) =>
+                  task.id === refreshed.id ? refreshed : task,
+                )
+              : nextTasks
+            tasksRef.current = tasksWithSelection
+            setTasks(tasksWithSelection)
+            setNextCursor(taskResult.data.nextCursor)
+            const selected = selectedTaskRef.current
+            if (selected) {
+              const current =
+                refreshed?.id === selected.id
+                  ? refreshed
+                  : tasksWithSelection.find((task) => task.id === selected.id)
+              if (current) updateSelectedTask(current)
+              else if (
+                selectedTaskID === selected.id &&
+                (selectedResult?.response?.status === 401 ||
+                  selectedResult?.response?.status === 403)
+              ) {
+                updateSelectedTask(undefined)
+                if (viewRef.current !== "call") setView("none")
+              }
+            } else if (
+              firstLoad &&
+              tasksWithSelection[0] &&
+              viewRef.current !== "call"
+            ) {
+              updateSelectedTask(tasksWithSelection[0])
+              setView("task")
+            } else if (!tasksWithSelection[0] && viewRef.current !== "call") {
+              setView("none")
+            }
+          }
+
+          if (messageGeneration === messageQueryGenerationRef.current) {
+            const firstLoad = !hasLoadedThreadsRef.current
+            hasLoadedThreadsRef.current = true
+            messageQueryKeyRef.current = messageQueryKey
+            messageThreadsRef.current = nextMessages
+            setMessageThreads(nextMessages)
+            setMessageNextCursor(messageResult.data.nextCursor)
+            const selected = selectedThreadRef.current
+            if (selected) {
+              const current = nextMessages.find(
+                (thread) => thread.id === selected.id,
+              )
+              if (current) setSelectedThread(current)
+            } else if (
+              firstLoad &&
+              railModeRef.current === "messages" &&
+              !composingNewRef.current &&
+              nextMessages[0] &&
+              viewRef.current !== "call"
+            ) {
+              setSelectedThread(nextMessages[0])
+              setView("message")
+            } else if (
+              !nextMessages[0] &&
+              !composingNewRef.current &&
+              viewRef.current === "message"
+            ) {
+              setView("none")
+            }
+          }
+          setCallingHint((current) => current + 1)
+        },
+      }
+    },
+    [],
+  )
+  const reconcileWorkspaceRef = useRef(reconcileWorkspace)
   useEffect(() => {
-    snapshotRef.current = loadSnapshot
-  }, [loadSnapshot])
-  useEffect(() => {
-    taskRefetchRef.current = loadTasks
-  }, [loadTasks])
-  useEffect(() => {
-    messageRefetchRef.current = loadMessageThreads
-  }, [loadMessageThreads])
-  useEffect(() => {
-    selectedRefetchRef.current = refreshSelectedTask
-  }, [refreshSelectedTask])
+    reconcileWorkspaceRef.current = reconcileWorkspace
+  }, [reconcileWorkspace])
 
   const loadAuthority = useCallback(async () => {
     if (!session.data) return
@@ -409,7 +586,13 @@ export function TaskWorkspaceShell() {
         : practice.locations.some((item) => item.id === storedScope)
           ? (storedScope ?? "")
           : ""
-    setOrdering(readTaskOrdering(result.data.actor.subject, practice.id))
+    const initialOrdering = readTaskOrdering(
+      result.data.actor.subject,
+      practice.id,
+    )
+    orderingRef.current = initialOrdering
+    locationScopeRef.current = scope
+    setOrdering(initialOrdering)
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -417,8 +600,8 @@ export function TaskWorkspaceShell() {
     setLocationScopeID(scope)
     window.localStorage.setItem(practiceStorageKey, practice.id)
     window.localStorage.setItem(locationStorageKey, location.id)
-    await loadSnapshot(practice.id, location.id)
-  }, [loadSnapshot, session.data])
+    setLoadState("loading")
+  }, [session.data])
 
   useEffect(() => {
     if (session.isPending) return
@@ -432,9 +615,23 @@ export function TaskWorkspaceShell() {
 
   useEffect(() => {
     if (!practiceID || loadState !== "ready") return
+    const queryKey = workspaceTaskQueryKey(
+      practiceID,
+      locationScopeID,
+      settledSearch,
+      ordering,
+    )
+    if (taskQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadTasks(), 0)
     return () => window.clearTimeout(timeout)
-  }, [loadState, loadTasks, practiceID])
+  }, [
+    loadState,
+    loadTasks,
+    locationScopeID,
+    ordering,
+    practiceID,
+    settledSearch,
+  ])
 
   useEffect(() => {
     if (
@@ -445,87 +642,58 @@ export function TaskWorkspaceShell() {
     ) {
       return
     }
+    const queryKey = workspaceMessageQueryKey(
+      practiceID,
+      locationID,
+      settledSearch,
+    )
+    if (messageQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadMessageThreads(), 0)
     return () => window.clearTimeout(timeout)
-  }, [loadMessageThreads, loadState, locationID, practiceID, railMode])
+  }, [
+    loadMessageThreads,
+    loadState,
+    locationID,
+    practiceID,
+    railMode,
+    settledSearch,
+  ])
 
   useEffect(() => {
-    if (!practiceID || !locationID || loadState !== "ready") return
-    const controller = new AbortController()
-    let stopped = false
-
-    async function connect() {
-      while (!stopped) {
-        setConnection("connecting")
-        const token = await getAccessToken()
-        if (!token) {
-          setLoadState("unauthorized")
-          return
-        }
-        if (!(await snapshotRef.current(practiceID, locationID, false))) return
-        try {
-          const url = new URL("/v1/events", realtimeURL())
-          url.searchParams.set("practiceId", practiceID)
-          url.searchParams.set("locationId", locationID)
-          const response = await fetch(url, {
-            headers: {
-              accept: "text/event-stream",
-              authorization: `Bearer ${token}`,
-            },
-            signal: controller.signal,
-          })
-          if (response.status === 401 || response.status === 403) {
-            setLoadState("unauthorized")
-            return
-          }
-          if (!response.ok || !response.body) {
-            throw new Error("realtime unavailable")
-          }
-          setConnection("connected")
-          const reader = response.body
-            .pipeThrough(new TextDecoderStream())
-            .getReader()
-          let buffer = ""
-          while (!stopped) {
-            const { value, done } = await reader.read()
-            if (done) break
-            buffer += value
-            const events = buffer.split("\n\n")
-            buffer = events.pop() ?? ""
-            if (events.some((event) => event.includes("data:"))) {
-              await snapshotRef.current(practiceID, locationID, false)
-              await taskRefetchRef.current()
-              await messageRefetchRef.current()
-              await selectedRefetchRef.current()
-              setCallingHint((current) => current + 1)
-            }
-          }
-        } catch {
-          if (controller.signal.aborted) return
-        }
-        setConnection("disconnected")
-        await new Promise((resolve) =>
-          window.setTimeout(resolve, 500 + Math.random() * 750),
-        )
-      }
-    }
-    void connect()
+    const sync = createWorkspaceSync({
+      realtimeURL: realtimeURL(),
+      getToken: getAccessToken,
+      reconcile: (input) => reconcileWorkspaceRef.current(input),
+      onStateChange: setConnection,
+      onUnauthorized: () => setLoadState("unauthorized"),
+    })
+    workspaceSyncRef.current = sync
     return () => {
-      stopped = true
-      controller.abort()
+      workspaceSyncRef.current = undefined
+      sync.stop()
     }
-  }, [loadState, locationID, practiceID])
+  }, [])
 
   useEffect(() => {
-    if (!practiceID) return
-    const interval = window.setInterval(() => {
-      if (connectionRef.current === "connected") return
-      void taskRefetchRef.current()
-      void messageRefetchRef.current()
-      void selectedRefetchRef.current()
-    }, 1_500)
-    return () => window.clearInterval(interval)
-  }, [practiceID])
+    const sync = workspaceSyncRef.current
+    if (!sync) return
+    if (
+      !discovery ||
+      !practiceID ||
+      !locationID ||
+      loadState === "unauthorized"
+    ) {
+      sync.setScope()
+      return
+    }
+    sync.setScope({ practiceID, locationID })
+  }, [discovery, loadState, locationID, practiceID])
+
+  useEffect(() => {
+    if (connection === "degraded" && !workspaceRef.current) {
+      setLoadState("unavailable")
+    }
+  }, [connection])
 
   function selectLocationScope(nextLocationID: string) {
     callDetailGenerationRef.current += 1
@@ -533,36 +701,53 @@ export function TaskWorkspaceShell() {
     messageQueryGenerationRef.current += 1
     hasLoadedTasksRef.current = false
     hasLoadedThreadsRef.current = false
+    taskQueryKeyRef.current = ""
+    messageQueryKeyRef.current = ""
     tasksRef.current = []
     messageThreadsRef.current = []
     setTasks([])
     setMessageThreads([])
-    setSelectedTask(undefined)
+    updateSelectedTask(undefined)
     setSelectedThread(undefined)
     setHistoricalCall(undefined)
     setComposingNew(false)
     if (viewRef.current !== "call") setView("none")
+    locationScopeRef.current = nextLocationID
     setLocationScopeID(nextLocationID)
     window.localStorage.setItem(
       `${taskScopeStorageKey}.${practiceID}`,
       nextLocationID,
     )
-    if (nextLocationID) {
+    if (nextLocationID && nextLocationID !== locationID) {
+      workspaceRef.current = undefined
+      setWorkspace(undefined)
+      setLoadState("loading")
       snapshotScopeRef.current = `${practiceID}:${nextLocationID}`
       setLocationID(nextLocationID)
       window.localStorage.setItem(locationStorageKey, nextLocationID)
-      void loadSnapshot(practiceID, nextLocationID, false)
     }
+  }
+
+  function updateRailMode(mode: RailMode) {
+    railModeRef.current = mode
+    setRailMode(mode)
+  }
+
+  function updateSelectedTask(task?: Task) {
+    selectedTaskRef.current = task
+    setSelectedTask(task)
   }
 
   function selectRailMode(mode: RailMode) {
     if (mode === railMode) return
-    setRailMode(mode)
+    updateRailMode(mode)
     setSearch("")
     setSettledSearch("")
     if (mode === "messages") {
       const messageLocationID = locationScopeID || locationID
       if (messageLocationID !== locationScopeID) {
+        locationScopeRef.current = messageLocationID
+        taskQueryKeyRef.current = ""
         setLocationScopeID(messageLocationID)
         window.localStorage.setItem(
           `${taskScopeStorageKey}.${practiceID}`,
@@ -589,14 +774,14 @@ export function TaskWorkspaceShell() {
             : "none",
     )
     if (!selectedTaskRef.current && tasksRef.current[0]) {
-      setSelectedTask(tasksRef.current[0])
+      updateSelectedTask(tasksRef.current[0])
     }
   }
 
   function selectTask(task: Task) {
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
-    setSelectedTask(task)
+    updateSelectedTask(task)
     if (activeCall) returnTaskIDRef.current = task.id
     setView("task")
   }
@@ -629,7 +814,7 @@ export function TaskWorkspaceShell() {
     tasksRef.current = next
     setTasks(next)
     if (select) {
-      setSelectedTask(task)
+      updateSelectedTask(task)
       if (activeCall) returnTaskIDRef.current = task.id
       setView("task")
     }
@@ -701,7 +886,7 @@ export function TaskWorkspaceShell() {
         path: { taskId: result.taskId },
       }).catch(() => undefined)
       if (task?.data) {
-        setRailMode("tasks")
+        updateRailMode("tasks")
         setSearch("")
         setSettledSearch("")
         updateTaskProjection(task.data)
@@ -712,15 +897,15 @@ export function TaskWorkspaceShell() {
       (task) => task.id === returnTaskIDRef.current,
     )
     if (previous) {
-      setSelectedTask(previous)
+      updateSelectedTask(previous)
       setView("task")
     } else {
       setView(tasksRef.current[0] ? "task" : "none")
-      setSelectedTask(tasksRef.current[0])
+      updateSelectedTask(tasksRef.current[0])
     }
   }
 
-  if (session.isPending || (loadState === "loading" && !discovery)) {
+  if (session.isPending || (loadState === "loading" && !workspace)) {
     return <WorkspaceLoading />
   }
   if (loadState === "unauthorized") {
@@ -741,7 +926,14 @@ export function TaskWorkspaceShell() {
         title="Workspace temporarily disconnected"
         description="No data was reconstructed. Retry the authoritative request when the service is available."
         action="Retry"
-        onAction={() => void loadAuthority()}
+        onAction={() => {
+          if (discovery && practiceID && locationID) {
+            setLoadState("loading")
+            workspaceSyncRef.current?.refresh()
+            return
+          }
+          void loadAuthority()
+        }}
       />
     )
   }
@@ -776,6 +968,7 @@ export function TaskWorkspaceShell() {
         }}
         onOrderingChange={(value) => {
           taskQueryGenerationRef.current += 1
+          orderingRef.current = value
           setOrdering(value)
           window.localStorage.setItem(
             taskOrderingKey(discovery.actor.subject, practiceID),
@@ -878,7 +1071,7 @@ export function TaskWorkspaceShell() {
               void loadTasks()
             }}
             onTaskOpen={(task) => {
-              setRailMode("tasks")
+              updateRailMode("tasks")
               setSearch("")
               setSettledSearch("")
               updateTaskProjection(task)
@@ -920,6 +1113,23 @@ export function TaskWorkspaceShell() {
 
 function taskOrderingKey(userSubject: string, practiceID: string) {
   return `${taskOrderingStorageKey}.${userSubject}.${practiceID}`
+}
+
+function workspaceTaskQueryKey(
+  practiceID: string,
+  locationID: string,
+  search: string,
+  ordering: TaskOrdering,
+) {
+  return `${practiceID}:${locationID}:${search}:${ordering}`
+}
+
+function workspaceMessageQueryKey(
+  practiceID: string,
+  locationID: string,
+  search: string,
+) {
+  return `${practiceID}:${locationID}:${search}`
 }
 
 function readTaskOrdering(

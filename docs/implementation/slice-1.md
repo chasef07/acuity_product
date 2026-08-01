@@ -60,8 +60,9 @@ No Task, Call, Message, or Evidence module or model is introduced in this slice.
 ## Visible states and recovery
 
 The browser interface explicitly renders `loading`, `empty`, `unauthorized`,
-`unavailable`, and `disconnected`. `disconnected` retains the last committed
-snapshot, reconnects with jitter, and refetches after reconnection. An
+and `unavailable`. Realtime transport loss keeps the last committed snapshot,
+retries quietly during a short grace period, then marks updates as delayed and
+uses bounded jittered authoritative polling until the stream recovers. An
 unavailable PostgreSQL dependency fails readiness and returns a retryable stable
 error; it never renders false success. Authentication denials use stable error
 codes without protected data.
@@ -75,7 +76,7 @@ safe JWKS refresh before denial.
 
 Required runtime configuration names the role, database URL, pool maximum,
 acquisition timeout, Better Auth issuer/audience/JWKS URL, allowed web origin,
-HTTP address, and SSE lifetime/heartbeat/revalidation.
+HTTP address, and SSE maximum lifetime/jitter/heartbeat/revalidation.
 Next.js separately requires a bounded Better Auth pool, auth secret/base URL,
 portal API URL, and an email adapter. Test email is captured only by an explicit
 test adapter; production SMTP values remain deployment inputs. Runtime logs use

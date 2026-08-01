@@ -132,7 +132,9 @@ The checked configuration alone is not restore evidence.
 6. Deploy the one-instance worker revision. During overlap, confirm at most one
    old and one new worker and no duplicate provider command ID.
 7. Shift request traffic gradually. Verify instance caps, pool use, webhook
-   acknowledgement, command latency, receipt/command age, and SSE reconnect.
+   acknowledgement, command latency, receipt/command age, the 300-second
+   realtime request timeout, 240–270-second application stream rotation, and
+   SSE reconnect.
 8. Deploy web last. It may scale to zero; verify its first-request cold path
    separately from the warm call-control path.
 9. Enable provider routing only after every live acceptance gate below passes.
@@ -148,6 +150,12 @@ The checked configuration alone is not restore evidence.
   one second, and duplicates must converge.
 - With 10 logged-in Staff, prove command, portal query, and realtime paths stay
   responsive while ingress is pressured.
+- With multiple established browser streams, terminate one realtime
+  PostgreSQL listener and prove every affected client leaves the old listener
+  generation, preserves its last good snapshot, reconnects after recovery, and
+  performs one authoritative HTTP reconciliation. Repeat during a rolling
+  realtime revision and confirm planned rotation is distributed rather than a
+  synchronized reconnect wave.
 - With one worker, prove receipt and command lanes continue moving, including a
   held/uncertain provider command and rolling-revision overlap.
 - Prove outbound and inbound Messaging attachments cross the portal, worker,

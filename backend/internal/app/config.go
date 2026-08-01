@@ -74,11 +74,12 @@ type MessagingConfig struct {
 }
 
 type RealtimeConfig struct {
-	Heartbeat    time.Duration
-	Lifetime     time.Duration
-	Revalidate   time.Duration
-	ReconnectMin time.Duration
-	ReconnectMax time.Duration
+	Heartbeat      time.Duration
+	Lifetime       time.Duration
+	LifetimeJitter time.Duration
+	Revalidate     time.Duration
+	ReconnectMin   time.Duration
+	ReconnectMax   time.Duration
 }
 
 func LoadConfig(getenv func(string) string) (Config, error) {
@@ -316,6 +317,10 @@ func loadRealtimeConfig(getenv func(string) string) (RealtimeConfig, error) {
 	if err != nil {
 		return RealtimeConfig{}, err
 	}
+	lifetimeJitter, err := positiveInt(getenv, "REALTIME_STREAM_JITTER_SECONDS")
+	if err != nil {
+		return RealtimeConfig{}, err
+	}
 	revalidate, err := positiveInt(getenv, "REALTIME_REVALIDATE_SECONDS")
 	if err != nil {
 		return RealtimeConfig{}, err
@@ -329,13 +334,15 @@ func loadRealtimeConfig(getenv func(string) string) (RealtimeConfig, error) {
 		return RealtimeConfig{}, err
 	}
 	result := RealtimeConfig{
-		Heartbeat:    time.Duration(heartbeat) * time.Second,
-		Lifetime:     time.Duration(lifetime) * time.Second,
-		Revalidate:   time.Duration(revalidate) * time.Second,
-		ReconnectMin: time.Duration(reconnectMin) * time.Millisecond,
-		ReconnectMax: time.Duration(reconnectMax) * time.Second,
+		Heartbeat:      time.Duration(heartbeat) * time.Second,
+		Lifetime:       time.Duration(lifetime) * time.Second,
+		LifetimeJitter: time.Duration(lifetimeJitter) * time.Second,
+		Revalidate:     time.Duration(revalidate) * time.Second,
+		ReconnectMin:   time.Duration(reconnectMin) * time.Millisecond,
+		ReconnectMax:   time.Duration(reconnectMax) * time.Second,
 	}
-	if result.Lifetime <= result.Heartbeat || result.ReconnectMax < result.ReconnectMin {
+	if result.Lifetime-result.LifetimeJitter <= result.Heartbeat ||
+		result.ReconnectMax < result.ReconnectMin {
 		return RealtimeConfig{}, fmt.Errorf("realtime intervals are inconsistent")
 	}
 	return result, nil

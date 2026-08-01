@@ -49,6 +49,12 @@ capacity while the warm floor and local pools reflect the measured pilot load.
 | `realtime` | service | request | 50 | 1 | 2 | 1 | 1 `LISTEN` |
 | `worker` | worker pool | instance | n/a | 1 fixed | 1 fixed | 1 | 0 |
 
+The realtime service explicitly keeps Cloud Run's request timeout at 300
+seconds. The application rotates each SSE stream between 240 and 270 seconds
+(`streamMaximumSeconds=270`, `streamJitterSeconds=30`), preserving at least a
+30-second shutdown margin below the platform deadline and spreading planned
+reconnections across instances.
+
 The web can scale to zero because a cold web render does not own provider
 acknowledgement, call control, realtime freshness, or durable recovery.
 `portal-api`, `provider-ingress`, and `realtime` each keep one instance warm.
@@ -98,6 +104,11 @@ acquisition/connect timeout, a five-minute idle limit, and bounded connection
 lifetime jitter. The migration job uses one task, pool max 1, a 5000 ms timeout,
 and no automatic retry. Realtime's dedicated `LISTEN` connection is outside its
 pool and is counted once for every allowed realtime instance.
+
+Listener generations are part of the runtime contract: loss or recovery of the
+PostgreSQL listener closes every stream from the old generation. Browsers then
+reconnect and reconstruct authority over HTTP; no client may remain apparently
+live while its runtime is blind to `NOTIFY` wake-ups.
 
 ## Deterministic acceptance evidence
 

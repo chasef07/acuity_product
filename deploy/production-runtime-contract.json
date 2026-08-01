@@ -82,7 +82,10 @@
       "maximumInstances": 2,
       "poolMaximum": 1,
       "dedicatedConnections": 1,
-      "acquisitionTimeoutMilliseconds": 1500
+      "acquisitionTimeoutMilliseconds": 1500,
+      "requestTimeoutSeconds": 300,
+      "streamMaximumSeconds": 270,
+      "streamJitterSeconds": 30
     },
     {
       "name": "worker",

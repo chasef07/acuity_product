@@ -187,14 +187,15 @@ func runAuthorizedHTTP(
 	var handler http.Handler
 	if config.Role == app.RoleRealtime {
 		hub, err := realtime.New(realtime.Config{
-			DatabaseURL:        config.DatabaseURL,
-			AccessTimeout:      config.AcquireTimeout,
-			HeartbeatInterval:  config.Realtime.Heartbeat,
-			StreamLifetime:     config.Realtime.Lifetime,
-			RevalidateInterval: config.Realtime.Revalidate,
-			ReconnectMin:       config.Realtime.ReconnectMin,
-			ReconnectMax:       config.Realtime.ReconnectMax,
-			Observer:           observer,
+			DatabaseURL:          config.DatabaseURL,
+			AccessTimeout:        config.AcquireTimeout,
+			HeartbeatInterval:    config.Realtime.Heartbeat,
+			StreamLifetime:       config.Realtime.Lifetime,
+			StreamLifetimeJitter: config.Realtime.LifetimeJitter,
+			RevalidateInterval:   config.Realtime.Revalidate,
+			ReconnectMin:         config.Realtime.ReconnectMin,
+			ReconnectMax:         config.Realtime.ReconnectMax,
+			Observer:             observer,
 		}, accessModule)
 		if err != nil {
 			return err

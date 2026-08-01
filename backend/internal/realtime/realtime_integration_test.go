@@ -26,6 +26,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) {
@@ -474,6 +475,261 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 		if !strings.Contains(metrics.String(), fragment) {
 			t.Fatalf("realtime metrics omitted %s: %s", fragment, metrics.String())
 		}
+	}
+}
+
+func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "realtime-listener-recovery-test",
+		Practices: []access.PracticeProvision{{
+			Key:       "realtime-listener-recovery",
+			Name:      "Realtime Listener Recovery",
+			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
+			Invitations: []access.InvitationProvision{{
+				Key:           "realtime-listener-member",
+				Email:         "member@realtime-listener.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision realtime listener fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "realtime-listener-member",
+		Email:         "member@realtime-listener.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept realtime listener invitation: %v", err)
+	}
+
+	hubContext, stopHub := context.WithCancel(context.Background())
+	defer stopHub()
+	hub, err := realtime.New(realtime.Config{
+		DatabaseURL:        testDatabaseURL(t),
+		AccessTimeout:      500 * time.Millisecond,
+		HeartbeatInterval:  time.Second,
+		StreamLifetime:     5 * time.Second,
+		RevalidateInterval: time.Second,
+		ReconnectMin:       10 * time.Millisecond,
+		ReconnectMax:       50 * time.Millisecond,
+	}, accessModule)
+	if err != nil {
+		t.Fatalf("new realtime listener adapter: %v", err)
+	}
+	go hub.Run(hubContext)
+	waitForHubReady(t, hub)
+
+	firstWriter := newGatedSSEWriter()
+	firstRequest := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- hub.Stream(
+			firstWriter,
+			firstRequest,
+			identity,
+			authorization.Practice.ID,
+			authorization.Locations[0].ID,
+		)
+	}()
+	select {
+	case <-firstWriter.ready:
+	case <-time.After(time.Second):
+		t.Fatal("first realtime listener stream did not become ready")
+	}
+
+	var terminated bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(bool_or(pg_terminate_backend(pid)), false)
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+			AND pid <> pg_backend_pid()
+			AND query = 'LISTEN acuity_workspace_hints'
+	`).Scan(&terminated); err != nil {
+		t.Fatalf("terminate realtime listener: %v", err)
+	}
+	if !terminated {
+		t.Fatal("realtime LISTEN backend was not found")
+	}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("listener-loss stream: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("listener loss did not force the existing stream to reconnect")
+	}
+
+	waitForHubReady(t, hub)
+	secondContext, stopSecond := context.WithCancel(context.Background())
+	secondWriter := newGatedSSEWriter()
+	secondRequest := httptest.NewRequest(http.MethodGet, "/v1/events", nil).
+		WithContext(secondContext)
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- hub.Stream(
+			secondWriter,
+			secondRequest,
+			identity,
+			authorization.Practice.ID,
+			authorization.Locations[0].ID,
+		)
+	}()
+	select {
+	case <-secondWriter.ready:
+	case <-time.After(time.Second):
+		t.Fatal("recovered realtime listener did not accept a fresh stream")
+	}
+	stopSecond()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("stop recovered realtime stream: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("recovered realtime stream did not stop")
+	}
+}
+
+func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.July, 31, 13, 0, 0, 0, time.UTC)
+	accessModule, identity, authorization := provisionRealtimeMember(
+		t,
+		pool,
+		now,
+		"realtime-rotation",
+	)
+	hubContext, stopHub := context.WithCancel(context.Background())
+	defer stopHub()
+	hub, err := realtime.New(realtime.Config{
+		DatabaseURL:          testDatabaseURL(t),
+		AccessTimeout:        500 * time.Millisecond,
+		HeartbeatInterval:    20 * time.Millisecond,
+		StreamLifetime:       200 * time.Millisecond,
+		StreamLifetimeJitter: 100 * time.Millisecond,
+		RevalidateInterval:   time.Second,
+		ReconnectMin:         10 * time.Millisecond,
+		ReconnectMax:         50 * time.Millisecond,
+	}, accessModule)
+	if err != nil {
+		t.Fatalf("new realtime rotation adapter: %v", err)
+	}
+	go hub.Run(hubContext)
+	waitForHubReady(t, hub)
+
+	const clients = 32
+	writers := make([]*gatedSSEWriter, clients)
+	done := make([]chan error, clients)
+	started := make([]time.Time, clients)
+	for index := range clients {
+		writers[index] = newGatedSSEWriter()
+		done[index] = make(chan error, 1)
+		request := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+		go func(index int) {
+			done[index] <- hub.Stream(
+				writers[index],
+				request,
+				identity,
+				authorization.Practice.ID,
+				authorization.Locations[0].ID,
+			)
+		}(index)
+	}
+	for index, writer := range writers {
+		select {
+		case <-writer.ready:
+			started[index] = time.Now()
+		case <-time.After(time.Second):
+			t.Fatalf("concurrent realtime stream %d did not become ready", index)
+		}
+	}
+
+	buckets := map[int64]struct{}{}
+	for index, result := range done {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("planned realtime rotation %d: %v", index, err)
+			}
+			elapsed := time.Since(started[index])
+			if elapsed < 70*time.Millisecond || elapsed > 500*time.Millisecond {
+				t.Fatalf("planned realtime rotation %d elapsed %s", index, elapsed)
+			}
+			buckets[elapsed.Milliseconds()/10] = struct{}{}
+		case <-time.After(time.Second):
+			t.Fatalf("planned realtime rotation %d did not close", index)
+		}
+	}
+	if len(buckets) < 3 {
+		t.Fatalf("planned realtime rotations were not observably jittered: %v", buckets)
+	}
+}
+
+func provisionRealtimeMember(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	now time.Time,
+	key string,
+) (*access.Module, access.Identity, access.Authorization) {
+	t.Helper()
+	accessModule := access.New(pool, func() time.Time { return now })
+	email := key + "@realtime.test"
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: key,
+		Practices: []access.PracticeProvision{{
+			Key:       key,
+			Name:      "Realtime Test Practice",
+			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
+			Invitations: []access.InvitationProvision{{
+				Key:           key + "-member",
+				Email:         email,
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision %s fixture: %v", key, err)
+	}
+	identity := access.Identity{
+		Subject:       key + "-member",
+		Email:         email,
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept %s invitation: %v", key, err)
+	}
+	return accessModule, identity, authorization
+}
+
+func waitForHubReady(t *testing.T, hub *realtime.Hub) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !hub.Ready() {
+		if time.Now().After(deadline) {
+			t.Fatal("realtime Hub did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
