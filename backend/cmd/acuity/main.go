@@ -443,8 +443,16 @@ func runMigrate(
 	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
 		return err
 	}
+	if err := provisionConfiguredLocationVoice(ctx, config, pool); err != nil {
+		return err
+	}
+	voiceProvision := config.LocationVoiceProvision
 	if config.ProvisioningInput == "" {
-		slog.Info("migrations_applied", "provisioning", false)
+		slog.Info(
+			"migrations_applied",
+			"provisioning", false,
+			"location_voice_provisioned", voiceProvision.Number != "",
+		)
 		return nil
 	}
 
@@ -546,6 +554,32 @@ func runMigrate(
 		"provisioning", true,
 		"invitation_count", len(provisioned.Invitations),
 	)
+	return nil
+}
+
+func provisionConfiguredLocationVoice(
+	ctx context.Context,
+	config app.Config,
+	pool *pgxpool.Pool,
+) error {
+	voiceProvision := config.LocationVoiceProvision
+	if voiceProvision.Number == "" {
+		return nil
+	}
+	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
+		ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+			PracticeKey: voiceProvision.PracticeKey,
+			LocationKey: voiceProvision.LocationKey,
+			Number:      voiceProvision.Number,
+			Enabled:     true,
+		}}); err != nil {
+		return fmt.Errorf(
+			"provision Location voice %q/%q: %w",
+			voiceProvision.PracticeKey,
+			voiceProvision.LocationKey,
+			err,
+		)
+	}
 	return nil
 }
 

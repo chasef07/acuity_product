@@ -183,6 +183,32 @@ func TestLoadConfigRejectsUnknownRolesAndUnboundedPools(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRequiresCompleteMigrateVoiceProvision(t *testing.T) {
+	base := map[string]string{
+		"ACUITY_RUNTIME_ROLE":         "migrate",
+		"DATABASE_URL":                "postgres://database.example/acuity",
+		"DATABASE_POOL_MAX":           "1",
+		"DATABASE_ACQUIRE_TIMEOUT_MS": "5000",
+		"MIGRATE_VOICE_PRACTICE_KEY":  "abita-eye-group",
+		"MIGRATE_VOICE_LOCATION_KEY":  "demo-484",
+		"MIGRATE_VOICE_NUMBER":        "+14843989071",
+	}
+	config, err := LoadConfig(func(name string) string { return base[name] })
+	if err != nil {
+		t.Fatalf("load migrate voice provision: %v", err)
+	}
+	if config.LocationVoiceProvision.PracticeKey != "abita-eye-group" ||
+		config.LocationVoiceProvision.LocationKey != "demo-484" ||
+		config.LocationVoiceProvision.Number != "+14843989071" {
+		t.Fatalf("Location voice provision = %#v", config.LocationVoiceProvision)
+	}
+
+	delete(base, "MIGRATE_VOICE_LOCATION_KEY")
+	if _, err := LoadConfig(func(name string) string { return base[name] }); err == nil {
+		t.Fatal("migrate accepted a partial Location voice provision")
+	}
+}
+
 func clone(values map[string]string) map[string]string {
 	result := make(map[string]string, len(values))
 	for key, value := range values {

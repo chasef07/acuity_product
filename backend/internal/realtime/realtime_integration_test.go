@@ -632,26 +632,31 @@ func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) 
 
 	const clients = 32
 	writers := make([]*gatedSSEWriter, clients)
-	done := make([]chan error, clients)
-	started := make([]time.Time, clients)
+	type rotationResult struct {
+		err     error
+		endedAt time.Time
+	}
+	done := make([]chan rotationResult, clients)
 	for index := range clients {
 		writers[index] = newGatedSSEWriter()
-		done[index] = make(chan error, 1)
+		done[index] = make(chan rotationResult, 1)
 		request := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
 		go func(index int) {
-			done[index] <- hub.Stream(
-				writers[index],
-				request,
-				identity,
-				authorization.Practice.ID,
-				authorization.Locations[0].ID,
-			)
+			done[index] <- rotationResult{
+				err: hub.Stream(
+					writers[index],
+					request,
+					identity,
+					authorization.Practice.ID,
+					authorization.Locations[0].ID,
+				),
+				endedAt: time.Now(),
+			}
 		}(index)
 	}
 	for index, writer := range writers {
 		select {
 		case <-writer.ready:
-			started[index] = time.Now()
 		case <-time.After(time.Second):
 			t.Fatalf("concurrent realtime stream %d did not become ready", index)
 		}
@@ -660,11 +665,11 @@ func TestRealtimePlannedRotationIsJitteredAcrossConcurrentClients(t *testing.T) 
 	buckets := map[int64]struct{}{}
 	for index, result := range done {
 		select {
-		case err := <-result:
-			if err != nil {
-				t.Fatalf("planned realtime rotation %d: %v", index, err)
+		case rotation := <-result:
+			if rotation.err != nil {
+				t.Fatalf("planned realtime rotation %d: %v", index, rotation.err)
 			}
-			elapsed := time.Since(started[index])
+			elapsed := rotation.endedAt.Sub(writers[index].readyAt)
 			if elapsed < 70*time.Millisecond || elapsed > 500*time.Millisecond {
 				t.Fatalf("planned realtime rotation %d elapsed %s", index, elapsed)
 			}
@@ -780,6 +785,7 @@ type sseEvent struct {
 type gatedSSEWriter struct {
 	header  http.Header
 	ready   chan struct{}
+	readyAt time.Time
 	blocked chan struct{}
 	release chan struct{}
 
@@ -807,7 +813,10 @@ func (writer *gatedSSEWriter) WriteHeader(int) {}
 func (writer *gatedSSEWriter) Write(body []byte) (int, error) {
 	event := string(body)
 	if strings.Contains(event, "event: ready") {
-		writer.readyOnce.Do(func() { close(writer.ready) })
+		writer.readyOnce.Do(func() {
+			writer.readyAt = time.Now()
+			close(writer.ready)
+		})
 	}
 	if strings.Contains(event, "event: hint") {
 		block := false
