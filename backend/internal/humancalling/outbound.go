@@ -34,11 +34,11 @@ type StartOutboundCallCommand struct {
 }
 
 type ConfirmOutboundMediaCommand struct {
-	Identity      access.Identity
-	SessionID     string
-	CallID        string
-	MediaToken    string
-	ProviderLegID string
+	Identity          access.Identity
+	SessionID         string
+	CallID            string
+	MediaToken        string
+	ProviderSessionID string
 }
 
 type LocationVoiceProvision struct {
@@ -535,12 +535,12 @@ func (m *Module) ConfirmOutboundMedia(
 	command.SessionID = strings.TrimSpace(command.SessionID)
 	command.CallID = strings.TrimSpace(command.CallID)
 	command.MediaToken = strings.TrimSpace(command.MediaToken)
-	command.ProviderLegID = strings.TrimSpace(command.ProviderLegID)
+	command.ProviderSessionID = strings.TrimSpace(command.ProviderSessionID)
 	if command.Identity.Subject == "" ||
 		command.SessionID == "" ||
 		command.CallID == "" ||
 		command.MediaToken == "" ||
-		command.ProviderLegID == "" {
+		command.ProviderSessionID == "" {
 		return Call{}, ErrInvalidInput
 	}
 
@@ -559,7 +559,7 @@ func (m *Module) ConfirmOutboundMedia(
 
 	var practiceID, locationID, attemptID string
 	var claimantSubject, claimantSession string
-	var staffControlID, staffLegID, destination, callerID string
+	var staffControlID, staffLegID, staffSessionID, destination, callerID string
 	var state CallState
 	var staffAnsweredAt, mediaReadyAt *time.Time
 	if err := tx.QueryRow(ctx, `
@@ -572,6 +572,7 @@ func (m *Module) ConfirmOutboundMedia(
 			call.claimant_session_id,
 			call.expected_staff_call_control_id,
 			call.expected_staff_call_leg_id,
+			COALESCE(call.call_session_id, ''),
 			call.destination_phone,
 			call.outbound_caller_id,
 			attempt.staff_answered_at,
@@ -591,6 +592,7 @@ func (m *Module) ConfirmOutboundMedia(
 		&claimantSession,
 		&staffControlID,
 		&staffLegID,
+		&staffSessionID,
 		&destination,
 		&callerID,
 		&staffAnsweredAt,
@@ -625,18 +627,23 @@ func (m *Module) ConfirmOutboundMedia(
 		return Call{}, fmt.Errorf("confirm outbound media lease: %w", err)
 	}
 	expectedToken := m.staffMediaToken(command.CallID, attemptID)
+	confirmationPending := mediaReadyAt == nil &&
+		(state == CallPreparing || state == CallReconciling)
+	confirmationComplete := mediaReadyAt != nil &&
+		(state == CallRinging ||
+			state == CallConnecting ||
+			state == CallReconciling ||
+			state == CallConnected)
 	if !ownsLease ||
 		claimantSubject != command.Identity.Subject ||
 		claimantSession != command.SessionID ||
-		staffLegID != command.ProviderLegID ||
+		staffSessionID != command.ProviderSessionID ||
 		!hmac.Equal([]byte(expectedToken), []byte(command.MediaToken)) ||
 		staffAnsweredAt == nil ||
-		(state != CallPreparing &&
-			state != CallReconciling &&
-			state != CallRinging) {
+		(!confirmationPending && !confirmationComplete) {
 		return Call{}, ErrConflict
 	}
-	if state != CallRinging {
+	if confirmationPending {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_connection_attempts
 			SET media_ready_at = COALESCE(media_ready_at, $2), updated_at = $2
@@ -706,8 +713,6 @@ func (m *Module) ConfirmOutboundMedia(
 		); err != nil {
 			return Call{}, err
 		}
-	} else if mediaReadyAt == nil {
-		return Call{}, ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Call{}, fmt.Errorf("commit outbound media readiness: %w", err)

@@ -44,14 +44,19 @@ Outbound calling uses one state machine for both entry points:
    current softphone lease, readiness, and SIP credential, then commits a
    Preparing Call and durable staff-media Dial before provider contact.
 3. Provider answer alone does not dial the destination. The owning browser must
-   attach the exact current TelnyxRTC leg, start remote audio playback, and
-   explicitly confirm the HMAC-bound media token and provider leg. Only that
-   confirmation commits the destination Dial. It uses the server-derived caller
-   ID, disables answering-machine detection, bridges only on answer, and caps
-   ringing at 30 seconds.
+   attach the exact current TelnyxRTC invite, start remote audio playback, and
+   explicitly confirm its HMAC-bound media token and Telnyx session. The shared
+   session correlates the WebRTC/SIP leg with the distinct Call Control leg.
+   The confirmation is idempotent only while the same browser lease, claim,
+   provider session, answer, and recorded readiness remain authoritative. Only
+   that confirmation commits the destination Dial. It uses the
+   server-derived caller ID, disables answering-machine detection, bridges only
+   on answer, and caps ringing at 30 seconds.
 4. Only provider bridge facts mark the Call Connected. New connected human
    Calls issue no recording command. A browser reload or lease takeover
    reattaches to the durable Call and cannot replay the destination Dial.
+   Durable media readiness distinguishes a pre-confirmation reconciliation
+   from a post-dial unknown state.
 5. A browser or transport timeout never invents a terminal result. Ring expiry
    becomes Status unknown with durable hangup intents. Provider facts establish
    No answer, Busy, Declined, Failed, or the connected outcome.
@@ -104,7 +109,8 @@ safe greeting fallback, the two-minute recording boundary, reordered
 saved-versus-error fact handling, silent-callback and definitive command-failure
 recovery, exact provider-leg correlation, duplicate fact idempotency,
 allowlisted private copy and playback,
-server-derived Task outbound routing, browser-media-before-destination ordering,
+server-derived Task outbound routing, cross-leg Telnyx session correlation,
+browser-media-before-destination ordering,
 simultaneous outbound idempotency, provider-confirmed connection, absence of
 connected recording, atomic Task disposition, interrupted-command recovery,
 ring-timeout reconciliation, and provider-backed No answer, Busy, Declined, and

@@ -291,6 +291,7 @@ type Call struct {
 	WinnerSubject       string
 	ExpectedStaffLegID  string
 	ExpectedMediaToken  string
+	MediaReady          bool
 	currentAttemptID    string
 	Phone               string
 	CallerID            string
@@ -4382,12 +4383,14 @@ func (m *Module) applyStaffInitiated(
 
 	var attemptID, claimantSubject, claimantSession string
 	var attemptEndedAt *time.Time
+	var attemptMediaReadyAt *time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			id::text,
 			claimant_subject,
 			claimant_session_id,
-			ended_at
+			ended_at,
+			media_ready_at
 		FROM human_calling_connection_attempts
 		WHERE call_id = $1
 			AND (
@@ -4419,6 +4422,7 @@ func (m *Module) applyStaffInitiated(
 		&claimantSubject,
 		&claimantSession,
 		&attemptEndedAt,
+		&attemptMediaReadyAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
@@ -4461,7 +4465,9 @@ func (m *Module) applyStaffInitiated(
 				state = CASE
 					WHEN state = 'RECONCILING' AND direction = 'INBOUND'
 						THEN 'CONNECTING'
-					WHEN state = 'RECONCILING' AND direction = 'OUTBOUND'
+					WHEN state = 'RECONCILING'
+						AND direction = 'OUTBOUND'
+						AND $6 = FALSE
 						THEN 'PREPARING'
 					ELSE state
 				END,
@@ -4472,7 +4478,8 @@ func (m *Module) applyStaffInitiated(
 			WHERE id = $1
 				AND current_attempt_id = $5
 				AND state IN ('PREPARING', 'CONNECTING', 'RECONCILING')
-		`, callID, fact.CallControlID, fact.CallLegID, m.now(), attemptID); err != nil {
+		`, callID, fact.CallControlID, fact.CallLegID, m.now(), attemptID,
+			attemptMediaReadyAt != nil); err != nil {
 			return fmt.Errorf("project initiated current staff leg: %w", err)
 		}
 	}
@@ -5659,6 +5666,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(c.winner_subject, ''),
 			COALESCE(c.expected_staff_call_leg_id, ''),
 			COALESCE(c.current_attempt_id::text, ''),
+			attempt.media_ready_at IS NOT NULL,
 			COALESCE(h.phone, c.destination_phone, ''),
 			COALESCE(c.outbound_caller_id, ''),
 			COALESCE(h.phone_source, CASE
@@ -5698,6 +5706,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		FROM human_calling_calls c
 		LEFT JOIN human_calling_handoffs h ON h.id = c.handoff_id
 		JOIN access_locations l ON l.id = c.location_id AND l.practice_id = c.practice_id
+		LEFT JOIN human_calling_connection_attempts attempt ON attempt.id = c.current_attempt_id
 		LEFT JOIN human_calling_recordings r ON r.call_id = c.id
 		LEFT JOIN human_calling_voicemails v ON v.call_id = c.id
 		WHERE c.id = $1
@@ -5715,6 +5724,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.WinnerSubject,
 		&result.ExpectedStaffLegID,
 		&result.currentAttemptID,
+		&result.MediaReady,
 		&result.Phone,
 		&result.CallerID,
 		&result.PhoneSource,

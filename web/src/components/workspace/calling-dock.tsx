@@ -46,6 +46,7 @@ import {
   type IncomingMediaLeg,
   type MediaState,
 } from "@/lib/calling/media-adapter"
+import { mediaConfirmationDecision } from "@/lib/calling/media-confirmation"
 import { providerOutcomeLabel } from "@/lib/calling/outcomes"
 import { portalClient } from "@/lib/api/client"
 
@@ -342,7 +343,7 @@ export function CallingDock({
                   body: {
                     sessionId: sessionID,
                     mediaToken: leg.mediaToken,
-                    providerLegId: leg.providerLegID,
+                    providerSessionId: leg.providerSessionID,
                   },
                 }).catch(() => undefined)
                 if (result?.data) {
@@ -351,10 +352,27 @@ export function CallingDock({
                   break
                 }
                 if (
-                  result?.response?.status === 401 ||
-                  result?.response?.status === 403
+                  mediaConfirmationDecision(
+                    undefined,
+                    result?.response?.status,
+                    leg.mediaToken,
+                  ) === "stop"
                 ) {
                   break
+                }
+                if (result?.response?.status === 409) {
+                  const refreshed = await getCallingCall({
+                    client: portalClient(token),
+                    path: { callId: current.data.id },
+                  }).catch(() => undefined)
+                  const decision = mediaConfirmationDecision(
+                    refreshed?.data,
+                    refreshed?.response?.status,
+                    leg.mediaToken,
+                  )
+                  if (decision === "stop") {
+                    break
+                  }
                 }
                 await new Promise((resolve) => window.setTimeout(resolve, 100))
               }

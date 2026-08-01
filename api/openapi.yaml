@@ -511,7 +511,7 @@ paths:
   /v1/calling/calls/{callId}/media-ready:
     post:
       operationId: confirmCallingMediaReady
-      summary: Confirm that the owning browser attached the exact answered staff media leg.
+      summary: Confirm that the owning browser attached the answered staff media session.
       parameters:
         - name: callId
           in: path
@@ -2020,7 +2020,7 @@ components:
     ConfirmCallingMediaRequest:
       type: object
       additionalProperties: false
-      required: [sessionId, mediaToken, providerLegId]
+      required: [sessionId, mediaToken, providerSessionId]
       properties:
         sessionId:
           type: string
@@ -2030,7 +2030,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-        providerLegId:
+        providerSessionId:
           type: string
           minLength: 1
           maxLength: 500
@@ -2123,6 +2123,7 @@ components:
         - reasonSource
         - expectedStaffLegId
         - expectedMediaToken
+        - mediaReady
         - providerTermination
         - callerId
         - retryAllowed
@@ -2182,7 +2183,10 @@ components:
           description: Empty until Telnyx identifies the one staff leg created for this claim.
         expectedMediaToken:
           type: string
-          description: Opaque token that identifies the exact WebRTC media leg for the current claim.
+          description: Opaque token that identifies the current staff-media attempt.
+        mediaReady:
+          type: boolean
+          description: Whether the current attempt durably recorded browser media readiness.
         providerTermination:
           type: string
         callerId:

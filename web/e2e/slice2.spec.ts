@@ -852,6 +852,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await sendIncomingLegs(
       takeoverPage,
       await mediaTokenForCall(database, recoveryCall.id),
+      "fixture-recovery-session",
     )
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     const recoveryStaffState = Buffer.from(JSON.stringify({
@@ -1215,12 +1216,14 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         taskOutbound.id,
         "DIAL_STAFF",
       )
+      const taskSession = `fixture-task-outbound-${taskOutbound.id}`
       await sendIncomingLeg(
         takeoverPage,
-        taskStaff.leg_id,
+        "fixture-task-webrtc-leg",
         await mediaTokenForCall(database, taskOutbound.id),
+        false,
+        taskSession,
       )
-      const taskSession = `fixture-task-outbound-${taskOutbound.id}`
       await deliverProviderEvent(takeoverPage, {
         eventType: "call.answered",
         eventId: `e2e-task-staff-answered-${taskOutbound.id}`,
@@ -1291,9 +1294,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       ).toBeVisible({ timeout: 15_000 })
       await sendIncomingLeg(
         takeoverPage,
-        taskStaff.leg_id,
+        "fixture-task-webrtc-leg",
         await mediaTokenForCall(database, taskOutbound.id),
         true,
+        taskSession,
       )
       await expect(
         callCenter(takeoverPage).getByText(/Audio: attached/),
@@ -1467,12 +1471,14 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         standalone.id,
         "DIAL_STAFF",
       )
+      const standaloneSession = `fixture-standalone-${standalone.id}`
       await sendIncomingLeg(
         takeoverPage,
-        standaloneStaff.leg_id,
+        "fixture-standalone-webrtc-leg",
         await mediaTokenForCall(database, standalone.id),
+        false,
+        standaloneSession,
       )
-      const standaloneSession = `fixture-standalone-${standalone.id}`
       await deliverProviderEvent(takeoverPage, {
         eventType: "call.answered",
         eventId: `e2e-standalone-staff-answered-${standalone.id}`,
@@ -1574,7 +1580,12 @@ async function prepareBrowser(context: BrowserContext) {
       notifications: [] as Array<{ title: string; body: string; tag: string }>,
       incoming: undefined as
         | undefined
-        | ((id: string, legID: string, recovery: boolean) => void),
+        | ((
+            legID: string,
+            sessionID: string,
+            mediaToken: string,
+            recovery: boolean,
+          ) => void),
       signal: undefined as undefined | ((state: string) => void),
     }
     const microphone = {
@@ -1654,6 +1665,7 @@ async function prepareBrowser(context: BrowserContext) {
             onState: (state: string) => void
             onIncoming: (leg: {
               providerLegID: string
+              providerSessionID: string
               mediaToken: string
               recovery: boolean
               answer: () => Promise<void>
@@ -1667,11 +1679,13 @@ async function prepareBrowser(context: BrowserContext) {
           state.signal = callbacks.onState
           state.incoming = (
             providerLegID: string,
+            providerSessionID: string,
             mediaToken: string,
             recovery: boolean,
           ) =>
             callbacks.onIncoming({
               providerLegID,
+              providerSessionID,
               mediaToken,
               recovery,
               answer: async () => {
@@ -1752,9 +1766,25 @@ function providerLegPayload(clientState: string) {
   }
 }
 
-async function sendIncomingLegs(page: Page, mediaToken: string) {
-  await sendIncomingLeg(page, "unrelated-browser-leg", "unrelated-media-token")
-  await sendIncomingLeg(page, "fixture-browser-leg", mediaToken)
+async function sendIncomingLegs(
+  page: Page,
+  mediaToken: string,
+  providerSessionID = "fixture-call-session",
+) {
+  await sendIncomingLeg(
+    page,
+    "unrelated-browser-leg",
+    "unrelated-media-token",
+    false,
+    "unrelated-session",
+  )
+  await sendIncomingLeg(
+    page,
+    "fixture-browser-leg",
+    mediaToken,
+    false,
+    providerSessionID,
+  )
 }
 
 async function sendIncomingLeg(
@@ -1762,6 +1792,7 @@ async function sendIncomingLeg(
   providerLegID: string,
   mediaToken: string,
   recovery = false,
+  providerSessionID = "fixture-call-session",
 ) {
   await expect
     .poll(() =>
@@ -1775,22 +1806,27 @@ async function sendIncomingLeg(
       ),
     )
     .toBe(true)
-  await page.evaluate(({ providerLegID, mediaToken, recovery }) => {
-    const fixture = window as typeof window & {
-      __acuityCallingTestState: {
-        incoming?: (
-          providerLegID: string,
-          mediaToken: string,
-          recovery: boolean,
-        ) => void
+  await page.evaluate(
+    ({ providerLegID, providerSessionID, mediaToken, recovery }) => {
+      const fixture = window as typeof window & {
+        __acuityCallingTestState: {
+          incoming?: (
+            providerLegID: string,
+            providerSessionID: string,
+            mediaToken: string,
+            recovery: boolean,
+          ) => void
+        }
       }
-    }
-    fixture.__acuityCallingTestState.incoming?.(
-      providerLegID,
-      mediaToken,
-      recovery,
-    )
-  }, { providerLegID, mediaToken, recovery })
+      fixture.__acuityCallingTestState.incoming?.(
+        providerLegID,
+        providerSessionID,
+        mediaToken,
+        recovery,
+      )
+    },
+    { providerLegID, providerSessionID, mediaToken, recovery },
+  )
 }
 
 async function mediaTokenForCall(database: Pool, callID: string) {
