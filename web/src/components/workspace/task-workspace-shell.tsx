@@ -138,9 +138,6 @@ export function TaskWorkspaceShell() {
   const callDetailGenerationRef = useRef(0)
 
   useEffect(() => {
-    selectedTaskRef.current = selectedTask
-  }, [selectedTask])
-  useEffect(() => {
     selectedThreadRef.current = selectedThread
   }, [selectedThread])
   useEffect(() => {
@@ -263,7 +260,7 @@ export function TaskWorkspaceShell() {
         ) {
           tasksRef.current = []
           setTasks([])
-          setSelectedTask(undefined)
+          updateSelectedTask(undefined)
           setView("none")
           setLoadState("unauthorized")
         }
@@ -282,9 +279,9 @@ export function TaskWorkspaceShell() {
       const selected = selectedTaskRef.current
       if (selected) {
         const current = next.find((task) => task.id === selected.id)
-        if (current) setSelectedTask(current)
+        if (current) updateSelectedTask(current)
       } else if (firstLoad && next[0] && viewRef.current !== "call") {
-        setSelectedTask(next[0])
+        updateSelectedTask(next[0])
         setView("task")
       } else if (!next[0] && viewRef.current !== "call") {
         setView("none")
@@ -486,14 +483,16 @@ export function TaskWorkspaceShell() {
             const selected = selectedTaskRef.current
             if (selected) {
               const current =
-                refreshed ??
-                tasksWithSelection.find((task) => task.id === selected.id)
-              if (current) setSelectedTask(current)
+                refreshed?.id === selected.id
+                  ? refreshed
+                  : tasksWithSelection.find((task) => task.id === selected.id)
+              if (current) updateSelectedTask(current)
               else if (
-                selectedResult?.response?.status === 401 ||
-                selectedResult?.response?.status === 403
+                selectedTaskID === selected.id &&
+                (selectedResult?.response?.status === 401 ||
+                  selectedResult?.response?.status === 403)
               ) {
-                setSelectedTask(undefined)
+                updateSelectedTask(undefined)
                 if (viewRef.current !== "call") setView("none")
               }
             } else if (
@@ -501,7 +500,7 @@ export function TaskWorkspaceShell() {
               tasksWithSelection[0] &&
               viewRef.current !== "call"
             ) {
-              setSelectedTask(tasksWithSelection[0])
+              updateSelectedTask(tasksWithSelection[0])
               setView("task")
             } else if (!tasksWithSelection[0] && viewRef.current !== "call") {
               setView("none")
@@ -708,7 +707,7 @@ export function TaskWorkspaceShell() {
     messageThreadsRef.current = []
     setTasks([])
     setMessageThreads([])
-    setSelectedTask(undefined)
+    updateSelectedTask(undefined)
     setSelectedThread(undefined)
     setHistoricalCall(undefined)
     setComposingNew(false)
@@ -732,6 +731,11 @@ export function TaskWorkspaceShell() {
   function updateRailMode(mode: RailMode) {
     railModeRef.current = mode
     setRailMode(mode)
+  }
+
+  function updateSelectedTask(task?: Task) {
+    selectedTaskRef.current = task
+    setSelectedTask(task)
   }
 
   function selectRailMode(mode: RailMode) {
@@ -770,14 +774,14 @@ export function TaskWorkspaceShell() {
             : "none",
     )
     if (!selectedTaskRef.current && tasksRef.current[0]) {
-      setSelectedTask(tasksRef.current[0])
+      updateSelectedTask(tasksRef.current[0])
     }
   }
 
   function selectTask(task: Task) {
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
-    setSelectedTask(task)
+    updateSelectedTask(task)
     if (activeCall) returnTaskIDRef.current = task.id
     setView("task")
   }
@@ -810,7 +814,7 @@ export function TaskWorkspaceShell() {
     tasksRef.current = next
     setTasks(next)
     if (select) {
-      setSelectedTask(task)
+      updateSelectedTask(task)
       if (activeCall) returnTaskIDRef.current = task.id
       setView("task")
     }
@@ -893,11 +897,11 @@ export function TaskWorkspaceShell() {
       (task) => task.id === returnTaskIDRef.current,
     )
     if (previous) {
-      setSelectedTask(previous)
+      updateSelectedTask(previous)
       setView("task")
     } else {
       setView(tasksRef.current[0] ? "task" : "none")
-      setSelectedTask(tasksRef.current[0])
+      updateSelectedTask(tasksRef.current[0])
     }
   }
 
