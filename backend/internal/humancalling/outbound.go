@@ -177,6 +177,26 @@ func (m *Module) ProvisionLocationVoices(
 			provision.VoicemailGreeting); err != nil {
 			return fmt.Errorf("provision Location voice number: %w", err)
 		}
+		var configured, enabled int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*), count(*) FILTER (WHERE enabled)
+			FROM human_calling_location_voice_numbers
+			WHERE practice_id = $1
+				AND location_id = $2
+		`, practiceID, locationID).Scan(&configured, &enabled); err != nil {
+			return fmt.Errorf("verify Location voice number: %w", err)
+		}
+		expectedEnabled := 0
+		if provision.Enabled {
+			expectedEnabled = 1
+		}
+		if configured != 1 || enabled != expectedEnabled {
+			return fmt.Errorf(
+				"verify Location voice number: configured=%d enabled=%d",
+				configured,
+				enabled,
+			)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Location voice provisioning: %w", err)

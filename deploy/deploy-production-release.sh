@@ -65,11 +65,17 @@ backend_services=(
   acuity-realtime
 )
 service_runtime() {
+  runtime_environment="DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
+  runtime_timeout=0
   case "$1" in
-    acuity-portal-api) printf '20 1 3\n' ;;
-    acuity-provider-ingress) printf '20 1 2\n' ;;
-    acuity-realtime) printf '50 1 2\n' ;;
-    acuity-web) printf '40 0 2\n' ;;
+    acuity-portal-api) read -r concurrency minimum maximum <<<"20 1 3" ;;
+    acuity-provider-ingress) read -r concurrency minimum maximum <<<"20 1 2" ;;
+    acuity-realtime)
+      read -r concurrency minimum maximum <<<"50 1 2"
+      runtime_environment+=",REALTIME_STREAM_SECONDS=270,REALTIME_STREAM_JITTER_SECONDS=30"
+      runtime_timeout=300
+      ;;
+    acuity-web) read -r concurrency minimum maximum <<<"40 0 2" ;;
     *)
       echo "Unknown production service $1." >&2
       return 1
@@ -260,7 +266,7 @@ gcloud run jobs update acuity-migrate \
   --image "$backend_digest" \
   --tasks 1 \
   --max-retries 0 \
-  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000" \
+  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,MIGRATE_VOICE_PRACTICE_KEY=abita-eye-group,MIGRATE_VOICE_LOCATION_KEY=demo-484,MIGRATE_VOICE_NUMBER=+14843989071" \
   --quiet
 gcloud run jobs execute acuity-migrate \
   --project "$PROJECT_ID" \
@@ -269,10 +275,10 @@ gcloud run jobs execute acuity-migrate \
   --quiet
 
 for service in "${backend_services[@]}"; do
-  read -r concurrency minimum maximum < <(service_runtime "$service")
+  service_runtime "$service"
   revision="$service-$DEPLOYMENT_ID"
   touched_services+=("$service")
-  gcloud run deploy "$service" \
+  set -- gcloud run deploy "$service" \
     --project "$PROJECT_ID" \
     --region "$REGION" \
     --image "$backend_digest" \
@@ -283,10 +289,15 @@ for service in "${backend_services[@]}"; do
     --concurrency "$concurrency" \
     --min "$minimum" \
     --max "$maximum" \
-    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500" \
+    --update-env-vars "$runtime_environment"
+  if ((runtime_timeout > 0)); then
+    set -- "$@" --timeout "$runtime_timeout"
+  fi
+  set -- "$@" \
     --startup-probe "httpGet.path=/health/live,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
     --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=3" \
     --quiet
+  "$@"
   verify_service_revision "$revision" "$backend_digest"
 done
 
@@ -339,7 +350,7 @@ for service in "${backend_services[@]}"; do
   smoke "$(service_url "$service")/health/ready"
 done
 
-read -r concurrency minimum maximum < <(service_runtime acuity-web)
+service_runtime acuity-web
 web_revision="acuity-web-$DEPLOYMENT_ID"
 touched_services+=("acuity-web")
 gcloud run deploy acuity-web \

@@ -36,7 +36,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		t.Fatalf("migration was not completed before service staging:\n%s", strings.Join(commands, "\n"))
 	}
 	assertCapturedCommand(t, commands, "run\tjobs\tupdate\tacuity-migrate",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,MIGRATE_VOICE_PRACTICE_KEY=abita-eye-group,MIGRATE_VOICE_LOCATION_KEY=demo-484,MIGRATE_VOICE_NUMBER=+14843989071",
 	)
 
 	for _, service := range []string{
@@ -79,7 +79,8 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t50",
 		"--min\t1",
 		"--max\t2",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
+		"--timeout\t300",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,REALTIME_STREAM_SECONDS=270,REALTIME_STREAM_JITTER_SECONDS=30",
 	)
 
 	assertCapturedCommand(t, commands, "run\tworker-pools\tdeploy\tacuity-worker",
