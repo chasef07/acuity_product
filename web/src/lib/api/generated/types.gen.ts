@@ -246,7 +246,12 @@ export type RetryOutboundCallRequest = {
 export type ConfirmCallingMediaRequest = {
     sessionId: string;
     mediaToken: string;
-    providerSessionId: string;
+    /**
+     * Accepted for compatibility with older web clients and otherwise ignored.
+     *
+     * @deprecated
+     */
+    providerSessionId?: string;
 };
 
 export type OutboundCallEligibility = {

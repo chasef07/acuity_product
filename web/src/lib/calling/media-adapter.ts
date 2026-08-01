@@ -6,7 +6,6 @@ export type MediaState =
 
 export type IncomingMediaLeg = {
   providerLegID: string
-  providerSessionID: string
   mediaToken: string
   recovery: boolean
   answer: () => Promise<void>
@@ -215,9 +214,8 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         return
       }
       const providerLegID = call.telnyxIDs.telnyxLegId
-      const providerSessionID = call.telnyxIDs.telnyxSessionId
       const mediaToken = mediaTokenFromHeaders(call.options.customHeaders)
-      if (!providerLegID || !providerSessionID || !mediaToken) {
+      if (!providerLegID || !mediaToken) {
         void rejectMediaCall(call, "acuity:invalid-media-invite").catch(
           () => undefined,
         )
@@ -225,7 +223,6 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       }
       callbacks.onIncoming({
         providerLegID,
-        providerSessionID,
         mediaToken,
         recovery: call.state !== "ringing",
         answer: async () => {

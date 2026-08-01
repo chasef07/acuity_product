@@ -2020,7 +2020,7 @@ components:
     ConfirmCallingMediaRequest:
       type: object
       additionalProperties: false
-      required: [sessionId, mediaToken, providerSessionId]
+      required: [sessionId, mediaToken]
       properties:
         sessionId:
           type: string
@@ -2034,6 +2034,8 @@ components:
           type: string
           minLength: 1
           maxLength: 500
+          deprecated: true
+          description: Accepted for compatibility with older web clients and otherwise ignored.
     OutboundCallEligibility:
       type: object
       additionalProperties: false

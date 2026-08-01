@@ -871,11 +871,10 @@ func (server *Server) ConfirmCallingMediaReady(
 	call, err := server.calling.ConfirmOutboundMedia(
 		ctx,
 		humancalling.ConfirmOutboundMediaCommand{
-			Identity:          identity,
-			SessionID:         body.SessionId,
-			CallID:            callID.String(),
-			MediaToken:        body.MediaToken,
-			ProviderSessionID: body.ProviderSessionId,
+			Identity:   identity,
+			SessionID:  body.SessionId,
+			CallID:     callID.String(),
+			MediaToken: body.MediaToken,
 		},
 	)
 	if err != nil {

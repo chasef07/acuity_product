@@ -852,7 +852,6 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await sendIncomingLegs(
       takeoverPage,
       await mediaTokenForCall(database, recoveryCall.id),
-      "fixture-recovery-session",
     )
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     const recoveryStaffState = Buffer.from(JSON.stringify({
@@ -1222,7 +1221,6 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         "fixture-task-webrtc-leg",
         await mediaTokenForCall(database, taskOutbound.id),
         false,
-        taskSession,
       )
       await deliverProviderEvent(takeoverPage, {
         eventType: "call.answered",
@@ -1297,7 +1295,6 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         "fixture-task-webrtc-leg",
         await mediaTokenForCall(database, taskOutbound.id),
         true,
-        taskSession,
       )
       await expect(
         callCenter(takeoverPage).getByText(/Audio: attached/),
@@ -1477,7 +1474,6 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         "fixture-standalone-webrtc-leg",
         await mediaTokenForCall(database, standalone.id),
         false,
-        standaloneSession,
       )
       await deliverProviderEvent(takeoverPage, {
         eventType: "call.answered",
@@ -1582,7 +1578,6 @@ async function prepareBrowser(context: BrowserContext) {
         | undefined
         | ((
             legID: string,
-            sessionID: string,
             mediaToken: string,
             recovery: boolean,
           ) => void),
@@ -1665,7 +1660,6 @@ async function prepareBrowser(context: BrowserContext) {
             onState: (state: string) => void
             onIncoming: (leg: {
               providerLegID: string
-              providerSessionID: string
               mediaToken: string
               recovery: boolean
               answer: () => Promise<void>
@@ -1679,13 +1673,11 @@ async function prepareBrowser(context: BrowserContext) {
           state.signal = callbacks.onState
           state.incoming = (
             providerLegID: string,
-            providerSessionID: string,
             mediaToken: string,
             recovery: boolean,
           ) =>
             callbacks.onIncoming({
               providerLegID,
-              providerSessionID,
               mediaToken,
               recovery,
               answer: async () => {
@@ -1769,21 +1761,18 @@ function providerLegPayload(clientState: string) {
 async function sendIncomingLegs(
   page: Page,
   mediaToken: string,
-  providerSessionID = "fixture-call-session",
 ) {
   await sendIncomingLeg(
     page,
     "unrelated-browser-leg",
     "unrelated-media-token",
     false,
-    "unrelated-session",
   )
   await sendIncomingLeg(
     page,
     "fixture-browser-leg",
     mediaToken,
     false,
-    providerSessionID,
   )
 }
 
@@ -1792,7 +1781,6 @@ async function sendIncomingLeg(
   providerLegID: string,
   mediaToken: string,
   recovery = false,
-  providerSessionID = "fixture-call-session",
 ) {
   await expect
     .poll(() =>
@@ -1807,12 +1795,11 @@ async function sendIncomingLeg(
     )
     .toBe(true)
   await page.evaluate(
-    ({ providerLegID, providerSessionID, mediaToken, recovery }) => {
+    ({ providerLegID, mediaToken, recovery }) => {
       const fixture = window as typeof window & {
         __acuityCallingTestState: {
           incoming?: (
             providerLegID: string,
-            providerSessionID: string,
             mediaToken: string,
             recovery: boolean,
           ) => void
@@ -1820,12 +1807,11 @@ async function sendIncomingLeg(
       }
       fixture.__acuityCallingTestState.incoming?.(
         providerLegID,
-        providerSessionID,
         mediaToken,
         recovery,
       )
     },
-    { providerLegID, providerSessionID, mediaToken, recovery },
+    { providerLegID, mediaToken, recovery },
   )
 }
 

@@ -343,7 +343,6 @@ export function CallingDock({
                   body: {
                     sessionId: sessionID,
                     mediaToken: leg.mediaToken,
-                    providerSessionId: leg.providerSessionID,
                   },
                 }).catch(() => undefined)
                 if (result?.data) {
