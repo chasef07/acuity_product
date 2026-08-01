@@ -977,18 +977,43 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 	if destinationIntents != 0 {
 		t.Fatalf("destination intents before browser readiness = %d", destinationIntents)
 	}
+	if _, err := calling.ConfirmOutboundMedia(
+		context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            call.ID,
+			MediaToken:        answered.ExpectedMediaToken,
+			ProviderSessionID: "unrelated-session",
+		},
+	); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("unrelated staff media session error = %v", err)
+	}
 	ringing, err := calling.ConfirmOutboundMedia(
 		context.Background(),
 		humancalling.ConfirmOutboundMediaCommand{
-			Identity:      identity,
-			SessionID:     sessionID,
-			CallID:        call.ID,
-			MediaToken:    answered.ExpectedMediaToken,
-			ProviderLegID: "staff-leg-1",
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            call.ID,
+			MediaToken:        answered.ExpectedMediaToken,
+			ProviderSessionID: "outbound-session",
 		},
 	)
 	if err != nil || ringing.State != humancalling.CallRinging {
 		t.Fatalf("outbound Ringing Call = %#v, err=%v", ringing, err)
+	}
+	reconfirmed, err := calling.ConfirmOutboundMedia(
+		context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            call.ID,
+			MediaToken:        answered.ExpectedMediaToken,
+			ProviderSessionID: "outbound-session",
+		},
+	)
+	if err != nil || reconfirmed.State != humancalling.CallRinging {
+		t.Fatalf("idempotent Ringing confirmation = %#v, err=%v", reconfirmed, err)
 	}
 	if provider.count(humancalling.CommandDialDestination) != 0 {
 		t.Fatalf("destination command escaped durable worker: %#v", provider.commands)
@@ -1028,6 +1053,19 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 		connected.WinnerSubject != identity.Subject ||
 		connected.Recording.State != "" {
 		t.Fatalf("connected outbound Call = %#v, err=%v", connected, err)
+	}
+	reconfirmed, err = calling.ConfirmOutboundMedia(
+		context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            call.ID,
+			MediaToken:        answered.ExpectedMediaToken,
+			ProviderSessionID: "outbound-session",
+		},
+	)
+	if err != nil || reconfirmed.State != humancalling.CallConnected {
+		t.Fatalf("idempotent Connected confirmation = %#v, err=%v", reconfirmed, err)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "outbound-destination-hangup",
@@ -1141,11 +1179,11 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 	if _, err := calling.ConfirmOutboundMedia(
 		context.Background(),
 		humancalling.ConfirmOutboundMediaCommand{
-			Identity:      identity,
-			SessionID:     sessionID,
-			CallID:        timeoutCall.ID,
-			MediaToken:    timeoutAnswered.ExpectedMediaToken,
-			ProviderLegID: "staff-leg-1",
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            timeoutCall.ID,
+			MediaToken:        timeoutAnswered.ExpectedMediaToken,
+			ProviderSessionID: "timeout-session",
 		},
 	); err != nil {
 		t.Fatalf("confirm timeout staff media: %v", err)
@@ -1175,8 +1213,65 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 	)
 	if err != nil ||
 		unknown.State != humancalling.CallReconciling ||
+		!unknown.MediaReady ||
 		unknown.ProviderTermination != "STATUS_UNKNOWN" {
 		t.Fatalf("outbound timeout reconciliation = %#v, err=%v", unknown, err)
+	}
+	if err := calling.ApplyProviderFact(
+		context.Background(),
+		humancalling.ProviderFact{
+			EventID:       "timeout-late-staff-initiated",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    now,
+			CallControlID: "staff-control-1",
+			CallLegID:     "staff-leg-1",
+			CallSessionID: "timeout-session",
+			ClientState: stringPayload(
+				timeoutStaffDial.Payload,
+				"client_state",
+			),
+		},
+	); err != nil {
+		t.Fatalf("apply late timeout staff initiation: %v", err)
+	}
+	unknown, err = calling.ReadCall(context.Background(), identity, timeoutCall.ID)
+	if err != nil ||
+		unknown.State != humancalling.CallReconciling ||
+		!unknown.MediaReady ||
+		unknown.ProviderTermination != "STATUS_UNKNOWN" {
+		t.Fatalf("late staff fact preserved timeout reconciliation = %#v, err=%v", unknown, err)
+	}
+	if _, err := calling.AcquireSoftphone(
+		context.Background(),
+		identity,
+		sessionID,
+		false,
+	); err != nil {
+		t.Fatalf("renew softphone after outbound timeout: %v", err)
+	}
+	reconfirmed, err = calling.ConfirmOutboundMedia(
+		context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            timeoutCall.ID,
+			MediaToken:        timeoutAnswered.ExpectedMediaToken,
+			ProviderSessionID: "timeout-session",
+		},
+	)
+	if err != nil || reconfirmed.State != humancalling.CallReconciling {
+		t.Fatalf("idempotent reconciliation confirmation = %#v, err=%v", reconfirmed, err)
+	}
+	var timeoutDestinationIntents int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_DESTINATION'
+	`, timeoutCall.ID).Scan(&timeoutDestinationIntents); err != nil {
+		t.Fatalf("count timeout destination intents: %v", err)
+	}
+	if timeoutDestinationIntents != 1 {
+		t.Fatalf("timeout destination intents after reconfirmation = %d", timeoutDestinationIntents)
 	}
 	var hangupIntents int
 	if err := pool.QueryRow(context.Background(), `
@@ -1567,11 +1662,11 @@ func proveProviderBackedOutcome(
 	if _, err := calling.ConfirmOutboundMedia(
 		context.Background(),
 		humancalling.ConfirmOutboundMediaCommand{
-			Identity:      identity,
-			SessionID:     sessionID,
-			CallID:        call.ID,
-			MediaToken:    answered.ExpectedMediaToken,
-			ProviderLegID: staffLegID,
+			Identity:          identity,
+			SessionID:         sessionID,
+			CallID:            call.ID,
+			MediaToken:        answered.ExpectedMediaToken,
+			ProviderSessionID: callSessionID,
 		},
 	); err != nil {
 		t.Fatalf("confirm %s staff media: %v", want, err)

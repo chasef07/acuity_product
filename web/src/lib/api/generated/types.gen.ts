@@ -246,7 +246,7 @@ export type RetryOutboundCallRequest = {
 export type ConfirmCallingMediaRequest = {
     sessionId: string;
     mediaToken: string;
-    providerLegId: string;
+    providerSessionId: string;
 };
 
 export type OutboundCallEligibility = {
@@ -298,9 +298,13 @@ export type CallingCall = {
      */
     expectedStaffLegId: string;
     /**
-     * Opaque token that identifies the exact WebRTC media leg for the current claim.
+     * Opaque token that identifies the current staff-media attempt.
      */
     expectedMediaToken: string;
+    /**
+     * Whether the current attempt durably recorded browser media readiness.
+     */
+    mediaReady: boolean;
     providerTermination: string;
     callerId: string;
     retryOfCallId?: string;

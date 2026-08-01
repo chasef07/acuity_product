@@ -74,12 +74,16 @@ function fakeCall(
   mediaToken: string,
   actions: string[],
   hasRemoteStream = true,
+  providerSessionID = "session-1",
 ) {
   return {
     state: "ringing",
     remoteStream: hasRemoteStream ? {} : undefined,
-    options: {
+    telnyxIDs: {
       telnyxLegId: providerLegID,
+      telnyxSessionId: providerSessionID,
+    },
+    options: {
       customHeaders: [{ name: "X-Acuity-Media-Token", value: mediaToken }],
     },
     answer: async () => {
@@ -91,6 +95,31 @@ function fakeCall(
     dtmf: (digit: string) => actions.push(`dtmf:${digit}`),
   }
 }
+
+test("incoming media exposes the shared Telnyx session identity", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const call = fakeCall(
+    "webrtc-leg",
+    "a".repeat(43),
+    [],
+    true,
+    "shared-session",
+  )
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+
+  assert.equal(
+    legs[0].providerSessionID,
+    "shared-session",
+  )
+})
 
 test("Telnyx media starts with the microphone fenced", () => {
   assert.equal(callingClientOptions("token").mutedMicOnStart, true)

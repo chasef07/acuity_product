@@ -239,7 +239,7 @@ export const getCallingCall = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
- * Confirm that the owning browser attached the exact answered staff media leg.
+ * Confirm that the owning browser attached the answered staff media session.
  */
 export const confirmCallingMediaReady = <ThrowOnError extends boolean = false>(options: Options<ConfirmCallingMediaReadyData, ThrowOnError>) => (options.client ?? client).post<ConfirmCallingMediaReadyResponses, ConfirmCallingMediaReadyErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
