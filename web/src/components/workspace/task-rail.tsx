@@ -11,7 +11,6 @@ import {
   LogOutIcon,
   MessageSquareIcon,
   MoonIcon,
-  PhoneCallIcon,
   PlusIcon,
   SearchIcon,
   SunIcon,
@@ -45,9 +44,9 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
+import { CallingOutboundNavigation } from "@/components/workspace/calling-dock"
 import type {
   AccessDiscovery,
-  CallingOffer,
   MessageThreadSummary,
   PracticeAccess,
   Task,
@@ -74,8 +73,6 @@ type TaskRailProps = {
   nextCursor: string
   messageNextCursor: string
   connection: ConnectionState
-  callingOffers: CallingOffer[]
-  onLocationScopeChange: (locationID: string) => void
   onModeChange: (mode: RailMode) => void
   onSearchChange: (search: string) => void
   onOrderingChange: (ordering: "time" | "priority") => void
@@ -102,8 +99,6 @@ export function TaskRail({
   nextCursor,
   messageNextCursor,
   connection,
-  callingOffers,
-  onLocationScopeChange,
   onModeChange,
   onSearchChange,
   onOrderingChange,
@@ -185,25 +180,10 @@ export function TaskRail({
               <span>Messages</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          <CallingOutboundNavigation />
         </SidebarMenu>
         <SidebarGroup className="p-0">
-          <SidebarGroupLabel>{practice.name}</SidebarGroupLabel>
-          <SidebarGroupContent className="flex gap-2">
-            <NativeSelect
-              aria-label="Location"
-              className="min-w-0 flex-1"
-              value={locationScopeID}
-              onChange={(event) => onLocationScopeChange(event.target.value)}
-            >
-              {mode === "tasks" && practice.locations.length > 1 && (
-                <NativeSelectOption value="">All offices</NativeSelectOption>
-              )}
-              {practice.locations.map((location) => (
-                <NativeSelectOption key={location.id} value={location.id}>
-                  {location.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+          <SidebarGroupContent className="flex justify-end gap-2">
             {mode === "tasks" ? (
               <NativeSelect
                 aria-label="Order tasks"
@@ -228,19 +208,6 @@ export function TaskRail({
       </SidebarHeader>
       <Separator />
       <SidebarContent className="gap-0">
-        {callingOffers.length > 0 && (
-          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
-            <PhoneCallIcon className="size-3.5 text-primary" />
-            <span className="font-medium">Incoming call</span>
-            <Badge
-              data-testid="calling-queue-count"
-              variant="secondary"
-              className="ml-auto font-mono"
-            >
-              {callingOffers.length}
-            </Badge>
-          </div>
-        )}
         {mode === "tasks" ? (
           <>
             <TaskGroup

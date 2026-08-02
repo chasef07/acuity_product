@@ -2,7 +2,12 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { ShieldCheckIcon, WifiOffIcon } from "lucide-react"
+import {
+  CheckIcon,
+  ChevronsUpDownIcon,
+  ShieldCheckIcon,
+  WifiOffIcon,
+} from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -25,13 +30,24 @@ import {
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { CallingDock } from "@/components/workspace/calling-dock"
+import {
+  CallingAvailabilityControl,
+  CallingDock,
+} from "@/components/workspace/calling-dock"
 import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
 import { MessageWorkspace } from "@/components/workspace/message-workspace"
 import {
@@ -54,7 +70,6 @@ import type {
   AccessDiscovery,
   CallingCall,
   CallingDispositionResult,
-  CallingOffer,
   Message,
   MessageThreadSummary,
   Task,
@@ -107,7 +122,6 @@ export function TaskWorkspaceShell() {
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [callRefreshRevision, setCallRefreshRevision] = useState(0)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
-  const [callingOffers, setCallingOffers] = useState<CallingOffer[]>([])
   const [taskCallRequest, setTaskCallRequest] = useState<{
     id: string
     taskID: string
@@ -731,6 +745,69 @@ export function TaskWorkspaceShell() {
     }
   }
 
+  function selectWorkspaceScope(
+    nextPracticeID: string,
+    nextLocationScopeID: string,
+  ) {
+    if (!discovery) return
+    const nextPractice = discovery.practices.find(
+      (item) => item.id === nextPracticeID,
+    )
+    if (!nextPractice) return
+    if (nextPracticeID === practiceID) {
+      selectLocationScope(nextLocationScopeID)
+      return
+    }
+    const nextLocation =
+      nextPractice.locations.find(
+        (location) => location.id === nextLocationScopeID,
+      ) ?? nextPractice.locations[0]
+    if (!nextLocation) return
+
+    callDetailGenerationRef.current += 1
+    taskQueryGenerationRef.current += 1
+    messageQueryGenerationRef.current += 1
+    snapshotGenerationRef.current += 1
+    hasLoadedTasksRef.current = false
+    hasLoadedThreadsRef.current = false
+    taskQueryKeyRef.current = ""
+    messageQueryKeyRef.current = ""
+    tasksRef.current = []
+    messageThreadsRef.current = []
+    setTasks([])
+    setMessageThreads([])
+    updateSelectedTask(undefined)
+    setSelectedThread(undefined)
+    setHistoricalCall(undefined)
+    setComposingNew(false)
+    if (viewRef.current !== "call") setView("none")
+
+    const nextOrdering = readTaskOrdering(
+      discovery.actor.subject,
+      nextPractice.id,
+    )
+    const nextScope =
+      railModeRef.current === "messages"
+        ? nextLocation.id
+        : nextLocationScopeID
+    orderingRef.current = nextOrdering
+    locationScopeRef.current = nextScope
+    workspaceRef.current = undefined
+    setWorkspace(undefined)
+    setOrdering(nextOrdering)
+    setPracticeID(nextPractice.id)
+    setLocationID(nextLocation.id)
+    setLocationScopeID(nextScope)
+    snapshotScopeRef.current = `${nextPractice.id}:${nextLocation.id}`
+    window.localStorage.setItem(practiceStorageKey, nextPractice.id)
+    window.localStorage.setItem(locationStorageKey, nextLocation.id)
+    window.localStorage.setItem(
+      `${taskScopeStorageKey}.${nextPractice.id}`,
+      nextScope,
+    )
+    setLoadState("loading")
+  }
+
   function updateRailMode(mode: RailMode) {
     railModeRef.current = mode
     setRailMode(mode)
@@ -866,7 +943,12 @@ export function TaskWorkspaceShell() {
     activeCallIDRef.current = call?.id ?? ""
     if (!call) return
     const canFocus =
-      call.state === "CONNECTED" || call.state === "NEEDS_DISPOSITION"
+      call.state === "PREPARING" ||
+      call.state === "RINGING" ||
+      call.state === "CONNECTING" ||
+      call.state === "RECONCILING" ||
+      call.state === "CONNECTED" ||
+      call.state === "NEEDS_DISPOSITION"
     if (!canFocus || call.id === focusedCallIDRef.current) return
     if (call.id !== previousCallID) {
       callDetailGenerationRef.current += 1
@@ -946,172 +1028,271 @@ export function TaskWorkspaceShell() {
     discovery.practices[0]
   return (
     <SidebarProvider>
-      <TaskRail
-        discovery={discovery}
-        practice={practice}
-        locationScopeID={locationScopeID}
-        tasks={tasks}
-        messages={messageThreads}
-        mode={railMode}
-        selectedTaskID={selectedTask?.id ?? ""}
-        selectedThreadID={selectedThread?.id ?? ""}
-        search={search}
-        ordering={ordering}
-        loading={tasksLoading}
-        messageLoading={messagesLoading}
-        nextCursor={nextCursor}
-        messageNextCursor={messageNextCursor}
-        connection={connection}
-        callingOffers={callingOffers}
-        onLocationScopeChange={selectLocationScope}
-        onModeChange={selectRailMode}
-        onSearchChange={(value) => {
-          taskQueryGenerationRef.current += 1
-          setSearch(value)
-        }}
-        onOrderingChange={(value) => {
-          taskQueryGenerationRef.current += 1
-          orderingRef.current = value
-          setOrdering(value)
-          window.localStorage.setItem(
-            taskOrderingKey(discovery.actor.subject, practiceID),
-            value,
+      <CallingDock
+        platformOperator={workspace.platformOperator}
+        practiceID={practiceID}
+        locations={practice.locations}
+        callRefreshRevision={callRefreshRevision}
+        workspaceRevision={workspaceRevision}
+        taskCallRequest={taskCallRequest}
+        onTaskCallHandled={(requestID, requestError) => {
+          setTaskCallRequest((current) =>
+            current?.id === requestID ? undefined : current,
           )
+          setTaskCallError(requestError ?? "")
         }}
-        onTaskSelect={selectTask}
-        onThreadSelect={selectMessageThread}
-        onNewText={composeNewMessage}
-        onLoadMore={() => void loadTasks(nextCursor, true)}
-        onMessageLoadMore={() =>
-          void loadMessageThreads(messageNextCursor, true)
-        }
-      />
-      <SidebarInset
-        data-testid="mounted-workspace"
-        data-workspace-version={workspace.version}
-        className="min-w-0"
+        onCallChanged={handleCallChanged}
+        onDisposition={(result) => void handleDisposition(result)}
       >
-        {workspace.supportMode && (
-          <SupportBanner
-            supportMode={workspace.supportMode}
-            onChanged={() => void loadSnapshot(practiceID, locationID, false)}
-          />
-        )}
-        <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
-          <SidebarTrigger />
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {workspace.practice.name} ·{" "}
-            {railMode === "messages"
-              ? practice.locations.find(
-                  (location) => location.id === locationID,
-                )?.name
-              : locationScopeID
-                ? practice.locations.find(
-                    (location) => location.id === locationScopeID,
-                  )?.name
-                : "All offices"}
-          </span>
-          <span className="ml-auto font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
-            {workspace.platformOperator ? "Platform operator" : "Practice user"}
-          </span>
-          {workspace.platformOperator && !workspace.supportMode && (
-            <SupportDialog
-              practiceID={practiceID}
-              onEntered={() => void loadSnapshot(practiceID, locationID, false)}
+        <TaskRail
+          discovery={discovery}
+          practice={practice}
+          locationScopeID={locationScopeID}
+          tasks={tasks}
+          messages={messageThreads}
+          mode={railMode}
+          selectedTaskID={selectedTask?.id ?? ""}
+          selectedThreadID={selectedThread?.id ?? ""}
+          search={search}
+          ordering={ordering}
+          loading={tasksLoading}
+          messageLoading={messagesLoading}
+          nextCursor={nextCursor}
+          messageNextCursor={messageNextCursor}
+          connection={connection}
+          onModeChange={selectRailMode}
+          onSearchChange={(value) => {
+            taskQueryGenerationRef.current += 1
+            setSearch(value)
+          }}
+          onOrderingChange={(value) => {
+            taskQueryGenerationRef.current += 1
+            orderingRef.current = value
+            setOrdering(value)
+            window.localStorage.setItem(
+              taskOrderingKey(discovery.actor.subject, practiceID),
+              value,
+            )
+          }}
+          onTaskSelect={selectTask}
+          onThreadSelect={selectMessageThread}
+          onNewText={composeNewMessage}
+          onLoadMore={() => void loadTasks(nextCursor, true)}
+          onMessageLoadMore={() =>
+            void loadMessageThreads(messageNextCursor, true)
+          }
+        />
+        <SidebarInset
+          data-testid="mounted-workspace"
+          data-workspace-version={workspace.version}
+          className="min-w-0"
+        >
+          {workspace.supportMode && (
+            <SupportBanner
+              supportMode={workspace.supportMode}
+              onChanged={() => void loadSnapshot(practiceID, locationID, false)}
             />
           )}
-        </header>
-        <CallingDock
-          platformOperator={workspace.platformOperator}
-          practiceID={practiceID}
-          locations={practice.locations}
-          callRefreshRevision={callRefreshRevision}
-          workspaceRevision={workspaceRevision}
-          taskCallRequest={taskCallRequest}
-          onTaskCallHandled={(requestID, requestError) => {
-            setTaskCallRequest((current) =>
-              current?.id === requestID ? undefined : current,
-            )
-            setTaskCallError(requestError ?? "")
-          }}
-          onOffersChanged={setCallingOffers}
-          onCallChanged={handleCallChanged}
-          onDisposition={(result) => void handleDisposition(result)}
-        />
-        {railMode === "messages" && view !== "call" ? (
-          <MessageWorkspace
-            thread={selectedThread}
-            composingNew={composingNew}
-            practiceID={practiceID}
-            locationID={locationID}
-            locationName={
-              practice.locations.find((location) => location.id === locationID)
-                ?.name ?? "Office"
-            }
-            supportSessionID={workspace.supportMode?.id ?? ""}
-            canMutate={
-              !workspace.platformOperator || Boolean(workspace.supportMode)
-            }
-            revision={workspaceRevision}
-            initialMessage={committedMessage}
-            onMessageSent={handleMessageSent}
-            onThreadRead={(threadID) => {
-              const nextThreads = messageThreadsRef.current.map((thread) =>
-                thread.id === threadID ? { ...thread, unread: false } : thread,
-              )
-              messageThreadsRef.current = nextThreads
-              setMessageThreads(nextThreads)
-              const nextTasks = tasksRef.current.map((task) =>
-                task.conversationThreadId === threadID ||
-                task.messageThreadId === threadID
-                  ? { ...task, unread: false }
-                  : task,
-              )
-              tasksRef.current = nextTasks
-              setTasks(nextTasks)
-            }}
-            onTaskCreated={(task) => {
-              updateTaskProjection(task, false)
-              void loadTasks()
-            }}
-            onTaskOpen={(task) => {
-              updateRailMode("tasks")
-              setSearch("")
-              setSettledSearch("")
-              updateTaskProjection(task)
-            }}
-            onCallOpen={(callID) => void openCallDetail(callID)}
-          />
-        ) : (
-          <InteractionWorkspace
-            task={selectedTask}
-            activeCall={historicalCall ?? activeCall}
-            view={view === "message" ? "none" : view}
-            supportSessionID={workspace.supportMode?.id ?? ""}
-            canMutate={
-              !workspace.platformOperator || Boolean(workspace.supportMode)
-            }
-            historyHint={workspaceRevision}
-            taskCallPending={Boolean(taskCallRequest)}
-            taskCallError={taskCallError}
-            onTaskUpdated={(task) => {
-              updateTaskProjection(task)
-              void loadTasks()
-            }}
-            onStartTaskCall={(task) => {
-              setTaskCallError("")
-              setTaskCallRequest({
-                id: window.crypto.randomUUID(),
-                taskID: task.id,
-              })
-            }}
-            onReturnToCall={() => {
-              if (activeCall) setView("call")
-            }}
-          />
-        )}
-      </SidebarInset>
+          <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
+            <SidebarTrigger />
+            <WorkspaceSelector
+              discovery={discovery}
+              practiceID={practiceID}
+              locationID={locationID}
+              locationScopeID={locationScopeID}
+              mode={railMode}
+              onSelect={selectWorkspaceScope}
+            />
+            <CallingAvailabilityControl />
+            {workspace.platformOperator && !workspace.supportMode && (
+              <SupportDialog
+                practiceID={practiceID}
+                onEntered={() =>
+                  void loadSnapshot(practiceID, locationID, false)
+                }
+              />
+            )}
+          </header>
+          {railMode === "messages" && view !== "call" ? (
+            <MessageWorkspace
+              thread={selectedThread}
+              composingNew={composingNew}
+              practiceID={practiceID}
+              locationID={locationID}
+              locationName={
+                practice.locations.find((location) => location.id === locationID)
+                  ?.name ?? "Office"
+              }
+              supportSessionID={workspace.supportMode?.id ?? ""}
+              canMutate={
+                !workspace.platformOperator || Boolean(workspace.supportMode)
+              }
+              revision={workspaceRevision}
+              initialMessage={committedMessage}
+              onMessageSent={handleMessageSent}
+              onThreadRead={(threadID) => {
+                const nextThreads = messageThreadsRef.current.map((thread) =>
+                  thread.id === threadID ? { ...thread, unread: false } : thread,
+                )
+                messageThreadsRef.current = nextThreads
+                setMessageThreads(nextThreads)
+                const nextTasks = tasksRef.current.map((task) =>
+                  task.conversationThreadId === threadID ||
+                  task.messageThreadId === threadID
+                    ? { ...task, unread: false }
+                    : task,
+                )
+                tasksRef.current = nextTasks
+                setTasks(nextTasks)
+              }}
+              onTaskCreated={(task) => {
+                updateTaskProjection(task, false)
+                void loadTasks()
+              }}
+              onTaskOpen={(task) => {
+                updateRailMode("tasks")
+                setSearch("")
+                setSettledSearch("")
+                updateTaskProjection(task)
+              }}
+              onCallOpen={(callID) => void openCallDetail(callID)}
+            />
+          ) : (
+            <InteractionWorkspace
+              task={selectedTask}
+              activeCall={historicalCall ?? activeCall}
+              view={view === "message" ? "none" : view}
+              supportSessionID={workspace.supportMode?.id ?? ""}
+              canMutate={
+                !workspace.platformOperator || Boolean(workspace.supportMode)
+              }
+              historyHint={workspaceRevision}
+              taskCallPending={Boolean(taskCallRequest)}
+              taskCallError={taskCallError}
+              onTaskUpdated={(task) => {
+                updateTaskProjection(task)
+                void loadTasks()
+              }}
+              onStartTaskCall={(task) => {
+                setTaskCallError("")
+                setTaskCallRequest({
+                  id: window.crypto.randomUUID(),
+                  taskID: task.id,
+                })
+              }}
+              onReturnToCall={() => {
+                if (activeCall) setView("call")
+              }}
+            />
+          )}
+        </SidebarInset>
+      </CallingDock>
     </SidebarProvider>
+  )
+}
+
+function WorkspaceSelector({
+  discovery,
+  practiceID,
+  locationID,
+  locationScopeID,
+  mode,
+  onSelect,
+}: {
+  discovery: AccessDiscovery
+  practiceID: string
+  locationID: string
+  locationScopeID: string
+  mode: RailMode
+  onSelect: (practiceID: string, locationID: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const practice =
+    discovery.practices.find((item) => item.id === practiceID) ??
+    discovery.practices[0]
+  if (!practice) return null
+  const selectedLocationID =
+    mode === "messages" ? locationID : locationScopeID
+  const locationLabel = selectedLocationID
+    ? (practice.locations.find((item) => item.id === selectedLocationID)?.name ??
+      "Office")
+    : "All offices"
+
+  function select(nextPracticeID: string, nextLocationID: string) {
+    onSelect(nextPracticeID, nextLocationID)
+    setOpen(false)
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            aria-label="Workspace selector"
+            variant="ghost"
+            size="sm"
+            className="min-w-0 max-w-80"
+          />
+        }
+      >
+        <span className="truncate">
+          {practice.name} · {locationLabel}
+        </span>
+        <ChevronsUpDownIcon data-icon="inline-end" />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80">
+        <PopoverHeader>
+          <PopoverTitle>Workspace</PopoverTitle>
+          <PopoverDescription>
+            Choose an authorized Practice and Location.
+          </PopoverDescription>
+        </PopoverHeader>
+        <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
+          {discovery.practices.map((item) => (
+            <div key={item.id} className="flex flex-col gap-1">
+              <p className="px-2 font-medium">{item.name}</p>
+              {mode === "tasks" && item.locations.length > 1 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="w-full justify-start"
+                  aria-current={
+                    item.id === practiceID && !locationScopeID
+                      ? "page"
+                      : undefined
+                  }
+                  onClick={() => select(item.id, "")}
+                >
+                  {item.id === practiceID && !locationScopeID && (
+                    <CheckIcon data-icon="inline-start" />
+                  )}
+                  All offices
+                </Button>
+              )}
+              {item.locations.map((location) => {
+                const selected =
+                  item.id === practiceID && location.id === selectedLocationID
+                return (
+                  <Button
+                    key={location.id}
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="w-full justify-start"
+                    aria-current={selected ? "page" : undefined}
+                    onClick={() => select(item.id, location.id)}
+                  >
+                    {selected && <CheckIcon data-icon="inline-start" />}
+                    {location.name}
+                  </Button>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

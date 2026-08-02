@@ -31,7 +31,9 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   )
 
   await page.getByRole("button", { name: "Messages", exact: true }).click()
-  await expect(page.getByLabel("Location")).toHaveValue(/.+/)
+  await expect(
+    page.getByRole("button", { name: "Workspace selector" }),
+  ).toContainText("Abita Eye Group · Fixture Location 1")
   const newText = page.getByRole("button", { name: "New text" })
   await expect(newText).toBeVisible()
   await newText.click()
