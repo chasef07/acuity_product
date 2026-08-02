@@ -212,9 +212,15 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await expect(
       operatorPage.getByText("Validate Slice 1 browser workflow"),
     ).toBeVisible()
-    await operatorPage.getByLabel("Location").selectOption({
-      label: "Fixture Location 1",
-    })
+    await operatorPage
+      .getByRole("button", { name: "Workspace selector" })
+      .click()
+    await operatorPage
+      .getByRole("button", { name: "Fixture Location 1", exact: true })
+      .click()
+    await expect(
+      operatorPage.getByRole("button", { name: "Workspace selector" }),
+    ).toContainText("Abita Eye Group · Fixture Location 1")
     await expect(
       operatorPage.getByText("Abita Eye Group", { exact: true }),
     ).toBeVisible()
@@ -228,19 +234,27 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     )
     expect(accessResponse.ok()).toBeTruthy()
     const access = (await accessResponse.json()) as {
-      practices: Array<{ id: string; name: string }>
+      practices: Array<{
+        id: string
+        name: string
+        locations: Array<{ id: string; name: string }>
+      }>
     }
     const operatorPractice = access.practices.find(
       (practice) => practice.name === "Abita Eye Group",
     )
     expect(operatorPractice?.id).toBeTruthy()
+    const operatorLocation = operatorPractice?.locations.find(
+      (location) => location.name === "Fixture Location 1",
+    )
+    expect(operatorLocation?.id).toBeTruthy()
     const snapshotResponse = await operatorPage.request.get(
       `${portalURL}/v1/workspace`,
       {
         headers: { authorization: `Bearer ${operatorToken}` },
         params: {
           practiceId: operatorPractice!.id,
-          locationId: await selectedValue(operatorPage, "Location"),
+          locationId: operatorLocation!.id,
         },
       },
     )
@@ -332,8 +346,8 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await coarsePage.goto("/workspace")
     await expect(coarsePage.getByText("No follow-up tasks")).toBeVisible()
     await expect(
-      coarsePage.getByText("Abita Eye Group", { exact: true }).first(),
-    ).toBeVisible()
+      coarsePage.getByRole("button", { name: "Workspace selector" }),
+    ).toContainText("Abita Eye Group")
     await coarsePage.screenshot({
       path: testInfo.outputPath("workspace-coarse-pointer.png"),
       fullPage: true,
@@ -400,8 +414,4 @@ async function abortFirstRealtimeRequest(page: Page) {
     }
     await route.continue()
   })
-}
-
-async function selectedValue(page: Page, label: string): Promise<string> {
-  return page.getByLabel(label).inputValue()
 }
