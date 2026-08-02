@@ -25,6 +25,41 @@ class FakeAudioElement {
   remove() {}
 }
 
+class FakePeerConnection {
+  private readonly listeners = new Map<string, Set<() => void>>()
+  connectionState: RTCPeerConnectionState
+  iceConnectionState: RTCIceConnectionState
+  signalingState: RTCSignalingState
+
+  constructor(
+    connectionState: RTCPeerConnectionState = "connected",
+    iceConnectionState: RTCIceConnectionState = "connected",
+    signalingState: RTCSignalingState = "stable",
+  ) {
+    this.connectionState = connectionState
+    this.iceConnectionState = iceConnectionState
+    this.signalingState = signalingState
+  }
+
+  addEventListener(event: string, listener: () => void) {
+    const listeners = this.listeners.get(event) ?? new Set()
+    listeners.add(listener)
+    this.listeners.set(event, listeners)
+  }
+
+  removeEventListener(event: string, listener: () => void) {
+    this.listeners.get(event)?.delete(listener)
+  }
+
+  connect() {
+    this.connectionState = "connected"
+    this.iceConnectionState = "connected"
+    for (const listener of this.listeners.get("connectionstatechange") ?? []) {
+      listener()
+    }
+  }
+}
+
 function installMediaDOM() {
   const output = new FakeAudioElement()
   output.id = "remote"
@@ -74,6 +109,7 @@ function fakeCall(
   mediaToken: string,
   actions: string[],
   hasRemoteStream = true,
+  peerConnection = new FakePeerConnection(),
 ) {
   return {
     state: "ringing",
@@ -84,6 +120,7 @@ function fakeCall(
     options: {
       customHeaders: [{ name: "X-Acuity-Media-Token", value: mediaToken }],
     },
+    peer: { instance: peerConnection },
     answer: async () => {
       actions.push("answer")
     },
@@ -93,6 +130,32 @@ function fakeCall(
     dtmf: (digit: string) => actions.push(`dtmf:${digit}`),
   }
 }
+
+test("media attachment waits for secure peer connectivity", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const peer = new FakePeerConnection("connecting", "checking")
+  const call = fakeCall("leg-1", "a".repeat(43), [], true, peer)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+
+  let attached = false
+  const attachment = legs[0].answer().then(() => {
+    attached = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(attached, false)
+
+  peer.connect()
+  await attachment
+  assert.equal(attached, true)
+})
 
 test("incoming media does not require a shared Call Control session", async () => {
   const output = installMediaDOM()

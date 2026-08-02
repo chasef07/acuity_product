@@ -121,6 +121,21 @@ current-leg-only DTMF. The real PostgreSQL browser harness additionally crosses
 authenticated handoff HTTP, signed provider ingress, worker-owned private
 recording copy, authorized playback, explicit staff-media confirmation,
 second-tab visibility, reload recovery, and a no-server-write DTMF assertion.
+For outbound connection latency, that harness holds workspace, Task, and
+Message reconciliation open and requires the signed bridge receipt to produce
+an authoritative Connected Call response within 750 milliseconds. This target
+beats the browser's one-second recovery poll without treating the realtime
+version as Call state. The same receipt records must show less than 500
+milliseconds from durable receipt commit to the worker's processing attempt.
+
+The receipt worker starts each drain immediately, processes up to eight durable
+receipts, and otherwise waits at most 250 milliseconds. Existing bounded
+`acuity_call_center_receipt_processing` queue and processing observations are
+the production measurement seam. The deterministic fast path meets its target
+with that fallback interval, so this slice does not add a PostgreSQL
+notification connection. Production percentiles remain part of the controlled
+live gate.
+
 Generated OpenAPI clients, Go tests and vet, web unit tests, lint, typecheck,
 production build, and deployment-contract tests complete the deterministic
 release gate.

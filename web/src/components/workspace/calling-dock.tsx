@@ -54,7 +54,8 @@ type CallingDockProps = {
   platformOperator: boolean
   practiceID: string
   locations: Location[]
-  hint: number
+  callRefreshRevision: number
+  workspaceRevision: number
   taskCallRequest?: { id: string; taskID: string }
   onTaskCallHandled: (requestID: string, error?: string) => void
   onOffersChanged: (offers: CallingOffer[]) => void
@@ -70,7 +71,8 @@ export function CallingDock({
   platformOperator,
   practiceID,
   locations,
-  hint,
+  callRefreshRevision,
+  workspaceRevision,
   taskCallRequest,
   onTaskCallHandled,
   onOffersChanged,
@@ -96,6 +98,9 @@ export function CallingDock({
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
   const probeStreamRef = useRef<MediaStream | null>(null)
   const expectedCallRef = useRef("")
+  const activeCallSnapshotRef = useRef<
+    { id: string; version: number } | undefined
+  >(undefined)
   const ownerRef = useRef(false)
   const availabilityRef = useRef(false)
   const availabilityIntentRef = useRef(false)
@@ -105,6 +110,18 @@ export function CallingDock({
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
   const notificationsRef = useRef(new Map<string, Notification>())
+  const applyActiveCall = useCallback((call?: CallingCall) => {
+    if (call && call.id !== expectedCallRef.current) return false
+    const applied = activeCallSnapshotRef.current
+    if (call && applied?.id === call.id && call.version < applied.version) {
+      return false
+    }
+    activeCallSnapshotRef.current = call
+      ? { id: call.id, version: call.version }
+      : undefined
+    setActiveCall(call)
+    return true
+  }, [])
   const resolvedDialLocationID = locations.some(
     (location) => location.id === dialLocationID,
   )
@@ -216,14 +233,14 @@ export function CallingDock({
       }
       expectedCallRef.current = result.data.id
       setExpectedCallID(result.data.id)
-      setActiveCall(result.data)
+      applyActiveCall(result.data)
       setAvailable(false)
       availabilityRef.current = false
       setShowDialer(false)
       setDialDestination("")
       return undefined
     },
-    [activeCall, lease?.owner, mediaState, sessionID],
+    [activeCall, applyActiveCall, lease?.owner, mediaState, sessionID],
   )
 
   useEffect(() => {
@@ -379,9 +396,12 @@ export function CallingDock({
                 throw new Error("staff media readiness was not committed")
               }
             }
+            if (!applyActiveCall(attachedCall)) {
+              await leg.reject().catch(() => undefined)
+              return
+            }
             mediaLegRef.current = leg
             setMediaAttached(true)
-            setActiveCall(attachedCall)
             return
           }
           if (
@@ -414,7 +434,7 @@ export function CallingDock({
         }
       }
     },
-    [sessionID, updateReadiness],
+    [applyActiveCall, sessionID, updateReadiness],
   )
 
   const connectMedia = useCallback(async () => {
@@ -452,7 +472,7 @@ export function CallingDock({
           client: portalClient(token),
           path: { callId: acquired.data.activeCallId },
         }).catch(() => undefined)
-        if (observed?.data) setActiveCall(observed.data)
+        if (observed?.data) applyActiveCall(observed.data)
       }
       return
     }
@@ -466,7 +486,7 @@ export function CallingDock({
         path: { callId: acquired.data.activeCallId },
       }).catch(() => undefined)
       if (restored?.data) {
-        setActiveCall(restored.data)
+        applyActiveCall(restored.data)
         setMediaAttached(false)
       }
     }
@@ -533,6 +553,7 @@ export function CallingDock({
     }
   }, [
     handleIncoming,
+    applyActiveCall,
     rememberAvailabilityIntent,
     sessionID,
     updateReadiness,
@@ -563,7 +584,7 @@ export function CallingDock({
     }).catch(() => undefined)
     if (expectedCallRef.current !== callID) return
     if (result?.data) {
-      setActiveCall(result.data)
+      if (!applyActiveCall(result.data)) return
       if (
         result.data.state === "UNANSWERED" ||
         result.data.state === "MISSED" ||
@@ -585,7 +606,7 @@ export function CallingDock({
         setAvailable(true)
         availabilityRef.current = true
         void updateReadiness(true, "ready")
-        setActiveCall(undefined)
+        applyActiveCall()
         setExpectedCallID("")
         expectedCallRef.current = ""
       }
@@ -593,7 +614,7 @@ export function CallingDock({
       result?.response?.status === 403 ||
       result?.response?.status === 409
     ) {
-      setActiveCall(undefined)
+      applyActiveCall()
       setExpectedCallID("")
       expectedCallRef.current = ""
       mediaLegRef.current = null
@@ -609,7 +630,7 @@ export function CallingDock({
         void updateReadiness(true, "ready")
       }
     }
-  }, [mediaState, updateReadiness])
+  }, [applyActiveCall, mediaState, updateReadiness])
 
   const refreshOwnership = useCallback(async () => {
     const restoreMedia =
@@ -625,17 +646,15 @@ export function CallingDock({
     if (!result?.data?.owner) {
       setLease(result?.data)
       if (result?.data?.activeCallId) {
+        const restoredCall =
+          expectedCallRef.current !== result.data.activeCallId
         expectedCallRef.current = result.data.activeCallId
         setExpectedCallID(result.data.activeCallId)
-        const observed = await getCallingCall({
-          client: portalClient(token),
-          path: { callId: result.data.activeCallId },
-        }).catch(() => undefined)
-        if (observed?.data) setActiveCall(observed.data)
+        if (restoredCall) await refreshCall()
       } else {
         expectedCallRef.current = ""
         setExpectedCallID("")
-        setActiveCall(undefined)
+        applyActiveCall()
       }
       setAvailable(false)
       availabilityRef.current = false
@@ -653,13 +672,15 @@ export function CallingDock({
     setLease(result.data)
     ownerRef.current = true
     if (result.data.activeCallId) {
-      if (expectedCallRef.current !== result.data.activeCallId) {
+      const restoredCall =
+        expectedCallRef.current !== result.data.activeCallId
+      if (restoredCall) {
         expectedCallRef.current = result.data.activeCallId
         setExpectedCallID(result.data.activeCallId)
       }
       setAvailable(false)
       availabilityRef.current = false
-      await refreshCall()
+      if (restoredCall) await refreshCall()
     }
     if (!adapterRef.current) {
       await connectMedia()
@@ -668,17 +689,22 @@ export function CallingDock({
     await updateReadiness(
       availabilityIntentRef.current && expectedCallRef.current === "",
     )
-  }, [connectMedia, refreshCall, sessionID, updateReadiness])
+  }, [applyActiveCall, connectMedia, refreshCall, sessionID, updateReadiness])
+
+  useEffect(() => {
+    if (platformOperator) return
+    const timeout = window.setTimeout(() => void refreshCall(), 0)
+    return () => window.clearTimeout(timeout)
+  }, [callRefreshRevision, platformOperator, refreshCall])
 
   useEffect(() => {
     if (platformOperator) return
     const timeout = window.setTimeout(() => {
       void refreshOwnership()
       void refreshOffers()
-      void refreshCall()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [hint, platformOperator, refreshCall, refreshOffers, refreshOwnership])
+  }, [platformOperator, refreshOffers, refreshOwnership, workspaceRevision])
 
   useEffect(() => {
     if (platformOperator || !lease?.owner) return
@@ -826,7 +852,7 @@ export function CallingDock({
       setError("The hangup request could not be committed.")
       return
     }
-    setActiveCall(result.data)
+    applyActiveCall(result.data)
   }
 
   function toggleMute() {
@@ -870,7 +896,7 @@ export function CallingDock({
     setMuted(false)
     expectedCallRef.current = result.data.id
     setExpectedCallID(result.data.id)
-    setActiveCall(result.data)
+    applyActiveCall(result.data)
     setAvailable(false)
     availabilityRef.current = false
     await connectMedia()
@@ -898,7 +924,7 @@ export function CallingDock({
       return
     }
     onDisposition(result.data)
-    setActiveCall(undefined)
+    applyActiveCall()
     setExpectedCallID("")
     expectedCallRef.current = ""
     mediaLegRef.current = null
@@ -1084,7 +1110,7 @@ export function CallingDock({
           onRetry={() => void retryCall()}
           retryPending={outboundPending}
           onClose={() => {
-            setActiveCall(undefined)
+            applyActiveCall()
             setExpectedCallID("")
             expectedCallRef.current = ""
             mediaLegRef.current = null

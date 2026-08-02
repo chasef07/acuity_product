@@ -105,7 +105,8 @@ export function TaskWorkspaceShell() {
   const [view, setView] = useState<View>("none")
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
-  const [callingHint, setCallingHint] = useState(0)
+  const [callRefreshRevision, setCallRefreshRevision] = useState(0)
+  const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [callingOffers, setCallingOffers] = useState<CallingOffer[]>([])
   const [taskCallRequest, setTaskCallRequest] = useState<{
     id: string
@@ -537,7 +538,7 @@ export function TaskWorkspaceShell() {
               setView("none")
             }
           }
-          setCallingHint((current) => current + 1)
+          setWorkspaceRevision((current) => current + 1)
         },
       }
     },
@@ -664,6 +665,8 @@ export function TaskWorkspaceShell() {
       realtimeURL: realtimeURL(),
       getToken: getAccessToken,
       reconcile: (input) => reconcileWorkspaceRef.current(input),
+      onValidatedHint: () =>
+        setCallRefreshRevision((current) => current + 1),
       onStateChange: setConnection,
       onUnauthorized: () => setLoadState("unauthorized"),
     })
@@ -1022,7 +1025,8 @@ export function TaskWorkspaceShell() {
           platformOperator={workspace.platformOperator}
           practiceID={practiceID}
           locations={practice.locations}
-          hint={callingHint}
+          callRefreshRevision={callRefreshRevision}
+          workspaceRevision={workspaceRevision}
           taskCallRequest={taskCallRequest}
           onTaskCallHandled={(requestID, requestError) => {
             setTaskCallRequest((current) =>
@@ -1048,7 +1052,7 @@ export function TaskWorkspaceShell() {
             canMutate={
               !workspace.platformOperator || Boolean(workspace.supportMode)
             }
-            revision={callingHint}
+            revision={workspaceRevision}
             initialMessage={committedMessage}
             onMessageSent={handleMessageSent}
             onThreadRead={(threadID) => {
@@ -1087,7 +1091,7 @@ export function TaskWorkspaceShell() {
             canMutate={
               !workspace.platformOperator || Boolean(workspace.supportMode)
             }
-            historyHint={callingHint}
+            historyHint={workspaceRevision}
             taskCallPending={Boolean(taskCallRequest)}
             taskCallError={taskCallError}
             onTaskUpdated={(task) => {
