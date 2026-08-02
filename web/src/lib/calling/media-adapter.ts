@@ -38,6 +38,9 @@ declare global {
 type SDKCall = {
   state: string
   remoteStream?: MediaStream
+  peer?: {
+    instance?: RTCPeerConnection | null
+  }
   telnyxIDs: {
     telnyxLegId?: string
     telnyxSessionId?: string
@@ -243,6 +246,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
           }
           output.srcObject = call.remoteStream
           await output.play()
+          await waitForSecureMedia(call)
           applyMicrophoneFence(call, true, desiredMuted)
           this.activeSession = {
             call,
@@ -298,4 +302,61 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     // Control remains the sole termination owner.
     if (client) await client.serverDisconnect()
   }
+}
+
+function waitForSecureMedia(call: SDKCall) {
+  const peer = call.peer?.instance
+  if (!peer) {
+    return Promise.reject(
+      new Error("browser secure media transport is unavailable"),
+    )
+  }
+  if (secureMediaConnected(peer)) return Promise.resolve()
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => finish(new Error("browser secure media transport did not connect")),
+      10_000,
+    )
+    const events = [
+      "connectionstatechange",
+      "iceconnectionstatechange",
+      "signalingstatechange",
+    ] as const
+
+    function check() {
+      if (secureMediaConnected(peer!)) {
+        finish()
+        return
+      }
+      if (
+        peer!.connectionState === "failed" ||
+        peer!.connectionState === "closed" ||
+        peer!.iceConnectionState === "failed" ||
+        peer!.iceConnectionState === "closed" ||
+        peer!.signalingState === "closed"
+      ) {
+        finish(new Error("browser secure media transport failed"))
+      }
+    }
+
+    function finish(error?: Error) {
+      clearTimeout(timeout)
+      for (const event of events) peer!.removeEventListener(event, check)
+      if (error) reject(error)
+      else resolve()
+    }
+
+    for (const event of events) peer.addEventListener(event, check)
+    check()
+  })
+}
+
+function secureMediaConnected(peer: RTCPeerConnection) {
+  return (
+    peer.connectionState === "connected" &&
+    (peer.iceConnectionState === "connected" ||
+      peer.iceConnectionState === "completed") &&
+    peer.signalingState !== "closed"
+  )
 }

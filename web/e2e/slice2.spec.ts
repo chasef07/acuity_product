@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises"
 
-import { expect, test, type BrowserContext, type Page } from "@playwright/test"
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+  type Route,
+} from "@playwright/test"
 import { Pool } from "pg"
 
 import { latestEmail } from "./support"
@@ -8,6 +14,8 @@ import { latestEmail } from "./support"
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL =
   process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
+const realtimeURL =
+  process.env.E2E_REALTIME_URL ?? "http://127.0.0.1:18081"
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
@@ -468,17 +476,69 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     const loserPage =
       winnerPage === selectedPage ? secondaryPage : selectedPage
     const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
+    const staffClientState = Buffer.from(JSON.stringify({
+      v: 1,
+      call: durableCall.id,
+      leg: "staff",
+      attempt: durableCall.current_attempt_id,
+    })).toString("base64")
     await sendIncomingLeg(
       winnerPage,
       "unrelated-browser-leg",
       "unrelated-media-token",
     )
-    await sendIncomingLeg(
-      winnerPage,
-      "early-browser-leg",
-      durableMediaToken,
-    )
-    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+    await pauseMediaAttachment(winnerPage)
+    try {
+      await sendIncomingLeg(
+        winnerPage,
+        "early-browser-leg",
+        durableMediaToken,
+      )
+      await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+      await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
+
+      const callURL = `${portalURL}/v1/calling/calls/${durableCall.id}`
+      const tokenResponse = await winnerPage.request.get(
+        `${webURL}/api/auth/token`,
+      )
+      expect(tokenResponse.ok()).toBeTruthy()
+      const { token } = (await tokenResponse.json()) as { token: string }
+      const beforeReceipt = await winnerPage.request.get(callURL, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(beforeReceipt.ok()).toBeTruthy()
+      const beforeVersion = ((await beforeReceipt.json()) as { version: number })
+        .version
+      const refreshedCall = winnerPage.waitForResponse(async (response) => {
+        if (
+          response.request().method() !== "GET" ||
+          response.url() !== callURL ||
+          !response.ok()
+        ) {
+          return false
+        }
+        const { version } = (await response.json()) as { version: number }
+        return version > beforeVersion
+      })
+      await deliverProviderEvent(winnerPage, {
+        eventType: "call.initiated",
+        eventId: "e2e-staff-initiated",
+        occurredAt: new Date().toISOString(),
+        payload: providerLegPayload(staffClientState),
+      })
+      await deliverProviderEvent(winnerPage, {
+        eventType: "call.answered",
+        eventId: "e2e-staff-answered",
+        occurredAt: new Date().toISOString(),
+        payload: providerLegPayload(staffClientState),
+      })
+      await refreshedCall
+    } finally {
+      await resumeMediaAttachment(winnerPage)
+    }
+    await expect(
+      callCenter(winnerPage).getByText(/Audio: attached/),
+    ).toBeVisible()
     await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
     await sendIncomingLeg(
       winnerPage,
@@ -524,29 +584,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
     await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
 
-    const staffClientState = Buffer.from(JSON.stringify({
-      v: 1,
-      call: durableCall.id,
-      leg: "staff",
-      attempt: durableCall.current_attempt_id,
-    })).toString("base64")
     const callerClientState = Buffer.from(JSON.stringify({
       v: 1,
       call: durableCall.id,
       leg: "caller",
     })).toString("base64")
-    await deliverProviderEvent(winnerPage, {
-      eventType: "call.initiated",
-      eventId: "e2e-staff-initiated",
-      occurredAt: new Date().toISOString(),
-      payload: providerLegPayload(staffClientState),
-    })
-    await deliverProviderEvent(winnerPage, {
-      eventType: "call.answered",
-      eventId: "e2e-staff-answered",
-      occurredAt: new Date().toISOString(),
-      payload: providerLegPayload(staffClientState),
-    })
     await deliverProviderEvent(winnerPage, {
       eventType: "call.bridged",
       eventId: "e2e-staff-bridged",
@@ -1227,6 +1269,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         "DIAL_STAFF",
       )
       const taskSession = `fixture-task-outbound-${taskOutbound.id}`
+      const answersBeforeAttachment = await mediaCount(takeoverPage, "answers")
+      await pauseMediaAttachment(takeoverPage)
       await sendIncomingLeg(
         takeoverPage,
         "fixture-task-webrtc-leg",
@@ -1244,6 +1288,47 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           client_state: taskStaff.client_state,
         },
       })
+      try {
+        await expect
+          .poll(() => mediaCount(takeoverPage, "answers"))
+          .toBe(answersBeforeAttachment + 1)
+        await expect
+          .poll(async () => {
+            const result = await database.query<{ answered: boolean }>(
+              `SELECT attempt.staff_answered_at IS NOT NULL AS answered
+                 FROM human_calling_calls call
+                 JOIN human_calling_connection_attempts attempt
+                   ON attempt.id = call.current_attempt_id
+                WHERE call.id = $1`,
+              [taskOutbound.id],
+            )
+            return result.rows[0]?.answered
+          })
+          .toBe(true)
+        await takeoverPage.waitForTimeout(300)
+        const attachmentFence = await database.query<{
+          destination_commands: string
+          media_ready: boolean
+        }>(
+          `SELECT
+             (SELECT count(*)::text
+                FROM human_calling_provider_commands command
+               WHERE command.call_id = call.id
+                 AND command.action = 'DIAL_DESTINATION') AS destination_commands,
+             attempt.media_ready_at IS NOT NULL AS media_ready
+             FROM human_calling_calls call
+             JOIN human_calling_connection_attempts attempt
+               ON attempt.id = call.current_attempt_id
+            WHERE call.id = $1`,
+          [taskOutbound.id],
+        )
+        expect(attachmentFence.rows[0]).toEqual({
+          destination_commands: "0",
+          media_ready: false,
+        })
+      } finally {
+        await resumeMediaAttachment(takeoverPage)
+      }
       await expect(
         callCenter(takeoverPage).getByText("Ringing", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
@@ -1255,17 +1340,78 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         taskOutbound.id,
         "DIAL_DESTINATION",
       )
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.bridged",
-        eventId: `e2e-task-destination-bridged-${taskOutbound.id}`,
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: taskDestination.control_id,
-          call_leg_id: taskDestination.leg_id,
-          call_session_id: taskSession,
-          client_state: taskDestination.client_state,
-        },
-      })
+      const callURL = `${portalURL}/v1/calling/calls/${taskOutbound.id}`
+      await takeoverPage.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" && response.url() === callURL,
+      )
+      await pauseCallPolling(takeoverPage)
+      const releaseReconciliation = deferred<void>()
+      let reconciliationStarted = false
+      const reconciliationPattern = `${portalURL}/v1/**`
+      const delayReconciliation = async (route: Route) => {
+        const request = route.request()
+        const pathname = new URL(request.url()).pathname
+        const delayed =
+          pathname === "/v1/workspace" ||
+          pathname === "/v1/tasks/query" ||
+          pathname === "/v1/message-threads/query" ||
+          (request.method() === "GET" &&
+            pathname.startsWith("/v1/tasks/"))
+        if (!delayed) {
+          await route.continue()
+          return
+        }
+        reconciliationStarted = true
+        await releaseReconciliation.promise
+        await route.continue()
+      }
+      await takeoverPage.route(reconciliationPattern, delayReconciliation)
+      const bridgeStartedAt = Date.now()
+      const bridgeEventID = `e2e-task-destination-bridged-${taskOutbound.id}`
+      try {
+        const connectedResponse = takeoverPage.waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            response.url() === callURL,
+          { timeout: 750 },
+        )
+        await deliverProviderEvent(takeoverPage, {
+          eventType: "call.bridged",
+          eventId: bridgeEventID,
+          occurredAt: new Date().toISOString(),
+          payload: {
+            call_control_id: taskDestination.control_id,
+            call_leg_id: taskDestination.leg_id,
+            call_session_id: taskSession,
+            client_state: taskDestination.client_state,
+          },
+        })
+        const response = await connectedResponse
+        expect(await response.json()).toMatchObject({ state: "CONNECTED" })
+        expect(Date.now() - bridgeStartedAt).toBeLessThan(750)
+        await expect.poll(() => reconciliationStarted).toBe(true)
+        const receiptTiming = await database.query<{
+          queue_milliseconds: string
+        }>(
+          `SELECT EXTRACT(
+                    EPOCH FROM (last_attempt_at - received_at)
+                  ) * 1000 AS queue_milliseconds
+             FROM human_calling_provider_receipts
+            WHERE event_id = $1`,
+          [bridgeEventID],
+        )
+        expect(Number(receiptTiming.rows[0]?.queue_milliseconds)).toBeLessThan(
+          500,
+        )
+      } finally {
+        releaseReconciliation.resolve()
+        await resumeCallPolling(takeoverPage)
+        await takeoverPage.unroute(
+          reconciliationPattern,
+          delayReconciliation,
+        )
+      }
       await expect(
         callCenter(takeoverPage).getByText("Connected", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
@@ -1385,22 +1531,44 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           destination: "+15555550100",
         })
 
-      await takeoverPage.getByRole("button", { name: "Hang up" }).click()
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.hangup",
-        eventId: `e2e-task-destination-hangup-${taskOutbound.id}`,
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: taskDestination.control_id,
-          call_leg_id: taskDestination.leg_id,
-          call_session_id: taskSession,
-          client_state: taskDestination.client_state,
-          hangup_cause: "normal_clearing",
-        },
-      })
       await expect(
-        callCenter(takeoverPage).getByText("Call ended", { exact: true }),
+        callCenter(winnerPage).getByText("Connected", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
+      const winnerNetwork = await winnerPage.context().newCDPSession(winnerPage)
+      await winnerNetwork.send("Network.enable")
+      try {
+        await winnerNetwork.send("Network.setBlockedURLs", {
+          urls: [`${realtimeURL}/v1/events*`],
+        })
+        await expect(winnerPage.getByText("Updates delayed")).toBeVisible({
+          timeout: 45_000,
+        })
+
+        await takeoverPage.getByRole("button", { name: "Hang up" }).click()
+        await deliverProviderEvent(takeoverPage, {
+          eventType: "call.hangup",
+          eventId: `e2e-task-destination-hangup-${taskOutbound.id}`,
+          occurredAt: new Date().toISOString(),
+          payload: {
+            call_control_id: taskDestination.control_id,
+            call_leg_id: taskDestination.leg_id,
+            call_session_id: taskSession,
+            client_state: taskDestination.client_state,
+            hangup_cause: "normal_clearing",
+          },
+        })
+        await expect(
+          callCenter(takeoverPage).getByText("Call ended", { exact: true }),
+        ).toBeVisible({ timeout: 15_000 })
+
+        await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
+        await expect(
+          callCenter(winnerPage).getByText("Call ended", { exact: true }),
+        ).toBeVisible({ timeout: 15_000 })
+      } finally {
+        await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
+        await winnerNetwork.detach()
+      }
       await takeoverPage.getByRole("button", { name: "Keep open" }).click()
       await expect
         .poll(async () => {
@@ -1600,6 +1768,9 @@ async function prepareBrowser(context: BrowserContext) {
       answers: 0,
       rejects: 0,
       disconnects: 0,
+      mediaAttachmentPaused: false,
+      resumeMediaAttachment: undefined as undefined | (() => void),
+      callPollingPaused: false,
       dtmf: [] as string[],
       ringtonePulses: 0,
       ringtoneStops: 0,
@@ -1613,6 +1784,16 @@ async function prepareBrowser(context: BrowserContext) {
           ) => void),
       signal: undefined as undefined | ((state: string) => void),
     }
+    const scheduleInterval = window.setInterval.bind(window)
+    window.setInterval = ((handler: TimerHandler, timeout?: number) => {
+      if (typeof handler !== "function") {
+        return scheduleInterval(handler, timeout)
+      }
+      return scheduleInterval(() => {
+        if (state.callPollingPaused && timeout === 1_000) return
+        handler()
+      }, timeout)
+    }) as typeof window.setInterval
     const microphone = {
       readyState: "live",
       stop: () => undefined,
@@ -1712,6 +1893,11 @@ async function prepareBrowser(context: BrowserContext) {
               recovery,
               answer: async () => {
                 state.answers += 1
+                if (state.mediaAttachmentPaused) {
+                  await new Promise<void>((resolve) => {
+                    state.resumeMediaAttachment = resolve
+                  })
+                }
               },
               reject: async () => {
                 state.rejects += 1
@@ -1852,6 +2038,60 @@ async function sendIncomingLeg(
     },
     { providerLegID, mediaToken, recovery },
   )
+}
+
+async function pauseMediaAttachment(page: Page) {
+  await page.evaluate(() => {
+    const state = (
+      window as typeof window & {
+        __acuityCallingTestState: { mediaAttachmentPaused: boolean }
+      }
+    ).__acuityCallingTestState
+    state.mediaAttachmentPaused = true
+  })
+}
+
+async function resumeMediaAttachment(page: Page) {
+  await page.evaluate(() => {
+    const state = (
+      window as typeof window & {
+        __acuityCallingTestState: {
+          mediaAttachmentPaused: boolean
+          resumeMediaAttachment?: () => void
+        }
+      }
+    ).__acuityCallingTestState
+    state.mediaAttachmentPaused = false
+    state.resumeMediaAttachment?.()
+    state.resumeMediaAttachment = undefined
+  })
+}
+
+async function pauseCallPolling(page: Page) {
+  await setCallPollingPaused(page, true)
+}
+
+async function resumeCallPolling(page: Page) {
+  await setCallPollingPaused(page, false)
+}
+
+async function setCallPollingPaused(page: Page, paused: boolean) {
+  await page.evaluate((nextPaused) => {
+    const state = (
+      window as typeof window & {
+        __acuityCallingTestState: { callPollingPaused: boolean }
+      }
+    ).__acuityCallingTestState
+    state.callPollingPaused = nextPaused
+  }, paused)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
 }
 
 async function mediaTokenForCall(database: Pool, callID: string) {
