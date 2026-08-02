@@ -1,6 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import {
   CheckIcon,
   HeadphonesIcon,
@@ -8,6 +16,7 @@ import {
   MicOffIcon,
   PhoneCallIcon,
   PhoneOffIcon,
+  PhoneOutgoingIcon,
   RotateCcwIcon,
   ShieldAlertIcon,
 } from "lucide-react"
@@ -15,8 +24,39 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar"
+import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import {
   acceptCallingOffer,
   acquireSoftphone,
@@ -51,13 +91,13 @@ import { providerOutcomeLabel } from "@/lib/calling/outcomes"
 import { portalClient } from "@/lib/api/client"
 
 type CallingDockProps = {
+  children: ReactNode
   platformOperator: boolean
   practiceID: string
   locations: Location[]
   hint: number
   taskCallRequest?: { id: string; taskID: string }
   onTaskCallHandled: (requestID: string, error?: string) => void
-  onOffersChanged: (offers: CallingOffer[]) => void
   onCallChanged: (call: CallingCall | undefined) => void
   onDisposition: (result: CallingDispositionResult) => void
 }
@@ -66,14 +106,90 @@ const sessionStorageKey = "acuity.callingSession"
 const mediaEnabledStorageKey = "acuity.callingMediaEnabled"
 const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
 
+type CallingNavigationContext = {
+  activeCall: CallingCall | undefined
+  availabilityError: string
+  availabilityPending: boolean
+  available: boolean
+  dialerOpen: boolean
+  ownsSoftphone: boolean
+  platformOperator: boolean
+  setAvailability: (available: boolean) => void
+  setDialerOpen: (open: boolean) => void
+}
+
+const CallingNavigationContext = createContext<CallingNavigationContext | null>(
+  null,
+)
+
+function useCallingNavigation() {
+  const context = useContext(CallingNavigationContext)
+  if (!context) {
+    throw new Error("Calling navigation must be rendered inside CallingDock.")
+  }
+  return context
+}
+
+export function CallingAvailabilityControl() {
+  const {
+    activeCall,
+    availabilityError,
+    availabilityPending,
+    available,
+    ownsSoftphone,
+    platformOperator,
+    setAvailability,
+  } = useCallingNavigation()
+  if (platformOperator) return null
+  return (
+    <div className="ml-auto flex items-center gap-2">
+      <span className="text-xs font-medium">Availability</span>
+      {availabilityPending && <Spinner aria-label="Updating availability" />}
+      {!availabilityPending && availabilityError && (
+        <ShieldAlertIcon
+          aria-label={availabilityError}
+          className="text-destructive"
+        />
+      )}
+      <Switch
+        aria-label="Availability"
+        size="sm"
+        checked={available}
+        disabled={
+          availabilityPending || (Boolean(activeCall) && ownsSoftphone)
+        }
+        onCheckedChange={setAvailability}
+      />
+    </div>
+  )
+}
+
+export function CallingOutboundNavigation() {
+  const { activeCall, dialerOpen, platformOperator, setDialerOpen } =
+    useCallingNavigation()
+  if (platformOperator) return null
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={dialerOpen}
+        disabled={Boolean(activeCall)}
+        onClick={() => setDialerOpen(true)}
+      >
+        <PhoneOutgoingIcon />
+        <span>Outbound calls</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
 export function CallingDock({
+  children,
   platformOperator,
   practiceID,
   locations,
   hint,
   taskCallRequest,
   onTaskCallHandled,
-  onOffersChanged,
   onCallChanged,
   onDisposition,
 }: CallingDockProps) {
@@ -91,6 +207,7 @@ export function CallingDock({
   const [dialLocationID, setDialLocationID] = useState("")
   const [dialDestination, setDialDestination] = useState("")
   const [outboundPending, setOutboundPending] = useState(false)
+  const [availabilityPending, setAvailabilityPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const adapterRef = useRef<CallingMediaAdapter | null>(null)
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
@@ -121,22 +238,19 @@ export function CallingDock({
     availabilityRef.current = available
   }, [available])
   useEffect(() => {
-    onOffersChanged(offers)
-  }, [offers, onOffersChanged])
-  useEffect(() => {
     onCallChanged(activeCall)
   }, [activeCall, onCallChanged])
-  useEffect(
-    () => () => {
-      onOffersChanged([])
-    },
-    [onOffersChanged],
-  )
 
   const updateReadiness = useCallback(
     async (nextAvailable: boolean, nextMediaState = mediaState) => {
       const token = await getAccessToken()
-      if (!token) return undefined
+      if (!token) {
+        setAvailable(false)
+        availabilityRef.current = false
+        setAvailabilityPending(false)
+        setError("Your authentication needs to be refreshed.")
+        return undefined
+      }
       const probeTrack = probeStreamRef.current?.getAudioTracks()[0]
       const technicallyReady =
         nextMediaState === "ready" && probeTrack?.readyState === "live"
@@ -158,7 +272,13 @@ export function CallingDock({
       } else {
         setAvailable(false)
         availabilityRef.current = false
+        setError(
+          nextAvailable
+            ? "Availability could not be confirmed."
+            : "Pausing calls could not be confirmed.",
+        )
       }
+      setAvailabilityPending(false)
       return result?.data
     },
     [mediaState, sessionID],
@@ -421,113 +541,134 @@ export function CallingDock({
     if (connectingRef.current) return
     connectingRef.current = true
     try {
-    const storedIntent = window.sessionStorage.getItem(
-      availabilityIntentStorageKey,
-    )
-    if (storedIntent === null) {
-      rememberAvailabilityIntent(true)
-    } else {
-      availabilityIntentRef.current = storedIntent === "true"
-    }
-    setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setError("Your authentication needs to be refreshed.")
-      return
-    }
-    const acquired = await acquireSoftphone({
-      client: portalClient(token),
-      body: { sessionId: sessionID, takeover: false },
-    }).catch(() => undefined)
-    if (!acquired?.data) {
-      setError("The softphone lease is temporarily unavailable.")
-      return
-    }
-    setLease(acquired.data)
-    if (!acquired.data.owner) {
+      const storedIntent = window.sessionStorage.getItem(
+        availabilityIntentStorageKey,
+      )
+      if (storedIntent === null) {
+        rememberAvailabilityIntent(true)
+      } else {
+        availabilityIntentRef.current = storedIntent === "true"
+      }
+      setError("")
+      const token = await getAccessToken()
+      if (!token) {
+        setError("Your authentication needs to be refreshed.")
+        setAvailabilityPending(false)
+        return
+      }
+      const acquired = await acquireSoftphone({
+        client: portalClient(token),
+        body: { sessionId: sessionID, takeover: false },
+      }).catch(() => undefined)
+      if (!acquired?.data) {
+        setError("The softphone lease is temporarily unavailable.")
+        setAvailabilityPending(false)
+        return
+      }
+      setLease(acquired.data)
+      if (!acquired.data.owner) {
+        if (acquired.data.activeCallId) {
+          expectedCallRef.current = acquired.data.activeCallId
+          setExpectedCallID(acquired.data.activeCallId)
+          const observed = await getCallingCall({
+            client: portalClient(token),
+            path: { callId: acquired.data.activeCallId },
+          }).catch(() => undefined)
+          if (observed?.data) setActiveCall(observed.data)
+        }
+        setError("Calling is active in another browser.")
+        setAvailabilityPending(false)
+        return
+      }
       if (acquired.data.activeCallId) {
         expectedCallRef.current = acquired.data.activeCallId
         setExpectedCallID(acquired.data.activeCallId)
-        const observed = await getCallingCall({
+        setAvailable(false)
+        availabilityRef.current = false
+        const restored = await getCallingCall({
           client: portalClient(token),
           path: { callId: acquired.data.activeCallId },
         }).catch(() => undefined)
-        if (observed?.data) setActiveCall(observed.data)
+        if (restored?.data) {
+          setActiveCall(restored.data)
+          setMediaAttached(false)
+        }
       }
-      return
-    }
-    if (acquired.data.activeCallId) {
-      expectedCallRef.current = acquired.data.activeCallId
-      setExpectedCallID(acquired.data.activeCallId)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const microphone = stream.getAudioTracks()[0]
+        if (!microphone || microphone.readyState !== "live") {
+          stream.getTracks().forEach((track) => track.stop())
+          throw new Error("microphone unavailable")
+        }
+        probeStreamRef.current?.getTracks().forEach((track) => track.stop())
+        probeStreamRef.current = stream
+        microphone.addEventListener(
+          "ended",
+          () => {
+            setAvailable(false)
+            availabilityRef.current = false
+            void updateReadiness(false, "unavailable")
+          },
+          { once: true },
+        )
+        const audioContext = new AudioContext()
+        await audioContext.resume()
+        await audioContext.close()
+        if ("Notification" in window && Notification.permission === "default") {
+          await Notification.requestPermission()
+        }
+      } catch {
+        setError("Microphone and browser audio permission are required.")
+        setAvailabilityPending(false)
+        return
+      }
+      const issued = await issueCallingMediaToken({
+        client: portalClient(token),
+        body: { sessionId: sessionID },
+      }).catch(() => undefined)
+      if (!issued?.data) {
+        setError(
+          "Calling credentials are still being prepared. Try again shortly.",
+        )
+        setAvailabilityPending(false)
+        return
+      }
+      if (!document.querySelector("#acuity-calling-remote-audio")) {
+        setError("The browser audio output is unavailable.")
+        setAvailabilityPending(false)
+        return
+      }
+      await adapterRef.current?.disconnect()
+      const adapter = createCallingMediaAdapter()
+      adapterRef.current = adapter
+      await adapter.connect(issued.data.token, "acuity-calling-remote-audio", {
+        onState: (state) => {
+          setMediaState(state)
+          if (state === "ready") {
+            const mayReceiveOffers =
+              availabilityIntentRef.current &&
+              expectedCallRef.current === ""
+            setAvailable(false)
+            availabilityRef.current = false
+            void updateReadiness(mayReceiveOffers, state)
+          } else if (state === "unavailable" || state === "reconnecting") {
+            setAvailable(false)
+            availabilityRef.current = false
+            mediaLegRef.current = null
+            setMediaAttached(false)
+            setMuted(false)
+            void updateReadiness(false, state)
+          }
+        },
+        onIncoming: (leg) => void handleIncoming(leg),
+      })
+      window.sessionStorage.setItem(mediaEnabledStorageKey, "true")
+    } catch {
       setAvailable(false)
       availabilityRef.current = false
-      const restored = await getCallingCall({
-        client: portalClient(token),
-        path: { callId: acquired.data.activeCallId },
-      }).catch(() => undefined)
-      if (restored?.data) {
-        setActiveCall(restored.data)
-        setMediaAttached(false)
-      }
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const microphone = stream.getAudioTracks()[0]
-      if (!microphone || microphone.readyState !== "live") {
-        stream.getTracks().forEach((track) => track.stop())
-        throw new Error("microphone unavailable")
-      }
-      probeStreamRef.current?.getTracks().forEach((track) => track.stop())
-      probeStreamRef.current = stream
-      microphone.addEventListener("ended", () => {
-        setAvailable(false)
-        availabilityRef.current = false
-        void updateReadiness(false, "unavailable")
-      }, { once: true })
-      const audioContext = new AudioContext()
-      await audioContext.resume()
-      await audioContext.close()
-      if ("Notification" in window && Notification.permission === "default") {
-        await Notification.requestPermission()
-      }
-    } catch {
-      setError("Microphone and browser audio permission are required.")
-      return
-    }
-    const issued = await issueCallingMediaToken({
-      client: portalClient(token),
-      body: { sessionId: sessionID },
-    }).catch(() => undefined)
-    if (!issued?.data) {
-      setError("Calling credentials are still being prepared. Try again shortly.")
-      return
-    }
-    if (!document.querySelector("#acuity-calling-remote-audio")) {
-      setError("The browser audio output is unavailable.")
-      return
-    }
-    await adapterRef.current?.disconnect()
-    const adapter = createCallingMediaAdapter()
-    adapterRef.current = adapter
-    await adapter.connect(issued.data.token, "acuity-calling-remote-audio", {
-      onState: (state) => {
-        setMediaState(state)
-        if (state === "ready") {
-          const mayReceiveOffers =
-            availabilityIntentRef.current &&
-            expectedCallRef.current === ""
-          setAvailable(mayReceiveOffers)
-          availabilityRef.current = mayReceiveOffers
-          void updateReadiness(mayReceiveOffers, state)
-        } else if (state === "unavailable" || state === "reconnecting") {
-          setAvailable(false)
-          availabilityRef.current = false
-          void updateReadiness(false, state)
-        }
-      },
-      onIncoming: (leg) => void handleIncoming(leg),
-    })
-    window.sessionStorage.setItem(mediaEnabledStorageKey, "true")
+      setAvailabilityPending(false)
+      setError("Browser calling could not be started.")
     } finally {
       connectingRef.current = false
     }
@@ -582,8 +723,7 @@ export function CallingDock({
         availabilityIntentRef.current &&
         !availabilityRef.current
       ) {
-        setAvailable(true)
-        availabilityRef.current = true
+        setAvailabilityPending(true)
         void updateReadiness(true, "ready")
         setActiveCall(undefined)
         setExpectedCallID("")
@@ -604,8 +744,7 @@ export function CallingDock({
         availabilityIntentRef.current &&
         !availabilityRef.current
       ) {
-        setAvailable(true)
-        availabilityRef.current = true
+        setAvailabilityPending(true)
         void updateReadiness(true, "ready")
       }
     }
@@ -761,13 +900,18 @@ export function CallingDock({
 
   async function takeOver() {
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) {
+      setError("Your authentication needs to be refreshed.")
+      setAvailabilityPending(false)
+      return
+    }
     const result = await acquireSoftphone({
       client: portalClient(token),
       body: { sessionId: sessionID, takeover: true },
     }).catch(() => undefined)
     if (!result?.data?.owner) {
       setError("This browser could not take over the softphone.")
+      setAvailabilityPending(false)
       return
     }
     setLease(result.data)
@@ -775,13 +919,34 @@ export function CallingDock({
   }
 
   async function pauseCalling() {
+    setAvailabilityPending(true)
     rememberAvailabilityIntent(false)
     await updateReadiness(false)
   }
 
   async function resumeCalling() {
+    setAvailabilityPending(true)
     rememberAvailabilityIntent(true)
     await updateReadiness(true)
+  }
+
+  async function setAvailabilityIntent(nextAvailable: boolean) {
+    setError("")
+    if (!nextAvailable) {
+      await pauseCalling()
+      return
+    }
+    setAvailabilityPending(true)
+    rememberAvailabilityIntent(true)
+    if (!lease?.owner) {
+      await takeOver()
+      return
+    }
+    if (mediaState !== "ready") {
+      await connectMedia()
+      return
+    }
+    await resumeCalling()
   }
 
   async function acceptOffer(offer: CallingOffer) {
@@ -906,200 +1071,271 @@ export function CallingDock({
     setMuted(false)
     if (mediaState === "ready" && ownerRef.current) {
       const nextAvailable = availabilityIntentRef.current
-      setAvailable(nextAvailable)
-      availabilityRef.current = nextAvailable
-      const readiness = await updateReadiness(nextAvailable)
-      availabilityRef.current = readiness?.available ?? false
+      setAvailabilityPending(true)
+      await updateReadiness(nextAvailable)
     }
   }
 
-  if (platformOperator) return <OperatorCallInspector />
-
   const earliest = offers[0]
   return (
-    <section
-      aria-label="Call Center"
-      className="border-b bg-muted/20 px-4 py-2"
+    <CallingNavigationContext.Provider
+      value={{
+        activeCall,
+        availabilityError: error,
+        availabilityPending,
+        available,
+        dialerOpen: showDialer,
+        ownsSoftphone: Boolean(lease?.owner),
+        platformOperator,
+        setAvailability: (nextAvailable) =>
+          void setAvailabilityIntent(nextAvailable),
+        setDialerOpen: setShowDialer,
+      }}
     >
+      {children}
       <audio id="acuity-calling-remote-audio" autoPlay className="hidden" />
-      <div className="flex min-h-9 flex-wrap items-center gap-2">
-        <HeadphonesIcon className="size-4 text-primary" />
-        <span className="text-xs font-semibold uppercase tracking-[0.16em]">
-          Call Center
-        </span>
-        {!lease?.owner && (
-          <>
-            <Badge variant="outline">Inactive in this browser</Badge>
-            <Button size="sm" onClick={() => void (lease ? takeOver() : connectMedia())}>
-              {lease ? "Take over softphone" : "Enable calling"}
-            </Button>
-          </>
-        )}
-        {lease?.owner && mediaState !== "ready" && (
-          <>
-            <Badge variant="outline">
-              {mediaState === "reconnecting" ? "Reconnecting" : "Audio not ready"}
-            </Badge>
-            <Button size="sm" onClick={() => void connectMedia()}>
-              Enable calling
-            </Button>
-          </>
-        )}
-        {lease?.owner && mediaState === "ready" && (
-          <>
-            <Badge variant={available ? "secondary" : "outline"}>
-              {available ? "Available" : "Paused"}
-            </Badge>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void (available ? pauseCalling() : resumeCalling())}
-            >
-              {available ? "Pause calls" : "Become available"}
-            </Button>
-            {!activeCall && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowDialer((current) => !current)}
-              >
-                <PhoneCallIcon />
-                New call
-              </Button>
-            )}
-          </>
-        )}
-        {earliest && !activeCall && (
-          <div className="ml-auto flex min-w-0 items-center gap-2">
-            <PhoneCallIcon className="size-4 animate-pulse motion-reduce:animate-none" />
-            <span className="truncate text-sm font-medium">
-              {earliest.displayName || "Incoming caller"} · {earliest.locationName}
-              {earliest.nameSource ? ` · ${earliest.nameSource}` : ""}
-            </span>
-            {earliest.transferReason && (
-              <span className="hidden max-w-64 truncate text-xs text-muted-foreground md:inline">
-                {earliest.transferReason}
-                {earliest.reasonSource ? ` · ${earliest.reasonSource}` : ""}
-              </span>
-            )}
-            {offers.length > 1 && (
-              <Badge variant="secondary">{offers.length} incoming</Badge>
-            )}
-            <Badge variant="outline">
-              {secondsRemaining(earliest.deadline, now)}s
-            </Badge>
-            <Button size="sm" onClick={() => void acceptOffer(earliest)}>
-              Accept
-            </Button>
-          </div>
-        )}
-      </div>
-      {showDialer && lease?.owner && mediaState === "ready" && !activeCall && (
-        <form
-          aria-label="Standalone outbound call"
-          className="mt-2 flex flex-wrap items-end gap-2 rounded-md border bg-background p-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void commitOutbound(window.crypto.randomUUID(), {
-              practiceId: practiceID,
-              locationId: resolvedDialLocationID,
-              destination: dialDestination.trim(),
-            }).then((requestError) => {
-              if (requestError) setError(requestError)
-            })
+      {!platformOperator && (
+        <Dialog
+          open={showDialer}
+          onOpenChange={(open) => {
+            setShowDialer(open)
+            if (open) setError("")
           }}
         >
-          <label className="grid gap-1 text-xs">
-            <span className="text-muted-foreground">Call office</span>
-            <NativeSelect
-              aria-label="Call office"
-              className="h-8 min-w-48"
-              value={resolvedDialLocationID}
-              onChange={(event) => setDialLocationID(event.target.value)}
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Outbound call</DialogTitle>
+              <DialogDescription>
+                Choose the office and enter a US phone number.
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              aria-label="Standalone outbound call"
+              className="flex flex-col gap-4"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void commitOutbound(window.crypto.randomUUID(), {
+                  practiceId: practiceID,
+                  locationId: resolvedDialLocationID,
+                  destination: dialDestination.trim(),
+                }).then((requestError) => {
+                  if (requestError) setError(requestError)
+                })
+              }}
             >
-              {locations.map((location) => (
-                <NativeSelectOption key={location.id} value={location.id}>
-                  {location.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </label>
-          <label className="grid min-w-56 flex-1 gap-1 text-xs">
-            <span className="text-muted-foreground">
-              Destination · US +1 E.164
-            </span>
-            <Input
-              aria-label="Outbound destination"
-              className="h-8 font-mono"
-              placeholder="+15555550100"
-              value={dialDestination}
-              onChange={(event) => setDialDestination(event.target.value)}
-            />
-          </label>
-          <Button
-            size="sm"
-            type="submit"
-            disabled={
-              outboundPending ||
-              !resolvedDialLocationID ||
-              !/^\+1[2-9][0-9]{2}[2-9][0-9]{6}$/.test(dialDestination.trim())
-            }
-          >
-            {outboundPending ? "Preparing…" : "Call"}
-          </Button>
-        </form>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel>Location</FieldLabel>
+                  <Select
+                    items={locations.map((location) => ({
+                      label: location.name,
+                      value: location.id,
+                    }))}
+                    value={resolvedDialLocationID}
+                    onValueChange={(value) => setDialLocationID(value ?? "")}
+                  >
+                    <SelectTrigger aria-label="Call location" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {locations.map((location) => (
+                          <SelectItem key={location.id} value={location.id}>
+                            {location.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="outbound-destination">
+                    Phone number
+                  </FieldLabel>
+                  <Input
+                    id="outbound-destination"
+                    aria-label="Outbound destination"
+                    placeholder="+15555550100"
+                    value={dialDestination}
+                    onChange={(event) => setDialDestination(event.target.value)}
+                  />
+                </Field>
+              </FieldGroup>
+              {(!lease?.owner || mediaState !== "ready") && (
+                <p className="text-xs text-muted-foreground">
+                  Turn on Availability to prepare browser audio before calling.
+                </p>
+              )}
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <DialogFooter>
+                <Button
+                  type="submit"
+                  disabled={
+                    outboundPending ||
+                    !lease?.owner ||
+                    mediaState !== "ready" ||
+                    !resolvedDialLocationID ||
+                    !/^\+1[2-9][0-9]{2}[2-9][0-9]{6}$/.test(
+                      dialDestination.trim(),
+                    )
+                  }
+                >
+                  {outboundPending && <Spinner data-icon="inline-start" />}
+                  Call
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       )}
-      {offers.length > 1 && !activeCall && (
-        <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-          {offers.slice(1).map((offer) => (
-            <button
-              key={offer.id}
-              className="flex shrink-0 items-center gap-2 rounded-md border bg-background px-3 py-2 text-left text-xs"
-              onClick={() => void acceptOffer(offer)}
-            >
-              <span className="font-medium">
-                {offer.displayName || "Incoming caller"}
-                {offer.nameSource ? ` · ${offer.nameSource}` : ""}
-              </span>
-              <span className="text-muted-foreground">{offer.locationName}</span>
-              <span className="font-mono">
-                {secondsRemaining(offer.deadline, now)}s
-              </span>
-            </button>
-          ))}
+      {!platformOperator && earliest && !activeCall && (
+        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
+          <IncomingCallControls
+            offers={offers}
+            now={now}
+            error={error}
+            onAccept={(offer) => void acceptOffer(offer)}
+          />
         </div>
       )}
-      {activeCall && (
-        <ActiveCallControls
-          call={activeCall}
-          mediaState={mediaState}
-          mediaAttached={mediaAttached}
-          owner={Boolean(lease?.owner)}
-          now={now}
-          muted={muted}
-          onMute={toggleMute}
-          onDTMF={sendDTMF}
-          onHangup={() => void hangup()}
-          onDispose={(outcome) => void dispose(outcome)}
-          onRetry={() => void retryCall()}
-          retryPending={outboundPending}
-          onClose={() => {
-            setActiveCall(undefined)
-            setExpectedCallID("")
-            expectedCallRef.current = ""
-            mediaLegRef.current = null
-            setMediaAttached(false)
-          }}
-        />
+      {!platformOperator && activeCall && (
+        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
+          <Card role="region" aria-label="Active call controls" size="sm">
+            <CardHeader>
+              <CardTitle className="flex min-w-0 items-center gap-2">
+                <Badge
+                  variant={
+                    activeCall.state === "CONNECTED" ? "secondary" : "outline"
+                  }
+                >
+                  {callStateLabel(activeCall.state)}
+                </Badge>
+                <span className="truncate">
+                  {activeCall.displayName ||
+                    (activeCall.direction === "OUTBOUND"
+                      ? "Outbound call"
+                      : "Caller")}
+                </span>
+              </CardTitle>
+              <CardDescription className="truncate">
+                {activeCall.phone || "Phone unavailable"} ·{" "}
+                {activeCall.locationName}
+              </CardDescription>
+              <CardAction>
+                <Badge aria-label="Call timer" variant="outline">
+                  {callTimerLabel(activeCall, now)}
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <ActiveCallControls
+                call={activeCall}
+                mediaState={mediaState}
+                mediaAttached={mediaAttached}
+                owner={Boolean(lease?.owner)}
+                muted={muted}
+                onMute={toggleMute}
+                onDTMF={sendDTMF}
+                onHangup={() => void hangup()}
+                onDispose={(outcome) => void dispose(outcome)}
+                onRetry={() => void retryCall()}
+                retryPending={outboundPending}
+                onClose={() => {
+                  setActiveCall(undefined)
+                  setExpectedCallID("")
+                  expectedCallRef.current = ""
+                  mediaLegRef.current = null
+                  setMediaAttached(false)
+                }}
+              />
+              {error && <p className="text-destructive">{error}</p>}
+            </CardContent>
+          </Card>
+        </div>
       )}
-      {error && (
-        <Alert variant="destructive" className="mt-2 py-2">
+      {!platformOperator && !activeCall && !earliest && error && (
+        <Alert
+          aria-label="Calling status"
+          variant="destructive"
+          className="fixed right-4 bottom-4 z-40 max-w-sm"
+        >
           <ShieldAlertIcon />
           <AlertTitle>Calling needs attention</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-    </section>
+      {platformOperator && (
+        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[32rem]">
+          <OperatorCallInspector />
+        </div>
+      )}
+    </CallingNavigationContext.Provider>
+  )
+}
+
+function IncomingCallControls({
+  offers,
+  now,
+  error,
+  onAccept,
+}: {
+  offers: CallingOffer[]
+  now: number
+  error: string
+  onAccept: (offer: CallingOffer) => void
+}) {
+  const earliest = offers[0]
+  if (!earliest) return null
+  return (
+    <Card role="region" aria-label="Incoming calls" size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <PhoneCallIcon />
+          Incoming call
+        </CardTitle>
+        <CardDescription>
+          {earliest.displayName || "Incoming caller"} · {earliest.locationName}
+          {earliest.nameSource ? ` · ${earliest.nameSource}` : ""}
+        </CardDescription>
+        <CardAction>
+          <Badge data-testid="calling-queue-count" variant="secondary">
+            {offers.length}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {earliest.transferReason && (
+          <p className="text-muted-foreground">
+            {earliest.transferReason}
+            {earliest.reasonSource ? ` · ${earliest.reasonSource}` : ""}
+          </p>
+        )}
+        {offers.slice(1).map((offer) => (
+          <Button
+            key={offer.id}
+            type="button"
+            variant="outline"
+            className="h-auto w-full justify-between"
+            onClick={() => onAccept(offer)}
+          >
+            <span className="truncate">
+              {offer.displayName || "Incoming caller"} · {offer.locationName}
+              {offer.nameSource ? ` · ${offer.nameSource}` : ""}
+            </span>
+            <span>{secondsRemaining(offer.deadline, now)}s</span>
+          </Button>
+        ))}
+        {error && <p className="text-destructive">{error}</p>}
+      </CardContent>
+      <CardFooter className="justify-between">
+        <Badge variant="outline">
+          {secondsRemaining(earliest.deadline, now)}s
+        </Badge>
+        <Button size="sm" onClick={() => onAccept(earliest)}>
+          Accept
+        </Button>
+      </CardFooter>
+    </Card>
   )
 }
 
@@ -1191,7 +1427,6 @@ function ActiveCallControls({
   mediaState,
   mediaAttached,
   owner,
-  now,
   muted,
   onMute,
   onDTMF,
@@ -1205,7 +1440,6 @@ function ActiveCallControls({
   mediaState: MediaState
   mediaAttached: boolean
   owner: boolean
-  now: number
   muted: boolean
   onMute: () => void
   onDTMF: (digit: string) => void
@@ -1238,34 +1472,21 @@ function ActiveCallControls({
     mediaAttached
   const dispositionChoices = callDispositionChoices(call)
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2">
-      <Badge variant={call.state === "CONNECTED" ? "secondary" : "outline"}>
-        {callStateLabel(call.state)}
-      </Badge>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">
-          {call.displayName ||
-            (call.direction === "OUTBOUND" ? "Outbound call" : "Caller")}{" "}
-          · {call.locationName}
-        </p>
-        <p className="truncate text-xs text-muted-foreground">
-          {call.phone || "Phone unavailable"}
-          {call.phoneSource ? ` (${call.phoneSource})` : ""} ·{" "}
-          {call.transferReason || "No transfer note"}
-          {call.reasonSource ? ` (${call.reasonSource})` : ""}
-        </p>
-        <p className="truncate text-xs text-muted-foreground">
-          {call.nameSource ? `Name: ${call.nameSource} · ` : ""}
-          Audio: {mediaAttached ? "attached" : mediaState === "ready" ? "waiting for exact leg" : mediaState}
-          {call.connectedAt
-            ? ` · ${Math.max(0, Math.floor((now - new Date(call.connectedAt).getTime()) / 1000))}s`
-            : ""}
-          {call.callerId ? ` · Caller ID ${call.callerId}` : ""}
-          {call.providerTermination
-            ? ` · ${providerOutcomeLabel(call.providerTermination)}`
-            : ""}
-        </p>
-      </div>
+    <div className="flex flex-wrap items-center gap-2">
+      <p className="basis-full truncate text-xs text-muted-foreground">
+        {call.nameSource ? `Name: ${call.nameSource} · ` : ""}
+        Audio: {mediaAttached
+          ? "attached"
+          : mediaState === "ready"
+            ? "waiting for exact leg"
+            : mediaState}
+        {call.transferReason ? ` · ${call.transferReason}` : ""}
+        {call.reasonSource ? ` (${call.reasonSource})` : ""}
+        {call.callerId ? ` · Caller ID ${call.callerId}` : ""}
+        {call.providerTermination
+          ? ` · ${providerOutcomeLabel(call.providerTermination)}`
+          : ""}
+      </p>
       {owner && (call.state === "CONNECTING" ||
         call.state === "RECONCILING" ||
         call.state === "CONNECTED") && (
@@ -1415,6 +1636,27 @@ function browserSessionID() {
 
 function secondsRemaining(deadline: string, now: number) {
   return Math.max(0, Math.ceil((new Date(deadline).getTime() - now) / 1000))
+}
+
+function callTimerLabel(call: CallingCall, now: number) {
+  if (call.connectedAt) {
+    const elapsed = Math.max(
+      0,
+      Math.floor((now - new Date(call.connectedAt).getTime()) / 1000),
+    )
+    const minutes = Math.floor(elapsed / 60)
+    const seconds = String(elapsed % 60).padStart(2, "0")
+    return `${minutes}:${seconds}`
+  }
+  if (
+    call.state === "PREPARING" ||
+    call.state === "RINGING" ||
+    call.state === "CONNECTING" ||
+    call.state === "RECONCILING"
+  ) {
+    return `${secondsRemaining(call.deadline, now)}s`
+  }
+  return "Ended"
 }
 
 function acceptanceMessage(status: string) {

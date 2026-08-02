@@ -363,23 +363,29 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     })
     await Promise.all([
       expect(
-        selectedPage
-          .getByRole("region", { name: "Call Center" })
+        callCenter(selectedPage)
           .getByText("Synthetic Caller · Fixture Location 1 · Abita", {
             exact: true,
           }),
       ).toBeVisible(),
       expect(
-        secondaryPage
-          .getByRole("region", { name: "Call Center" })
+        callCenter(secondaryPage)
           .getByText("Synthetic Caller · Fixture Location 1 · Abita", {
             exact: true,
           }),
       ).toBeVisible(),
       expect(selectedPage.getByTestId("calling-queue-count")).toHaveText("2"),
       expect(secondaryPage.getByTestId("calling-queue-count")).toHaveText("2"),
-      expect(selectedPage.getByText("Second Synthetic Caller · Abita")).toBeVisible(),
-      expect(secondaryPage.getByText("Second Synthetic Caller · Abita")).toBeVisible(),
+      expect(
+        selectedPage.getByText(
+          "Second Synthetic Caller · Fixture Location 1 · Abita",
+        ),
+      ).toBeVisible(),
+      expect(
+        secondaryPage.getByText(
+          "Second Synthetic Caller · Fixture Location 1 · Abita",
+        ),
+      ).toBeVisible(),
     ])
     for (const activePage of [selectedPage, secondaryPage]) {
       await expect
@@ -483,8 +489,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(2)
     releaseAcceptResponses()
     await expect(
-      winnerPage
-        .getByRole("region", { name: "Call Center" })
+      callCenter(winnerPage)
         .getByText("Connecting", { exact: true }),
     ).toBeVisible()
     await expect(loserPage.getByText("Another available User claimed this Call.")).toBeVisible()
@@ -598,16 +603,23 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       .toBe(0)
 
     const takeoverPage = await winnerPage.context().newPage()
+    await takeoverPage.addInitScript(() => {
+      window.sessionStorage.setItem("acuity.callingMediaEnabled", "true")
+    })
     await takeoverPage.goto("/workspace")
-    await expect(takeoverPage.getByRole("region", { name: "Call Center" })).toBeVisible()
-    await takeoverPage.getByRole("button", { name: "Enable calling" }).click()
-    await takeoverPage.getByRole("button", { name: "Take over softphone" }).click()
+    const takeoverAvailability = takeoverPage.getByRole("switch", {
+      name: "Availability",
+    })
+    await expect(takeoverAvailability).toBeVisible()
     await expect(
       callCenter(takeoverPage).getByText("Connected", { exact: true }),
-    ).toBeVisible()
+    ).toBeVisible({ timeout: 15_000 })
+    await expect(takeoverAvailability).toBeEnabled()
+    await takeoverAvailability.click()
+    await expect(takeoverAvailability).toBeDisabled()
     await expect(
-      callCenter(winnerPage).getByText("Inactive in this browser"),
-    ).toBeVisible()
+      winnerPage.getByRole("button", { name: "Mute" }),
+    ).toHaveCount(0)
     await expect.poll(() => mediaCount(winnerPage, "disconnects")).toBeGreaterThan(0)
     await expect(
       callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/),
@@ -617,7 +629,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
     await signalMedia(takeoverPage, "reconnecting")
     await expect(
-      callCenter(takeoverPage).getByText("Reconnecting", { exact: true }),
+      callCenter(takeoverPage).getByText(/Audio: reconnecting/),
     ).toBeVisible()
     await signalMedia(takeoverPage, "ready")
     await expect(
@@ -737,9 +749,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     ).toBeVisible()
     expect(loserPage.url()).not.toContain("5555550100")
     await loserPage.getByLabel("Search tasks").fill("")
-    await expect(
-      callCenter(takeoverPage).getByText("Available", { exact: true }),
-    ).toBeVisible()
+    await expect(takeoverAvailability).toBeChecked()
     await expect
       .poll(async () => {
         const result = await database.query<{ state: string }>(
@@ -906,9 +916,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         return result.rows[0]?.state
       })
       .toBe("RESOLVED")
-    await expect(
-      callCenter(takeoverPage).getByText("Available", { exact: true }),
-    ).toBeVisible()
+    await expect(takeoverAvailability).toBeChecked()
     await expect(
       takeoverPage.getByRole("heading", {
         name: "Scheduling help",
@@ -1155,8 +1163,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         callCenter(winnerPage).getByText("Preparing", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
       await expect(
+        takeoverPage.getByText("Contact Context", { exact: true }),
+      ).toBeVisible()
+      await expect(
         takeoverPage.getByRole("heading", {
-          name: "Confirm scheduling plan",
+          name: "Engagement history",
           exact: true,
         }),
       ).toBeVisible()
@@ -1237,10 +1248,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         callCenter(takeoverPage).getByText("Ringing", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
       await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Confirm scheduling plan",
-          exact: true,
-        }),
+        takeoverPage.getByText("Contact Context", { exact: true }),
       ).toBeVisible()
       const taskDestination = await callingCommand(
         database,
@@ -1423,12 +1431,38 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           recording_commands: "0",
         })
 
-      await takeoverPage.getByRole("button", { name: "New call" }).click()
-      const dialer = takeoverPage.locator(
-        'form[aria-label="Standalone outbound call"]',
-      )
+      await takeoverPage
+        .getByRole("button", { name: "Outbound calls" })
+        .click()
+      const outboundDialog = takeoverPage.getByRole("dialog", {
+        name: "Outbound call",
+      })
+      await expect(outboundDialog).toBeVisible()
+      const dialer = outboundDialog.getByRole("form", {
+        name: "Standalone outbound call",
+      })
+      await expect(dialer.getByLabel("Call location")).toBeVisible()
       await dialer.getByLabel("Outbound destination").fill("+15555550100")
       await dialer.getByRole("button", { name: "Call", exact: true }).click()
+      await expect(outboundDialog).not.toBeVisible()
+      await expect(
+        callCenter(takeoverPage).getByText("Preparing", { exact: true }),
+      ).toBeVisible()
+      await expect(
+        takeoverPage.getByText("Contact Context", { exact: true }),
+      ).toBeVisible()
+      await expect(
+        takeoverPage.getByRole("heading", {
+          name: "Engagement history",
+          exact: true,
+        }),
+      ).toBeVisible()
+      await takeoverPage
+        .getByRole("button", { name: "Messages", exact: true })
+        .click()
+      await expect(
+        takeoverPage.getByRole("region", { name: "Active call controls" }),
+      ).toBeVisible()
       const standalone = await expect
         .poll(async () => {
           const result = await database.query<{
@@ -1530,15 +1564,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         .toEqual({ state: "RESOLVED", task_count: "1" })
     })
 
-    await takeoverPage.getByRole("button", { name: "Pause calls" }).click()
-    await expect(
-      callCenter(takeoverPage).getByText("Paused", { exact: true }),
-    ).toBeVisible()
+    await takeoverAvailability.click()
+    await expect(takeoverAvailability).not.toBeChecked()
     await signalMedia(takeoverPage, "reconnecting")
     await signalMedia(takeoverPage, "ready")
-    await expect(
-      callCenter(takeoverPage).getByText("Paused", { exact: true }),
-    ).toBeVisible()
+    await expect(takeoverAvailability).not.toBeChecked()
     await expect
       .poll(async () => {
         const result = await database.query<{ desired_available: boolean }>(
@@ -1719,18 +1749,27 @@ async function signUp(
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Password").fill("fixture-password-1234")
   await page.getByRole("button", { name: "Sign in" }).click()
-  await expect(page.getByRole("region", { name: "Call Center" })).toBeVisible()
-}
-
-async function enableCalling(page: Page) {
-  await page.getByRole("button", { name: "Enable calling" }).click()
   await expect(
-    callCenter(page).getByText("Available", { exact: true }),
+    page.getByRole("switch", { name: "Availability" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Outbound calls" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Workspace selector" }),
   ).toBeVisible()
 }
 
+async function enableCalling(page: Page) {
+  const availability = page.getByRole("switch", { name: "Availability" })
+  await availability.click()
+  await expect(availability).toBeChecked()
+}
+
 function callCenter(page: Page) {
-  return page.getByRole("region", { name: "Call Center" })
+  return page.getByRole("region", {
+    name: /^(Incoming calls|Active call controls)$/,
+  })
 }
 
 async function deliverProviderEvent(
