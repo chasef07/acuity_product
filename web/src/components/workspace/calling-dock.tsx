@@ -107,6 +107,29 @@ const sessionStorageKey = "acuity.callingSession"
 const mediaEnabledStorageKey = "acuity.callingMediaEnabled"
 const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
 
+function callStillOwnsMediaLeg(
+  call: CallingCall | undefined,
+  expectedCallID: string,
+  attachedCallID: string,
+  mediaToken: string,
+) {
+  if (
+    !call ||
+    call.id !== expectedCallID ||
+    call.id !== attachedCallID ||
+    call.expectedMediaToken !== mediaToken
+  ) {
+    return false
+  }
+  return (
+    call.state === "PREPARING" ||
+    call.state === "RINGING" ||
+    call.state === "CONNECTING" ||
+    call.state === "RECONCILING" ||
+    call.state === "CONNECTED"
+  )
+}
+
 type CallingNavigationContext = {
   activeCall: CallingCall | undefined
   availabilityError: string
@@ -215,9 +238,7 @@ export function CallingDock({
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
   const probeStreamRef = useRef<MediaStream | null>(null)
   const expectedCallRef = useRef("")
-  const activeCallSnapshotRef = useRef<
-    { id: string; version: number } | undefined
-  >(undefined)
+  const activeCallSnapshotRef = useRef<CallingCall | undefined>(undefined)
   const ownerRef = useRef(false)
   const availabilityRef = useRef(false)
   const availabilityIntentRef = useRef(false)
@@ -234,8 +255,6 @@ export function CallingDock({
       return false
     }
     activeCallSnapshotRef.current = call
-      ? { id: call.id, version: call.version }
-      : undefined
     setActiveCall(call)
     return true
   }, [])
@@ -516,7 +535,15 @@ export function CallingDock({
                 throw new Error("staff media readiness was not committed")
               }
             }
-            if (!applyActiveCall(attachedCall)) {
+            if (
+              !applyActiveCall(attachedCall) &&
+              !callStillOwnsMediaLeg(
+                activeCallSnapshotRef.current,
+                expectedCallRef.current,
+                attachedCall.id,
+                leg.mediaToken,
+              )
+            ) {
               await leg.reject().catch(() => undefined)
               return
             }
@@ -785,11 +812,9 @@ export function CallingDock({
     if (!result?.data?.owner) {
       setLease(result?.data)
       if (result?.data?.activeCallId) {
-        const restoredCall =
-          expectedCallRef.current !== result.data.activeCallId
         expectedCallRef.current = result.data.activeCallId
         setExpectedCallID(result.data.activeCallId)
-        if (restoredCall) await refreshCall()
+        await refreshCall()
       } else {
         expectedCallRef.current = ""
         setExpectedCallID("")

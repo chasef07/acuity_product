@@ -14,6 +14,8 @@ import { latestEmail } from "./support"
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL =
   process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
+const realtimeURL =
+  process.env.E2E_REALTIME_URL ?? "http://127.0.0.1:18081"
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
@@ -474,17 +476,69 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     const loserPage =
       winnerPage === selectedPage ? secondaryPage : selectedPage
     const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
+    const staffClientState = Buffer.from(JSON.stringify({
+      v: 1,
+      call: durableCall.id,
+      leg: "staff",
+      attempt: durableCall.current_attempt_id,
+    })).toString("base64")
     await sendIncomingLeg(
       winnerPage,
       "unrelated-browser-leg",
       "unrelated-media-token",
     )
-    await sendIncomingLeg(
-      winnerPage,
-      "early-browser-leg",
-      durableMediaToken,
-    )
-    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+    await pauseMediaAttachment(winnerPage)
+    try {
+      await sendIncomingLeg(
+        winnerPage,
+        "early-browser-leg",
+        durableMediaToken,
+      )
+      await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
+      await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
+
+      const callURL = `${portalURL}/v1/calling/calls/${durableCall.id}`
+      const tokenResponse = await winnerPage.request.get(
+        `${webURL}/api/auth/token`,
+      )
+      expect(tokenResponse.ok()).toBeTruthy()
+      const { token } = (await tokenResponse.json()) as { token: string }
+      const beforeReceipt = await winnerPage.request.get(callURL, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(beforeReceipt.ok()).toBeTruthy()
+      const beforeVersion = ((await beforeReceipt.json()) as { version: number })
+        .version
+      const refreshedCall = winnerPage.waitForResponse(async (response) => {
+        if (
+          response.request().method() !== "GET" ||
+          response.url() !== callURL ||
+          !response.ok()
+        ) {
+          return false
+        }
+        const { version } = (await response.json()) as { version: number }
+        return version > beforeVersion
+      })
+      await deliverProviderEvent(winnerPage, {
+        eventType: "call.initiated",
+        eventId: "e2e-staff-initiated",
+        occurredAt: new Date().toISOString(),
+        payload: providerLegPayload(staffClientState),
+      })
+      await deliverProviderEvent(winnerPage, {
+        eventType: "call.answered",
+        eventId: "e2e-staff-answered",
+        occurredAt: new Date().toISOString(),
+        payload: providerLegPayload(staffClientState),
+      })
+      await refreshedCall
+    } finally {
+      await resumeMediaAttachment(winnerPage)
+    }
+    await expect(
+      callCenter(winnerPage).getByText(/Audio: attached/),
+    ).toBeVisible()
     await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
     await sendIncomingLeg(
       winnerPage,
@@ -530,29 +584,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
     await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
 
-    const staffClientState = Buffer.from(JSON.stringify({
-      v: 1,
-      call: durableCall.id,
-      leg: "staff",
-      attempt: durableCall.current_attempt_id,
-    })).toString("base64")
     const callerClientState = Buffer.from(JSON.stringify({
       v: 1,
       call: durableCall.id,
       leg: "caller",
     })).toString("base64")
-    await deliverProviderEvent(winnerPage, {
-      eventType: "call.initiated",
-      eventId: "e2e-staff-initiated",
-      occurredAt: new Date().toISOString(),
-      payload: providerLegPayload(staffClientState),
-    })
-    await deliverProviderEvent(winnerPage, {
-      eventType: "call.answered",
-      eventId: "e2e-staff-answered",
-      occurredAt: new Date().toISOString(),
-      payload: providerLegPayload(staffClientState),
-    })
     await deliverProviderEvent(winnerPage, {
       eventType: "call.bridged",
       eventId: "e2e-staff-bridged",
@@ -1495,22 +1531,44 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           destination: "+15555550100",
         })
 
-      await takeoverPage.getByRole("button", { name: "Hang up" }).click()
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.hangup",
-        eventId: `e2e-task-destination-hangup-${taskOutbound.id}`,
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: taskDestination.control_id,
-          call_leg_id: taskDestination.leg_id,
-          call_session_id: taskSession,
-          client_state: taskDestination.client_state,
-          hangup_cause: "normal_clearing",
-        },
-      })
       await expect(
-        callCenter(takeoverPage).getByText("Call ended", { exact: true }),
+        callCenter(winnerPage).getByText("Connected", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
+      const winnerNetwork = await winnerPage.context().newCDPSession(winnerPage)
+      await winnerNetwork.send("Network.enable")
+      try {
+        await winnerNetwork.send("Network.setBlockedURLs", {
+          urls: [`${realtimeURL}/v1/events*`],
+        })
+        await expect(winnerPage.getByText("Updates delayed")).toBeVisible({
+          timeout: 45_000,
+        })
+
+        await takeoverPage.getByRole("button", { name: "Hang up" }).click()
+        await deliverProviderEvent(takeoverPage, {
+          eventType: "call.hangup",
+          eventId: `e2e-task-destination-hangup-${taskOutbound.id}`,
+          occurredAt: new Date().toISOString(),
+          payload: {
+            call_control_id: taskDestination.control_id,
+            call_leg_id: taskDestination.leg_id,
+            call_session_id: taskSession,
+            client_state: taskDestination.client_state,
+            hangup_cause: "normal_clearing",
+          },
+        })
+        await expect(
+          callCenter(takeoverPage).getByText("Call ended", { exact: true }),
+        ).toBeVisible({ timeout: 15_000 })
+
+        await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
+        await expect(
+          callCenter(winnerPage).getByText("Call ended", { exact: true }),
+        ).toBeVisible({ timeout: 15_000 })
+      } finally {
+        await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
+        await winnerNetwork.detach()
+      }
       await takeoverPage.getByRole("button", { name: "Keep open" }).click()
       await expect
         .poll(async () => {
