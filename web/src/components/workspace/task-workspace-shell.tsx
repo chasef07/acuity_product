@@ -1093,7 +1093,7 @@ export function TaskWorkspaceShell() {
               onChanged={() => void loadSnapshot(practiceID, locationID, false)}
             />
           )}
-          <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
+          <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-card/40 px-3">
             <SidebarTrigger />
             <WorkspaceSelector
               discovery={discovery}
@@ -1446,9 +1446,9 @@ function SupportBanner({
   return (
     <div
       role="status"
-      className="flex items-center gap-3 border-b border-primary/30 bg-primary/10 px-4 py-2 text-xs"
+      className="flex items-center gap-3 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[13px]"
     >
-      <ShieldCheckIcon className="size-4 text-primary" />
+      <ShieldCheckIcon className="size-4 stroke-[1.75] text-warning" />
       <span className="min-w-0 flex-1 truncate">
         Support Mode active · {supportMode.reason}
       </span>

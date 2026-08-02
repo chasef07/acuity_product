@@ -251,12 +251,15 @@ function TaskWorkspace({
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="border-b px-5 py-4">
         <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-full sm:basis-auto">
             <div className="mb-2 flex items-center gap-2">
-              <Badge variant={task.state === "OPEN" ? "secondary" : "outline"}>
+              <Badge
+                variant={task.state === "OPEN" ? "secondary" : "outline"}
+                className={task.state === "COMPLETED" ? "text-success" : undefined}
+              >
                 {task.state === "OPEN" ? "Open" : "Completed"}
               </Badge>
-              <span className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
+              <span className="text-xs font-medium text-muted-foreground">
                 Task · v{task.version}
               </span>
             </div>
@@ -304,7 +307,7 @@ function TaskWorkspace({
               </div>
             ) : (
               <div className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-xl font-semibold tracking-tight">
+                <h1 className="truncate text-xl font-semibold tracking-[-0.015em]">
                   {task.title}
                 </h1>
                 {task.state === "OPEN" && canMutate && (
@@ -322,11 +325,11 @@ function TaskWorkspace({
                 )}
               </div>
             )}
-            <p className="mt-2 font-mono text-sm text-muted-foreground">
+            <p className="mt-2 text-sm tabular-nums text-muted-foreground">
               {formatPhone(task.phone)} · {task.locationName}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
             {activeCall && (
               <Button variant="outline" onClick={onReturnToCall}>
                 <PhoneCallIcon />
@@ -467,7 +470,7 @@ function AITaskSource({ task }: { task: Task }) {
         >
           {formatUrgency(task.urgency)}
         </Badge>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
           Created by AI · {formatDateTime(task.createdAt)}
         </span>
       </div>
@@ -485,7 +488,7 @@ function AITaskSource({ task }: { task: Task }) {
         </div>
         {task.sourceCallId && (
           <div className="text-xs text-muted-foreground md:text-right">
-            <p className="uppercase tracking-[0.12em]">Source call</p>
+            <p className="font-medium">Source call</p>
             <p className="mt-1 font-mono">{task.sourceCallId}</p>
           </div>
         )}
@@ -695,20 +698,29 @@ function CallWorkspace({
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="border-b px-5 py-4">
         <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-full sm:basis-auto">
             <div className="mb-2 flex items-center gap-2">
-              <Badge variant="secondary">{callWorkspaceLabel(call.state)}</Badge>
-              <span className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
+              <Badge
+                variant="secondary"
+                className={cn(
+                  call.state === "CONNECTED" && "text-success",
+                  (call.state === "CONNECTING" ||
+                    call.state === "RECONCILING") && "text-warning",
+                )}
+              >
+                {callWorkspaceLabel(call.state)}
+              </Badge>
+              <span className="text-xs font-medium text-muted-foreground">
                 {callStateLabel(call.state)}
               </span>
             </div>
-            <p className="text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
+            <p className="text-xs font-medium text-muted-foreground">
               Contact Context
             </p>
-            <h1 className="truncate text-xl font-semibold tracking-tight">
+            <h1 className="truncate text-xl font-semibold tracking-[-0.015em]">
               {call.displayName || formatPhone(call.phone)}
             </h1>
-            <p className="mt-2 font-mono text-sm text-muted-foreground">
+            <p className="mt-2 text-sm tabular-nums text-muted-foreground">
               {formatPhone(call.phone)} · {call.locationName}
             </p>
           </div>
@@ -985,7 +997,7 @@ function EngagementHistoryItem({
           <Badge variant="outline">{message.delivery}</Badge>
           <time
             dateTime={item.occurredAt}
-            className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+            className="ml-auto text-xs tabular-nums text-muted-foreground"
           >
             {formatDateTime(item.occurredAt)}
           </time>
@@ -1017,7 +1029,7 @@ function EngagementHistoryItem({
           )}
           <time
             dateTime={item.occurredAt}
-            className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+            className="ml-auto text-xs tabular-nums text-muted-foreground"
           >
             {formatDateTime(item.occurredAt)}
           </time>
@@ -1046,7 +1058,10 @@ function EngagementHistoryItem({
       <article className="border bg-card px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">Task</span>
-          <Badge variant={task.state === "OPEN" ? "secondary" : "outline"}>
+          <Badge
+            variant={task.state === "OPEN" ? "secondary" : "outline"}
+            className={task.state === "COMPLETED" ? "text-success" : undefined}
+          >
             {task.state}
           </Badge>
           {task.recoveryOutcome && (
@@ -1056,7 +1071,7 @@ function EngagementHistoryItem({
           )}
           <time
             dateTime={item.occurredAt}
-            className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+            className="ml-auto text-xs tabular-nums text-muted-foreground"
           >
             {formatDateTime(item.occurredAt)}
           </time>
@@ -1270,7 +1285,7 @@ function CallHistory({
                   )}
                   <time
                     dateTime={item.startedAt}
-                    className="ml-auto font-mono text-[0.6875rem] text-muted-foreground"
+                    className="ml-auto text-xs tabular-nums text-muted-foreground"
                   >
                     {formatDateTime(item.startedAt)}
                   </time>
@@ -1305,7 +1320,7 @@ function CallHistory({
 function Metadata({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <span className="block text-[0.625rem] uppercase tracking-[0.14em]">
+      <span className="block text-xs font-medium">
         {label}
       </span>
       <span className="mt-1 block truncate text-foreground">{value}</span>
