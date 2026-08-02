@@ -112,6 +112,7 @@ type CallingNavigationContext = {
   availabilityPending: boolean
   available: boolean
   dialerOpen: boolean
+  ownsSoftphone: boolean
   platformOperator: boolean
   setAvailability: (available: boolean) => void
   setDialerOpen: (open: boolean) => void
@@ -135,6 +136,7 @@ export function CallingAvailabilityControl() {
     availabilityError,
     availabilityPending,
     available,
+    ownsSoftphone,
     platformOperator,
     setAvailability,
   } = useCallingNavigation()
@@ -153,7 +155,9 @@ export function CallingAvailabilityControl() {
         aria-label="Availability"
         size="sm"
         checked={available}
-        disabled={availabilityPending || Boolean(activeCall)}
+        disabled={
+          availabilityPending || (Boolean(activeCall) && ownsSoftphone)
+        }
         onCheckedChange={setAvailability}
       />
     </div>
@@ -1081,6 +1085,7 @@ export function CallingDock({
         availabilityPending,
         available,
         dialerOpen: showDialer,
+        ownsSoftphone: Boolean(lease?.owner),
         platformOperator,
         setAvailability: (nextAvailable) =>
           void setAvailabilityIntent(nextAvailable),

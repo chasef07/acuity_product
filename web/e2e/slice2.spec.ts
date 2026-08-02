@@ -603,15 +603,20 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       .toBe(0)
 
     const takeoverPage = await winnerPage.context().newPage()
+    await takeoverPage.addInitScript(() => {
+      window.sessionStorage.setItem("acuity.callingMediaEnabled", "true")
+    })
     await takeoverPage.goto("/workspace")
     const takeoverAvailability = takeoverPage.getByRole("switch", {
       name: "Availability",
     })
     await expect(takeoverAvailability).toBeVisible()
-    await takeoverAvailability.click()
     await expect(
       callCenter(takeoverPage).getByText("Connected", { exact: true }),
-    ).toBeVisible()
+    ).toBeVisible({ timeout: 15_000 })
+    await expect(takeoverAvailability).toBeEnabled()
+    await takeoverAvailability.click()
+    await expect(takeoverAvailability).toBeDisabled()
     await expect(
       winnerPage.getByRole("button", { name: "Mute" }),
     ).toHaveCount(0)
