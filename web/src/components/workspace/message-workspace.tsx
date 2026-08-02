@@ -120,17 +120,17 @@ export function MessageWorkspace({
               <Badge variant="outline">
                 {composingNew ? "New text" : "Conversation"}
               </Badge>
-              <span className="font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground">
+              <span className="text-xs font-medium text-muted-foreground">
                 {locationName}
               </span>
             </div>
-            <h1 className="mt-2 truncate font-mono text-xl font-semibold tracking-tight">
+            <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
               {thread ? formatPhone(thread.externalPhone) : "Choose a number"}
             </h1>
             <p className="mt-1 text-xs text-muted-foreground">
               {thread?.displayName ? `${thread.displayName} · ` : ""}
               Office sender{" "}
-              <span className="font-mono">
+              <span className="tabular-nums">
                 {thread
                   ? formatPhone(thread.officePhone)
                   : "is locked by office"}
@@ -195,7 +195,7 @@ export function TaskMessageConversation({
       className="flex min-h-[22rem] flex-1 flex-col border-b"
     >
       <div className="border-b bg-muted/20 px-5 py-2.5">
-        <p className="font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground">
+        <p className="text-xs font-medium tabular-nums text-muted-foreground">
           Conversation · {formatPhone(task.phone)}
         </p>
       </div>
@@ -740,7 +740,7 @@ function MessageEntry({
         )}
         <div
           className={cn(
-            "mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[0.625rem]",
+            "mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums",
             outbound ? "text-primary-foreground/75" : "text-muted-foreground",
           )}
         >
@@ -771,7 +771,7 @@ function MessageEntry({
               <Button
                 size="sm"
                 variant={outbound ? "secondary" : "ghost"}
-                className="h-7 text-xs"
+                className="h-7"
                 disabled={pending}
                 onClick={() => void createTask()}
               >
@@ -785,7 +785,7 @@ function MessageEntry({
                 <Button
                   size="sm"
                   variant={outbound ? "secondary" : "ghost"}
-                  className="h-7 text-xs"
+                  className="h-7"
                   disabled={pending}
                   onClick={() => void sendAgain()}
                 >
@@ -831,12 +831,12 @@ function TimelineRule({
     <div className="mx-auto w-full max-w-xl border bg-muted/80 px-3 py-2 text-xs shadow-xs backdrop-blur-sm">
       <div className="flex items-center gap-2">
         <span className="[&_svg]:size-3.5 text-muted-foreground">{icon}</span>
-        <span className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
+        <span className="text-xs font-medium text-muted-foreground">
           {label}
         </span>
         <time
           dateTime={occurredAt}
-          className="ml-auto font-mono text-[0.625rem] text-muted-foreground"
+          className="ml-auto text-xs tabular-nums text-muted-foreground"
         >
           {formatDateTime(occurredAt)}
         </time>
@@ -955,16 +955,16 @@ function AttachmentCard({
         >
           <FileTextIcon className="size-4" />
           <span className="min-w-0 flex-1 truncate">{attachment.fileName}</span>
-          <span className="font-mono">{formatBytes(attachment.byteSize)}</span>
+          <span className="tabular-nums">{formatBytes(attachment.byteSize)}</span>
         </div>
       )}
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[0.625rem]">
+      <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
         <span>{attachment.state}</span>
         {isPDF && attachment.state === "Stored" && (
           <Button
             size="sm"
             variant="ghost"
-            className="ml-auto h-6 px-2 text-[0.625rem]"
+            className="ml-auto h-7 px-2"
             disabled={pending}
             onClick={() => void download()}
           >
@@ -976,7 +976,7 @@ function AttachmentCard({
           <Button
             size="sm"
             variant="ghost"
-            className="ml-auto h-6 px-2 text-[0.625rem]"
+            className="ml-auto h-7 px-2"
             disabled={pending}
             onClick={() => void retry()}
           >
@@ -1146,7 +1146,7 @@ function MessageComposer({
             inputMode="tel"
             autoComplete="tel"
             placeholder="+1 727 555 0100"
-            className="mb-2 font-mono"
+            className="mb-2 tabular-nums"
             value={destination}
             disabled={disabled || pending || destinationLocked}
             onChange={(event) => setDestination(event.target.value)}
@@ -1220,7 +1220,7 @@ function MessageComposer({
             </span>
           )}
           {body.length >= 1_400 && (
-            <span className="ml-auto font-mono tabular-nums">
+            <span className="ml-auto tabular-nums">
               {body.length}/{maximumMessageLength}
             </span>
           )}

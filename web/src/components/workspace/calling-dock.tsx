@@ -89,6 +89,7 @@ import {
 import { mediaConfirmationDecision } from "@/lib/calling/media-confirmation"
 import { providerOutcomeLabel } from "@/lib/calling/outcomes"
 import { portalClient } from "@/lib/api/client"
+import { cn } from "@/lib/utils"
 
 type CallingDockProps = {
   children: ReactNode
@@ -143,7 +144,7 @@ export function CallingAvailabilityControl() {
   if (platformOperator) return null
   return (
     <div className="ml-auto flex items-center gap-2">
-      <span className="text-xs font-medium">Availability</span>
+      <span className="text-[13px] font-medium">Availability</span>
       {availabilityPending && <Spinner aria-label="Updating availability" />}
       {!availabilityPending && availabilityError && (
         <ShieldAlertIcon
@@ -153,6 +154,7 @@ export function CallingAvailabilityControl() {
       )}
       <Switch
         aria-label="Availability"
+        className="data-checked:bg-success"
         size="sm"
         checked={available}
         disabled={
@@ -1207,6 +1209,11 @@ export function CallingDock({
                   variant={
                     activeCall.state === "CONNECTED" ? "secondary" : "outline"
                   }
+                  className={cn(
+                    activeCall.state === "CONNECTED" && "text-success",
+                    (activeCall.state === "CONNECTING" ||
+                      activeCall.state === "RECONCILING") && "text-warning",
+                  )}
                 >
                   {callStateLabel(activeCall.state)}
                 </Badge>
@@ -1222,7 +1229,11 @@ export function CallingDock({
                 {activeCall.locationName}
               </CardDescription>
               <CardAction>
-                <Badge aria-label="Call timer" variant="outline">
+                <Badge
+                  aria-label="Call timer"
+                  variant="outline"
+                  className="tabular-nums"
+                >
                   {callTimerLabel(activeCall, now)}
                 </Badge>
               </CardAction>
@@ -1290,7 +1301,7 @@ function IncomingCallControls({
     <Card role="region" aria-label="Incoming calls" size="sm">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <PhoneCallIcon />
+          <PhoneCallIcon className="text-warning" />
           Incoming call
         </CardTitle>
         <CardDescription>
@@ -1298,7 +1309,11 @@ function IncomingCallControls({
           {earliest.nameSource ? ` · ${earliest.nameSource}` : ""}
         </CardDescription>
         <CardAction>
-          <Badge data-testid="calling-queue-count" variant="secondary">
+          <Badge
+            data-testid="calling-queue-count"
+            variant="secondary"
+            className="tabular-nums text-warning"
+          >
             {offers.length}
           </Badge>
         </CardAction>
@@ -1322,13 +1337,15 @@ function IncomingCallControls({
               {offer.displayName || "Incoming caller"} · {offer.locationName}
               {offer.nameSource ? ` · ${offer.nameSource}` : ""}
             </span>
-            <span>{secondsRemaining(offer.deadline, now)}s</span>
+            <span className="tabular-nums">
+              {secondsRemaining(offer.deadline, now)}s
+            </span>
           </Button>
         ))}
         {error && <p className="text-destructive">{error}</p>}
       </CardContent>
       <CardFooter className="justify-between">
-        <Badge variant="outline">
+        <Badge variant="outline" className="tabular-nums text-warning">
           {secondsRemaining(earliest.deadline, now)}s
         </Badge>
         <Button size="sm" onClick={() => onAccept(earliest)}>
@@ -1373,7 +1390,7 @@ function OperatorCallInspector() {
         }}
       >
         <HeadphonesIcon className="size-4" />
-        <span className="text-xs font-semibold uppercase tracking-[0.16em]">
+        <span className="text-[13px] font-medium">
           Call diagnostics
         </span>
         <Input

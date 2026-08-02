@@ -136,10 +136,10 @@ export function TaskRail({
             alt=""
             width={28}
             height={28}
-            className="size-7 shrink-0 object-contain dark:invert"
+            className="size-7 shrink-0 rounded-sm object-contain"
             priority
           />
-          <p className="min-w-0 flex-1 truncate text-sm font-semibold">
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold tracking-[-0.01em]">
             Acuity Health
           </p>
           <ConnectionMark state={connection} />
@@ -305,19 +305,19 @@ function TaskGroup({
 }) {
   if (tasks.length === 0) return null
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>
+    <SidebarGroup className="p-0">
+      <SidebarGroupLabel className="px-3 font-medium">
         {label}
-        <span className="ml-auto font-mono tabular-nums">{tasks.length}</span>
+        <span className="ml-auto tabular-nums">{tasks.length}</span>
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu>
+        <SidebarMenu className="gap-0">
           {tasks.map((task) => (
             <SidebarMenuItem key={task.id}>
               <SidebarMenuButton
                 isActive={task.id === selectedTaskID}
                 className={cn(
-                  "h-auto min-h-16 animate-in py-2 fade-in slide-in-from-top-1 duration-200",
+                  "h-auto min-h-16 animate-in rounded-none border-b border-sidebar-border px-3 py-2.5 fade-in slide-in-from-top-1 duration-200",
                   "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
                 )}
                 tooltip={task.title}
@@ -328,26 +328,26 @@ function TaskGroup({
                     {task.unread && task.state === "OPEN" && (
                       <span
                         aria-label="Unread conversation"
-                        className="size-1.5 shrink-0 rounded-full bg-primary"
+                        className="size-1.5 shrink-0 rounded-full bg-warning"
                       />
                     )}
                     {task.state === "COMPLETED" && (
-                      <CheckCircle2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                      <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
                     )}
-                    <span className="truncate text-xs font-medium">
+                    <span className="truncate text-[13px] font-medium">
                       {task.title}
                     </span>
                     {task.origin === "ABITA_AI" && (
                       <Badge
                         variant="outline"
-                        className="h-4 gap-1 px-1 font-mono text-[0.5625rem]"
+                        className="h-4 gap-1 px-1 text-[0.6875rem]"
                       >
                         <BotIcon className="size-2.5" aria-hidden="true" />
                         AI
                       </Badge>
                     )}
                   </span>
-                  <span className="flex items-center gap-2 font-mono text-[0.625rem] text-muted-foreground">
+                  <span className="flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
                     <span>{formatPhone(task.phone)}</span>
                     {task.category && (
                       <>
@@ -375,7 +375,7 @@ function TaskGroup({
                     {showOffice && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <span className="truncate font-sans">
+                        <span className="truncate">
                           {task.locationName}
                         </span>
                       </>
@@ -402,18 +402,18 @@ function MessageThreadGroup({
 }) {
   if (threads.length === 0) return null
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>
+    <SidebarGroup className="p-0">
+      <SidebarGroupLabel className="px-3 font-medium">
         Correspondence ledger
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu>
+        <SidebarMenu className="gap-0">
           {threads.map((thread) => (
             <SidebarMenuItem key={thread.id}>
               <SidebarMenuButton
                 isActive={thread.id === selectedThreadID}
                 className={cn(
-                  "h-auto min-h-20 animate-in py-2.5 fade-in slide-in-from-top-1 duration-200",
+                  "h-auto min-h-20 animate-in rounded-none border-b border-sidebar-border px-3 py-2.5 fade-in slide-in-from-top-1 duration-200",
                   "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
                 )}
                 tooltip={thread.externalPhone}
@@ -424,19 +424,19 @@ function MessageThreadGroup({
                     {thread.unread && (
                       <span
                         aria-label="Unread message"
-                        className="size-1.5 shrink-0 rounded-full bg-primary"
+                        className="size-1.5 shrink-0 rounded-full bg-warning"
                       />
                     )}
                     <MessageSquareIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
+                      className="size-4 shrink-0 stroke-[1.75] text-muted-foreground"
                       aria-hidden="true"
                     />
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium tabular-nums">
                       {formatPhone(thread.externalPhone)}
                     </span>
                     <time
                       dateTime={thread.latestActivity}
-                      className="font-mono text-[0.625rem] text-muted-foreground"
+                      className="text-xs tabular-nums text-muted-foreground"
                     >
                       {relativeTime(thread.latestActivity)}
                     </time>
@@ -446,7 +446,7 @@ function MessageThreadGroup({
                       ? `${thread.displayName} · ${formatNameSource(thread.nameSource)}`
                       : "No sourced name"}
                   </span>
-                  <span className="flex items-center gap-1.5 font-mono text-[0.625rem] text-muted-foreground">
+                  <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
                     <span>
                       {thread.latestDirection === "OUTBOUND"
                         ? "Outbound"
@@ -541,6 +541,11 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
             : "Live updates delayed"
       }
       variant="outline"
+      className={cn(
+        state === "connected" && "border-success/30 text-success",
+        state === "connecting" && "border-warning/30 text-warning",
+        state === "degraded" && "border-destructive/30 text-destructive",
+      )}
     >
       {state === "connected"
         ? "Live"
