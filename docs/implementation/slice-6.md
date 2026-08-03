@@ -19,21 +19,22 @@ Inbound recovery follows one authenticated AI handoff:
    Location greeting resolves to the required safe HTTPS fallback; control
    never returns to the AI receptionist.
 3. Provider-confirmed greeting completion commits one inbound-only, single
-   channel WAV recording command with a 120-second cap and no transcription.
+   channel MP3 recording command with a 120-second cap and no transcription.
    An accepted command arms a 30-second callback grace after that cap, so a
    missing saved-or-error callback still becomes one missed-call recovery.
 4. A provider-confirmed positive-duration artifact atomically creates one OPEN
-   `Review voicemail` Task and a Processing voicemail source. A recording error,
+   `Review voicemail` Task and a Ready voicemail source identified by the
+   durable Telnyx recording ID. A recording error,
    a non-positive artifact, or a caller hangup before recording begins creates
    one OPEN `Return missed call` Task and no audio placeholder. Once recording
    has begun, hangup waits for the delayed saved-or-error callback so receipt
    ordering cannot misclassify a voicemail.
-5. The worker copies the provider artifact into Acuity private storage. Three
-   failed attempts move the same source to Recording unavailable; no copy
-   outcome creates a second Task.
+5. No voicemail copy is scheduled. Callback download URLs are irrelevant to
+   durable state and may expire without affecting playback.
 6. Portal playback first issues a five-minute capability, then rechecks current
-   Location access before reading the private object. No public object URL or
-   default download action is exposed.
+   Practice and Location access before calling `GET /v2/recordings/{id}` with
+   the server-side Telnyx key. It follows the fresh provider download URL and
+   streams complete or ranged audio without exposing the key or raw URL.
 
 Outbound calling uses one state machine for both entry points:
 
@@ -86,13 +87,13 @@ destination.
   stable command identity. Ambiguous destination writes enter reconciliation
   and never auto-redial.
 - Duplicate and reordered provider facts cannot create a second Call, Task,
-  destination Dial, disposition Task, or voicemail object.
+  destination Dial, disposition Task, or voicemail lifecycle row.
 - Voicemail playback and recording facts must match the Call's exact provider
   control ID, leg ID, and session ID. Outbound idempotency keys are serialized
   per initiating User before the first lookup, including simultaneous starts.
-- Provider recording copies accept only HTTPS URLs on the explicit endpoint
-  allowlist, revalidate every redirect, reject private IP literals, and cap
-  redirects, response time, and bytes before writing private storage.
+- Voicemail playback always refreshes through the durable Telnyx recording ID.
+  Provider not-found, authentication, rate-limit, timeout, invalid-response,
+  expired-download-URL, and 5xx outcomes remain bounded and observable.
 - DTMF is a transient browser-media action. It is accepted only on the current
   connected owned TelnyxRTC leg and is never sent to the server, persisted,
   queued, retried, logged, or emitted as a domain event.
@@ -108,7 +109,7 @@ The focused PostgreSQL suite proves one-Task voicemail and missed-call outcomes,
 safe greeting fallback, the two-minute recording boundary, reordered
 saved-versus-error fact handling, silent-callback and definitive command-failure
 recovery, exact provider-leg correlation, duplicate fact idempotency,
-allowlisted private copy and playback,
+fresh provider playback, cross-tenant denial before provider contact, and Range responses,
 server-derived Task outbound routing, cross-leg Telnyx session correlation,
 browser-media-before-destination ordering,
 simultaneous outbound idempotency, provider-confirmed connection, absence of
@@ -118,8 +119,8 @@ Failed normalization.
 
 Adapter and browser tests prove Telnyx command normalization and direct,
 current-leg-only DTMF. The real PostgreSQL browser harness additionally crosses
-authenticated handoff HTTP, signed provider ingress, worker-owned private
-recording copy, authorized playback, explicit staff-media confirmation,
+authenticated handoff HTTP, signed provider ingress, Telnyx-owned recording
+identity, authorized backend-proxied playback, explicit staff-media confirmation,
 second-tab visibility, reload recovery, and a no-server-write DTMF assertion.
 For outbound connection latency, that harness holds workspace, Task, and
 Message reconciliation open and requires the signed bridge receipt to produce
@@ -141,7 +142,7 @@ production build, and deployment-contract tests complete the deterministic
 release gate.
 
 Deterministic fixtures prove product behavior, not live Telnyx delivery, real
-audio quality, private-bucket IAM, or browser-device acceptance.
+audio quality, provider retention, or browser-device acceptance.
 
 ## Controlled live gate
 
@@ -149,7 +150,8 @@ Issue #19 remains not live-accepted until an explicitly approved run with
 non-sensitive test numbers records PHI-safe evidence for:
 
 - one authenticated handoff answered by Staff;
-- one voicemail copied and replayed from Acuity storage;
+- one no-answer voicemail saved by Telnyx and replayed through Acuity's
+  authenticated streaming route;
 - one missed-call recovery with no recording;
 - one Task-originated connected Call and disposition;
 - one standalone unsuccessful Call and disposition;

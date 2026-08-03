@@ -2,11 +2,44 @@ package humancalling
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 )
+
+func (m *Module) recordVoicemailPlayback(err error, duration time.Duration) {
+	outcome := observability.VoicemailPlaybackSucceeded
+	if errors.Is(err, ErrDenied) {
+		outcome = observability.VoicemailPlaybackDenied
+	}
+	var unavailable *VoicemailUnavailableError
+	if errors.As(err, &unavailable) {
+		switch unavailable.Reason {
+		case VoicemailRecordingNotFound:
+			outcome = observability.VoicemailPlaybackNotFound
+		case VoicemailProviderAuth:
+			outcome = observability.VoicemailPlaybackProviderAuth
+		case VoicemailProviderRateLimited:
+			outcome = observability.VoicemailPlaybackRateLimited
+		case VoicemailProviderTimeout:
+			outcome = observability.VoicemailPlaybackTimeout
+		case VoicemailProviderInvalid:
+			outcome = observability.VoicemailPlaybackInvalidResponse
+		case VoicemailRecordingURLExpired:
+			outcome = observability.VoicemailPlaybackURLExpired
+		default:
+			outcome = observability.VoicemailPlaybackUnavailable
+		}
+	} else if err != nil && !errors.Is(err, ErrDenied) {
+		outcome = observability.VoicemailPlaybackUnavailable
+	}
+	observability.Record(
+		m.observer,
+		observability.VoicemailPlayback(outcome, duration),
+	)
+}
 
 func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	now := m.now()

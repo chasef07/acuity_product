@@ -304,12 +304,12 @@ PostgreSQL
 
 - `Access` owns human and service principals, invitations, memberships, roles, location scope, and authorization decisions.
 - `Work` owns task creation, assignment, priority, status, completion, reopening, task activity, and queue projections.
-- `HumanCalling` owns availability, call offers, winner election, logical call state, bridge confirmation, disposition, and recording readiness. Telnyx voice behavior stays behind its provider adapter.
+- `HumanCalling` owns availability, call offers, winner election, logical call state, bridge confirmation, disposition, canonical voicemail lifecycle, recording identity, authorization metadata, and playback audit. Telnyx voice behavior and provider-owned audio stay behind its provider adapter.
 - `Messaging` owns Location-scoped conversations, inbound correlation, durable
   send intent, delivery evidence, attachment state, per-user unread state, and
   explicit send-again attempts. It asks `Work` to create a Task only after an
   authorized human explicitly chooses a source Message.
-- `EvidenceArchive` owns protected recording/transcript availability, access grants, audit, retention, and deletion.
+- `EvidenceArchive` owns protected recording/transcript metadata, access grants, audit, retention, and deletion. Telnyx owns recording audio; authenticated backend retrieval never exposes provider credentials or raw signed URLs.
 - `ContactContext` is a small value object used by tasks and interactions, not an independent identity service.
 - The modules expose behavior-oriented interfaces. HTTP handlers, SQL, Telnyx, Better Auth/JWKS, object storage, SSE, and durable jobs remain replaceable adapters around them.
 - The browser calls `portal-api` directly. Next.js does not proxy ordinary product commands.
@@ -472,8 +472,8 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Every role uses bounded acquisition, exponential backoff with jitter, and only safe idempotent retries from the beginning of the operation. A zonal database outage is visible until recovery; no runtime may convert it into false success.
 - Store secrets in Secret Manager.
 - Generate internal application credentials through approved tooling or deployment automation. Do not commit them, paste them into product configuration, or ask an operator to invent them manually.
-- Store recordings in approved protected object storage; expose them only through short-lived, location-authorized access and audit each grant.
-- Require an approved recording/transcript retention period in each practice's production configuration. Delete protected content after the configured period while retaining non-content audit metadata.
+- Keep recording audio in Telnyx. Store canonical lifecycle, authorization metadata, durable provider recording identity, timestamps, and audit evidence in PostgreSQL; stream audio through short-lived, location-authorized backend access.
+- Require an approved recording/transcript retention period in each practice's production configuration. Apply content deletion through the provider while retaining canonical non-content audit metadata.
 - Use one public product domain with path routing to the web and API services.
 - Publish immutable frontend and backend images by digest. Deploy backend roles from the same tested backend digest.
 - Deploy request-role revisions with no traffic and smoke-test startup, run `migrate` once, exercise the tagged revisions against the expanded schema, deploy the compatible worker and realtime revisions, then shift traffic gradually.

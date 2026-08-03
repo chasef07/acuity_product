@@ -32,8 +32,6 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"TELNYX_CREDENTIAL_CONNECTION_ID":          "credential-connection-synthetic",
 		"TELNYX_FROM_NUMBER":                       "+15555550100",
 		"TELNYX_RINGBACK_URL":                      "https://assets.example/ringback.wav",
-		"TELNYX_RECORDING_BUCKET":                  "synthetic-recordings",
-		"HUMAN_CALLING_RECORDING_CA_FILE":          "/tmp/synthetic-recording-ca.pem",
 		"TELNYX_WEBHOOK_PUBLIC_KEY":                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"MESSAGING_WEBHOOK_BASE_URL":               "https://ingress.example/v1/provider/telnyx/messaging-webhooks",
 		"MESSAGING_ATTACHMENT_DIRECTORY":           "/tmp/acuity-message-attachments",
@@ -64,9 +62,7 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		t.Fatalf("calling timings = %#v", config.HumanCalling)
 	}
 	if config.HumanCalling.HandoffSIPDomain != "synthetic.sip.telnyx.com" ||
-		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" ||
-		config.HumanCalling.RecordingCAFile !=
-			"/tmp/synthetic-recording-ca.pem" {
+		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" {
 		t.Fatalf("calling SIP domains = %#v", config.HumanCalling)
 	}
 	if config.Service.Token != "synthetic-service-token" ||
@@ -94,7 +90,6 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 			delete(values, "TELNYX_CREDENTIAL_CONNECTION_ID")
 			delete(values, "TELNYX_FROM_NUMBER")
 			delete(values, "TELNYX_RINGBACK_URL")
-			delete(values, "TELNYX_RECORDING_BUCKET")
 			if role != RoleProviderIngress {
 				delete(values, "MESSAGING_WEBHOOK_BASE_URL")
 			}
@@ -156,7 +151,6 @@ func TestLoadConfigRejectsMalformedHumanCallingKeys(t *testing.T) {
 		"TELNYX_CREDENTIAL_CONNECTION_ID": "credential-connection-synthetic",
 		"TELNYX_FROM_NUMBER":              "+15555550100",
 		"TELNYX_RINGBACK_URL":             "https://assets.example/ringback.wav",
-		"TELNYX_RECORDING_BUCKET":         "synthetic-recordings",
 	}
 	if _, err := LoadConfig(func(name string) string { return base[name] }); err == nil {
 		t.Fatal("expected malformed handoff token key to fail closed")

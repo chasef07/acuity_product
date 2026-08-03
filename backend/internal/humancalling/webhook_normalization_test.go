@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestRecordingSavedNormalizationRequiresAnExactGCSObject(t *testing.T) {
+func TestRecordingSavedNormalizationKeepsDurableTelnyxIdentity(t *testing.T) {
 	raw := []byte(`{
 		"data": {
 			"record_type": "event",
@@ -30,14 +30,13 @@ func TestRecordingSavedNormalizationRequiresAnExactGCSObject(t *testing.T) {
 		t.Fatalf("normalize recording saved: known=%t err=%v", known, err)
 	}
 	if fact.Type != FactRecordingSaved ||
-		fact.RecordingBucket != "synthetic-recordings" ||
-		fact.RecordingObjectKey != "provider-prefix/call.wav" ||
+		fact.RecordingID != "recording-id" ||
 		!fact.OccurredAt.Equal(time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)) {
 		t.Fatalf("recording fact = %#v", fact)
 	}
 }
 
-func TestRecordingSavedNormalizationDoesNotTreatTelnyxStorageAsGCSReady(t *testing.T) {
+func TestRecordingSavedNormalizationDoesNotDependOnCallbackURL(t *testing.T) {
 	raw := []byte(`{
 		"data": {
 			"record_type": "event",
@@ -57,10 +56,10 @@ func TestRecordingSavedNormalizationDoesNotTreatTelnyxStorageAsGCSReady(t *testi
 	}`)
 	fact, known, err := normalizeTelnyxFact(raw)
 	if err != nil || !known {
-		t.Fatalf("normalize non-GCS recording: known=%t err=%v", known, err)
+		t.Fatalf("normalize recording callback: known=%t err=%v", known, err)
 	}
-	if fact.RecordingBucket != "" || fact.RecordingObjectKey != "" {
-		t.Fatalf("non-GCS object became ready: %#v", fact)
+	if fact.RecordingID != "recording-id" {
+		t.Fatalf("recording identity = %#v", fact)
 	}
 }
 

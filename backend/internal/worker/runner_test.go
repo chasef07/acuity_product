@@ -405,10 +405,6 @@ func (*controlledWork) ProcessNextCredentialReconciliation(context.Context) (boo
 	return false, nil
 }
 
-func (*controlledWork) ProcessNextVoicemailCopy(context.Context) (bool, error) {
-	return false, nil
-}
-
 func (work *controlledWork) ExpireOffers(ctx context.Context) (int, error) {
 	if work.offerExpiryStarted != nil {
 		work.offerExpiryStarted <- struct{}{}

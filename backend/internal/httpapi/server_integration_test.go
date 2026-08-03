@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -180,6 +181,337 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		t.Fatalf("missing credential status = %d, body = %s", missingCredential.StatusCode, readBody(t, missingCredential))
 	}
 	_ = missingCredential.Body.Close()
+}
+
+func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 3, 12, 0, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"voicemail-playback-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "voicemail-http-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "voicemail-http-practice",
+			Name: "Voicemail HTTP Practice",
+			Locations: []access.LocationProvision{
+				{Key: "voicemail-http-location", Name: "Voicemail HTTP Location"},
+				{Key: "voicemail-hidden-location", Name: "Voicemail Hidden Location"},
+			},
+			Invitations: []access.InvitationProvision{
+				{
+					Key:           "voicemail-http-staff",
+					Email:         "voicemail-http@synthetic.test",
+					Role:          access.RoleStaff,
+					LocationScope: access.LocationScopeAll,
+					ExpiresAt:     now.Add(time.Hour),
+				},
+				{
+					Key:                  "voicemail-hidden-staff",
+					Email:                "voicemail-hidden@synthetic.test",
+					Role:                 access.RoleStaff,
+					LocationScope:        access.LocationScopeSelected,
+					SelectedLocationKeys: []string{"voicemail-hidden-location"},
+					ExpiresAt:            now.Add(time.Hour),
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision voicemail HTTP fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "voicemail-http-subject",
+		Email:         "voicemail-http@synthetic.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept voicemail HTTP invitation: %v", err)
+	}
+	hiddenIdentity := access.Identity{
+		Subject:       "voicemail-hidden-subject",
+		Email:         "voicemail-hidden@synthetic.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.AcceptInvitation(
+		context.Background(),
+		hiddenIdentity,
+		provisioned.Invitations[1].Token,
+	); err != nil {
+		t.Fatalf("accept hidden Location invitation: %v", err)
+	}
+	handoffID := uuid.NewString()
+	callID := uuid.NewString()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, phone,
+			expires_at, consumed_at, created_at
+		)
+		VALUES ($1, 'voicemail-http-service', $2, $3, 'voicemail-http-source',
+			'voicemail-http-key', $4, $5, '+15555550100', $6, $7, $7)
+	`, handoffID, authorization.Practice.ID, authorization.Locations[0].ID,
+		[]byte(callID), []byte("token-"+callID), now.Add(time.Minute), now,
+	); err != nil {
+		t.Fatalf("insert voicemail HTTP handoff: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id,
+			ended_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'VOICEMAIL', $5,
+			'voicemail-http-control', 'voicemail-http-leg',
+			'voicemail-http-session', $6, $7, $6)
+	`, callID, handoffID, authorization.Practice.ID,
+		authorization.Locations[0].ID, now.Add(20*time.Second),
+		now.Add(12*time.Second), now,
+	); err != nil {
+		t.Fatalf("insert voicemail HTTP Call: %v", err)
+	}
+	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin voicemail HTTP Task: %v", err)
+	}
+	task, err := work.New(pool, accessModule, func() time.Time { return now }).EnsureRecoveryTask(
+		context.Background(),
+		tx,
+		work.EnsureRecoveryTaskCommand{
+			CallID:     callID,
+			PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID,
+			Phone:      "+15555550100",
+			Outcome:    work.RecoveryOutcomeVoicemail,
+			OccurredAt: now.Add(12 * time.Second),
+		},
+	)
+	if err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatalf("create voicemail HTTP Task: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(), `
+		INSERT INTO human_calling_voicemails (
+			call_id, practice_id, location_id, task_id, outcome, audio_state,
+			provider_recording_id, recording_started_at, recording_ended_at,
+			duration_millis, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'VOICEMAIL', 'READY',
+			'voicemail-http-recording', $5, $6, 12000, $5, $6)
+	`, callID, authorization.Practice.ID, authorization.Locations[0].ID,
+		task.ID, now, now.Add(12*time.Second),
+	); err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatalf("insert voicemail HTTP evidence: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit voicemail HTTP fixture: %v", err)
+	}
+
+	audio := &httpVoicemailAudio{}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		httpCallingProvider{},
+		humancalling.Config{
+			PlaybackSigningKey:     []byte("abcdef0123456789abcdef0123456789"),
+			VoicemailAudioProvider: audio,
+			Observer:               observer,
+		},
+		func() time.Time { return now },
+	)
+	handler, err := newPortalHandlerWithCalling(
+		t,
+		httpapi.Config{AllowedOrigin: "http://localhost:3000", AcquireTimeout: time.Second},
+		pool,
+		accessModule,
+		staticAuthenticator{
+			"voicemail-http-token":   identity,
+			"voicemail-hidden-token": hiddenIdentity,
+		},
+		calling,
+	)
+	if err != nil {
+		t.Fatalf("new voicemail HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	capabilityResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/calls/"+callID+"/voicemail-playback",
+		"voicemail-http-token",
+		nil,
+	)
+	if capabilityResponse.StatusCode != http.StatusOK {
+		t.Fatalf("voicemail capability status = %d, body = %s", capabilityResponse.StatusCode, readBody(t, capabilityResponse))
+	}
+	var capability api.VoicemailPlaybackCapability
+	decode(t, capabilityResponse, &capability)
+	deniedRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deniedRequest.Header.Set("Authorization", "Bearer voicemail-hidden-token")
+	deniedResponse, err := server.Client().Do(deniedRequest)
+	if err != nil {
+		t.Fatalf("request cross-Location voicemail playback: %v", err)
+	}
+	_ = deniedResponse.Body.Close()
+	if deniedResponse.StatusCode != http.StatusForbidden || audio.calls != 0 {
+		t.Fatalf(
+			"cross-Location playback = status:%d provider-calls:%d",
+			deniedResponse.StatusCode,
+			audio.calls,
+		)
+	}
+	playbackRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbackRequest.Header.Set("Authorization", "Bearer voicemail-http-token")
+	playbackRequest.Header.Set("Range", "bytes=0-3")
+	playbackResponse, err := server.Client().Do(playbackRequest)
+	if err != nil {
+		t.Fatalf("request voicemail playback: %v", err)
+	}
+	defer playbackResponse.Body.Close()
+	body, err := io.ReadAll(playbackResponse.Body)
+	if err != nil {
+		t.Fatalf("read voicemail playback response: %v", err)
+	}
+	if playbackResponse.StatusCode != http.StatusPartialContent ||
+		playbackResponse.Header.Get("Accept-Ranges") != "bytes" ||
+		playbackResponse.Header.Get("Content-Range") != "bytes 0-3/13" ||
+		playbackResponse.Header.Get("Content-Length") != "4" ||
+		playbackResponse.Header.Get("Content-Type") != "audio/mpeg" ||
+		string(body) != "synt" ||
+		audio.rangeHeader != "bytes=0-3" {
+		t.Fatalf("voicemail playback response = status:%d headers:%v body:%q fixture:%#v",
+			playbackResponse.StatusCode, playbackResponse.Header, body, audio)
+	}
+
+	metrics.Reset()
+	malformedRange := "items 0-3/13"
+	audio.contentRange = &malformedRange
+	malformedRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformedRequest.Header.Set("Authorization", "Bearer voicemail-http-token")
+	malformedRequest.Header.Set("Range", "bytes=0-3")
+	malformedResponse, err := server.Client().Do(malformedRequest)
+	if err != nil {
+		t.Fatalf("request malformed partial voicemail: %v", err)
+	}
+	var malformedEnvelope api.ErrorEnvelope
+	decode(t, malformedResponse, &malformedEnvelope)
+	if malformedResponse.StatusCode != http.StatusServiceUnavailable ||
+		malformedResponse.Header.Get("Content-Range") != "" ||
+		malformedEnvelope.Error.Code != "VOICEMAIL_UNAVAILABLE" ||
+		!strings.Contains(metrics.String(), `"outcome":"invalid_response"`) ||
+		strings.Contains(metrics.String(), `"outcome":"succeeded"`) {
+		t.Fatalf("malformed partial response = status:%d headers:%v body:%#v metrics:%s",
+			malformedResponse.StatusCode, malformedResponse.Header,
+			malformedEnvelope, metrics.String())
+	}
+
+	metrics.Reset()
+	audio.contentRange = nil
+	audio.contentLength = "invalid"
+	audio.failStream = true
+	failedStreamRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedStreamRequest.Header.Set("Authorization", "Bearer voicemail-http-token")
+	failedStreamRequest.Header.Set("Range", "bytes=0-3")
+	failedStreamResponse, requestErr := server.Client().Do(failedStreamRequest)
+	var readErr error
+	if failedStreamResponse != nil {
+		_, readErr = io.ReadAll(failedStreamResponse.Body)
+		_ = failedStreamResponse.Body.Close()
+	}
+	if (requestErr == nil && readErr == nil) ||
+		!strings.Contains(metrics.String(), `"outcome":"unavailable"`) ||
+		strings.Contains(metrics.String(), `"outcome":"succeeded"`) {
+		t.Fatalf("failed voicemail stream = request-err:%v read-err:%v metrics:%s",
+			requestErr, readErr, metrics.String())
+	}
+	audio.failStream = false
+
+	failures := []struct {
+		name       string
+		reason     humancalling.VoicemailUnavailableReason
+		retryAfter string
+		status     int
+		retryable  bool
+	}{
+		{name: "recording not found", reason: humancalling.VoicemailRecordingNotFound, status: http.StatusNotFound},
+		{name: "provider auth", reason: humancalling.VoicemailProviderAuth, status: http.StatusServiceUnavailable},
+		{name: "provider rate limited", reason: humancalling.VoicemailProviderRateLimited, retryAfter: "7", status: http.StatusServiceUnavailable, retryable: true},
+		{name: "provider timeout", reason: humancalling.VoicemailProviderTimeout, status: http.StatusGatewayTimeout, retryable: true},
+		{name: "provider unavailable", reason: humancalling.VoicemailProviderUnavailable, status: http.StatusServiceUnavailable, retryable: true},
+		{name: "recording URL expired", reason: humancalling.VoicemailRecordingURLExpired, status: http.StatusServiceUnavailable, retryable: true},
+	}
+	for _, failure := range failures {
+		t.Run(failure.name, func(t *testing.T) {
+			audio.err = &humancalling.VoicemailUnavailableError{
+				Reason:     failure.reason,
+				RetryAfter: failure.retryAfter,
+			}
+			request, err := http.NewRequest(
+				http.MethodGet,
+				server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Authorization", "Bearer voicemail-http-token")
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatalf("request unavailable voicemail: %v", err)
+			}
+			defer response.Body.Close()
+			var envelope api.ErrorEnvelope
+			decode(t, response, &envelope)
+			if response.StatusCode != failure.status ||
+				envelope.Error.Code != "VOICEMAIL_UNAVAILABLE" ||
+				envelope.Error.Retryable != failure.retryable ||
+				response.Header.Get("Retry-After") != failure.retryAfter {
+				t.Fatalf("unavailable voicemail response = status:%d headers:%v body:%#v",
+					response.StatusCode, response.Header, envelope)
+			}
+		})
+	}
 }
 
 func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
@@ -1033,7 +1365,6 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			HandoffSIPDomain: "synthetic.sip.telnyx.com",
 			OfferDuration:    20 * time.Second,
 			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-			RecordingBucket:  "synthetic-recordings",
 		},
 		func() time.Time { return now },
 	)
@@ -1400,12 +1731,84 @@ func (httpCallingProvider) Execute(
 	return humancalling.ProviderResult{}, nil
 }
 
+type httpVoicemailAudio struct {
+	calls         int
+	rangeHeader   string
+	contentLength string
+	contentRange  *string
+	failStream    bool
+	err           error
+}
+
+func (audio *httpVoicemailAudio) OpenVoicemailRecording(
+	_ context.Context,
+	_ string,
+	rangeHeader string,
+) (humancalling.PlaybackContent, error) {
+	audio.calls++
+	audio.rangeHeader = rangeHeader
+	if audio.err != nil {
+		return humancalling.PlaybackContent{}, audio.err
+	}
+	contentRange := "bytes 0-3/13"
+	if audio.contentRange != nil {
+		contentRange = *audio.contentRange
+	}
+	contentLength := audio.contentLength
+	if contentLength == "" {
+		contentLength = "4"
+	}
+	var body io.ReadCloser = io.NopCloser(strings.NewReader("synt"))
+	if audio.failStream {
+		body = &failingVoicemailBody{}
+	}
+	return humancalling.PlaybackContent{
+		StatusCode:    http.StatusPartialContent,
+		ContentType:   "audio/mpeg",
+		ContentLength: contentLength,
+		ContentRange:  contentRange,
+		Body:          body,
+	}, nil
+}
+
+type failingVoicemailBody struct {
+	read bool
+}
+
+func (body *failingVoicemailBody) Read(target []byte) (int, error) {
+	if !body.read {
+		body.read = true
+		return copy(target, "synt"), nil
+	}
+	return 0, errors.New("synthetic stream failure")
+}
+
+func (*failingVoicemailBody) Close() error { return nil }
+
 func newPortalHandler(
 	t *testing.T,
 	config httpapi.Config,
 	pool *pgxpool.Pool,
 	accessModule *access.Module,
 	authenticator httpapi.IdentityAuthenticator,
+) (http.Handler, error) {
+	return newPortalHandlerWithCalling(
+		t,
+		config,
+		pool,
+		accessModule,
+		authenticator,
+		humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
+	)
+}
+
+func newPortalHandlerWithCalling(
+	t *testing.T,
+	config httpapi.Config,
+	pool *pgxpool.Pool,
+	accessModule *access.Module,
+	authenticator httpapi.IdentityAuthenticator,
+	calling *humancalling.Module,
 ) (http.Handler, error) {
 	t.Helper()
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
@@ -1426,7 +1829,7 @@ func newPortalHandler(
 	return httpapi.NewPortal(config, pool, httpapi.PortalDependencies{
 		Access:               accessModule,
 		Authenticator:        authenticator,
-		Calling:              humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil),
+		Calling:              calling,
 		Work:                 work.New(pool, accessModule, nil),
 		ServiceAuthenticator: serviceAuthenticator,
 	})

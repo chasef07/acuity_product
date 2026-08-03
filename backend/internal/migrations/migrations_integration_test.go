@@ -27,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 14 {
-		t.Fatalf("migration count = %d, want 14", migrationCount)
+	if migrationCount != 15 {
+		t.Fatalf("migration count = %d, want 15", migrationCount)
 	}
 	var greetingRequired bool
 	var greetingDefault string
@@ -181,6 +181,148 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 		if !exists {
 			t.Fatalf("operational Users view %s is missing", view)
 		}
+	}
+}
+
+func TestTelnyxNativeVoicemailMigrationPreservesLegacyEvidence(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000701',
+			'legacy-voicemail-practice',
+			'Legacy Voicemail Practice'
+		);
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000702',
+			'00000000-0000-0000-0000-000000000701',
+			'legacy-voicemail-location',
+			'Legacy Voicemail Location'
+		);
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, phone,
+			expires_at, consumed_at, created_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000711',
+			'legacy-voicemail-test',
+			'00000000-0000-0000-0000-000000000701',
+			'00000000-0000-0000-0000-000000000702',
+			'legacy-voicemail-source',
+			'legacy-voicemail-key',
+			'\x01',
+			'\x02',
+			'+15555550100',
+			'2026-08-03T12:05:00Z',
+			'2026-08-03T12:00:00Z',
+			'2026-08-03T12:00:00Z'
+		);
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id,
+			ended_at, created_at, updated_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000721',
+			'00000000-0000-0000-0000-000000000711',
+			'00000000-0000-0000-0000-000000000701',
+			'00000000-0000-0000-0000-000000000702',
+			'VOICEMAIL',
+			'2026-08-03T12:01:00Z',
+			'legacy-voicemail-control',
+			'legacy-voicemail-leg',
+			'legacy-voicemail-session',
+			'2026-08-03T12:00:12Z',
+			'2026-08-03T12:00:00Z',
+			'2026-08-03T12:00:12Z'
+		);
+		INSERT INTO work_tasks (
+			id, practice_id, location_id, call_id, phone, title, state,
+			created_by_subject, created_at, updated_at, origin,
+			created_by_kind, recovery_outcome
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000731',
+			'00000000-0000-0000-0000-000000000701',
+			'00000000-0000-0000-0000-000000000702',
+			'00000000-0000-0000-0000-000000000721',
+			'+15555550100',
+			'Review voicemail',
+			'OPEN',
+			'system:human-calling',
+			'2026-08-03T12:00:12Z',
+			'2026-08-03T12:00:12Z',
+			'VOICEMAIL_RECOVERY',
+			'SERVICE',
+			'VOICEMAIL'
+		);
+		INSERT INTO human_calling_voicemails (
+			call_id, practice_id, location_id, task_id, outcome, audio_state,
+			provider_recording_id, recording_started_at, recording_ended_at,
+			duration_millis, object_key, content_type, byte_size, copy_attempts,
+			copied_at, created_at, updated_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000721',
+			'00000000-0000-0000-0000-000000000701',
+			'00000000-0000-0000-0000-000000000702',
+			'00000000-0000-0000-0000-000000000731',
+			'VOICEMAIL',
+			'READY',
+			'legacy-provider-recording',
+			'2026-08-03T12:00:00Z',
+			'2026-08-03T12:00:12Z',
+			12000,
+			'legacy/voicemail.wav',
+			'audio/wav',
+			17,
+			1,
+			'2026-08-03T12:00:13Z',
+			'2026-08-03T12:00:00Z',
+			'2026-08-03T12:00:13Z'
+		);
+		DELETE FROM schema_migrations
+		WHERE name = '0015_telnyx_native_voicemail.sql';
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("prepare legacy voicemail evidence: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("reapply Telnyx-native voicemail migration: %v", err)
+	}
+	var providerRecordingID, objectKey, contentType string
+	var byteSize int64
+	var copyAttempts int
+	if err := pool.QueryRow(ctx, `
+		SELECT provider_recording_id, object_key, content_type, byte_size,
+			copy_attempts
+		FROM human_calling_voicemails
+		WHERE call_id = '00000000-0000-0000-0000-000000000721'
+	`).Scan(
+		&providerRecordingID,
+		&objectKey,
+		&contentType,
+		&byteSize,
+		&copyAttempts,
+	); err != nil {
+		t.Fatalf("read preserved legacy voicemail evidence: %v", err)
+	}
+	if providerRecordingID != "legacy-provider-recording" ||
+		objectKey != "legacy/voicemail.wav" ||
+		contentType != "audio/wav" ||
+		byteSize != 17 ||
+		copyAttempts != 1 {
+		t.Fatalf(
+			"legacy voicemail changed: recording=%q object=%q type=%q bytes=%d attempts=%d",
+			providerRecordingID,
+			objectKey,
+			contentType,
+			byteSize,
+			copyAttempts,
+		)
 	}
 }
 

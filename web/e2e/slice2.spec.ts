@@ -1111,7 +1111,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         activity_count: "4",
       })
 
-    await test.step("Slice 6 voicemail crosses signed ingress, private copy, and authorized playback", async () => {
+    await test.step("Slice 6 voicemail crosses signed ingress, Telnyx storage, and authorized playback", async () => {
       const voicemailHandoffResponse = await takeoverPage.request.post(
         `${portalURL}/v1/handoffs`,
         {
@@ -1217,7 +1217,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           recording_started_at: recordingStartedAt.toISOString(),
           recording_ended_at: recordingEndedAt.toISOString(),
           recording_urls: {
-            wav: "https://recordings.telnyx.test:19443/voicemail.wav",
+            mp3: "https://expired.invalid/callback.mp3",
           },
         },
       })
@@ -1228,16 +1228,28 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
             const result = await database.query<{
               audio_state: string
               outcome: string
+              provider_recording_id: string
+              provider_url_is_null: boolean
+              object_key_is_null: boolean
+              next_copy_is_null: boolean
               task_count: string
             }>(
               `SELECT
                voicemail.audio_state,
                voicemail.outcome,
+               voicemail.provider_recording_id,
+               voicemail.provider_recording_url IS NULL AS provider_url_is_null,
+               voicemail.object_key IS NULL AS object_key_is_null,
+               voicemail.next_copy_at IS NULL AS next_copy_is_null,
                count(task.id)::text AS task_count
              FROM human_calling_voicemails voicemail
              JOIN work_tasks task ON task.id = voicemail.task_id
             WHERE voicemail.call_id = $1
-            GROUP BY voicemail.audio_state, voicemail.outcome`,
+            GROUP BY voicemail.audio_state, voicemail.outcome,
+               voicemail.provider_recording_id,
+               voicemail.provider_recording_url,
+               voicemail.object_key,
+               voicemail.next_copy_at`,
               [voicemailCallID],
             )
             return result.rows[0] ?? null
@@ -1247,6 +1259,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         .toEqual({
           audio_state: "READY",
           outcome: "VOICEMAIL",
+          provider_recording_id: "fixture-voicemail-recording",
+          provider_url_is_null: true,
+          object_key_is_null: true,
+          next_copy_is_null: true,
           task_count: "1",
         })
 
@@ -1277,7 +1293,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await takeoverPage.getByRole("button", { name: "Load recording" }).click()
       const playback = await playbackResponse
       expect(playback.status()).toBe(200)
-      expect(playback.headers()["content-type"]).toBe("audio/wav")
+      expect(playback.headers()["content-type"]).toBe("audio/mpeg")
       await expect(
         takeoverPage.getByLabel("Voicemail recording"),
       ).toHaveAttribute("src", /^blob:/)

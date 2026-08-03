@@ -93,6 +93,20 @@ const (
 	AcceptFailed         AcceptOutcome = "failed"
 )
 
+type VoicemailPlaybackOutcome string
+
+const (
+	VoicemailPlaybackSucceeded       VoicemailPlaybackOutcome = "succeeded"
+	VoicemailPlaybackDenied          VoicemailPlaybackOutcome = "denied"
+	VoicemailPlaybackNotFound        VoicemailPlaybackOutcome = "not_found"
+	VoicemailPlaybackProviderAuth    VoicemailPlaybackOutcome = "provider_auth"
+	VoicemailPlaybackRateLimited     VoicemailPlaybackOutcome = "rate_limited"
+	VoicemailPlaybackTimeout         VoicemailPlaybackOutcome = "timeout"
+	VoicemailPlaybackUnavailable     VoicemailPlaybackOutcome = "unavailable"
+	VoicemailPlaybackInvalidResponse VoicemailPlaybackOutcome = "invalid_response"
+	VoicemailPlaybackURLExpired      VoicemailPlaybackOutcome = "url_expired"
+)
+
 // Event values can only be created through the fixed constructors below.
 // Their private fields cannot carry identifiers, errors, SQL, or evidence.
 type Event struct {
@@ -186,6 +200,30 @@ func CallAccepted(outcome AcceptOutcome) Event {
 func CallBridged(acceptToBridge time.Duration) Event {
 	return event("acuity_call_center_accept_to_bridge",
 		"seconds", positive(acceptToBridge).Seconds())
+}
+
+func VoicemailPlayback(
+	outcome VoicemailPlaybackOutcome,
+	duration time.Duration,
+) Event {
+	return event(
+		"acuity_call_center_voicemail_playback",
+		"outcome",
+		bounded(
+			string(outcome),
+			"succeeded",
+			"denied",
+			"not_found",
+			"provider_auth",
+			"rate_limited",
+			"timeout",
+			"unavailable",
+			"invalid_response",
+			"url_expired",
+		),
+		"seconds",
+		positive(duration).Seconds(),
+	)
 }
 
 type Observer interface{ Observe(Event) }
