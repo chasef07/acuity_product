@@ -9,7 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -54,6 +57,105 @@ type PlaybackContent struct {
 	ContentLength string
 	ContentRange  string
 	Body          io.ReadCloser
+	completion    *playbackCompletion
+}
+
+type playbackCompletion struct {
+	once sync.Once
+	fn   func(error)
+}
+
+func (content PlaybackContent) Complete(err error) {
+	if content.completion != nil {
+		content.completion.once.Do(func() {
+			content.completion.fn(err)
+		})
+	}
+}
+
+func (content PlaybackContent) Validate(rangeHeader string) error {
+	requested, requestedRange := parseSingleByteRange(rangeHeader)
+	if strings.TrimSpace(rangeHeader) != "" && !requestedRange {
+		return voicemailUnavailable(VoicemailProviderInvalid, "")
+	}
+	if content.Body == nil ||
+		(content.StatusCode != http.StatusOK &&
+			content.StatusCode != http.StatusPartialContent) {
+		return voicemailUnavailable(VoicemailProviderInvalid, "")
+	}
+	if content.StatusCode == http.StatusPartialContent &&
+		(!requestedRange ||
+			!matchesContentRange(requested, content.ContentRange)) {
+		return voicemailUnavailable(VoicemailProviderInvalid, "")
+	}
+	return nil
+}
+
+type byteRange struct {
+	start    uint64
+	end      uint64
+	hasStart bool
+	hasEnd   bool
+}
+
+func parseSingleByteRange(value string) (byteRange, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) > 128 || !strings.HasPrefix(value, "bytes=") ||
+		strings.Contains(value, ",") {
+		return byteRange{}, false
+	}
+	bounds := strings.Split(strings.TrimPrefix(value, "bytes="), "-")
+	if len(bounds) != 2 || (bounds[0] == "" && bounds[1] == "") {
+		return byteRange{}, false
+	}
+	result := byteRange{}
+	var err error
+	if bounds[0] != "" {
+		result.start, err = strconv.ParseUint(bounds[0], 10, 64)
+		if err != nil {
+			return byteRange{}, false
+		}
+		result.hasStart = true
+	}
+	if bounds[1] != "" {
+		result.end, err = strconv.ParseUint(bounds[1], 10, 64)
+		if err != nil || (!result.hasStart && result.end == 0) {
+			return byteRange{}, false
+		}
+		result.hasEnd = true
+	}
+	if result.hasStart && result.hasEnd && result.end < result.start {
+		return byteRange{}, false
+	}
+	return result, true
+}
+
+func matchesContentRange(requested byteRange, value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) > 128 || !strings.HasPrefix(value, "bytes ") {
+		return false
+	}
+	rangeAndLength := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
+	if len(rangeAndLength) != 2 {
+		return false
+	}
+	bounds := strings.Split(rangeAndLength[0], "-")
+	if len(bounds) != 2 {
+		return false
+	}
+	start, startErr := strconv.ParseUint(bounds[0], 10, 64)
+	end, endErr := strconv.ParseUint(bounds[1], 10, 64)
+	length, lengthErr := strconv.ParseUint(rangeAndLength[1], 10, 64)
+	if startErr != nil || endErr != nil || lengthErr != nil ||
+		start > end || end >= length {
+		return false
+	}
+	if requested.hasStart {
+		return start == requested.start &&
+			(!requested.hasEnd || end <= requested.end)
+	}
+	return requested.hasEnd && end == length-1 &&
+		end-start+1 <= requested.end
 }
 
 type VoicemailAudioProvider interface {
@@ -747,7 +849,9 @@ func (m *Module) OpenVoicemailPlayback(
 ) (content PlaybackContent, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
-		m.recordVoicemailPlayback(resultErr, time.Since(startedAt))
+		if resultErr != nil {
+			m.recordVoicemailPlayback(resultErr, time.Since(startedAt))
+		}
 	}()
 	claims, err := m.parsePlaybackCapability(token)
 	if err != nil {
@@ -808,11 +912,18 @@ func (m *Module) OpenVoicemailPlayback(
 	if m.config.VoicemailAudioProvider == nil {
 		return PlaybackContent{}, ErrConflict
 	}
-	return m.config.VoicemailAudioProvider.OpenVoicemailRecording(
+	content, resultErr = m.config.VoicemailAudioProvider.OpenVoicemailRecording(
 		streamContext,
 		providerRecordingID,
 		rangeHeader,
 	)
+	if resultErr != nil {
+		return PlaybackContent{}, resultErr
+	}
+	content.completion = &playbackCompletion{fn: func(streamErr error) {
+		m.recordVoicemailPlayback(streamErr, time.Since(startedAt))
+	}}
+	return content, nil
 }
 
 func (m *Module) parsePlaybackCapability(token string) (playbackClaims, error) {

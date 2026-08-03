@@ -26,6 +26,10 @@ type TelnyxAdapter struct {
 	config TelnyxConfig
 }
 
+var errInvalidRecordingLocation = errors.New("invalid recording location")
+
+const telnyxRecordingRequestTimeout = 5 * time.Second
+
 func NewTelnyxAdapter(config TelnyxConfig) (*TelnyxAdapter, error) {
 	if strings.TrimSpace(config.APIKey) == "" {
 		return nil, fmt.Errorf("Telnyx API key is required")
@@ -370,10 +374,12 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 	}
 	parsed, err := url.Parse(recordingURL)
 	allowLocalHTTP := strings.HasPrefix(adapter.config.BaseURL, "http://")
-	if err != nil ||
-		(parsed.Scheme != "https" &&
-			!(allowLocalHTTP && parsed.Scheme == "http")) ||
-		parsed.Host == "" || parsed.User != nil {
+	allowedHost, locationErr := validateRecordingLocation(
+		parsed,
+		"",
+		allowLocalHTTP,
+	)
+	if err != nil || locationErr != nil {
 		return PlaybackContent{}, voicemailUnavailable(
 			VoicemailProviderInvalid,
 			"",
@@ -394,8 +400,41 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 	if rangeHeader = strings.TrimSpace(rangeHeader); rangeHeader != "" {
 		request.Header.Set("Range", rangeHeader)
 	}
-	audio, err := adapter.config.HTTPClient.Do(request)
+	audioClient := *adapter.config.HTTPClient
+	audioClient.Timeout = 0
+	previousRedirectCheck := audioClient.CheckRedirect
+	audioClient.CheckRedirect = func(
+		request *http.Request,
+		via []*http.Request,
+	) error {
+		if len(via) >= 3 {
+			return errInvalidRecordingLocation
+		}
+		if _, err := validateRecordingLocation(
+			request.URL,
+			allowedHost,
+			allowLocalHTTP,
+		); err != nil {
+			return err
+		}
+		if previousRedirectCheck != nil {
+			return previousRedirectCheck(request, via)
+		}
+		return nil
+	}
+	audio, err := doWithResponseHeaderTimeout(
+		ctx,
+		&audioClient,
+		request,
+		telnyxRecordingRequestTimeout,
+	)
 	if err != nil {
+		if errors.Is(err, errInvalidRecordingLocation) {
+			return PlaybackContent{}, voicemailUnavailable(
+				VoicemailProviderInvalid,
+				"",
+			)
+		}
 		return PlaybackContent{}, voicemailTransportError(err)
 	}
 	if audio.StatusCode != http.StatusOK &&
@@ -421,19 +460,126 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 	if contentType == "" {
 		contentType = "audio/mpeg"
 	}
-	return PlaybackContent{
+	content := PlaybackContent{
 		StatusCode:    audio.StatusCode,
 		ContentType:   contentType,
 		ContentLength: audio.Header.Get("Content-Length"),
 		ContentRange:  audio.Header.Get("Content-Range"),
 		Body:          audio.Body,
-	}, nil
+	}
+	if err := content.Validate(rangeHeader); err != nil {
+		_ = content.Body.Close()
+		return PlaybackContent{}, err
+	}
+	return content, nil
+}
+
+func validateRecordingLocation(
+	location *url.URL,
+	allowedHost string,
+	allowLocalHTTP bool,
+) (string, error) {
+	if location == nil || location.Host == "" || location.User != nil ||
+		(location.Scheme != "https" &&
+			!(allowLocalHTTP && location.Scheme == "http")) {
+		return "", errInvalidRecordingLocation
+	}
+	hostname := strings.ToLower(strings.TrimSuffix(location.Hostname(), "."))
+	if hostname == "" || strings.Contains(hostname, "%") {
+		return "", errInvalidRecordingLocation
+	}
+	endpoint := hostname
+	if port := location.Port(); port != "" {
+		endpoint = net.JoinHostPort(hostname, port)
+	}
+	if allowedHost != "" && endpoint != allowedHost {
+		return "", errInvalidRecordingLocation
+	}
+	if !allowLocalHTTP && internalRecordingHost(hostname) {
+		return "", errInvalidRecordingLocation
+	}
+	return endpoint, nil
+}
+
+func internalRecordingHost(hostname string) bool {
+	if hostname == "localhost" ||
+		strings.HasSuffix(hostname, ".localhost") ||
+		strings.HasSuffix(hostname, ".local") ||
+		strings.HasSuffix(hostname, ".internal") {
+		return true
+	}
+	address := net.ParseIP(hostname)
+	return address != nil &&
+		(address.IsPrivate() ||
+			address.IsLoopback() ||
+			address.IsLinkLocalUnicast() ||
+			address.IsUnspecified() ||
+			address.IsMulticast())
+}
+
+type responseResult struct {
+	response *http.Response
+	err      error
+}
+
+func doWithResponseHeaderTimeout(
+	ctx context.Context,
+	client *http.Client,
+	request *http.Request,
+	timeout time.Duration,
+) (*http.Response, error) {
+	requestContext, cancel := context.WithCancel(ctx)
+	request = request.Clone(requestContext)
+	result := make(chan responseResult)
+	go func() {
+		response, err := client.Do(request)
+		select {
+		case result <- responseResult{response: response, err: err}:
+		case <-requestContext.Done():
+			if response != nil && response.Body != nil {
+				_ = response.Body.Close()
+			}
+		}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case completed := <-result:
+		if completed.err != nil {
+			cancel()
+			return nil, completed.err
+		}
+		completed.response.Body = &cancelingReadCloser{
+			ReadCloser: completed.response.Body,
+			cancel:     cancel,
+		}
+		return completed.response, nil
+	case <-ctx.Done():
+		cancel()
+		return nil, ctx.Err()
+	case <-timer.C:
+		cancel()
+		return nil, context.DeadlineExceeded
+	}
+}
+
+type cancelingReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body *cancelingReadCloser) Close() error {
+	err := body.ReadCloser.Close()
+	body.cancel()
+	return err
 }
 
 func (adapter *TelnyxAdapter) recordingMetadata(
 	ctx context.Context,
 	recordingID string,
 ) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, telnyxRecordingRequestTimeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,

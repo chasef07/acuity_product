@@ -1015,13 +1015,15 @@ func (server *Server) GetCallingVoicemailPlayback(
 		server.writeVoicemailPlaybackError(w, r, err)
 		return
 	}
-	if content.Body == nil ||
-		(content.StatusCode != http.StatusOK &&
-			content.StatusCode != http.StatusPartialContent) {
-		server.writeCallingError(w, r, humancalling.ErrConflict)
+	rangeHeader := stringValue(params.Range)
+	if err := content.Validate(rangeHeader); err != nil {
+		if content.Body != nil {
+			_ = content.Body.Close()
+		}
+		content.Complete(err)
+		server.writeVoicemailPlaybackError(w, r, err)
 		return
 	}
-	defer content.Body.Close()
 	w.Header().Set("Content-Type", safeAudioContentType(content.ContentType))
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Disposition", "inline")
@@ -1030,12 +1032,20 @@ func (server *Server) GetCallingVoicemailPlayback(
 	if length, ok := safeContentLength(content.ContentLength); ok {
 		w.Header().Set("Content-Length", length)
 	}
-	if content.StatusCode == http.StatusPartialContent &&
-		safeContentRange(content.ContentRange) {
+	if content.StatusCode == http.StatusPartialContent {
 		w.Header().Set("Content-Range", content.ContentRange)
 	}
 	w.WriteHeader(content.StatusCode)
-	_, _ = io.Copy(w, content.Body)
+	_, copyErr := io.Copy(w, content.Body)
+	closeErr := content.Body.Close()
+	streamErr := copyErr
+	if streamErr == nil {
+		streamErr = closeErr
+	}
+	content.Complete(streamErr)
+	if copyErr != nil {
+		panic(http.ErrAbortHandler)
+	}
 }
 
 func safeAudioContentType(value string) string {
@@ -1052,26 +1062,6 @@ func safeContentLength(value string) (string, bool) {
 	value = strings.TrimSpace(value)
 	length, err := strconv.ParseInt(value, 10, 64)
 	return value, err == nil && length >= 0
-}
-
-func safeContentRange(value string) bool {
-	value = strings.TrimSpace(value)
-	if len(value) > 128 || !strings.HasPrefix(value, "bytes ") {
-		return false
-	}
-	rangeAndLength := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
-	if len(rangeAndLength) != 2 {
-		return false
-	}
-	bounds := strings.Split(rangeAndLength[0], "-")
-	if len(bounds) != 2 {
-		return false
-	}
-	start, startErr := strconv.ParseUint(bounds[0], 10, 64)
-	end, endErr := strconv.ParseUint(bounds[1], 10, 64)
-	length, lengthErr := strconv.ParseUint(rangeAndLength[1], 10, 64)
-	return startErr == nil && endErr == nil && lengthErr == nil &&
-		start <= end && end < length
 }
 
 func (server *Server) RequestCallingHangup(
