@@ -4,6 +4,7 @@ import test from "node:test"
 import { providerOutcomeLabel } from "./outcomes.ts"
 
 const outcomes = {
+  COMPLETED: "Completed",
   NO_ANSWER: "No answer",
   BUSY: "Busy",
   DECLINED: "Declined",

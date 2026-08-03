@@ -36,7 +36,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
   browser,
   page: selectedPage,
 }) => {
-  test.setTimeout(240_000)
+  test.setTimeout(300_000)
   test.skip(
     !provisioningOutput || !databaseURL,
     "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
@@ -696,30 +696,42 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
     await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
 
-    await takeoverPage.getByRole("button", { name: "Hang up" }).click()
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ count: string }>(
-          `SELECT count(*)::text
-             FROM human_calling_provider_commands
-            WHERE call_id = $1 AND action = 'HANGUP'`,
-          [durableCall.id],
-        )
-        return Number(result.rows[0]?.count ?? 0)
+    const inboundCallURL = `${portalURL}/v1/calling/calls/${durableCall.id}`
+    await pauseCallPolling(takeoverPage)
+    try {
+      const providerFirstRefresh = takeoverPage.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          response.url() === inboundCallURL,
+      )
+      await deliverProviderEvent(takeoverPage, {
+        eventType: "call.hangup",
+        eventId: "e2e-provider-first-hangup",
+        occurredAt: new Date().toISOString(),
+        payload: {
+          call_control_id: "fixture-caller-control",
+          call_leg_id: "fixture-caller-leg",
+          call_session_id: "fixture-call-session",
+          client_state: callerClientState,
+          hangup_cause: "normal_clearing",
+        },
       })
-      .toBeGreaterThan(0)
-    await deliverProviderEvent(takeoverPage, {
-      eventType: "call.hangup",
-      eventId: "e2e-staff-hangup",
-      occurredAt: new Date().toISOString(),
-      payload: {
-        ...providerLegPayload(staffClientState),
-        hangup_cause: "normal_clearing",
-      },
-    })
+      expect(await (await providerFirstRefresh).json()).toMatchObject({
+        state: "NEEDS_DISPOSITION",
+      })
+    } finally {
+      await resumeCallPolling(takeoverPage)
+    }
     await expect(
       callCenter(takeoverPage).getByText("Call ended", { exact: true }),
     ).toBeVisible()
+    const providerFirstHangups = await database.query<{ count: string }>(
+      `SELECT count(*)::text
+         FROM human_calling_provider_commands
+        WHERE call_id = $1 AND action = 'HANGUP'`,
+      [durableCall.id],
+    )
+    expect(providerFirstHangups.rows[0]?.count).toBe("0")
     await takeoverPage.getByRole("button", { name: "Create task" }).click()
     await expect
       .poll(async () => {
@@ -1560,10 +1572,82 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           timeout: 45_000,
         })
 
+        const hangupURL = `${callURL}/hangup`
+        const releaseFailedHangup = deferred<void>()
+        let failedHangupStarted = false
+        const failHangup = async (route: Route) => {
+          failedHangupStarted = true
+          await releaseFailedHangup.promise
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ code: "unavailable" }),
+          })
+        }
+        await takeoverPage.route(hangupURL, failHangup)
         await takeoverPage.getByRole("button", { name: "Hang up" }).click()
+        await expect.poll(() => failedHangupStarted).toBe(true)
+        await expect(
+          callCenter(takeoverPage)
+            .locator('[data-slot="badge"]')
+            .filter({ hasText: /^Ending…$/ }),
+        ).toBeVisible()
+        await expect(
+          takeoverPage.getByRole("button", { name: "Ending…" }),
+        ).toBeDisabled()
+        await expect(
+          takeoverPage.getByRole("button", { name: "Mute" }),
+        ).toBeDisabled()
+        await expect(
+          takeoverPage.getByRole("button", { name: "Keypad" }),
+        ).toBeDisabled()
+        releaseFailedHangup.resolve()
+        await expect(
+          callCenter(takeoverPage).getByText("Connected", { exact: true }),
+        ).toBeVisible()
+        await expect(
+          callCenter(takeoverPage).getByText(
+            "Hang up was not committed. Check your connection and try again.",
+            { exact: true },
+          ),
+        ).toBeVisible()
+        await expect(
+          takeoverPage.getByRole("button", { name: "Hang up" }),
+        ).toBeEnabled()
+        await takeoverPage.unroute(hangupURL, failHangup)
+
+        await takeoverPage.getByRole("button", { name: "Hang up" }).click()
+        await expect(
+          callCenter(takeoverPage)
+            .locator('[data-slot="badge"]')
+            .filter({ hasText: /^Ending…$/ }),
+        ).toBeVisible()
+        await expect(
+          takeoverPage.getByRole("button", { name: "Ending…" }),
+        ).toBeDisabled()
+        const hangupEventID = `e2e-task-destination-hangup-${taskOutbound.id}`
+        const terminalResponse = takeoverPage.waitForResponse(
+          async (response) => {
+            if (
+              response.request().method() !== "GET" ||
+              response.url() !== callURL
+            ) {
+              return false
+            }
+            const call = (await response.json().catch(() => undefined)) as
+              | { providerTermination?: string; state?: string }
+              | undefined
+            return (
+              call?.state === "NEEDS_DISPOSITION" &&
+              call.providerTermination === "COMPLETED"
+            )
+          },
+          { timeout: 750 },
+        )
+        const hangupStartedAt = Date.now()
         await deliverProviderEvent(takeoverPage, {
           eventType: "call.hangup",
-          eventId: `e2e-task-destination-hangup-${taskOutbound.id}`,
+          eventId: hangupEventID,
           occurredAt: new Date().toISOString(),
           payload: {
             call_control_id: taskDestination.control_id,
@@ -1573,9 +1657,30 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
             hangup_cause: "normal_clearing",
           },
         })
+        expect(await (await terminalResponse).json()).toMatchObject({
+          state: "NEEDS_DISPOSITION",
+          providerTermination: "COMPLETED",
+        })
+        expect(Date.now() - hangupStartedAt).toBeLessThan(750)
+        const hangupReceiptTiming = await database.query<{
+          queue_milliseconds: string
+        }>(
+          `SELECT EXTRACT(
+                    EPOCH FROM (last_attempt_at - received_at)
+                  ) * 1000 AS queue_milliseconds
+             FROM human_calling_provider_receipts
+            WHERE event_id = $1`,
+          [hangupEventID],
+        )
+        expect(
+          Number(hangupReceiptTiming.rows[0]?.queue_milliseconds),
+        ).toBeLessThan(500)
         await expect(
           callCenter(takeoverPage).getByText("Call ended", { exact: true }),
         ).toBeVisible({ timeout: 15_000 })
+        await expect(
+          callCenter(takeoverPage).getByText(/Completed/),
+        ).toBeVisible()
 
         await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
         await expect(

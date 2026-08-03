@@ -1069,11 +1069,13 @@ func (m *Module) applyOutboundBridge(
 	var staffControlID, staffLegID, destinationControlID, destinationLegID string
 	var callSessionID string
 	var state CallState
-	var connectedAt *time.Time
+	var entryPoint CallEntryPoint
+	var connectedAt, endedAt *time.Time
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			practice_id::text,
 			state,
+			entry_point,
 			COALESCE(current_attempt_id::text, ''),
 			initiating_subject,
 			COALESCE(expected_staff_call_control_id, ''),
@@ -1081,13 +1083,15 @@ func (m *Module) applyOutboundBridge(
 			COALESCE(destination_call_control_id, ''),
 			COALESCE(destination_call_leg_id, ''),
 			COALESCE(call_session_id, ''),
-			connected_at
+			connected_at,
+			ended_at
 		FROM human_calling_calls
 		WHERE id = $1 AND direction = 'OUTBOUND'
 		FOR UPDATE
 	`, callID).Scan(
 		&practiceID,
 		&state,
+		&entryPoint,
 		&currentAttemptID,
 		&initiatingSubject,
 		&staffControlID,
@@ -1096,6 +1100,7 @@ func (m *Module) applyOutboundBridge(
 		&destinationLegID,
 		&callSessionID,
 		&connectedAt,
+		&endedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
@@ -1139,12 +1144,19 @@ func (m *Module) applyOutboundBridge(
 		destinationLegID == "" {
 		return ErrConflict
 	}
-	if state == CallResolved ||
-		state == CallFollowUpRequired ||
-		state == CallNeedsDisposition {
+	lateTaskBridge := state == CallResolved &&
+		entryPoint == CallEntryTask &&
+		connectedAt == nil &&
+		endedAt != nil &&
+		!fact.OccurredAt.After(*endedAt)
+	if !lateTaskBridge &&
+		(state == CallResolved ||
+			state == CallFollowUpRequired ||
+			state == CallNeedsDisposition) {
 		return tx.Commit(ctx)
 	}
-	if state != CallRinging &&
+	if !lateTaskBridge &&
+		state != CallRinging &&
 		state != CallReconciling &&
 		state != CallConnected {
 		return ErrConflict
@@ -1152,32 +1164,47 @@ func (m *Module) applyOutboundBridge(
 	if connectedAt != nil {
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_connection_attempts
 		SET
 			staff_call_control_id = COALESCE(staff_call_control_id, $2),
 			staff_call_leg_id = COALESCE(staff_call_leg_id, $3),
-			bridge_occurred_at = $4,
+			bridge_occurred_at = CASE
+				WHEN bridge_occurred_at IS NULL OR $4 < bridge_occurred_at THEN $4
+				ELSE bridge_occurred_at
+			END,
 			updated_at = $5
-		WHERE id = $1 AND ended_at IS NULL
+		WHERE id = $1
+			AND (ended_at IS NULL OR $4 <= ended_at)
 	`, currentAttemptID, staffControlID, staffLegID, fact.OccurredAt,
-		m.now()); err != nil {
+		m.now())
+	if err != nil {
 		return fmt.Errorf("project outbound bridge attempt: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	nextState := CallConnected
+	if lateTaskBridge {
+		nextState = CallNeedsDisposition
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls
 		SET
-			state = 'CONNECTED',
+			state = $7,
 			winner_subject = $2,
 			destination_call_control_id = $3,
 			destination_call_leg_id = $4,
-			provider_termination = NULL,
+			provider_termination = CASE
+				WHEN $7 = 'CONNECTED' THEN NULL
+				ELSE provider_termination
+			END,
 			connected_at = $5,
 			version = version + 1,
 			updated_at = $6
 		WHERE id = $1
 	`, callID, initiatingSubject, destinationControlID, destinationLegID,
-		fact.OccurredAt, m.now()); err != nil {
+		fact.OccurredAt, m.now(), nextState); err != nil {
 		return fmt.Errorf("project outbound bridge: %w", err)
 	}
 	if err := appendTimeline(
@@ -1390,6 +1417,8 @@ func (m *Module) applyOutboundHangup(
 
 func outboundTermination(cause string) string {
 	switch strings.ToLower(strings.TrimSpace(cause)) {
+	case "normal_clearing":
+		return "COMPLETED"
 	case "no_answer", "no-answer", "timeout":
 		return "NO_ANSWER"
 	case "busy", "user_busy":
