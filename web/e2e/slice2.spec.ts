@@ -164,6 +164,27 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         selectedPage.getByRole("button", { name: new RegExp(firstTitle) }),
         secondaryPage.getByRole("button", { name: new RegExp(firstTitle) }),
       ]
+      const openSections = [
+        selectedPage.getByRole("button", { name: "Open", exact: true }),
+        secondaryPage.getByRole("button", { name: "Open", exact: true }),
+      ]
+      await Promise.all(
+        openSections.map(async (section) => {
+          await expect(section).toHaveAttribute("aria-expanded", "false")
+          await expect(section).toHaveText("Open")
+        }),
+      )
+      await Promise.all(
+        firstTaskButtons.map((button) => expect(button).not.toBeVisible()),
+      )
+      await openSections[0].focus()
+      await selectedPage.keyboard.press("Enter")
+      await openSections[1].click()
+      await Promise.all(
+        openSections.map((section) =>
+          expect(section).toHaveAttribute("aria-expanded", "true"),
+        ),
+      )
       await Promise.all(firstTaskButtons.map((button) => expect(button).toBeVisible()))
       await Promise.all([
         expect(
@@ -214,26 +235,41 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         ).toBeVisible(),
       ])
 
-      await secondaryPage.getByLabel("Order tasks").selectOption("priority")
-      await expect(secondaryPage.getByLabel("Order tasks")).toHaveValue(
-        "priority",
-      )
-      await expect(selectedPage.getByLabel("Order tasks")).toHaveValue("time")
+      await secondaryPage.getByRole("switch", { name: "Urgency" }).click()
+      await expect(
+        secondaryPage.getByRole("switch", { name: "Urgency" }),
+      ).toBeChecked()
+      await expect(
+        selectedPage.getByRole("switch", { name: "Urgency" }),
+      ).not.toBeChecked()
       await secondaryPage.reload()
-      await expect(secondaryPage.getByLabel("Order tasks")).toHaveValue(
-        "priority",
-      )
+      await expect(
+        secondaryPage.getByRole("switch", { name: "Urgency" }),
+      ).toBeChecked()
+      await secondaryPage
+        .getByRole("button", { name: "Open", exact: true })
+        .click()
       await secondaryPage
         .getByRole("button", { name: new RegExp(firstTitle) })
         .click()
 
-      await selectedPage.getByRole("button", { name: "Complete" }).click()
+      await selectedPage
+        .getByRole("button", { name: "Complete", exact: true })
+        .click()
+      const completedSection = secondaryPage.getByRole("button", {
+        name: "Completed",
+        exact: true,
+      })
+      await expect(completedSection).toHaveAttribute("aria-expanded", "false")
+      await expect(completedSection).toHaveText("Completed")
+      await completedSection.click()
+      await expect(completedSection).toHaveAttribute("aria-expanded", "true")
       await expect(
         secondaryPage.getByRole("button", { name: "Reopen" }),
       ).toBeVisible()
       await secondaryPage.getByRole("button", { name: "Reopen" }).click()
       await expect(
-        selectedPage.getByRole("button", { name: "Complete" }),
+        selectedPage.getByRole("button", { name: "Complete", exact: true }),
       ).toBeVisible()
 
       const committed = await database.query<{
@@ -266,6 +302,51 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         actor_email: null,
         raw_task: expect.not.stringContaining("compatibility-only-patient-id"),
         creation_activities: "1",
+      })
+
+      await test.step("collapsed Task groups gate pagination until expanded", async () => {
+        let cursorRequests = 0
+        await secondaryPage.route(`${portalURL}/v1/tasks/query`, async (route) => {
+          const request = route.request()
+          const body = request.postDataJSON() as { cursor?: string }
+          if (body.cursor) {
+            cursorRequests += 1
+            await route.fulfill({
+              contentType: "application/json",
+              status: 200,
+              body: JSON.stringify({ items: [], nextCursor: "" }),
+            })
+            return
+          }
+          const response = await route.fetch()
+          const page = (await response.json()) as {
+            items: unknown[]
+            nextCursor: string
+          }
+          await route.fulfill({
+            response,
+            json: { ...page, nextCursor: "synthetic-next-task-page" },
+          })
+        })
+
+        try {
+          await secondaryPage.reload()
+          const openSection = secondaryPage.getByRole("button", {
+            name: "Open",
+            exact: true,
+          })
+          await expect(openSection).toHaveAttribute("aria-expanded", "false")
+          await expect(
+            secondaryPage.getByLabel("Loading more tasks"),
+          ).toHaveCount(0)
+          await secondaryPage.waitForTimeout(500)
+          expect(cursorRequests).toBe(0)
+
+          await openSection.click()
+          await expect.poll(() => cursorRequests).toBe(1)
+        } finally {
+          await secondaryPage.unroute(`${portalURL}/v1/tasks/query`)
+        }
       })
     })
 
@@ -992,7 +1073,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         exact: true,
       }),
     ).toBeVisible()
-    await takeoverPage.getByRole("button", { name: "Complete" }).click()
+    await takeoverPage
+      .getByRole("button", { name: "Complete", exact: true })
+      .click()
     await expect(
       takeoverPage.getByRole("button", { name: "Reopen" }),
     ).toBeVisible()
@@ -1001,10 +1084,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     ).toBeVisible()
     await loserPage.getByRole("button", { name: "Reopen" }).click()
     await expect(
-      takeoverPage.getByRole("button", { name: "Complete" }),
+      takeoverPage.getByRole("button", { name: "Complete", exact: true }),
     ).toBeVisible()
     await expect(
-      loserPage.getByRole("button", { name: "Complete" }),
+      loserPage.getByRole("button", { name: "Complete", exact: true }),
     ).toBeVisible()
     await expect
       .poll(async () => {
@@ -1183,6 +1266,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           task_count: "1",
         })
 
+      const takeoverOpenTasks = takeoverPage.getByRole("button", {
+        name: "Open",
+        exact: true,
+      })
+      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "false")
+      await takeoverOpenTasks.click()
+      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "true")
       await takeoverPage
         .getByRole("button", { name: /Review voicemail/ })
         .click()

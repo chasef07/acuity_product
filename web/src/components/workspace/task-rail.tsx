@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
   BotIcon,
   CheckCircle2Icon,
+  ChevronRightIcon,
   ListTodoIcon,
   LogOutIcon,
   MessageSquareIcon,
@@ -29,7 +30,6 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Kbd } from "@/components/ui/kbd"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -37,13 +37,18 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { CallingOutboundNavigation } from "@/components/workspace/calling-dock"
 import type {
   AccessDiscovery,
@@ -112,8 +117,13 @@ export function TaskRail({
   const completed = tasks.filter((task) => task.state === "COMPLETED")
   const showOffice = practice.locations.length > 1 && !locationScopeID
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const [openExpanded, setOpenExpanded] = useState(false)
+  const [completedExpanded, setCompletedExpanded] = useState(false)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
+  const taskSurfaceExpanded =
+    (openExpanded && open.length > 0) ||
+    (completedExpanded && completed.length > 0)
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -162,49 +172,74 @@ export function TaskRail({
           </InputGroupAddon>
         </InputGroup>
         <SidebarMenu aria-label="Workspace">
-          <SidebarMenuItem>
+          <SidebarMenuItem
+            className={cn(
+              "flex items-center rounded-[calc(var(--radius-sm)+2px)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+              mode === "tasks" &&
+                "bg-sidebar-accent text-sidebar-accent-foreground",
+            )}
+          >
             <SidebarMenuButton
               isActive={mode === "tasks"}
+              className="w-auto! min-w-0 flex-1 hover:bg-transparent! data-active:bg-transparent!"
               onClick={() => onModeChange("tasks")}
             >
               <ListTodoIcon />
               <span>Tasks</span>
             </SidebarMenuButton>
+            {mode === "tasks" && (
+              <div className="mr-2 flex shrink-0 items-center gap-2">
+                <span className="text-sm font-medium">Urgency</span>
+                <Switch
+                  aria-label="Urgency"
+                  size="sm"
+                  checked={ordering === "priority"}
+                  onCheckedChange={(checked) =>
+                    onOrderingChange(checked ? "priority" : "time")
+                  }
+                />
+              </div>
+            )}
           </SidebarMenuItem>
-          <SidebarMenuItem>
+          <SidebarMenuItem
+            className={cn(
+              "flex items-center rounded-[calc(var(--radius-sm)+2px)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+              mode === "messages" &&
+                "bg-sidebar-accent text-sidebar-accent-foreground",
+            )}
+          >
             <SidebarMenuButton
               isActive={mode === "messages"}
+              className="w-auto! min-w-0 flex-1 hover:bg-transparent! data-active:bg-transparent!"
               onClick={() => onModeChange("messages")}
             >
               <MessageSquareIcon />
               <span>Messages</span>
             </SidebarMenuButton>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="New message"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="mr-1 min-h-0! opacity-100 transition-opacity motion-reduce:transition-none md:opacity-0 md:group-hover/menu-item:opacity-100 md:group-focus-within/menu-item:opacity-100"
+                    onClick={() => {
+                      if (mode !== "messages") onModeChange("messages")
+                      onNewText()
+                    }}
+                  >
+                    <PlusIcon />
+                  </Button>
+                }
+              />
+              <TooltipContent role="tooltip" side="right">
+                New message
+              </TooltipContent>
+            </Tooltip>
           </SidebarMenuItem>
           <CallingOutboundNavigation />
         </SidebarMenu>
-        <SidebarGroup className="p-0">
-          <SidebarGroupContent className="flex justify-end gap-2">
-            {mode === "tasks" ? (
-              <NativeSelect
-                aria-label="Order tasks"
-                size="sm"
-                value={ordering}
-                onChange={(event) =>
-                  onOrderingChange(event.target.value as "time" | "priority")
-                }
-                className="shrink-0"
-              >
-                <NativeSelectOption value="time">Time</NativeSelectOption>
-                <NativeSelectOption value="priority">Priority</NativeSelectOption>
-              </NativeSelect>
-            ) : (
-              <Button size="sm" variant="outline" onClick={onNewText}>
-                <PlusIcon data-icon="inline-start" />
-                New text
-              </Button>
-            )}
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarHeader>
       <Separator />
       <SidebarContent className="gap-0">
@@ -213,27 +248,33 @@ export function TaskRail({
             <TaskGroup
               label="Open"
               tasks={open}
+              expanded={openExpanded}
               selectedTaskID={selectedTaskID}
               showOffice={showOffice}
+              onExpandedChange={setOpenExpanded}
               onTaskSelect={onTaskSelect}
             />
             <TaskGroup
               label="Completed"
               tasks={completed}
+              expanded={completedExpanded}
               selectedTaskID={selectedTaskID}
               showOffice={showOffice}
+              onExpandedChange={setCompletedExpanded}
               onTaskSelect={onTaskSelect}
             />
             {loading && <RailLoading label="Refreshing tasks" />}
             {!loading && tasks.length === 0 && (
               <RailEmpty>No follow-up tasks</RailEmpty>
             )}
-            <RailLoadSentinel
-              label="Loading more tasks"
-              cursor={nextCursor}
-              loading={loading}
-              onLoadMore={onLoadMore}
-            />
+            {taskSurfaceExpanded && (
+              <RailLoadSentinel
+                label="Loading more tasks"
+                cursor={nextCursor}
+                loading={loading}
+                onLoadMore={onLoadMore}
+              />
+            )}
           </>
         ) : (
           <>
@@ -293,24 +334,44 @@ export function TaskRail({
 function TaskGroup({
   label,
   tasks,
+  expanded,
   selectedTaskID,
   showOffice,
+  onExpandedChange,
   onTaskSelect,
 }: {
   label: "Open" | "Completed"
   tasks: Task[]
+  expanded: boolean
   selectedTaskID: string
   showOffice: boolean
+  onExpandedChange: (expanded: boolean) => void
   onTaskSelect: (task: Task) => void
 }) {
+  const contentID = useId()
+
   if (tasks.length === 0) return null
   return (
     <SidebarGroup className="p-0">
-      <SidebarGroupLabel className="px-3 font-medium">
-        {label}
-        <span className="ml-auto tabular-nums">{tasks.length}</span>
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
+      <button
+        type="button"
+        aria-controls={contentID}
+        aria-expanded={expanded}
+        className="group/disclosure flex h-8 w-full shrink-0 items-center px-3 text-left text-sm/5 font-medium text-sidebar-foreground/70 outline-hidden transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        onClick={() => onExpandedChange(!expanded)}
+      >
+        <span>{label}</span>
+        <ChevronRightIcon
+          aria-hidden="true"
+          className={cn(
+            "ml-auto size-4 shrink-0 stroke-[1.75] transition-[opacity,transform] motion-reduce:transition-none",
+            expanded
+              ? "rotate-90 opacity-0 group-hover/disclosure:opacity-100 group-focus-visible/disclosure:opacity-100"
+              : "opacity-100",
+          )}
+        />
+      </button>
+      <SidebarGroupContent id={contentID} hidden={!expanded}>
         <SidebarMenu className="gap-0">
           {tasks.map((task) => (
             <SidebarMenuItem key={task.id}>
@@ -334,7 +395,7 @@ function TaskGroup({
                     {task.state === "COMPLETED" && (
                       <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
                     )}
-                    <span className="truncate text-[13px] font-medium">
+                    <span className="truncate text-sm font-medium">
                       {task.title}
                     </span>
                     {task.origin === "ABITA_AI" && (
@@ -403,9 +464,6 @@ function MessageThreadGroup({
   if (threads.length === 0) return null
   return (
     <SidebarGroup className="p-0">
-      <SidebarGroupLabel className="px-3 font-medium">
-        Correspondence ledger
-      </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu className="gap-0">
           {threads.map((thread) => (
@@ -431,7 +489,7 @@ function MessageThreadGroup({
                       className="size-4 shrink-0 stroke-[1.75] text-muted-foreground"
                       aria-hidden="true"
                     />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium tabular-nums">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium tabular-nums">
                       {formatPhone(thread.externalPhone)}
                     </span>
                     <time
