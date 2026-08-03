@@ -378,11 +378,11 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var eventID, eventType string
+	var eventID string
 	var raw []byte
 	var receivedAt time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT event_id, event_type, raw_body, received_at
+		SELECT event_id, raw_body, received_at
 		FROM human_calling_provider_receipts
 		WHERE next_attempt_at <= $1
 			AND (
@@ -395,7 +395,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		ORDER BY next_attempt_at, received_at, event_id
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
-	`, now).Scan(&eventID, &eventType, &raw, &receivedAt)
+	`, now).Scan(&eventID, &raw, &receivedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
@@ -404,23 +404,6 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			return false, nil
 		}
 		return false, fmt.Errorf("claim provider receipt: %w", err)
-	}
-	if eventType == string(FactCallHangup) &&
-		now.Before(receivedAt.Add(2*time.Second)) {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_provider_receipts
-			SET
-				projection_error_code = 'WAITING_FOR_RELATED_FACT',
-				next_attempt_at = $2
-			WHERE event_id = $1
-		`, eventID, receivedAt.Add(2*time.Second)); err != nil {
-			return false, fmt.Errorf("defer provider hangup receipt: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit deferred provider hangup receipt: %w", err)
-		}
-		m.recordReceiptProcessed(ReceiptPending, receivedAt, now, m.now())
-		return true, nil
 	}
 	var projectionAttempts int
 	if err := tx.QueryRow(ctx, `

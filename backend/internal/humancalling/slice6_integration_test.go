@@ -1053,9 +1053,27 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 		t.Fatalf("idempotent Connected confirmation = %#v, err=%v", reconfirmed, err)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
-		EventID:       "outbound-destination-hangup",
+		EventID:       "outbound-staff-hangup",
 		Type:          humancalling.FactCallHangup,
 		OccurredAt:    now.Add(20 * time.Second),
+		CallControlID: "staff-control-1",
+		CallLegID:     "staff-leg-1",
+		CallSessionID: "outbound-session",
+		ClientState:   stringPayload(staffDial.Payload, "client_state"),
+		HangupCause:   "normal_clearing",
+	}); err != nil {
+		t.Fatalf("terminate outbound staff leg: %v", err)
+	}
+	ended, err := calling.ReadCall(context.Background(), identity, call.ID)
+	if err != nil ||
+		ended.State != humancalling.CallNeedsDisposition ||
+		ended.ProviderTermination != "COMPLETED" {
+		t.Fatalf("ended outbound Call = %#v, err=%v", ended, err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "outbound-destination-hangup-after-staff",
+		Type:          humancalling.FactCallHangup,
+		OccurredAt:    now.Add(21 * time.Second),
 		CallControlID: "destination-control-1",
 		CallLegID:     "destination-leg-1",
 		CallSessionID: "outbound-session",
@@ -1065,11 +1083,14 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 		),
 		HangupCause: "normal_clearing",
 	}); err != nil {
-		t.Fatalf("terminate outbound destination: %v", err)
+		t.Fatalf("converge duplicate outbound destination hangup: %v", err)
 	}
-	ended, err := calling.ReadCall(context.Background(), identity, call.ID)
-	if err != nil || ended.State != humancalling.CallNeedsDisposition {
-		t.Fatalf("ended outbound Call = %#v, err=%v", ended, err)
+	converged, err := calling.ReadCall(context.Background(), identity, call.ID)
+	if err != nil ||
+		converged.State != ended.State ||
+		converged.ProviderTermination != ended.ProviderTermination ||
+		converged.Version != ended.Version {
+		t.Fatalf("two-leg outbound hangup convergence = %#v, err=%v", converged, err)
 	}
 	dispositioned, err := calling.RecordDisposition(
 		context.Background(),
