@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -289,6 +290,326 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 	ended, err := calling.ReadCall(context.Background(), identity, offers[0].ID)
 	if err != nil || ended.State != humancalling.CallNeedsDisposition {
 		t.Fatalf("reordered bridge/hangup Call = %#v, err = %v", ended, err)
+	}
+}
+
+func TestOutboundBridgeReceiptAfterHangupPreservesConnectedDisposition(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 3, 9, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(
+		context.Background(),
+		access.Provisioning{
+			Environment: "test",
+			RequestedBy: "outbound-receipt-ordering-test",
+			Practices: []access.PracticeProvision{{
+				Key:  "outbound-receipt-practice",
+				Name: "Outbound Receipt Practice",
+				Locations: []access.LocationProvision{{
+					Key:            "outbound-receipt-location",
+					Name:           "Outbound Receipt Location",
+					AbitaOfficeKey: "outbound-receipt-office",
+				}},
+				Invitations: []access.InvitationProvision{{
+					Key:           "outbound-receipt-staff",
+					Email:         "outbound-receipt@synthetic.test",
+					Role:          access.RoleStaff,
+					LocationScope: access.LocationScopeAll,
+					ExpiresAt:     now.Add(time.Hour),
+				}},
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("provision outbound receipt staff: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "outbound-receipt-staff-subject",
+		Email:         "outbound-receipt@synthetic.test",
+		EmailVerified: true,
+	}
+	authorization, err := accessModule.AcceptInvitation(
+		context.Background(),
+		identity,
+		provisioned.Invitations[0].Token,
+	)
+	if err != nil {
+		t.Fatalf("accept outbound receipt invitation: %v", err)
+	}
+	taskModule := work.New(pool, accessModule, func() time.Time { return now })
+	task, _, err := taskModule.CreateAITask(
+		context.Background(),
+		work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject:       "outbound-receipt-service",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
+				},
+			},
+			OfficeKey:      "outbound-receipt-office",
+			OfficePhone:    "+15555550199",
+			SourceCallID:   "outbound-receipt-source",
+			IdempotencyKey: "outbound-receipt-task",
+			Phone:          "+15555550100",
+			Summary:        "Call patient",
+			Message:        "Synthetic outbound receipt ordering Task",
+			Category:       work.TaskCategoryAppointments,
+			Urgency:        work.TaskUrgencyNormal,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create outbound receipt Task: %v", err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		provider,
+		humancalling.Config{
+			HandoffSIPDomain:  "synthetic.sip.telnyx.com",
+			StaffSIPDomain:    "sip.telnyx.com",
+			HandoffTokenKey:   []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:     "synthetic-call-control",
+			ConnectionTimeout: 15 * time.Second,
+			LeaseDuration:     30 * time.Second,
+			ReadinessGrace:    15 * time.Second,
+			WebhookPublicKey:  publicKey,
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	if err := calling.ProvisionLocationVoices(
+		context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "outbound-receipt-practice",
+			LocationKey: "outbound-receipt-location",
+			Number:      "+15555550155",
+			Enabled:     true,
+		}},
+	); err != nil {
+		t.Fatalf("provision outbound receipt voice: %v", err)
+	}
+	prepareCredentials(t, calling)
+	const sessionID = "outbound-receipt-browser"
+	if _, err := calling.AcquireSoftphone(
+		context.Background(),
+		identity,
+		sessionID,
+		false,
+	); err != nil {
+		t.Fatalf("acquire outbound receipt softphone: %v", err)
+	}
+	if _, err := calling.SetReadiness(
+		context.Background(),
+		ready(identity, sessionID),
+	); err != nil {
+		t.Fatalf("ready outbound receipt softphone: %v", err)
+	}
+	call, err := calling.StartOutboundCall(
+		context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity:       identity,
+			SessionID:      sessionID,
+			IdempotencyKey: "outbound-receipt-call",
+			TaskID:         task.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("start outbound receipt Call: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("dial outbound receipt staff: processed=%t err=%v", processed, err)
+	}
+	staffDial := provider.last(humancalling.CommandDialStaff)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "outbound-receipt-staff-answered",
+		Type:          humancalling.FactCallAnswered,
+		OccurredAt:    now.Add(time.Second),
+		CallControlID: "staff-control-1",
+		CallLegID:     "staff-leg-1",
+		CallSessionID: "outbound-receipt-session",
+		ClientState:   stringPayload(staffDial.Payload, "client_state"),
+	}); err != nil {
+		t.Fatalf("answer outbound receipt staff: %v", err)
+	}
+	prepared, err := calling.ReadCall(context.Background(), identity, call.ID)
+	if err != nil {
+		t.Fatalf("read prepared outbound receipt Call: %v", err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(
+		context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity:   identity,
+			SessionID:  sessionID,
+			CallID:     call.ID,
+			MediaToken: prepared.ExpectedMediaToken,
+		},
+	); err != nil {
+		t.Fatalf("confirm outbound receipt media: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("dial outbound receipt destination: processed=%t err=%v", processed, err)
+	}
+	destinationDial := provider.last(humancalling.CommandDialDestination)
+	destinationClientState := stringPayload(destinationDial.Payload, "client_state")
+	receive := func(eventID, eventType string, occurredAt time.Time, hangupCause string) {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"call_control_id":"destination-control-1","call_leg_id":"destination-leg-1","call_session_id":"outbound-receipt-session","client_state":"%s","hangup_cause":"%s"}}}`,
+			eventType,
+			eventID,
+			occurredAt.Format(time.RFC3339Nano),
+			destinationClientState,
+			hangupCause,
+		))
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(),
+			raw,
+			timestamp,
+			signature,
+		); err != nil {
+			t.Fatalf("receive %s: %v", eventID, err)
+		}
+	}
+	bridgeAt := now.Add(2 * time.Second)
+	hangupAt := now.Add(3 * time.Second)
+	now = now.Add(4 * time.Second)
+	receive(
+		"outbound-receipt-hangup",
+		"call.hangup",
+		hangupAt,
+		"normal_clearing",
+	)
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("project outbound hangup first: processed=%t err=%v", processed, err)
+	}
+	intermediate, err := calling.ReadCall(context.Background(), identity, call.ID)
+	if err != nil ||
+		intermediate.State != humancalling.CallResolved ||
+		intermediate.ConnectedAt != nil ||
+		intermediate.ProviderTermination != "COMPLETED" {
+		t.Fatalf("immediate outbound hangup projection = %#v, err=%v", intermediate, err)
+	}
+	var hangupState humancalling.ReceiptState
+	var hangupAttempts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'outbound-receipt-hangup'
+	`).Scan(&hangupState, &hangupAttempts); err != nil {
+		t.Fatalf("read outbound hangup receipt: %v", err)
+	}
+	if hangupState != humancalling.ReceiptApplied || hangupAttempts != 1 {
+		t.Fatalf("outbound hangup receipt state=%q attempts=%d", hangupState, hangupAttempts)
+	}
+	var workspaceVersionBeforeBridge int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, authorization.Practice.ID).Scan(&workspaceVersionBeforeBridge); err != nil {
+		t.Fatalf("read workspace version before delayed bridge: %v", err)
+	}
+
+	now = now.Add(time.Second)
+	receive("outbound-receipt-bridge", "call.bridged", bridgeAt, "")
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("project earlier outbound bridge later: processed=%t err=%v", processed, err)
+	}
+	ended, err := calling.ReadCall(context.Background(), identity, call.ID)
+	if err != nil ||
+		ended.State != humancalling.CallNeedsDisposition ||
+		ended.ConnectedAt == nil ||
+		!ended.ConnectedAt.Equal(bridgeAt) ||
+		ended.ProviderTermination != "COMPLETED" {
+		t.Fatalf("reordered outbound receipts Call = %#v, err=%v", ended, err)
+	}
+	var bridgeState humancalling.ReceiptState
+	var bridgeAttempts int
+	var workspaceVersionAfterBridge int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'outbound-receipt-bridge'
+	`).Scan(&bridgeState, &bridgeAttempts); err != nil {
+		t.Fatalf("read delayed outbound bridge receipt: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT workspace_version
+		FROM access_practices
+		WHERE id = $1
+	`, authorization.Practice.ID).Scan(&workspaceVersionAfterBridge); err != nil {
+		t.Fatalf("read workspace version after delayed bridge: %v", err)
+	}
+	if bridgeState != humancalling.ReceiptApplied ||
+		bridgeAttempts != 1 ||
+		workspaceVersionAfterBridge != workspaceVersionBeforeBridge+1 {
+		t.Fatalf(
+			"delayed bridge receipt state=%q attempts=%d workspace=%d->%d",
+			bridgeState,
+			bridgeAttempts,
+			workspaceVersionBeforeBridge,
+			workspaceVersionAfterBridge,
+		)
+	}
+	var endedAt, attemptBridgeAt, attemptEndedAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.ended_at, attempt.bridge_occurred_at, attempt.ended_at
+		FROM human_calling_calls call
+		JOIN human_calling_connection_attempts attempt
+			ON attempt.id = call.current_attempt_id
+		WHERE call.id = $1
+	`, call.ID).Scan(&endedAt, &attemptBridgeAt, &attemptEndedAt); err != nil {
+		t.Fatalf("read reordered outbound receipt timestamps: %v", err)
+	}
+	if !endedAt.Equal(hangupAt) ||
+		!attemptBridgeAt.Equal(bridgeAt) ||
+		!attemptEndedAt.Equal(hangupAt) {
+		t.Fatalf(
+			"reordered outbound timestamps: connected=%s ended=%s attempt-ended=%s",
+			attemptBridgeAt,
+			endedAt,
+			attemptEndedAt,
+		)
+	}
+	rows, err := pool.Query(context.Background(), `
+		SELECT kind
+		FROM human_calling_timeline
+		WHERE call_id = $1
+			AND provider_event_id IN (
+				'outbound-receipt-bridge',
+				'outbound-receipt-hangup'
+			)
+		ORDER BY occurred_at, kind
+	`, call.ID)
+	if err != nil {
+		t.Fatalf("read reordered outbound timeline: %v", err)
+	}
+	defer rows.Close()
+	kinds := []string{}
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			t.Fatalf("scan reordered outbound timeline: %v", err)
+		}
+		kinds = append(kinds, kind)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate reordered outbound timeline: %v", err)
+	}
+	if fmt.Sprint(kinds) != "[call.connected call.terminated]" {
+		t.Fatalf("reordered outbound timeline = %v", kinds)
 	}
 }
 
