@@ -168,7 +168,7 @@ export function CallingAvailabilityControl() {
   if (platformOperator) return null
   return (
     <div className="ml-auto flex items-center gap-2">
-      <span className="text-[13px] font-medium">Availability</span>
+      <span className="text-sm font-medium">Availability</span>
       {availabilityPending && <Spinner aria-label="Updating availability" />}
       {!availabilityPending && availabilityError && (
         <ShieldAlertIcon

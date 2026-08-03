@@ -164,6 +164,27 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         selectedPage.getByRole("button", { name: new RegExp(firstTitle) }),
         secondaryPage.getByRole("button", { name: new RegExp(firstTitle) }),
       ]
+      const openSections = [
+        selectedPage.getByRole("button", { name: "Open", exact: true }),
+        secondaryPage.getByRole("button", { name: "Open", exact: true }),
+      ]
+      await Promise.all(
+        openSections.map(async (section) => {
+          await expect(section).toHaveAttribute("aria-expanded", "false")
+          await expect(section).toHaveText("Open")
+        }),
+      )
+      await Promise.all(
+        firstTaskButtons.map((button) => expect(button).not.toBeVisible()),
+      )
+      await openSections[0].focus()
+      await selectedPage.keyboard.press("Enter")
+      await openSections[1].click()
+      await Promise.all(
+        openSections.map((section) =>
+          expect(section).toHaveAttribute("aria-expanded", "true"),
+        ),
+      )
       await Promise.all(firstTaskButtons.map((button) => expect(button).toBeVisible()))
       await Promise.all([
         expect(
@@ -214,20 +235,33 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         ).toBeVisible(),
       ])
 
-      await secondaryPage.getByLabel("Order tasks").selectOption("priority")
-      await expect(secondaryPage.getByLabel("Order tasks")).toHaveValue(
-        "priority",
-      )
-      await expect(selectedPage.getByLabel("Order tasks")).toHaveValue("time")
+      await secondaryPage.getByRole("switch", { name: "Urgency" }).click()
+      await expect(
+        secondaryPage.getByRole("switch", { name: "Urgency" }),
+      ).toBeChecked()
+      await expect(
+        selectedPage.getByRole("switch", { name: "Urgency" }),
+      ).not.toBeChecked()
       await secondaryPage.reload()
-      await expect(secondaryPage.getByLabel("Order tasks")).toHaveValue(
-        "priority",
-      )
+      await expect(
+        secondaryPage.getByRole("switch", { name: "Urgency" }),
+      ).toBeChecked()
+      await secondaryPage
+        .getByRole("button", { name: "Open", exact: true })
+        .click()
       await secondaryPage
         .getByRole("button", { name: new RegExp(firstTitle) })
         .click()
 
       await selectedPage.getByRole("button", { name: "Complete" }).click()
+      const completedSection = secondaryPage.getByRole("button", {
+        name: "Completed",
+        exact: true,
+      })
+      await expect(completedSection).toHaveAttribute("aria-expanded", "false")
+      await expect(completedSection).toHaveText("Completed")
+      await completedSection.click()
+      await expect(completedSection).toHaveAttribute("aria-expanded", "true")
       await expect(
         secondaryPage.getByRole("button", { name: "Reopen" }),
       ).toBeVisible()
