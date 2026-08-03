@@ -1250,6 +1250,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           task_count: "1",
         })
 
+      const takeoverOpenTasks = takeoverPage.getByRole("button", {
+        name: "Open",
+        exact: true,
+      })
+      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "false")
+      await takeoverOpenTasks.click()
+      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "true")
       await takeoverPage
         .getByRole("button", { name: /Review voicemail/ })
         .click()
