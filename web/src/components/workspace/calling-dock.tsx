@@ -234,6 +234,7 @@ export function CallingDock({
   const [dialLocationID, setDialLocationID] = useState("")
   const [dialDestination, setDialDestination] = useState("")
   const [outboundPending, setOutboundPending] = useState(false)
+  const [endingCallID, setEndingCallID] = useState("")
   const [availabilityPending, setAvailabilityPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const adapterRef = useRef<CallingMediaAdapter | null>(null)
@@ -258,6 +259,12 @@ export function CallingDock({
     }
     activeCallSnapshotRef.current = call
     setActiveCall(call)
+    setEndingCallID((current) =>
+      current &&
+      (!call || call.id !== current || call.state !== "CONNECTED")
+        ? ""
+        : current,
+    )
     return true
   }, [])
   const resolvedDialLocationID = locations.some(
@@ -623,7 +630,7 @@ export function CallingDock({
             client: portalClient(token),
             path: { callId: acquired.data.activeCallId },
           }).catch(() => undefined)
-          if (observed?.data) setActiveCall(observed.data)
+          if (observed?.data) applyActiveCall(observed.data)
         }
         setError("Calling is active in another browser.")
         setAvailabilityPending(false)
@@ -1032,16 +1039,28 @@ export function CallingDock({
   }
 
   async function hangup() {
-    if (!activeCall) return
+    if (!activeCall || endingCallID) return
+    const callID = activeCall.id
+    setEndingCallID(callID)
+    setError("")
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) {
+      setEndingCallID("")
+      setError(
+        "Your authentication needs to be refreshed before you try Hang up again.",
+      )
+      return
+    }
     const result = await requestCallingHangup({
       client: portalClient(token),
-      path: { callId: activeCall.id },
+      path: { callId: callID },
       body: { sessionId: sessionID },
     }).catch(() => undefined)
     if (!result?.data) {
-      setError("The hangup request could not be committed.")
+      setEndingCallID((current) => (current === callID ? "" : current))
+      setError(
+        "Hang up was not committed. Check your connection and try again.",
+      )
       return
     }
     applyActiveCall(result.data)
@@ -1262,11 +1281,14 @@ export function CallingDock({
                   }
                   className={cn(
                     activeCall.state === "CONNECTED" && "text-success",
+                    endingCallID === activeCall.id && "text-warning",
                     (activeCall.state === "CONNECTING" ||
                       activeCall.state === "RECONCILING") && "text-warning",
                   )}
                 >
-                  {callStateLabel(activeCall.state)}
+                  {endingCallID === activeCall.id
+                    ? "Ending…"
+                    : callStateLabel(activeCall.state)}
                 </Badge>
                 <span className="truncate">
                   {activeCall.displayName ||
@@ -1302,6 +1324,7 @@ export function CallingDock({
                 onDispose={(outcome) => void dispose(outcome)}
                 onRetry={() => void retryCall()}
                 retryPending={outboundPending}
+                controlsPending={endingCallID === activeCall.id}
                 onClose={() => {
                   applyActiveCall()
                   setExpectedCallID("")
@@ -1502,6 +1525,7 @@ function ActiveCallControls({
   onDispose,
   onRetry,
   retryPending,
+  controlsPending,
   onClose,
 }: {
   call: CallingCall
@@ -1523,6 +1547,7 @@ function ActiveCallControls({
   ) => void
   onRetry: () => void
   retryPending: boolean
+  controlsPending: boolean
   onClose: () => void
 }) {
   const [keypadOpen, setKeypadOpen] = useState(false)
@@ -1534,6 +1559,7 @@ function ActiveCallControls({
     call.state === "VOICEMAIL" ||
     call.state === "MISSED"
   const keypadEligible =
+    !controlsPending &&
     owner &&
     call.state === "CONNECTED" &&
     mediaState === "ready" &&
@@ -1561,7 +1587,7 @@ function ActiveCallControls({
         <Button
           size="sm"
           variant="outline"
-          disabled={!mediaAttached}
+          disabled={controlsPending || !mediaAttached}
           onClick={onMute}
         >
           {muted ? <MicOffIcon /> : <MicIcon />}
@@ -1578,9 +1604,14 @@ function ActiveCallControls({
           >
             Keypad
           </Button>
-          <Button size="sm" variant="destructive" onClick={onHangup}>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={controlsPending}
+            onClick={onHangup}
+          >
             <PhoneOffIcon />
-            Hang up
+            {controlsPending ? "Ending…" : "Hang up"}
           </Button>
         </>
       )}
