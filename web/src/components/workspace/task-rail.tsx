@@ -117,8 +117,13 @@ export function TaskRail({
   const completed = tasks.filter((task) => task.state === "COMPLETED")
   const showOffice = practice.locations.length > 1 && !locationScopeID
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const [openExpanded, setOpenExpanded] = useState(false)
+  const [completedExpanded, setCompletedExpanded] = useState(false)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
+  const taskSurfaceExpanded =
+    (openExpanded && open.length > 0) ||
+    (completedExpanded && completed.length > 0)
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -243,27 +248,33 @@ export function TaskRail({
             <TaskGroup
               label="Open"
               tasks={open}
+              expanded={openExpanded}
               selectedTaskID={selectedTaskID}
               showOffice={showOffice}
+              onExpandedChange={setOpenExpanded}
               onTaskSelect={onTaskSelect}
             />
             <TaskGroup
               label="Completed"
               tasks={completed}
+              expanded={completedExpanded}
               selectedTaskID={selectedTaskID}
               showOffice={showOffice}
+              onExpandedChange={setCompletedExpanded}
               onTaskSelect={onTaskSelect}
             />
             {loading && <RailLoading label="Refreshing tasks" />}
             {!loading && tasks.length === 0 && (
               <RailEmpty>No follow-up tasks</RailEmpty>
             )}
-            <RailLoadSentinel
-              label="Loading more tasks"
-              cursor={nextCursor}
-              loading={loading}
-              onLoadMore={onLoadMore}
-            />
+            {taskSurfaceExpanded && (
+              <RailLoadSentinel
+                label="Loading more tasks"
+                cursor={nextCursor}
+                loading={loading}
+                onLoadMore={onLoadMore}
+              />
+            )}
           </>
         ) : (
           <>
@@ -323,17 +334,20 @@ export function TaskRail({
 function TaskGroup({
   label,
   tasks,
+  expanded,
   selectedTaskID,
   showOffice,
+  onExpandedChange,
   onTaskSelect,
 }: {
   label: "Open" | "Completed"
   tasks: Task[]
+  expanded: boolean
   selectedTaskID: string
   showOffice: boolean
+  onExpandedChange: (expanded: boolean) => void
   onTaskSelect: (task: Task) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
   const contentID = useId()
 
   if (tasks.length === 0) return null
@@ -344,7 +358,7 @@ function TaskGroup({
         aria-controls={contentID}
         aria-expanded={expanded}
         className="group/disclosure flex h-8 w-full shrink-0 items-center px-3 text-left text-sm/5 font-medium text-sidebar-foreground/70 outline-hidden transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-        onClick={() => setExpanded((current) => !current)}
+        onClick={() => onExpandedChange(!expanded)}
       >
         <span>{label}</span>
         <ChevronRightIcon

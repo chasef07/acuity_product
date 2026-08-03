@@ -194,7 +194,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     taskConversation.getByRole("article").filter({ hasText: taskReply }),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: "Complete" }).click()
+  await page.getByRole("button", { name: "Complete", exact: true }).click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeDisabled()
