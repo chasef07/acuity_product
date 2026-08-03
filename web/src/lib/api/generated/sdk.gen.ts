@@ -318,7 +318,7 @@ export const issueCallingVoicemailPlayback = <ThrowOnError extends boolean = fal
 });
 
 /**
- * Stream authorized private voicemail audio without exposing an object URL.
+ * Refresh and stream Telnyx-owned voicemail audio without exposing the provider URL.
  */
 export const getCallingVoicemailPlayback = <ThrowOnError extends boolean = false>(options: Options<GetCallingVoicemailPlaybackData, ThrowOnError>) => (options.client ?? client).get<GetCallingVoicemailPlaybackResponses, GetCallingVoicemailPlaybackErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

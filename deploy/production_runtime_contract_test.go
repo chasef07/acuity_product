@@ -323,6 +323,15 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 	if len(commands) != 6 {
 		t.Fatalf("captured Cloud Run command count = %d, want 6\n%s", len(commands), strings.Join(commands, "\n"))
 	}
+	for _, retired := range []string{
+		"TELNYX_RECORDING_BUCKET",
+		"HUMAN_CALLING_RECORDING_HOSTS",
+		"HUMAN_CALLING_RECORDING_CA_FILE",
+	} {
+		if strings.Contains(strings.Join(commands, "\n"), retired) {
+			t.Fatalf("rendered runtime still requires %s", retired)
+		}
+	}
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
 		"--region\tus-east1",
 		"--cpu\t1",
@@ -419,12 +428,6 @@ func TestProductionCloudRunCommandsFailClosed(t *testing.T) {
 			key:     "USABLE_DATABASE_CONNECTIONS",
 			value:   "21",
 			message: "production requires at least 22 usable database connections",
-		},
-		{
-			name:    "recording bucket",
-			key:     "RECORDING_BUCKET_LOCATION",
-			value:   "us-central1",
-			message: "recording bucket must be in us-east1",
 		},
 		{
 			name:    "messaging attachment bucket",
@@ -653,8 +656,6 @@ func productionRuntimeEnvironment() []string {
 		"TELNYX_CREDENTIAL_CONNECTION_ID=credential",
 		"TELNYX_FROM_NUMBER=+15555550100",
 		"TELNYX_RINGBACK_URL=https://portal.example/ringback.wav",
-		"TELNYX_RECORDING_BUCKET=acuity-recordings",
-		"RECORDING_BUCKET_LOCATION=us-east1",
 		"TELNYX_WEBHOOK_PUBLIC_KEY=test-public-key",
 		"MESSAGING_WEBHOOK_BASE_URL=https://ingress.example/v1/provider/telnyx/messaging-webhooks",
 		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",

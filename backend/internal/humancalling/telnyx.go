@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -133,7 +135,7 @@ func (adapter *TelnyxAdapter) Execute(
 	case CommandStartVoicemailRecording:
 		maxLength, validMaxLength := payload["max_length"].(float64)
 		if command.TargetID == "" ||
-			payload["format"] != "wav" ||
+			payload["format"] != "mp3" ||
 			payload["channels"] != "single" ||
 			payload["recording_track"] != "inbound" ||
 			payload["transcription"] != false ||
@@ -329,6 +331,187 @@ func (adapter *TelnyxAdapter) IsCallAlive(
 		)
 	}
 	return *response.Data.IsAlive, nil
+}
+
+func (adapter *TelnyxAdapter) OpenVoicemailRecording(
+	ctx context.Context,
+	recordingID string,
+	rangeHeader string,
+) (PlaybackContent, error) {
+	recordingID = strings.TrimSpace(recordingID)
+	if recordingID == "" {
+		return PlaybackContent{}, ErrInvalidInput
+	}
+	metadata, err := adapter.recordingMetadata(ctx, recordingID)
+	if err != nil {
+		return PlaybackContent{}, err
+	}
+	var response struct {
+		Data struct {
+			DownloadURLs        recordingURLs `json:"download_urls"`
+			PublicRecordingURLs recordingURLs `json:"public_recording_urls"`
+			RecordingURLs       recordingURLs `json:"recording_urls"`
+			RecordingURL        string        `json:"recording_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(metadata, &response); err != nil {
+		return PlaybackContent{}, voicemailUnavailable(
+			VoicemailProviderInvalid,
+			"",
+		)
+	}
+	recordingURL := firstRecordingURL(
+		response.Data.DownloadURLs,
+		response.Data.PublicRecordingURLs,
+		response.Data.RecordingURLs,
+	)
+	if recordingURL == "" {
+		recordingURL = strings.TrimSpace(response.Data.RecordingURL)
+	}
+	parsed, err := url.Parse(recordingURL)
+	allowLocalHTTP := strings.HasPrefix(adapter.config.BaseURL, "http://")
+	if err != nil ||
+		(parsed.Scheme != "https" &&
+			!(allowLocalHTTP && parsed.Scheme == "http")) ||
+		parsed.Host == "" || parsed.User != nil {
+		return PlaybackContent{}, voicemailUnavailable(
+			VoicemailProviderInvalid,
+			"",
+		)
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		parsed.String(),
+		nil,
+	)
+	if err != nil {
+		return PlaybackContent{}, voicemailUnavailable(
+			VoicemailProviderInvalid,
+			"",
+		)
+	}
+	if rangeHeader = strings.TrimSpace(rangeHeader); rangeHeader != "" {
+		request.Header.Set("Range", rangeHeader)
+	}
+	audio, err := adapter.config.HTTPClient.Do(request)
+	if err != nil {
+		return PlaybackContent{}, voicemailTransportError(err)
+	}
+	if audio.StatusCode != http.StatusOK &&
+		audio.StatusCode != http.StatusPartialContent {
+		audio.Body.Close()
+		reason := VoicemailProviderUnavailable
+		if audio.StatusCode == http.StatusUnauthorized ||
+			audio.StatusCode == http.StatusForbidden ||
+			audio.StatusCode == http.StatusNotFound {
+			reason = VoicemailRecordingURLExpired
+		} else if audio.StatusCode == http.StatusTooManyRequests {
+			reason = VoicemailProviderRateLimited
+		}
+		return PlaybackContent{}, voicemailUnavailable(
+			reason,
+			safeRetryAfter(audio.Header.Get("Retry-After")),
+		)
+	}
+	contentType := strings.TrimSpace(strings.Split(
+		audio.Header.Get("Content-Type"),
+		";",
+	)[0])
+	if contentType == "" {
+		contentType = "audio/mpeg"
+	}
+	return PlaybackContent{
+		StatusCode:    audio.StatusCode,
+		ContentType:   contentType,
+		ContentLength: audio.Header.Get("Content-Length"),
+		ContentRange:  audio.Header.Get("Content-Range"),
+		Body:          audio.Body,
+	}, nil
+}
+
+func (adapter *TelnyxAdapter) recordingMetadata(
+	ctx context.Context,
+	recordingID string,
+) ([]byte, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		adapter.config.BaseURL+"/recordings/"+url.PathEscape(recordingID),
+		nil,
+	)
+	if err != nil {
+		return nil, voicemailUnavailable(VoicemailProviderInvalid, "")
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+adapter.config.APIKey)
+	response, err := adapter.config.HTTPClient.Do(request)
+	if err != nil {
+		return nil, voicemailTransportError(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		reason := VoicemailProviderUnavailable
+		switch response.StatusCode {
+		case http.StatusNotFound:
+			reason = VoicemailRecordingNotFound
+		case http.StatusUnauthorized, http.StatusForbidden:
+			reason = VoicemailProviderAuth
+		case http.StatusTooManyRequests:
+			reason = VoicemailProviderRateLimited
+		}
+		return nil, voicemailUnavailable(
+			reason,
+			safeRetryAfter(response.Header.Get("Retry-After")),
+		)
+	}
+	metadata, err := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
+	if err != nil || len(metadata) == 0 || len(metadata) > 64*1024 {
+		return nil, voicemailUnavailable(VoicemailProviderInvalid, "")
+	}
+	return metadata, nil
+}
+
+func voicemailTransportError(err error) error {
+	var networkError net.Error
+	if errors.Is(err, context.DeadlineExceeded) ||
+		(errors.As(err, &networkError) && networkError.Timeout()) {
+		return voicemailUnavailable(VoicemailProviderTimeout, "")
+	}
+	return voicemailUnavailable(VoicemailProviderUnavailable, "")
+}
+
+func voicemailUnavailable(
+	reason VoicemailUnavailableReason,
+	retryAfter string,
+) error {
+	return &VoicemailUnavailableError{Reason: reason, RetryAfter: retryAfter}
+}
+
+func safeRetryAfter(value string) string {
+	value = strings.TrimSpace(value)
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 || seconds > 3600 {
+		return ""
+	}
+	return strconv.Itoa(seconds)
+}
+
+type recordingURLs struct {
+	MP3 string `json:"mp3"`
+	WAV string `json:"wav"`
+}
+
+func firstRecordingURL(groups ...recordingURLs) string {
+	for _, group := range groups {
+		if value := strings.TrimSpace(group.MP3); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(group.WAV); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (adapter *TelnyxAdapter) request(

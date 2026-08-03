@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,193 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
+
+func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
+	audio := []byte("synthetic-mp3")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		switch request.URL.Path {
+		case "/v2/recordings/provider-recording-1":
+			if request.Header.Get("Authorization") != "Bearer synthetic-key" {
+				http.Error(writer, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(
+				writer,
+				`{"data":{"download_urls":{"mp3":%q}}}`,
+				server.URL+"/recording.mp3",
+			)
+		case "/recording.mp3":
+			if request.Header.Get("Authorization") != "" {
+				http.Error(writer, "credential leaked", http.StatusBadRequest)
+				return
+			}
+			if request.Header.Get("Range") != "bytes=0-3" {
+				http.Error(writer, "range missing", http.StatusBadRequest)
+				return
+			}
+			writer.Header().Set("Accept-Ranges", "bytes")
+			writer.Header().Set("Content-Range", "bytes 0-3/13")
+			writer.Header().Set("Content-Length", "4")
+			writer.Header().Set("Content-Type", "audio/mpeg")
+			writer.WriteHeader(http.StatusPartialContent)
+			_, _ = writer.Write(audio[:4])
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:     "synthetic-key",
+		BaseURL:    server.URL + "/v2",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := adapter.OpenVoicemailRecording(
+		context.Background(),
+		"provider-recording-1",
+		"bytes=0-3",
+	)
+	if err != nil {
+		t.Fatalf("open voicemail recording: %v", err)
+	}
+	defer content.Body.Close()
+	body, err := io.ReadAll(content.Body)
+	if err != nil {
+		t.Fatalf("read voicemail recording: %v", err)
+	}
+	if content.StatusCode != http.StatusPartialContent ||
+		content.ContentType != "audio/mpeg" ||
+		content.ContentLength != "4" ||
+		content.ContentRange != "bytes 0-3/13" ||
+		string(body) != "synt" {
+		t.Fatalf("voicemail recording = %#v body=%q", content, body)
+	}
+}
+
+func TestTelnyxAdapterClassifiesVoicemailPlaybackFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		expiredURL bool
+		timeout    bool
+		want       humancalling.VoicemailUnavailableReason
+		wantRetry  string
+	}{
+		{name: "recording not found", status: http.StatusNotFound, want: humancalling.VoicemailRecordingNotFound},
+		{name: "provider unauthorized", status: http.StatusUnauthorized, want: humancalling.VoicemailProviderAuth},
+		{name: "provider forbidden", status: http.StatusForbidden, want: humancalling.VoicemailProviderAuth},
+		{name: "provider rate limited", status: http.StatusTooManyRequests, want: humancalling.VoicemailProviderRateLimited, wantRetry: "7"},
+		{name: "provider unavailable", status: http.StatusServiceUnavailable, want: humancalling.VoicemailProviderUnavailable},
+		{name: "fresh download URL expired", status: http.StatusOK, expiredURL: true, want: humancalling.VoicemailRecordingURLExpired},
+		{name: "provider timeout", timeout: true, want: humancalling.VoicemailProviderTimeout},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				if test.timeout {
+					time.Sleep(100 * time.Millisecond)
+					return
+				}
+				if request.URL.Path == "/recording.mp3" {
+					writer.WriteHeader(http.StatusForbidden)
+					return
+				}
+				if test.status == http.StatusTooManyRequests {
+					writer.Header().Set("Retry-After", test.wantRetry)
+				}
+				if test.expiredURL {
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(
+						writer,
+						`{"data":{"download_urls":{"mp3":%q}}}`,
+						server.URL+"/recording.mp3",
+					)
+					return
+				}
+				writer.WriteHeader(test.status)
+			}))
+			defer server.Close()
+			client := server.Client()
+			if test.timeout {
+				client.Timeout = 10 * time.Millisecond
+			}
+			adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+				APIKey:     "synthetic-key",
+				BaseURL:    server.URL + "/v2",
+				HTTPClient: client,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = adapter.OpenVoicemailRecording(
+				context.Background(),
+				"provider-recording-1",
+				"",
+			)
+			var unavailable *humancalling.VoicemailUnavailableError
+			if !errors.As(err, &unavailable) ||
+				unavailable.Reason != test.want ||
+				unavailable.RetryAfter != test.wantRetry {
+				t.Fatalf("voicemail playback error = %#v, want reason %q retry %q", err, test.want, test.wantRetry)
+			}
+		})
+	}
+}
+
+func TestTelnyxAdapterRejectsInsecureProductionRecordingURL(t *testing.T) {
+	var requests int
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:  "synthetic-key",
+		BaseURL: "https://api.telnyx.test/v2",
+		HTTPClient: &http.Client{Transport: httpRoundTripperFunc(func(
+			request *http.Request,
+		) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"data":{"download_urls":{"mp3":"http://recordings.telnyx.test/audio.mp3"}}}`,
+				)),
+				Request: request,
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.OpenVoicemailRecording(
+		context.Background(),
+		"provider-recording-1",
+		"",
+	)
+	var unavailable *humancalling.VoicemailUnavailableError
+	if !errors.As(err, &unavailable) ||
+		unavailable.Reason != humancalling.VoicemailProviderInvalid ||
+		requests != 1 {
+		t.Fatalf("insecure recording URL result = err:%#v requests:%d", err, requests)
+	}
+}
+
+type httpRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (transport httpRoundTripperFunc) RoundTrip(
+	request *http.Request,
+) (*http.Response, error) {
+	return transport(request)
+}
 
 func TestTelnyxAdapterAcceptsRawMediaJWT(t *testing.T) {
 	expiresAt := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
@@ -199,7 +388,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 			Action:   humancalling.CommandStartVoicemailRecording,
 			TargetID: "caller-control",
 			Payload: map[string]any{
-				"format":           "wav",
+				"format":           "mp3",
 				"channels":         "single",
 				"recording_track":  "inbound",
 				"transcription":    false,
@@ -242,6 +431,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 		t.Fatalf("voicemail greeting request = %#v", greeting)
 	}
 	if recording["_path"] != "/v2/calls/caller-control/actions/record_start" ||
+		recording["format"] != "mp3" ||
 		recording["channels"] != "single" ||
 		recording["recording_track"] != "inbound" ||
 		recording["max_length"] != float64(120) ||

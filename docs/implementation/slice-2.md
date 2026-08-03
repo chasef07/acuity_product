@@ -127,8 +127,8 @@ prove it is rejected. Integration tests additionally cover no-redial ambiguous
 recovery, deadline expiry, invalid JWT boundaries, receipt reordering, and the
 sanitized operator timeline.
 
-These tests are deterministic product proof, not live Telnyx, LiveKit, audio, or
-GCS proof.
+These tests are deterministic product proof, not live Telnyx, LiveKit, audio,
+or carrier proof.
 
 ## Controlled live gate
 
@@ -149,10 +149,11 @@ until one explicitly approved synthetic run supplies all of this evidence:
   reload recovery without a second Dial or bridge;
 - provider-confirmed hangup, committed disposition, and a sanitized Platform
   Operator timeline explaining the journey; and
-- a post-bridge dual-channel WAV object in the dedicated private GCS bucket,
-  with no Telnyx or application transcription artifact.
+- the current release emits no connected-call recording command; any future
+  human-call recording must remain Telnyx-owned and use the authenticated
+  provider-recording playback boundary.
 
-The run requires approved Telnyx, LiveKit, public HTTPS webhook, GCS, browser
-audio, synthetic identities, and secret configuration. Health endpoints, mock
+The run requires approved Telnyx, LiveKit, public HTTPS webhook, browser audio,
+synthetic identities, and secret configuration. Health endpoints, mock
 audio, successful command responses, or a Dial response alone do not satisfy
 this gate.

@@ -133,9 +133,7 @@ type Config struct {
 	CredentialConnectionID string
 	FromNumber             string
 	RingbackURL            string
-	RecordingBucket        string
-	VoicemailStore         VoicemailObjectStore
-	RecordingDownloader    RecordingDownloader
+	VoicemailAudioProvider VoicemailAudioProvider
 	PlaybackSigningKey     []byte
 	WebhookPublicKey       ed25519.PublicKey
 	WebhookTolerance       time.Duration
@@ -179,9 +177,6 @@ type ProviderFact struct {
 	To                 string
 	HangupCause        string
 	RecordingID        string
-	RecordingBucket    string
-	RecordingObjectKey string
-	RecordingURL       string
 	RecordingStartedAt time.Time
 	RecordingEndedAt   time.Time
 }
@@ -271,9 +266,6 @@ const (
 
 type Recording struct {
 	State       RecordingState
-	Bucket      string
-	ObjectKey   string
-	ProviderID  string
 	FailureCode string
 }
 
@@ -653,7 +645,7 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 				return m.applyVoicemailRecordingSaved(ctx, fact, state.CallID)
 			}
 		} else {
-			transaction = func() error { return m.applyRecordingSaved(ctx, fact) }
+			return nil
 		}
 	case FactRecordingError:
 		if state, ok := parseOpaqueClientState(fact.ClientState); ok &&
@@ -663,7 +655,7 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 				return m.applyVoicemailRecordingError(ctx, fact, state.CallID)
 			}
 		} else {
-			transaction = func() error { return m.applyRecordingError(ctx, fact) }
+			return nil
 		}
 	default:
 		return nil
@@ -5524,128 +5516,6 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	return nil
 }
 
-func (m *Module) applyRecordingSaved(ctx context.Context, fact ProviderFact) error {
-	if fact.RecordingBucket != m.config.RecordingBucket ||
-		fact.RecordingObjectKey == "" {
-		fact.RecordingObjectKey = ""
-		return m.applyRecordingFact(
-			ctx,
-			fact,
-			RecordingFailed,
-			"GCS_OBJECT_NOT_READY",
-		)
-	}
-	return m.applyRecordingFact(ctx, fact, RecordingReady, "")
-}
-
-func (m *Module) applyRecordingError(ctx context.Context, fact ProviderFact) error {
-	return m.applyRecordingFact(
-		ctx,
-		fact,
-		RecordingFailed,
-		"PROVIDER_RECORDING_FAILED",
-	)
-}
-
-func (m *Module) applyRecordingFact(
-	ctx context.Context,
-	fact ProviderFact,
-	recordingState RecordingState,
-	failureCode string,
-) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin recording projection: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		return tx.Commit(ctx)
-	}
-
-	var callID, practiceID, currentObjectKey string
-	err = tx.QueryRow(ctx, `
-		SELECT c.id::text, c.practice_id::text, r.object_key
-		FROM human_calling_calls c
-		JOIN human_calling_recordings r ON r.call_id = c.id
-		WHERE c.call_session_id = $1
-			AND (
-				c.caller_call_control_id = $2
-				OR c.expected_staff_call_control_id = $2
-			)
-		FOR UPDATE OF r
-	`, fact.CallSessionID, fact.CallControlID).Scan(
-		&callID,
-		&practiceID,
-		&currentObjectKey,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConflict
-		}
-		return fmt.Errorf("correlate recording evidence: %w", err)
-	}
-	objectKey := currentObjectKey
-	if fact.RecordingObjectKey != "" {
-		objectKey = fact.RecordingObjectKey
-	}
-	projected, err := tx.Exec(ctx, `
-		UPDATE human_calling_recordings
-		SET
-			state = $2,
-			provider_recording_id = NULLIF($3, ''),
-			object_key = $4,
-			ready_at = CASE WHEN $2 = 'READY' THEN $5 ELSE ready_at END,
-			failure_code = NULLIF($6, ''),
-			last_event_at = $5,
-			updated_at = $5
-		WHERE call_id = $1
-			AND (
-				last_event_at IS NULL
-				OR last_event_at < $5
-				OR (
-					last_event_at = $5
-					AND $2 = 'READY'
-					AND state <> 'READY'
-				)
-			)
-	`, callID, recordingState, fact.RecordingID, objectKey, fact.OccurredAt, failureCode)
-	if err != nil {
-		return fmt.Errorf("project recording evidence: %w", err)
-	}
-	timelineKind := "recording." + strings.ToLower(string(recordingState))
-	timelineError := failureCode
-	if projected.RowsAffected() == 0 {
-		timelineKind = "recording.fact_ignored"
-		timelineError = "STALE_RECORDING_FACT"
-	}
-	if err := appendTimeline(
-		ctx,
-		tx,
-		callID,
-		practiceID,
-		timelineKind,
-		"",
-		fact.EventID,
-		"",
-		opaqueReference(fact.RecordingID),
-		timelineError,
-		fact.OccurredAt,
-	); err != nil {
-		return err
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit recording projection: %w", err)
-	}
-	return nil
-}
-
 func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 	var result Call
 	err := m.pool.QueryRow(ctx, `
@@ -5681,12 +5551,17 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			c.connected_at,
 			c.version,
 			COALESCE(r.state, ''),
-			COALESCE(r.bucket, ''),
-			COALESCE(r.object_key, ''),
-			COALESCE(r.provider_recording_id, ''),
 			COALESCE(r.failure_code, ''),
 			COALESCE(v.outcome, ''),
-			COALESCE(v.audio_state, ''),
+			COALESCE(
+				CASE
+					WHEN v.outcome = 'VOICEMAIL'
+						AND v.provider_recording_id IS NOT NULL
+						THEN 'READY'
+					ELSE v.audio_state
+				END,
+				''
+			),
 			COALESCE(v.task_id::text, ''),
 			COALESCE(v.duration_millis / 1000, 0),
 			COALESCE(c.retry_of_call_id::text, ''),
@@ -5736,9 +5611,6 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.ConnectedAt,
 		&result.Version,
 		&result.Recording.State,
-		&result.Recording.Bucket,
-		&result.Recording.ObjectKey,
-		&result.Recording.ProviderID,
 		&result.Recording.FailureCode,
 		&result.Voicemail.Outcome,
 		&result.Voicemail.AudioState,

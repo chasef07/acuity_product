@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -995,6 +996,7 @@ func (server *Server) GetCallingVoicemailPlayback(
 	w http.ResponseWriter,
 	r *http.Request,
 	token string,
+	params api.GetCallingVoicemailPlaybackParams,
 ) {
 	identity, ok := server.callingIdentity(w, r)
 	if !ok {
@@ -1004,18 +1006,72 @@ func (server *Server) GetCallingVoicemailPlayback(
 	defer cancel()
 	content, err := server.calling.OpenVoicemailPlayback(
 		ctx,
+		r.Context(),
 		identity,
 		token,
+		stringValue(params.Range),
 	)
 	if err != nil {
-		server.writeCallingError(w, r, err)
+		server.writeVoicemailPlaybackError(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", content.ContentType)
+	if content.Body == nil ||
+		(content.StatusCode != http.StatusOK &&
+			content.StatusCode != http.StatusPartialContent) {
+		server.writeCallingError(w, r, humancalling.ErrConflict)
+		return
+	}
+	defer content.Body.Close()
+	w.Header().Set("Content-Type", safeAudioContentType(content.ContentType))
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content.Content)
+	if length, ok := safeContentLength(content.ContentLength); ok {
+		w.Header().Set("Content-Length", length)
+	}
+	if content.StatusCode == http.StatusPartialContent &&
+		safeContentRange(content.ContentRange) {
+		w.Header().Set("Content-Range", content.ContentRange)
+	}
+	w.WriteHeader(content.StatusCode)
+	_, _ = io.Copy(w, content.Body)
+}
+
+func safeAudioContentType(value string) string {
+	value = strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
+	switch value {
+	case "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav":
+		return value
+	default:
+		return "audio/mpeg"
+	}
+}
+
+func safeContentLength(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	length, err := strconv.ParseInt(value, 10, 64)
+	return value, err == nil && length >= 0
+}
+
+func safeContentRange(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) > 128 || !strings.HasPrefix(value, "bytes ") {
+		return false
+	}
+	rangeAndLength := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
+	if len(rangeAndLength) != 2 {
+		return false
+	}
+	bounds := strings.Split(rangeAndLength[0], "-")
+	if len(bounds) != 2 {
+		return false
+	}
+	start, startErr := strconv.ParseUint(bounds[0], 10, 64)
+	end, endErr := strconv.ParseUint(bounds[1], 10, 64)
+	length, lengthErr := strconv.ParseUint(rangeAndLength[1], 10, 64)
+	return startErr == nil && endErr == nil && lengthErr == nil &&
+		start <= end && end < length
 }
 
 func (server *Server) RequestCallingHangup(
@@ -1986,6 +2042,46 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}
+}
+
+func (server *Server) writeVoicemailPlaybackError(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+) {
+	var unavailable *humancalling.VoicemailUnavailableError
+	if !errors.As(err, &unavailable) {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	status := http.StatusServiceUnavailable
+	message := "Voicemail playback is temporarily unavailable. Try again."
+	retryable := true
+	switch unavailable.Reason {
+	case humancalling.VoicemailRecordingNotFound:
+		status = http.StatusNotFound
+		message = "This voicemail is no longer available."
+		retryable = false
+	case humancalling.VoicemailProviderAuth:
+		message = "Voicemail playback is temporarily unavailable. Contact support if this continues."
+		retryable = false
+	case humancalling.VoicemailProviderRateLimited:
+		message = "Voicemail playback is temporarily busy. Try again shortly."
+		if unavailable.RetryAfter != "" {
+			w.Header().Set("Retry-After", unavailable.RetryAfter)
+		}
+	case humancalling.VoicemailProviderTimeout:
+		status = http.StatusGatewayTimeout
+		message = "Voicemail playback timed out. Try again."
+	}
+	server.writeError(
+		w,
+		r,
+		status,
+		"VOICEMAIL_UNAVAILABLE",
+		message,
+		retryable,
+	)
 }
 
 func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err error) {

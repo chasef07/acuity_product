@@ -18,7 +18,7 @@ flowchart LR
     AI["Existing AI agent"]
     Telnyx["Telnyx<br/>voice and SMS"]
     DB[("Cloud SQL PostgreSQL<br/>sole durable authority")]
-    Objects[("Protected object storage")]
+    Objects[("Protected SMS/MMS attachment storage")]
 
     Browser --> Next
     Browser -->|"HTTPS + JWT"| API
@@ -33,20 +33,20 @@ flowchart LR
     Migrate --> DB
     API -->|"committed provider commands"| Telnyx
     Worker -->|"retry and reconciliation"| Telnyx
-    Worker --> Objects
+    Worker -->|"Messaging attachment jobs"| Objects
 ```
 
 ## Modules
 
-The Go runtime contains five deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, object storage, and durable jobs are adapters around those interfaces.
+The Go runtime contains five deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, and durable jobs are adapters around those interfaces.
 
 | Module | Owns | Does not own |
 |---|---|---|
 | `Access` | Human and service principals, invitations, memberships, Platform Operators, Support Mode, roles, location scope, authorization decisions | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
-| `HumanCalling` | Availability, simultaneous offers, winner election, logical call state, bridge confirmation, post-call disposition, recording readiness | Task lifecycle, SMS correlation, protected evidence access |
+| `HumanCalling` | Availability, simultaneous offers, winner election, logical call state, bridge confirmation, post-call disposition, voicemail lifecycle, recording identity, and authorized playback | Task lifecycle, SMS correlation, provider-owned audio bytes |
 | `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts | Task lifecycle, contact identity, call state |
-| `EvidenceArchive` | Recording/transcript availability, protected grants, access audit, retention, deletion | Call control, task completion, provider routing |
+| `EvidenceArchive` | Canonical recording/transcript metadata, protected grants, access audit, retention, deletion | Call control, task completion, provider-owned audio bytes |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
 
@@ -137,7 +137,7 @@ flowchart LR
     Evidence["EvidenceArchive<br/>deep module"]
 
     DB[("PostgreSQL")]
-    Objects[("Protected object storage")]
+    Objects[("Protected SMS/MMS attachment storage")]
 
     Browser --> Access
     AI --> Access
@@ -167,14 +167,15 @@ flowchart LR
     Calling --> DB
     Messaging --> DB
     Evidence --> DB
-    Evidence --> Objects
+    Evidence -->|"fresh authorized recording fetch"| Telnyx
+    Messaging --> Objects
 ```
 
 Dependency rules:
 
 1. `Access` resolves Platform Operator or Practice membership, role, dynamic or selected location scope, and Support Mode before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
 2. `HumanCalling` and `Messaging` may ask `Work` to create accountable work. `Work` does not know Telnyx.
-3. `EvidenceArchive` grants protected access after authorization. No caller receives a permanent recording URL.
+3. `HumanCalling` and `EvidenceArchive` grant protected access after authorization. PostgreSQL stores the durable Telnyx recording identity; the backend refreshes and proxies provider audio without exposing a raw provider URL.
 4. PostgreSQL is the sole durable product authority. SSE, browser state, and provider commands are projections or requests.
 5. Provider events are facts. A browser click cannot prove that a call bridged, an SMS delivered, or a recording became available.
 
@@ -187,7 +188,8 @@ Only dependencies that actually vary get a seam.
 | Human identity | Better Auth JWT/JWKS | Signed test JWT/JWKS | Authentication varies without changing `Access` |
 | Voice provider | Telnyx voice/webhook adapter | Deterministic provider adapter | Live provider behavior must be simulated and accepted live |
 | Messaging provider | Telnyx messaging/webhook adapter | Signed fixture adapter | Delivery, replay, and failure must be deterministic in tests |
-| Evidence storage | Protected object-storage adapter | Local test-storage adapter | Access and retention behavior must run without production storage |
+| Recording media | Telnyx recording-retrieval adapter | Deterministic streaming adapter | Authorization, fresh provider URLs, Range responses, and bounded failure behavior must be deterministic |
+| Messaging attachments | Protected attachment-storage adapter | Local file adapter | SMS/MMS attachment behavior must run without production storage |
 
 PostgreSQL is local-substitutable infrastructure, not an external module interface. Module integration tests use real PostgreSQL behavior so transactions, locking, unique constraints, and optimistic concurrency remain inside the implementation being tested.
 

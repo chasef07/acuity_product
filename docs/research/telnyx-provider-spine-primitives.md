@@ -214,10 +214,10 @@ Handle:
 
 Telnyx says its recording download URL in the webhook remains active for ten
 minutes. A webhook row containing that URL is therefore not durable recording
-evidence. The worker must promptly copy the asset to protected storage, or the
-Call Control Application must be configured for the approved GCS/AWS storage
-path. Persist the provider recording and transcription IDs for retrieval and
-diagnosis.
+identity. The binding storage decision is provider-native: persist the Telnyx
+recording ID, refresh metadata through `GET /v2/recordings/{id}`, and proxy the
+fresh audio URL only inside an authorized backend request. No GCS/AWS recording
+copy is part of the runtime path.
 
 ## Event and command discipline
 
@@ -432,7 +432,7 @@ audio, and durable recording evidence.
    Control-to-Telnyx WebRTC credential call in the target account? Prove it
    before the specification locks the happy path.
 5. **Recording policy:** What consent/announcement, jurisdiction, retention,
-   access, deletion, BAA, and GCS requirements apply?
+   access, provider deletion, and BAA requirements apply?
 6. **Voicemail:** Is voicemail part of Slice 2, and is it recorded by Telnyx
    after the 20-second staff window, or deferred to the next slice?
 7. **Browser recovery:** On reload, should a still-active provider call be

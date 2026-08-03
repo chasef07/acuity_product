@@ -737,7 +737,7 @@ paths:
   /v1/calling/voicemail-playback/{token}:
     get:
       operationId: getCallingVoicemailPlayback
-      summary: Stream authorized private voicemail audio without exposing an object URL.
+      summary: Refresh and stream Telnyx-owned voicemail audio without exposing the provider URL.
       parameters:
         - name: token
           in: path
@@ -746,11 +746,25 @@ paths:
             type: string
             minLength: 1
             maxLength: 2048
+        - name: Range
+          in: header
+          required: false
+          description: Optional single byte range forwarded to the provider audio request.
+          schema:
+            type: string
+            maxLength: 128
       responses:
         "200":
-          description: Authorized voicemail audio.
+          description: Authorized complete voicemail audio.
           content:
-            audio/wav:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Authorized partial voicemail audio.
+          content:
+            audio/mpeg:
               schema:
                 type: string
                 format: binary
@@ -758,8 +772,20 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Denied"
+        "404":
+          description: The Telnyx recording is no longer available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
         "503":
           $ref: "#/components/responses/Unavailable"
+        "504":
+          description: Telnyx recording retrieval timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /v1/tasks:
     post:
       operationId: createStaffTask

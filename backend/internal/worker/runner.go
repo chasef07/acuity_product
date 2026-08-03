@@ -14,7 +14,6 @@ type CallingWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
 	ReportReceiptQueue(context.Context) error
 	ProcessNextCommand(context.Context) (bool, error)
-	ProcessNextVoicemailCopy(context.Context) (bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
 	ExpireOffers(context.Context) (int, error)
 	ExpireConnections(context.Context) (int, error)
@@ -299,17 +298,6 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 		runner.work.ExpireVoicemailFailures,
 	); err != nil {
 		warn(ctx, "voicemail_failure_expiry_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runBoolWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.work.ProcessNextVoicemailCopy,
-	); err != nil {
-		warn(ctx, "voicemail_copy_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {

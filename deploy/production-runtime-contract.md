@@ -142,14 +142,12 @@ Production runtime rendering and its fail-closed capacity check:
 ```sh
 ACUITY_DEPLOYMENT_PROFILE=production \
 USABLE_DATABASE_CONNECTIONS=22 \
-RECORDING_BUCKET_LOCATION=us-east1 \
 MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1 \
   ./deploy/cloud-run-commands.example.sh
 ```
 
-The command also rejects a Cloud SQL connection name or recording-bucket
-location outside `us-east1`, and applies the same region check to the Messaging
-attachment bucket.
+The command also rejects a Cloud SQL connection name or Messaging attachment
+bucket location outside `us-east1`.
 
 Messaging adds one shared private Cloud Storage volume mounted at
 `MESSAGING_ATTACHMENT_DIRECTORY` by `portal-api`, `provider-ingress`, and

@@ -66,6 +66,10 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	observer.Observe(observability.SSEListenerConnected(true))
 	observer.Observe(observability.CallAccepted(observability.AcceptAlreadyClaimed))
 	observer.Observe(observability.CallBridged(1250 * time.Millisecond))
+	observer.Observe(observability.VoicemailPlayback(
+		observability.VoicemailPlaybackRateLimited,
+		250*time.Millisecond,
+	))
 
 	logs := entries(t, output.String())
 	assertField(t, logs, "acuity_call_center_webhook_acknowledgement",
@@ -84,6 +88,8 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		"outcome", "already_claimed")
 	assertField(t, logs, "acuity_call_center_accept_to_bridge",
 		"seconds", 1.25)
+	assertField(t, logs, "acuity_call_center_voicemail_playback",
+		"outcome", "rate_limited")
 }
 
 func TestPoolTracerClassifiesBoundedAcquisitionOutcome(t *testing.T) {

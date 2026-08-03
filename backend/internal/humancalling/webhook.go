@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -68,12 +67,8 @@ type telnyxVoicePayload struct {
 	To                 string    `json:"to"`
 	HangupCause        string    `json:"hangup_cause"`
 	RecordingID        string    `json:"recording_id"`
-	RecordingObjectKey string    `json:"recording_object_key"`
 	RecordingStartedAt time.Time `json:"recording_started_at"`
 	RecordingEndedAt   time.Time `json:"recording_ended_at"`
-	RecordingURLs      struct {
-		WAV string `json:"wav"`
-	} `json:"recording_urls"`
 }
 
 func (m *Module) ReceiveWebhook(
@@ -701,7 +696,6 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	fact.To = payload.To
 	fact.HangupCause = payload.HangupCause
 	fact.RecordingID = payload.RecordingID
-	fact.RecordingObjectKey = payload.RecordingObjectKey
 	fact.RecordingStartedAt = payload.RecordingStartedAt
 	fact.RecordingEndedAt = payload.RecordingEndedAt
 	if fact.CallControlID == "" ||
@@ -723,31 +717,12 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 			return ProviderFact{}, false, ErrInvalidWebhook
 		}
 	}
-	if fact.Type == FactRecordingSaved {
-		fact.RecordingURL = payload.RecordingURLs.WAV
-		fact.RecordingBucket, fact.RecordingObjectKey = gcsObject(
-			payload.RecordingURLs.WAV,
-		)
-	}
 	return fact, true, nil
 }
 
 func validUUID(value string) bool {
 	_, err := uuid.Parse(value)
 	return err == nil
-}
-
-func gcsObject(value string) (string, string) {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "gs" || parsed.Host == "" {
-		return "", ""
-	}
-	key := strings.TrimPrefix(parsed.EscapedPath(), "/")
-	decoded, err := url.PathUnescape(key)
-	if err != nil || decoded == "" {
-		return "", ""
-	}
-	return parsed.Host, decoded
 }
 
 func claimProviderFact(
