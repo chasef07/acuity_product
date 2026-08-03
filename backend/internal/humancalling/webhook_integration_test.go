@@ -253,11 +253,24 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		"normal_clearing",
 	)
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("defer reordered hangup: processed=%t err=%v", processed, err)
+		t.Fatalf("project reordered hangup immediately: processed=%t err=%v", processed, err)
 	}
-	now = now.Add(3 * time.Second)
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("project reordered hangup first: processed=%t err=%v", processed, err)
+	var hangupReceiptState humancalling.ReceiptState
+	var hangupProjectionAttempts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'a-webhook-hangup'
+	`).Scan(&hangupReceiptState, &hangupProjectionAttempts); err != nil {
+		t.Fatalf("read immediate hangup projection: %v", err)
+	}
+	if hangupReceiptState != humancalling.ReceiptApplied ||
+		hangupProjectionAttempts != 1 {
+		t.Fatalf(
+			"immediate hangup receipt state = %q, attempts = %d",
+			hangupReceiptState,
+			hangupProjectionAttempts,
+		)
 	}
 	reopened, err := calling.ListOffers(context.Background(), identity)
 	if err != nil || len(reopened) != 1 || reopened[0].ID != offers[0].ID {
@@ -438,10 +451,6 @@ func TestRejectedHandoffTerminalizesRelatedLifecycleReceipts(t *testing.T) {
 		event := raw("rejected-"+strings.TrimPrefix(eventType, "call."), eventType)
 		receive(event)
 		process(eventType)
-		if eventType == "call.hangup" {
-			now = now.Add(3 * time.Second)
-			process(eventType + " after reorder hold")
-		}
 		if receipt := receive(event); receipt.State != humancalling.ReceiptFailed {
 			t.Fatalf("%s receipt = %#v", eventType, receipt)
 		}
@@ -577,7 +586,6 @@ func TestIrreparableKnownWebhookReceiptFailsPermanently(t *testing.T) {
 		t.Fatalf("receive malformed known event: %v", err)
 	}
 
-	now = now.Add(3 * time.Second)
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process malformed known event: processed=%t err=%v", processed, err)
 	}
@@ -724,7 +732,7 @@ func TestSlowRelatedFactReceiptIsVisibleInOperatorTimeline(t *testing.T) {
 	}
 }
 
-func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
+func TestHangupReceiptMissingRelatedCallFallsBackToSlowCadenceAndConverges(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -779,15 +787,15 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 		}
 		return receipt
 	}
-	answeredRaw := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.answered","id":"answered-before-call","occurred_at":"%s","payload":{"call_control_id":"late-related-control","call_leg_id":"late-related-leg","call_session_id":"late-related-session"}}}`,
+	hangupRaw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.hangup","id":"hangup-before-call","occurred_at":"%s","payload":{"call_control_id":"late-related-control","call_leg_id":"late-related-leg","call_session_id":"late-related-session","hangup_cause":"normal_clearing"}}}`,
 		now.Format(time.RFC3339Nano),
 	))
-	if receipt := receive(answeredRaw); receipt.State != humancalling.ReceiptPending {
-		t.Fatalf("initial answer receipt = %#v", receipt)
+	if receipt := receive(hangupRaw); receipt.State != humancalling.ReceiptPending {
+		t.Fatalf("initial hangup receipt = %#v", receipt)
 	}
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("process answer before Call: processed=%t err=%v", processed, err)
+		t.Fatalf("process hangup before Call: processed=%t err=%v", processed, err)
 	}
 	for retry, delay := range expectedFastReceiptRetryDelays {
 		now = now.Add(delay - time.Millisecond)
@@ -809,9 +817,9 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 			)
 		}
 	}
-	if receipt := receive(answeredRaw); !receipt.Duplicate ||
+	if receipt := receive(hangupRaw); !receipt.Duplicate ||
 		receipt.State != humancalling.ReceiptPending {
-		t.Fatalf("slow-wait answer receipt = %#v", receipt)
+		t.Fatalf("slow-wait hangup receipt = %#v", receipt)
 	}
 	now = now.Add(15*time.Minute - time.Second)
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || processed {
@@ -829,11 +837,11 @@ func TestRelatedFactReceiptFallsBackToSlowCadenceAndConverges(t *testing.T) {
 
 	now = now.Add(time.Second)
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("replay answer after Call: processed=%t err=%v", processed, err)
+		t.Fatalf("replay hangup after Call: processed=%t err=%v", processed, err)
 	}
-	if receipt := receive(answeredRaw); !receipt.Duplicate ||
+	if receipt := receive(hangupRaw); !receipt.Duplicate ||
 		receipt.State != humancalling.ReceiptApplied {
-		t.Fatalf("converged answer receipt = %#v", receipt)
+		t.Fatalf("converged hangup receipt = %#v", receipt)
 	}
 }
 

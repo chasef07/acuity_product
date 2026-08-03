@@ -1390,6 +1390,8 @@ func (m *Module) applyOutboundHangup(
 
 func outboundTermination(cause string) string {
 	switch strings.ToLower(strings.TrimSpace(cause)) {
+	case "normal_clearing":
+		return "COMPLETED"
 	case "no_answer", "no-answer", "timeout":
 		return "NO_ANSWER"
 	case "busy", "user_busy":

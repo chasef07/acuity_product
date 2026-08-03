@@ -1,5 +1,7 @@
 export function providerOutcomeLabel(value: string) {
   switch (value) {
+    case "COMPLETED":
+      return "Completed"
     case "NO_ANSWER":
       return "No answer"
     case "BUSY":
