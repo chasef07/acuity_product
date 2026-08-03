@@ -66,7 +66,6 @@ func TestAuthenticatedHandoffCreatesOneCurrentOffer(t *testing.T) {
 		StaffSIPDomain:   "sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket:  "synthetic-recordings",
 	}, func() time.Time { return now })
 
 	command := humancalling.CreateHandoffCommand{
@@ -1430,7 +1429,6 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 		StaffSIPDomain:   "sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket:  "synthetic-recordings",
 		Observer:         observer,
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
@@ -2389,7 +2387,6 @@ func TestDelayedHistoricalWinnerDoesNotConflictWithANewerActiveCall(t *testing.T
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket:  "synthetic-recordings",
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	for index, identity := range identities {
@@ -4127,7 +4124,6 @@ func readyOfferAt(
 		StaffSIPDomain:   "sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket:  "synthetic-recordings",
 	}, clock)
 	prepareCredentials(t, calling)
 	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{

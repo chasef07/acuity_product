@@ -100,5 +100,5 @@ auto-focus, loser selection stability, protected phone search, return routing,
 cross-browser rename/complete/reopen refresh, and the final Task/Activity rows.
 
 These checks are deterministic product proof. They do not claim new live
-Telnyx, LiveKit, browser-audio, public-webhook, or GCS evidence. The controlled
-Slice 2 live gate remains the boundary before patient routing.
+Telnyx, LiveKit, browser-audio, public-webhook, or provider-recording evidence.
+The controlled Slice 2 live gate remains the boundary before patient routing.

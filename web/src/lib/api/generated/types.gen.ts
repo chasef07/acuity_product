@@ -1610,6 +1610,12 @@ export type IssueCallingVoicemailPlaybackResponse = IssueCallingVoicemailPlaybac
 
 export type GetCallingVoicemailPlaybackData = {
     body?: never;
+    headers?: {
+        /**
+         * Optional single byte range forwarded to the provider audio request.
+         */
+        Range?: string;
+    };
     path: {
         token: string;
     };
@@ -1627,18 +1633,30 @@ export type GetCallingVoicemailPlaybackErrors = {
      */
     403: ErrorEnvelope;
     /**
+     * The Telnyx recording is no longer available.
+     */
+    404: ErrorEnvelope;
+    /**
      * A required dependency is temporarily unavailable.
      */
     503: ErrorEnvelope;
+    /**
+     * Telnyx recording retrieval timed out.
+     */
+    504: ErrorEnvelope;
 };
 
 export type GetCallingVoicemailPlaybackError = GetCallingVoicemailPlaybackErrors[keyof GetCallingVoicemailPlaybackErrors];
 
 export type GetCallingVoicemailPlaybackResponses = {
     /**
-     * Authorized voicemail audio.
+     * Authorized complete voicemail audio.
      */
     200: Blob | File;
+    /**
+     * Authorized partial voicemail audio.
+     */
+    206: Blob | File;
 };
 
 export type GetCallingVoicemailPlaybackResponse = GetCallingVoicemailPlaybackResponses[keyof GetCallingVoicemailPlaybackResponses];

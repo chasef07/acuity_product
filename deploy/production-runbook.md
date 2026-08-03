@@ -58,7 +58,7 @@ measured constraint and recalculate the connection reservation.
 2. Confirm `us-east1` for Cloud SQL, every Cloud Run service, the worker pool,
    the recording and Messaging attachment buckets, Artifact Registry, and any
    dependent regional resources. The runtime command independently rejects a
-   mismatched Cloud SQL connection name, `RECORDING_BUCKET_LOCATION`, or
+   mismatched Cloud SQL connection name or
    `MESSAGING_ATTACHMENT_BUCKET_LOCATION`.
 3. Record the current Cloud SQL settings and query:
 

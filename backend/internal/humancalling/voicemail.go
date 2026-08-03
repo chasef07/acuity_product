@@ -9,10 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -52,134 +52,135 @@ type PlaybackCapability struct {
 }
 
 type PlaybackContent struct {
-	ContentType string
-	Content     []byte
+	StatusCode    int
+	ContentType   string
+	ContentLength string
+	ContentRange  string
+	Body          io.ReadCloser
+	completion    *playbackCompletion
 }
 
-type VoicemailObjectStore interface {
-	Put(context.Context, string, []byte) error
-	Get(context.Context, string) ([]byte, error)
+type playbackCompletion struct {
+	once sync.Once
+	fn   func(error)
 }
 
-type RecordingDownloader interface {
-	Download(context.Context, string) ([]byte, string, error)
-}
-
-type HTTPRecordingDownloader struct {
-	client       *http.Client
-	allowedHosts map[string]struct{}
-}
-
-func NewHTTPRecordingDownloader(
-	client *http.Client,
-	allowedHosts ...string,
-) *HTTPRecordingDownloader {
-	if client == nil {
-		client = &http.Client{}
-	}
-	clientCopy := *client
-	if clientCopy.Timeout <= 0 {
-		clientCopy.Timeout = 10 * time.Second
-	}
-	hosts := map[string]struct{}{}
-	for _, host := range allowedHosts {
-		host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
-		if host != "" {
-			hosts[host] = struct{}{}
-		}
-	}
-	if len(hosts) == 0 {
-		hosts["s3.amazonaws.com"] = struct{}{}
-	}
-	clientCopy.CheckRedirect = func(
-		request *http.Request,
-		via []*http.Request,
-	) error {
-		if len(via) >= 3 {
-			return errors.New("provider recording redirected too many times")
-		}
-		if err := validateRecordingLocation(request.URL, hosts); err != nil {
-			return err
-		}
-		return nil
-	}
-	return &HTTPRecordingDownloader{
-		client:       &clientCopy,
-		allowedHosts: hosts,
+func (content PlaybackContent) Complete(err error) {
+	if content.completion != nil {
+		content.completion.once.Do(func() {
+			content.completion.fn(err)
+		})
 	}
 }
 
-func (downloader *HTTPRecordingDownloader) Download(
-	ctx context.Context,
-	recordingURL string,
-) ([]byte, string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(recordingURL))
-	if err != nil {
-		return nil, "", errors.New("invalid provider recording location")
+func (content PlaybackContent) Validate(rangeHeader string) error {
+	requested, requestedRange := parseSingleByteRange(rangeHeader)
+	if strings.TrimSpace(rangeHeader) != "" && !requestedRange {
+		return voicemailUnavailable(VoicemailProviderInvalid, "")
 	}
-	if err := validateRecordingLocation(parsed, downloader.allowedHosts); err != nil {
-		return nil, "", errors.New("invalid provider recording location")
+	if content.Body == nil ||
+		(content.StatusCode != http.StatusOK &&
+			content.StatusCode != http.StatusPartialContent) {
+		return voicemailUnavailable(VoicemailProviderInvalid, "")
 	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		parsed.String(),
-		nil,
-	)
-	if err != nil {
-		return nil, "", fmt.Errorf("create recording copy request: %w", err)
-	}
-	response, err := downloader.client.Do(request)
-	if err != nil {
-		return nil, "", fmt.Errorf("copy provider recording: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", errors.New("provider recording copy was rejected")
-	}
-	const maximumVoicemailBytes = 25 << 20
-	content, err := io.ReadAll(
-		io.LimitReader(response.Body, maximumVoicemailBytes+1),
-	)
-	if err != nil {
-		return nil, "", fmt.Errorf("read provider recording: %w", err)
-	}
-	if len(content) == 0 || len(content) > maximumVoicemailBytes {
-		return nil, "", errors.New("provider recording size is invalid")
-	}
-	contentType := strings.ToLower(strings.TrimSpace(
-		strings.Split(response.Header.Get("Content-Type"), ";")[0],
-	))
-	return content, contentType, nil
-}
-
-func validateRecordingLocation(
-	location *url.URL,
-	allowedHosts map[string]struct{},
-) error {
-	if location == nil ||
-		!strings.EqualFold(location.Scheme, "https") ||
-		location.User != nil ||
-		location.Host == "" {
-		return errors.New("invalid provider recording location")
-	}
-	host := strings.ToLower(strings.TrimSuffix(location.Hostname(), "."))
-	endpoint := host
-	if location.Port() != "" {
-		endpoint = net.JoinHostPort(host, location.Port())
-	}
-	if _, ok := allowedHosts[endpoint]; !ok {
-		return errors.New("provider recording host is not allowed")
-	}
-	if address := net.ParseIP(host); address != nil &&
-		(address.IsPrivate() ||
-			address.IsLoopback() ||
-			address.IsLinkLocalUnicast() ||
-			address.IsUnspecified() ||
-			address.IsMulticast()) {
-		return errors.New("provider recording address is not public")
+	if content.StatusCode == http.StatusPartialContent &&
+		(!requestedRange ||
+			!matchesContentRange(requested, content.ContentRange)) {
+		return voicemailUnavailable(VoicemailProviderInvalid, "")
 	}
 	return nil
+}
+
+type byteRange struct {
+	start    uint64
+	end      uint64
+	hasStart bool
+	hasEnd   bool
+}
+
+func parseSingleByteRange(value string) (byteRange, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) > 128 || !strings.HasPrefix(value, "bytes=") ||
+		strings.Contains(value, ",") {
+		return byteRange{}, false
+	}
+	bounds := strings.Split(strings.TrimPrefix(value, "bytes="), "-")
+	if len(bounds) != 2 || (bounds[0] == "" && bounds[1] == "") {
+		return byteRange{}, false
+	}
+	result := byteRange{}
+	var err error
+	if bounds[0] != "" {
+		result.start, err = strconv.ParseUint(bounds[0], 10, 64)
+		if err != nil {
+			return byteRange{}, false
+		}
+		result.hasStart = true
+	}
+	if bounds[1] != "" {
+		result.end, err = strconv.ParseUint(bounds[1], 10, 64)
+		if err != nil || (!result.hasStart && result.end == 0) {
+			return byteRange{}, false
+		}
+		result.hasEnd = true
+	}
+	if result.hasStart && result.hasEnd && result.end < result.start {
+		return byteRange{}, false
+	}
+	return result, true
+}
+
+func matchesContentRange(requested byteRange, value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) > 128 || !strings.HasPrefix(value, "bytes ") {
+		return false
+	}
+	rangeAndLength := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
+	if len(rangeAndLength) != 2 {
+		return false
+	}
+	bounds := strings.Split(rangeAndLength[0], "-")
+	if len(bounds) != 2 {
+		return false
+	}
+	start, startErr := strconv.ParseUint(bounds[0], 10, 64)
+	end, endErr := strconv.ParseUint(bounds[1], 10, 64)
+	length, lengthErr := strconv.ParseUint(rangeAndLength[1], 10, 64)
+	if startErr != nil || endErr != nil || lengthErr != nil ||
+		start > end || end >= length {
+		return false
+	}
+	if requested.hasStart {
+		return start == requested.start &&
+			(!requested.hasEnd || end <= requested.end)
+	}
+	return requested.hasEnd && end == length-1 &&
+		end-start+1 <= requested.end
+}
+
+type VoicemailAudioProvider interface {
+	OpenVoicemailRecording(context.Context, string, string) (PlaybackContent, error)
+}
+
+type VoicemailUnavailableReason string
+
+const (
+	VoicemailRecordingNotFound   VoicemailUnavailableReason = "recording_not_found"
+	VoicemailProviderAuth        VoicemailUnavailableReason = "provider_auth"
+	VoicemailProviderRateLimited VoicemailUnavailableReason = "provider_rate_limited"
+	VoicemailProviderTimeout     VoicemailUnavailableReason = "provider_timeout"
+	VoicemailProviderUnavailable VoicemailUnavailableReason = "provider_unavailable"
+	VoicemailProviderInvalid     VoicemailUnavailableReason = "provider_invalid_response"
+	VoicemailRecordingURLExpired VoicemailUnavailableReason = "recording_url_expired"
+)
+
+type VoicemailUnavailableError struct {
+	Reason     VoicemailUnavailableReason
+	RetryAfter string
+}
+
+func (err *VoicemailUnavailableError) Error() string {
+	return "voicemail is unavailable"
 }
 
 type playbackClaims struct {
@@ -334,7 +335,7 @@ func (m *Module) applyVoicemailGreetingEnded(
 			CommandStartVoicemailRecording,
 			callerControlID,
 			map[string]any{
-				"format":           "wav",
+				"format":           "mp3",
 				"channels":         "single",
 				"recording_track":  "inbound",
 				"play_beep":        true,
@@ -386,9 +387,8 @@ func (m *Module) applyVoicemailRecordingSaved(
 	if !claimed {
 		return tx.Commit(ctx)
 	}
-	hasArtifact := fact.RecordingEndedAt.After(fact.RecordingStartedAt) &&
-		fact.RecordingID != "" &&
-		fact.RecordingURL != ""
+	hasArtifact := fact.RecordingEndedAt.Sub(fact.RecordingStartedAt).Milliseconds() > 0 &&
+		strings.TrimSpace(fact.RecordingID) != ""
 	var practiceID, callerControlID, callerLegID, callSessionID string
 	if err := tx.QueryRow(ctx, `
 		SELECT
@@ -734,11 +734,9 @@ func (m *Module) ensureRecoveryOutcome(
 	case RecoveryVoicemail:
 		duration := fact.RecordingEndedAt.Sub(fact.RecordingStartedAt)
 		if fact.RecordingID == "" ||
-			fact.RecordingURL == "" ||
 			!fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
 			return "", ErrInvalidInput
 		}
-		objectKey := "voicemails/" + callID + ".wav"
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO human_calling_voicemails (
 				call_id,
@@ -748,23 +746,20 @@ func (m *Module) ensureRecoveryOutcome(
 				outcome,
 				audio_state,
 				provider_recording_id,
-				provider_recording_url,
 				recording_started_at,
 				recording_ended_at,
 				duration_millis,
-				object_key,
-				next_copy_at,
 				created_at,
 				updated_at
 			)
 			VALUES (
-				$1, $2, $3, $4, 'VOICEMAIL', 'PROCESSING', $5, $6,
-				$7, $8, $9, $10, $11, $11, $11
+				$1, $2, $3, $4, 'VOICEMAIL', 'READY', $5,
+				$6, $7, $8, $9, $9
 			)
 			ON CONFLICT (call_id) DO NOTHING
 		`, callID, practiceID, locationID, task.ID, fact.RecordingID,
-			fact.RecordingURL, fact.RecordingStartedAt, fact.RecordingEndedAt,
-			duration.Milliseconds(), objectKey, m.now(),
+			fact.RecordingStartedAt, fact.RecordingEndedAt,
+			duration.Milliseconds(), m.now(),
 		); err != nil {
 			return "", fmt.Errorf("commit voicemail source: %w", err)
 		}
@@ -817,158 +812,6 @@ func (m *Module) ensureRecoveryOutcome(
 	return task.ID, nil
 }
 
-func (m *Module) ProcessNextVoicemailCopy(ctx context.Context) (bool, error) {
-	if m.config.VoicemailStore == nil || m.config.RecordingDownloader == nil {
-		return false, nil
-	}
-	claimTx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return false, fmt.Errorf("begin voicemail copy: %w", err)
-	}
-	defer func() { _ = claimTx.Rollback(ctx) }()
-	var callID, practiceID, providerURL, objectKey string
-	var attempts int
-	err = claimTx.QueryRow(ctx, `
-		SELECT
-			call_id::text,
-			practice_id::text,
-			provider_recording_url,
-			object_key,
-			copy_attempts
-		FROM human_calling_voicemails
-		WHERE audio_state = 'PROCESSING'
-			AND next_copy_at <= $1
-		ORDER BY next_copy_at, created_at, call_id
-		FOR UPDATE SKIP LOCKED
-		LIMIT 1
-	`, m.now()).Scan(
-		&callID,
-		&practiceID,
-		&providerURL,
-		&objectKey,
-		&attempts,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, claimTx.Commit(ctx)
-	}
-	if err != nil {
-		return false, fmt.Errorf("claim voicemail copy: %w", err)
-	}
-	attempts++
-	claimExpiresAt := m.now().Add(5 * time.Minute)
-	if _, err := claimTx.Exec(ctx, `
-		UPDATE human_calling_voicemails
-		SET
-			copy_attempts = $2,
-			next_copy_at = $3,
-			updated_at = $4
-		WHERE call_id = $1
-			AND audio_state = 'PROCESSING'
-	`, callID, attempts, claimExpiresAt, m.now()); err != nil {
-		return false, fmt.Errorf("lease voicemail copy: %w", err)
-	}
-	if err := claimTx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit voicemail copy claim: %w", err)
-	}
-
-	content, contentType, copyErr := m.config.RecordingDownloader.Download(
-		ctx,
-		providerURL,
-	)
-	if copyErr == nil {
-		contentType = strings.ToLower(strings.TrimSpace(contentType))
-		if contentType != "audio/wav" || len(content) == 0 {
-			copyErr = errors.New("invalid voicemail recording")
-		}
-	}
-	if copyErr == nil {
-		copyErr = m.config.VoicemailStore.Put(ctx, objectKey, content)
-	}
-	finalizeTx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return false, fmt.Errorf("begin voicemail copy finalization: %w", err)
-	}
-	defer func() { _ = finalizeTx.Rollback(ctx) }()
-	finalized := false
-	if copyErr != nil {
-		if attempts >= 3 {
-			tag, err := finalizeTx.Exec(ctx, `
-				UPDATE human_calling_voicemails
-				SET
-					audio_state = 'UNAVAILABLE',
-					provider_recording_url = NULL,
-					next_copy_at = NULL,
-					last_error_code = 'COPY_FAILED',
-					updated_at = $4
-				WHERE call_id = $1
-					AND audio_state = 'PROCESSING'
-					AND copy_attempts = $2
-					AND next_copy_at = $3
-			`, callID, attempts, claimExpiresAt, m.now())
-			if err != nil {
-				return false, fmt.Errorf("finalize unavailable voicemail: %w", err)
-			}
-			finalized = tag.RowsAffected() == 1
-		} else {
-			tag, err := finalizeTx.Exec(ctx, `
-				UPDATE human_calling_voicemails
-				SET
-					next_copy_at = $4,
-					last_error_code = 'COPY_FAILED',
-					updated_at = $5
-				WHERE call_id = $1
-					AND audio_state = 'PROCESSING'
-					AND copy_attempts = $2
-					AND next_copy_at = $3
-			`, callID, attempts, claimExpiresAt,
-				m.now().Add(time.Duration(attempts)*time.Minute), m.now())
-			if err != nil {
-				return false, fmt.Errorf("schedule voicemail copy retry: %w", err)
-			}
-			finalized = tag.RowsAffected() == 1
-		}
-	} else {
-		tag, err := finalizeTx.Exec(ctx, `
-			UPDATE human_calling_voicemails
-			SET
-				audio_state = 'READY',
-				provider_recording_url = NULL,
-				content_type = $4,
-				byte_size = $5,
-				next_copy_at = NULL,
-				last_error_code = NULL,
-				copied_at = $6,
-				updated_at = $6
-			WHERE call_id = $1
-				AND audio_state = 'PROCESSING'
-				AND copy_attempts = $2
-				AND next_copy_at = $3
-		`, callID, attempts, claimExpiresAt, contentType, len(content),
-			m.now())
-		if err != nil {
-			return false, fmt.Errorf("finalize voicemail copy: %w", err)
-		}
-		finalized = tag.RowsAffected() == 1
-	}
-	if !finalized {
-		if err := finalizeTx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit stale voicemail copy: %w", err)
-		}
-		return true, nil
-	}
-	if _, err := m.access.RecordWorkspaceChange(
-		ctx,
-		finalizeTx,
-		practiceID,
-	); err != nil {
-		return false, err
-	}
-	if err := finalizeTx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit voicemail copy: %w", err)
-	}
-	return true, nil
-}
-
 func (m *Module) IssueVoicemailPlayback(
 	ctx context.Context,
 	identity access.Identity,
@@ -998,33 +841,41 @@ func (m *Module) IssueVoicemailPlayback(
 }
 
 func (m *Module) OpenVoicemailPlayback(
-	ctx context.Context,
+	authorizationContext context.Context,
+	streamContext context.Context,
 	identity access.Identity,
 	token string,
-) (PlaybackContent, error) {
+	rangeHeader string,
+) (content PlaybackContent, resultErr error) {
+	startedAt := time.Now()
+	defer func() {
+		if resultErr != nil {
+			m.recordVoicemailPlayback(resultErr, time.Since(startedAt))
+		}
+	}()
 	claims, err := m.parsePlaybackCapability(token)
 	if err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.pool.BeginTx(authorizationContext, pgx.TxOptions{})
 	if err != nil {
 		return PlaybackContent{}, fmt.Errorf("begin voicemail playback: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var practiceID, locationID, objectKey, contentType string
-	if err := tx.QueryRow(ctx, `
+	defer func() { _ = tx.Rollback(authorizationContext) }()
+	var practiceID, locationID, providerRecordingID string
+	if err := tx.QueryRow(authorizationContext, `
 		SELECT
 			practice_id::text,
 			location_id::text,
-			object_key,
-			content_type
+			provider_recording_id
 		FROM human_calling_voicemails
-		WHERE call_id = $1 AND audio_state = 'READY'
+		WHERE call_id = $1
+			AND outcome = 'VOICEMAIL'
+			AND provider_recording_id IS NOT NULL
 	`, claims.CallID).Scan(
 		&practiceID,
 		&locationID,
-		&objectKey,
-		&contentType,
+		&providerRecordingID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PlaybackContent{}, ErrDenied
@@ -1032,7 +883,7 @@ func (m *Module) OpenVoicemailPlayback(
 		return PlaybackContent{}, fmt.Errorf("read voicemail playback source: %w", err)
 	}
 	if _, err := m.access.LockReadAuthorization(
-		ctx,
+		authorizationContext,
 		tx,
 		identity,
 		practiceID,
@@ -1040,14 +891,39 @@ func (m *Module) OpenVoicemailPlayback(
 	); err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := appendTimeline(
+		authorizationContext,
+		tx,
+		claims.CallID,
+		practiceID,
+		"voicemail.playback_authorized",
+		identity.Subject,
+		"",
+		"",
+		opaqueReference(claims.Nonce),
+		"",
+		m.now(),
+	); err != nil {
+		return PlaybackContent{}, err
+	}
+	if err := tx.Commit(authorizationContext); err != nil {
 		return PlaybackContent{}, fmt.Errorf("commit voicemail playback: %w", err)
 	}
-	content, err := m.config.VoicemailStore.Get(ctx, objectKey)
-	if err != nil {
-		return PlaybackContent{}, fmt.Errorf("open voicemail object: %w", err)
+	if m.config.VoicemailAudioProvider == nil {
+		return PlaybackContent{}, ErrConflict
 	}
-	return PlaybackContent{ContentType: contentType, Content: content}, nil
+	content, resultErr = m.config.VoicemailAudioProvider.OpenVoicemailRecording(
+		streamContext,
+		providerRecordingID,
+		rangeHeader,
+	)
+	if resultErr != nil {
+		return PlaybackContent{}, resultErr
+	}
+	content.completion = &playbackCompletion{fn: func(streamErr error) {
+		m.recordVoicemailPlayback(streamErr, time.Since(startedAt))
+	}}
+	return content, nil
 }
 
 func (m *Module) parsePlaybackCapability(token string) (playbackClaims, error) {

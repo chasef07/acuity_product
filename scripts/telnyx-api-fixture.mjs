@@ -60,6 +60,41 @@ createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(chunk)
   const requestBody = Buffer.concat(chunks)
 
+  const recordingAudioMatch = request.url?.match(
+    /^\/fixture\/recordings\/([^/]+)\.mp3$/,
+  )
+  if (request.method === "GET" && recordingAudioMatch) {
+    if (request.headers.authorization) {
+      response.writeHead(400).end()
+      return
+    }
+    const audio = Buffer.from("synthetic-mp3-audio")
+    const range = request.headers.range?.match(/^bytes=(\d+)-(\d*)$/)
+    if (range) {
+      const start = Number(range[1])
+      const requestedEnd = range[2] === "" ? audio.length - 1 : Number(range[2])
+      const end = Math.min(requestedEnd, audio.length - 1)
+      if (start > end || start >= audio.length) {
+        response.writeHead(416, { "content-range": `bytes */${audio.length}` }).end()
+        return
+      }
+      const partial = audio.subarray(start, end + 1)
+      response.writeHead(206, {
+        "accept-ranges": "bytes",
+        "content-length": String(partial.length),
+        "content-range": `bytes ${start}-${end}/${audio.length}`,
+        "content-type": "audio/mpeg",
+      }).end(partial)
+      return
+    }
+    response.writeHead(200, {
+      "accept-ranges": "bytes",
+      "content-length": String(audio.length),
+      "content-type": "audio/mpeg",
+    }).end(audio)
+    return
+  }
+
   if (request.url === "/fixture/webhook") {
     if (request.headers.authorization !== "Bearer fixture-control") {
       response.writeHead(401).end()
@@ -144,6 +179,18 @@ createServer(async (request, response) => {
     return
   }
   response.setHeader("content-type", "application/json")
+  const recordingMetadataMatch = request.url?.match(/^\/v2\/recordings\/([^/]+)$/)
+  if (request.method === "GET" && recordingMetadataMatch) {
+    const recordingID = decodeURIComponent(recordingMetadataMatch[1])
+    response.writeHead(200).end(JSON.stringify({
+      data: {
+        download_urls: {
+          mp3: `http://127.0.0.1:19000/fixture/recordings/${encodeURIComponent(recordingID)}.mp3`,
+        },
+      },
+    }))
+    return
+  }
   if (request.method === "POST" && request.url === "/v2/telephony_credentials") {
     const payload = JSON.parse(requestBody.toString("utf8"))
     credentialSequence += 1

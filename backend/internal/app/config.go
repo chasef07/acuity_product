@@ -62,9 +62,6 @@ type HumanCallingConfig struct {
 	CredentialConnectionID string
 	FromNumber             string
 	RingbackURL            string
-	RecordingBucket        string
-	RecordingAllowedHosts  []string
-	RecordingCAFile        string
 	PlaybackSigningKey     []byte
 	OfferDuration          time.Duration
 	ConnectionTimeout      time.Duration
@@ -301,7 +298,6 @@ func loadTelnyxCommandConfig(
 		{"TELNYX_CREDENTIAL_CONNECTION_ID", &result.CredentialConnectionID},
 		{"TELNYX_FROM_NUMBER", &result.FromNumber},
 		{"TELNYX_RINGBACK_URL", &result.RingbackURL},
-		{"TELNYX_RECORDING_BUCKET", &result.RecordingBucket},
 	}
 	for _, value := range values {
 		loaded, err := required(getenv, value.name)
@@ -311,20 +307,6 @@ func loadTelnyxCommandConfig(
 		*value.target = loaded
 	}
 	result.TelnyxAPIBaseURL = strings.TrimSpace(getenv("TELNYX_API_BASE_URL"))
-	for _, host := range strings.Split(
-		strings.TrimSpace(getenv("HUMAN_CALLING_RECORDING_HOSTS")),
-		",",
-	) {
-		if host = strings.TrimSpace(host); host != "" {
-			result.RecordingAllowedHosts = append(
-				result.RecordingAllowedHosts,
-				host,
-			)
-		}
-	}
-	result.RecordingCAFile = strings.TrimSpace(
-		getenv("HUMAN_CALLING_RECORDING_CA_FILE"),
-	)
 	timings := []struct {
 		name   string
 		target *time.Duration

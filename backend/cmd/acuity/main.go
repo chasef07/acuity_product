@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -223,7 +221,7 @@ func runAuthorizedHTTP(
 			return err
 		}
 		callingConfig := humanCallingConfig(config, observer)
-		callingConfig.VoicemailStore = attachmentStore
+		callingConfig.VoicemailAudioProvider = provider
 		calling := humancalling.New(
 			pool,
 			accessModule,
@@ -295,19 +293,7 @@ func runWorker(
 	if err != nil {
 		return err
 	}
-	recordingClient, err := recordingHTTPClient(
-		config.HumanCalling.RecordingCAFile,
-	)
-	if err != nil {
-		return err
-	}
 	callingConfig := humanCallingConfig(config, observer)
-	callingConfig.VoicemailStore = attachmentStore
-	callingConfig.RecordingDownloader =
-		humancalling.NewHTTPRecordingDownloader(
-			recordingClient,
-			config.HumanCalling.RecordingAllowedHosts...,
-		)
 	calling := humancalling.New(
 		pool,
 		access.New(pool, nil),
@@ -357,33 +343,6 @@ func runWorker(
 	return runner.Run(ctx)
 }
 
-func recordingHTTPClient(certificateFile string) (*http.Client, error) {
-	if certificateFile == "" {
-		return nil, nil
-	}
-	certificate, err := os.ReadFile(certificateFile)
-	if err != nil {
-		return nil, fmt.Errorf("read recording CA file: %w", err)
-	}
-	roots, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, fmt.Errorf("load system recording roots: %w", err)
-	}
-	if !roots.AppendCertsFromPEM(certificate) {
-		return nil, errors.New("recording CA file contains no certificates")
-	}
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return nil, errors.New("default HTTP transport is unavailable")
-	}
-	recordingTransport := transport.Clone()
-	recordingTransport.TLSClientConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    roots,
-	}
-	return &http.Client{Transport: recordingTransport}, nil
-}
-
 func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {
 	return humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
 		APIKey:  config.HumanCalling.TelnyxAPIKey,
@@ -425,7 +384,6 @@ func humanCallingConfig(
 		CredentialConnectionID: config.HumanCalling.CredentialConnectionID,
 		FromNumber:             config.HumanCalling.FromNumber,
 		RingbackURL:            config.HumanCalling.RingbackURL,
-		RecordingBucket:        config.HumanCalling.RecordingBucket,
 		PlaybackSigningKey:     config.HumanCalling.PlaybackSigningKey,
 		WebhookPublicKey:       ed25519.PublicKey(config.HumanCalling.WebhookPublicKey),
 		Observer:               observer,

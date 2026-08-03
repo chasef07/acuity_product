@@ -291,7 +291,6 @@ GRANT UPDATE ON TABLE
     public.human_calling_provider_receipts,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
-    public.human_calling_voicemails,
     public.work_tasks
 TO acuity_worker;
 

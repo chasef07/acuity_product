@@ -568,7 +568,6 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
-		"human_calling_voicemails",
 		"work_tasks",
 	)
 	grant("acuity_worker", "DELETE", "messaging_attachments")

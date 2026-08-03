@@ -53,7 +53,6 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		HandoffSIPDomain: "synthetic.sip.telnyx.com",
 		OfferDuration:    20 * time.Second,
 		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
-		RecordingBucket:  "synthetic-recordings",
 		WebhookPublicKey: publicKey,
 		WebhookTolerance: 5 * time.Minute,
 		Observer:         observer,
