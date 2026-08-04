@@ -260,6 +260,111 @@ func TestFollowUpDispositionAtomicallyCreatesAndReplaysOneTask(t *testing.T) {
 	}
 }
 
+func TestPendingOutcomeDoesNotConsumeCallCapacity(t *testing.T) {
+	calling, identity, offer := readyOffer(
+		t,
+		&recordingProvider{},
+		"pending-outcome-capacity",
+	)
+	sessionID := "pending-outcome-capacity-browser"
+	if _, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		sessionID,
+		offer.ID,
+	); err != nil {
+		t.Fatalf("accept pending-outcome Call: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open pending-outcome observer pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	endedAt := time.Date(2026, time.August, 4, 9, 0, 20, 0, time.UTC)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET
+			state = 'NEEDS_DISPOSITION',
+			winner_subject = claimant_subject,
+			connected_at = $2,
+			ended_at = $2,
+			updated_at = $2
+		WHERE id = $1
+	`, offer.ID, endedAt); err != nil {
+		t.Fatalf("prepare pending Call outcome: %v", err)
+	}
+
+	softphone, err := calling.AcquireSoftphone(
+		context.Background(),
+		identity,
+		sessionID,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("renew softphone with pending outcome: %v", err)
+	}
+	if softphone.ActiveCallID != "" {
+		t.Fatalf("pending outcome occupied active media slot: %#v", softphone)
+	}
+	if softphone.PendingOutcomeCallID != offer.ID {
+		t.Fatalf("pending outcome recovery handle = %#v", softphone)
+	}
+	softphone, err = calling.SetReadiness(
+		context.Background(),
+		ready(identity, sessionID),
+	)
+	if err != nil || !softphone.Available || softphone.ActiveCallID != "" ||
+		softphone.PendingOutcomeCallID != offer.ID {
+		t.Fatalf("readiness with pending outcome = %#v, err=%v", softphone, err)
+	}
+
+	if _, err := calling.CreateHandoff(
+		context.Background(),
+		humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject:    "abita-pending-outcome-interruption",
+				PracticeID: offer.PracticeID,
+			},
+			LocationID:     offer.LocationID,
+			SourceCallID:   "pending-outcome-interruption-source",
+			IdempotencyKey: "pending-outcome-interruption-idempotency",
+			Contact: humancalling.ContactContext{
+				Phone:       "+15555550103",
+				PhoneSource: "Abita",
+				DisplayName: "Second caller",
+				NameSource:  "Abita",
+			},
+		},
+	); err != nil {
+		t.Fatalf("create interrupting handoff: %v", err)
+	}
+	if err := calling.ApplyProviderFact(
+		context.Background(),
+		humancalling.ProviderFact{
+			EventID:       "pending-outcome-interruption-inbound",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    time.Date(2026, time.July, 27, 12, 0, 1, 0, time.UTC),
+			CallControlID: "pending-outcome-interruption-control",
+			CallLegID:     "pending-outcome-interruption-leg",
+			CallSessionID: "pending-outcome-interruption-session",
+			From:          "+15555550103",
+			To:            "+14843336938",
+		},
+	); err != nil {
+		t.Fatalf("admit interrupting inbound Call: %v", err)
+	}
+	offers, err := calling.ListOffers(context.Background(), identity)
+	if err != nil || len(offers) != 1 {
+		t.Fatalf("offers while outcome is pending = %#v, err=%v", offers, err)
+	}
+	accepted, err := calling.AcceptOffer(
+		context.Background(), identity, sessionID, offers[0].ID,
+	)
+	if err != nil || accepted.Status != humancalling.Accepted {
+		t.Fatalf("accept interrupting inbound Call = %#v, err=%v", accepted, err)
+	}
+}
+
 func TestFollowUpTaskFailureLeavesCallNeedingDisposition(t *testing.T) {
 	calling, identity, offer := readyOffer(
 		t,

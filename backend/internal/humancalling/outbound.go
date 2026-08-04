@@ -368,7 +368,7 @@ func (m *Module) StartOutboundCall(
 			WHERE id = $1
 				AND direction = 'OUTBOUND'
 				AND initiating_subject = $2
-				AND state IN ('RESOLVED', 'RECONCILING')
+				AND state IN ('UNANSWERED', 'RESOLVED', 'RECONCILING')
 			FOR UPDATE
 		`, command.RetryOfCallID, command.Identity.Subject).Scan(
 			&retryState,
@@ -885,7 +885,7 @@ func (m *Module) expireOutboundCalls(ctx context.Context) (int, error) {
 		if call.state != CallRinging {
 			nextState := CallResolved
 			if call.entryPoint == CallEntryStandalone {
-				nextState = CallNeedsDisposition
+				nextState = CallUnanswered
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
@@ -1345,8 +1345,11 @@ func (m *Module) applyOutboundHangup(
 	}
 
 	nextState := CallNeedsDisposition
-	if state != CallConnected && entryPoint == CallEntryTask {
-		nextState = CallResolved
+	if state != CallConnected {
+		nextState = CallUnanswered
+		if entryPoint == CallEntryTask {
+			nextState = CallResolved
+		}
 	}
 	termination := outboundTermination(fact.HangupCause)
 	if clientState.Leg == "staff" && state != CallConnected {

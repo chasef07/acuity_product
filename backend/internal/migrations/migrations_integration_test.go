@@ -3,7 +3,6 @@ package migrations_test
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 17 {
-		t.Fatalf("migration count = %d, want 17", migrationCount)
+	if migrationCount != 18 {
+		t.Fatalf("migration count = %d, want 18", migrationCount)
 	}
 	var staffTransferTableExists bool
 	var taskInteractionTableExists bool
@@ -70,13 +69,13 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 		&voicemailTaskUnique,
 		&taskActivityConstraint,
 	); err != nil {
-		t.Fatalf("inspect PR #44 rollback schema: %v", err)
+		t.Fatalf("inspect restored phone workspace schema: %v", err)
 	}
-	if staffTransferTableExists || taskInteractionTableExists ||
-		staffTransferColumnExists || openRecoveryIndexExists || !voicemailTaskUnique ||
-		strings.Contains(taskActivityConstraint, "INTERACTION_ATTACHED") {
+	if staffTransferTableExists || !taskInteractionTableExists ||
+		staffTransferColumnExists || !openRecoveryIndexExists || voicemailTaskUnique ||
+		!strings.Contains(taskActivityConstraint, "INTERACTION_ATTACHED") {
 		t.Fatalf(
-			"PR #44 rollback schema = transfer table:%t interaction table:%t transfer column:%t recovery index:%t voicemail unique:%t",
+			"restored phone workspace schema = transfer table:%t interaction table:%t transfer column:%t recovery index:%t voicemail unique:%t",
 			staffTransferTableExists,
 			taskInteractionTableExists,
 			staffTransferColumnExists,
@@ -242,6 +241,7 @@ func TestRetiredPhoneLedWorkspaceMigrationPreservesRecoveryTasks(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
+		DROP INDEX work_tasks_one_open_recovery_need_idx;
 		INSERT INTO access_practices (id, provisioning_key, name)
 		VALUES (
 			'00000000-0000-0000-0000-000000000901',
@@ -372,10 +372,7 @@ func TestRetiredPhoneLedWorkspaceMigrationPreservesRecoveryTasks(t *testing.T) {
 				now()
 			);
 		DELETE FROM schema_migrations
-		WHERE name IN (
-			'0016_phone_led_workspace.sql',
-			'0017_revert_phone_led_workspace.sql'
-		);
+		WHERE name = '0016_phone_led_workspace.sql';
 	`, pgx.QueryExecModeSimpleProtocol); err != nil {
 		t.Fatalf("seed migration 0015 state: %v", err)
 	}
@@ -403,6 +400,162 @@ func TestRetiredPhoneLedWorkspaceMigrationPreservesRecoveryTasks(t *testing.T) {
 			"preserved recovery evidence = %d Tasks and %d Activities, want 2 and 2",
 			taskCount,
 			activityCount,
+		)
+	}
+}
+
+func TestRestoredPhoneWorkspaceMigrationFailsClosedOnDuplicateRecoveryTasks(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+
+	// Recreate the post-rollback production shape, then introduce two distinct
+	// accountable recovery Tasks that a migration must not merge or delete.
+	if _, err := pool.Exec(ctx, `
+		DROP INDEX work_tasks_one_open_recovery_need_idx;
+		DROP TABLE work_task_interactions;
+		ALTER TABLE human_calling_voicemails
+			ADD CONSTRAINT human_calling_voicemails_task_id_key UNIQUE (task_id);
+		DELETE FROM schema_migrations
+		WHERE name = '0018_restore_phone_led_workspace.sql';
+
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000951',
+			'restore-preflight-practice',
+			'Restore Preflight Practice'
+		);
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000952',
+			'00000000-0000-0000-0000-000000000951',
+			'restore-preflight-location',
+			'Restore Preflight Location'
+		);
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, phone, expires_at
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000953',
+				'restore-preflight-test',
+				'00000000-0000-0000-0000-000000000951',
+				'00000000-0000-0000-0000-000000000952',
+				'restore-preflight-source-one',
+				'restore-preflight-key-one',
+				'\x01',
+				'\x02',
+				'+15555550102',
+				now() + interval '1 hour'
+			),
+			(
+				'00000000-0000-0000-0000-000000000954',
+				'restore-preflight-test',
+				'00000000-0000-0000-0000-000000000951',
+				'00000000-0000-0000-0000-000000000952',
+				'restore-preflight-source-two',
+				'restore-preflight-key-two',
+				'\x03',
+				'\x04',
+				'+15555550102',
+				now() + interval '1 hour'
+			);
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000955',
+				'00000000-0000-0000-0000-000000000953',
+				'00000000-0000-0000-0000-000000000951',
+				'00000000-0000-0000-0000-000000000952',
+				'OFFERING',
+				now() + interval '1 minute',
+				'restore-preflight-control-one',
+				'restore-preflight-leg-one',
+				'restore-preflight-session-one'
+			),
+			(
+				'00000000-0000-0000-0000-000000000956',
+				'00000000-0000-0000-0000-000000000954',
+				'00000000-0000-0000-0000-000000000951',
+				'00000000-0000-0000-0000-000000000952',
+				'OFFERING',
+				now() + interval '1 minute',
+				'restore-preflight-control-two',
+				'restore-preflight-leg-two',
+				'restore-preflight-session-two'
+			);
+		INSERT INTO work_tasks (
+			id, practice_id, location_id, call_id, phone, title, state, origin,
+			urgency, created_by_kind, created_by_subject, created_at, updated_at,
+			recovery_outcome
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000961',
+				'00000000-0000-0000-0000-000000000951',
+				'00000000-0000-0000-0000-000000000952',
+				'00000000-0000-0000-0000-000000000955',
+				'+15555550102',
+				'Review missed call',
+				'OPEN',
+				'MISSED_CALL_RECOVERY',
+				'normal',
+				'SERVICE',
+				'restore-preflight-test',
+				now() - interval '1 minute',
+				now() - interval '1 minute',
+				'MISSED_CALL'
+			),
+			(
+				'00000000-0000-0000-0000-000000000962',
+				'00000000-0000-0000-0000-000000000951',
+				'00000000-0000-0000-0000-000000000952',
+				'00000000-0000-0000-0000-000000000956',
+				'+15555550102',
+				'Review voicemail',
+				'OPEN',
+				'VOICEMAIL_RECOVERY',
+				'normal',
+				'SERVICE',
+				'restore-preflight-test',
+				now(),
+				now(),
+				'VOICEMAIL'
+			);
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("seed duplicate recovery Tasks: %v", err)
+	}
+
+	err := migrations.Apply(ctx, pool)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"duplicate open recovery Tasks require audited reconciliation",
+	) {
+		t.Fatalf("restore preflight error = %v", err)
+	}
+	var taskCount int
+	var interactionTableExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			count(*),
+			to_regclass('public.work_task_interactions') IS NOT NULL
+		FROM work_tasks
+		WHERE id IN (
+			'00000000-0000-0000-0000-000000000961',
+			'00000000-0000-0000-0000-000000000962'
+		)
+		GROUP BY to_regclass('public.work_task_interactions') IS NOT NULL
+	`).Scan(&taskCount, &interactionTableExists); err != nil {
+		t.Fatalf("inspect failed restoration: %v", err)
+	}
+	if taskCount != 2 || interactionTableExists {
+		t.Fatalf(
+			"failed restoration left %d Tasks and interaction table:%t, want 2 and false",
+			taskCount,
+			interactionTableExists,
 		)
 	}
 }
@@ -480,23 +633,40 @@ func TestPhoneLedWorkspaceRollbackFailsClosedBeforeDroppingEvidence(t *testing.T
 		t.Fatalf("seed rollback fixture: %v", err)
 	}
 
-	phoneWorkspaceMigration, err := os.ReadFile("sql/0016_phone_led_workspace.sql")
-	if err != nil {
-		t.Fatalf("read phone-led workspace migration: %v", err)
-	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin phone-led workspace replay: %v", err)
-	}
-	if _, err := tx.Exec(ctx, string(phoneWorkspaceMigration)); err != nil {
-		_ = tx.Rollback(ctx)
-		t.Fatalf("replay phone-led workspace migration: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit phone-led workspace replay: %v", err)
-	}
-
 	if _, err := pool.Exec(ctx, `
+		CREATE TABLE human_calling_staff_transfers (
+			id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+			call_id uuid NOT NULL REFERENCES human_calling_calls(id) ON DELETE CASCADE,
+			practice_id uuid NOT NULL REFERENCES access_practices(id),
+			location_id uuid NOT NULL,
+			requested_by_subject text NOT NULL,
+			requested_by_session_id text NOT NULL,
+			recipient_subject text NOT NULL,
+			recipient_session_id text,
+			handoff_note text NOT NULL CHECK (char_length(handoff_note) <= 500),
+			state text NOT NULL CHECK (state IN (
+				'REQUESTED', 'ACCEPTED', 'COMPLETED', 'DECLINED',
+				'CANCELLED', 'EXPIRED', 'FAILED'
+			)),
+			expires_at timestamptz NOT NULL,
+			completed_at timestamptz,
+			created_at timestamptz NOT NULL DEFAULT now(),
+			updated_at timestamptz NOT NULL DEFAULT now(),
+			FOREIGN KEY (practice_id, location_id)
+				REFERENCES access_locations(practice_id, id),
+			CHECK (requested_by_subject <> recipient_subject)
+		);
+		CREATE UNIQUE INDEX human_calling_one_active_staff_transfer_idx
+			ON human_calling_staff_transfers (call_id)
+			WHERE state IN ('REQUESTED', 'ACCEPTED');
+		CREATE INDEX human_calling_staff_transfer_recipient_idx
+			ON human_calling_staff_transfers (recipient_subject, state, expires_at);
+		ALTER TABLE human_calling_connection_attempts
+			ADD COLUMN staff_transfer_id uuid
+				REFERENCES human_calling_staff_transfers(id);
+		CREATE UNIQUE INDEX human_calling_staff_transfer_attempt_idx
+			ON human_calling_connection_attempts (staff_transfer_id)
+			WHERE staff_transfer_id IS NOT NULL;
 		DELETE FROM schema_migrations
 		WHERE name = '0017_revert_phone_led_workspace.sql';
 		INSERT INTO human_calling_staff_transfers (
@@ -520,7 +690,7 @@ func TestPhoneLedWorkspaceRollbackFailsClosedBeforeDroppingEvidence(t *testing.T
 		t.Fatalf("seed rollback blocker: %v", err)
 	}
 
-	err = migrations.Apply(ctx, pool)
+	err := migrations.Apply(ctx, pool)
 	if err == nil || !strings.Contains(err.Error(), "staff transfer evidence exists") {
 		t.Fatalf("staff transfer rollback error = %v", err)
 	}

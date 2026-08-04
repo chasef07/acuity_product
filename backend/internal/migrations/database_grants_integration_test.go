@@ -471,6 +471,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
+		"work_task_interactions",
 		"work_tasks",
 	}
 	grant("acuity_portal", "SELECT", portalReads...)
@@ -492,6 +493,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_provider_commands",
 		"messaging_threads",
 		"work_task_activities",
+		"work_task_interactions",
 		"work_tasks",
 	)
 	grant("acuity_portal", "UPDATE",
@@ -545,6 +547,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
+		"work_task_interactions",
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
@@ -560,6 +563,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
+		"work_task_interactions",
 		"work_tasks",
 	)
 	grant("acuity_worker", "UPDATE",

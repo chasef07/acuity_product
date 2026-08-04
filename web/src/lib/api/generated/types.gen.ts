@@ -192,6 +192,10 @@ export type SoftphoneState = {
      * The User's current durable Call, or empty when capacity is free.
      */
     activeCallId: string;
+    /**
+     * The latest connected Call awaiting an outcome, or empty when none remains.
+     */
+    pendingOutcomeCallId: string;
 };
 
 export type MediaTokenRequest = {
@@ -320,6 +324,21 @@ export type CallingCall = {
     voicemail?: CallingVoicemail;
 };
 
+export type LiveCall = {
+    id: string;
+    locationId: string;
+    locationName: string;
+    phone: string;
+    direction: 'INBOUND' | 'OUTBOUND';
+    staffSubject: string;
+    staffEmail: string;
+    connectedAt: string;
+};
+
+export type LiveCallPage = {
+    items: Array<LiveCall>;
+};
+
 export type CallingDispositionRequest = {
     sessionId: string;
     outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
@@ -405,11 +424,35 @@ export type TaskPage = {
     nextCursor: string;
 };
 
+export type EngagementLocation = {
+    id: string;
+    name: string;
+};
+
+export type EngagementSummary = {
+    phone: string;
+    displayName?: string;
+    locations: Array<EngagementLocation>;
+    latestActivity: string;
+    openTaskCount: number;
+    unread: boolean;
+};
+
+export type EngagementPage = {
+    items: Array<EngagementSummary>;
+};
+
+export type EngagementQueryRequest = {
+    practiceId: string;
+    phone: string;
+};
+
 export type TaskQueryRequest = {
     practiceId: string;
     locationId?: string;
     search?: string;
-    ordering?: 'time' | 'priority';
+    state?: 'OPEN' | 'COMPLETED';
+    ordering?: 'priority' | 'recent';
     cursor?: string;
     limit?: number;
 };
@@ -543,6 +586,7 @@ export type ConversationTimelineItem = {
     type: 'MESSAGE' | 'CALL' | 'TASK';
     id: string;
     occurredAt: string;
+    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
@@ -1168,6 +1212,46 @@ export type ListCallingOffersResponses = {
 
 export type ListCallingOffersResponse = ListCallingOffersResponses[keyof ListCallingOffersResponses];
 
+export type ListLiveCallsData = {
+    body?: never;
+    path?: never;
+    query: {
+        practiceId: string;
+        locationId?: string;
+    };
+    url: '/v1/calling/live-calls';
+};
+
+export type ListLiveCallsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ListLiveCallsError = ListLiveCallsErrors[keyof ListLiveCallsErrors];
+
+export type ListLiveCallsResponses = {
+    /**
+     * Access-filtered active Calls.
+     */
+    200: LiveCallPage;
+};
+
+export type ListLiveCallsResponse = ListLiveCallsResponses[keyof ListLiveCallsResponses];
+
 export type AcceptCallingOfferData = {
     body: AcceptCallingOfferRequest;
     path: {
@@ -1661,6 +1745,86 @@ export type GetCallingVoicemailPlaybackResponses = {
 
 export type GetCallingVoicemailPlaybackResponse = GetCallingVoicemailPlaybackResponses[keyof GetCallingVoicemailPlaybackResponses];
 
+export type QueryEngagementsData = {
+    body: EngagementQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/engagements/query';
+};
+
+export type QueryEngagementsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryEngagementsError = QueryEngagementsErrors[keyof QueryEngagementsErrors];
+
+export type QueryEngagementsResponses = {
+    /**
+     * Exact-phone results within the current User's Location Scope.
+     */
+    200: EngagementPage;
+};
+
+export type QueryEngagementsResponse = QueryEngagementsResponses[keyof QueryEngagementsResponses];
+
+export type GetEngagementTimelineData = {
+    body?: never;
+    path: {
+        phone: string;
+    };
+    query: {
+        practiceId: string;
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/engagements/{phone}/timeline';
+};
+
+export type GetEngagementTimelineErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetEngagementTimelineError = GetEngagementTimelineErrors[keyof GetEngagementTimelineErrors];
+
+export type GetEngagementTimelineResponses = {
+    /**
+     * Chronological exact-phone Engagement History.
+     */
+    200: ConversationTimelinePage;
+};
+
+export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
+
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;
     path?: never;
@@ -1947,6 +2111,48 @@ export type GetTaskCallHistoryResponses = {
 };
 
 export type GetTaskCallHistoryResponse = GetTaskCallHistoryResponses[keyof GetTaskCallHistoryResponses];
+
+export type GetTaskEngagementHistoryData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: {
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/tasks/{taskId}/engagement-history';
+};
+
+export type GetTaskEngagementHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetTaskEngagementHistoryError = GetTaskEngagementHistoryErrors[keyof GetTaskEngagementHistoryErrors];
+
+export type GetTaskEngagementHistoryResponses = {
+    /**
+     * Chronological exact-phone Engagement History.
+     */
+    200: ConversationTimelinePage;
+};
+
+export type GetTaskEngagementHistoryResponse = GetTaskEngagementHistoryResponses[keyof GetTaskEngagementHistoryResponses];
 
 export type QueryMessageThreadsData = {
     body: MessageThreadQueryRequest;

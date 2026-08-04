@@ -1,13 +1,12 @@
 "use client"
 
-import { useEffect, useId, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
   BotIcon,
   CheckCircle2Icon,
-  ChevronRightIcon,
   ListTodoIcon,
   LogOutIcon,
   MessageSquareIcon,
@@ -53,6 +52,7 @@ import { CallingOutboundNavigation } from "@/components/workspace/calling-dock"
 import type {
   AccessDiscovery,
   MessageThreadSummary,
+  EngagementSummary,
   PracticeAccess,
   Task,
 } from "@/lib/api/generated/types.gen"
@@ -68,11 +68,15 @@ type TaskRailProps = {
   locationScopeID: string
   tasks: Task[]
   messages: MessageThreadSummary[]
+  engagements: EngagementSummary[]
   mode: RailMode
   selectedTaskID: string
   selectedThreadID: string
   search: string
-  ordering: "time" | "priority"
+  taskState: "OPEN" | "COMPLETED"
+  ordering: "recent" | "priority"
+  unreadOnly: boolean
+  engagementLoading: boolean
   loading: boolean
   messageLoading: boolean
   nextCursor: string
@@ -80,7 +84,11 @@ type TaskRailProps = {
   connection: ConnectionState
   onModeChange: (mode: RailMode) => void
   onSearchChange: (search: string) => void
-  onOrderingChange: (ordering: "time" | "priority") => void
+  onTaskStateChange: (state: "OPEN" | "COMPLETED") => void
+  onOrderingChange: (ordering: "recent" | "priority") => void
+  onUnreadOnlyChange: (unreadOnly: boolean) => void
+  onSearchSubmit: () => void
+  onEngagementSelect: (engagement: EngagementSummary) => void
   onTaskSelect: (task: Task) => void
   onThreadSelect: (thread: MessageThreadSummary) => void
   onNewText: () => void
@@ -94,11 +102,15 @@ export function TaskRail({
   locationScopeID,
   tasks,
   messages,
+  engagements,
   mode,
   selectedTaskID,
   selectedThreadID,
   search,
+  taskState,
   ordering,
+  unreadOnly,
+  engagementLoading,
   loading,
   messageLoading,
   nextCursor,
@@ -106,24 +118,30 @@ export function TaskRail({
   connection,
   onModeChange,
   onSearchChange,
+  onTaskStateChange,
   onOrderingChange,
+  onUnreadOnlyChange,
+  onSearchSubmit,
+  onEngagementSelect,
   onTaskSelect,
   onThreadSelect,
   onNewText,
   onLoadMore,
   onMessageLoadMore,
 }: TaskRailProps) {
-  const open = tasks.filter((task) => task.state === "OPEN")
-  const completed = tasks.filter((task) => task.state === "COMPLETED")
   const showOffice = practice.locations.length > 1 && !locationScopeID
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const [openExpanded, setOpenExpanded] = useState(false)
-  const [completedExpanded, setCompletedExpanded] = useState(false)
+  const [expandedTaskState, setExpandedTaskState] = useState<
+    "OPEN" | "COMPLETED" | ""
+  >("")
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
-  const taskSurfaceExpanded =
-    (openExpanded && open.length > 0) ||
-    (completedExpanded && completed.length > 0)
+  const searching = Boolean(search.trim())
+  const visibleMessages = unreadOnly
+    ? messages.filter(
+        (thread) => thread.unread || thread.id === selectedThreadID,
+      )
+    : messages
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -159,10 +177,16 @@ export function TaskRail({
             ref={searchInputRef}
             aria-label={mode === "tasks" ? "Search tasks" : "Search messages"}
             autoComplete="off"
-            inputMode={mode === "messages" ? "tel" : undefined}
-            placeholder="Search"
+            inputMode="tel"
+            placeholder="Search phone number"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                onSearchSubmit()
+              }
+            }}
           />
           <InputGroupAddon>
             <SearchIcon />
@@ -189,13 +213,15 @@ export function TaskRail({
             </SidebarMenuButton>
             {mode === "tasks" && (
               <div className="mr-2 flex shrink-0 items-center gap-2">
-                <span className="text-sm font-medium">Urgency</span>
+                <span className="text-xs font-medium">
+                  {ordering === "priority" ? "Priority" : "Recent"}
+                </span>
                 <Switch
                   aria-label="Urgency"
                   size="sm"
                   checked={ordering === "priority"}
                   onCheckedChange={(checked) =>
-                    onOrderingChange(checked ? "priority" : "time")
+                    onOrderingChange(checked ? "priority" : "recent")
                   }
                 />
               </div>
@@ -237,37 +263,72 @@ export function TaskRail({
                 New message
               </TooltipContent>
             </Tooltip>
+            {mode === "messages" && (
+              <div className="mr-2 flex shrink-0 items-center gap-2">
+                <span className="text-xs font-medium">Unread</span>
+                <Switch
+                  aria-label="Unread only"
+                  size="sm"
+                  checked={unreadOnly}
+                  onCheckedChange={onUnreadOnlyChange}
+                />
+              </div>
+            )}
           </SidebarMenuItem>
           <CallingOutboundNavigation />
         </SidebarMenu>
       </SidebarHeader>
       <Separator />
       <SidebarContent className="gap-0">
-        {mode === "tasks" ? (
+        {searching ? (
           <>
-            <TaskGroup
-              label="Open"
-              tasks={open}
-              expanded={openExpanded}
-              selectedTaskID={selectedTaskID}
-              showOffice={showOffice}
-              onExpandedChange={setOpenExpanded}
-              onTaskSelect={onTaskSelect}
+            <EngagementGroup
+              engagements={engagements}
+              onEngagementSelect={onEngagementSelect}
             />
+            {engagementLoading && <RailLoading label="Searching phones" />}
+            {!engagementLoading && engagements.length === 0 && (
+              <RailEmpty>No exact phone match</RailEmpty>
+            )}
+          </>
+        ) : mode === "tasks" ? (
+          <>
+            <div className="grid grid-cols-2 border-b p-2">
+              {(["OPEN", "COMPLETED"] as const).map((state) => (
+                <Button
+                  key={state}
+                  size="sm"
+                  variant={taskState === state ? "secondary" : "ghost"}
+                  aria-expanded={
+                    taskState === state && expandedTaskState === state
+                  }
+                  onClick={() => {
+                    if (taskState === state) {
+                      setExpandedTaskState((current) =>
+                        current === state ? "" : state,
+                      )
+                      return
+                    }
+                    onTaskStateChange(state)
+                    setExpandedTaskState(state)
+                  }}
+                >
+                  {state === "OPEN" ? "Open" : "Completed"}
+                </Button>
+              ))}
+            </div>
             <TaskGroup
-              label="Completed"
-              tasks={completed}
-              expanded={completedExpanded}
+              tasks={tasks}
+              expanded={expandedTaskState === taskState}
               selectedTaskID={selectedTaskID}
               showOffice={showOffice}
-              onExpandedChange={setCompletedExpanded}
               onTaskSelect={onTaskSelect}
             />
             {loading && <RailLoading label="Refreshing tasks" />}
             {!loading && tasks.length === 0 && (
               <RailEmpty>No follow-up tasks</RailEmpty>
             )}
-            {taskSurfaceExpanded && (
+            {expandedTaskState === taskState && (
               <RailLoadSentinel
                 label="Loading more tasks"
                 cursor={nextCursor}
@@ -279,13 +340,15 @@ export function TaskRail({
         ) : (
           <>
             <MessageThreadGroup
-              threads={messages}
+              threads={visibleMessages}
               selectedThreadID={selectedThreadID}
               onThreadSelect={onThreadSelect}
             />
             {messageLoading && <RailLoading label="Refreshing messages" />}
-            {!messageLoading && messages.length === 0 && (
-              <RailEmpty>No conversations at this office</RailEmpty>
+            {!messageLoading && visibleMessages.length === 0 && (
+              <RailEmpty>
+                {unreadOnly ? "No unread conversations" : "No conversations at this office"}
+              </RailEmpty>
             )}
             <RailLoadSentinel
               label="Loading more conversations"
@@ -332,46 +395,22 @@ export function TaskRail({
 }
 
 function TaskGroup({
-  label,
   tasks,
   expanded,
   selectedTaskID,
   showOffice,
-  onExpandedChange,
   onTaskSelect,
 }: {
-  label: "Open" | "Completed"
   tasks: Task[]
   expanded: boolean
   selectedTaskID: string
   showOffice: boolean
-  onExpandedChange: (expanded: boolean) => void
   onTaskSelect: (task: Task) => void
 }) {
-  const contentID = useId()
-
   if (tasks.length === 0) return null
   return (
     <SidebarGroup className="p-0">
-      <button
-        type="button"
-        aria-controls={contentID}
-        aria-expanded={expanded}
-        className="group/disclosure flex h-8 w-full shrink-0 items-center px-3 text-left text-sm/5 font-medium text-sidebar-foreground/70 outline-hidden transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-        onClick={() => onExpandedChange(!expanded)}
-      >
-        <span>{label}</span>
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn(
-            "ml-auto size-4 shrink-0 stroke-[1.75] transition-[opacity,transform] motion-reduce:transition-none",
-            expanded
-              ? "rotate-90 opacity-0 group-hover/disclosure:opacity-100 group-focus-visible/disclosure:opacity-100"
-              : "opacity-100",
-          )}
-        />
-      </button>
-      <SidebarGroupContent id={contentID} hidden={!expanded}>
+      <SidebarGroupContent hidden={!expanded}>
         <SidebarMenu className="gap-0">
           {tasks.map((task) => (
             <SidebarMenuItem key={task.id}>
@@ -441,6 +480,62 @@ function TaskGroup({
                         </span>
                       </>
                     )}
+                  </span>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  )
+}
+
+function EngagementGroup({
+  engagements,
+  onEngagementSelect,
+}: {
+  engagements: EngagementSummary[]
+  onEngagementSelect: (engagement: EngagementSummary) => void
+}) {
+  if (engagements.length === 0) return null
+  return (
+    <SidebarGroup className="p-0">
+      <SidebarGroupContent>
+        <SidebarMenu className="gap-0">
+          {engagements.map((engagement) => (
+            <SidebarMenuItem key={engagement.phone}>
+              <SidebarMenuButton
+                className="h-auto min-h-20 rounded-none border-b border-sidebar-border px-3 py-2.5"
+                tooltip={engagement.phone}
+                onClick={() => onEngagementSelect(engagement)}
+              >
+                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="flex items-center gap-2">
+                    {engagement.unread && (
+                      <span
+                        aria-label="Unread activity"
+                        className="size-1.5 rounded-full bg-warning"
+                      />
+                    )}
+                    <span className="truncate font-medium tabular-nums">
+                      {formatPhone(engagement.phone)}
+                    </span>
+                    <time
+                      dateTime={engagement.latestActivity}
+                      className="ml-auto text-xs tabular-nums text-muted-foreground"
+                    >
+                      {relativeTime(engagement.latestActivity)}
+                    </time>
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {engagement.displayName || "No sourced name"}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {engagement.locations.map((location) => location.name).join(" · ")}
+                    {engagement.openTaskCount > 0
+                      ? ` · ${engagement.openTaskCount} open ${engagement.openTaskCount === 1 ? "Task" : "Tasks"}`
+                      : ""}
                   </span>
                 </span>
               </SidebarMenuButton>

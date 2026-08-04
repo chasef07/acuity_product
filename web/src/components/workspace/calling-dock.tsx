@@ -226,6 +226,7 @@ export function CallingDock({
   const [available, setAvailable] = useState(false)
   const [offers, setOffers] = useState<CallingOffer[]>([])
   const [activeCall, setActiveCall] = useState<CallingCall>()
+  const [pendingOutcome, setPendingOutcome] = useState<CallingCall>()
   const [expectedCallID, setExpectedCallID] = useState("")
   const [mediaAttached, setMediaAttached] = useState(false)
   const [muted, setMuted] = useState(false)
@@ -650,6 +651,15 @@ export function CallingDock({
           setMediaAttached(false)
         }
       }
+      if (acquired.data.pendingOutcomeCallId) {
+        const pending = await getCallingCall({
+          client: portalClient(token),
+          path: { callId: acquired.data.pendingOutcomeCallId },
+        }).catch(() => undefined)
+        if (pending?.data?.state === "NEEDS_DISPOSITION") {
+          setPendingOutcome(pending.data)
+        }
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         const microphone = stream.getAudioTracks()[0]
@@ -761,12 +771,30 @@ export function CallingDock({
     }).catch(() => undefined)
     if (expectedCallRef.current !== callID) return
     if (result?.data) {
+      if (result.data.state === "NEEDS_DISPOSITION") {
+        setPendingOutcome(result.data)
+        applyActiveCall()
+        setExpectedCallID("")
+        expectedCallRef.current = ""
+        setMediaAttached(false)
+        mediaLegRef.current = null
+        setMuted(false)
+        if (
+          ownerRef.current &&
+          mediaState === "ready" &&
+          availabilityIntentRef.current &&
+          !availabilityRef.current
+        ) {
+          setAvailabilityPending(true)
+          void updateReadiness(true, "ready")
+        }
+        return
+      }
       if (!applyActiveCall(result.data)) return
       if (
         result.data.state === "UNANSWERED" ||
         result.data.state === "MISSED" ||
         result.data.state === "VOICEMAIL" ||
-        result.data.state === "NEEDS_DISPOSITION" ||
         result.data.state === "RESOLVED" ||
         result.data.state === "FOLLOW_UP_REQUIRED"
       ) {
@@ -844,6 +872,17 @@ export function CallingDock({
     }
     setLease(result.data)
     ownerRef.current = true
+    if (result.data.pendingOutcomeCallId) {
+      const pending = await getCallingCall({
+        client: portalClient(token),
+        path: { callId: result.data.pendingOutcomeCallId },
+      }).catch(() => undefined)
+      if (pending?.data?.state === "NEEDS_DISPOSITION") {
+        setPendingOutcome(pending.data)
+      }
+    } else {
+      setPendingOutcome(undefined)
+    }
     if (result.data.activeCallId) {
       const restoredCall =
         expectedCallRef.current !== result.data.activeCallId
@@ -1063,6 +1102,24 @@ export function CallingDock({
       )
       return
     }
+    if (result.data.state === "NEEDS_DISPOSITION") {
+      setPendingOutcome(result.data)
+      applyActiveCall()
+      setExpectedCallID("")
+      expectedCallRef.current = ""
+      mediaLegRef.current = null
+      setMediaAttached(false)
+      setMuted(false)
+      if (
+        mediaState === "ready" &&
+        ownerRef.current &&
+        availabilityIntentRef.current
+      ) {
+        setAvailabilityPending(true)
+        await updateReadiness(true, "ready")
+      }
+      return
+    }
     applyActiveCall(result.data)
   }
 
@@ -1122,12 +1179,13 @@ export function CallingDock({
       | "CREATE_TASK"
       | "NO_FOLLOW_UP",
   ) {
-    if (!activeCall) return
+    const call = pendingOutcome ?? activeCall
+    if (!call || call.state !== "NEEDS_DISPOSITION") return
     const token = await getAccessToken()
     if (!token) return
     const result = await recordCallingDisposition({
       client: portalClient(token),
-      path: { callId: activeCall.id },
+      path: { callId: call.id },
       body: { sessionId: sessionID, outcome },
     }).catch(() => undefined)
     if (!result?.data) {
@@ -1135,6 +1193,7 @@ export function CallingDock({
       return
     }
     onDisposition(result.data)
+    setPendingOutcome(undefined)
     applyActiveCall()
     setExpectedCallID("")
     expectedCallRef.current = ""
@@ -1334,6 +1393,34 @@ export function CallingDock({
                 }}
               />
               {error && <p className="text-destructive">{error}</p>}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+      {!platformOperator && pendingOutcome && !activeCall && !earliest && (
+        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
+          <Card role="region" aria-label="Call outcome" size="sm">
+            <CardHeader>
+              <CardTitle>How did the call end?</CardTitle>
+              <CardDescription>
+                {pendingOutcome.phone} · {pendingOutcome.locationName}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              {callDispositionChoices(pendingOutcome).map((choice) => (
+                <Button
+                  key={choice.outcome}
+                  variant={choice.label === "Resolved" ? "default" : "outline"}
+                  onClick={() => void dispose(choice.outcome)}
+                >
+                  {choice.label === "Resolved" && <CheckIcon />}
+                  {choice.label}
+                </Button>
+              ))}
+              <p className="basis-full text-xs text-muted-foreground">
+                Calling capacity is already available; this outcome can be saved later.
+              </p>
+              {error && <p className="basis-full text-xs text-destructive">{error}</p>}
             </CardContent>
           </Card>
         </div>
@@ -1698,19 +1785,19 @@ function callDispositionChoices(
   if (call.direction !== "OUTBOUND") {
     return [
       { outcome: "RESOLVED", label: "Resolved" },
-      { outcome: "FOLLOW_UP_REQUIRED", label: "Create task" },
+      { outcome: "FOLLOW_UP_REQUIRED", label: "Follow-up needed" },
     ]
   }
   if (call.entryPoint === "TASK") {
     return [
-      { outcome: "COMPLETE_TASK", label: "Complete task" },
-      { outcome: "KEEP_OPEN", label: "Keep open" },
+      { outcome: "COMPLETE_TASK", label: "Resolved" },
+      { outcome: "KEEP_OPEN", label: "Follow-up needed" },
     ]
   }
   if (call.connectedAt) {
     return [
       { outcome: "RESOLVED", label: "Resolved" },
-      { outcome: "CREATE_TASK", label: "Create task" },
+      { outcome: "CREATE_TASK", label: "Follow-up needed" },
     ]
   }
   return [

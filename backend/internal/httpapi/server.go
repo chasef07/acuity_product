@@ -704,6 +704,39 @@ func (server *Server) ListCallingOffers(w http.ResponseWriter, r *http.Request) 
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) ListLiveCalls(
+	w http.ResponseWriter,
+	r *http.Request,
+	params api.ListLiveCallsParams,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	liveCalls, err := server.calling.ListLiveCalls(
+		ctx,
+		identity,
+		params.PracticeId.String(),
+		uuidString(params.LocationId),
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response := api.LiveCallPage{Items: make([]api.LiveCall, 0, len(liveCalls))}
+	for _, liveCall := range liveCalls {
+		item, err := liveCallResponse(liveCall)
+		if err != nil {
+			server.writeCallingError(w, r, err)
+			return
+		}
+		response.Items = append(response.Items, item)
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) AcceptCallingOffer(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -811,6 +844,76 @@ func (server *Server) GetCallingEngagementHistory(
 	response, err := conversationTimelineResponse(timeline)
 	if err != nil {
 		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.EngagementQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	page, err := server.messaging.QueryEngagements(
+		ctx,
+		messaging.QueryEngagementsCommand{
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			Phone:      body.Phone,
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := engagementPageResponse(page)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetEngagementTimeline(
+	w http.ResponseWriter,
+	r *http.Request,
+	phone string,
+	params api.GetEngagementTimelineParams,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	normalized, err := messaging.NormalizePhone(phone)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	timeline, err := server.messaging.QueryPhoneTimeline(
+		ctx,
+		messaging.QueryPhoneTimelineCommand{
+			Identity:   identity,
+			PracticeID: params.PracticeId.String(),
+			Phone:      normalized,
+			Cursor:     stringValue(params.Cursor),
+			Limit:      intValue(params.Limit),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := conversationTimelineResponse(timeline)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1188,9 +1291,13 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ordering := work.TaskOrderingTime
+	ordering := work.TaskOrderingPriority
 	if body.Ordering != nil {
 		ordering = work.TaskOrdering(*body.Ordering)
+	}
+	state := work.TaskOpen
+	if body.State != nil {
+		state = work.TaskState(*body.State)
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
@@ -1199,6 +1306,7 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		PracticeID: body.PracticeId.String(),
 		LocationID: uuidString(body.LocationId),
 		Search:     stringValue(body.Search),
+		State:      state,
 		Ordering:   ordering,
 		Cursor:     stringValue(body.Cursor),
 		Limit:      intValue(body.Limit),
@@ -1387,6 +1495,45 @@ func (server *Server) GetTaskCallHistory(
 	response, err := callHistoryResponse(history)
 	if err != nil {
 		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetTaskEngagementHistory(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+	params api.GetTaskEngagementHistoryParams,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	task, err := server.work.ReadTask(ctx, identity, taskID.String())
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	timeline, err := server.messaging.QueryPhoneTimeline(
+		ctx,
+		messaging.QueryPhoneTimelineCommand{
+			Identity:   identity,
+			PracticeID: task.PracticeID,
+			Phone:      task.Phone,
+			Cursor:     stringValue(params.Cursor),
+			Limit:      intValue(params.Limit),
+		},
+	)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	response, err := conversationTimelineResponse(timeline)
+	if err != nil {
+		server.writeMessagingError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -2414,11 +2561,12 @@ func membershipResponse(membership access.Membership) (api.Membership, error) {
 
 func softphoneResponse(state humancalling.SoftphoneState) api.SoftphoneState {
 	return api.SoftphoneState{
-		SessionId:      state.SessionID,
-		LeaseExpiresAt: state.LeaseExpiresAt,
-		Owner:          state.Owner,
-		Available:      state.Available,
-		ActiveCallId:   state.ActiveCallID,
+		SessionId:            state.SessionID,
+		LeaseExpiresAt:       state.LeaseExpiresAt,
+		Owner:                state.Owner,
+		Available:            state.Available,
+		ActiveCallId:         state.ActiveCallID,
+		PendingOutcomeCallId: state.PendingOutcomeCallID,
 	}
 }
 
@@ -2447,6 +2595,27 @@ func callingOfferResponse(offer humancalling.Offer) (api.CallingOffer, error) {
 		Deadline:       offer.Deadline,
 		State:          api.CallingOfferState(offer.State),
 		Version:        offer.Version,
+	}, nil
+}
+
+func liveCallResponse(call humancalling.LiveCall) (api.LiveCall, error) {
+	id, err := uuid.Parse(call.ID)
+	if err != nil {
+		return api.LiveCall{}, err
+	}
+	locationID, err := uuid.Parse(call.LocationID)
+	if err != nil {
+		return api.LiveCall{}, err
+	}
+	return api.LiveCall{
+		Id:           id,
+		LocationId:   locationID,
+		LocationName: call.LocationName,
+		Phone:        call.Phone,
+		Direction:    api.LiveCallDirection(call.Direction),
+		StaffSubject: call.StaffSubject,
+		StaffEmail:   call.StaffEmail,
+		ConnectedAt:  call.ConnectedAt,
 	}, nil
 }
 
@@ -2698,6 +2867,38 @@ func messageThreadPageResponse(
 	return response, nil
 }
 
+func engagementPageResponse(
+	page messaging.EngagementPage,
+) (api.EngagementPage, error) {
+	response := api.EngagementPage{
+		Items: make([]api.EngagementSummary, 0, len(page.Items)),
+	}
+	for _, item := range page.Items {
+		summary := api.EngagementSummary{
+			Phone:          item.Phone,
+			Locations:      make([]api.EngagementLocation, 0, len(item.Locations)),
+			LatestActivity: item.LatestActivity,
+			OpenTaskCount:  item.OpenTaskCount,
+			Unread:         item.Unread,
+		}
+		if item.DisplayName != "" {
+			summary.DisplayName = &item.DisplayName
+		}
+		for _, itemLocation := range item.Locations {
+			locationID, err := uuid.Parse(itemLocation.ID)
+			if err != nil {
+				return api.EngagementPage{}, err
+			}
+			summary.Locations = append(summary.Locations, api.EngagementLocation{
+				Id:   locationID,
+				Name: itemLocation.Name,
+			})
+		}
+		response.Items = append(response.Items, summary)
+	}
+	return response, nil
+}
+
 func messageResponse(message messaging.Message) (api.Message, error) {
 	id, err := uuid.Parse(message.ID)
 	if err != nil {
@@ -2807,6 +3008,10 @@ func conversationTimelineResponse(
 			Id:         id,
 			Type:       api.ConversationTimelineItemType(item.Type),
 			OccurredAt: item.OccurredAt,
+		}
+		if item.TaskActivity != "" {
+			activity := api.ConversationTimelineItemTaskActivity(item.TaskActivity)
+			converted.TaskActivity = &activity
 		}
 		switch item.Type {
 		case "MESSAGE":
