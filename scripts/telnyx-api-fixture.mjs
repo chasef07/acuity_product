@@ -22,7 +22,6 @@ let callSequence = 0
 let messageSequence = 0
 const credentials = new Map()
 const messages = new Map()
-const staffDialsByCall = new Map()
 
 async function deliverWebhook(url, event) {
   const raw = Buffer.from(JSON.stringify({
@@ -238,16 +237,10 @@ createServer(async (request, response) => {
       !payload.media_prep &&
       payload.answering_machine_detection !== "disabled"
     ) {
-      const clientState = JSON.parse(
-        Buffer.from(payload.client_state, "base64").toString("utf8"),
-      )
-      const dialSequence = (staffDialsByCall.get(clientState.call) ?? 0) + 1
-      staffDialsByCall.set(clientState.call, dialSequence)
-      const suffix = dialSequence === 1 ? "" : `-${dialSequence}`
       response.writeHead(200).end(JSON.stringify({
         data: {
-          call_control_id: `fixture-staff-control${suffix}`,
-          call_leg_id: `fixture-staff-leg${suffix}`,
+          call_control_id: "fixture-staff-control",
+          call_leg_id: "fixture-staff-leg",
         },
       }))
       return

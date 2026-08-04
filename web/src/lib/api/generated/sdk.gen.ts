@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcceptStaffTransferData, AcceptStaffTransferErrors, AcceptStaffTransferResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CancelStaffTransferData, CancelStaffTransferErrors, CancelStaffTransferResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, ConfirmCallingMediaReadyData, ConfirmCallingMediaReadyErrors, ConfirmCallingMediaReadyResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DeclineStaffTransferData, DeclineStaffTransferErrors, DeclineStaffTransferResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetCallingEngagementHistoryData, GetCallingEngagementHistoryErrors, GetCallingEngagementHistoryResponses, GetCallingVoicemailPlaybackData, GetCallingVoicemailPlaybackErrors, GetCallingVoicemailPlaybackResponses, GetEngagementTimelineData, GetEngagementTimelineErrors, GetEngagementTimelineResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetMessageThreadTimelineData, GetMessageThreadTimelineErrors, GetMessageThreadTimelineResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetTaskEngagementHistoryData, GetTaskEngagementHistoryErrors, GetTaskEngagementHistoryResponses, GetTaskOutboundEligibilityData, GetTaskOutboundEligibilityErrors, GetTaskOutboundEligibilityResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, IssueCallingVoicemailPlaybackData, IssueCallingVoicemailPlaybackErrors, IssueCallingVoicemailPlaybackResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, ListLiveCallsData, ListLiveCallsErrors, ListLiveCallsResponses, ListStaffTransferCandidatesData, ListStaffTransferCandidatesErrors, ListStaffTransferCandidatesResponses, ListStaffTransfersData, ListStaffTransfersErrors, ListStaffTransfersResponses, MarkMessageThreadReadData, MarkMessageThreadReadErrors, MarkMessageThreadReadResponses, QueryEngagementsData, QueryEngagementsErrors, QueryEngagementsResponses, QueryMessageThreadsData, QueryMessageThreadsErrors, QueryMessageThreadsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequestStaffTransferData, RequestStaffTransferErrors, RequestStaffTransferResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RetryOutboundCallData, RetryOutboundCallErrors, RetryOutboundCallResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, StartOutboundCallData, StartOutboundCallErrors, StartOutboundCallResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
+import type { AcceptCallingOfferData, AcceptCallingOfferErrors, AcceptCallingOfferResponses, AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AcquireSoftphoneData, AcquireSoftphoneErrors, AcquireSoftphoneResponses, AddLocationData, AddLocationErrors, AddLocationResponses, CompleteTaskData, CompleteTaskErrors, CompleteTaskResponses, ConfirmCallingMediaReadyData, ConfirmCallingMediaReadyErrors, ConfirmCallingMediaReadyResponses, CreateHandoffData, CreateHandoffErrors, CreateHandoffResponses, CreateMessageFollowUpTaskData, CreateMessageFollowUpTaskErrors, CreateMessageFollowUpTaskResponses, CreateStaffTaskData, CreateStaffTaskErrors, CreateStaffTaskResponses, DiscoverAccessData, DiscoverAccessErrors, DiscoverAccessResponses, EnterSupportModeData, EnterSupportModeErrors, EnterSupportModeResponses, GetCallingCallData, GetCallingCallErrors, GetCallingCallHistoryData, GetCallingCallHistoryErrors, GetCallingCallHistoryResponses, GetCallingCallResponses, GetCallingEngagementHistoryData, GetCallingEngagementHistoryErrors, GetCallingEngagementHistoryResponses, GetCallingVoicemailPlaybackData, GetCallingVoicemailPlaybackErrors, GetCallingVoicemailPlaybackResponses, GetEventsData, GetEventsErrors, GetEventsResponse, GetEventsResponses, GetLivenessData, GetLivenessResponses, GetMessageAttachmentData, GetMessageAttachmentErrors, GetMessageAttachmentResponses, GetMessageThreadTimelineData, GetMessageThreadTimelineErrors, GetMessageThreadTimelineResponses, GetOperatorCallingTimelineData, GetOperatorCallingTimelineErrors, GetOperatorCallingTimelineResponses, GetProviderMessageMediaData, GetProviderMessageMediaErrors, GetProviderMessageMediaResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetTaskCallHistoryData, GetTaskCallHistoryErrors, GetTaskCallHistoryResponses, GetTaskOutboundEligibilityData, GetTaskOutboundEligibilityErrors, GetTaskOutboundEligibilityResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, InspectInvitationData, InspectInvitationErrors, InspectInvitationResponses, InspectSignUpEligibilityData, InspectSignUpEligibilityErrors, InspectSignUpEligibilityResponses, IssueCallingMediaTokenData, IssueCallingMediaTokenErrors, IssueCallingMediaTokenResponses, IssueCallingVoicemailPlaybackData, IssueCallingVoicemailPlaybackErrors, IssueCallingVoicemailPlaybackResponses, ListCallingOffersData, ListCallingOffersErrors, ListCallingOffersResponses, MarkMessageThreadReadData, MarkMessageThreadReadErrors, MarkMessageThreadReadResponses, QueryMessageThreadsData, QueryMessageThreadsErrors, QueryMessageThreadsResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadTaskData, ReadTaskErrors, ReadTaskResponses, ReceiveCorrelatedTelnyxMessagingWebhookData, ReceiveCorrelatedTelnyxMessagingWebhookErrors, ReceiveCorrelatedTelnyxMessagingWebhookResponses, ReceiveTelnyxMessagingWebhookData, ReceiveTelnyxMessagingWebhookErrors, ReceiveTelnyxMessagingWebhookResponses, ReceiveTelnyxWebhookData, ReceiveTelnyxWebhookErrors, ReceiveTelnyxWebhookResponses, RecordCallingDispositionData, RecordCallingDispositionErrors, RecordCallingDispositionResponses, RenameTaskData, RenameTaskErrors, RenameTaskResponses, ReopenTaskData, ReopenTaskErrors, ReopenTaskResponses, RequestCallingHangupData, RequestCallingHangupErrors, RequestCallingHangupResponses, RequeueOperatorProviderReceiptData, RequeueOperatorProviderReceiptErrors, RequeueOperatorProviderReceiptResponses, RetryInboundMessageAttachmentData, RetryInboundMessageAttachmentErrors, RetryInboundMessageAttachmentResponses, RetryOutboundCallData, RetryOutboundCallErrors, RetryOutboundCallResponses, RevokeSupportModeData, RevokeSupportModeErrors, RevokeSupportModeResponses, SendMessageAgainData, SendMessageAgainErrors, SendMessageAgainResponses, SendMessageData, SendMessageErrors, SendMessageResponses, SetCallingReadinessData, SetCallingReadinessErrors, SetCallingReadinessResponses, StartOutboundCallData, StartOutboundCallErrors, StartOutboundCallResponses, UploadMessageAttachmentData, UploadMessageAttachmentErrors, UploadMessageAttachmentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -195,77 +195,6 @@ export const listCallingOffers = <ThrowOnError extends boolean = false>(options?
 });
 
 /**
- * List informational active Calls within the current User's Location Scope.
- */
-export const listLiveCalls = <ThrowOnError extends boolean = false>(options: Options<ListLiveCallsData, ThrowOnError>) => (options.client ?? client).get<ListLiveCallsResponses, ListLiveCallsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/live-calls',
-    ...options
-});
-
-/**
- * List currently eligible same-Location transfer recipients.
- */
-export const listStaffTransferCandidates = <ThrowOnError extends boolean = false>(options: Options<ListStaffTransferCandidatesData, ThrowOnError>) => (options.client ?? client).get<ListStaffTransferCandidatesResponses, ListStaffTransferCandidatesErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/calls/{callId}/transfer-candidates',
-    ...options
-});
-
-/**
- * Request one durable same-Location warm transfer.
- */
-export const requestStaffTransfer = <ThrowOnError extends boolean = false>(options: Options<RequestStaffTransferData, ThrowOnError>) => (options.client ?? client).post<RequestStaffTransferResponses, RequestStaffTransferErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/calls/{callId}/transfers',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * List active incoming and outgoing staff transfers for the current User.
- */
-export const listStaffTransfers = <ThrowOnError extends boolean = false>(options?: Options<ListStaffTransfersData, ThrowOnError>) => (options?.client ?? client).get<ListStaffTransfersResponses, ListStaffTransfersErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/transfers',
-    ...options
-});
-
-/**
- * Accept a transfer and start the recipient provider leg.
- */
-export const acceptStaffTransfer = <ThrowOnError extends boolean = false>(options: Options<AcceptStaffTransferData, ThrowOnError>) => (options.client ?? client).post<AcceptStaffTransferResponses, AcceptStaffTransferErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/transfers/{transferId}/accept',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Decline a pending transfer request.
- */
-export const declineStaffTransfer = <ThrowOnError extends boolean = false>(options: Options<DeclineStaffTransferData, ThrowOnError>) => (options.client ?? client).post<DeclineStaffTransferResponses, DeclineStaffTransferErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/transfers/{transferId}/decline',
-    ...options
-});
-
-/**
- * Cancel a pending outgoing transfer request.
- */
-export const cancelStaffTransfer = <ThrowOnError extends boolean = false>(options: Options<CancelStaffTransferData, ThrowOnError>) => (options.client ?? client).post<CancelStaffTransferResponses, CancelStaffTransferErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/transfers/{transferId}/cancel',
-    ...options
-});
-
-/**
  * Atomically claim one current offer and commit its Dial command.
  */
 export const acceptCallingOffer = <ThrowOnError extends boolean = false>(options: Options<AcceptCallingOfferData, ThrowOnError>) => (options.client ?? client).post<AcceptCallingOfferResponses, AcceptCallingOfferErrors, ThrowOnError>({
@@ -398,28 +327,6 @@ export const getCallingVoicemailPlayback = <ThrowOnError extends boolean = false
 });
 
 /**
- * Resolve one authorized exact-phone Engagement across Practice Locations.
- */
-export const queryEngagements = <ThrowOnError extends boolean = false>(options: Options<QueryEngagementsData, ThrowOnError>) => (options.client ?? client).post<QueryEngagementsResponses, QueryEngagementsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/engagements/query',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Read one authorized exact-phone Engagement History.
- */
-export const getEngagementTimeline = <ThrowOnError extends boolean = false>(options: Options<GetEngagementTimelineData, ThrowOnError>) => (options.client ?? client).get<GetEngagementTimelineResponses, GetEngagementTimelineErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/engagements/{phone}/timeline',
-    ...options
-});
-
-/**
  * Accept one authenticated current Abita create_staff_task command.
  */
 export const createStaffTask = <ThrowOnError extends boolean = false>(options: Options<CreateStaffTaskData, ThrowOnError>) => (options.client ?? client).post<CreateStaffTaskResponses, CreateStaffTaskErrors, ThrowOnError>({
@@ -499,15 +406,6 @@ export const reopenTask = <ThrowOnError extends boolean = false>(options: Option
 export const getTaskCallHistory = <ThrowOnError extends boolean = false>(options: Options<GetTaskCallHistoryData, ThrowOnError>) => (options.client ?? client).get<GetTaskCallHistoryResponses, GetTaskCallHistoryErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/v1/tasks/{taskId}/history',
-    ...options
-});
-
-/**
- * Read authorized exact-phone Engagement History for one Task.
- */
-export const getTaskEngagementHistory = <ThrowOnError extends boolean = false>(options: Options<GetTaskEngagementHistoryData, ThrowOnError>) => (options.client ?? client).get<GetTaskEngagementHistoryResponses, GetTaskEngagementHistoryErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/tasks/{taskId}/engagement-history',
     ...options
 });
 

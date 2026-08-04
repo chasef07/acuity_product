@@ -122,184 +122,6 @@ type ThreadPage struct {
 	NextCursor string
 }
 
-type EngagementLocation struct {
-	ID   string
-	Name string
-}
-
-type EngagementSummary struct {
-	Phone          string
-	DisplayName    string
-	Locations      []EngagementLocation
-	LatestActivity time.Time
-	OpenTaskCount  int
-	Unread         bool
-}
-
-type QueryEngagementsCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	Phone      string
-}
-
-type EngagementPage struct {
-	Items []EngagementSummary
-}
-
-func (m *Module) QueryEngagements(
-	ctx context.Context,
-	command QueryEngagementsCommand,
-) (EngagementPage, error) {
-	command.PracticeID = strings.TrimSpace(command.PracticeID)
-	phone, err := normalizePhone(command.Phone)
-	if m.pool == nil || m.access == nil || command.PracticeID == "" || err != nil {
-		return EngagementPage{}, ErrInvalidInput
-	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("begin Engagement lookup: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		"",
-	)
-	if err != nil {
-		return EngagementPage{}, ErrDenied
-	}
-	locationIDs := make([]string, 0, len(authorization.Locations))
-	for _, location := range authorization.Locations {
-		locationIDs = append(locationIDs, location.ID)
-	}
-	if len(locationIDs) == 0 {
-		return EngagementPage{}, ErrDenied
-	}
-
-	var summary EngagementSummary
-	var found bool
-	err = tx.QueryRow(ctx, `
-		WITH evidence AS (
-			SELECT
-				thread.location_id,
-				thread.updated_at AS occurred_at,
-				COALESCE(thread.display_name, '') AS display_name
-			FROM messaging_threads thread
-			WHERE thread.practice_id = $1
-				AND thread.location_id::text = ANY($2::text[])
-				AND thread.external_phone = $3
-			UNION ALL
-			SELECT
-				call.location_id,
-				call.updated_at,
-				COALESCE(handoff.display_name, '')
-			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-			WHERE call.practice_id = $1
-				AND call.location_id::text = ANY($2::text[])
-				AND COALESCE(handoff.phone, call.destination_phone) = $3
-			UNION ALL
-			SELECT
-				task.location_id,
-				task.updated_at,
-				COALESCE(task.caller_name, '')
-			FROM work_tasks task
-			WHERE task.practice_id = $1
-				AND task.location_id::text = ANY($2::text[])
-				AND task.phone = $3
-		)
-		SELECT
-			$3,
-			COALESCE((
-				SELECT display_name
-				FROM evidence
-				WHERE display_name <> ''
-				ORDER BY occurred_at DESC
-				LIMIT 1
-			), ''),
-			COALESCE(max(occurred_at), '-infinity'::timestamptz),
-			(
-				SELECT count(*)
-				FROM work_tasks task
-				WHERE task.practice_id = $1
-					AND task.location_id::text = ANY($2::text[])
-					AND task.phone = $3
-					AND task.state = 'OPEN'
-			),
-			EXISTS (
-				SELECT 1
-				FROM messaging_threads thread
-				JOIN messaging_thread_unreads unread ON unread.thread_id = thread.id
-				WHERE thread.practice_id = $1
-					AND thread.location_id::text = ANY($2::text[])
-					AND thread.external_phone = $3
-					AND unread.user_subject = $4
-			),
-			count(*) > 0
-		FROM evidence
-	`, command.PracticeID, locationIDs, phone, command.Identity.Subject).Scan(
-		&summary.Phone,
-		&summary.DisplayName,
-		&summary.LatestActivity,
-		&summary.OpenTaskCount,
-		&summary.Unread,
-		&found,
-	)
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("query Engagement summary: %w", err)
-	}
-	if !found {
-		if err := tx.Commit(ctx); err != nil {
-			return EngagementPage{}, fmt.Errorf("commit empty Engagement lookup: %w", err)
-		}
-		return EngagementPage{Items: []EngagementSummary{}}, nil
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT DISTINCT location.id::text, location.name
-		FROM access_locations location
-		JOIN (
-			SELECT location_id
-			FROM messaging_threads
-			WHERE practice_id = $1 AND external_phone = $3
-			UNION
-			SELECT call.location_id
-			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-			WHERE call.practice_id = $1
-				AND COALESCE(handoff.phone, call.destination_phone) = $3
-			UNION
-			SELECT location_id
-			FROM work_tasks
-			WHERE practice_id = $1 AND phone = $3
-		) evidence ON evidence.location_id = location.id
-		WHERE location.practice_id = $1
-			AND location.id::text = ANY($2::text[])
-		ORDER BY location.name, location.id::text
-	`, command.PracticeID, locationIDs, phone)
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("query Engagement Locations: %w", err)
-	}
-	for rows.Next() {
-		var location EngagementLocation
-		if err := rows.Scan(&location.ID, &location.Name); err != nil {
-			rows.Close()
-			return EngagementPage{}, fmt.Errorf("scan Engagement Location: %w", err)
-		}
-		summary.Locations = append(summary.Locations, location)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return EngagementPage{}, fmt.Errorf("iterate Engagement Locations: %w", err)
-	}
-	rows.Close()
-	if err := tx.Commit(ctx); err != nil {
-		return EngagementPage{}, fmt.Errorf("commit Engagement lookup: %w", err)
-	}
-	return EngagementPage{Items: []EngagementSummary{summary}}, nil
-}
-
 type pageCursor struct {
 	OccurredAt time.Time `json:"occurredAt"`
 	ID         string    `json:"id"`
@@ -321,13 +143,12 @@ type QueryPhoneTimelineCommand struct {
 }
 
 type TimelineItem struct {
-	Type         string
-	ID           string
-	OccurredAt   time.Time
-	TaskActivity string
-	Message      Message
-	Call         humancalling.CallHistoryItem
-	Task         work.Task
+	Type       string
+	ID         string
+	OccurredAt time.Time
+	Message    Message
+	Call       humancalling.CallHistoryItem
+	Task       work.Task
 }
 
 type TimelinePage struct {
@@ -578,24 +399,50 @@ func (m *Module) QueryPhoneTimeline(
 
 	taskRows, err := tx.Query(ctx, `
 		SELECT
-			activity.id::text,
 			task.id::text,
-			activity.kind,
-			activity.occurred_at
+			task.practice_id::text,
+			task.location_id::text,
+			location.name,
+			task.call_id::text,
+			task.phone,
+			task.title,
+			task.state,
+			task.origin,
+			task.urgency,
+			task.category,
+			task.caller_name,
+			task.source_call_id,
+			task.source_message,
+			task.source_message_id::text,
+			task.message_thread_id::text,
+			task.recovery_outcome,
+			task.created_by_kind,
+			task.created_by_subject,
+			task.created_by_email,
+			task.created_at,
+			task.completed_by_subject,
+			task.completed_by_email,
+			task.completed_at,
+			task.version,
+			task.updated_at,
+			COALESCE(task.message_thread_id::text, ''),
+			false
 		FROM work_tasks task
-		JOIN work_task_activities activity ON activity.task_id = task.id
+		JOIN access_locations location
+			ON location.practice_id = task.practice_id
+			AND location.id = task.location_id
 		WHERE task.practice_id = $1
 			AND task.location_id::text = ANY($2::text[])
 			AND task.phone = $3
 			AND (
 				$4::timestamptz IS NULL
-				OR activity.occurred_at < $4
+				OR task.created_at < $4
 				OR (
-					activity.occurred_at = $4
-					AND 'TASK:' || activity.id::text < $5
+					task.created_at = $4
+					AND 'TASK:' || task.id::text < $5
 				)
 			)
-		ORDER BY activity.occurred_at DESC, activity.id DESC
+		ORDER BY task.created_at DESC, task.id DESC
 		LIMIT $6
 	`, command.PracticeID, locationIDs, command.Phone,
 		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
@@ -603,39 +450,24 @@ func (m *Module) QueryPhoneTimeline(
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("query phone Tasks: %w", err)
 	}
-	type taskActivityRow struct {
-		id, taskID, kind string
-		occurredAt       time.Time
-	}
-	activities := []taskActivityRow{}
 	for taskRows.Next() {
-		var activity taskActivityRow
-		if err := taskRows.Scan(
-			&activity.id, &activity.taskID, &activity.kind, &activity.occurredAt,
-		); err != nil {
-			taskRows.Close()
-			return TimelinePage{}, fmt.Errorf("scan phone Task Activity: %w", err)
-		}
-		activities = append(activities, activity)
-	}
-	if err := taskRows.Err(); err != nil {
-		taskRows.Close()
-		return TimelinePage{}, fmt.Errorf("iterate phone Task Activities: %w", err)
-	}
-	taskRows.Close()
-	for _, activity := range activities {
-		task, err := readConversationTask(ctx, tx, activity.taskID)
+		task, err := scanConversationTask(taskRows)
 		if err != nil {
+			taskRows.Close()
 			return TimelinePage{}, fmt.Errorf("scan phone Task: %w", err)
 		}
 		items = append(items, TimelineItem{
-			Type:         "TASK",
-			ID:           activity.id,
-			OccurredAt:   activity.occurredAt,
-			TaskActivity: activity.kind,
-			Task:         task,
+			Type:       "TASK",
+			ID:         task.ID,
+			OccurredAt: task.CreatedAt,
+			Task:       task,
 		})
 	}
+	if err := taskRows.Err(); err != nil {
+		taskRows.Close()
+		return TimelinePage{}, fmt.Errorf("iterate phone Tasks: %w", err)
+	}
+	taskRows.Close()
 
 	sort.Slice(items, func(left int, right int) bool {
 		if items[left].OccurredAt.Equal(items[right].OccurredAt) {
@@ -3621,45 +3453,6 @@ type conversationTaskScanner interface {
 	Scan(...any) error
 }
 
-func readConversationTask(ctx context.Context, tx pgx.Tx, taskID string) (work.Task, error) {
-	return scanConversationTask(tx.QueryRow(ctx, `
-		SELECT
-			task.id::text,
-			task.practice_id::text,
-			task.location_id::text,
-			location.name,
-			task.call_id::text,
-			task.phone,
-			task.title,
-			task.state,
-			task.origin,
-			task.urgency,
-			task.category,
-			task.caller_name,
-			task.source_call_id,
-			task.source_message,
-			task.source_message_id::text,
-			task.message_thread_id::text,
-			task.recovery_outcome,
-			task.created_by_kind,
-			task.created_by_subject,
-			task.created_by_email,
-			task.created_at,
-			task.completed_by_subject,
-			task.completed_by_email,
-			task.completed_at,
-			task.version,
-			task.updated_at,
-			COALESCE(task.message_thread_id::text, ''),
-			false
-		FROM work_tasks task
-		JOIN access_locations location
-			ON location.practice_id = task.practice_id
-			AND location.id = task.location_id
-		WHERE task.id = $1
-	`, taskID))
-}
-
 func scanConversationTask(scanner conversationTaskScanner) (work.Task, error) {
 	var task work.Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
@@ -4020,10 +3813,6 @@ func normalizePhone(value string) (string, error) {
 		return "", ErrInvalidInput
 	}
 	return normalized, nil
-}
-
-func NormalizePhone(value string) (string, error) {
-	return normalizePhone(value)
 }
 
 func sendFingerprint(command SendCommand) ([32]byte, error) {

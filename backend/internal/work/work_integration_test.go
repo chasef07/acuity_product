@@ -64,93 +64,6 @@ func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
 	}
 }
 
-func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.August, 4, 9, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
-	locationID := authorization.Locations[0].ID
-	phone := "+15555550100"
-	missedCallID := insertCallAt(
-		t,
-		pool,
-		authorization,
-		locationID,
-		phone,
-		"Missed caller",
-		now,
-	)
-	voicemailCallID := insertCallAt(
-		t,
-		pool,
-		authorization,
-		locationID,
-		phone,
-		"Voicemail caller",
-		now.Add(time.Minute),
-	)
-
-	ensureRecovery := func(command work.EnsureRecoveryTaskCommand) work.Task {
-		t.Helper()
-		tx, err := pool.Begin(context.Background())
-		if err != nil {
-			t.Fatalf("begin recovery Task transaction: %v", err)
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		task, err := module.EnsureRecoveryTask(
-			context.Background(),
-			tx,
-			command,
-		)
-		if err != nil {
-			t.Fatalf("ensure recovery Task: %v", err)
-		}
-		if err := tx.Commit(context.Background()); err != nil {
-			t.Fatalf("commit recovery Task: %v", err)
-		}
-		return task
-	}
-	missed := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID:     missedCallID,
-		PracticeID: authorization.Practice.ID,
-		LocationID: locationID,
-		Phone:      phone,
-		Outcome:    work.RecoveryOutcomeMissedCall,
-		OccurredAt: now,
-	})
-	voicemail := ensureRecovery(work.EnsureRecoveryTaskCommand{
-		CallID:     voicemailCallID,
-		PracticeID: authorization.Practice.ID,
-		LocationID: locationID,
-		Phone:      phone,
-		Outcome:    work.RecoveryOutcomeVoicemail,
-		OccurredAt: now.Add(time.Minute),
-	})
-
-	if voicemail.ID != missed.ID ||
-		voicemail.Title != "Review voicemail" ||
-		voicemail.Origin != work.TaskOriginVoicemail ||
-		voicemail.RecoveryOutcome != work.RecoveryOutcomeVoicemail {
-		t.Fatalf("combined recovery Task = %#v, first = %#v", voicemail, missed)
-	}
-	var taskCount, interactionCount int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT
-			(SELECT count(*) FROM work_tasks WHERE id = $1),
-			(SELECT count(*) FROM work_task_interactions WHERE task_id = $1)
-	`, missed.ID).Scan(&taskCount, &interactionCount); err != nil {
-		t.Fatalf("read combined recovery evidence: %v", err)
-	}
-	if taskCount != 1 || interactionCount != 2 {
-		t.Fatalf(
-			"combined recovery evidence = %d Tasks, %d Interactions; want 1, 2",
-			taskCount,
-			interactionCount,
-		)
-	}
-}
-
 func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
@@ -763,13 +676,13 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 		t.Fatalf("query first Task page: %v", err)
 	}
 	assertTaskIDs(t, firstPage.Items, openOld.ID, openNew.ID)
-	if firstPage.NextCursor != "" {
-		t.Fatalf("last open Task page cursor = %q, want empty", firstPage.NextCursor)
+	if firstPage.NextCursor == "" {
+		t.Fatal("first Task page has no next cursor")
 	}
 	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
 		Identity:   identity,
 		PracticeID: authorization.Practice.ID,
-		State:      work.TaskCompleted,
+		Cursor:     firstPage.NextCursor,
 		Limit:      2,
 	})
 	if err != nil {
@@ -791,20 +704,7 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query Location Tasks: %v", err)
 	}
-	assertTaskIDs(t, locationPage.Items, openOld.ID)
-	completedLocationPage, err := module.QueryTasks(
-		context.Background(),
-		work.QueryTasksCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-			State:      work.TaskCompleted,
-		},
-	)
-	if err != nil {
-		t.Fatalf("query completed Location Tasks: %v", err)
-	}
-	assertTaskIDs(t, completedLocationPage.Items, completedOld.ID)
+	assertTaskIDs(t, locationPage.Items, openOld.ID, completedOld.ID)
 
 	titlePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
 		Identity:   identity,

@@ -34,7 +34,6 @@ GRANT SELECT ON TABLE
     public.human_calling_provider_commands,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
-    public.human_calling_staff_transfers,
     public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
@@ -43,7 +42,6 @@ GRANT SELECT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
-    public.work_task_interactions,
     public.work_tasks
 TO acuity_portal;
 
@@ -86,14 +84,12 @@ GRANT INSERT ON TABLE
     public.human_calling_handoffs,
     public.human_calling_provider_commands,
     public.human_calling_softphone_leases,
-    public.human_calling_staff_transfers,
     public.human_calling_timeline,
     public.messaging_attachments,
     public.messaging_messages,
     public.messaging_provider_commands,
     public.messaging_threads,
     public.work_task_activities,
-    public.work_task_interactions,
     public.work_tasks
 TO acuity_portal;
 
@@ -109,7 +105,6 @@ GRANT UPDATE ON TABLE
     public.human_calling_handoffs,
     public.human_calling_provider_commands,
     public.human_calling_softphone_leases,
-    public.human_calling_staff_transfers,
     public.work_tasks
 TO acuity_portal;
 
@@ -240,7 +235,6 @@ GRANT SELECT ON TABLE
     public.human_calling_provider_receipts,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
-    public.human_calling_staff_transfers,
     public.human_calling_voicemails,
     public.messaging_attachments,
     public.messaging_location_configurations,
@@ -250,7 +244,6 @@ GRANT SELECT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
-    public.work_task_interactions,
     public.work_tasks
 TO acuity_worker;
 
@@ -267,7 +260,6 @@ GRANT INSERT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
-    public.work_task_interactions,
     public.work_tasks
 TO acuity_worker;
 
@@ -303,7 +295,6 @@ GRANT UPDATE ON TABLE
     public.human_calling_provider_receipts,
     public.human_calling_recordings,
     public.human_calling_softphone_leases,
-    public.human_calling_staff_transfers,
     public.work_tasks
 TO acuity_worker;
 

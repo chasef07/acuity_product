@@ -719,7 +719,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	}
 	var completed api.Task
 	decode(t, completedResponse, &completed)
-	if completed.State != api.TaskStateCOMPLETED || completed.CompletedBy == nil ||
+	if completed.State != api.COMPLETED || completed.CompletedBy == nil ||
 		completed.CompletedBy.Kind != api.TaskActorKindHUMAN ||
 		completed.CompletedBy.Email == nil ||
 		string(*completed.CompletedBy.Email) != identity.Email {
@@ -740,7 +740,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	}
 	var reopened api.Task
 	decode(t, reopenedResponse, &reopened)
-	if reopened.State != api.TaskStateOPEN || reopened.CompletedBy != nil ||
+	if reopened.State != api.OPEN || reopened.CompletedBy != nil ||
 		reopened.Title != renamed.Title {
 		t.Fatalf("reopened HTTP Task = %#v", reopened)
 	}

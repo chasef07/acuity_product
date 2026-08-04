@@ -3,6 +3,7 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,8 +28,61 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 16 {
-		t.Fatalf("migration count = %d, want 16", migrationCount)
+	if migrationCount != 17 {
+		t.Fatalf("migration count = %d, want 17", migrationCount)
+	}
+	var staffTransferTableExists bool
+	var taskInteractionTableExists bool
+	var staffTransferColumnExists bool
+	var openRecoveryIndexExists bool
+	var voicemailTaskUnique bool
+	var taskActivityConstraint string
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			to_regclass('public.human_calling_staff_transfers') IS NOT NULL,
+			to_regclass('public.work_task_interactions') IS NOT NULL,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+					AND table_name = 'human_calling_connection_attempts'
+					AND column_name = 'staff_transfer_id'
+			),
+			to_regclass('public.work_tasks_one_open_recovery_need_idx') IS NOT NULL,
+			EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conrelid = 'public.human_calling_voicemails'::regclass
+					AND conname = 'human_calling_voicemails_task_id_key'
+					AND contype = 'u'
+			),
+			(
+				SELECT pg_get_constraintdef(oid)
+				FROM pg_constraint
+				WHERE conrelid = 'public.work_task_activities'::regclass
+					AND conname = 'work_task_activities_kind_check'
+			)
+	`).Scan(
+		&staffTransferTableExists,
+		&taskInteractionTableExists,
+		&staffTransferColumnExists,
+		&openRecoveryIndexExists,
+		&voicemailTaskUnique,
+		&taskActivityConstraint,
+	); err != nil {
+		t.Fatalf("inspect PR #44 rollback schema: %v", err)
+	}
+	if staffTransferTableExists || taskInteractionTableExists ||
+		staffTransferColumnExists || openRecoveryIndexExists || !voicemailTaskUnique ||
+		strings.Contains(taskActivityConstraint, "INTERACTION_ATTACHED") {
+		t.Fatalf(
+			"PR #44 rollback schema = transfer table:%t interaction table:%t transfer column:%t recovery index:%t voicemail unique:%t",
+			staffTransferTableExists,
+			taskInteractionTableExists,
+			staffTransferColumnExists,
+			openRecoveryIndexExists,
+			voicemailTaskUnique,
+		)
 	}
 	var greetingRequired bool
 	var greetingDefault string
@@ -181,6 +235,150 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 		if !exists {
 			t.Fatalf("operational Users view %s is missing", view)
 		}
+	}
+}
+
+func TestPhoneLedWorkspaceRollbackFailsClosedBeforeDroppingEvidence(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000801',
+			'rollback-practice',
+			'Rollback Practice'
+		);
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000802',
+			'00000000-0000-0000-0000-000000000801',
+			'rollback-location',
+			'Rollback Location'
+		);
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, phone, expires_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000811',
+			'rollback-test',
+			'00000000-0000-0000-0000-000000000801',
+			'00000000-0000-0000-0000-000000000802',
+			'rollback-source',
+			'rollback-key',
+			'\x01',
+			'\x02',
+			'+15555550100',
+			now() + interval '1 hour'
+		);
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000821',
+			'00000000-0000-0000-0000-000000000811',
+			'00000000-0000-0000-0000-000000000801',
+			'00000000-0000-0000-0000-000000000802',
+			'OFFERING',
+			now() + interval '1 minute',
+			'rollback-control',
+			'rollback-leg',
+			'rollback-session'
+		);
+		INSERT INTO work_tasks (
+			id, practice_id, location_id, call_id, phone, title, state, origin,
+			urgency, created_by_kind, created_by_subject, created_by_email,
+			created_at, updated_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000831',
+			'00000000-0000-0000-0000-000000000801',
+			'00000000-0000-0000-0000-000000000802',
+			'00000000-0000-0000-0000-000000000821',
+			'+15555550100',
+			'Rollback follow-up',
+			'OPEN',
+			'HUMAN_CALL_FOLLOW_UP',
+			'normal',
+			'HUMAN',
+			'rollback-user',
+			'rollback@example.com',
+			now(),
+			now()
+		)
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("seed rollback fixture: %v", err)
+	}
+
+	phoneWorkspaceMigration, err := os.ReadFile("sql/0016_phone_led_workspace.sql")
+	if err != nil {
+		t.Fatalf("read phone-led workspace migration: %v", err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin phone-led workspace replay: %v", err)
+	}
+	if _, err := tx.Exec(ctx, string(phoneWorkspaceMigration)); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("replay phone-led workspace migration: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit phone-led workspace replay: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM schema_migrations
+		WHERE name = '0017_revert_phone_led_workspace.sql';
+		INSERT INTO human_calling_staff_transfers (
+			id, call_id, practice_id, location_id, requested_by_subject,
+			requested_by_session_id, recipient_subject, handoff_note, state,
+			expires_at
+		)
+		VALUES (
+			'00000000-0000-0000-0000-000000000841',
+			'00000000-0000-0000-0000-000000000821',
+			'00000000-0000-0000-0000-000000000801',
+			'00000000-0000-0000-0000-000000000802',
+			'rollback-requester',
+			'rollback-requester-session',
+			'rollback-recipient',
+			'preserve this evidence',
+			'CANCELLED',
+			now()
+		)
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("seed rollback blocker: %v", err)
+	}
+
+	err = migrations.Apply(ctx, pool)
+	if err == nil || !strings.Contains(err.Error(), "staff transfer evidence exists") {
+		t.Fatalf("staff transfer rollback error = %v", err)
+	}
+	var transferCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM human_calling_staff_transfers
+	`).Scan(&transferCount); err != nil {
+		t.Fatalf("read preserved transfer evidence: %v", err)
+	}
+	if transferCount != 1 {
+		t.Fatalf("preserved transfer evidence count = %d, want 1", transferCount)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM human_calling_staff_transfers`); err != nil {
+		t.Fatalf("remove reviewed rollback blocker: %v", err)
+	}
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply reviewed phone-led workspace rollback: %v", err)
+	}
+	var interactionTableExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT to_regclass('public.work_task_interactions') IS NOT NULL
+	`).Scan(&interactionTableExists); err != nil {
+		t.Fatalf("inspect completed rollback: %v", err)
+	}
+	if interactionTableExists {
+		t.Fatal("reviewed phone-led workspace rollback retained interaction schema")
 	}
 }
 

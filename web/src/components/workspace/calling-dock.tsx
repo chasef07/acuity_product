@@ -11,7 +11,6 @@ import {
 } from "react"
 import {
   CheckIcon,
-  ArrowRightLeftIcon,
   HeadphonesIcon,
   MicIcon,
   MicOffIcon,
@@ -60,19 +59,13 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import {
   acceptCallingOffer,
-  acceptStaffTransfer,
   acquireSoftphone,
   confirmCallingMediaReady,
   getCallingCall,
   getOperatorCallingTimeline,
   issueCallingMediaToken,
-  listStaffTransferCandidates,
-  listStaffTransfers,
   listCallingOffers,
   recordCallingDisposition,
-  requestStaffTransfer,
-  declineStaffTransfer,
-  cancelStaffTransfer,
   requestCallingHangup,
   retryOutboundCall,
   setCallingReadiness,
@@ -85,8 +78,6 @@ import type {
   Location,
   OperatorCallingTimeline,
   SoftphoneState,
-  StaffTransfer,
-  StaffTransferCandidate,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 import {
@@ -103,7 +94,6 @@ import { cn } from "@/lib/utils"
 type CallingDockProps = {
   children: ReactNode
   platformOperator: boolean
-  actorSubject: string
   practiceID: string
   locations: Location[]
   callRefreshRevision: number
@@ -221,7 +211,6 @@ export function CallingOutboundNavigation() {
 export function CallingDock({
   children,
   platformOperator,
-  actorSubject,
   practiceID,
   locations,
   callRefreshRevision,
@@ -237,7 +226,6 @@ export function CallingDock({
   const [available, setAvailable] = useState(false)
   const [offers, setOffers] = useState<CallingOffer[]>([])
   const [activeCall, setActiveCall] = useState<CallingCall>()
-  const [pendingOutcome, setPendingOutcome] = useState<CallingCall>()
   const [expectedCallID, setExpectedCallID] = useState("")
   const [mediaAttached, setMediaAttached] = useState(false)
   const [muted, setMuted] = useState(false)
@@ -249,13 +237,6 @@ export function CallingDock({
   const [endingCallID, setEndingCallID] = useState("")
   const [availabilityPending, setAvailabilityPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const [staffTransfers, setStaffTransfers] = useState<StaffTransfer[]>([])
-  const staffTransfersRef = useRef<StaffTransfer[]>([])
-  const [transferCandidates, setTransferCandidates] = useState<StaffTransferCandidate[]>([])
-  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
-  const [transferRecipient, setTransferRecipient] = useState("")
-  const [transferNote, setTransferNote] = useState("")
-  const [transferPending, setTransferPending] = useState(false)
   const adapterRef = useRef<CallingMediaAdapter | null>(null)
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
   const probeStreamRef = useRef<MediaStream | null>(null)
@@ -509,16 +490,6 @@ export function CallingDock({
               return
             }
             await leg.answer()
-            const awaitingTransferBridge = staffTransfersRef.current.some(
-              (transfer) =>
-                transfer.callId === current.data.id &&
-                transfer.state === "ACCEPTED",
-            )
-            if (awaitingTransferBridge) {
-              mediaLegRef.current = leg
-              setMediaAttached(true)
-              return
-            }
             let attachedCall = current.data
             if (
               current.data.direction === "OUTBOUND" &&
@@ -679,15 +650,6 @@ export function CallingDock({
           setMediaAttached(false)
         }
       }
-      if (acquired.data.pendingOutcomeCallId) {
-        const pending = await getCallingCall({
-          client: portalClient(token),
-          path: { callId: acquired.data.pendingOutcomeCallId },
-        }).catch(() => undefined)
-        if (pending?.data?.state === "NEEDS_DISPOSITION") {
-          setPendingOutcome(pending.data)
-        }
-      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         const microphone = stream.getAudioTracks()[0]
@@ -788,19 +750,6 @@ export function CallingDock({
     setOffers(result.data.items)
   }, [])
 
-  const refreshStaffTransfers = useCallback(async () => {
-    if (platformOperator) return
-    const token = await getAccessToken()
-    if (!token) return
-    const result = await listStaffTransfers({
-      client: portalClient(token),
-    }).catch(() => undefined)
-    if (result?.data) {
-      staffTransfersRef.current = result.data.items
-      setStaffTransfers(result.data.items)
-    }
-  }, [platformOperator])
-
   const refreshCall = useCallback(async () => {
     const callID = expectedCallRef.current
     if (!callID) return
@@ -812,39 +761,12 @@ export function CallingDock({
     }).catch(() => undefined)
     if (expectedCallRef.current !== callID) return
     if (result?.data) {
-      if (
-        staffTransfersRef.current.some(
-          (transfer) =>
-            transfer.callId === result.data.id &&
-            transfer.state === "ACCEPTED",
-        )
-      ) {
-        return
-      }
-      if (result.data.state === "NEEDS_DISPOSITION") {
-        setPendingOutcome(result.data)
-        applyActiveCall()
-        setExpectedCallID("")
-        expectedCallRef.current = ""
-        setMediaAttached(false)
-        mediaLegRef.current = null
-        setMuted(false)
-        if (
-          ownerRef.current &&
-          mediaState === "ready" &&
-          availabilityIntentRef.current &&
-          !availabilityRef.current
-        ) {
-          setAvailabilityPending(true)
-          void updateReadiness(true, "ready")
-        }
-        return
-      }
       if (!applyActiveCall(result.data)) return
       if (
         result.data.state === "UNANSWERED" ||
         result.data.state === "MISSED" ||
         result.data.state === "VOICEMAIL" ||
+        result.data.state === "NEEDS_DISPOSITION" ||
         result.data.state === "RESOLVED" ||
         result.data.state === "FOLLOW_UP_REQUIRED"
       ) {
@@ -922,17 +844,6 @@ export function CallingDock({
     }
     setLease(result.data)
     ownerRef.current = true
-    if (result.data.pendingOutcomeCallId) {
-      const pending = await getCallingCall({
-        client: portalClient(token),
-        path: { callId: result.data.pendingOutcomeCallId },
-      }).catch(() => undefined)
-      if (pending?.data?.state === "NEEDS_DISPOSITION") {
-        setPendingOutcome(pending.data)
-      }
-    } else {
-      setPendingOutcome(undefined)
-    }
     if (result.data.activeCallId) {
       const restoredCall =
         expectedCallRef.current !== result.data.activeCallId
@@ -982,16 +893,6 @@ export function CallingDock({
     const interval = window.setInterval(() => void refreshOwnership(), 5_000)
     return () => window.clearInterval(interval)
   }, [lease?.owner, platformOperator, refreshOwnership])
-
-  useEffect(() => {
-    if (platformOperator) return
-    const timeout = window.setTimeout(() => void refreshStaffTransfers(), 0)
-    const interval = window.setInterval(() => void refreshStaffTransfers(), 1_000)
-    return () => {
-      window.clearTimeout(timeout)
-      window.clearInterval(interval)
-    }
-  }, [platformOperator, refreshStaffTransfers, workspaceRevision])
 
   useEffect(() => {
     const activeOfferIDs = new Set(offers.map((offer) => offer.id))
@@ -1137,107 +1038,6 @@ export function CallingDock({
     await refreshCall()
   }
 
-  async function openStaffTransfer() {
-    if (!activeCall) return
-    setTransferPending(true)
-    setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setTransferPending(false)
-      return
-    }
-    const result = await listStaffTransferCandidates({
-      client: portalClient(token),
-      path: { callId: activeCall.id },
-    }).catch(() => undefined)
-    setTransferPending(false)
-    if (!result?.data) {
-      setError("Transfer candidates are temporarily unavailable.")
-      return
-    }
-    setTransferCandidates(result.data.items)
-    setTransferRecipient(result.data.items[0]?.subject ?? "")
-    setTransferNote("")
-    setTransferDialogOpen(true)
-  }
-
-  async function commitStaffTransfer() {
-    if (!activeCall || !transferRecipient) return
-    setTransferPending(true)
-    setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setTransferPending(false)
-      return
-    }
-    const result = await requestStaffTransfer({
-      client: portalClient(token),
-      path: { callId: activeCall.id },
-      body: {
-        sessionId: sessionID,
-        recipientSubject: transferRecipient,
-        ...(transferNote.trim() ? { handoffNote: transferNote.trim() } : {}),
-      },
-    }).catch(() => undefined)
-    setTransferPending(false)
-    if (!result?.data) {
-      setError("The transfer request could not be committed.")
-      return
-    }
-    setTransferDialogOpen(false)
-    await refreshStaffTransfers()
-  }
-
-  async function acceptTransfer(transfer: StaffTransfer) {
-    setTransferPending(true)
-    setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setTransferPending(false)
-      return
-    }
-    const result = await acceptStaffTransfer({
-      client: portalClient(token),
-      path: { transferId: transfer.id },
-      body: { sessionId: sessionID },
-    }).catch(() => undefined)
-    setTransferPending(false)
-    if (!result?.data) {
-      setError("The transfer could not be accepted. It may have changed.")
-      await refreshStaffTransfers()
-      return
-    }
-    setAvailable(false)
-    availabilityRef.current = false
-    await refreshStaffTransfers()
-  }
-
-  async function declineTransfer(transfer: StaffTransfer) {
-    const token = await getAccessToken()
-    if (!token) return
-    setTransferPending(true)
-    const result = await declineStaffTransfer({
-      client: portalClient(token),
-      path: { transferId: transfer.id },
-    }).catch(() => undefined)
-    setTransferPending(false)
-    if (!result?.data) setError("The transfer could not be declined.")
-    await refreshStaffTransfers()
-  }
-
-  async function cancelTransfer(transfer: StaffTransfer) {
-    const token = await getAccessToken()
-    if (!token) return
-    setTransferPending(true)
-    const result = await cancelStaffTransfer({
-      client: portalClient(token),
-      path: { transferId: transfer.id },
-    }).catch(() => undefined)
-    setTransferPending(false)
-    if (!result?.data) setError("The transfer could not be cancelled.")
-    await refreshStaffTransfers()
-  }
-
   async function hangup() {
     if (!activeCall || endingCallID) return
     const callID = activeCall.id
@@ -1261,24 +1061,6 @@ export function CallingDock({
       setError(
         "Hang up was not committed. Check your connection and try again.",
       )
-      return
-    }
-    if (result.data.state === "NEEDS_DISPOSITION") {
-      setPendingOutcome(result.data)
-      applyActiveCall()
-      setExpectedCallID("")
-      expectedCallRef.current = ""
-      mediaLegRef.current = null
-      setMediaAttached(false)
-      setMuted(false)
-      if (
-        mediaState === "ready" &&
-        ownerRef.current &&
-        availabilityIntentRef.current
-      ) {
-        setAvailabilityPending(true)
-        await updateReadiness(true, "ready")
-      }
       return
     }
     applyActiveCall(result.data)
@@ -1340,13 +1122,12 @@ export function CallingDock({
       | "CREATE_TASK"
       | "NO_FOLLOW_UP",
   ) {
-    const call = pendingOutcome ?? activeCall
-    if (!call || call.state !== "NEEDS_DISPOSITION") return
+    if (!activeCall) return
     const token = await getAccessToken()
     if (!token) return
     const result = await recordCallingDisposition({
       client: portalClient(token),
-      path: { callId: call.id },
+      path: { callId: activeCall.id },
       body: { sessionId: sessionID, outcome },
     }).catch(() => undefined)
     if (!result?.data) {
@@ -1354,7 +1135,6 @@ export function CallingDock({
       return
     }
     onDisposition(result.data)
-    setPendingOutcome(undefined)
     applyActiveCall()
     setExpectedCallID("")
     expectedCallRef.current = ""
@@ -1369,14 +1149,6 @@ export function CallingDock({
   }
 
   const earliest = offers[0]
-  const incomingTransfer = staffTransfers.find(
-    (transfer) => transfer.recipientSubject === actorSubject,
-  )
-  const outgoingTransfer = staffTransfers.find(
-    (transfer) =>
-      transfer.requestedBySubject === actorSubject &&
-      transfer.callId === activeCall?.id,
-  )
   return (
     <CallingNavigationContext.Provider
       value={{
@@ -1488,103 +1260,7 @@ export function CallingDock({
           </DialogContent>
         </Dialog>
       )}
-      {!platformOperator && (
-        <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Transfer call</DialogTitle>
-              <DialogDescription>
-                The current call remains yours until the recipient accepts and the provider confirms their connection.
-              </DialogDescription>
-            </DialogHeader>
-            {transferCandidates.length > 0 ? (
-              <div className="flex flex-col gap-4">
-                <Field>
-                  <FieldLabel>Recipient</FieldLabel>
-                  <Select value={transferRecipient} onValueChange={(value) => setTransferRecipient(value ?? "")}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Choose available staff" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {transferCandidates.map((candidate) => (
-                          <SelectItem key={candidate.subject} value={candidate.subject}>
-                            {candidate.email}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="transfer-note">Handoff note</FieldLabel>
-                  <textarea
-                    id="transfer-note"
-                    aria-label="Handoff note"
-                    rows={4}
-                    maxLength={500}
-                    className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    value={transferNote}
-                    onChange={(event) => setTransferNote(event.target.value)}
-                  />
-                </Field>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No same-office staff member is currently available and technically ready.
-              </p>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>
-                Close
-              </Button>
-              <Button
-                disabled={transferPending || !transferRecipient}
-                onClick={() => void commitStaffTransfer()}
-              >
-                {transferPending && <Spinner />}
-                Request transfer
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-      {!platformOperator && incomingTransfer && !activeCall && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
-          <Card role="region" aria-label="Incoming staff transfer" size="sm">
-            <CardHeader>
-              <CardTitle>Transfer from {incomingTransfer.requestedByEmail || "staff"}</CardTitle>
-              <CardDescription>
-                {incomingTransfer.displayName
-                  ? `${incomingTransfer.displayName} · `
-                  : ""}
-                {incomingTransfer.phone} · {incomingTransfer.locationName}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {incomingTransfer.handoffNote && (
-                <p className="text-sm">{incomingTransfer.handoffNote}</p>
-              )}
-              {incomingTransfer.state === "ACCEPTED" && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Accepted · connecting your provider leg. Ownership has not moved yet.
-                </p>
-              )}
-            </CardContent>
-            {incomingTransfer.state === "REQUESTED" && (
-              <CardFooter className="gap-2">
-                <Button disabled={transferPending} onClick={() => void acceptTransfer(incomingTransfer)}>
-                  {transferPending && <Spinner />} Accept
-                </Button>
-                <Button variant="outline" disabled={transferPending} onClick={() => void declineTransfer(incomingTransfer)}>
-                  Decline
-                </Button>
-              </CardFooter>
-            )}
-          </Card>
-        </div>
-      )}
-      {!platformOperator && earliest && !activeCall && !incomingTransfer && (
+      {!platformOperator && earliest && !activeCall && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
             offers={offers}
@@ -1657,69 +1333,12 @@ export function CallingDock({
                   setMediaAttached(false)
                 }}
               />
-              {activeCall.state === "CONNECTED" &&
-                (outgoingTransfer ? (
-                  <div className="flex items-center gap-2 border-t pt-2 text-xs">
-                    <ArrowRightLeftIcon className="size-4" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {outgoingTransfer.state === "REQUESTED"
-                        ? `Waiting for ${outgoingTransfer.recipientEmail}`
-                        : `Accepted by ${outgoingTransfer.recipientEmail}; awaiting provider bridge`}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={transferPending}
-                      onClick={() => void cancelTransfer(outgoingTransfer)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-fit"
-                    disabled={transferPending || !mediaAttached}
-                    onClick={() => void openStaffTransfer()}
-                  >
-                    <ArrowRightLeftIcon /> Transfer
-                  </Button>
-                ))}
               {error && <p className="text-destructive">{error}</p>}
             </CardContent>
           </Card>
         </div>
       )}
-      {!platformOperator && pendingOutcome && !activeCall && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
-          <Card role="region" aria-label="Call outcome" size="sm">
-            <CardHeader>
-              <CardTitle>How did the call end?</CardTitle>
-              <CardDescription>
-                {pendingOutcome.phone} · {pendingOutcome.locationName}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              {callDispositionChoices(pendingOutcome).map((choice) => (
-                <Button
-                  key={choice.outcome}
-                  variant={choice.label === "Resolved" ? "default" : "outline"}
-                  onClick={() => void dispose(choice.outcome)}
-                >
-                  {choice.label === "Resolved" && <CheckIcon />}
-                  {choice.label}
-                </Button>
-              ))}
-              <p className="basis-full text-xs text-muted-foreground">
-                Calling capacity is already available; this outcome can be saved later.
-              </p>
-              {error && <p className="basis-full text-xs text-destructive">{error}</p>}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-      {!platformOperator && !activeCall && !earliest && !incomingTransfer && error && (
+      {!platformOperator && !activeCall && !earliest && error && (
         <Alert
           aria-label="Calling status"
           variant="destructive"
@@ -2079,19 +1698,19 @@ function callDispositionChoices(
   if (call.direction !== "OUTBOUND") {
     return [
       { outcome: "RESOLVED", label: "Resolved" },
-      { outcome: "FOLLOW_UP_REQUIRED", label: "Follow-up needed" },
+      { outcome: "FOLLOW_UP_REQUIRED", label: "Create task" },
     ]
   }
   if (call.entryPoint === "TASK") {
     return [
-      { outcome: "COMPLETE_TASK", label: "Resolved" },
-      { outcome: "KEEP_OPEN", label: "Follow-up needed" },
+      { outcome: "COMPLETE_TASK", label: "Complete task" },
+      { outcome: "KEEP_OPEN", label: "Keep open" },
     ]
   }
   if (call.connectedAt) {
     return [
       { outcome: "RESOLVED", label: "Resolved" },
-      { outcome: "CREATE_TASK", label: "Follow-up needed" },
+      { outcome: "CREATE_TASK", label: "Create task" },
     ]
   }
   return [
