@@ -161,8 +161,12 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       })
 
       const firstTaskButtons = [
-        selectedPage.getByRole("button", { name: new RegExp(firstTitle) }),
-        secondaryPage.getByRole("button", { name: new RegExp(firstTitle) }),
+        selectedPage.getByRole("button", {
+          name: new RegExp(`^${firstTitle} AI`),
+        }),
+        secondaryPage.getByRole("button", {
+          name: new RegExp(`^${firstTitle} AI`),
+        }),
       ]
       const openSections = [
         selectedPage.getByRole("button", { name: "Open", exact: true }),
@@ -203,6 +207,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
         ).toBeVisible(),
       ])
+      await selectedPage.getByText("More context", { exact: true }).click()
       await expect(
         selectedPage.getByRole("region", { name: "AI Task source" }),
       ).toContainText(firstMessage)
@@ -220,10 +225,14 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       expect(secondResponse.status()).toBe(201)
       await Promise.all([
         expect(
-          selectedPage.getByRole("button", { name: new RegExp(secondTitle) }),
+          selectedPage.getByRole("button", {
+            name: new RegExp(`^${secondTitle} AI`),
+          }),
         ).toBeVisible(),
         expect(
-          secondaryPage.getByRole("button", { name: new RegExp(secondTitle) }),
+          secondaryPage.getByRole("button", {
+            name: new RegExp(`^${secondTitle} AI`),
+          }),
         ).toBeVisible(),
       ])
       await Promise.all([
@@ -235,22 +244,25 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         ).toBeVisible(),
       ])
 
-      await secondaryPage.getByRole("switch", { name: "Urgency" }).click()
       await expect(
         secondaryPage.getByRole("switch", { name: "Urgency" }),
       ).toBeChecked()
       await expect(
         selectedPage.getByRole("switch", { name: "Urgency" }),
+      ).toBeChecked()
+      await secondaryPage.getByRole("switch", { name: "Urgency" }).click()
+      await expect(
+        secondaryPage.getByRole("switch", { name: "Urgency" }),
       ).not.toBeChecked()
       await secondaryPage.reload()
       await expect(
         secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).toBeChecked()
+      ).not.toBeChecked()
       await secondaryPage
         .getByRole("button", { name: "Open", exact: true })
         .click()
       await secondaryPage
-        .getByRole("button", { name: new RegExp(firstTitle) })
+        .getByRole("button", { name: new RegExp(`^${firstTitle} AI`) })
         .click()
 
       await selectedPage
@@ -550,13 +562,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         return result.rows[0]
       })
     expect(durableCall).toBeTruthy()
-    const winnerPage =
+    let winnerPage =
       durableCall.claimant_email === "selected@abita.test"
         ? selectedPage
         : secondaryPage
-    const loserPage =
+    let loserPage =
       winnerPage === selectedPage ? secondaryPage : selectedPage
-    const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
+    let durableMediaToken = await mediaTokenForCall(database, durableCall.id)
     const staffClientState = Buffer.from(JSON.stringify({
       v: 1,
       call: durableCall.id,
@@ -701,6 +713,131 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(winnerPage).getByText("Connected", { exact: true }),
     ).toBeVisible()
+    await test.step("accepted transfer moves controls only after provider bridge", async () => {
+      await callCenter(winnerPage)
+        .getByRole("button", { name: "Transfer", exact: true })
+        .click()
+      const transferDialog = winnerPage.getByRole("dialog", {
+        name: "Transfer call",
+      })
+      await expect(transferDialog).toBeVisible()
+      await transferDialog.getByLabel("Handoff note").fill(
+        "Please continue scheduling.",
+      )
+      await transferDialog
+        .getByRole("button", { name: "Request transfer" })
+        .click()
+
+      const incomingTransfer = loserPage.getByRole("region", {
+        name: "Incoming staff transfer",
+      })
+      await expect(incomingTransfer).toContainText("Synthetic Caller")
+      await expect(incomingTransfer).toContainText("Please continue scheduling.")
+      await incomingTransfer.getByRole("button", { name: "Accept" }).click()
+      await expect(incomingTransfer).toContainText(
+        "Ownership has not moved yet.",
+      )
+      await expect(
+        loserPage.getByRole("region", { name: "Active call controls" }),
+      ).toHaveCount(0)
+
+      const transferCommand = await expect
+        .poll(async () => {
+          const result = await database.query<{
+            client_state: string
+            control_id: string | null
+            leg_id: string | null
+          }>(
+            `SELECT
+               command.payload->>'client_state' AS client_state,
+               attempt.staff_call_control_id AS control_id,
+               attempt.staff_call_leg_id AS leg_id
+             FROM human_calling_provider_commands command
+             JOIN human_calling_connection_attempts attempt
+               ON attempt.id = command.attempt_id
+            WHERE command.call_id = $1
+              AND command.action = 'DIAL_STAFF'
+              AND attempt.staff_transfer_id IS NOT NULL
+              AND command.state IN ('SENT', 'RECONCILED')
+            ORDER BY command.created_at DESC
+            LIMIT 1`,
+            [durableCall.id],
+          )
+          const row = result.rows[0]
+          return row?.client_state && row.control_id && row.leg_id ? row : null
+        }, { timeout: 20_000 })
+        .not.toBeNull()
+        .then(async () => {
+          const result = await database.query<{
+            client_state: string
+            control_id: string
+            leg_id: string
+          }>(
+            `SELECT
+               command.payload->>'client_state' AS client_state,
+               attempt.staff_call_control_id AS control_id,
+               attempt.staff_call_leg_id AS leg_id
+             FROM human_calling_provider_commands command
+             JOIN human_calling_connection_attempts attempt
+               ON attempt.id = command.attempt_id
+            WHERE command.call_id = $1
+              AND command.action = 'DIAL_STAFF'
+              AND attempt.staff_transfer_id IS NOT NULL
+            ORDER BY command.created_at DESC
+            LIMIT 1`,
+            [durableCall.id],
+          )
+          return result.rows[0]
+        })
+      const transferMediaToken = await mediaTokenForCall(
+        database,
+        durableCall.id,
+      )
+      await sendIncomingLeg(
+        loserPage,
+        "fixture-transfer-browser-leg",
+        transferMediaToken,
+      )
+      await expect.poll(() => mediaCount(loserPage, "answers")).toBe(1)
+      await expect(
+        loserPage.getByRole("region", { name: "Active call controls" }),
+      ).toHaveCount(0)
+
+      await deliverProviderEvent(loserPage, {
+        eventType: "call.bridged",
+        eventId: "e2e-staff-transfer-bridged",
+        occurredAt: new Date().toISOString(),
+        payload: {
+          call_control_id: transferCommand.control_id,
+          call_leg_id: transferCommand.leg_id,
+          call_session_id: "fixture-call-session",
+          client_state: transferCommand.client_state,
+        },
+      })
+      await expect
+        .poll(async () => {
+          const result = await database.query<{ email: string }>(
+            `SELECT actor.email
+               FROM human_calling_calls call
+               JOIN auth."user" actor ON actor.id = call.winner_subject
+              WHERE call.id = $1`,
+            [durableCall.id],
+          )
+          return result.rows[0]?.email ?? ""
+        })
+        .toBe(
+          loserPage === selectedPage
+            ? "selected@abita.test"
+            : "secondary@abita.test",
+        )
+      await expect(
+        callCenter(loserPage).getByText("Connected", { exact: true }),
+      ).toBeVisible()
+      const previousWinner = winnerPage
+      winnerPage = loserPage
+      loserPage = previousWinner
+      durableMediaToken = transferMediaToken
+    })
     await expect
       .poll(async () => {
         const result = await database.query<{ count: string }>(
@@ -803,17 +940,32 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     } finally {
       await resumeCallPolling(takeoverPage)
     }
+    const inboundOutcome = takeoverPage.getByRole("region", {
+      name: "Call outcome",
+    })
+    await expect(inboundOutcome).toBeVisible()
     await expect(
-      callCenter(takeoverPage).getByText("Call ended", { exact: true }),
+      inboundOutcome.getByRole("button", { name: "Resolved", exact: true }),
     ).toBeVisible()
+    await expect(
+      inboundOutcome.getByRole("button", {
+        name: "Follow-up needed",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(takeoverAvailability).toBeEnabled()
     const providerFirstHangups = await database.query<{ count: string }>(
       `SELECT count(*)::text
          FROM human_calling_provider_commands
-        WHERE call_id = $1 AND action = 'HANGUP'`,
+        WHERE call_id = $1
+          AND action = 'HANGUP'
+          AND target_id = 'fixture-caller-control'`,
       [durableCall.id],
     )
     expect(providerFirstHangups.rows[0]?.count).toBe("0")
-    await takeoverPage.getByRole("button", { name: "Create task" }).click()
+    await inboundOutcome
+      .getByRole("button", { name: "Follow-up needed", exact: true })
+      .click()
     await expect
       .poll(async () => {
         const result = await database.query<{ state: string }>(
@@ -878,12 +1030,20 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         exact: true,
       }),
     ).toBeVisible()
-    await loserPage.getByLabel("Search tasks").fill("+15555550100")
+    const phoneSearch = loserPage.getByLabel("Search tasks")
+    await phoneSearch.fill("+15555550100")
+    await phoneSearch.press("Enter")
     await expect(
-      loserPage.getByRole("button", { name: /Scheduling help/ }),
+      loserPage.getByRole("heading", { name: "(555) 555-0100" }),
     ).toBeVisible()
+    await expect(loserPage.getByText("Engagement History", { exact: true })).toBeVisible()
     expect(loserPage.url()).not.toContain("5555550100")
-    await loserPage.getByLabel("Search tasks").fill("")
+    await phoneSearch.fill("+15555550101")
+    await phoneSearch.press("Enter")
+    await expect(
+      loserPage.getByRole("heading", { name: "(555) 555-0101" }),
+    ).toBeVisible()
+    await phoneSearch.fill("")
     await expect(takeoverAvailability).toBeChecked()
     await expect
       .poll(async () => {
@@ -1038,7 +1198,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         client_state: recoveryStaffState,
       },
     })
-    await expect(callCenter(takeoverPage).getByText("Call ended", { exact: true })).toBeVisible({
+    await expect(takeoverPage.getByRole("region", { name: "Call outcome" })).toBeVisible({
       timeout: 15_000,
     })
     await takeoverPage.getByRole("button", { name: "Resolved" }).click()
@@ -1282,15 +1442,23 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           exact: true,
         }),
       ).toBeVisible()
+      const focusedVoicemailTask = takeoverPage.getByRole("complementary", {
+        name: "Focused Task",
+      })
+      await focusedVoicemailTask
+        .getByText("More context", { exact: true })
+        .click()
       await expect(
-        takeoverPage.getByText("Ready", { exact: true }),
+        focusedVoicemailTask.getByText("Ready", { exact: true }),
       ).toBeVisible()
       const playbackResponse = takeoverPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
           response.url().includes("/v1/calling/voicemail-playback/"),
       )
-      await takeoverPage.getByRole("button", { name: "Load recording" }).click()
+      await focusedVoicemailTask
+        .getByRole("button", { name: "Load recording" })
+        .click()
       const playback = await playbackResponse
       expect(playback.status()).toBe(200)
       expect(playback.headers()["content-type"]).toBe("audio/mpeg")
@@ -1766,21 +1934,21 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           Number(hangupReceiptTiming.rows[0]?.queue_milliseconds),
         ).toBeLessThan(500)
         await expect(
-          callCenter(takeoverPage).getByText("Call ended", { exact: true }),
+          takeoverPage.getByRole("region", { name: "Call outcome" }),
         ).toBeVisible({ timeout: 15_000 })
-        await expect(
-          callCenter(takeoverPage).getByText(/Completed/),
-        ).toBeVisible()
 
         await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
         await expect(
-          callCenter(winnerPage).getByText("Call ended", { exact: true }),
+          winnerPage.getByRole("region", { name: "Call outcome" }),
         ).toBeVisible({ timeout: 15_000 })
       } finally {
         await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
         await winnerNetwork.detach()
       }
-      await takeoverPage.getByRole("button", { name: "Keep open" }).click()
+      await takeoverPage
+        .getByRole("region", { name: "Call outcome" })
+        .getByRole("button", { name: "Follow-up needed", exact: true })
+        .click()
       await expect
         .poll(async () => {
           const result = await database.query<{
@@ -1917,12 +2085,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         },
       })
       await expect(
-        callCenter(takeoverPage).getByText("Call ended", { exact: true }),
-      ).toBeVisible({ timeout: 15_000 })
-      await expect(
-        callCenter(takeoverPage).getByText(/No answer/),
-      ).toBeVisible()
-      await takeoverPage.getByRole("button", { name: "Create task" }).click()
+        takeoverPage.getByRole("region", { name: "Call outcome" }),
+      ).toHaveCount(0)
       await expect
         .poll(async () => {
           const result = await database.query<{
@@ -1940,7 +2104,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           )
           return result.rows[0]
         })
-        .toEqual({ state: "RESOLVED", task_count: "1" })
+        .toEqual({ state: "UNANSWERED", task_count: "0" })
     })
 
     await takeoverAvailability.click()

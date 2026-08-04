@@ -192,6 +192,10 @@ export type SoftphoneState = {
      * The User's current durable Call, or empty when capacity is free.
      */
     activeCallId: string;
+    /**
+     * The latest connected Call awaiting an outcome, or empty when none remains.
+     */
+    pendingOutcomeCallId: string;
 };
 
 export type MediaTokenRequest = {
@@ -320,6 +324,63 @@ export type CallingCall = {
     voicemail?: CallingVoicemail;
 };
 
+export type LiveCall = {
+    id: string;
+    locationId: string;
+    locationName: string;
+    phone: string;
+    direction: 'INBOUND' | 'OUTBOUND';
+    staffSubject: string;
+    staffEmail: string;
+    connectedAt: string;
+};
+
+export type LiveCallPage = {
+    items: Array<LiveCall>;
+};
+
+export type StaffTransferCandidate = {
+    subject: string;
+    email: string;
+};
+
+export type StaffTransferCandidateList = {
+    items: Array<StaffTransferCandidate>;
+};
+
+export type StaffTransferRequest = {
+    sessionId: string;
+    recipientSubject: string;
+    handoffNote?: string;
+};
+
+export type StaffTransferResponseRequest = {
+    sessionId: string;
+};
+
+export type StaffTransfer = {
+    id: string;
+    callId: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    phone: string;
+    displayName: string;
+    requestedBySubject: string;
+    requestedByEmail: string;
+    recipientSubject: string;
+    recipientEmail: string;
+    handoffNote: string;
+    state: 'REQUESTED' | 'ACCEPTED' | 'COMPLETED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED' | 'FAILED';
+    expiresAt: string;
+    createdAt: string;
+    completedAt?: string;
+};
+
+export type StaffTransferList = {
+    items: Array<StaffTransfer>;
+};
+
 export type CallingDispositionRequest = {
     sessionId: string;
     outcome: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
@@ -405,11 +466,35 @@ export type TaskPage = {
     nextCursor: string;
 };
 
+export type EngagementLocation = {
+    id: string;
+    name: string;
+};
+
+export type EngagementSummary = {
+    phone: string;
+    displayName?: string;
+    locations: Array<EngagementLocation>;
+    latestActivity: string;
+    openTaskCount: number;
+    unread: boolean;
+};
+
+export type EngagementPage = {
+    items: Array<EngagementSummary>;
+};
+
+export type EngagementQueryRequest = {
+    practiceId: string;
+    phone: string;
+};
+
 export type TaskQueryRequest = {
     practiceId: string;
     locationId?: string;
     search?: string;
-    ordering?: 'time' | 'priority';
+    state?: 'OPEN' | 'COMPLETED';
+    ordering?: 'priority' | 'recent';
     cursor?: string;
     limit?: number;
 };
@@ -543,6 +628,7 @@ export type ConversationTimelineItem = {
     type: 'MESSAGE' | 'CALL' | 'TASK';
     id: string;
     occurredAt: string;
+    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
@@ -1168,6 +1254,282 @@ export type ListCallingOffersResponses = {
 
 export type ListCallingOffersResponse = ListCallingOffersResponses[keyof ListCallingOffersResponses];
 
+export type ListLiveCallsData = {
+    body?: never;
+    path?: never;
+    query: {
+        practiceId: string;
+        locationId?: string;
+    };
+    url: '/v1/calling/live-calls';
+};
+
+export type ListLiveCallsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ListLiveCallsError = ListLiveCallsErrors[keyof ListLiveCallsErrors];
+
+export type ListLiveCallsResponses = {
+    /**
+     * Access-filtered active Calls.
+     */
+    200: LiveCallPage;
+};
+
+export type ListLiveCallsResponse = ListLiveCallsResponses[keyof ListLiveCallsResponses];
+
+export type ListStaffTransferCandidatesData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/transfer-candidates';
+};
+
+export type ListStaffTransferCandidatesErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ListStaffTransferCandidatesError = ListStaffTransferCandidatesErrors[keyof ListStaffTransferCandidatesErrors];
+
+export type ListStaffTransferCandidatesResponses = {
+    /**
+     * Eligible recipients at request time.
+     */
+    200: StaffTransferCandidateList;
+};
+
+export type ListStaffTransferCandidatesResponse = ListStaffTransferCandidatesResponses[keyof ListStaffTransferCandidatesResponses];
+
+export type RequestStaffTransferData = {
+    body: StaffTransferRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/transfers';
+};
+
+export type RequestStaffTransferErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RequestStaffTransferError = RequestStaffTransferErrors[keyof RequestStaffTransferErrors];
+
+export type RequestStaffTransferResponses = {
+    /**
+     * Transfer request committed; original ownership remains authoritative.
+     */
+    201: StaffTransfer;
+};
+
+export type RequestStaffTransferResponse = RequestStaffTransferResponses[keyof RequestStaffTransferResponses];
+
+export type ListStaffTransfersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/calling/transfers';
+};
+
+export type ListStaffTransfersErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ListStaffTransfersError = ListStaffTransfersErrors[keyof ListStaffTransfersErrors];
+
+export type ListStaffTransfersResponses = {
+    /**
+     * Active staff transfers with durable recovery state.
+     */
+    200: StaffTransferList;
+};
+
+export type ListStaffTransfersResponse = ListStaffTransfersResponses[keyof ListStaffTransfersResponses];
+
+export type AcceptStaffTransferData = {
+    body: StaffTransferResponseRequest;
+    path: {
+        transferId: string;
+    };
+    query?: never;
+    url: '/v1/calling/transfers/{transferId}/accept';
+};
+
+export type AcceptStaffTransferErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type AcceptStaffTransferError = AcceptStaffTransferErrors[keyof AcceptStaffTransferErrors];
+
+export type AcceptStaffTransferResponses = {
+    /**
+     * Acceptance committed; ownership still awaits provider bridge evidence.
+     */
+    200: StaffTransfer;
+};
+
+export type AcceptStaffTransferResponse = AcceptStaffTransferResponses[keyof AcceptStaffTransferResponses];
+
+export type DeclineStaffTransferData = {
+    body?: never;
+    path: {
+        transferId: string;
+    };
+    query?: never;
+    url: '/v1/calling/transfers/{transferId}/decline';
+};
+
+export type DeclineStaffTransferErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type DeclineStaffTransferError = DeclineStaffTransferErrors[keyof DeclineStaffTransferErrors];
+
+export type DeclineStaffTransferResponses = {
+    /**
+     * Transfer declined.
+     */
+    200: StaffTransfer;
+};
+
+export type DeclineStaffTransferResponse = DeclineStaffTransferResponses[keyof DeclineStaffTransferResponses];
+
+export type CancelStaffTransferData = {
+    body?: never;
+    path: {
+        transferId: string;
+    };
+    query?: never;
+    url: '/v1/calling/transfers/{transferId}/cancel';
+};
+
+export type CancelStaffTransferErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CancelStaffTransferError = CancelStaffTransferErrors[keyof CancelStaffTransferErrors];
+
+export type CancelStaffTransferResponses = {
+    /**
+     * Transfer cancelled.
+     */
+    200: StaffTransfer;
+};
+
+export type CancelStaffTransferResponse = CancelStaffTransferResponses[keyof CancelStaffTransferResponses];
+
 export type AcceptCallingOfferData = {
     body: AcceptCallingOfferRequest;
     path: {
@@ -1661,6 +2023,86 @@ export type GetCallingVoicemailPlaybackResponses = {
 
 export type GetCallingVoicemailPlaybackResponse = GetCallingVoicemailPlaybackResponses[keyof GetCallingVoicemailPlaybackResponses];
 
+export type QueryEngagementsData = {
+    body: EngagementQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/engagements/query';
+};
+
+export type QueryEngagementsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryEngagementsError = QueryEngagementsErrors[keyof QueryEngagementsErrors];
+
+export type QueryEngagementsResponses = {
+    /**
+     * Exact-phone results within the current User's Location Scope.
+     */
+    200: EngagementPage;
+};
+
+export type QueryEngagementsResponse = QueryEngagementsResponses[keyof QueryEngagementsResponses];
+
+export type GetEngagementTimelineData = {
+    body?: never;
+    path: {
+        phone: string;
+    };
+    query: {
+        practiceId: string;
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/engagements/{phone}/timeline';
+};
+
+export type GetEngagementTimelineErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetEngagementTimelineError = GetEngagementTimelineErrors[keyof GetEngagementTimelineErrors];
+
+export type GetEngagementTimelineResponses = {
+    /**
+     * Chronological exact-phone Engagement History.
+     */
+    200: ConversationTimelinePage;
+};
+
+export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
+
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;
     path?: never;
@@ -1947,6 +2389,48 @@ export type GetTaskCallHistoryResponses = {
 };
 
 export type GetTaskCallHistoryResponse = GetTaskCallHistoryResponses[keyof GetTaskCallHistoryResponses];
+
+export type GetTaskEngagementHistoryData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: {
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/tasks/{taskId}/engagement-history';
+};
+
+export type GetTaskEngagementHistoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetTaskEngagementHistoryError = GetTaskEngagementHistoryErrors[keyof GetTaskEngagementHistoryErrors];
+
+export type GetTaskEngagementHistoryResponses = {
+    /**
+     * Chronological exact-phone Engagement History.
+     */
+    200: ConversationTimelinePage;
+};
+
+export type GetTaskEngagementHistoryResponse = GetTaskEngagementHistoryResponses[keyof GetTaskEngagementHistoryResponses];
 
 export type QueryMessageThreadsData = {
     body: MessageThreadQueryRequest;

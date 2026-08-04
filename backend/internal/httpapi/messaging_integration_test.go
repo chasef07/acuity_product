@@ -276,7 +276,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	if task.Origin != api.STAFFMESSAGEFOLLOWUP ||
 		task.MessageId == nil ||
 		task.MessageThreadId == nil ||
-		task.State != api.OPEN {
+		task.State != api.TaskStateOPEN {
 		t.Fatalf("HTTP Message Task = %#v", task)
 	}
 	var engagementCallID string
@@ -357,6 +357,70 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		!types[api.ConversationTimelineItemTypeCALL] ||
 		!types[api.ConversationTimelineItemTypeTASK] {
 		t.Fatalf("combined Engagement History = %#v", engagement)
+	}
+	engagementQueryBody, _ := json.Marshal(api.EngagementQueryRequest{
+		PracticeId: parsedUUID(t, authorization.Practice.ID),
+		Phone:      "(727) 555-0199",
+	})
+	if _, err := messageModule.QueryEngagements(
+		context.Background(),
+		messaging.QueryEngagementsCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Phone:      "(727) 555-0199",
+		},
+	); err != nil {
+		t.Fatalf("query Engagements module: %v", err)
+	}
+	engagementQueryResponse := request(
+		t,
+		portal.Client(),
+		http.MethodPost,
+		portal.URL+"/v1/engagements/query",
+		"message-token",
+		engagementQueryBody,
+	)
+	if engagementQueryResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"query Engagements status = %d, body = %s",
+			engagementQueryResponse.StatusCode,
+			readBody(t, engagementQueryResponse),
+		)
+	}
+	var engagementPage api.EngagementPage
+	decode(t, engagementQueryResponse, &engagementPage)
+	if len(engagementPage.Items) != 1 ||
+		engagementPage.Items[0].Phone != "+17275550199" ||
+		engagementPage.Items[0].OpenTaskCount != 1 ||
+		len(engagementPage.Items[0].Locations) != 1 {
+		t.Fatalf("phone-led Engagement result = %#v", engagementPage)
+	}
+	for _, endpoint := range []string{
+		portal.URL + "/v1/engagements/+17275550199/timeline?practiceId=" +
+			url.QueryEscape(authorization.Practice.ID),
+		portal.URL + "/v1/tasks/" + task.Id.String() + "/engagement-history",
+	} {
+		response := request(
+			t,
+			portal.Client(),
+			http.MethodGet,
+			endpoint,
+			"message-token",
+			nil,
+		)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf(
+				"phone-led timeline %s status = %d, body = %s",
+				endpoint,
+				response.StatusCode,
+				readBody(t, response),
+			)
+		}
+		var page api.ConversationTimelinePage
+		decode(t, response, &page)
+		if len(page.Items) != len(engagement.Items) {
+			t.Fatalf("phone-led timeline %s = %#v", endpoint, page)
+		}
 	}
 	pagedIDs := map[string]bool{}
 	cursor := ""

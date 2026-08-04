@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -257,6 +258,432 @@ func TestFollowUpDispositionAtomicallyCreatesAndReplaysOneTask(t *testing.T) {
 	}
 	if taskCount != 1 || activityCount != 1 {
 		t.Fatalf("Task rows = %d, Activity rows = %d, want 1 each", taskCount, activityCount)
+	}
+}
+
+func TestPendingOutcomeDoesNotConsumeCallCapacity(t *testing.T) {
+	calling, identity, offer := readyOffer(
+		t,
+		&recordingProvider{},
+		"pending-outcome-capacity",
+	)
+	sessionID := "pending-outcome-capacity-browser"
+	if _, err := calling.AcceptOffer(
+		context.Background(),
+		identity,
+		sessionID,
+		offer.ID,
+	); err != nil {
+		t.Fatalf("accept pending-outcome Call: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open pending-outcome observer pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	endedAt := time.Date(2026, time.August, 4, 9, 0, 20, 0, time.UTC)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET
+			state = 'NEEDS_DISPOSITION',
+			winner_subject = claimant_subject,
+			connected_at = $2,
+			ended_at = $2,
+			updated_at = $2
+		WHERE id = $1
+	`, offer.ID, endedAt); err != nil {
+		t.Fatalf("prepare pending Call outcome: %v", err)
+	}
+
+	softphone, err := calling.AcquireSoftphone(
+		context.Background(),
+		identity,
+		sessionID,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("renew softphone with pending outcome: %v", err)
+	}
+	if softphone.ActiveCallID != "" {
+		t.Fatalf("pending outcome occupied active media slot: %#v", softphone)
+	}
+	if softphone.PendingOutcomeCallID != offer.ID {
+		t.Fatalf("pending outcome recovery handle = %#v", softphone)
+	}
+	softphone, err = calling.SetReadiness(
+		context.Background(),
+		ready(identity, sessionID),
+	)
+	if err != nil || !softphone.Available || softphone.ActiveCallID != "" ||
+		softphone.PendingOutcomeCallID != offer.ID {
+		t.Fatalf("readiness with pending outcome = %#v, err=%v", softphone, err)
+	}
+}
+
+func TestStaffTransferChangesOwnershipOnlyAfterProviderBridge(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 4, 10, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "staff-transfer-test",
+		Practices: []access.PracticeProvision{{
+			Key: "staff-transfer-practice", Name: "Staff Transfer Practice",
+			Locations: []access.LocationProvision{{Key: "staff-transfer-office", Name: "Staff Transfer Office"}},
+			Invitations: []access.InvitationProvision{
+				{Key: "staff-transfer-origin", Email: "origin@transfer.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll, ExpiresAt: now.Add(time.Hour)},
+				{Key: "staff-transfer-recipient", Email: "recipient@transfer.test", Role: access.RoleStaff, LocationScope: access.LocationScopeAll, ExpiresAt: now.Add(time.Hour)},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision staff transfer fixture: %v", err)
+	}
+	identities := []access.Identity{
+		{Subject: "staff-transfer-origin", Email: "origin@transfer.test", EmailVerified: true},
+		{Subject: "staff-transfer-recipient", Email: "recipient@transfer.test", EmailVerified: true},
+	}
+	authorizations := make([]access.Authorization, len(identities))
+	for index := range identities {
+		authorizations[index], err = accessModule.AcceptInvitation(
+			context.Background(), identities[index], provisioned.Invitations[index].Token,
+		)
+		if err != nil {
+			t.Fatalf("accept staff transfer invitation %d: %v", index, err)
+		}
+	}
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "transfer-recipient-control",
+		CallLegID:     "transfer-recipient-leg",
+	}}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CallControlID:     "transfer-connection",
+		FromNumber:        "+17275550100",
+		StaffSIPDomain:    "sip.telnyx.com",
+		ConnectionTimeout: 15 * time.Second,
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	sessions := []string{"staff-transfer-origin-browser", "staff-transfer-recipient-browser"}
+	for index, identity := range identities {
+		if _, err := calling.AcquireSoftphone(context.Background(), identity, sessions[index], false); err != nil {
+			t.Fatalf("acquire staff transfer softphone %d: %v", index, err)
+		}
+		if _, err := calling.SetReadiness(context.Background(), ready(identity, sessions[index])); err != nil {
+			t.Fatalf("ready staff transfer softphone %d: %v", index, err)
+		}
+	}
+	callID := uuid.NewString()
+	attemptID := uuid.NewString()
+	handoffID := uuid.NewString()
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin connected transfer fixture: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(context.Background(), `
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, phone, display_name,
+			expires_at, consumed_at, created_at
+		)
+		VALUES ($1, 'staff-transfer-service', $2, $3, 'staff-transfer-source',
+			'staff-transfer-key', $4, $5, '+15555550100', 'Sourced Caller', $6, $6, $6)
+	`, handoffID, authorizations[0].Practice.ID, authorizations[0].Locations[0].ID,
+		bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), now); err != nil {
+		t.Fatalf("create connected transfer handoff: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline, connection_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id,
+			claimant_subject, claimant_session_id, winner_subject,
+			expected_staff_call_control_id, expected_staff_call_leg_id,
+			direction, entry_point, connected_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'CONNECTED', $5, $5, 'transfer-caller-control',
+			'transfer-caller-leg', 'transfer-provider-session', $6, $7, $6,
+			'transfer-origin-control', 'transfer-origin-leg', 'INBOUND', 'AI_HANDOFF',
+			$5, $5, $5)
+	`, callID, handoffID, authorizations[0].Practice.ID, authorizations[0].Locations[0].ID,
+		now, identities[0].Subject, sessions[0]); err != nil {
+		t.Fatalf("create connected transfer Call: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(), `
+		INSERT INTO human_calling_connection_attempts (
+			id, call_id, claimant_subject, claimant_session_id, connection_deadline,
+			staff_call_control_id, staff_call_leg_id, bridge_occurred_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, 'transfer-origin-control',
+			'transfer-origin-leg', $5, $5, $5)
+	`, attemptID, callID, identities[0].Subject, sessions[0], now); err != nil {
+		t.Fatalf("create connected transfer attempt: %v", err)
+	}
+	if _, err := tx.Exec(context.Background(), `
+		UPDATE human_calling_calls SET current_attempt_id = $2 WHERE id = $1
+	`, callID, attemptID); err != nil {
+		t.Fatalf("attach connected transfer attempt: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit connected transfer fixture: %v", err)
+	}
+
+	candidates, err := calling.ListTransferCandidates(context.Background(), identities[0], callID)
+	if err != nil || len(candidates) != 1 || candidates[0].Subject != identities[1].Subject {
+		t.Fatalf("transfer candidates = %#v, err=%v", candidates, err)
+	}
+	transfer, err := calling.RequestStaffTransfer(context.Background(), humancalling.RequestStaffTransferCommand{
+		Identity: identities[0], CallID: callID, SessionID: sessions[0],
+		RecipientSubject: identities[1].Subject, HandoffNote: "Please continue scheduling.",
+	})
+	if err != nil || transfer.State != humancalling.StaffTransferRequested {
+		t.Fatalf("request staff transfer = %#v, err=%v", transfer, err)
+	}
+	if transfer.DisplayName != "Sourced Caller" {
+		t.Fatalf("transfer sourced name = %q", transfer.DisplayName)
+	}
+	if _, err := calling.AcceptStaffTransfer(context.Background(), humancalling.RespondStaffTransferCommand{
+		Identity: identities[1], TransferID: transfer.ID, SessionID: "stale-browser",
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("stale transfer session error = %v, want conflict", err)
+	}
+	accepted, err := calling.AcceptStaffTransfer(context.Background(), humancalling.RespondStaffTransferCommand{
+		Identity: identities[1], TransferID: transfer.ID, SessionID: sessions[1],
+	})
+	if err != nil || accepted.State != humancalling.StaffTransferAccepted {
+		t.Fatalf("accept staff transfer = %#v, err=%v", accepted, err)
+	}
+	recipientReadiness, err := calling.SetReadiness(
+		context.Background(),
+		ready(identities[1], sessions[1]),
+	)
+	if err != nil || recipientReadiness.Available || recipientReadiness.ActiveCallID != callID {
+		t.Fatalf("accepted recipient readiness = %#v, err=%v", recipientReadiness, err)
+	}
+	var recipientDesiredAvailable bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT desired_available
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1 AND session_id = $2
+	`, identities[1].Subject, sessions[1]).Scan(&recipientDesiredAvailable); err != nil {
+		t.Fatalf("read accepted recipient readiness intent: %v", err)
+	}
+	if recipientDesiredAvailable {
+		t.Fatal("accepted transfer recipient restored availability before provider bridge")
+	}
+	candidates, err = calling.ListTransferCandidates(context.Background(), identities[0], callID)
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("accepted recipient remained a transfer candidate: %#v, err=%v", candidates, err)
+	}
+	recipientCall, err := calling.ReadCall(context.Background(), identities[1], callID)
+	if err != nil || recipientCall.ExpectedMediaToken == "" {
+		t.Fatalf("accepted recipient media authorization = %#v, err=%v", recipientCall, err)
+	}
+	recipientSoftphone, err := calling.AcquireSoftphone(
+		context.Background(), identities[1], sessions[1], false,
+	)
+	if err != nil || recipientSoftphone.ActiveCallID != callID {
+		t.Fatalf("accepted recipient Call capacity = %#v, err=%v", recipientSoftphone, err)
+	}
+	beforeBridge, err := calling.ReadCall(context.Background(), identities[0], callID)
+	if err != nil || beforeBridge.WinnerSubject != identities[0].Subject {
+		t.Fatalf("pre-bridge Call ownership = %#v, err=%v", beforeBridge, err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("process transfer Dial: processed=%t err=%v", processed, err)
+	}
+	transferDial := provider.last(humancalling.CommandDialStaff)
+	now = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "staff-transfer-bridge", Type: humancalling.FactCallBridged,
+		OccurredAt: now, CallControlID: "transfer-recipient-control",
+		CallLegID: "transfer-recipient-leg", CallSessionID: "transfer-provider-session",
+		ClientState: transferDial.Payload["client_state"].(string),
+	}); err != nil {
+		t.Fatalf("apply staff transfer bridge: %v", err)
+	}
+	afterBridge, err := calling.ReadCall(context.Background(), identities[1], callID)
+	if err != nil || afterBridge.WinnerSubject != identities[1].Subject || afterBridge.State != humancalling.CallConnected {
+		t.Fatalf("provider-confirmed transfer Call = %#v, err=%v", afterBridge, err)
+	}
+	activeTransfers, err := calling.ListStaffTransfers(context.Background(), identities[1])
+	if err != nil || len(activeTransfers) != 0 {
+		t.Fatalf("completed transfer remained active: %#v, err=%v", activeTransfers, err)
+	}
+	var originDesiredAvailable bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT desired_available
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1 AND session_id = $2
+	`, identities[0].Subject, sessions[0]).Scan(&originDesiredAvailable); err != nil {
+		t.Fatalf("read transferring softphone restoration: %v", err)
+	}
+	if !originDesiredAvailable {
+		t.Fatal("transferring softphone was not restored")
+	}
+
+	returnTransfer, err := calling.RequestStaffTransfer(
+		context.Background(),
+		humancalling.RequestStaffTransferCommand{
+			Identity: identities[1], CallID: callID, SessionID: sessions[1],
+			RecipientSubject: identities[0].Subject,
+		},
+	)
+	if err != nil {
+		t.Fatalf("request optional-note return transfer: %v", err)
+	}
+	if _, err := calling.AcceptStaffTransfer(
+		context.Background(),
+		humancalling.RespondStaffTransferCommand{
+			Identity: identities[0], TransferID: returnTransfer.ID, SessionID: sessions[0],
+		},
+	); err != nil {
+		t.Fatalf("accept return transfer: %v", err)
+	}
+	now = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "staff-transfer-caller-hangup", Type: humancalling.FactCallHangup,
+		OccurredAt: now, CallControlID: "transfer-caller-control",
+		CallLegID: "transfer-caller-leg", CallSessionID: "transfer-provider-session",
+		HangupCause: "normal_clearing",
+	}); err != nil {
+		t.Fatalf("apply caller hangup during transfer: %v", err)
+	}
+	var returnState humancalling.StaffTransferState
+	var originAvailable bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT transfer.state, lease.desired_available
+		FROM human_calling_staff_transfers transfer
+		JOIN human_calling_softphone_leases lease
+			ON lease.user_subject = transfer.recipient_subject
+		WHERE transfer.id = $1
+	`, returnTransfer.ID).Scan(&returnState, &originAvailable); err != nil {
+		t.Fatalf("read caller-hangup transfer cleanup: %v", err)
+	}
+	if returnState != humancalling.StaffTransferCancelled || !originAvailable {
+		t.Fatalf("caller-hangup transfer = %s, recipient available=%t", returnState, originAvailable)
+	}
+	for range 10 {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil {
+			t.Fatalf("fence caller-hangup transfer Dial: %v", err)
+		}
+		if !processed {
+			break
+		}
+	}
+	if provider.count(humancalling.CommandDialStaff) != 1 {
+		t.Fatalf("caller-hangup transfer executed stale Dial: %d", provider.count(humancalling.CommandDialStaff))
+	}
+
+	ambiguousTransferID := uuid.NewString()
+	ambiguousAttemptID := uuid.NewString()
+	ambiguousDialID := uuid.NewString()
+	pendingHangupID := uuid.NewString()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_staff_transfers (
+			id, call_id, practice_id, location_id, requested_by_subject,
+			requested_by_session_id, recipient_subject, recipient_session_id,
+			handoff_note, state, expires_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', 'ACCEPTED', $9, $10, $10)
+	`, ambiguousTransferID, callID, authorizations[0].Practice.ID,
+		authorizations[0].Locations[0].ID, identities[1].Subject, sessions[1],
+		identities[0].Subject, sessions[0], now.Add(-time.Second), now); err != nil {
+		t.Fatalf("create ambiguous expired transfer: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_connection_attempts (
+			id, call_id, claimant_subject, claimant_session_id,
+			connection_deadline, staff_transfer_id, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+	`, ambiguousAttemptID, callID, identities[0].Subject, sessions[0],
+		now.Add(-time.Second), ambiguousTransferID, now); err != nil {
+		t.Fatalf("create ambiguous expired transfer attempt: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			id, call_id, attempt_id, user_subject, action, target_id,
+			payload, state, next_attempt_at, created_at, updated_at
+		)
+		VALUES
+			($1, $2, $3, $4, 'DIAL_STAFF', 'transfer-caller-control',
+				'{}'::jsonb, 'AMBIGUOUS', $6, $6, $6),
+			($5, $2, $3, $4, 'HANGUP', 'expired-transfer-hangup',
+				'{}'::jsonb, 'PENDING', $6, $6, $6)
+	`, ambiguousDialID, callID, ambiguousAttemptID, identities[0].Subject,
+		pendingHangupID, now); err != nil {
+		t.Fatalf("create blocked transfer command lane: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET desired_available = false, updated_at = $3
+		WHERE user_subject = $1 AND session_id = $2
+	`, identities[0].Subject, sessions[0], now); err != nil {
+		t.Fatalf("reserve ambiguous transfer recipient: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("expire ambiguous staff transfer: processed=%t err=%v", processed, err)
+	}
+	var ambiguousTransferState humancalling.StaffTransferState
+	var ambiguousCommandState, ambiguousErrorCode string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT transfer.state, command.state, command.last_error_code
+		FROM human_calling_staff_transfers transfer
+		JOIN human_calling_provider_commands command ON command.id = $2
+		WHERE transfer.id = $1
+	`, ambiguousTransferID, ambiguousDialID).Scan(
+		&ambiguousTransferState, &ambiguousCommandState, &ambiguousErrorCode,
+	); err != nil {
+		t.Fatalf("read ambiguous transfer expiry: %v", err)
+	}
+	if ambiguousTransferState != humancalling.StaffTransferExpired ||
+		ambiguousCommandState != "FAILED" || ambiguousErrorCode != "TRANSFER_EXPIRED" {
+		t.Fatalf(
+			"ambiguous transfer expiry = transfer %s, command %s/%s",
+			ambiguousTransferState, ambiguousCommandState, ambiguousErrorCode,
+		)
+	}
+	hangupsBefore := provider.count(humancalling.CommandHangup)
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("process Hangup after ambiguous transfer expiry: processed=%t err=%v", processed, err)
+	}
+	if provider.count(humancalling.CommandHangup) != hangupsBefore+1 {
+		t.Fatal("ambiguous transfer command still blocked the Call command lane")
+	}
+	var pendingHangupState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, pendingHangupID).Scan(&pendingHangupState); err != nil {
+		t.Fatalf("read unblocked Hangup: %v", err)
+	}
+	if pendingHangupState != "SENT" {
+		t.Fatalf("unblocked Hangup state = %s", pendingHangupState)
+	}
+
+	expiredTransferID := uuid.NewString()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_staff_transfers (
+			id, call_id, practice_id, location_id, requested_by_subject,
+			requested_by_session_id, recipient_subject, handoff_note, state,
+			expires_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, '', 'REQUESTED', $8, $9, $9)
+	`, expiredTransferID, callID, authorizations[0].Practice.ID,
+		authorizations[0].Locations[0].ID, identities[1].Subject, sessions[1],
+		identities[0].Subject, now.Add(-time.Second), now); err != nil {
+		t.Fatalf("create abandoned transfer: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("recover abandoned transfer: processed=%t err=%v", processed, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_staff_transfers WHERE id = $1
+	`, expiredTransferID).Scan(&returnState); err != nil {
+		t.Fatalf("read abandoned transfer recovery: %v", err)
+	}
+	if returnState != humancalling.StaffTransferExpired {
+		t.Fatalf("abandoned transfer state = %s", returnState)
 	}
 }
 

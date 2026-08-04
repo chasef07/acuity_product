@@ -158,7 +158,11 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   ).toHaveCount(0)
   await page.getByRole("button", { name: "Messages", exact: true }).click()
   await inbound.getByRole("button", { name: "Create Task" }).click()
-  await expect(page.getByText("Task · Open")).toBeVisible()
+  await expect(
+    page.getByRole("button", {
+      name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+    }),
+  ).toBeVisible()
 
   await page.getByRole("button", { name: "Tasks", exact: true }).click()
   const openSection = page.getByRole("button", { name: "Open", exact: true })

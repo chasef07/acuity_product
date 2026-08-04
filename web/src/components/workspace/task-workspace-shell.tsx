@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import {
   CheckIcon,
   ChevronsUpDownIcon,
+  CopyIcon,
+  PhoneCallIcon,
   ShieldCheckIcon,
   WifiOffIcon,
 } from "lucide-react"
@@ -49,7 +51,10 @@ import {
   CallingDock,
 } from "@/components/workspace/calling-dock"
 import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
-import { MessageWorkspace } from "@/components/workspace/message-workspace"
+import {
+  EngagementWorkspace,
+  MessageWorkspace,
+} from "@/components/workspace/message-workspace"
 import {
   type ConnectionState,
   type RailMode,
@@ -61,6 +66,8 @@ import {
   enterSupportMode,
   getCallingCall,
   getWorkspace,
+  listLiveCalls,
+  queryEngagements,
   queryMessageThreads,
   queryTasks,
   readTask,
@@ -70,6 +77,8 @@ import type {
   AccessDiscovery,
   CallingCall,
   CallingDispositionResult,
+  EngagementSummary,
+  LiveCall,
   Message,
   MessageThreadSummary,
   Task,
@@ -83,13 +92,14 @@ import {
 } from "@/lib/workspace-sync/workspace-sync"
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
-type View = "none" | "task" | "call" | "message"
+type View = "none" | "task" | "call" | "message" | "engagement"
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
 const taskScopeStorageKey = "acuity.taskLocationScope"
 const taskOrderingStorageKey = "acuity.taskOrdering"
-type TaskOrdering = "time" | "priority"
+const railModeStorageKey = "acuity.railMode"
+type TaskOrdering = "recent" | "priority"
 
 export function TaskWorkspaceShell() {
   const router = useRouter()
@@ -103,8 +113,14 @@ export function TaskWorkspaceShell() {
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
   const [settledSearch, setSettledSearch] = useState("")
-  const [ordering, setOrdering] = useState<TaskOrdering>("time")
+  const [ordering, setOrdering] = useState<TaskOrdering>("priority")
+  const [taskState, setTaskState] = useState<"OPEN" | "COMPLETED">("OPEN")
   const [railMode, setRailMode] = useState<RailMode>("tasks")
+  const [unreadOnly, setUnreadOnly] = useState(false)
+  const [engagements, setEngagements] = useState<EngagementSummary[]>([])
+  const [engagementLoading, setEngagementLoading] = useState(false)
+  const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
+  const [liveCalls, setLiveCalls] = useState<LiveCall[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [nextCursor, setNextCursor] = useState("")
   const [tasksLoading, setTasksLoading] = useState(false)
@@ -144,13 +160,15 @@ export function TaskWorkspaceShell() {
   const viewRef = useRef<View>("none")
   const railModeRef = useRef<RailMode>("tasks")
   const settledSearchRef = useRef("")
-  const orderingRef = useRef<TaskOrdering>("time")
+  const orderingRef = useRef<TaskOrdering>("priority")
+  const taskStateRef = useRef<"OPEN" | "COMPLETED">("OPEN")
   const locationScopeRef = useRef("")
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
   const activeCallIDRef = useRef("")
   const callDetailGenerationRef = useRef(0)
+  const engagementGenerationRef = useRef(0)
 
   useEffect(() => {
     selectedThreadRef.current = selectedThread
@@ -170,6 +188,9 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     orderingRef.current = ordering
   }, [ordering])
+  useEffect(() => {
+    taskStateRef.current = taskState
+  }, [taskState])
   useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
@@ -239,12 +260,12 @@ export function TaskWorkspaceShell() {
   )
 
   const loadTasks = useCallback(
-    async (cursor = "", append = false) => {
+    async (cursor = "", append = false, preserveSelection = false) => {
       if (!practiceID) return
       const queryKey = workspaceTaskQueryKey(
         practiceID,
         locationScopeID,
-        settledSearch,
+        taskState,
         ordering,
       )
       const requestGeneration = ++taskQueryGenerationRef.current
@@ -260,7 +281,7 @@ export function TaskWorkspaceShell() {
         body: {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
-          ...(settledSearch ? { search: settledSearch } : {}),
+          state: taskState,
           ordering,
           ...(cursor ? { cursor } : {}),
           limit: 50,
@@ -295,6 +316,10 @@ export function TaskWorkspaceShell() {
       if (selected) {
         const current = next.find((task) => task.id === selected.id)
         if (current) updateSelectedTask(current)
+        else if (!preserveSelection && viewRef.current !== "call") {
+          updateSelectedTask(next[0])
+          setView(next[0] ? "task" : "none")
+        }
       } else if (firstLoad && next[0] && viewRef.current !== "call") {
         updateSelectedTask(next[0])
         setView("task")
@@ -302,7 +327,7 @@ export function TaskWorkspaceShell() {
         setView("none")
       }
     },
-    [locationScopeID, ordering, practiceID, settledSearch],
+    [locationScopeID, ordering, practiceID, taskState],
   )
   const loadMessageThreads = useCallback(
     async (cursor = "", append = false) => {
@@ -310,7 +335,6 @@ export function TaskWorkspaceShell() {
       const queryKey = workspaceMessageQueryKey(
         practiceID,
         locationID,
-        settledSearch,
       )
       const requestGeneration = ++messageQueryGenerationRef.current
       setMessagesLoading(true)
@@ -325,7 +349,6 @@ export function TaskWorkspaceShell() {
         body: {
           practiceId: practiceID,
           locationId: locationID,
-          ...(settledSearch ? { search: settledSearch } : {}),
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -376,7 +399,7 @@ export function TaskWorkspaceShell() {
         setView("none")
       }
     },
-    [locationID, practiceID, settledSearch],
+    [locationID, practiceID],
   )
   const reconcileWorkspace = useCallback(
     async ({
@@ -393,19 +416,18 @@ export function TaskWorkspaceShell() {
       const taskGeneration = ++taskQueryGenerationRef.current
       const messageGeneration = ++messageQueryGenerationRef.current
       const taskLocationID = locationScopeRef.current
-      const taskSearch = settledSearchRef.current
       const taskOrdering = orderingRef.current
+      const currentTaskState = taskStateRef.current
       const selectedTaskID = selectedTaskRef.current?.id
       const taskQueryKey = workspaceTaskQueryKey(
         scope.practiceID,
         taskLocationID,
-        taskSearch,
+        currentTaskState,
         taskOrdering,
       )
       const messageQueryKey = workspaceMessageQueryKey(
         scope.practiceID,
         scope.locationID,
-        taskSearch,
       )
       const client = portalClient(token)
       const [snapshotResult, taskResult, messageResult, selectedResult] =
@@ -423,7 +445,7 @@ export function TaskWorkspaceShell() {
             body: {
               practiceId: scope.practiceID,
               ...(taskLocationID ? { locationId: taskLocationID } : {}),
-              ...(taskSearch ? { search: taskSearch } : {}),
+              state: currentTaskState,
               ordering: taskOrdering,
               limit: 50,
             },
@@ -434,7 +456,6 @@ export function TaskWorkspaceShell() {
             body: {
               practiceId: scope.practiceID,
               locationId: scope.locationID,
-              ...(taskSearch ? { search: taskSearch } : {}),
               limit: 50,
             },
             signal,
@@ -605,9 +626,12 @@ export function TaskWorkspaceShell() {
       result.data.actor.subject,
       practice.id,
     )
+    const initialRailMode = readRailMode(result.data.actor.subject, practice.id)
     orderingRef.current = initialOrdering
+    railModeRef.current = initialRailMode
     locationScopeRef.current = scope
     setOrdering(initialOrdering)
+    setRailMode(initialRailMode)
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -633,7 +657,7 @@ export function TaskWorkspaceShell() {
     const queryKey = workspaceTaskQueryKey(
       practiceID,
       locationScopeID,
-      settledSearch,
+      taskState,
       ordering,
     )
     if (taskQueryKeyRef.current === queryKey) return
@@ -645,7 +669,7 @@ export function TaskWorkspaceShell() {
     locationScopeID,
     ordering,
     practiceID,
-    settledSearch,
+    taskState,
   ])
 
   useEffect(() => {
@@ -660,7 +684,6 @@ export function TaskWorkspaceShell() {
     const queryKey = workspaceMessageQueryKey(
       practiceID,
       locationID,
-      settledSearch,
     )
     if (messageQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadMessageThreads(), 0)
@@ -671,7 +694,50 @@ export function TaskWorkspaceShell() {
     locationID,
     practiceID,
     railMode,
-    settledSearch,
+  ])
+
+  useEffect(() => {
+    const requestGeneration = ++engagementGenerationRef.current
+    if (!practiceID || !settledSearch) return
+    const timeout = window.setTimeout(async () => {
+      setEngagementLoading(true)
+      const token = await getAccessToken()
+      if (!token) return
+      const result = await queryEngagements({
+        client: portalClient(token),
+        body: { practiceId: practiceID, phone: settledSearch },
+      }).catch(() => undefined)
+      if (requestGeneration !== engagementGenerationRef.current) return
+      setEngagementLoading(false)
+      setEngagements(result?.data?.items ?? [])
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [practiceID, settledSearch, workspaceRevision])
+
+  useEffect(() => {
+    if (!practiceID || !locationID || loadState !== "ready") return
+    const liveLocationID = railMode === "messages" ? locationID : locationScopeID
+    const timeout = window.setTimeout(async () => {
+      const token = await getAccessToken()
+      if (!token) return
+      const result = await listLiveCalls({
+        client: portalClient(token),
+        query: {
+          practiceId: practiceID,
+          ...(liveLocationID ? { locationId: liveLocationID } : {}),
+        },
+      }).catch(() => undefined)
+      setLiveCalls(result?.data?.items ?? [])
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [
+    callRefreshRevision,
+    loadState,
+    locationID,
+    locationScopeID,
+    practiceID,
+    railMode,
+    workspaceRevision,
   ])
 
   useEffect(() => {
@@ -811,6 +877,12 @@ export function TaskWorkspaceShell() {
   function updateRailMode(mode: RailMode) {
     railModeRef.current = mode
     setRailMode(mode)
+    if (discovery && practiceID) {
+      window.localStorage.setItem(
+        railModeKey(discovery.actor.subject, practiceID),
+        mode,
+      )
+    }
   }
 
   function updateSelectedTask(task?: Task) {
@@ -864,6 +936,34 @@ export function TaskWorkspaceShell() {
     updateSelectedTask(task)
     if (activeCall) returnTaskIDRef.current = task.id
     setView("task")
+  }
+
+  function selectEngagement(engagement: EngagementSummary) {
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
+    setSelectedEngagement(engagement)
+    setView("engagement")
+  }
+
+  async function submitPhoneSearch() {
+    const phone = search.trim()
+    if (!phone || !practiceID) return
+    const requestGeneration = ++engagementGenerationRef.current
+    setEngagementLoading(true)
+    const token = await getAccessToken()
+    if (!token) {
+      setEngagementLoading(false)
+      return
+    }
+    const result = await queryEngagements({
+      client: portalClient(token),
+      body: { practiceId: practiceID, phone },
+    }).catch(() => undefined)
+    if (requestGeneration !== engagementGenerationRef.current) return
+    setEngagementLoading(false)
+    const items = result?.data?.items ?? []
+    setEngagements(items)
+    if (items[0]) selectEngagement(items[0])
   }
 
   function selectMessageThread(thread: MessageThreadSummary) {
@@ -947,8 +1047,7 @@ export function TaskWorkspaceShell() {
       call.state === "RINGING" ||
       call.state === "CONNECTING" ||
       call.state === "RECONCILING" ||
-      call.state === "CONNECTED" ||
-      call.state === "NEEDS_DISPOSITION"
+      call.state === "CONNECTED"
     if (!canFocus || call.id === focusedCallIDRef.current) return
     if (call.id !== previousCallID) {
       callDetailGenerationRef.current += 1
@@ -1030,6 +1129,7 @@ export function TaskWorkspaceShell() {
     <SidebarProvider>
       <CallingDock
         platformOperator={workspace.platformOperator}
+        actorSubject={discovery.actor.subject}
         practiceID={practiceID}
         locations={practice.locations}
         callRefreshRevision={callRefreshRevision}
@@ -1050,11 +1150,15 @@ export function TaskWorkspaceShell() {
           locationScopeID={locationScopeID}
           tasks={tasks}
           messages={messageThreads}
+          engagements={engagements}
           mode={railMode}
           selectedTaskID={selectedTask?.id ?? ""}
           selectedThreadID={selectedThread?.id ?? ""}
           search={search}
+          taskState={taskState}
           ordering={ordering}
+          unreadOnly={unreadOnly}
+          engagementLoading={engagementLoading}
           loading={tasksLoading}
           messageLoading={messagesLoading}
           nextCursor={nextCursor}
@@ -1062,8 +1166,29 @@ export function TaskWorkspaceShell() {
           connection={connection}
           onModeChange={selectRailMode}
           onSearchChange={(value) => {
-            taskQueryGenerationRef.current += 1
             setSearch(value)
+            if (!value.trim() && viewRef.current === "engagement") {
+              setEngagements([])
+              setEngagementLoading(false)
+              setSelectedEngagement(undefined)
+              setView(
+                railModeRef.current === "tasks" && selectedTaskRef.current
+                  ? "task"
+                  : railModeRef.current === "messages" && selectedThreadRef.current
+                    ? "message"
+                    : "none",
+              )
+            }
+          }}
+          onSearchSubmit={submitPhoneSearch}
+          onEngagementSelect={selectEngagement}
+          onTaskStateChange={(state) => {
+            if (state === taskState) return
+            taskQueryGenerationRef.current += 1
+            taskQueryKeyRef.current = ""
+            hasLoadedTasksRef.current = false
+            taskStateRef.current = state
+            setTaskState(state)
           }}
           onOrderingChange={(value) => {
             taskQueryGenerationRef.current += 1
@@ -1074,6 +1199,7 @@ export function TaskWorkspaceShell() {
               value,
             )
           }}
+          onUnreadOnlyChange={setUnreadOnly}
           onTaskSelect={selectTask}
           onThreadSelect={selectMessageThread}
           onNewText={composeNewMessage}
@@ -1104,6 +1230,10 @@ export function TaskWorkspaceShell() {
               onSelect={selectWorkspaceScope}
             />
             <CallingAvailabilityControl />
+            <LiveCallsIndicator
+              calls={liveCalls}
+              groupByLocation={railMode === "tasks" && !locationScopeID}
+            />
             {workspace.platformOperator && !workspace.supportMode && (
               <SupportDialog
                 practiceID={practiceID}
@@ -1113,8 +1243,31 @@ export function TaskWorkspaceShell() {
               />
             )}
           </header>
-          {railMode === "messages" && view !== "call" ? (
+          {view === "engagement" && selectedEngagement ? (
+            <EngagementWorkspace
+              key={selectedEngagement.phone}
+              engagement={selectedEngagement}
+              practiceID={practiceID}
+              supportSessionID={workspace.supportMode?.id ?? ""}
+              canMutate={
+                !workspace.platformOperator || Boolean(workspace.supportMode)
+              }
+              revision={workspaceRevision}
+              onTaskCreated={(task) => updateTaskProjection(task, false)}
+              onTaskOpen={(task) => {
+                updateRailMode("tasks")
+                setSearch("")
+                setSettledSearch("")
+                updateTaskProjection(task)
+              }}
+              onCallOpen={(callID) => void openCallDetail(callID)}
+            />
+          ) : railMode === "messages" && view !== "call" ? (
             <MessageWorkspace
+              key={
+                selectedThread?.id ??
+                (composingNew ? `new:${locationID}` : `empty:${locationID}`)
+              }
               thread={selectedThread}
               composingNew={composingNew}
               practiceID={practiceID}
@@ -1123,6 +1276,7 @@ export function TaskWorkspaceShell() {
                 practice.locations.find((location) => location.id === locationID)
                   ?.name ?? "Office"
               }
+              locations={practice.locations}
               supportSessionID={workspace.supportMode?.id ?? ""}
               canMutate={
                 !workspace.platformOperator || Boolean(workspace.supportMode)
@@ -1161,7 +1315,9 @@ export function TaskWorkspaceShell() {
             <InteractionWorkspace
               task={selectedTask}
               activeCall={historicalCall ?? activeCall}
-              view={view === "message" ? "none" : view}
+              view={
+                view === "task" || view === "call" ? view : "none"
+              }
               supportSessionID={workspace.supportMode?.id ?? ""}
               canMutate={
                 !workspace.platformOperator || Boolean(workspace.supportMode)
@@ -1171,7 +1327,7 @@ export function TaskWorkspaceShell() {
               taskCallError={taskCallError}
               onTaskUpdated={(task) => {
                 updateTaskProjection(task)
-                void loadTasks()
+                void loadTasks("", false, true)
               }}
               onStartTaskCall={(task) => {
                 setTaskCallError("")
@@ -1303,18 +1459,17 @@ function taskOrderingKey(userSubject: string, practiceID: string) {
 function workspaceTaskQueryKey(
   practiceID: string,
   locationID: string,
-  search: string,
+  state: "OPEN" | "COMPLETED",
   ordering: TaskOrdering,
 ) {
-  return `${practiceID}:${locationID}:${search}:${ordering}`
+  return `${practiceID}:${locationID}:${state}:${ordering}`
 }
 
 function workspaceMessageQueryKey(
   practiceID: string,
   locationID: string,
-  search: string,
 ) {
-  return `${practiceID}:${locationID}:${search}`
+  return `${practiceID}:${locationID}`
 }
 
 function readTaskOrdering(
@@ -1324,7 +1479,117 @@ function readTaskOrdering(
   const stored = window.localStorage.getItem(
     taskOrderingKey(userSubject, practiceID),
   )
-  return stored === "priority" ? "priority" : "time"
+  return stored === "recent" ? "recent" : "priority"
+}
+
+function railModeKey(userSubject: string, practiceID: string) {
+  return `${railModeStorageKey}.${userSubject}.${practiceID}`
+}
+
+function readRailMode(userSubject: string, practiceID: string): RailMode {
+  return window.localStorage.getItem(railModeKey(userSubject, practiceID)) ===
+    "messages"
+    ? "messages"
+    : "tasks"
+}
+
+function LiveCallsIndicator({
+  calls,
+  groupByLocation,
+}: {
+  calls: LiveCall[]
+  groupByLocation: boolean
+}) {
+  const [copiedCallID, setCopiedCallID] = useState("")
+  if (calls.length === 0) return null
+  const groups = groupByLocation
+    ? Object.values(
+        calls.reduce<Record<string, { name: string; calls: LiveCall[] }>>(
+          (current, call) => {
+            current[call.locationId] ??= {
+              name: call.locationName,
+              calls: [],
+            }
+            current[call.locationId]!.calls.push(call)
+            return current
+          },
+          {},
+        ),
+      )
+    : [{ name: "", calls }]
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button size="sm" variant="outline" aria-label="Live calls" />
+        }
+      >
+        <PhoneCallIcon />
+        {calls.length} live
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-96">
+        <PopoverHeader>
+          <PopoverTitle>Live calls</PopoverTitle>
+          <PopoverDescription>
+            Informational only. No assignment or claim is implied.
+          </PopoverDescription>
+        </PopoverHeader>
+        <div className="mt-2 flex max-h-80 flex-col overflow-y-auto">
+          {groups.map((group) => (
+            <section key={group.name || "current"} className="border-b last:border-b-0">
+              {group.name && (
+                <h3 className="sticky top-0 bg-popover py-2 text-xs font-semibold text-muted-foreground">
+                  {group.name}
+                </h3>
+              )}
+              <div className="divide-y">
+                {group.calls.map((call) => (
+                  <div key={call.id} className="flex items-start gap-3 py-3 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium tabular-nums">
+                        {formatPhone(call.phone)} · {call.direction === "INBOUND" ? "Inbound" : "Outbound"}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {call.staffEmail || call.staffSubject}
+                        {!groupByLocation && ` · ${call.locationName}`}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Connected {new Date(call.connectedAt).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`Copy ${call.phone}`}
+                      title={copiedCallID === call.id ? "Copied" : "Copy phone"}
+                      onClick={() => {
+                        void navigator.clipboard.writeText(call.phone)
+                        setCopiedCallID(call.id)
+                        window.setTimeout(() => setCopiedCallID(""), 1500)
+                      }}
+                    >
+                      {copiedCallID === call.id ? <CheckIcon /> : <CopyIcon />}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function formatPhone(phone: string) {
+  const digits = phone.replace(/\D/g, "")
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  }
+  return phone
 }
 
 function SupportDialog({
