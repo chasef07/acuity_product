@@ -1489,9 +1489,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       const bridgeEventID = `e2e-task-destination-bridged-${taskOutbound.id}`
       try {
         const connectedResponse = takeoverPage.waitForResponse(
-          (response) =>
+          async (response) =>
             response.request().method() === "GET" &&
-            response.url() === callURL,
+            response.url() === callURL &&
+            ((await response.json()) as { state?: string }).state ===
+              "CONNECTED",
           { timeout: 750 },
         )
         await deliverProviderEvent(takeoverPage, {

@@ -18,6 +18,7 @@ const (
 	nonTransactionalMigrationHeader = "-- acuity:no-transaction"
 	migrationCompletionQueryHeader  = "-- acuity:complete-if-true"
 	migrationStatementSeparator     = "-- acuity:next-statement"
+	retiredMigrationHeader          = "-- acuity:retired"
 )
 
 // Apply runs every unapplied forward-only migration in filename order.
@@ -57,6 +58,12 @@ func Apply(ctx context.Context, pool *pgxpool.Pool) error {
 		sql, err := migrationFiles.ReadFile("sql/" + entry.Name())
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
+		}
+		if isRetiredMigration(string(sql)) {
+			if err := recordMigration(ctx, pool, entry.Name()); err != nil {
+				return err
+			}
+			continue
 		}
 		statements, nonTransactional, err := migrationStatements(string(sql))
 		if err != nil {
@@ -115,6 +122,11 @@ func ApplyRuntimeGrants(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("commit database grants: %w", err)
 	}
 	return nil
+}
+
+func isRetiredMigration(sql string) bool {
+	firstLine, _, _ := strings.Cut(sql, "\n")
+	return strings.TrimSpace(firstLine) == retiredMigrationHeader
 }
 
 func migrationStatements(

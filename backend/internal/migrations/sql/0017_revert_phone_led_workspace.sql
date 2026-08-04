@@ -2,6 +2,37 @@
 -- closed when new evidence cannot be represented by that earlier schema.
 DO $rollback$
 BEGIN
+    IF to_regclass('public.human_calling_staff_transfers') IS NULL THEN
+        IF to_regclass('public.work_task_interactions') IS NOT NULL
+            OR to_regclass('public.work_tasks_one_open_recovery_need_idx') IS NOT NULL
+            OR EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'human_calling_connection_attempts'
+                    AND column_name = 'staff_transfer_id'
+            )
+        THEN
+            RAISE EXCEPTION 'cannot roll back a partial PR #44 schema'
+                USING HINT = 'Restore the complete PR #44 schema, then retry the rollback.';
+        END IF;
+        RETURN;
+    END IF;
+
+    IF to_regclass('public.work_task_interactions') IS NULL
+        OR to_regclass('public.work_tasks_one_open_recovery_need_idx') IS NULL
+        OR NOT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+                AND table_name = 'human_calling_connection_attempts'
+                AND column_name = 'staff_transfer_id'
+        )
+    THEN
+        RAISE EXCEPTION 'cannot roll back a partial PR #44 schema'
+            USING HINT = 'Restore the complete PR #44 schema, then retry the rollback.';
+    END IF;
+
     IF EXISTS (SELECT 1 FROM human_calling_staff_transfers) THEN
         RAISE EXCEPTION 'cannot roll back PR #44 while staff transfer evidence exists'
             USING HINT = 'Review and preserve human_calling_staff_transfers before retrying.';
@@ -44,29 +75,29 @@ BEGIN
         RAISE EXCEPTION 'cannot roll back PR #44 while a Task has multiple voicemails'
             USING HINT = 'Reconcile duplicate voicemail Task ownership before retrying.';
     END IF;
+
+    DROP TABLE work_task_interactions;
+
+    DROP INDEX work_tasks_one_open_recovery_need_idx;
+
+    ALTER TABLE human_calling_connection_attempts
+        DROP COLUMN staff_transfer_id;
+
+    DROP TABLE human_calling_staff_transfers;
+
+    ALTER TABLE human_calling_voicemails
+        ADD CONSTRAINT human_calling_voicemails_task_id_key UNIQUE (task_id);
+
+    ALTER TABLE work_task_activities
+        DROP CONSTRAINT work_task_activities_kind_check,
+        ADD CONSTRAINT work_task_activities_kind_check CHECK (kind IN (
+            'TASK_CREATED',
+            'TITLE_CHANGED',
+            'TASK_COMPLETED',
+            'TASK_REOPENED'
+        ));
 END
 $rollback$;
-
-DROP TABLE work_task_interactions;
-
-DROP INDEX work_tasks_one_open_recovery_need_idx;
-
-ALTER TABLE human_calling_connection_attempts
-    DROP COLUMN staff_transfer_id;
-
-DROP TABLE human_calling_staff_transfers;
-
-ALTER TABLE human_calling_voicemails
-    ADD CONSTRAINT human_calling_voicemails_task_id_key UNIQUE (task_id);
-
-ALTER TABLE work_task_activities
-    DROP CONSTRAINT work_task_activities_kind_check,
-    ADD CONSTRAINT work_task_activities_kind_check CHECK (kind IN (
-        'TASK_CREATED',
-        'TITLE_CHANGED',
-        'TASK_COMPLETED',
-        'TASK_REOPENED'
-    ));
 
 CREATE OR REPLACE FUNCTION work_preserve_task_source()
 RETURNS trigger
