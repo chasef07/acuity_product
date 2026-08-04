@@ -212,11 +212,12 @@ type CallStateProvider interface {
 }
 
 type SoftphoneState struct {
-	SessionID      string
-	LeaseExpiresAt time.Time
-	Owner          bool
-	Available      bool
-	ActiveCallID   string
+	SessionID            string
+	LeaseExpiresAt       time.Time
+	Owner                bool
+	Available            bool
+	ActiveCallID         string
+	PendingOutcomeCallID string
 }
 
 type MediaToken struct {
@@ -330,6 +331,17 @@ type CallHistoryItem struct {
 type CallHistoryPage struct {
 	Items      []CallHistoryItem
 	NextCursor string
+}
+
+type LiveCall struct {
+	ID           string
+	LocationID   string
+	LocationName string
+	Phone        string
+	Direction    CallDirection
+	StaffSubject string
+	StaffEmail   string
+	ConnectedAt  time.Time
 }
 
 type OperatorTimeline struct {
@@ -698,11 +710,9 @@ func (m *Module) AcquireSoftphone(
 					'RINGING',
 					'CONNECTING',
 					'CONNECTED',
-					'RECONCILING',
-					'NEEDS_DISPOSITION'
+					'RECONCILING'
 				)
 			)
-			OR (winner_subject = $1 AND state = 'NEEDS_DISPOSITION')
 		FOR UPDATE
 	`, identity.Subject)
 	if err != nil {
@@ -889,8 +899,7 @@ func (m *Module) SetReadiness(
 							'PREPARING',
 							'RINGING',
 							'CONNECTED',
-							'RECONCILING',
-							'NEEDS_DISPOSITION'
+							'RECONCILING'
 						)
 				) THEN false
 				ELSE $7
@@ -946,25 +955,28 @@ func (m *Module) loadCurrentCallCapacity(
 ) error {
 	if err := m.pool.QueryRow(ctx, `
 		SELECT COALESCE((
-			SELECT id::text
-			FROM human_calling_calls
-			WHERE
-				(
+			SELECT capacity.call_id
+			FROM (
+				SELECT id::text AS call_id, updated_at
+				FROM human_calling_calls
+				WHERE
 					claimant_subject = $1
 					AND state IN (
 						'PREPARING',
 						'RINGING',
 						'CONNECTING',
 						'CONNECTED',
-						'RECONCILING',
-						'NEEDS_DISPOSITION'
+						'RECONCILING'
 					)
-				)
-				OR (winner_subject = $1 AND state = 'NEEDS_DISPOSITION')
-			ORDER BY
-				(state = 'NEEDS_DISPOSITION'),
-				updated_at DESC,
-				id
+				UNION ALL
+				SELECT transfer.call_id::text, transfer.updated_at
+				FROM human_calling_staff_transfers transfer
+				JOIN human_calling_calls call ON call.id = transfer.call_id
+				WHERE transfer.recipient_subject = $1
+					AND transfer.state = 'ACCEPTED'
+					AND call.state = 'CONNECTED'
+			) capacity
+			ORDER BY capacity.updated_at DESC, capacity.call_id
 			LIMIT 1
 		), '')
 	`, subject).Scan(&state.ActiveCallID); err != nil {
@@ -972,6 +984,17 @@ func (m *Module) loadCurrentCallCapacity(
 	}
 	if state.ActiveCallID != "" {
 		state.Available = false
+	}
+	if err := m.pool.QueryRow(ctx, `
+		SELECT COALESCE((
+			SELECT id::text
+			FROM human_calling_calls
+			WHERE winner_subject = $1 AND state = 'NEEDS_DISPOSITION'
+			ORDER BY updated_at DESC, id
+			LIMIT 1
+		), '')
+	`, subject).Scan(&state.PendingOutcomeCallID); err != nil {
+		return fmt.Errorf("read pending Call outcome: %w", err)
 	}
 	return nil
 }
@@ -1578,11 +1601,9 @@ func (m *Module) ListOffers(
 					AND state IN (
 						'CONNECTING',
 						'CONNECTED',
-						'RECONCILING',
-						'NEEDS_DISPOSITION'
+						'RECONCILING'
 					)
 				)
-				OR (winner_subject = $1 AND state = 'NEEDS_DISPOSITION')
 		)
 	`, identity.Subject).Scan(&hasCurrentCall); err != nil {
 		return nil, fmt.Errorf("read current Call capacity: %w", err)
@@ -1807,24 +1828,6 @@ func (m *Module) acceptOfferTransaction(
 		}
 		return AcceptResult{Status: AcceptIneligible, CallID: callID, State: state}, nil
 	}
-	var needsDisposition bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM human_calling_calls
-			WHERE winner_subject = $1
-				AND state = 'NEEDS_DISPOSITION'
-		)
-	`, identity.Subject).Scan(&needsDisposition); err != nil {
-		return AcceptResult{}, fmt.Errorf("read pending Call disposition: %w", err)
-	}
-	if needsDisposition {
-		if err := tx.Commit(ctx); err != nil {
-			return AcceptResult{}, fmt.Errorf("commit disposition-ineligible offer acceptance: %w", err)
-		}
-		return AcceptResult{Status: AcceptIneligible, CallID: callID, State: state}, nil
-	}
-
 	var sipUsername string
 	if err := tx.QueryRow(ctx, `
 		SELECT provider_sip_username
@@ -1999,10 +2002,31 @@ func (m *Module) ReadCall(
 		return Call{}, ErrDenied
 	}
 	recoveryVisible := call.State == CallVoicemail || call.State == CallMissed
+	transferAttemptID := ""
 	if !recoveryVisible &&
 		call.ClaimantSubject != identity.Subject &&
 		call.WinnerSubject != identity.Subject {
+		err := m.pool.QueryRow(ctx, `
+			SELECT attempt.id::text
+			FROM human_calling_staff_transfers transfer
+			JOIN human_calling_connection_attempts attempt
+				ON attempt.staff_transfer_id = transfer.id
+			WHERE transfer.call_id = $1
+				AND transfer.recipient_subject = $2
+				AND transfer.state = 'ACCEPTED'
+		`, call.ID, identity.Subject).Scan(&transferAttemptID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Call{}, fmt.Errorf("authorize accepted staff transfer: %w", err)
+		}
+	}
+	if !recoveryVisible &&
+		call.ClaimantSubject != identity.Subject &&
+		call.WinnerSubject != identity.Subject &&
+		transferAttemptID == "" {
 		return Call{}, ErrDenied
+	}
+	if transferAttemptID != "" {
+		call.currentAttemptID = transferAttemptID
 	}
 	if call.currentAttemptID != "" &&
 		(call.State == CallPreparing ||
@@ -2143,6 +2167,109 @@ func (m *Module) QueryCallHistory(
 		return CallHistoryPage{}, fmt.Errorf("commit Call history: %w", err)
 	}
 	return CallHistoryPage{Items: items, NextCursor: nextCursor}, nil
+}
+
+func (m *Module) ListLiveCalls(
+	ctx context.Context,
+	identity access.Identity,
+	practiceID string,
+	locationID string,
+) ([]LiveCall, error) {
+	practiceID = strings.TrimSpace(practiceID)
+	locationID = strings.TrimSpace(locationID)
+	if m.pool == nil || m.access == nil || practiceID == "" {
+		return nil, ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin live Call query: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	authorization, err := m.access.LockReadAuthorization(
+		ctx,
+		tx,
+		identity,
+		practiceID,
+		locationID,
+	)
+	if err != nil {
+		return nil, ErrDenied
+	}
+	locationIDs := make([]string, 0, len(authorization.Locations))
+	if locationID != "" {
+		locationIDs = append(locationIDs, locationID)
+	} else {
+		for _, location := range authorization.Locations {
+			locationIDs = append(locationIDs, location.ID)
+		}
+	}
+	if len(locationIDs) == 0 {
+		return nil, ErrDenied
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT
+			call.id::text,
+			call.location_id::text,
+			location.name,
+			COALESCE(handoff.phone, call.destination_phone, ''),
+			call.direction,
+			COALESCE(
+				call.winner_subject,
+				call.initiating_subject,
+				call.claimant_subject,
+				''
+			),
+			COALESCE(membership.email, ''),
+			call.connected_at
+		FROM human_calling_calls call
+		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		JOIN access_locations location
+			ON location.practice_id = call.practice_id
+			AND location.id = call.location_id
+		LEFT JOIN access_memberships membership
+			ON membership.practice_id = call.practice_id
+			AND membership.user_subject = COALESCE(
+				call.winner_subject,
+				call.initiating_subject,
+				call.claimant_subject
+			)
+		WHERE call.practice_id = $1
+			AND call.location_id::text = ANY($2::text[])
+			AND call.state IN ('CONNECTED', 'RECONCILING')
+			AND call.connected_at IS NOT NULL
+			AND call.ended_at IS NULL
+		ORDER BY location.name, call.connected_at, call.id
+	`, practiceID, locationIDs)
+	if err != nil {
+		return nil, fmt.Errorf("query live Calls: %w", err)
+	}
+	liveCalls := []LiveCall{}
+	for rows.Next() {
+		var call LiveCall
+		if err := rows.Scan(
+			&call.ID,
+			&call.LocationID,
+			&call.LocationName,
+			&call.Phone,
+			&call.Direction,
+			&call.StaffSubject,
+			&call.StaffEmail,
+			&call.ConnectedAt,
+		); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan live Call: %w", err)
+		}
+		liveCalls = append(liveCalls, call)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate live Calls: %w", err)
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit live Call query: %w", err)
+	}
+	return liveCalls, nil
 }
 
 type callHistoryCursor struct {
@@ -3250,7 +3377,10 @@ func (m *Module) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
 	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_calls
 		SET
-			state = 'NEEDS_DISPOSITION',
+			state = CASE
+				WHEN connected_at IS NULL THEN 'UNANSWERED'
+				ELSE 'NEEDS_DISPOSITION'
+			END,
 			provider_termination = 'PROVIDER_CONFIRMED_NOT_ALIVE',
 			ended_at = $2,
 			version = version + 1,
@@ -3301,6 +3431,13 @@ func (m *Module) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
 }
 
 func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
+	expired, err := m.expireNextStaffTransfer(ctx, m.now())
+	if err != nil {
+		return false, err
+	}
+	if expired {
+		return true, nil
+	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin provider command claim: %w", err)
@@ -3367,13 +3504,25 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 					AND call.state NOT IN ('OFFERING', 'CONNECTING', 'RECONCILING'))
 				OR (command.action = 'DIAL_STAFF'
 					AND (
-						call.state NOT IN ('PREPARING', 'CONNECTING', 'RECONCILING')
-						OR command.attempt_id IS DISTINCT FROM call.current_attempt_id
-						OR EXISTS (
+						EXISTS (
 							SELECT 1
 							FROM human_calling_connection_attempts attempt
 							WHERE attempt.id = command.attempt_id
 								AND attempt.ended_at IS NOT NULL
+						)
+						OR (
+							NOT EXISTS (
+								SELECT 1
+								FROM human_calling_connection_attempts attempt
+								JOIN human_calling_staff_transfers transfer
+									ON transfer.id = attempt.staff_transfer_id
+									AND transfer.state = 'ACCEPTED'
+								WHERE attempt.id = command.attempt_id
+							)
+							AND (
+								call.state NOT IN ('PREPARING', 'CONNECTING', 'RECONCILING')
+								OR command.attempt_id IS DISTINCT FROM call.current_attempt_id
+							)
 						)
 					))
 				OR (command.action = 'DIAL_DESTINATION'
@@ -3779,21 +3928,28 @@ func (m *Module) finishCommandTransaction(
 		if command.AttemptID == "" {
 			return "", fmt.Errorf("Dial command omitted connection attempt identity")
 		}
-		var direction CallDirection
-		var entryPoint CallEntryPoint
-		if err := tx.QueryRow(ctx, `
+		handledTransfer, err := m.finishStaffTransferDial(
+			ctx, tx, command, *callID, callPracticeID, result, executeErr, state,
+		)
+		if err != nil {
+			return "", err
+		}
+		if !handledTransfer {
+			var direction CallDirection
+			var entryPoint CallEntryPoint
+			if err := tx.QueryRow(ctx, `
 			SELECT direction, entry_point
 			FROM human_calling_calls
 			WHERE id = $1
 		`, *callID).Scan(&direction, &entryPoint); err != nil {
-			return "", fmt.Errorf("read Dial Call direction: %w", err)
-		}
-		if executeErr == nil {
-			if result.CallControlID == "" || result.CallLegID == "" {
-				return "", fmt.Errorf("successful Dial omitted provider leg identity")
+				return "", fmt.Errorf("read Dial Call direction: %w", err)
 			}
-			var attemptEndedAt *time.Time
-			if err := tx.QueryRow(ctx, `
+			if executeErr == nil {
+				if result.CallControlID == "" || result.CallLegID == "" {
+					return "", fmt.Errorf("successful Dial omitted provider leg identity")
+				}
+				var attemptEndedAt *time.Time
+				if err := tx.QueryRow(ctx, `
 				UPDATE human_calling_connection_attempts
 				SET
 					staff_call_control_id = COALESCE(staff_call_control_id, $2),
@@ -3802,14 +3958,14 @@ func (m *Module) finishCommandTransaction(
 				WHERE id = $1
 				RETURNING ended_at
 			`,
-				command.AttemptID,
-				result.CallControlID,
-				result.CallLegID,
-				m.now(),
-			).Scan(&attemptEndedAt); err != nil {
-				return "", fmt.Errorf("record connection-attempt staff leg: %w", err)
-			}
-			callTag, err := tx.Exec(ctx, `
+					command.AttemptID,
+					result.CallControlID,
+					result.CallLegID,
+					m.now(),
+				).Scan(&attemptEndedAt); err != nil {
+					return "", fmt.Errorf("record connection-attempt staff leg: %w", err)
+				}
+				callTag, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
 				SET
 					expected_staff_call_control_id = $2,
@@ -3823,19 +3979,19 @@ func (m *Module) finishCommandTransaction(
 					AND state IN ('PREPARING', 'CONNECTING', 'RECONCILING')
 					AND $6::timestamptz IS NULL
 			`,
-				*callID,
-				result.CallControlID,
-				result.CallLegID,
-				m.now(),
-				command.AttemptID,
-				attemptEndedAt,
-			)
-			if err != nil {
-				return "", fmt.Errorf("record expected staff provider leg: %w", err)
-			}
-			if callTag.RowsAffected() == 0 {
-				var alreadyConnected bool
-				if err := tx.QueryRow(ctx, `
+					*callID,
+					result.CallControlID,
+					result.CallLegID,
+					m.now(),
+					command.AttemptID,
+					attemptEndedAt,
+				)
+				if err != nil {
+					return "", fmt.Errorf("record expected staff provider leg: %w", err)
+				}
+				if callTag.RowsAffected() == 0 {
+					var alreadyConnected bool
+					if err := tx.QueryRow(ctx, `
 					SELECT EXISTS (
 						SELECT 1
 						FROM human_calling_calls
@@ -3846,49 +4002,49 @@ func (m *Module) finishCommandTransaction(
 							AND expected_staff_call_leg_id = $4
 					)
 				`,
-					*callID,
-					command.AttemptID,
-					result.CallControlID,
-					result.CallLegID,
-				).Scan(&alreadyConnected); err != nil {
-					return "", fmt.Errorf("reconcile Dial result after bridge: %w", err)
-				}
-				if !alreadyConnected {
-					cleanupOwner := ""
-					if userSubject != nil {
-						cleanupOwner = *userSubject
-					}
-					if err := ensureHangupCommand(
-						ctx,
-						tx,
 						*callID,
 						command.AttemptID,
-						cleanupOwner,
 						result.CallControlID,
-						"staff",
-						m.now(),
-					); err != nil {
-						return "", err
+						result.CallLegID,
+					).Scan(&alreadyConnected); err != nil {
+						return "", fmt.Errorf("reconcile Dial result after bridge: %w", err)
+					}
+					if !alreadyConnected {
+						cleanupOwner := ""
+						if userSubject != nil {
+							cleanupOwner = *userSubject
+						}
+						if err := ensureHangupCommand(
+							ctx,
+							tx,
+							*callID,
+							command.AttemptID,
+							cleanupOwner,
+							result.CallControlID,
+							"staff",
+							m.now(),
+						); err != nil {
+							return "", err
+						}
 					}
 				}
-			}
-		} else if state == "AMBIGUOUS" {
-			if _, err := tx.Exec(ctx, `
+			} else if state == "AMBIGUOUS" {
+				if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
 				SET state = 'RECONCILING', version = version + 1, updated_at = $2
 				WHERE id = $1
 					AND current_attempt_id = $3
 					AND state IN ('PREPARING', 'CONNECTING')
 			`, *callID, m.now(), command.AttemptID); err != nil {
-				return "", fmt.Errorf("mark ambiguous Call reconciling: %w", err)
-			}
-		} else {
-			if direction == CallOutbound {
-				nextState := CallResolved
-				if entryPoint == CallEntryStandalone {
-					nextState = CallNeedsDisposition
+					return "", fmt.Errorf("mark ambiguous Call reconciling: %w", err)
 				}
-				if _, err := tx.Exec(ctx, `
+			} else {
+				if direction == CallOutbound {
+					nextState := CallResolved
+					if entryPoint == CallEntryStandalone {
+						nextState = CallUnanswered
+					}
+					if _, err := tx.Exec(ctx, `
 					UPDATE human_calling_calls
 					SET
 						state = $4,
@@ -3900,9 +4056,9 @@ func (m *Module) finishCommandTransaction(
 						AND current_attempt_id = $3
 						AND state IN ('PREPARING', 'RECONCILING')
 				`, *callID, m.now(), command.AttemptID, nextState); err != nil {
-					return "", fmt.Errorf("terminate failed outbound media preparation: %w", err)
-				}
-				if _, err := tx.Exec(ctx, `
+						return "", fmt.Errorf("terminate failed outbound media preparation: %w", err)
+					}
+					if _, err := tx.Exec(ctx, `
 					UPDATE human_calling_connection_attempts
 					SET
 						ended_at = COALESCE(ended_at, $2),
@@ -3910,37 +4066,37 @@ func (m *Module) finishCommandTransaction(
 						updated_at = $2
 					WHERE id = $1
 				`, command.AttemptID, m.now()); err != nil {
-					return "", fmt.Errorf("end failed outbound media attempt: %w", err)
-				}
-				if err := m.restoreOutboundAvailability(
-					ctx,
-					tx,
-					*callID,
-					m.now(),
-				); err != nil {
-					return "", err
-				}
-				if _, err := m.access.RecordWorkspaceChange(
-					ctx,
-					tx,
-					callPracticeID,
-				); err != nil {
-					return "", err
-				}
-			} else {
-				var deadline time.Time
-				if err := tx.QueryRow(ctx, `
+						return "", fmt.Errorf("end failed outbound media attempt: %w", err)
+					}
+					if err := m.restoreOutboundAvailability(
+						ctx,
+						tx,
+						*callID,
+						m.now(),
+					); err != nil {
+						return "", err
+					}
+					if _, err := m.access.RecordWorkspaceChange(
+						ctx,
+						tx,
+						callPracticeID,
+					); err != nil {
+						return "", err
+					}
+				} else {
+					var deadline time.Time
+					if err := tx.QueryRow(ctx, `
 				SELECT offer_deadline
 				FROM human_calling_calls
 				WHERE id = $1
 			`, *callID).Scan(&deadline); err != nil {
-					return "", fmt.Errorf("load definitively failed Call: %w", err)
-				}
-				nextState := CallUnanswered
-				if m.now().Before(deadline) {
-					nextState = CallOffering
-				}
-				callTag, err := tx.Exec(ctx, `
+						return "", fmt.Errorf("load definitively failed Call: %w", err)
+					}
+					nextState := CallUnanswered
+					if m.now().Before(deadline) {
+						nextState = CallOffering
+					}
+					callTag, err := tx.Exec(ctx, `
 				UPDATE human_calling_calls
 				SET
 					state = $2,
@@ -3962,10 +4118,10 @@ func (m *Module) finishCommandTransaction(
 					AND current_attempt_id = $4
 					AND state = 'CONNECTING'
 			`, *callID, nextState, m.now(), command.AttemptID)
-				if err != nil {
-					return "", fmt.Errorf("reopen definitively failed Call: %w", err)
-				}
-				if _, err := tx.Exec(ctx, `
+					if err != nil {
+						return "", fmt.Errorf("reopen definitively failed Call: %w", err)
+					}
+					if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_connection_attempts
 				SET
 					ended_at = COALESCE(ended_at, $2),
@@ -3973,26 +4129,27 @@ func (m *Module) finishCommandTransaction(
 					updated_at = $2
 				WHERE id = $1
 			`, command.AttemptID, m.now()); err != nil {
-					return "", fmt.Errorf("end rejected connection attempt: %w", err)
-				}
-				if callTag.RowsAffected() == 1 && nextState == CallUnanswered {
-					if err := insertCommand(
-						ctx,
-						tx,
-						*callID,
-						"",
-						CommandHangup,
-						command.TargetID,
-						map[string]any{
-							"client_state": opaqueClientState(*callID, "caller"),
-						},
-						m.now(),
-					); err != nil {
+						return "", fmt.Errorf("end rejected connection attempt: %w", err)
+					}
+					if callTag.RowsAffected() == 1 && nextState == CallUnanswered {
+						if err := insertCommand(
+							ctx,
+							tx,
+							*callID,
+							"",
+							CommandHangup,
+							command.TargetID,
+							map[string]any{
+								"client_state": opaqueClientState(*callID, "caller"),
+							},
+							m.now(),
+						); err != nil {
+							return "", err
+						}
+					}
+					if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
 						return "", err
 					}
-				}
-				if _, err := m.access.RecordWorkspaceChange(ctx, tx, callPracticeID); err != nil {
-					return "", err
 				}
 			}
 		}
@@ -4046,7 +4203,7 @@ func (m *Module) finishCommandTransaction(
 			`, *callID).Scan(&entryPoint); err != nil {
 				return "", fmt.Errorf("read failed outbound entry point: %w", err)
 			}
-			nextState := CallNeedsDisposition
+			nextState := CallUnanswered
 			if entryPoint == CallEntryTask {
 				nextState = CallResolved
 			}
@@ -4889,6 +5046,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	}
 
 	var attemptID, claimantSubject, claimantSession, staffControlID, staffLegID string
+	var staffTransferID string
 	var attemptEndedAt *time.Time
 	attemptQuery := `
 		SELECT
@@ -4897,6 +5055,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			claimant_session_id,
 			COALESCE(staff_call_control_id, ''),
 			COALESCE(staff_call_leg_id, ''),
+			COALESCE(staff_transfer_id::text, ''),
 			ended_at
 		FROM human_calling_connection_attempts
 		WHERE call_id = $1
@@ -4943,6 +5102,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		&claimantSession,
 		&staffControlID,
 		&staffLegID,
+		&staffTransferID,
 		&attemptEndedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -5052,7 +5212,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 
 	var winningAttemptID string
 	var acceptedAt, bridgeAt time.Time
-	if err := tx.QueryRow(ctx, `
+	winningAttemptQuery := `
 		SELECT
 			id::text,
 			claimant_subject,
@@ -5063,11 +5223,14 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			ended_at,
 			created_at
 		FROM human_calling_connection_attempts
-		WHERE call_id = $1 AND bridge_occurred_at IS NOT NULL
+		WHERE call_id = $1
+			AND bridge_occurred_at IS NOT NULL
+			AND ($2 = '' OR staff_transfer_id = $2::uuid)
 		ORDER BY bridge_occurred_at, created_at, id
 		LIMIT 1
 		FOR UPDATE
-	`, callID).Scan(
+	`
+	if err := tx.QueryRow(ctx, winningAttemptQuery, callID, staffTransferID).Scan(
 		&winningAttemptID,
 		&claimantSubject,
 		&claimantSession,
@@ -5078,6 +5241,26 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		&acceptedAt,
 	); err != nil {
 		return fmt.Errorf("select provider-confirmed winning attempt: %w", err)
+	}
+	if staffTransferID != "" {
+		var transferState StaffTransferState
+		if err := tx.QueryRow(ctx, `
+			SELECT state
+			FROM human_calling_staff_transfers
+			WHERE id = $1
+			FOR UPDATE
+		`, staffTransferID).Scan(&transferState); err != nil {
+			return fmt.Errorf("lock bridged staff transfer: %w", err)
+		}
+		if transferState != StaffTransferAccepted {
+			if err := ensureHangupCommand(
+				ctx, tx, callID, winningAttemptID, claimantSubject,
+				staffControlID, "staff", m.now(),
+			); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
 	}
 	if currentConnectedAt != nil &&
 		!bridgeAt.Before(*currentConnectedAt) &&
@@ -5131,7 +5314,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			expected_staff_call_control_id = $3,
 			expected_staff_call_leg_id = $4,
 			provider_termination = NULL,
-			connected_at = $2,
+			connected_at = COALESCE(connected_at, $2),
 			ended_at = CASE WHEN $8::timestamptz IS NOT NULL THEN $8 ELSE ended_at END,
 			version = version + 1,
 			updated_at = $9
@@ -5150,13 +5333,33 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	); err != nil {
 		return fmt.Errorf("project provider-confirmed bridge: %w", err)
 	}
+	if staffTransferID != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_staff_transfers
+			SET state = 'COMPLETED', completed_at = $2, updated_at = $2
+			WHERE id = $1 AND state = 'ACCEPTED'
+		`, staffTransferID, bridgeAt); err != nil {
+			return fmt.Errorf("complete provider-confirmed staff transfer: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_softphone_leases
+			SET desired_available = true, version = version + 1, updated_at = $3
+			WHERE user_subject = $1 AND session_id = $2
+		`, currentClaimant, currentSession, m.now()); err != nil {
+			return fmt.Errorf("restore transferring softphone: %w", err)
+		}
+	}
 
+	timelineKind := "call.connected"
+	if staffTransferID != "" {
+		timelineKind = "transfer.completed"
+	}
 	if err := appendTimeline(
 		ctx,
 		tx,
 		callID,
 		practiceID,
-		"call.connected",
+		timelineKind,
 		claimantSubject,
 		fact.EventID,
 		"",
@@ -5199,6 +5402,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	var currentClaimant, currentSession string
 	var state CallState
 	var deadline time.Time
+	var connectedAt *time.Time
 	clientState, hasClientState := parseOpaqueClientState(fact.ClientState)
 	query := `
 		SELECT
@@ -5206,6 +5410,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			c.practice_id::text,
 			c.state,
 			c.offer_deadline,
+			c.connected_at,
 			c.caller_call_control_id,
 			COALESCE(c.expected_staff_call_control_id, ''),
 			COALESCE(c.claimant_subject, ''),
@@ -5233,6 +5438,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 				practice_id::text,
 				state,
 				offer_deadline,
+				connected_at,
 				caller_call_control_id,
 				COALESCE(expected_staff_call_control_id, ''),
 				COALESCE(claimant_subject, ''),
@@ -5249,6 +5455,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 		&practiceID,
 		&state,
 		&deadline,
+		&connectedAt,
 		&callerControlID,
 		&currentStaffControlID,
 		&currentClaimant,
@@ -5263,6 +5470,13 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	}
 
 	callerHangup := fact.CallControlID == callerControlID
+	if callerHangup {
+		if err := m.terminateStaffTransfersForCallerHangup(
+			ctx, tx, callID, practiceID, fact.OccurredAt,
+		); err != nil {
+			return err
+		}
+	}
 	var attemptID, attemptClaimant, attemptSession string
 	if !callerHangup || currentClaimant != "" {
 		err := tx.QueryRow(ctx, `
@@ -5366,16 +5580,20 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 		if !callerHangup && !currentAttempt {
 			break
 		}
+		nextState := CallNeedsDisposition
+		if connectedAt == nil {
+			nextState = CallUnanswered
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_calls
 			SET
-				state = 'NEEDS_DISPOSITION',
-				provider_termination = NULLIF($2, ''),
-				ended_at = $3,
+				state = $2,
+				provider_termination = NULLIF($3, ''),
+				ended_at = $4,
 				version = version + 1,
-				updated_at = $3
+				updated_at = $4
 			WHERE id = $1
-		`, callID, fact.HangupCause, fact.OccurredAt); err != nil {
+		`, callID, nextState, fact.HangupCause, fact.OccurredAt); err != nil {
 			return fmt.Errorf("project connected Call termination: %w", err)
 		}
 	case CallConnecting, CallReconciling:
@@ -5567,7 +5785,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(c.retry_of_call_id::text, ''),
 			(
 				c.direction = 'OUTBOUND'
-				AND c.state IN ('RESOLVED', 'RECONCILING')
+				AND c.state IN ('UNANSWERED', 'RESOLVED', 'RECONCILING')
 				AND (
 					c.entry_point = 'STANDALONE'
 					OR EXISTS (
