@@ -1,3 +1,6 @@
+-- acuity:retired
+-- PR #44 was rolled back. Current runners record this migration without
+-- executing it; the body remains available to model already-deployed schemas.
 -- One Task may be supported by multiple communication Interactions. Keep the
 -- original work_tasks.call_id as immutable source compatibility while this
 -- relation becomes the authoritative attachment set.

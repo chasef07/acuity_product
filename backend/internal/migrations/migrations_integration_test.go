@@ -238,6 +238,175 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	}
 }
 
+func TestRetiredPhoneLedWorkspaceMigrationPreservesRecoveryTasks(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000901',
+			'retired-migration-practice',
+			'Retired Migration Practice'
+		);
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES (
+			'00000000-0000-0000-0000-000000000902',
+			'00000000-0000-0000-0000-000000000901',
+			'retired-migration-location',
+			'Retired Migration Location'
+		);
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, token_hash, phone, expires_at
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000911',
+				'retired-migration-test',
+				'00000000-0000-0000-0000-000000000901',
+				'00000000-0000-0000-0000-000000000902',
+				'retired-migration-source-one',
+				'retired-migration-key-one',
+				'\x01',
+				'\x02',
+				'+15555550101',
+				now() + interval '1 hour'
+			),
+			(
+				'00000000-0000-0000-0000-000000000912',
+				'retired-migration-test',
+				'00000000-0000-0000-0000-000000000901',
+				'00000000-0000-0000-0000-000000000902',
+				'retired-migration-source-two',
+				'retired-migration-key-two',
+				'\x03',
+				'\x04',
+				'+15555550101',
+				now() + interval '1 hour'
+			);
+		INSERT INTO human_calling_calls (
+			id, handoff_id, practice_id, location_id, state, offer_deadline,
+			caller_call_control_id, caller_call_leg_id, call_session_id
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000921',
+				'00000000-0000-0000-0000-000000000911',
+				'00000000-0000-0000-0000-000000000901',
+				'00000000-0000-0000-0000-000000000902',
+				'OFFERING',
+				now() + interval '1 minute',
+				'retired-migration-control-one',
+				'retired-migration-leg-one',
+				'retired-migration-session-one'
+			),
+			(
+				'00000000-0000-0000-0000-000000000922',
+				'00000000-0000-0000-0000-000000000912',
+				'00000000-0000-0000-0000-000000000901',
+				'00000000-0000-0000-0000-000000000902',
+				'OFFERING',
+				now() + interval '1 minute',
+				'retired-migration-control-two',
+				'retired-migration-leg-two',
+				'retired-migration-session-two'
+			);
+		INSERT INTO work_tasks (
+			id, practice_id, location_id, call_id, phone, title, state, origin,
+			urgency, created_by_kind, created_by_subject, created_at, updated_at,
+			recovery_outcome
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000931',
+				'00000000-0000-0000-0000-000000000901',
+				'00000000-0000-0000-0000-000000000902',
+				'00000000-0000-0000-0000-000000000921',
+				'+15555550101',
+				'Review missed call',
+				'OPEN',
+				'MISSED_CALL_RECOVERY',
+				'normal',
+				'SERVICE',
+				'retired-migration-test',
+				now() - interval '1 minute',
+				now() - interval '1 minute',
+				'MISSED_CALL'
+			),
+			(
+				'00000000-0000-0000-0000-000000000932',
+				'00000000-0000-0000-0000-000000000901',
+				'00000000-0000-0000-0000-000000000902',
+				'00000000-0000-0000-0000-000000000922',
+				'+15555550101',
+				'Review voicemail',
+				'OPEN',
+				'VOICEMAIL_RECOVERY',
+				'normal',
+				'SERVICE',
+				'retired-migration-test',
+				now(),
+				now(),
+				'VOICEMAIL'
+			);
+		INSERT INTO work_task_activities (
+			id, task_id, task_version, kind, actor_subject, actor_email, occurred_at
+		)
+		VALUES
+			(
+				'00000000-0000-0000-0000-000000000941',
+				'00000000-0000-0000-0000-000000000931',
+				1,
+				'TASK_CREATED',
+				'retired-migration-test',
+				'retired-migration@example.com',
+				now() - interval '1 minute'
+			),
+			(
+				'00000000-0000-0000-0000-000000000942',
+				'00000000-0000-0000-0000-000000000932',
+				1,
+				'TASK_CREATED',
+				'retired-migration-test',
+				'retired-migration@example.com',
+				now()
+			);
+		DELETE FROM schema_migrations
+		WHERE name IN (
+			'0016_phone_led_workspace.sql',
+			'0017_revert_phone_led_workspace.sql'
+		);
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		t.Fatalf("seed migration 0015 state: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply retired phone-led workspace migration: %v", err)
+	}
+	var taskCount int
+	var activityCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM work_tasks WHERE id IN (
+				'00000000-0000-0000-0000-000000000931',
+				'00000000-0000-0000-0000-000000000932'
+			)),
+			(SELECT count(*) FROM work_task_activities WHERE id IN (
+				'00000000-0000-0000-0000-000000000941',
+				'00000000-0000-0000-0000-000000000942'
+			))
+	`).Scan(&taskCount, &activityCount); err != nil {
+		t.Fatalf("count preserved recovery evidence: %v", err)
+	}
+	if taskCount != 2 || activityCount != 2 {
+		t.Fatalf(
+			"preserved recovery evidence = %d Tasks and %d Activities, want 2 and 2",
+			taskCount,
+			activityCount,
+		)
+	}
+}
+
 func TestPhoneLedWorkspaceRollbackFailsClosedBeforeDroppingEvidence(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
