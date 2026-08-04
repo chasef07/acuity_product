@@ -186,6 +186,10 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		},
 		"acuity_portal": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
+			`SELECT sender, messaging_profile_id
+				 FROM messaging_location_configurations
+				 WHERE false
+				 FOR SHARE`,
 			`SELECT id, expires_at, input_fingerprint
 				 FROM human_calling_handoffs
 				 WHERE false
@@ -620,6 +624,12 @@ func expectedColumnPrivileges() map[string]bool {
 		"actor_subject",
 		"idempotency_key",
 		"input_fingerprint",
+	)
+	grant(
+		"acuity_portal",
+		"public.messaging_location_configurations",
+		"UPDATE",
+		"updated_at",
 	)
 	grant(
 		"acuity_portal",

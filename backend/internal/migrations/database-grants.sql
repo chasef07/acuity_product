@@ -109,6 +109,10 @@ GRANT UPDATE ON TABLE
 TO acuity_portal;
 
 GRANT UPDATE (updated_at)
+ON TABLE public.messaging_location_configurations
+TO acuity_portal;
+
+GRANT UPDATE (updated_at)
 ON TABLE public.messaging_threads
 TO acuity_portal;
 
