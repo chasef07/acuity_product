@@ -17,7 +17,6 @@ import {
   PaperclipIcon,
   PhoneCallIcon,
   RefreshCwIcon,
-  SearchIcon,
   SendIcon,
   XIcon,
 } from "lucide-react"
@@ -26,15 +25,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
 import { portalClient } from "@/lib/api/client"
 import {
   createMessageFollowUpTask,
-  getEngagementTimeline,
   getMessageAttachment,
   getMessageThreadTimeline,
-  getTaskEngagementHistory,
   markMessageThreadRead,
   retryInboundMessageAttachment,
   sendMessage,
@@ -43,7 +39,6 @@ import {
 } from "@/lib/api/generated/sdk.gen"
 import type {
   ConversationTimelineItem,
-  EngagementSummary,
   Message,
   MessageAttachment,
   MessageThreadSummary,
@@ -68,7 +63,6 @@ type MessageWorkspaceProps = {
   practiceID: string
   locationID: string
   locationName: string
-  locations: Array<{ id: string; name: string }>
   supportSessionID: string
   canMutate: boolean
   revision: number
@@ -80,107 +74,12 @@ type MessageWorkspaceProps = {
   onCallOpen: (callID: string) => void
 }
 
-type TimelineSource =
-  | { kind: "task"; taskID: string }
-  | { kind: "engagement"; practiceID: string; phone: string }
-
-export function EngagementWorkspace({
-  engagement,
-  practiceID,
-  supportSessionID,
-  canMutate,
-  revision,
-  onTaskCreated,
-  onTaskOpen,
-  onCallOpen,
-}: {
-  engagement: EngagementSummary
-  practiceID: string
-  supportSessionID: string
-  canMutate: boolean
-  revision: number
-  onTaskCreated: (task: Task) => void
-  onTaskOpen: (task: Task) => void
-  onCallOpen: (callID: string) => void
-}) {
-  const defaultRoute =
-    engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
-  const [route, setRoute] = useState(defaultRoute)
-  const routeName =
-    engagement.locations.find((location) => location.id === route)?.name ??
-    "Choose sender route"
-  return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">Engagement History</Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                Unverified phone context
-              </span>
-            </div>
-            <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
-              {formatPhone(engagement.phone)}
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {engagement.displayName ? `${engagement.displayName} · ` : ""}
-              {engagement.locations.map((location) => location.name).join(" · ")}
-              {engagement.openTaskCount > 0
-                ? ` · ${engagement.openTaskCount} open ${engagement.openTaskCount === 1 ? "Task" : "Tasks"}`
-                : ""}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {engagement.unread && <Badge variant="secondary">Unread</Badge>}
-            <NativeSelect
-              aria-label="Sender route"
-              value={route}
-              onChange={(event) => setRoute(event.target.value)}
-            >
-              <NativeSelectOption value="" disabled>
-                Choose sender route
-              </NativeSelectOption>
-              {engagement.locations.map((location) => (
-                <NativeSelectOption key={location.id} value={location.id}>
-                  Send from {location.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
-        </div>
-      </header>
-      <MessageConversation
-        timelineSource={{
-          kind: "engagement",
-          practiceID,
-          phone: engagement.phone,
-        }}
-        composingNew={false}
-        practiceID={practiceID}
-        locationID={route}
-        routeLabel={routeName}
-        initialDestination={engagement.phone}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        onMessageSent={() => undefined}
-        onThreadRead={() => undefined}
-        onTaskCreated={onTaskCreated}
-        onTaskOpen={onTaskOpen}
-        onCallOpen={onCallOpen}
-      />
-    </section>
-  )
-}
-
 export function MessageWorkspace({
   thread,
   composingNew,
   practiceID,
   locationID,
   locationName,
-  locations,
   supportSessionID,
   canMutate,
   revision,
@@ -191,11 +90,6 @@ export function MessageWorkspace({
   onTaskOpen,
   onCallOpen,
 }: MessageWorkspaceProps) {
-  const [route, setRoute] = useState(thread?.locationId ?? locationID)
-
-  const routeName =
-    locations.find((location) => location.id === route)?.name ?? locationName
-
   if (!thread && !composingNew) {
     return (
       <section
@@ -210,7 +104,7 @@ export function MessageWorkspace({
           <h1 className="mt-4 text-lg font-semibold">Select a conversation</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             The timeline combines texts, calls, and follow-up Tasks for one
-            exact phone number across authorized offices.
+            exact phone number at one office.
           </p>
         </div>
       </section>
@@ -224,10 +118,10 @@ export function MessageWorkspace({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Badge variant="outline">
-                {composingNew ? "New text" : "Engagement History"}
+                {composingNew ? "New text" : "Conversation"}
               </Badge>
               <span className="text-xs font-medium text-muted-foreground">
-                {composingNew ? locationName : "Unverified phone context"}
+                {locationName}
               </span>
             </div>
             <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
@@ -235,48 +129,25 @@ export function MessageWorkspace({
             </h1>
             <p className="mt-1 text-xs text-muted-foreground">
               {thread?.displayName ? `${thread.displayName} · ` : ""}
-              {thread
-                ? "Messages, calls, and Tasks across authorized offices"
-                : "Choose an exact destination number"}
+              Office sender{" "}
+              <span className="tabular-nums">
+                {thread
+                  ? formatPhone(thread.officePhone)
+                  : "is locked by office"}
+              </span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {thread && (
-              <NativeSelect
-                aria-label="Sender route"
-                value={route}
-                onChange={(event) => setRoute(event.target.value)}
-              >
-                {locations.map((location) => (
-                  <NativeSelectOption key={location.id} value={location.id}>
-                    Send from {location.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
-            {thread?.outboundBlocked && (
-              <Badge variant="destructive">Patient opted out</Badge>
-            )}
-          </div>
+          {thread?.outboundBlocked && (
+            <Badge variant="destructive">Patient opted out</Badge>
+          )}
         </div>
       </header>
       <MessageConversation
         key={thread?.id ?? `new:${locationID}`}
         thread={thread}
-        timelineSource={
-          thread
-            ? {
-                kind: "engagement",
-                practiceID,
-                phone: thread.externalPhone,
-              }
-            : undefined
-        }
         composingNew={composingNew}
         practiceID={practiceID}
-        locationID={thread ? route : locationID}
-        routeLabel={thread ? routeName : locationName}
-        initialDestination={thread?.externalPhone}
+        locationID={locationID}
         supportSessionID={supportSessionID}
         canMutate={canMutate}
         revision={revision}
@@ -312,6 +183,12 @@ export function TaskMessageConversation({
     task.conversationThreadId ||
     createdMessage?.thread.id ||
     ""
+  const disabled = !canMutate || task.state !== "OPEN"
+  const disabledReason = !canMutate
+    ? "Read only"
+    : task.state !== "OPEN"
+      ? "Reopen this Task to send a message"
+      : ""
   return (
     <section
       aria-label="Task conversation"
@@ -322,27 +199,42 @@ export function TaskMessageConversation({
           Conversation · {formatPhone(task.phone)}
         </p>
       </div>
-      <MessageConversation
-        threadID={threadID}
-        timelineSource={{ kind: "task", taskID: task.id }}
-        composingNew={false}
-        practiceID={task.practiceId}
-        locationID={task.locationId}
-        routeLabel={task.locationName}
-        taskID={task.id}
-        taskOpen={task.state === "OPEN"}
-        initialDestination={task.phone}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        initialMessage={createdMessage}
-        onMessageSent={(message) => {
-          setCreatedMessage(message)
-          onMessageSent()
-        }}
-        onThreadRead={() => undefined}
-        onTaskCreated={onTaskCreated}
-      />
+      {threadID ? (
+        <MessageConversation
+          threadID={threadID}
+          composingNew={false}
+          practiceID={task.practiceId}
+          locationID={task.locationId}
+          taskID={task.id}
+          taskOpen={task.state === "OPEN"}
+          supportSessionID={supportSessionID}
+          canMutate={canMutate}
+          revision={revision}
+          initialMessage={createdMessage}
+          onMessageSent={(message) => {
+            setCreatedMessage(message)
+            onMessageSent()
+          }}
+          onThreadRead={() => undefined}
+          onTaskCreated={onTaskCreated}
+        />
+      ) : (
+        <MessageComposer
+          threadID=""
+          practiceID={task.practiceId}
+          locationID={task.locationId}
+          taskID={task.id}
+          initialDestination={task.phone}
+          destinationLocked
+          supportSessionID={supportSessionID}
+          disabled={disabled}
+          disabledReason={disabledReason}
+          onSent={(message) => {
+            setCreatedMessage(message)
+            onMessageSent()
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -350,14 +242,11 @@ export function TaskMessageConversation({
 function MessageConversation({
   thread,
   threadID = thread?.id ?? "",
-  timelineSource,
   composingNew,
   practiceID,
   locationID,
-  routeLabel,
   taskID,
   taskOpen = true,
-  initialDestination,
   supportSessionID,
   canMutate,
   revision,
@@ -370,14 +259,11 @@ function MessageConversation({
 }: {
   thread?: MessageThreadSummary
   threadID?: string
-  timelineSource?: TimelineSource
   composingNew: boolean
   practiceID: string
   locationID: string
-  routeLabel?: string
   taskID?: string
   taskOpen?: boolean
-  initialDestination?: string
   supportSessionID: string
   canMutate: boolean
   revision: number
@@ -388,38 +274,22 @@ function MessageConversation({
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
-  const timelineKind = timelineSource?.kind
-  const timelineTaskID =
-    timelineSource?.kind === "task" ? timelineSource.taskID : ""
-  const timelinePracticeID =
-    timelineSource?.kind === "engagement" ? timelineSource.practiceID : ""
-  const timelinePhone =
-    timelineSource?.kind === "engagement" ? timelineSource.phone : ""
-  const timelineKey = timelineKind
-    ? timelineKind === "task"
-      ? `task:${timelineTaskID}`
-      : `engagement:${timelinePracticeID}:${timelinePhone}`
-    : threadID
-  const committedItem = initialMessage
-    ? messageTimelineItem(initialMessage)
-    : undefined
+  const committedItem =
+    initialMessage && initialMessage.thread.id === threadID
+      ? messageTimelineItem(initialMessage)
+      : undefined
   const [items, setItems] = useState<ConversationTimelineItem[]>(
     committedItem ? [committedItem] : [],
   )
   const [cursor, setCursor] = useState("")
-  const [loading, setLoading] = useState(Boolean(timelineKey && !committedItem))
+  const [loading, setLoading] = useState(Boolean(threadID && !committedItem))
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [newActivity, setNewActivity] = useState(false)
-  const [findQuery, setFindQuery] = useState("")
   const [error, setError] = useState("")
   const generation = useRef(0)
-  const committedMessage = useRef<
+  const committedSending = useRef<
     { id: string; visibleUntil: number } | undefined
-  >(
-    initialMessage
-      ? { id: initialMessage.id, visibleUntil: Number.POSITIVE_INFINITY }
-      : undefined,
-  )
+  >(undefined)
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
   const initialized = useRef(false)
@@ -430,58 +300,29 @@ function MessageConversation({
   }, [onThreadRead])
 
   useEffect(() => {
-    if (initialMessage) {
-      committedMessage.current = {
+    if (
+      initialMessage?.delivery === "Sending" &&
+      initialMessage.thread.id === threadID
+    ) {
+      committedSending.current = {
         id: initialMessage.id,
         visibleUntil: Date.now() + 750,
       }
     }
   }, [initialMessage, threadID])
 
-  const loadPage = useCallback(
-    async (token: string, cursor = "") => {
-      if (timelineKind === "task") {
-        return getTaskEngagementHistory({
-          client: portalClient(token),
-          path: { taskId: timelineTaskID },
-          query: { ...(cursor ? { cursor } : {}), limit: 50 },
-        }).catch(() => undefined)
-      }
-      if (timelineKind === "engagement") {
-        return getEngagementTimeline({
-          client: portalClient(token),
-          path: { phone: timelinePhone },
-          query: {
-            practiceId: timelinePracticeID,
-            ...(cursor ? { cursor } : {}),
-            limit: 50,
-          },
-        }).catch(() => undefined)
-      }
-      if (!threadID) return undefined
-      return getMessageThreadTimeline({
-        client: portalClient(token),
-        path: { threadId: threadID },
-        query: { ...(cursor ? { cursor } : {}), limit: 50 },
-      }).catch(() => undefined)
-    },
-    [
-      threadID,
-      timelineKind,
-      timelinePhone,
-      timelinePracticeID,
-      timelineTaskID,
-    ],
-  )
-
   const loadLatest = useCallback(
     async (scroll = false) => {
-      if (!timelineKey) return
+      if (!threadID) return
       const requestGeneration = ++generation.current
       if (!initialized.current) setLoading(true)
       const token = await getAccessToken()
       if (!token) return
-      const result = await loadPage(token)
+      const result = await getMessageThreadTimeline({
+        client: portalClient(token),
+        path: { threadId: threadID },
+        query: { limit: 50 },
+      }).catch(() => undefined)
       if (requestGeneration !== generation.current) return
       setLoading(false)
       if (!result?.data) {
@@ -490,7 +331,7 @@ function MessageConversation({
       }
       initialized.current = true
       setItems((current) => {
-        const committed = committedMessage.current
+        const committed = committedSending.current
         if (committed && Date.now() < committed.visibleUntil) {
           const responseItem = current.find((item) => item.id === committed.id)
           if (responseItem) {
@@ -500,7 +341,7 @@ function MessageConversation({
             ]
           }
         }
-        committedMessage.current = undefined
+        committedSending.current = undefined
         return result.data.items
       })
       setCursor(result.data.nextCursor)
@@ -514,11 +355,11 @@ function MessageConversation({
         )
       }
     },
-    [loadPage, timelineKey],
+    [threadID],
   )
 
   useEffect(() => {
-    const committed = committedMessage.current
+    const committed = committedSending.current
     if (!committed) return
     const timeout = window.setTimeout(
       () => void loadLatest(true),
@@ -542,23 +383,23 @@ function MessageConversation({
   }, [supportSessionID, threadID])
 
   useEffect(() => {
-    if (!timelineKey) return
+    if (!threadID) return
     const timeout = window.setTimeout(() => {
       void loadLatest(true)
-      if (threadID) void markRead()
+      void markRead()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, markRead, threadID, timelineKey])
+  }, [loadLatest, markRead, threadID])
 
   useEffect(() => {
-    if (!initialized.current || !timelineKey) return
+    if (!initialized.current || !threadID) return
     if (atLatest.current) {
       void loadLatest(true)
-      if (threadID) void markRead()
+      void markRead()
     } else {
       setNewActivity(true)
     }
-  }, [loadLatest, markRead, revision, threadID, timelineKey])
+  }, [loadLatest, markRead, revision, threadID])
 
   async function loadOlder() {
     if (!cursor || loadingOlder) return
@@ -570,7 +411,11 @@ function MessageConversation({
     }
     const container = scroller.current
     const previousHeight = container?.scrollHeight ?? 0
-    const result = await loadPage(token, cursor)
+    const result = await getMessageThreadTimeline({
+      client: portalClient(token),
+      path: { threadId: threadID },
+      query: { cursor, limit: 50 },
+    }).catch(() => undefined)
     setLoadingOlder(false)
     if (!result?.data) return
     setItems((current) => [...result.data.items, ...current])
@@ -582,31 +427,10 @@ function MessageConversation({
   }
 
   const conversationThread =
-    (thread?.locationId === locationID ? thread : undefined) ??
-    items.find(
-      (item) => item.message?.thread.locationId === locationID,
-    )?.message?.thread
-  const composerThreadID =
-    conversationThread?.id ??
-    (timelineSource?.kind === "engagement" ? "" : threadID)
-  const visibleItems = findQuery.trim()
-    ? items.filter((item) => timelineItemText(item).includes(findQuery.trim().toLowerCase()))
-    : items
+    thread ?? items.find((item) => item.message)?.message?.thread
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b bg-muted/20 px-4 py-2">
-        <div className="relative mx-auto max-w-3xl">
-          <SearchIcon className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            aria-label="Find in history"
-            className="h-9 bg-background pl-8"
-            placeholder="Find in loaded history"
-            value={findQuery}
-            onChange={(event) => setFindQuery(event.target.value)}
-          />
-        </div>
-      </div>
       <div
         ref={scroller}
         data-testid="message-timeline"
@@ -637,7 +461,7 @@ function MessageConversation({
             </div>
           )}
           {!loading &&
-            visibleItems.map((item) => (
+            items.map((item) => (
               <TimelineEntry
                 key={`${item.type}:${item.id}`}
                 item={item}
@@ -657,11 +481,6 @@ function MessageConversation({
               </p>
             </div>
           )}
-          {!loading && items.length > 0 && visibleItems.length === 0 && (
-            <div className="mx-auto my-10 border bg-background p-5 text-center text-sm">
-              No activity on this page matches “{findQuery.trim()}”.
-            </div>
-          )}
         </div>
         {newActivity && (
           <div className="sticky bottom-3 flex justify-center">
@@ -674,7 +493,7 @@ function MessageConversation({
                 void markRead()
               }}
             >
-              New activity
+              New message
             </Button>
           </div>
         )}
@@ -687,25 +506,19 @@ function MessageConversation({
       )}
       <MessageComposer
         thread={conversationThread}
-        threadID={composerThreadID}
+        threadID={threadID}
         practiceID={practiceID}
         locationID={locationID}
-        routeLabel={routeLabel}
         taskID={taskID}
-        initialDestination={initialDestination}
-        destinationLocked={Boolean(initialDestination)}
         supportSessionID={supportSessionID}
         disabled={
           !canMutate ||
-          !locationID ||
           !taskOpen ||
           Boolean(conversationThread?.outboundBlocked)
         }
         disabledReason={
           !canMutate
             ? "Read only"
-            : !locationID
-              ? "Choose an authorized sender route"
             : !taskOpen
               ? "Reopen this Task to send a message"
               : conversationThread?.outboundBlocked
@@ -715,7 +528,7 @@ function MessageConversation({
         onSent={(message) => {
           atLatest.current = true
           if (message.delivery === "Sending") {
-            committedMessage.current = {
+            committedSending.current = {
               id: message.id,
               visibleUntil: Date.now() + 750,
             }
@@ -775,7 +588,7 @@ function TimelineEntry({
       >
         <TimelineRule
           icon={<PhoneCallIcon />}
-          label={`${item.call.locationName} · Call · Open detail`}
+          label="Call · Open detail"
           occurredAt={item.occurredAt}
           title={item.call.transferReason || "Inbound call"}
           detail={`${item.call.outcome.replaceAll("_", " ")} · ${formatDuration(item.call.durationSeconds)}`}
@@ -798,7 +611,7 @@ function TimelineEntry({
       >
         <TimelineRule
           icon={<CheckSquareIcon />}
-          label={`${task.locationName} · Task · ${taskActivityLabel(item.taskActivity, task.state)}`}
+          label={`Task · ${task.state === "OPEN" ? "Open" : "Completed"}`}
           occurredAt={item.occurredAt}
           title={task.title}
           detail={`Created by ${task.createdBy.email || task.createdBy.subject}`}
@@ -934,8 +747,6 @@ function MessageEntry({
           <time dateTime={message.createdAt}>
             {formatDateTime(message.createdAt)}
           </time>
-          <span aria-hidden="true">·</span>
-          <span>{message.thread.locationName}</span>
           {outbound && (
             <>
               <span aria-hidden="true">·</span>
@@ -1184,7 +995,6 @@ function MessageComposer({
   threadID,
   practiceID,
   locationID,
-  routeLabel,
   taskID,
   initialDestination,
   destinationLocked = false,
@@ -1197,7 +1007,6 @@ function MessageComposer({
   threadID: string
   practiceID: string
   locationID: string
-  routeLabel?: string
   taskID?: string
   initialDestination?: string
   destinationLocked?: boolean
@@ -1331,12 +1140,6 @@ function MessageComposer({
       onSubmit={(event) => void submit(event)}
     >
       <div className="mx-auto max-w-3xl">
-        <p className="mb-2 text-xs text-muted-foreground">
-          Sender route: <strong className="font-medium text-foreground">{routeLabel || "Selected office"}</strong>
-          {initialDestination
-            ? ` · destination locked to ${formatPhone(initialDestination)}`
-            : ""}
-        </p>
         {!threadID && (
           <Input
             aria-label="Destination phone number"
@@ -1441,20 +1244,6 @@ function MessageComposer({
   )
 }
 
-function timelineItemText(item: ConversationTimelineItem) {
-  return [
-    item.message?.body,
-    item.message?.attachment?.fileName,
-    item.call?.transferReason,
-    item.call?.outcome,
-    item.task?.title,
-    item.task?.state,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
-}
-
 function fileToBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -1465,26 +1254,6 @@ function fileToBase64(file: File) {
     }
     reader.readAsDataURL(file)
   })
-}
-
-function taskActivityLabel(
-  activity: ConversationTimelineItem["taskActivity"],
-  state: Task["state"],
-) {
-  switch (activity) {
-    case "TASK_CREATED":
-      return "Created"
-    case "TITLE_CHANGED":
-      return "Title changed"
-    case "TASK_COMPLETED":
-      return "Completed"
-    case "TASK_REOPENED":
-      return "Reopened"
-    case "INTERACTION_ATTACHED":
-      return "New interaction attached"
-    default:
-      return state === "OPEN" ? "Open" : "Completed"
-  }
 }
 
 function formatPhone(phone: string) {

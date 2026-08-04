@@ -463,7 +463,6 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_commands",
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
-		"human_calling_staff_transfers",
 		"human_calling_timeline",
 		"human_calling_voicemails",
 		"messaging_attachments",
@@ -472,7 +471,6 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
-		"work_task_interactions",
 		"work_tasks",
 	}
 	grant("acuity_portal", "SELECT", portalReads...)
@@ -488,14 +486,12 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_handoffs",
 		"human_calling_provider_commands",
 		"human_calling_softphone_leases",
-		"human_calling_staff_transfers",
 		"human_calling_timeline",
 		"messaging_attachments",
 		"messaging_messages",
 		"messaging_provider_commands",
 		"messaging_threads",
 		"work_task_activities",
-		"work_task_interactions",
 		"work_tasks",
 	)
 	grant("acuity_portal", "UPDATE",
@@ -510,7 +506,6 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_commands",
 		"human_calling_handoffs",
 		"human_calling_softphone_leases",
-		"human_calling_staff_transfers",
 		"work_tasks",
 	)
 	grant("acuity_portal", "DELETE", "messaging_thread_unreads")
@@ -541,7 +536,6 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
-		"human_calling_staff_transfers",
 		"human_calling_voicemails",
 		"messaging_attachments",
 		"messaging_location_configurations",
@@ -551,7 +545,6 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
-		"work_task_interactions",
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
@@ -567,7 +560,6 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
-		"work_task_interactions",
 		"work_tasks",
 	)
 	grant("acuity_worker", "UPDATE",
@@ -580,7 +572,6 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_receipts",
 		"human_calling_recordings",
 		"human_calling_softphone_leases",
-		"human_calling_staff_transfers",
 		"work_tasks",
 	)
 	grant("acuity_worker", "DELETE", "messaging_attachments")

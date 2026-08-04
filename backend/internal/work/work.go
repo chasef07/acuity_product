@@ -74,7 +74,6 @@ type TaskOrdering string
 const (
 	TaskOrderingTime     TaskOrdering = "time"
 	TaskOrderingPriority TaskOrdering = "priority"
-	TaskOrderingRecent   TaskOrdering = "recent"
 )
 
 var (
@@ -196,7 +195,6 @@ type QueryTasksCommand struct {
 	PracticeID string
 	LocationID string
 	Search     string
-	State      TaskState
 	Ordering   TaskOrdering
 	Cursor     string
 	Limit      int
@@ -385,9 +383,9 @@ func (m *Module) EnsureMessageFollowUp(
 	return task, status, nil
 }
 
-// EnsureRecoveryTask attaches compatible missed-call and voicemail evidence to
-// one open recovery Task. HumanCalling owns the caller outcome transaction;
-// Work owns the Task and Interaction attachment written inside it.
+// EnsureRecoveryTask creates the one immutable recovery Task for a voicemail or
+// missed-call outcome. HumanCalling owns the caller outcome transaction; Work
+// owns the Task row and Activity written inside it.
 func (m *Module) EnsureRecoveryTask(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -445,7 +443,7 @@ func (m *Module) EnsureRecoveryTask(
 			$1, $2, $3, $4, $5, 'OPEN', $6, 'normal',
 			NULLIF($7, ''), 'SERVICE', 'human-calling', $8, $9, $8
 		)
-		ON CONFLICT DO NOTHING
+		ON CONFLICT (call_id) DO NOTHING
 		RETURNING id::text
 	`, command.PracticeID, command.LocationID, command.CallID, command.Phone,
 		title, origin, command.CallerName, command.OccurredAt, command.Outcome,
@@ -454,87 +452,15 @@ func (m *Module) EnsureRecoveryTask(
 	if errors.Is(err, pgx.ErrNoRows) {
 		inserted = false
 		if err := tx.QueryRow(ctx, `
-			SELECT task.id::text
-			FROM work_tasks task
-			WHERE task.practice_id = $1
-				AND task.location_id = $2
-				AND task.phone = $3
-				AND task.state = 'OPEN'
-				AND task.origin IN (
-					'VOICEMAIL_RECOVERY',
-					'MISSED_CALL_RECOVERY'
-				)
-			ORDER BY task.created_at, task.id
-			LIMIT 1
-			FOR UPDATE
-		`, command.PracticeID, command.LocationID, command.Phone).Scan(&taskID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return Task{}, ErrConflict
-			}
-			return Task{}, fmt.Errorf("load compatible recovery Task: %w", err)
+			SELECT id::text
+			FROM work_tasks
+			WHERE call_id = $1
+			FOR SHARE
+		`, command.CallID).Scan(&taskID); err != nil {
+			return Task{}, fmt.Errorf("load replayed recovery Task: %w", err)
 		}
 	} else if err != nil {
 		return Task{}, fmt.Errorf("create recovery Task: %w", err)
-	}
-	interaction, err := tx.Exec(ctx, `
-		INSERT INTO work_task_interactions (
-			task_id,
-			call_id,
-			practice_id,
-			location_id,
-			occurred_at
-		)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (call_id) DO NOTHING
-	`, taskID, command.CallID, command.PracticeID, command.LocationID,
-		command.OccurredAt)
-	if err != nil {
-		return Task{}, fmt.Errorf("attach recovery Interaction: %w", err)
-	}
-	if interaction.RowsAffected() == 0 {
-		var linkedTaskID string
-		if err := tx.QueryRow(ctx, `
-			SELECT task_id::text
-			FROM work_task_interactions
-			WHERE call_id = $1
-		`, command.CallID).Scan(&linkedTaskID); err != nil {
-			return Task{}, fmt.Errorf("load replayed recovery Interaction: %w", err)
-		}
-		if linkedTaskID != taskID {
-			return Task{}, ErrConflict
-		}
-		task, err := loadTask(ctx, tx, taskID)
-		if err != nil {
-			return Task{}, err
-		}
-		return task, nil
-	}
-	if !inserted {
-		if command.Outcome == RecoveryOutcomeVoicemail {
-			origin = TaskOriginVoicemail
-			title = "Review voicemail"
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE work_tasks
-			SET
-				title = CASE
-					WHEN $2 = 'VOICEMAIL_RECOVERY' THEN $3
-					ELSE title
-				END,
-				origin = CASE
-					WHEN $2 = 'VOICEMAIL_RECOVERY' THEN $2
-					ELSE origin
-				END,
-				recovery_outcome = CASE
-					WHEN $2 = 'VOICEMAIL_RECOVERY' THEN 'VOICEMAIL'
-					ELSE recovery_outcome
-				END,
-				version = version + 1,
-				updated_at = GREATEST(updated_at, $4)
-			WHERE id = $1
-		`, taskID, origin, title, command.OccurredAt); err != nil {
-			return Task{}, fmt.Errorf("enrich recovery Task: %w", err)
-		}
 	}
 	task, err := loadTask(ctx, tx, taskID)
 	if err != nil {
@@ -543,19 +469,19 @@ func (m *Module) EnsureRecoveryTask(
 	if task.PracticeID != command.PracticeID ||
 		task.LocationID != command.LocationID ||
 		task.Phone != command.Phone ||
-		(task.Origin != TaskOriginVoicemail &&
-			task.Origin != TaskOriginMissedCall) {
+		task.CallID != command.CallID ||
+		task.Origin != origin ||
+		task.RecoveryOutcome != command.Outcome {
 		return Task{}, ErrConflict
 	}
-	activityKind := "TASK_CREATED"
 	if !inserted {
-		activityKind = "INTERACTION_ATTACHED"
+		return task, nil
 	}
 	if err := appendActivity(
 		ctx,
 		tx,
 		task,
-		activityKind,
+		"TASK_CREATED",
 		task.CreatedBy,
 		command.OccurredAt,
 	); err != nil {
@@ -1078,19 +1004,14 @@ func (m *Module) QueryTasks(
 	command QueryTasksCommand,
 ) (TaskPage, error) {
 	command.Search = strings.TrimSpace(command.Search)
-	if command.State == "" {
-		command.State = TaskOpen
-	}
 	if command.Ordering == "" {
-		command.Ordering = TaskOrderingPriority
+		command.Ordering = TaskOrderingTime
 	}
 	if m.access == nil ||
 		strings.TrimSpace(command.PracticeID) == "" ||
 		len(command.Search) > 500 ||
-		(command.State != TaskOpen && command.State != TaskCompleted) ||
 		(command.Ordering != TaskOrderingTime &&
-			command.Ordering != TaskOrderingPriority &&
-			command.Ordering != TaskOrderingRecent) {
+			command.Ordering != TaskOrderingPriority) {
 		return TaskPage{}, ErrInvalidInput
 	}
 	limit := command.Limit
@@ -1100,7 +1021,7 @@ func (m *Module) QueryTasks(
 	if limit < 1 || limit > 50 {
 		return TaskPage{}, ErrInvalidInput
 	}
-	cursor, err := decodeTaskCursor(command.Cursor, command.Ordering, command.State)
+	cursor, err := decodeTaskCursor(command.Cursor, command.Ordering)
 	if err != nil {
 		return TaskPage{}, ErrInvalidInput
 	}
@@ -1132,52 +1053,7 @@ func (m *Module) QueryTasks(
 		return TaskPage{}, ErrDenied
 	}
 
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering),
-		command.PracticeID,
-		locationIDs,
-		command.Search,
-		normalizedDigits(command.Search),
-		cursor.Present,
-		cursor.OrderedAt,
-		cursor.ID,
-		urgencyRank(cursor.Urgency),
-		limit+1,
-	)
-	if err != nil {
-		return TaskPage{}, fmt.Errorf("query Tasks: %w", err)
-	}
-	defer rows.Close()
-	items := make([]Task, 0, limit+1)
-	for rows.Next() {
-		task, err := scanTask(rows)
-		if err != nil {
-			return TaskPage{}, fmt.Errorf("scan Task query: %w", err)
-		}
-		items = append(items, task)
-	}
-	if err := rows.Err(); err != nil {
-		return TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
-	}
-	rows.Close()
-
-	nextCursor := ""
-	if len(items) > limit {
-		items = items[:limit]
-		nextCursor, err = encodeTaskCursor(
-			items[len(items)-1],
-			command.Ordering,
-		)
-		if err != nil {
-			return TaskPage{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return TaskPage{}, fmt.Errorf("commit Task query: %w", err)
-	}
-	return TaskPage{Items: items, NextCursor: nextCursor}, nil
-}
-
-const taskQuerySelect = `
+	rows, err := tx.Query(ctx, `
 		SELECT
 			task.id::text,
 			task.practice_id::text,
@@ -1213,69 +1089,121 @@ const taskQuerySelect = `
 			AND task.location_id::text = ANY($2::text[])
 			AND (
 				$3 = ''
-					OR strpos(lower(task.title), lower($3)) > 0
-					OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
-			)`
-
-func taskQuerySQL(state TaskState, ordering TaskOrdering) string {
-	switch {
-	case state == TaskOpen && ordering == TaskOrderingPriority:
-		return taskQuerySelect + `
-			AND task.state = 'OPEN'
+				OR strpos(lower(task.title), lower($3)) > 0
+				OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
+			)
 			AND (
-				NOT $5
-				OR CASE task.urgency
-					WHEN 'high_priority' THEN 0
-					WHEN 'normal' THEN 1
-					ELSE 2
-				END > $8
+				NOT $6
 				OR (
-					CASE task.urgency
-						WHEN 'high_priority' THEN 0
-						WHEN 'normal' THEN 1
-						ELSE 2
-					END = $8
-					AND (task.created_at, task.id::text) > ($6, $7)
+					$7 = 'OPEN'
+					AND (
+						(
+							task.state = 'OPEN'
+							AND (
+								(
+									$5 = 'time'
+									AND (
+										task.created_at > $9
+										OR (
+											task.created_at = $9
+											AND task.id::text > $10
+										)
+									)
+								)
+								OR (
+									$5 = 'priority'
+									AND (
+										(
+											CASE task.urgency
+												WHEN 'high_priority' THEN 0
+												WHEN 'normal' THEN 1
+												ELSE 2
+											END
+										) > $8
+										OR (
+											(
+												CASE task.urgency
+													WHEN 'high_priority' THEN 0
+													WHEN 'normal' THEN 1
+													ELSE 2
+												END
+											) = $8
+											AND (
+												task.created_at > $9
+												OR (
+													task.created_at = $9
+													AND task.id::text > $10
+												)
+											)
+										)
+									)
+								)
+							)
+						)
+						OR task.state = 'COMPLETED'
+					)
+				)
+				OR (
+					$7 = 'COMPLETED'
+					AND task.state = 'COMPLETED'
+					AND (
+						task.completed_at < $9
+						OR (task.completed_at = $9 AND task.id::text > $10)
+					)
 				)
 			)
 		ORDER BY
-			CASE task.urgency
-				WHEN 'high_priority' THEN 0
-				WHEN 'normal' THEN 1
-				ELSE 2
+			CASE task.state WHEN 'OPEN' THEN 0 ELSE 1 END,
+			CASE
+				WHEN task.state = 'OPEN' AND $5 = 'priority'
+				THEN CASE task.urgency
+					WHEN 'high_priority' THEN 0
+					WHEN 'normal' THEN 1
+					ELSE 2
+				END
+				ELSE 0
 			END,
-			task.created_at,
+			CASE WHEN task.state = 'OPEN' THEN task.created_at END,
+			CASE WHEN task.state = 'COMPLETED' THEN task.completed_at END DESC,
 			task.id
-		LIMIT $9`
-	case state == TaskOpen && ordering == TaskOrderingTime:
-		return taskQuerySelect + `
-			AND task.state = 'OPEN'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))
-		ORDER BY task.created_at, task.id
-		LIMIT $9`
-	case state == TaskOpen:
-		return taskQuerySelect + `
-			AND task.state = 'OPEN'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
-	case ordering == TaskOrderingRecent:
-		return taskQuerySelect + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
-	default:
-		return taskQuerySelect + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))
-		ORDER BY task.completed_at DESC, task.id DESC
-		LIMIT $9`
+		LIMIT $11
+	`, command.PracticeID, locationIDs, command.Search,
+		normalizedDigits(command.Search), command.Ordering, cursor.Present,
+		cursor.State, urgencyRank(cursor.Urgency), cursor.OrderedAt, cursor.ID,
+		limit+1,
+	)
+	if err != nil {
+		return TaskPage{}, fmt.Errorf("query Tasks: %w", err)
 	}
+	defer rows.Close()
+	items := make([]Task, 0, limit+1)
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return TaskPage{}, fmt.Errorf("scan Task query: %w", err)
+		}
+		items = append(items, task)
+	}
+	if err := rows.Err(); err != nil {
+		return TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
+	}
+	rows.Close()
+
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		nextCursor, err = encodeTaskCursor(
+			items[len(items)-1],
+			command.Ordering,
+		)
+		if err != nil {
+			return TaskPage{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TaskPage{}, fmt.Errorf("commit Task query: %w", err)
+	}
+	return TaskPage{Items: items, NextCursor: nextCursor}, nil
 }
 
 func (m *Module) ReadTask(
@@ -1325,9 +1253,7 @@ type taskCursor struct {
 
 func encodeTaskCursor(task Task, ordering TaskOrdering) (string, error) {
 	orderedAt := task.CreatedAt
-	if ordering == TaskOrderingRecent {
-		orderedAt = task.UpdatedAt
-	} else if task.State == TaskCompleted {
+	if task.State == TaskCompleted {
 		if task.CompletedAt == nil {
 			return "", fmt.Errorf("encode Task cursor: completed Task has no completion time")
 		}
@@ -1349,7 +1275,6 @@ func encodeTaskCursor(task Task, ordering TaskOrdering) (string, error) {
 func decodeTaskCursor(
 	encoded string,
 	ordering TaskOrdering,
-	state TaskState,
 ) (taskCursor, error) {
 	if encoded == "" {
 		return taskCursor{}, nil
@@ -1362,11 +1287,14 @@ func decodeTaskCursor(
 	if err := json.Unmarshal(raw, &cursor); err != nil {
 		return taskCursor{}, err
 	}
+	if cursor.Ordering == "" {
+		cursor.Ordering = TaskOrderingTime
+	}
 	if cursor.Urgency == "" {
 		cursor.Urgency = TaskUrgencyNormal
 	}
 	if cursor.Ordering != ordering ||
-		cursor.State != state ||
+		(cursor.State != TaskOpen && cursor.State != TaskCompleted) ||
 		(cursor.State == TaskOpen && !validTaskUrgency(cursor.Urgency)) ||
 		cursor.OrderedAt.IsZero() ||
 		strings.TrimSpace(cursor.ID) == "" {

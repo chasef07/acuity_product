@@ -1151,37 +1151,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		secondLocationMessage.Thread.OfficePhone != "+17275550101" {
 		t.Fatalf("second Location Message = %#v", secondLocationMessage)
 	}
-	phoneTimeline, err := module.QueryPhoneTimeline(
-		context.Background(),
-		messaging.QueryPhoneTimelineCommand{
-			Identity: identity, PracticeID: authorization.Practice.ID,
-			Phone: "+17275550199",
-		},
-	)
-	if err != nil {
-		t.Fatalf("query cross-Location phone timeline: %v", err)
-	}
-	taskActivities := map[string]bool{}
-	locations := map[string]bool{}
-	for _, item := range phoneTimeline.Items {
-		switch item.Type {
-		case "MESSAGE":
-			locations[item.Message.Thread.LocationName] = true
-		case "CALL":
-			locations[item.Call.LocationName] = true
-		case "TASK":
-			locations[item.Task.LocationName] = true
-			taskActivities[item.TaskActivity] = true
-		}
-	}
-	for _, activity := range []string{"TASK_CREATED", "TASK_COMPLETED", "TASK_REOPENED"} {
-		if !taskActivities[activity] {
-			t.Fatalf("phone timeline omitted %s: %#v", activity, taskActivities)
-		}
-	}
-	if !locations[authorization.Locations[0].Name] || !locations["Message Office Two"] {
-		t.Fatalf("phone timeline Location provenance = %#v", locations)
-	}
 	secondLocationThreads, err := module.QueryThreads(
 		context.Background(),
 		messaging.QueryThreadsCommand{
