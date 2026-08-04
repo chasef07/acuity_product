@@ -1342,7 +1342,7 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 		timeoutCall.ID,
 	)
 	if err != nil ||
-		providerBacked.State != humancalling.CallNeedsDisposition ||
+		providerBacked.State != humancalling.CallUnanswered ||
 		providerBacked.ProviderTermination != "NO_ANSWER" {
 		t.Fatalf("provider-backed no-answer = %#v, err=%v", providerBacked, err)
 	}
@@ -1360,31 +1360,15 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 	); err != nil {
 		t.Fatalf("renew readiness for standalone disposition: %v", err)
 	}
-	created, err := calling.RecordDisposition(
+	_, err = calling.RecordDisposition(
 		context.Background(),
 		identity,
 		sessionID,
 		timeoutCall.ID,
 		humancalling.DispositionCreateTask,
 	)
-	if err != nil ||
-		created.Call.State != humancalling.CallResolved ||
-		created.TaskID == "" {
-		t.Fatalf("standalone Create Task disposition = %#v, err=%v", created, err)
-	}
-	replayedDisposition, err := calling.RecordDisposition(
-		context.Background(),
-		identity,
-		sessionID,
-		timeoutCall.ID,
-		humancalling.DispositionCreateTask,
-	)
-	if err != nil || replayedDisposition.TaskID != created.TaskID {
-		t.Fatalf(
-			"replayed standalone disposition = %#v, err=%v",
-			replayedDisposition,
-			err,
-		)
+	if !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("non-connected standalone disposition error = %v", err)
 	}
 	var followUpTasks int
 	if err := pool.QueryRow(context.Background(), `
@@ -1394,8 +1378,8 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 	`, timeoutCall.ID).Scan(&followUpTasks); err != nil {
 		t.Fatalf("count standalone follow-up Tasks: %v", err)
 	}
-	if followUpTasks != 1 {
-		t.Fatalf("standalone follow-up Tasks = %d, want 1", followUpTasks)
+	if followUpTasks != 0 {
+		t.Fatalf("standalone follow-up Tasks = %d, want 0", followUpTasks)
 	}
 	for index, outcome := range []struct {
 		cause string
@@ -1492,7 +1476,7 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 			stalled.ID,
 		)
 		if err != nil ||
-			stalled.State != humancalling.CallNeedsDisposition ||
+			stalled.State != humancalling.CallUnanswered ||
 			stalled.ProviderTermination != "MEDIA_READINESS_FAILED" {
 			t.Fatalf(
 				"expired %s media Call = %#v, err=%v",
@@ -1507,8 +1491,8 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 			sessionID,
 			stalled.ID,
 			humancalling.DispositionNoFollowUp,
-		); err != nil {
-			t.Fatalf("dispose stalled %s media Call: %v", test.name, err)
+		); !errors.Is(err, humancalling.ErrConflict) {
+			t.Fatalf("non-connected %s disposition error = %v", test.name, err)
 		}
 		softphone, err := calling.AcquireSoftphone(
 			context.Background(),
@@ -1563,7 +1547,7 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 		mediaFailure.ID,
 	)
 	if err != nil ||
-		mediaFailure.State != humancalling.CallNeedsDisposition ||
+		mediaFailure.State != humancalling.CallUnanswered ||
 		mediaFailure.ProviderTermination != "MEDIA_READINESS_FAILED" {
 		t.Fatalf("standalone media failure = %#v, err=%v", mediaFailure, err)
 	}
@@ -1573,8 +1557,8 @@ func TestTaskOutboundDerivesRouteAndWaitsForStaffMediaAnswer(t *testing.T) {
 		sessionID,
 		mediaFailure.ID,
 		humancalling.DispositionNoFollowUp,
-	); err != nil {
-		t.Fatalf("dispose standalone media failure: %v", err)
+	); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("non-connected media failure disposition error = %v", err)
 	}
 	retry, err := calling.StartOutboundCall(
 		context.Background(),
@@ -1731,7 +1715,7 @@ func proveProviderBackedOutcome(
 	}
 	call, err = calling.ReadCall(context.Background(), identity, call.ID)
 	if err != nil ||
-		call.State != humancalling.CallNeedsDisposition ||
+		call.State != humancalling.CallUnanswered ||
 		call.ProviderTermination != want {
 		t.Fatalf("provider-backed %s Call = %#v, err=%v", want, call, err)
 	}
@@ -1741,8 +1725,8 @@ func proveProviderBackedOutcome(
 		sessionID,
 		call.ID,
 		humancalling.DispositionNoFollowUp,
-	); err != nil {
-		t.Fatalf("dispose provider-backed %s Call: %v", want, err)
+	); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("non-connected %s disposition error = %v", want, err)
 	}
 }
 

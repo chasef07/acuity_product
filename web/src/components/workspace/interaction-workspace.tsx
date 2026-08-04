@@ -248,213 +248,158 @@ function TaskWorkspace({
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-            <div className="mb-2 flex items-center gap-2">
-              <Badge
-                variant={task.state === "OPEN" ? "secondary" : "outline"}
-                className={task.state === "COMPLETED" ? "text-success" : undefined}
-              >
-                {task.state === "OPEN" ? "Open" : "Completed"}
-              </Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                Task · v{task.version}
-              </span>
-            </div>
-            {editing && task.state === "OPEN" ? (
-              <div className="flex max-w-2xl items-center gap-2">
-                <Input
-                  aria-label="Task title"
-                  autoFocus
-                  maxLength={500}
-                  value={draft}
-                  disabled={pending}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault()
-                      void saveTitle()
-                    }
-                    if (event.key === "Escape") {
-                      setDraft(task.title)
-                      setEditing(false)
-                      setError("")
-                    }
-                  }}
-                />
-                <Button
-                  size="icon"
-                  aria-label="Save title"
-                  onClick={() => void saveTitle()}
-                  disabled={pending}
-                >
-                  {pending ? <Spinner /> : <CheckIcon />}
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Cancel rename"
-                  onClick={() => {
-                    setDraft(task.title)
-                    setEditing(false)
-                    setError("")
-                  }}
-                >
-                  <XIcon />
-                </Button>
-              </div>
-            ) : (
-              <div className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-xl font-semibold tracking-[-0.015em]">
-                  {task.title}
-                </h1>
-                {task.state === "OPEN" && canMutate && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Rename task"
-                    onClick={() => {
-                      setDraft(task.title)
-                      setEditing(true)
-                    }}
-                  >
-                    <PencilIcon />
-                  </Button>
-                )}
-              </div>
-            )}
-            <p className="mt-2 text-sm tabular-nums text-muted-foreground">
-              {formatPhone(task.phone)} · {task.locationName}
-            </p>
-          </div>
-          <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
-            {activeCall && (
-              <Button variant="outline" onClick={onReturnToCall}>
-                <PhoneCallIcon />
-                Return to active call
-              </Button>
-            )}
-            {!canMutate ? (
-              <Badge variant="outline">Read only · enter Support Mode to change</Badge>
-            ) : task.state === "OPEN" ? (
-              <>
-                {!activeCall && (
-                  <Button
-                    variant="outline"
-                    disabled={!callEligible || taskCallPending}
-                    title={callEligible ? "Call this Task" : callReason}
-                    onClick={() => onStartTaskCall(task)}
-                  >
-                    <PhoneCallIcon />
-                    {taskCallPending ? "Preparing…" : "Call"}
-                  </Button>
-                )}
-                <Button
-                  onClick={() => void transition("complete")}
-                  disabled={pending}
-                >
-                  {pending ? <Spinner /> : <CheckCircle2Icon />}
-                  Complete
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={() => void transition("reopen")}
-                disabled={pending}
-              >
-                {pending ? <Spinner /> : <RotateCcwIcon />}
-                Reopen
-              </Button>
-            )}
-          </div>
+    <section className="flex min-h-0 flex-1 flex-col xl:flex-row">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="border-b px-5 py-4">
+          <p className="text-xs font-medium text-muted-foreground">
+            Engagement History · exact phone
+          </p>
+          <h1 className="mt-1 text-xl font-semibold tabular-nums">
+            {formatPhone(task.phone)}
+          </h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {task.locationName} · Task-linked context across authorized offices
+          </p>
+        </header>
+        <TaskMessageConversation
+          key={task.id}
+          task={task}
+          supportSessionID={supportSessionID}
+          canMutate={canMutate}
+          revision={historyHint}
+          onTaskCreated={onTaskUpdated}
+          onMessageSent={() => void refreshTask()}
+        />
+        {!task.messageThreadId && !task.conversationThreadId && (
+          <CallHistory
+            key={`task:${task.id}`}
+            source={{ kind: "task", id: task.id }}
+            revision={historyHint}
+          />
+        )}
+      </div>
+      <aside
+        aria-label="Focused Task"
+        className="w-full shrink-0 overflow-y-auto border-t bg-card px-4 py-4 xl:w-80 xl:border-t-0 xl:border-l"
+      >
+        <div className="flex items-center gap-2">
+          <Badge
+            variant={task.state === "OPEN" ? "secondary" : "outline"}
+            className={task.state === "COMPLETED" ? "text-success" : undefined}
+          >
+            {task.state === "OPEN" ? "Open" : "Completed"}
+          </Badge>
+          <span className="text-xs text-muted-foreground">Task · v{task.version}</span>
         </div>
-        {error && !(editing && task.state === "COMPLETED") && (
+        {editing && task.state === "OPEN" ? (
+          <div className="mt-3 flex items-center gap-1">
+            <Input
+              aria-label="Task title"
+              autoFocus
+              maxLength={500}
+              value={draft}
+              disabled={pending}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveTitle()
+                if (event.key === "Escape") {
+                  setDraft(task.title)
+                  setEditing(false)
+                  setError("")
+                }
+              }}
+            />
+            <Button size="icon" aria-label="Save title" onClick={() => void saveTitle()}>
+              {pending ? <Spinner /> : <CheckIcon />}
+            </Button>
+            <Button size="icon" variant="ghost" aria-label="Cancel rename" onClick={() => setEditing(false)}>
+              <XIcon />
+            </Button>
+          </div>
+        ) : (
+          <div className="mt-3 flex items-start gap-1">
+            <h2 className="min-w-0 flex-1 text-lg font-semibold leading-snug">{task.title}</h2>
+            {task.state === "OPEN" && canMutate && (
+              <Button variant="ghost" size="icon" aria-label="Rename task" onClick={() => setEditing(true)}>
+                <PencilIcon />
+              </Button>
+            )}
+          </div>
+        )}
+        <div className="mt-4 flex flex-col gap-2">
+          {activeCall && (
+            <Button variant="outline" onClick={onReturnToCall}>
+              <PhoneCallIcon /> Return to active call
+            </Button>
+          )}
+          {!canMutate ? (
+            <Badge variant="outline">Read only · enter Support Mode</Badge>
+          ) : task.state === "OPEN" ? (
+            <>
+              {!activeCall && (
+                <Button
+                  variant="outline"
+                  disabled={!callEligible || taskCallPending}
+                  title={callEligible ? "Call this Task" : callReason}
+                  onClick={() => onStartTaskCall(task)}
+                >
+                  <PhoneCallIcon /> {taskCallPending ? "Preparing…" : "Call"}
+                </Button>
+              )}
+              <Button onClick={() => void transition("complete")} disabled={pending}>
+                {pending ? <Spinner /> : <CheckCircle2Icon />} Complete
+              </Button>
+            </>
+          ) : (
+            <Button variant="outline" onClick={() => void transition("reopen")} disabled={pending}>
+              {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
+            </Button>
+          )}
+        </div>
+        {(taskCallError || (!callEligible && callReason)) && (
+          <p className="mt-3 text-xs text-muted-foreground">{taskCallError || callReason}</p>
+        )}
+        {error && (
           <Alert variant="destructive" className="mt-3">
             <AlertTitle>Task changed</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        {(taskCallError || (!callEligible && callReason)) && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {taskCallError || callReason}
-          </p>
-        )}
-        {editing && task.state === "COMPLETED" && (
-          <Alert className="mt-3">
-            <AlertTitle>Title retained</AlertTitle>
-            <AlertDescription>
-              <p>
-                This Task was completed while you were editing. Reopen it to
-                retry “{draft}”.
-              </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="mt-2"
-                onClick={() => {
-                  setDraft(task.title)
-                  setEditing(false)
-                  setError("")
-                }}
-              >
-                Discard attempted title
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-        <div className="mt-4 grid gap-3 border-t pt-3 text-xs text-muted-foreground sm:grid-cols-3">
-          <Metadata
-            label="Created"
-            value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
-          />
-          <Metadata
-            label="Last changed"
-            value={formatDateTime(task.updatedAt)}
-          />
+        <Separator className="my-4" />
+        <details className="group rounded-md border px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium">
+            More context
+          </summary>
+          <div className="mt-3 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Task Activity is shown in sequence in Engagement History.
+            </p>
+            {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
+            {(task.origin === "VOICEMAIL_RECOVERY" ||
+              task.origin === "MISSED_CALL_RECOVERY") && (
+              <RecoveryTaskSource task={task} revision={historyHint} />
+            )}
+            {task.sourceCallId && task.origin !== "ABITA_AI" && (
+              <Metadata label="Source call" value={task.sourceCallId} />
+            )}
+          </div>
+        </details>
+        <div className="grid gap-3 text-xs text-muted-foreground">
+          <Metadata label="Created" value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`} />
+          <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
           <Metadata
             label="Completed"
-            value={
-              task.completedAt
-                ? `${formatDateTime(task.completedAt)} · ${task.completedBy ? actorLabel(task.completedBy) : ""}`
-                : "Not completed"
-            }
+            value={task.completedAt ? formatDateTime(task.completedAt) : "Not completed"}
           />
         </div>
-      </header>
-      {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
-      {(task.origin === "VOICEMAIL_RECOVERY" ||
-        task.origin === "MISSED_CALL_RECOVERY") && (
-        <RecoveryTaskSource task={task} revision={historyHint} />
-      )}
-      <TaskMessageConversation
-        key={task.id}
-        task={task}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={historyHint}
-        onTaskCreated={onTaskUpdated}
-        onMessageSent={() => void refreshTask()}
-      />
-      {!task.messageThreadId && !task.conversationThreadId && (
-        <CallHistory
-          key={`task:${task.id}`}
-          source={{ kind: "task", id: task.id }}
-          revision={historyHint}
-        />
-      )}
+      </aside>
     </section>
   )
 }
 
 function AITaskSource({ task }: { task: Task }) {
   return (
-    <section
-      aria-label="AI Task source"
-      className="border-b bg-muted/20 px-5 py-4"
-    >
+    <section aria-label="AI Task source" className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="gap-1.5">
           <BotIcon className="size-3.5" aria-hidden="true" />
@@ -470,27 +415,22 @@ function AITaskSource({ task }: { task: Task }) {
         >
           {formatUrgency(task.urgency)}
         </Badge>
-        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-          Created by AI · {formatDateTime(task.createdAt)}
-        </span>
       </div>
-      <div className="mt-3 grid gap-3 text-sm md:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="text-sm">
         <div>
           <p className="font-medium">
             {task.callerName
               ? `AI-supplied name: ${task.callerName}`
-              : "Caller"}{" "}
-            · {formatPhone(task.phone)}
+              : "No sourced caller name"}
           </p>
-          <p className="mt-1 max-w-3xl whitespace-pre-wrap text-muted-foreground">
+          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
             {task.sourceMessage}
           </p>
         </div>
         {task.sourceCallId && (
-          <div className="text-xs text-muted-foreground md:text-right">
-            <p className="font-medium">Source call</p>
-            <p className="mt-1 font-mono">{task.sourceCallId}</p>
-          </div>
+          <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+            Source call · {task.sourceCallId}
+          </p>
         )}
       </div>
     </section>
@@ -532,18 +472,12 @@ function RecoveryTaskSource({
   }, [revision, task.callId, task.version])
 
   return (
-    <section
-      aria-label="Call recovery source"
-      className="border-b bg-muted/20 px-5 py-4"
-    >
+    <section aria-label="Call recovery source">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="gap-1.5">
           <AudioLinesIcon className="size-3.5" aria-hidden="true" />
           {task.recoveryOutcome === "VOICEMAIL" ? "Voicemail" : "Missed call"}
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          Contact Context · {formatPhone(task.phone)} · {task.locationName}
-        </span>
       </div>
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       {call?.voicemail && <VoicemailSource call={call} compact />}

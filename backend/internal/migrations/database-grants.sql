@@ -42,6 +42,7 @@ GRANT SELECT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_interactions,
     public.work_tasks
 TO acuity_portal;
 
@@ -90,6 +91,7 @@ GRANT INSERT ON TABLE
     public.messaging_provider_commands,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_interactions,
     public.work_tasks
 TO acuity_portal;
 
@@ -244,6 +246,7 @@ GRANT SELECT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_interactions,
     public.work_tasks
 TO acuity_worker;
 
@@ -260,6 +263,7 @@ GRANT INSERT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_interactions,
     public.work_tasks
 TO acuity_worker;
 

@@ -401,6 +401,37 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/calling/live-calls:
+    get:
+      operationId: listLiveCalls
+      summary: List informational active Calls within the current User's Location Scope.
+      parameters:
+        - name: practiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: locationId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Access-filtered active Calls.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveCallPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/calling/offers/{callId}/accept:
     post:
       operationId: acceptCallingOffer
@@ -786,6 +817,74 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/engagements/query:
+    post:
+      operationId: queryEngagements
+      summary: Resolve one authorized exact-phone Engagement across Practice Locations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EngagementQueryRequest"
+      responses:
+        "200":
+          description: Exact-phone results within the current User's Location Scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngagementPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/engagements/{phone}/timeline:
+    get:
+      operationId: getEngagementTimeline
+      summary: Read one authorized exact-phone Engagement History.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 32
+        - name: practiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Chronological exact-phone Engagement History.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationTimelinePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -994,6 +1093,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CallHistoryPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/engagement-history:
+    get:
+      operationId: getTaskEngagementHistory
+      summary: Read authorized exact-phone Engagement History for one Task.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Chronological exact-phone Engagement History.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationTimelinePage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1902,7 +2037,7 @@ components:
     SoftphoneState:
       type: object
       additionalProperties: false
-      required: [sessionId, leaseExpiresAt, owner, available, activeCallId]
+      required: [sessionId, leaseExpiresAt, owner, available, activeCallId, pendingOutcomeCallId]
       properties:
         sessionId:
           type: string
@@ -1916,6 +2051,9 @@ components:
         activeCallId:
           type: string
           description: The User's current durable Call, or empty when capacity is free.
+        pendingOutcomeCallId:
+          type: string
+          description: The latest connected Call awaiting an outcome, or empty when none remains.
     MediaTokenRequest:
       type: object
       additionalProperties: false
@@ -2235,6 +2373,48 @@ components:
           $ref: "#/components/schemas/CallingRecording"
         voicemail:
           $ref: "#/components/schemas/CallingVoicemail"
+    LiveCall:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - locationId
+        - locationName
+        - phone
+        - direction
+        - staffSubject
+        - staffEmail
+        - connectedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        phone:
+          type: string
+        direction:
+          type: string
+          enum: [INBOUND, OUTBOUND]
+        staffSubject:
+          type: string
+        staffEmail:
+          type: string
+        connectedAt:
+          type: string
+          format: date-time
+    LiveCallPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveCall"
     CallingDispositionRequest:
       type: object
       additionalProperties: false
@@ -2473,6 +2653,65 @@ components:
             $ref: "#/components/schemas/Task"
         nextCursor:
           type: string
+    EngagementLocation:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    EngagementSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - phone
+        - locations
+        - latestActivity
+        - openTaskCount
+        - unread
+      properties:
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        displayName:
+          type: string
+        locations:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/EngagementLocation"
+        latestActivity:
+          type: string
+          format: date-time
+        openTaskCount:
+          type: integer
+          minimum: 0
+        unread:
+          type: boolean
+    EngagementPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EngagementSummary"
+    EngagementQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, phone]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        phone:
+          type: string
+          minLength: 1
+          maxLength: 32
     TaskQueryRequest:
       type: object
       additionalProperties: false
@@ -2487,9 +2726,12 @@ components:
         search:
           type: string
           maxLength: 500
+        state:
+          type: string
+          enum: [OPEN, COMPLETED]
         ordering:
           type: string
-          enum: [time, priority]
+          enum: [priority, recent]
         cursor:
           type: string
         limit:
@@ -2856,6 +3098,14 @@ components:
         occurredAt:
           type: string
           format: date-time
+        taskActivity:
+          type: string
+          enum:
+            - TASK_CREATED
+            - TITLE_CHANGED
+            - TASK_COMPLETED
+            - TASK_REOPENED
+            - INTERACTION_ATTACHED
         message:
           $ref: "#/components/schemas/Message"
         task:

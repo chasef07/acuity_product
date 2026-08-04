@@ -238,6 +238,16 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("accept voicemail HTTP invitation: %v", err)
 	}
+	voicemailLocationID := ""
+	for _, location := range authorization.Locations {
+		if location.Name == "Voicemail HTTP Location" {
+			voicemailLocationID = location.ID
+			break
+		}
+	}
+	if voicemailLocationID == "" {
+		t.Fatal("voicemail HTTP Location is missing from authorization")
+	}
 	hiddenIdentity := access.Identity{
 		Subject:       "voicemail-hidden-subject",
 		Email:         "voicemail-hidden@synthetic.test",
@@ -260,7 +270,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		)
 		VALUES ($1, 'voicemail-http-service', $2, $3, 'voicemail-http-source',
 			'voicemail-http-key', $4, $5, '+15555550100', $6, $7, $7)
-	`, handoffID, authorization.Practice.ID, authorization.Locations[0].ID,
+	`, handoffID, authorization.Practice.ID, voicemailLocationID,
 		[]byte(callID), []byte("token-"+callID), now.Add(time.Minute), now,
 	); err != nil {
 		t.Fatalf("insert voicemail HTTP handoff: %v", err)
@@ -275,7 +285,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 			'voicemail-http-control', 'voicemail-http-leg',
 			'voicemail-http-session', $6, $7, $6)
 	`, callID, handoffID, authorization.Practice.ID,
-		authorization.Locations[0].ID, now.Add(20*time.Second),
+		voicemailLocationID, now.Add(20*time.Second),
 		now.Add(12*time.Second), now,
 	); err != nil {
 		t.Fatalf("insert voicemail HTTP Call: %v", err)
@@ -290,7 +300,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		work.EnsureRecoveryTaskCommand{
 			CallID:     callID,
 			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
+			LocationID: voicemailLocationID,
 			Phone:      "+15555550100",
 			Outcome:    work.RecoveryOutcomeVoicemail,
 			OccurredAt: now.Add(12 * time.Second),
@@ -308,7 +318,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		)
 		VALUES ($1, $2, $3, $4, 'VOICEMAIL', 'READY',
 			'voicemail-http-recording', $5, $6, 12000, $5, $6)
-	`, callID, authorization.Practice.ID, authorization.Locations[0].ID,
+	`, callID, authorization.Practice.ID, voicemailLocationID,
 		task.ID, now, now.Add(12*time.Second),
 	); err != nil {
 		_ = tx.Rollback(context.Background())
@@ -719,7 +729,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	}
 	var completed api.Task
 	decode(t, completedResponse, &completed)
-	if completed.State != api.COMPLETED || completed.CompletedBy == nil ||
+	if completed.State != api.TaskStateCOMPLETED || completed.CompletedBy == nil ||
 		completed.CompletedBy.Kind != api.TaskActorKindHUMAN ||
 		completed.CompletedBy.Email == nil ||
 		string(*completed.CompletedBy.Email) != identity.Email {
@@ -740,7 +750,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	}
 	var reopened api.Task
 	decode(t, reopenedResponse, &reopened)
-	if reopened.State != api.OPEN || reopened.CompletedBy != nil ||
+	if reopened.State != api.TaskStateOPEN || reopened.CompletedBy != nil ||
 		reopened.Title != renamed.Title {
 		t.Fatalf("reopened HTTP Task = %#v", reopened)
 	}
