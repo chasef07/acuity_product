@@ -75,6 +75,18 @@ export function InteractionWorkspace({
   onStartTaskCall,
   onReturnToCall,
 }: InteractionWorkspaceProps) {
+	const openRecoveryTask = useCallback(
+		async (taskID: string) => {
+			const token = await getAccessToken()
+			if (!token) return
+			const result = await readTask({
+				client: portalClient(token),
+				path: { taskId: taskID },
+			}).catch(() => undefined)
+			if (result?.data) onTaskUpdated(result.data)
+		},
+		[onTaskUpdated],
+	)
   if (view === "call" && activeCall) {
     return (
       <CallWorkspace
@@ -82,6 +94,7 @@ export function InteractionWorkspace({
         historyHint={historyHint}
         returnTask={task}
         onReturnToTask={task ? () => onTaskUpdated(task) : undefined}
+		onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
         supportSessionID={supportSessionID}
         canMutate={canMutate}
       />
@@ -365,6 +378,10 @@ function TaskWorkspace({
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
+        {(task.origin === "VOICEMAIL_RECOVERY" ||
+          task.origin === "MISSED_CALL_RECOVERY") && (
+          <RecoveryTaskSource task={task} revision={historyHint} />
+        )}
         <Separator className="my-4" />
         <details className="group rounded-md border px-3 py-2">
           <summary className="cursor-pointer text-sm font-medium">
@@ -375,10 +392,6 @@ function TaskWorkspace({
               Task Activity is shown in sequence in Engagement History.
             </p>
             {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
-            {(task.origin === "VOICEMAIL_RECOVERY" ||
-              task.origin === "MISSED_CALL_RECOVERY") && (
-              <RecoveryTaskSource task={task} revision={historyHint} />
-            )}
             {task.sourceCallId && task.origin !== "ABITA_AI" && (
               <Metadata label="Source call" value={task.sourceCallId} />
             )}
@@ -445,17 +458,34 @@ function RecoveryTaskSource({
   revision: number
 }) {
   const [call, setCall] = useState<CallingCall>()
+  const [interactions, setInteractions] = useState<Task["interactions"]>([])
   const [error, setError] = useState("")
 
   useEffect(() => {
-    if (!task.callId) return
     let current = true
     const timeout = window.setTimeout(async () => {
       const token = await getAccessToken()
       if (!token || !current) return
+      const client = portalClient(token)
+      const detail = await readTask({
+        client,
+        path: { taskId: task.id },
+      }).catch(() => undefined)
+      if (!current) return
+      if (!detail?.data) {
+        setError("Recovery source is temporarily unavailable.")
+        return
+      }
+      const linkedInteractions = detail.data.interactions
+      setInteractions(linkedInteractions)
+      const voicemail = linkedInteractions.find(
+        (interaction) => interaction.type === "VOICEMAIL",
+      )
+      const callID = voicemail?.callId ?? task.callId
+      if (!callID) return
       const result = await getCallingCall({
-        client: portalClient(token),
-        path: { callId: task.callId! },
+        client,
+        path: { callId: callID },
       }).catch(() => undefined)
       if (!current) return
       if (result?.data) {
@@ -469,7 +499,7 @@ function RecoveryTaskSource({
       current = false
       window.clearTimeout(timeout)
     }
-  }, [revision, task.callId, task.version])
+  }, [revision, task.callId, task.id, task.version])
 
   return (
     <section aria-label="Call recovery source">
@@ -478,7 +508,23 @@ function RecoveryTaskSource({
           <AudioLinesIcon className="size-3.5" aria-hidden="true" />
           {task.recoveryOutcome === "VOICEMAIL" ? "Voicemail" : "Missed call"}
         </Badge>
+		{task.relatedInteractionCount > 0 && (
+			<span className="text-xs text-muted-foreground">
+				{task.relatedInteractionCount} related
+			</span>
+		)}
       </div>
+      {interactions.length > 0 && (
+        <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+          {interactions.map((interaction) => (
+            <li key={interaction.callId}>
+              {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
+              {" · "}
+              {formatDateTime(interaction.occurredAt)}
+            </li>
+          ))}
+        </ul>
+      )}
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       {call?.voicemail && <VoicemailSource call={call} compact />}
     </section>
@@ -495,6 +541,7 @@ function VoicemailSource({
   const [audioURL, setAudioURL] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+	const audioRef = useRef<HTMLAudioElement>(null)
   const voicemail = call.voicemail
 
   useEffect(
@@ -503,6 +550,10 @@ function VoicemailSource({
     },
     [audioURL],
   )
+
+	useEffect(() => {
+		if (audioURL) void audioRef.current?.play().catch(() => undefined)
+	}, [audioURL])
 
   if (!voicemail) return null
   const stateLabel =
@@ -573,11 +624,12 @@ function VoicemailSource({
             disabled={loading}
             onClick={() => void loadAudio()}
           >
-            {loading ? <Spinner /> : "Load recording"}
+            {loading ? <Spinner /> : "Play"}
           </Button>
         )}
         {audioURL && (
           <audio
+			ref={audioRef}
             aria-label="Voicemail recording"
             controls
             controlsList="nodownload"
@@ -617,6 +669,7 @@ function CallWorkspace({
   historyHint,
   returnTask,
   onReturnToTask,
+	onOpenRecoveryTask,
   supportSessionID,
   canMutate,
 }: {
@@ -624,6 +677,7 @@ function CallWorkspace({
   historyHint: number
   returnTask: Task | undefined
   onReturnToTask: (() => void) | undefined
+	onOpenRecoveryTask: (taskID: string) => void
   supportSessionID: string
   canMutate: boolean
 }) {
@@ -657,6 +711,18 @@ function CallWorkspace({
             <p className="mt-2 text-sm tabular-nums text-muted-foreground">
               {formatPhone(call.phone)} · {call.locationName}
             </p>
+			{call.recoveryTask && (
+				<div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+					<Badge variant="outline">{call.recoveryTask.state}</Badge>
+					<span className="font-medium">{call.recoveryTask.title}</span>
+					<span className="text-xs text-muted-foreground">
+						{call.recoveryTask.relatedInteractionCount} related
+					</span>
+					<Button size="sm" variant="outline" onClick={() => onOpenRecoveryTask(call.recoveryTask!.id)}>
+						Open Task
+					</Button>
+				</div>
+			)}
           </div>
           {returnTask && onReturnToTask && (
             <Button variant="outline" onClick={onReturnToTask}>

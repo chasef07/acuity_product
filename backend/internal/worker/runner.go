@@ -32,6 +32,10 @@ type MessagingWork interface {
 	ExpirePendingAttachments(context.Context) error
 }
 
+type dispositionExpiryWork interface {
+	ExpireDispositions(context.Context) (int, error)
+}
+
 type Dependency interface {
 	Ping(context.Context) error
 }
@@ -288,6 +292,15 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireConnections); err != nil {
 		warn(ctx, "calling_connection_expiry_failed", err)
 		failed = true
+	}
+	if ctx.Err() != nil {
+		return failed
+	}
+	if dispositionWork, ok := runner.work.(dispositionExpiryWork); ok {
+		if _, err := runCountWork(ctx, runner.config.WorkTimeout, dispositionWork.ExpireDispositions); err != nil {
+			warn(ctx, "calling_disposition_expiry_failed", err)
+			failed = true
+		}
 	}
 	if ctx.Err() != nil {
 		return failed

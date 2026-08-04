@@ -79,6 +79,7 @@ func (adapter *TelnyxAdapter) Execute(
 	case CommandPlayVoicemailGreeting:
 		if command.TargetID == "" ||
 			emptyString(payload["greeting"]) ||
+			payload["stop"] != "all" ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}

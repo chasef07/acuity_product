@@ -324,7 +324,7 @@ export function TaskRail({
               showOffice={showOffice}
               onTaskSelect={onTaskSelect}
             />
-            {loading && <RailLoading label="Refreshing tasks" />}
+            {loading && tasks.length === 0 && <RailLoading label="Loading tasks" />}
             {!loading && tasks.length === 0 && (
               <RailEmpty>No follow-up tasks</RailEmpty>
             )}
@@ -344,7 +344,7 @@ export function TaskRail({
               selectedThreadID={selectedThreadID}
               onThreadSelect={onThreadSelect}
             />
-            {messageLoading && <RailLoading label="Refreshing messages" />}
+            {messageLoading && visibleMessages.length === 0 && <RailLoading label="Loading messages" />}
             {!messageLoading && visibleMessages.length === 0 && (
               <RailEmpty>
                 {unreadOnly ? "No unread conversations" : "No conversations at this office"}
@@ -446,6 +446,13 @@ function TaskGroup({
                         AI
                       </Badge>
                     )}
+                    {(task.origin === "VOICEMAIL_RECOVERY" ||
+                      task.origin === "MISSED_CALL_RECOVERY") &&
+                      task.relatedInteractionCount > 0 && (
+                        <span className="ml-auto shrink-0 text-xs font-normal text-muted-foreground">
+                          {task.relatedInteractionCount} related
+                        </span>
+                      )}
                   </span>
                   <span className="flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
                     <span>{formatPhone(task.phone)}</span>

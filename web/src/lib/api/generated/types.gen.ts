@@ -266,7 +266,7 @@ export type OutboundCallEligibility = {
 export type AcceptCallingOfferResult = {
     status: 'ACCEPTED' | 'ALREADY_CLAIMED' | 'EXPIRED' | 'INELIGIBLE';
     callId: string;
-    state: 'OFFERING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    state: 'OFFERING' | 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
 };
 
 export type CallingRecording = {
@@ -296,6 +296,7 @@ export type CallingCall = {
     taskId?: string;
     state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     deadline: string;
+    dispositionDeadline?: string;
     phone: string;
     phoneSource: string;
     displayName: string;
@@ -322,6 +323,14 @@ export type CallingCall = {
     version: number;
     recording?: CallingRecording;
     voicemail?: CallingVoicemail;
+    recoveryTask?: CallingRecoveryTask;
+};
+
+export type CallingRecoveryTask = {
+    id: string;
+    title: string;
+    state: 'OPEN' | 'COMPLETED';
+    relatedInteractionCount: number;
 };
 
 export type LiveCall = {
@@ -417,6 +426,14 @@ export type Task = {
     completedAt?: string;
     version: number;
     updatedAt: string;
+    relatedInteractionCount: number;
+    interactions: Array<TaskInteraction>;
+};
+
+export type TaskInteraction = {
+    callId: string;
+    occurredAt: string;
+    type: 'CALL' | 'VOICEMAIL';
 };
 
 export type TaskPage = {
@@ -608,7 +625,7 @@ export type CallHistoryItem = {
     locationName: string;
     answeredByEmail: string;
     transferReason: string;
-    outcome: 'OFFERING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    outcome: 'OFFERING' | 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     current: boolean;
     originating: boolean;
 };

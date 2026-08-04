@@ -365,6 +365,51 @@ func TestPendingOutcomeDoesNotConsumeCallCapacity(t *testing.T) {
 	}
 }
 
+func TestDispositionDeadlineResolvesWithoutABrowser(t *testing.T) {
+	now := time.Date(2026, time.August, 4, 9, 0, 0, 0, time.UTC)
+	calling, identity, offer := readyOfferAt(
+		t,
+		&recordingProvider{},
+		"automatic-disposition",
+		func() time.Time { return now },
+	)
+	sessionID := "automatic-disposition-browser"
+	if _, err := calling.AcceptOffer(context.Background(), identity, sessionID, offer.ID); err != nil {
+		t.Fatalf("accept automatic disposition Call: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("open automatic disposition observer pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	deadline := now.Add(20 * time.Second)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET
+			state = 'NEEDS_DISPOSITION',
+			winner_subject = claimant_subject,
+			connected_at = $2,
+			ended_at = $2,
+			disposition_deadline = $3,
+			updated_at = $2
+		WHERE id = $1
+	`, offer.ID, now, deadline); err != nil {
+		t.Fatalf("prepare automatic disposition Call: %v", err)
+	}
+	if count, err := calling.ExpireDispositions(context.Background()); err != nil || count != 0 {
+		t.Fatalf("early disposition expiry: count=%d err=%v", count, err)
+	}
+	now = deadline
+	if count, err := calling.ExpireDispositions(context.Background()); err != nil || count != 1 {
+		t.Fatalf("expire disposition: count=%d err=%v", count, err)
+	}
+	resolved, err := calling.ReadCall(context.Background(), identity, offer.ID)
+	if err != nil || resolved.State != humancalling.CallResolved ||
+		resolved.DispositionDeadline != nil {
+		t.Fatalf("automatic disposition result = %#v, err=%v", resolved, err)
+	}
+}
+
 func TestFollowUpTaskFailureLeavesCallNeedingDisposition(t *testing.T) {
 	calling, identity, offer := readyOffer(
 		t,

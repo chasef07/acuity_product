@@ -2224,10 +2224,14 @@ components:
           type: string
           enum:
             - OFFERING
+            - PREPARING
+            - RINGING
             - CONNECTING
             - CONNECTED
             - RECONCILING
             - UNANSWERED
+            - VOICEMAIL
+            - MISSED
             - NEEDS_DISPOSITION
             - RESOLVED
             - FOLLOW_UP_REQUIRED
@@ -2332,6 +2336,9 @@ components:
         deadline:
           type: string
           format: date-time
+        dispositionDeadline:
+          type: string
+          format: date-time
         phone:
           type: string
         phoneSource:
@@ -2373,6 +2380,24 @@ components:
           $ref: "#/components/schemas/CallingRecording"
         voicemail:
           $ref: "#/components/schemas/CallingVoicemail"
+        recoveryTask:
+          $ref: "#/components/schemas/CallingRecoveryTask"
+    CallingRecoveryTask:
+      type: object
+      additionalProperties: false
+      required: [id, title, state, relatedInteractionCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        state:
+          type: string
+          enum: [OPEN, COMPLETED]
+        relatedInteractionCount:
+          type: integer
+          minimum: 0
     LiveCall:
       type: object
       additionalProperties: false
@@ -2571,6 +2596,8 @@ components:
         - unread
         - version
         - updatedAt
+        - relatedInteractionCount
+        - interactions
       properties:
         id:
           type: string
@@ -2642,6 +2669,27 @@ components:
         updatedAt:
           type: string
           format: date-time
+        relatedInteractionCount:
+          type: integer
+          minimum: 0
+        interactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskInteraction"
+    TaskInteraction:
+      type: object
+      additionalProperties: false
+      required: [callId, occurredAt, type]
+      properties:
+        callId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [CALL, VOICEMAIL]
     TaskPage:
       type: object
       additionalProperties: false
@@ -3172,10 +3220,14 @@ components:
           type: string
           enum:
             - OFFERING
+            - PREPARING
+            - RINGING
             - CONNECTING
             - CONNECTED
             - RECONCILING
             - UNANSWERED
+            - VOICEMAIL
+            - MISSED
             - NEEDS_DISPOSITION
             - RESOLVED
             - FOLLOW_UP_REQUIRED
