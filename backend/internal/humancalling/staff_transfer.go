@@ -760,6 +760,15 @@ func (m *Module) endStaffTransferAttempt(
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("end staff transfer attempt: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'TRANSFER_EXPIRED', updated_at = $2
+		WHERE attempt_id = NULLIF($1, '')::uuid
+			AND action = 'DIAL_STAFF'
+			AND state = 'AMBIGUOUS'
+	`, attemptID, now); err != nil {
+		return fmt.Errorf("retire ambiguous staff transfer Dial: %w", err)
+	}
 	if staffControlID != "" {
 		if err := ensureHangupCommand(
 			ctx, tx, transfer.callID, attemptID, transfer.recipient,

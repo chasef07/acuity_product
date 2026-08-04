@@ -1030,14 +1030,20 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         exact: true,
       }),
     ).toBeVisible()
-    await loserPage.getByLabel("Search tasks").fill("+15555550100")
-    await loserPage.getByLabel("Search tasks").press("Enter")
+    const phoneSearch = loserPage.getByLabel("Search tasks")
+    await phoneSearch.fill("+15555550100")
+    await phoneSearch.press("Enter")
     await expect(
       loserPage.getByRole("heading", { name: "(555) 555-0100" }),
     ).toBeVisible()
     await expect(loserPage.getByText("Engagement History", { exact: true })).toBeVisible()
     expect(loserPage.url()).not.toContain("5555550100")
-    await loserPage.getByLabel("Search tasks").fill("")
+    await phoneSearch.fill("+15555550101")
+    await phoneSearch.press("Enter")
+    await expect(
+      loserPage.getByRole("heading", { name: "(555) 555-0101" }),
+    ).toBeVisible()
+    await phoneSearch.fill("")
     await expect(takeoverAvailability).toBeChecked()
     await expect
       .poll(async () => {

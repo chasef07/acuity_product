@@ -901,6 +901,13 @@ func (m *Module) SetReadiness(
 							'CONNECTED',
 							'RECONCILING'
 						)
+				) OR EXISTS (
+					SELECT 1
+					FROM human_calling_staff_transfers transfer
+					JOIN human_calling_calls call ON call.id = transfer.call_id
+					WHERE transfer.recipient_subject = $1
+						AND transfer.state = 'ACCEPTED'
+						AND call.state = 'CONNECTED'
 				) THEN false
 				ELSE $7
 			END,

@@ -260,7 +260,7 @@ export function TaskWorkspaceShell() {
   )
 
   const loadTasks = useCallback(
-    async (cursor = "", append = false) => {
+    async (cursor = "", append = false, preserveSelection = false) => {
       if (!practiceID) return
       const queryKey = workspaceTaskQueryKey(
         practiceID,
@@ -316,7 +316,7 @@ export function TaskWorkspaceShell() {
       if (selected) {
         const current = next.find((task) => task.id === selected.id)
         if (current) updateSelectedTask(current)
-        else if (viewRef.current !== "call") {
+        else if (!preserveSelection && viewRef.current !== "call") {
           updateSelectedTask(next[0])
           setView(next[0] ? "task" : "none")
         }
@@ -946,18 +946,21 @@ export function TaskWorkspaceShell() {
   }
 
   async function submitPhoneSearch() {
-    if (engagements[0]) {
-      selectEngagement(engagements[0])
-      return
-    }
     const phone = search.trim()
     if (!phone || !practiceID) return
+    const requestGeneration = ++engagementGenerationRef.current
+    setEngagementLoading(true)
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) {
+      setEngagementLoading(false)
+      return
+    }
     const result = await queryEngagements({
       client: portalClient(token),
       body: { practiceId: practiceID, phone },
     }).catch(() => undefined)
+    if (requestGeneration !== engagementGenerationRef.current) return
+    setEngagementLoading(false)
     const items = result?.data?.items ?? []
     setEngagements(items)
     if (items[0]) selectEngagement(items[0])
@@ -1324,7 +1327,7 @@ export function TaskWorkspaceShell() {
               taskCallError={taskCallError}
               onTaskUpdated={(task) => {
                 updateTaskProjection(task)
-                void loadTasks()
+                void loadTasks("", false, true)
               }}
               onStartTaskCall={(task) => {
                 setTaskCallError("")

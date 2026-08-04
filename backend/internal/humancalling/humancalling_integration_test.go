@@ -452,6 +452,28 @@ func TestStaffTransferChangesOwnershipOnlyAfterProviderBridge(t *testing.T) {
 	if err != nil || accepted.State != humancalling.StaffTransferAccepted {
 		t.Fatalf("accept staff transfer = %#v, err=%v", accepted, err)
 	}
+	recipientReadiness, err := calling.SetReadiness(
+		context.Background(),
+		ready(identities[1], sessions[1]),
+	)
+	if err != nil || recipientReadiness.Available || recipientReadiness.ActiveCallID != callID {
+		t.Fatalf("accepted recipient readiness = %#v, err=%v", recipientReadiness, err)
+	}
+	var recipientDesiredAvailable bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT desired_available
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1 AND session_id = $2
+	`, identities[1].Subject, sessions[1]).Scan(&recipientDesiredAvailable); err != nil {
+		t.Fatalf("read accepted recipient readiness intent: %v", err)
+	}
+	if recipientDesiredAvailable {
+		t.Fatal("accepted transfer recipient restored availability before provider bridge")
+	}
+	candidates, err = calling.ListTransferCandidates(context.Background(), identities[0], callID)
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("accepted recipient remained a transfer candidate: %#v, err=%v", candidates, err)
+	}
 	recipientCall, err := calling.ReadCall(context.Background(), identities[1], callID)
 	if err != nil || recipientCall.ExpectedMediaToken == "" {
 		t.Fatalf("accepted recipient media authorization = %#v, err=%v", recipientCall, err)
@@ -551,6 +573,92 @@ func TestStaffTransferChangesOwnershipOnlyAfterProviderBridge(t *testing.T) {
 	}
 	if provider.count(humancalling.CommandDialStaff) != 1 {
 		t.Fatalf("caller-hangup transfer executed stale Dial: %d", provider.count(humancalling.CommandDialStaff))
+	}
+
+	ambiguousTransferID := uuid.NewString()
+	ambiguousAttemptID := uuid.NewString()
+	ambiguousDialID := uuid.NewString()
+	pendingHangupID := uuid.NewString()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_staff_transfers (
+			id, call_id, practice_id, location_id, requested_by_subject,
+			requested_by_session_id, recipient_subject, recipient_session_id,
+			handoff_note, state, expires_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', 'ACCEPTED', $9, $10, $10)
+	`, ambiguousTransferID, callID, authorizations[0].Practice.ID,
+		authorizations[0].Locations[0].ID, identities[1].Subject, sessions[1],
+		identities[0].Subject, sessions[0], now.Add(-time.Second), now); err != nil {
+		t.Fatalf("create ambiguous expired transfer: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_connection_attempts (
+			id, call_id, claimant_subject, claimant_session_id,
+			connection_deadline, staff_transfer_id, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+	`, ambiguousAttemptID, callID, identities[0].Subject, sessions[0],
+		now.Add(-time.Second), ambiguousTransferID, now); err != nil {
+		t.Fatalf("create ambiguous expired transfer attempt: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			id, call_id, attempt_id, user_subject, action, target_id,
+			payload, state, next_attempt_at, created_at, updated_at
+		)
+		VALUES
+			($1, $2, $3, $4, 'DIAL_STAFF', 'transfer-caller-control',
+				'{}'::jsonb, 'AMBIGUOUS', $6, $6, $6),
+			($5, $2, $3, $4, 'HANGUP', 'expired-transfer-hangup',
+				'{}'::jsonb, 'PENDING', $6, $6, $6)
+	`, ambiguousDialID, callID, ambiguousAttemptID, identities[0].Subject,
+		pendingHangupID, now); err != nil {
+		t.Fatalf("create blocked transfer command lane: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET desired_available = false, updated_at = $3
+		WHERE user_subject = $1 AND session_id = $2
+	`, identities[0].Subject, sessions[0], now); err != nil {
+		t.Fatalf("reserve ambiguous transfer recipient: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("expire ambiguous staff transfer: processed=%t err=%v", processed, err)
+	}
+	var ambiguousTransferState humancalling.StaffTransferState
+	var ambiguousCommandState, ambiguousErrorCode string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT transfer.state, command.state, command.last_error_code
+		FROM human_calling_staff_transfers transfer
+		JOIN human_calling_provider_commands command ON command.id = $2
+		WHERE transfer.id = $1
+	`, ambiguousTransferID, ambiguousDialID).Scan(
+		&ambiguousTransferState, &ambiguousCommandState, &ambiguousErrorCode,
+	); err != nil {
+		t.Fatalf("read ambiguous transfer expiry: %v", err)
+	}
+	if ambiguousTransferState != humancalling.StaffTransferExpired ||
+		ambiguousCommandState != "FAILED" || ambiguousErrorCode != "TRANSFER_EXPIRED" {
+		t.Fatalf(
+			"ambiguous transfer expiry = transfer %s, command %s/%s",
+			ambiguousTransferState, ambiguousCommandState, ambiguousErrorCode,
+		)
+	}
+	hangupsBefore := provider.count(humancalling.CommandHangup)
+	if processed, err := calling.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("process Hangup after ambiguous transfer expiry: processed=%t err=%v", processed, err)
+	}
+	if provider.count(humancalling.CommandHangup) != hangupsBefore+1 {
+		t.Fatal("ambiguous transfer command still blocked the Call command lane")
+	}
+	var pendingHangupState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, pendingHangupID).Scan(&pendingHangupState); err != nil {
+		t.Fatalf("read unblocked Hangup: %v", err)
+	}
+	if pendingHangupState != "SENT" {
+		t.Fatalf("unblocked Hangup state = %s", pendingHangupState)
 	}
 
 	expiredTransferID := uuid.NewString()
