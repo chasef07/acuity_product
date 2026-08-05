@@ -1116,6 +1116,11 @@ function MessageConversation({
         setError("The conversation could not be loaded.")
         return
       }
+      const currentScroller = scroller.current
+      const preservedScrollTop = currentScroller &&
+        currentScroller.scrollHeight - currentScroller.scrollTop - currentScroller.clientHeight >= 72
+        ? currentScroller.scrollTop
+        : undefined
       initialized.current = true
       setItems((current) => {
         const committed = committedMessage.current
@@ -1132,7 +1137,11 @@ function MessageConversation({
         return result.data.items
       })
       setCursor(result.data.nextCursor)
-      if (scroll) {
+      if (preservedScrollTop !== undefined) {
+        window.requestAnimationFrame(() => {
+          if (scroller.current) scroller.current.scrollTop = preservedScrollTop
+        })
+      } else if (scroll) {
         window.requestAnimationFrame(() =>
           scroller.current?.scrollTo({
             top: scroller.current.scrollHeight,
@@ -1198,7 +1207,12 @@ function MessageConversation({
 
   useEffect(() => {
     if (!initialized.current || !timelineKey) return
-    if (atLatest.current) {
+    const container = scroller.current
+    const isAtLatest = container
+      ? container.scrollHeight - container.scrollTop - container.clientHeight < 72
+      : atLatest.current
+    atLatest.current = isAtLatest
+    if (isAtLatest) {
       void loadLatest(true)
       void markRead()
     } else {

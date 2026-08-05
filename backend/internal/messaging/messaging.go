@@ -2304,7 +2304,7 @@ func (m *Module) MarkEngagementRead(
 	if len(locationIDs) == 0 {
 		return ErrDenied
 	}
-	tag, err := tx.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		DELETE FROM messaging_thread_unreads unread
 		USING messaging_threads thread
 		WHERE unread.thread_id = thread.id
@@ -2315,11 +2315,6 @@ func (m *Module) MarkEngagementRead(
 	`, command.Identity.Subject, command.PracticeID, locationIDs, phone)
 	if err != nil {
 		return fmt.Errorf("mark Engagement read: %w", err)
-	}
-	if tag.RowsAffected() > 0 {
-		if _, err := m.access.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
-			return err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Engagement read: %w", err)

@@ -1123,6 +1123,11 @@ export function TaskWorkspaceShell() {
   }
 
   function handleEngagementRead(phone: string) {
+    const clearedThreadIDs = new Set(
+      messageThreadsRef.current
+        .filter((thread) => thread.externalPhone === phone)
+        .map((thread) => thread.id),
+    )
     const nextThreads = messageThreadsRef.current.map((thread) =>
       thread.externalPhone === phone ? { ...thread, unread: false } : thread,
     )
@@ -1136,7 +1141,14 @@ export function TaskWorkspaceShell() {
         item.phone === phone ? { ...item, unread: false } : item,
       ),
     )
-    void loadTasks("", false, true)
+    const nextTasks = tasksRef.current.map((task) =>
+      clearedThreadIDs.has(task.conversationThreadId ?? "") ||
+      clearedThreadIDs.has(task.messageThreadId ?? "")
+        ? { ...task, unread: false }
+        : task,
+    )
+    tasksRef.current = nextTasks
+    setTasks(nextTasks)
   }
 
   const handleCallChanged = useCallback((call: CallingCall | undefined) => {
