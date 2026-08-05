@@ -114,6 +114,7 @@ export function EngagementWorkspace({
   supportSessionID,
   canMutate,
   revision,
+  initialMessage,
   focusedTask,
   onMessageSent,
   onThreadRead,
@@ -131,6 +132,7 @@ export function EngagementWorkspace({
   supportSessionID: string
   canMutate: boolean
   revision: number
+  initialMessage?: Message
   focusedTask?: Task
   onMessageSent: (message: Message) => void
   onThreadRead: (threadID: string) => void
@@ -252,6 +254,7 @@ export function EngagementWorkspace({
         supportSessionID={supportSessionID}
         canMutate={canMutate}
         revision={revision}
+        initialMessage={initialMessage}
         onMessageSent={onMessageSent}
         onThreadRead={onThreadRead}
         onEngagementRead={onEngagementRead}
@@ -1156,11 +1159,10 @@ function MessageConversation({
   useEffect(() => {
     const committed = committedMessage.current
     if (!committed) return
-    const timeout = window.setTimeout(
-      () => void loadLatest(true),
-      Math.max(0, committed.visibleUntil - Date.now()),
-    )
-    return () => window.clearTimeout(timeout)
+    const firstRefresh = Math.max(0, committed.visibleUntil - Date.now())
+    const timeouts = [firstRefresh, firstRefresh + 2_000, firstRefresh + 6_000]
+      .map((delay) => window.setTimeout(() => void loadLatest(true), delay))
+    return () => timeouts.forEach((timeout) => window.clearTimeout(timeout))
   }, [loadLatest, threadID])
 
   const markRead = useCallback(async () => {

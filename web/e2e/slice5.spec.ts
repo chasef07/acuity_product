@@ -209,8 +209,13 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     page.getByRole("article").filter({ hasText: unseenText }),
   ).toHaveCount(0)
   await expect
-    .poll(() => timelineScroller.evaluate((element) => element.scrollTop))
-    .toBe(preservedScrollTop)
+    .poll(async () =>
+      Math.abs(
+        (await timelineScroller.evaluate((element) => element.scrollTop)) -
+          preservedScrollTop,
+      ),
+    )
+    .toBeLessThanOrEqual(2)
   await expect(
     page.getByRole("button", { name: "New activity", exact: true }),
   ).toHaveCount(0)

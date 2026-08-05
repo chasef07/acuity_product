@@ -1340,6 +1340,7 @@ export function TaskWorkspaceShell() {
                 !workspace.platformOperator || Boolean(workspace.supportMode)
               }
               revision={workspaceRevision}
+              initialMessage={committedMessage}
               focusedTask={selectedTask}
               onMessageSent={handleMessageSent}
               onThreadRead={handleThreadRead}
