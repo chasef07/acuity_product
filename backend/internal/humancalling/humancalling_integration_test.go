@@ -1815,7 +1815,8 @@ func TestTenConcurrentAcceptsCommitOneClaimantAndOneDial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record disposition: %v", err)
 	}
-	if resolved.Call.State != humancalling.CallResolved {
+	if resolved.Call.State != humancalling.CallResolved ||
+		resolved.Call.DispositionOutcome != string(humancalling.DispositionResolved) {
 		t.Fatalf("resolved Call = %#v", resolved)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{

@@ -475,6 +475,7 @@ function TextRow({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
+        data-testid="text-attention-row"
         className="h-auto min-h-16 rounded-none border-t px-3 py-2"
         tooltip={thread.externalPhone}
         onClick={onSelect}
@@ -534,8 +535,10 @@ function aggregateTexts(
         previewThread: newest,
         oldestAttention: threads.reduce(
           (oldest, thread) =>
-            thread.latestActivity < oldest ? thread.latestActivity : oldest,
-          threads[0]!.latestActivity,
+            (thread.attentionSince ?? thread.latestActivity) < oldest
+              ? (thread.attentionSince ?? thread.latestActivity)
+              : oldest,
+          threads[0]!.attentionSince ?? threads[0]!.latestActivity,
         ),
         engagement: {
           phone,

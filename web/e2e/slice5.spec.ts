@@ -214,8 +214,9 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(
     page.getByRole("button", { name: "New activity", exact: true }),
   ).toHaveCount(0)
-  await timelineScroller.hover()
-  await page.mouse.wheel(0, 10_000)
+  await timelineScroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
   await expect(
     page.getByRole("article").filter({ hasText: unseenText }),
   ).toBeVisible()

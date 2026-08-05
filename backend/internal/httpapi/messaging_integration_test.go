@@ -16,7 +16,6 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
-	engagementquery "github.com/chasef07/acuity_product/backend/internal/engagement"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -244,6 +243,8 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	if len(threads.Items) != 1 ||
 		!threads.Items[0].Unread ||
 		!threads.Items[0].NeedsAttention ||
+		threads.Items[0].AttentionSince == nil ||
+		!threads.Items[0].AttentionSince.Equal(now) ||
 		threads.Items[0].Preview != "Thank you." {
 		t.Fatalf("HTTP Message Threads = %#v", threads)
 	}
@@ -423,6 +424,29 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	).Scan(&engagementCallID); err != nil {
 		t.Fatalf("create Engagement History Call: %v", err)
 	}
+	noteBody, _ := json.Marshal(api.CreateStaffNoteRequest{
+		PracticeId: parsedUUID(t, authorization.Practice.ID),
+		LocationId: parsedUUID(t, authorization.Locations[0].ID),
+		Body:       "Patient prefers late-afternoon callbacks.",
+	})
+	noteResponse := request(
+		t,
+		portal.Client(),
+		http.MethodPost,
+		portal.URL+"/v1/engagements/+17275550199/notes",
+		"message-token",
+		noteBody,
+	)
+	if noteResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("create Staff Note status = %d, body = %s", noteResponse.StatusCode, readBody(t, noteResponse))
+	}
+	var createdNote api.StaffNote
+	decode(t, noteResponse, &createdNote)
+	if createdNote.Body != "Patient prefers late-afternoon callbacks." ||
+		createdNote.LocationName != authorization.Locations[0].Name ||
+		createdNote.CreatedBy.Subject != identity.Subject {
+		t.Fatalf("created Staff Note = %#v", createdNote)
+	}
 	engagementResponse := request(
 		t,
 		portal.Client(),
@@ -459,11 +483,18 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 				item.Task.LocationName != authorization.Locations[0].Name {
 				t.Fatalf("Location-labeled Task history = %#v", item)
 			}
+		case api.ConversationTimelineItemTypeNOTE:
+			if item.Note == nil ||
+				item.Note.Body != "Patient prefers late-afternoon callbacks." ||
+				item.Note.LocationName != authorization.Locations[0].Name {
+				t.Fatalf("Location-labeled Staff Note history = %#v", item)
+			}
 		}
 	}
 	if !types[api.ConversationTimelineItemTypeMESSAGE] ||
 		!types[api.ConversationTimelineItemTypeCALL] ||
-		!types[api.ConversationTimelineItemTypeTASK] {
+		!types[api.ConversationTimelineItemTypeTASK] ||
+		!types[api.ConversationTimelineItemTypeNOTE] {
 		t.Fatalf("combined Engagement History = %#v", engagement)
 	}
 	engagementPhone := "(727) 555-0199"
@@ -471,16 +502,6 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		PracticeId: parsedUUID(t, authorization.Practice.ID),
 		Phone:      &engagementPhone,
 	})
-	if _, err := engagementquery.New(pool, accessModule).Query(
-		context.Background(),
-		engagementquery.QueryCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			Phone:      "(727) 555-0199",
-		},
-	); err != nil {
-		t.Fatalf("query Engagements module: %v", err)
-	}
 	engagementQueryResponse := request(
 		t,
 		portal.Client(),

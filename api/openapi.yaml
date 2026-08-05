@@ -916,6 +916,39 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/engagements/{phone}/notes:
+    post:
+      operationId: createStaffNote
+      summary: Add an immutable staff-authored note to one exact-phone Engagement History.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 32
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStaffNoteRequest"
+      responses:
+        "201":
+          description: Staff Note created in the authorized Location.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffNote"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -2370,6 +2403,15 @@ components:
         dispositionDeadline:
           type: string
           format: date-time
+        dispositionOutcome:
+          type: string
+          enum:
+            - RESOLVED
+            - FOLLOW_UP_REQUIRED
+            - COMPLETE_TASK
+            - KEEP_OPEN
+            - CREATE_TASK
+            - NO_FOLLOW_UP
         phone:
           type: string
         phoneSource:
@@ -2927,6 +2969,9 @@ components:
               type: boolean
             needsAttention:
               type: boolean
+            attentionSince:
+              type: string
+              format: date-time
     MessageThreadPage:
       type: object
       additionalProperties: false
@@ -3187,6 +3232,60 @@ components:
         supportSessionId:
           type: string
           format: uuid
+    CreateStaffNoteRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, locationId, body]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        body:
+          type: string
+          minLength: 1
+          maxLength: 2500
+        supportSessionId:
+          type: string
+          format: uuid
+    StaffNote:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - phone
+        - body
+        - createdBy
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        body:
+          type: string
+          minLength: 1
+          maxLength: 2500
+        createdBy:
+          $ref: "#/components/schemas/TaskActor"
+        createdAt:
+          type: string
+          format: date-time
     ConversationTimelineItem:
       type: object
       additionalProperties: false
@@ -3194,7 +3293,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MESSAGE, CALL, TASK]
+          enum: [MESSAGE, CALL, TASK, NOTE]
         id:
           type: string
           format: uuid
@@ -3215,6 +3314,8 @@ components:
           $ref: "#/components/schemas/Task"
         call:
           $ref: "#/components/schemas/CallHistoryItem"
+        note:
+          $ref: "#/components/schemas/StaffNote"
     ConversationTimelinePage:
       type: object
       additionalProperties: false

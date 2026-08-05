@@ -89,6 +89,7 @@ type ThreadSummary struct {
 	LatestActivity  time.Time
 	Unread          bool
 	NeedsAttention  bool
+	AttentionSince  *time.Time
 }
 
 type Message struct {
@@ -151,6 +152,7 @@ type TimelineItem struct {
 	Message      Message
 	Call         humancalling.CallHistoryItem
 	Task         work.Task
+	Note         work.StaffNote
 }
 
 type TimelinePage struct {
@@ -459,6 +461,70 @@ func (m *Module) QueryPhoneTimeline(
 			Task:         task,
 		})
 	}
+
+	noteRows, err := tx.Query(ctx, `
+		SELECT
+			note.id::text,
+			note.practice_id::text,
+			note.location_id::text,
+			location.name,
+			note.phone,
+			note.body,
+			note.created_by_subject,
+			note.created_by_email,
+			note.created_at
+		FROM work_staff_notes note
+		JOIN access_locations location
+			ON location.practice_id = note.practice_id
+			AND location.id = note.location_id
+		WHERE note.practice_id = $1
+			AND note.location_id::text = ANY($2::text[])
+			AND note.phone = $3
+			AND (
+				$4::timestamptz IS NULL
+				OR note.created_at < $4
+				OR (
+					note.created_at = $4
+					AND 'NOTE:' || note.id::text < $5
+				)
+			)
+		ORDER BY note.created_at DESC, note.id DESC
+		LIMIT $6
+	`, command.PracticeID, locationIDs, command.Phone,
+		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
+	)
+	if err != nil {
+		return TimelinePage{}, fmt.Errorf("query phone Staff Notes: %w", err)
+	}
+	for noteRows.Next() {
+		var note work.StaffNote
+		if err := noteRows.Scan(
+			&note.ID,
+			&note.PracticeID,
+			&note.LocationID,
+			&note.LocationName,
+			&note.Phone,
+			&note.Body,
+			&note.CreatedBy.Subject,
+			&note.CreatedBy.Email,
+			&note.CreatedAt,
+		); err != nil {
+			noteRows.Close()
+			return TimelinePage{}, fmt.Errorf("scan phone Staff Note: %w", err)
+		}
+		note.CreatedBy.Kind = access.ActorHuman
+		items = append(items, TimelineItem{
+			Type:       "NOTE",
+			ID:         note.ID,
+			OccurredAt: note.CreatedAt,
+			Note:       note,
+		})
+	}
+	if err := noteRows.Err(); err != nil {
+		noteRows.Close()
+		return TimelinePage{}, fmt.Errorf("iterate phone Staff Notes: %w", err)
+	}
+	noteRows.Close()
 
 	sort.Slice(items, func(left int, right int) bool {
 		if items[left].OccurredAt.Equal(items[right].OccurredAt) {
@@ -2076,17 +2142,8 @@ func (m *Module) QueryThreads(
 				WHERE unread.thread_id = thread.id
 					AND unread.user_subject = $4
 			),
-			EXISTS (
-				SELECT 1
-				FROM messaging_messages inbound
-				WHERE inbound.thread_id = thread.id
-					AND inbound.direction = 'INBOUND'
-					AND inbound.created_at > COALESCE((
-						SELECT handled.handled_through
-						FROM messaging_thread_handled handled
-						WHERE handled.thread_id = thread.id
-					), '-infinity'::timestamptz)
-			)
+			attention.since IS NOT NULL,
+			attention.since
 		FROM messaging_threads thread
 		JOIN access_locations location
 			ON location.practice_id = thread.practice_id
@@ -2128,6 +2185,17 @@ func (m *Module) QueryThreads(
 			ORDER BY message.created_at DESC, message.id DESC
 			LIMIT 1
 		) latest_inbound ON true
+		LEFT JOIN LATERAL (
+			SELECT min(inbound.created_at) AS since
+			FROM messaging_messages inbound
+			WHERE inbound.thread_id = thread.id
+				AND inbound.direction = 'INBOUND'
+				AND inbound.created_at > COALESCE((
+					SELECT handled.handled_through
+					FROM messaging_thread_handled handled
+					WHERE handled.thread_id = thread.id
+				), '-infinity'::timestamptz)
+		) attention ON true
 		LEFT JOIN LATERAL (
 			SELECT max(event.occurred_at) AS occurred_at
 			FROM (
@@ -2198,6 +2266,7 @@ func (m *Module) QueryThreads(
 			&item.LatestActivity,
 			&item.Unread,
 			&item.NeedsAttention,
+			&item.AttentionSince,
 		); err != nil {
 			return ThreadPage{}, fmt.Errorf("scan Message Thread: %w", err)
 		}

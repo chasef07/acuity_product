@@ -17,7 +17,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
-	"github.com/chasef07/acuity_product/backend/internal/engagement"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
@@ -75,7 +74,7 @@ type Server struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
-	engagement    *engagement.Module
+	engagement    *engagementQueryAdapter
 	messaging     *messaging.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
@@ -175,7 +174,7 @@ func newServer(
 		authenticator: dependencies.authenticator,
 		events:        dependencies.events,
 		calling:       dependencies.calling,
-		engagement:    engagement.New(pool, dependencies.access),
+		engagement:    newEngagementQueryAdapter(pool, dependencies.access),
 		messaging:     dependencies.messaging,
 		work:          dependencies.work,
 		serviceAuth:   dependencies.serviceAuth,
@@ -883,6 +882,46 @@ func (server *Server) MarkEngagementTextHandled(
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (server *Server) CreateStaffNote(
+	w http.ResponseWriter,
+	r *http.Request,
+	phone string,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	normalized, err := messaging.NormalizePhone(phone)
+	if err != nil {
+		server.writeWorkError(w, r, work.ErrInvalidInput)
+		return
+	}
+	var body api.CreateStaffNoteRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	note, err := server.work.CreateStaffNote(ctx, work.CreateStaffNoteCommand{
+		Identity:         identity,
+		PracticeID:       body.PracticeId.String(),
+		LocationID:       body.LocationId.String(),
+		Phone:            normalized,
+		Body:             body.Body,
+		SupportSessionID: uuidString(body.SupportSessionId),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := staffNoteResponse(note)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusCreated, response)
+}
+
 func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	identity, ok := server.messagingIdentity(w, r)
 	if !ok {
@@ -902,9 +941,9 @@ func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	if body.Limit != nil {
 		limit = *body.Limit
 	}
-	page, err := server.engagement.Query(
+	page, err := server.engagement.query(
 		ctx,
-		engagement.QueryCommand{
+		engagementQueryCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
 			Phone:      phone,
@@ -2310,9 +2349,9 @@ func (server *Server) writeEngagementError(
 	err error,
 ) {
 	switch {
-	case errors.Is(err, engagement.ErrInvalidInput):
+	case errors.Is(err, errEngagementInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, engagement.ErrDenied):
+	case errors.Is(err, errEngagementDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
@@ -2716,6 +2755,10 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 	if call.DispositionDeadline != nil {
 		response.DispositionDeadline = call.DispositionDeadline
 	}
+	if call.DispositionOutcome != "" {
+		outcome := api.CallingCallDispositionOutcome(call.DispositionOutcome)
+		response.DispositionOutcome = &outcome
+	}
 	if call.RecoveryTask != nil {
 		id, err := uuid.Parse(call.RecoveryTask.ID)
 		if err != nil {
@@ -2948,13 +2991,16 @@ func messageThreadPageResponse(
 			Unread:          item.Unread,
 			NeedsAttention:  item.NeedsAttention,
 		}
+		if item.AttentionSince != nil {
+			summary.AttentionSince = item.AttentionSince
+		}
 		response.Items = append(response.Items, summary)
 	}
 	return response, nil
 }
 
 func engagementPageResponse(
-	page engagement.Page,
+	page engagementPage,
 ) (api.EngagementPage, error) {
 	response := api.EngagementPage{
 		Items: make([]api.EngagementSummary, 0, len(page.Items)),
@@ -3119,10 +3165,46 @@ func conversationTimelineResponse(
 				return api.ConversationTimelinePage{}, err
 			}
 			converted.Call = &call
+		case "NOTE":
+			note, err := staffNoteResponse(item.Note)
+			if err != nil {
+				return api.ConversationTimelinePage{}, err
+			}
+			converted.Note = &note
 		}
 		response.Items = append(response.Items, converted)
 	}
 	return response, nil
+}
+
+func staffNoteResponse(note work.StaffNote) (api.StaffNote, error) {
+	id, err := uuid.Parse(note.ID)
+	if err != nil {
+		return api.StaffNote{}, err
+	}
+	practiceID, err := uuid.Parse(note.PracticeID)
+	if err != nil {
+		return api.StaffNote{}, err
+	}
+	locationID, err := uuid.Parse(note.LocationID)
+	if err != nil {
+		return api.StaffNote{}, err
+	}
+	email := apiEmail(note.CreatedBy.Email)
+	return api.StaffNote{
+		Id:           id,
+		PracticeId:   practiceID,
+		LocationId:   locationID,
+		LocationName: note.LocationName,
+		Phone:        note.Phone,
+		Body:         note.Body,
+		CreatedBy: api.TaskActor{
+			Kind:    api.TaskActorKindHUMAN,
+			Subject: note.CreatedBy.Subject,
+			Email:   &email,
+		},
+		CreatedAt: note.CreatedAt,
+	}, nil
 }
 
 func visibleDelivery(state messaging.DeliveryState) api.MessageDeliveryState {

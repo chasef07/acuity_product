@@ -672,6 +672,114 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       winnerPage.getByRole("button", { name: /Texts [1-9]/ }),
     ).toBeVisible()
+    const staffNote = "Patient prefers late-afternoon callbacks."
+    await winnerPage.getByRole("button", { name: "Add staff note" }).click()
+    await winnerPage.getByRole("textbox", { name: "Staff note" }).fill(staffNote)
+    await winnerPage.getByRole("button", { name: "Save note" }).click()
+    await expect(
+      winnerPage.getByRole("article").filter({ hasText: staffNote }),
+    ).toBeVisible()
+    await expect(
+      winnerPage.locator("main").getByRole("separator").first(),
+    ).toBeVisible()
+
+    for (let index = 0; index < 12; index += 1) {
+      const fill = await winnerPage.request.post(
+        `${telnyxFixtureURL}/fixture/message-inbound`,
+        {
+          headers: { authorization: "Bearer fixture-control" },
+          data: {
+            eventId: `slice-2-scroll-fill-${index}`,
+            providerMessageId: `provider-slice-2-scroll-fill-${index}`,
+            from: "+15555550100",
+            to: "+17275550101",
+            text: `Earlier call context ${index + 1}.`,
+          },
+        },
+      )
+      expect(fill.ok()).toBeTruthy()
+    }
+    await expect(
+      winnerPage
+        .getByRole("article")
+        .filter({ hasText: "Earlier call context 12." }),
+    ).toBeVisible()
+    const newerAttention = await winnerPage.request.post(
+      `${telnyxFixtureURL}/fixture/message-inbound`,
+      {
+        headers: { authorization: "Bearer fixture-control" },
+        data: {
+          eventId: "slice-2-newer-attention",
+          providerMessageId: "provider-slice-2-newer-attention",
+          from: "+15555550198",
+          to: "+17275550101",
+          text: "This newer number needs a reply too.",
+        },
+      },
+    )
+    expect(newerAttention.ok()).toBeTruthy()
+    const textAttentionRows = winnerPage.getByTestId("text-attention-row")
+    await expect(textAttentionRows).toHaveCount(2)
+    await expect(textAttentionRows.nth(0)).toContainText("(555) 555-0100")
+    await expect(textAttentionRows.nth(1)).toContainText("(555) 555-0198")
+    const timelineScroller = winnerPage.getByTestId("message-timeline")
+    await expect
+      .poll(() =>
+        timelineScroller.evaluate(
+          (element) => element.scrollHeight - element.clientHeight,
+        ),
+      )
+      .toBeGreaterThan(100)
+    await timelineScroller.hover()
+    await winnerPage.mouse.wheel(0, -10_000)
+    await expect
+      .poll(() =>
+        timelineScroller.evaluate(
+          (element) =>
+            element.scrollHeight - element.scrollTop - element.clientHeight,
+        ),
+      )
+      .toBeGreaterThan(72)
+    const preservedScrollTop = await timelineScroller.evaluate(
+      (element) => element.scrollTop,
+    )
+    const unseenText = "New activity while reviewing this connected call."
+    const unseen = await winnerPage.request.post(
+      `${telnyxFixtureURL}/fixture/message-inbound`,
+      {
+        headers: { authorization: "Bearer fixture-control" },
+        data: {
+          eventId: "slice-2-scroll-unseen",
+          providerMessageId: "provider-slice-2-scroll-unseen",
+          from: "+15555550100",
+          to: "+17275550101",
+          text: unseenText,
+        },
+      },
+    )
+    expect(unseen.ok()).toBeTruthy()
+    await expect(
+      winnerPage.getByRole("article").filter({ hasText: unseenText }),
+    ).toHaveCount(0)
+    await expect
+      .poll(() => timelineScroller.evaluate((element) => element.scrollTop))
+      .toBe(preservedScrollTop)
+    await timelineScroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+    })
+    await expect(
+      winnerPage.getByRole("article").filter({ hasText: unseenText }),
+    ).toBeVisible()
+
+    await winnerPage.getByRole("button", { name: "Recent", exact: true }).click()
+    await expect
+      .poll(() =>
+        winnerPage
+          .getByRole("button", { name: /\(555\) 555-0100/ })
+          .count(),
+      )
+      .toBeGreaterThan(1)
+    await winnerPage.getByRole("button", { name: "Recent", exact: true }).click()
     await expect
       .poll(async () => {
         const result = await database.query<{ count: string }>(
@@ -2080,6 +2188,23 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         return result.rows[0]?.desired_available
       })
       .toBe(false)
+
+    await expect(
+      takeoverPage.getByRole("heading", {
+        name: "(555) 555-0100",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await takeoverPage
+      .getByRole("button", { name: /Fixture Location 1 · Call · Open detail/ })
+      .filter({ hasText: "FOLLOW UP REQUIRED" })
+      .first()
+      .click()
+    const disposedCallSnapshot = takeoverPage.getByRole("complementary", {
+      name: "Selected item",
+    })
+    await expect(disposedCallSnapshot).toContainText("Disposition")
+    await expect(disposedCallSnapshot).toContainText("follow up required")
   } finally {
     await database.end()
     await secondaryContext.close()

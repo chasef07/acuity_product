@@ -44,6 +44,7 @@ GRANT SELECT ON TABLE
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_interactions,
+    public.work_staff_notes,
     public.work_tasks
 TO acuity_portal;
 
@@ -94,6 +95,7 @@ GRANT INSERT ON TABLE
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_interactions,
+    public.work_staff_notes,
     public.work_tasks
 TO acuity_portal;
 

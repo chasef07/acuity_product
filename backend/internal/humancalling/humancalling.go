@@ -282,6 +282,7 @@ type Call struct {
 	State               CallState
 	Deadline            time.Time
 	DispositionDeadline *time.Time
+	DispositionOutcome  string
 	ClaimantSubject     string
 	WinnerSubject       string
 	ExpectedStaffLegID  string
@@ -5790,6 +5791,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 				ELSE c.offer_deadline
 			END,
 			c.disposition_deadline,
+			COALESCE(c.disposition_outcome, ''),
 			COALESCE(c.claimant_subject, ''),
 			COALESCE(c.winner_subject, ''),
 			COALESCE(c.expected_staff_call_leg_id, ''),
@@ -5863,6 +5865,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.State,
 		&result.Deadline,
 		&result.DispositionDeadline,
+		&result.DispositionOutcome,
 		&result.ClaimantSubject,
 		&result.WinnerSubject,
 		&result.ExpectedStaffLegID,

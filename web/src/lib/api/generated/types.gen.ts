@@ -297,6 +297,7 @@ export type CallingCall = {
     state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     deadline: string;
     dispositionDeadline?: string;
+    dispositionOutcome?: 'RESOLVED' | 'FOLLOW_UP_REQUIRED' | 'COMPLETE_TASK' | 'KEEP_OPEN' | 'CREATE_TASK' | 'NO_FOLLOW_UP';
     phone: string;
     phoneSource: string;
     displayName: string;
@@ -512,6 +513,7 @@ export type MessageThreadSummary = MessageThread & {
     latestActivity: string;
     unread: boolean;
     needsAttention: boolean;
+    attentionSince?: string;
 };
 
 export type MessageThreadPage = {
@@ -608,14 +610,33 @@ export type CreateMessageFollowUpTaskRequest = {
     supportSessionId?: string;
 };
 
+export type CreateStaffNoteRequest = {
+    practiceId: string;
+    locationId: string;
+    body: string;
+    supportSessionId?: string;
+};
+
+export type StaffNote = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    phone: string;
+    body: string;
+    createdBy: TaskActor;
+    createdAt: string;
+};
+
 export type ConversationTimelineItem = {
-    type: 'MESSAGE' | 'CALL' | 'TASK';
+    type: 'MESSAGE' | 'CALL' | 'TASK' | 'NOTE';
     id: string;
     occurredAt: string;
     taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
+    note?: StaffNote;
 };
 
 export type ConversationTimelinePage = {
@@ -1893,6 +1914,45 @@ export type MarkEngagementTextHandledResponses = {
 };
 
 export type MarkEngagementTextHandledResponse = MarkEngagementTextHandledResponses[keyof MarkEngagementTextHandledResponses];
+
+export type CreateStaffNoteData = {
+    body: CreateStaffNoteRequest;
+    path: {
+        phone: string;
+    };
+    query?: never;
+    url: '/v1/engagements/{phone}/notes';
+};
+
+export type CreateStaffNoteErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CreateStaffNoteError = CreateStaffNoteErrors[keyof CreateStaffNoteErrors];
+
+export type CreateStaffNoteResponses = {
+    /**
+     * Staff Note created in the authorized Location.
+     */
+    201: StaffNote;
+};
+
+export type CreateStaffNoteResponse = CreateStaffNoteResponses[keyof CreateStaffNoteResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;

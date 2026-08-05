@@ -125,6 +125,29 @@ type Task struct {
 	UpdatedAt               time.Time
 }
 
+// StaffNote is durable staff-authored evidence attached to an exact phone.
+// It belongs to Work because it is authored operational work context rather
+// than a Message or Call.
+type StaffNote struct {
+	ID           string
+	PracticeID   string
+	LocationID   string
+	LocationName string
+	Phone        string
+	Body         string
+	CreatedBy    ActorSnapshot
+	CreatedAt    time.Time
+}
+
+type CreateStaffNoteCommand struct {
+	Identity         access.Identity
+	PracticeID       string
+	LocationID       string
+	Phone            string
+	Body             string
+	SupportSessionID string
+}
+
 // TaskInteraction is the authorized communication evidence attached to a
 // Task. It remains a Call owned by HumanCalling rather than a copied Work
 // aggregate.
@@ -234,6 +257,95 @@ func New(
 		now = time.Now
 	}
 	return &Module{pool: pool, access: accessModule, now: now}
+}
+
+// CreateStaffNote records immutable staff-authored context in the authorized
+// Location and advances the workspace version in the same transaction.
+func (m *Module) CreateStaffNote(
+	ctx context.Context,
+	command CreateStaffNoteCommand,
+) (StaffNote, error) {
+	command.PracticeID = strings.TrimSpace(command.PracticeID)
+	command.LocationID = strings.TrimSpace(command.LocationID)
+	command.Phone = strings.TrimSpace(command.Phone)
+	command.Body = strings.TrimSpace(command.Body)
+	if m.pool == nil || m.access == nil ||
+		command.PracticeID == "" || command.LocationID == "" ||
+		!canonicalPhone.MatchString(command.Phone) ||
+		!textLengthBetween(command.Body, 1, 2500) {
+		return StaffNote{}, ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return StaffNote{}, fmt.Errorf("begin Staff Note creation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	authorization, err := m.access.LockMutationAuthorization(
+		ctx, tx, command.Identity, command.PracticeID, command.LocationID,
+		command.SupportSessionID,
+	)
+	if err != nil {
+		if errors.Is(err, access.ErrSupportRequired) ||
+			errors.Is(err, access.ErrSupportExpired) ||
+			errors.Is(err, access.ErrSupportRevoked) ||
+			errors.Is(err, access.ErrSupportPracticeMismatch) {
+			return StaffNote{}, err
+		}
+		return StaffNote{}, ErrDenied
+	}
+	createdAt := m.now()
+	note := StaffNote{
+		PracticeID: command.PracticeID,
+		LocationID: command.LocationID,
+		Phone:      command.Phone,
+		Body:       command.Body,
+		CreatedBy: ActorSnapshot{
+			Kind:    access.ActorHuman,
+			Subject: authorization.Actor.Subject,
+			Email:   strings.ToLower(strings.TrimSpace(authorization.Actor.Email)),
+		},
+		CreatedAt: createdAt,
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO work_staff_notes (
+			practice_id, location_id, phone, body,
+			created_by_subject, created_by_email, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id::text
+	`, note.PracticeID, note.LocationID, note.Phone, note.Body,
+		note.CreatedBy.Subject, note.CreatedBy.Email, note.CreatedAt,
+	).Scan(&note.ID)
+	if err != nil {
+		return StaffNote{}, fmt.Errorf("create Staff Note: %w", err)
+	}
+	for _, location := range authorization.Locations {
+		if location.ID == note.LocationID {
+			note.LocationName = location.Name
+			break
+		}
+	}
+	if err := m.access.AuditSupportedMutation(
+		ctx,
+		tx,
+		authorization,
+		access.SupportedMutationAudit{
+			Action:          "staff_note.created",
+			ResourceType:    "staff_note",
+			ResourceID:      note.ID,
+			ResourceVersion: 1,
+			OccurredAt:      createdAt,
+		},
+	); err != nil {
+		return StaffNote{}, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, note.PracticeID); err != nil {
+		return StaffNote{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StaffNote{}, fmt.Errorf("commit Staff Note creation: %w", err)
+	}
+	return note, nil
 }
 
 // EnsureCallFollowUp creates the one Task linked to a Call. The caller owns the

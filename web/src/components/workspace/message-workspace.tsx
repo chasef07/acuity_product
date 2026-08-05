@@ -21,6 +21,7 @@ import {
   RefreshCwIcon,
   SearchIcon,
   SendIcon,
+  StickyNoteIcon,
   XIcon,
 } from "lucide-react"
 
@@ -30,11 +31,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
+import { Textarea } from "@/components/ui/textarea"
 import { CallingNumberAction } from "@/components/workspace/calling-dock"
 import { portalAPIURL, portalClient } from "@/lib/api/client"
 import {
   completeTask,
   createMessageFollowUpTask,
+  createStaffNote,
   getEngagementTimeline,
   getCallingCall,
   getMessageAttachment,
@@ -402,8 +405,11 @@ function SelectedCallSnapshot({
             />
           </>
         )}
-        {(call.state === "RESOLVED" || call.state === "FOLLOW_UP_REQUIRED") && (
-          <SnapshotField label="Disposition" value={callStateLabel(call.state)} />
+        {call.dispositionOutcome && (
+          <SnapshotField
+            label="Disposition"
+            value={call.dispositionOutcome.toLowerCase().replaceAll("_", " ")}
+          />
         )}
         {call.connectedAt && (
           <SnapshotField label="Connected" value={formatDateTime(call.connectedAt)} />
@@ -1008,6 +1014,9 @@ function MessageConversation({
   const [error, setError] = useState("")
   const [handledThrough, setHandledThrough] = useState("")
   const [handling, setHandling] = useState(false)
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteBody, setNoteBody] = useState("")
+  const [noteSaving, setNoteSaving] = useState(false)
   const generation = useRef(0)
   const committedMessage = useRef<
     { id: string; visibleUntil: number } | undefined
@@ -1252,33 +1261,44 @@ function MessageConversation({
           )}
           {!loading &&
             visibleItems.map((item, index) => (
-              <TimelineEntry
-                key={`${item.type}:${item.id}`}
-                item={item}
-                canMutate={canMutate}
-                supportSessionID={supportSessionID}
-                onChanged={() => void loadLatest(true)}
-                onTaskCreated={onTaskCreated}
-                onTaskOpen={onTaskOpen}
-                groupedWithPrevious={areConsecutiveMessages(
-                  visibleItems[index - 1],
-                  item,
+              <div key={`${item.type}:${item.id}`} className="contents">
+                {isDateBoundary(visibleItems[index - 1], item) && (
+                  <div
+                    role="separator"
+                    className="flex items-center gap-3 py-1 text-xs font-medium text-muted-foreground"
+                  >
+                    <span className="h-px flex-1 bg-border" />
+                    {formatTimelineDate(item.occurredAt)}
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
                 )}
-                groupedWithNext={areConsecutiveMessages(
-                  item,
-                  visibleItems[index + 1],
-                )}
-                onCallOpen={
-                  onCallOpen
-                    ? (callID, history) =>
-                        onCallOpen(
-                          callID,
-                          history,
-                          recoveryEvidence(items, history),
-                        )
-                    : undefined
-                }
-              />
+                <TimelineEntry
+                  item={item}
+                  canMutate={canMutate}
+                  supportSessionID={supportSessionID}
+                  onChanged={() => void loadLatest(true)}
+                  onTaskCreated={onTaskCreated}
+                  onTaskOpen={onTaskOpen}
+                  groupedWithPrevious={areConsecutiveMessages(
+                    visibleItems[index - 1],
+                    item,
+                  )}
+                  groupedWithNext={areConsecutiveMessages(
+                    item,
+                    visibleItems[index + 1],
+                  )}
+                  onCallOpen={
+                    onCallOpen
+                      ? (callID, history) =>
+                          onCallOpen(
+                            callID,
+                            history,
+                            recoveryEvidence(items, history),
+                          )
+                      : undefined
+                  }
+                />
+              </div>
             ))}
           {!loading && items.length === 0 && !composingNew && (
             <div className="mx-auto my-10 max-w-sm border bg-background p-5 text-center">
@@ -1340,6 +1360,91 @@ function MessageConversation({
           </Button>
         </div>
       )}
+      {canMutate &&
+        locationID &&
+        (timelinePhone || conversationThread?.externalPhone) && (
+          <div className="border-t bg-muted/20 px-4 py-2">
+            {!noteOpen ? (
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setNoteOpen(true)}
+                >
+                  <StickyNoteIcon />
+                  Add staff note
+                </Button>
+              </div>
+            ) : (
+              <form
+                className="mx-auto flex max-w-3xl flex-col gap-2"
+                onSubmit={async (event) => {
+                  event.preventDefault()
+                  const body = noteBody.trim()
+                  const phone =
+                    timelinePhone || conversationThread?.externalPhone || ""
+                  if (!body || !phone || noteSaving) return
+                  setNoteSaving(true)
+                  const token = await getAccessToken()
+                  const result = token
+                    ? await createStaffNote({
+                        client: portalClient(token),
+                        path: { phone },
+                        body: {
+                          practiceId: practiceID,
+                          locationId: locationID,
+                          body,
+                          ...(supportSessionID
+                            ? { supportSessionId: supportSessionID }
+                            : {}),
+                        },
+                      }).catch(() => undefined)
+                    : undefined
+                  setNoteSaving(false)
+                  if (!result?.data) {
+                    setError("The staff note could not be saved.")
+                    return
+                  }
+                  setError("")
+                  setNoteBody("")
+                  setNoteOpen(false)
+                  atLatest.current = true
+                  await loadLatest(true)
+                }}
+              >
+                <Textarea
+                  aria-label="Staff note"
+                  maxLength={2500}
+                  placeholder="Add context for staff…"
+                  value={noteBody}
+                  onChange={(event) => setNoteBody(event.target.value)}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={noteSaving}
+                    onClick={() => {
+                      setNoteOpen(false)
+                      setNoteBody("")
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={!noteBody.trim() || noteSaving}
+                  >
+                    {noteSaving ? <Spinner /> : <StickyNoteIcon />}
+                    Save note
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
       <MessageComposer
         thread={conversationThread}
         threadID={composerThreadID}
@@ -1473,6 +1578,19 @@ function TimelineEntry({
           detail={`${task.state === "OPEN" ? "Open Task" : "Completed Task"} · ${formatPhone(task.phone)}`}
         />
       </button>
+    )
+  }
+  if (item.type === "NOTE" && item.note) {
+    return (
+      <article>
+        <TimelineRule
+          icon={<StickyNoteIcon />}
+          label={`${item.note.locationName} · Staff note`}
+          occurredAt={item.occurredAt}
+          title="Staff note"
+          detail={item.note.body}
+        />
+      </article>
     )
   }
   return null
@@ -1662,7 +1780,7 @@ function MessageEntry({
             )}
           >
             <time dateTime={message.createdAt}>
-              {formatDateTime(message.createdAt)}
+              {formatTimelineTime(message.createdAt)}
             </time>
             <span aria-hidden="true">·</span>
             <span>{message.thread.locationName}</span>
@@ -1758,7 +1876,7 @@ function TimelineRule({
           dateTime={occurredAt}
           className="ml-auto text-xs tabular-nums text-muted-foreground"
         >
-          {formatDateTime(occurredAt)}
+          {formatTimelineTime(occurredAt)}
         </time>
       </div>
       <p className="mt-1.5 font-medium">{title}</p>
@@ -2231,6 +2349,30 @@ function formatDateTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value))
+}
+
+function formatTimelineTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value))
+}
+
+function formatTimelineDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value))
+}
+
+function isDateBoundary(
+  previous: ConversationTimelineItem | undefined,
+  current: ConversationTimelineItem,
+) {
+  if (!previous) return true
+  return new Date(previous.occurredAt).toDateString() !==
+    new Date(current.occurredAt).toDateString()
 }
 
 function formatDuration(seconds: number) {
