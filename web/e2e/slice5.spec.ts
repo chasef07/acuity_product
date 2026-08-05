@@ -171,6 +171,56 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(inbound).toBeVisible()
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
 
+  for (let index = 0; index < 16; index += 1) {
+    await sendInbound(
+      page,
+      `slice-5-scroll-fill-${index}`,
+      `Earlier context line ${index + 1}.`,
+    )
+  }
+  await expect(
+    page.getByRole("article").filter({ hasText: "Earlier context line 16." }),
+  ).toBeVisible()
+  const timelineScroller = page.getByTestId("message-timeline")
+  await expect
+    .poll(() =>
+      timelineScroller.evaluate(
+        (element) => element.scrollHeight - element.clientHeight,
+      ),
+    )
+    .toBeGreaterThan(100)
+  await timelineScroller.hover()
+  await page.mouse.wheel(0, -10_000)
+  await expect
+    .poll(() =>
+      timelineScroller.evaluate(
+        (element) =>
+          element.scrollHeight - element.scrollTop - element.clientHeight,
+      ),
+    )
+    .toBeGreaterThan(72)
+  const preservedScrollTop = await timelineScroller.evaluate(
+    (element) => element.scrollTop,
+  )
+  const unseenText = "New activity while reviewing older history."
+  await sendInbound(page, "slice-5-scroll-unseen", unseenText)
+  await expect(firstThread.getByLabel("Unread message")).toBeVisible()
+  await expect(
+    page.getByRole("article").filter({ hasText: unseenText }),
+  ).toHaveCount(0)
+  await expect
+    .poll(() => timelineScroller.evaluate((element) => element.scrollTop))
+    .toBe(preservedScrollTop)
+  await expect(
+    page.getByRole("button", { name: "New activity", exact: true }),
+  ).toHaveCount(0)
+  await timelineScroller.hover()
+  await page.mouse.wheel(0, 10_000)
+  await expect(
+    page.getByRole("article").filter({ hasText: unseenText }),
+  ).toBeVisible()
+  await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
+
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
@@ -248,6 +298,16 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toBeVisible()
+  await page.reload()
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", {
+      name: `Texts ${initialTextCount + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible()
   await page
     .getByRole("button", { name: "Looks handled — Mark complete" })
     .click()
@@ -257,6 +317,17 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toBeVisible()
+  await page.reload()
+  await expect(
+    page.getByRole("button", {
+      name: `Texts ${initialTextCount}`,
+      exact: true,
+    }),
+  ).toBeVisible()
+  await page
+    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .first()
+    .click()
 
   await selectedItem.getByRole("button", { name: "Complete", exact: true }).click()
   await expect(

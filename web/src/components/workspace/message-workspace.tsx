@@ -41,6 +41,7 @@ import {
   getMessageThreadTimeline,
   getTaskEngagementHistory,
   issueCallingVoicemailPlayback,
+  markEngagementTextHandled,
   markMessageThreadRead,
   readTask,
   retryInboundMessageAttachment,
@@ -112,7 +113,6 @@ export function EngagementWorkspace({
   onMessageSent,
   onThreadRead,
   onTaskUpdated,
-  onTextEligibilityChanged,
   onTextHandled,
   taskCallPending,
   taskCallError,
@@ -129,8 +129,7 @@ export function EngagementWorkspace({
   onMessageSent: (message: Message) => void
   onThreadRead: (threadID: string) => void
   onTaskUpdated: (task: Task) => void
-  onTextEligibilityChanged: (threadID: string, eligible: boolean) => void
-  onTextHandled: (threadID: string) => void
+  onTextHandled: (phone: string) => void
   taskCallPending: boolean
   taskCallError: string
   onStartTaskCall: (task: Task) => void
@@ -249,8 +248,8 @@ export function EngagementWorkspace({
         onMessageSent={onMessageSent}
         onThreadRead={onThreadRead}
         onTaskCreated={onTaskCreated}
-        onTextEligibilityChanged={onTextEligibilityChanged}
         onTextHandled={onTextHandled}
+        textNeedsAttention={engagement.textNeedsAttention}
         onTaskOpen={(task) => {
           setSelectedCall(undefined)
           setSelectedTask(task)
@@ -392,10 +391,19 @@ function SelectedCallSnapshot({
           value={formatDateTime(history?.startedAt ?? call.connectedAt ?? call.deadline)}
         />
         {history && (
-          <SnapshotField
-            label="Duration"
-            value={formatDuration(history.durationSeconds)}
-          />
+          <>
+            <SnapshotField
+              label="Outcome"
+              value={history.outcome.toLowerCase().replaceAll("_", " ")}
+            />
+            <SnapshotField
+              label="Duration"
+              value={formatDuration(history.durationSeconds)}
+            />
+          </>
+        )}
+        {(call.state === "RESOLVED" || call.state === "FOLLOW_UP_REQUIRED") && (
+          <SnapshotField label="Disposition" value={callStateLabel(call.state)} />
         )}
         {call.connectedAt && (
           <SnapshotField label="Connected" value={formatDateTime(call.connectedAt)} />
@@ -946,8 +954,8 @@ function MessageConversation({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
-  onTextEligibilityChanged,
   onTextHandled,
+  textNeedsAttention = false,
 }: {
   thread?: MessageThreadSummary
   threadID?: string
@@ -972,8 +980,8 @@ function MessageConversation({
     history?: CallHistoryItem,
     evidence?: RecoveryEvidence,
   ) => void
-  onTextEligibilityChanged?: (threadID: string, eligible: boolean) => void
-  onTextHandled?: (threadID: string) => void
+  onTextHandled?: (phone: string) => void
+  textNeedsAttention?: boolean
 }) {
   const timelineKind = timelineSource?.kind
   const timelineTaskID =
@@ -999,6 +1007,7 @@ function MessageConversation({
   const [findQuery, setFindQuery] = useState("")
   const [error, setError] = useState("")
   const [handledThrough, setHandledThrough] = useState("")
+  const [handling, setHandling] = useState(false)
   const generation = useRef(0)
   const committedMessage = useRef<
     { id: string; visibleUntil: number } | undefined
@@ -1009,6 +1018,7 @@ function MessageConversation({
   )
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
+  const pendingRealtime = useRef(false)
   const initialized = useRef(false)
   const onThreadReadRef = useRef(onThreadRead)
   const conversationThread =
@@ -1147,6 +1157,8 @@ function MessageConversation({
     if (atLatest.current) {
       void loadLatest(true)
       void markRead()
+    } else {
+      pendingRealtime.current = true
     }
   }, [loadLatest, markRead, revision, threadID, timelineKey])
 
@@ -1183,7 +1195,8 @@ function MessageConversation({
   )
   const latestMessage = messageItems.at(-1)?.message
   const handledEligible = Boolean(
-    latestMessage?.direction === "OUTBOUND" &&
+    textNeedsAttention &&
+      latestMessage?.direction === "OUTBOUND" &&
       latestMessage.id !== handledThrough &&
       messageItems.some((item) => item.message.direction === "INBOUND"),
   )
@@ -1208,8 +1221,14 @@ function MessageConversation({
         className="relative min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(to_right,transparent_calc(50%-0.5px),color-mix(in_oklab,var(--border)_55%,transparent)_50%,transparent_calc(50%+0.5px))] px-4 py-5"
         onScroll={(event) => {
           const element = event.currentTarget
-          atLatest.current =
+          const nowAtLatest =
             element.scrollHeight - element.scrollTop - element.clientHeight < 72
+          atLatest.current = nowAtLatest
+          if (nowAtLatest && pendingRealtime.current) {
+            pendingRealtime.current = false
+            void loadLatest(true)
+            void markRead()
+          }
         }}
       >
         <div className="mx-auto flex max-w-3xl flex-col gap-3">
@@ -1290,11 +1309,31 @@ function MessageConversation({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => {
+            disabled={handling}
+            onClick={async () => {
+              setHandling(true)
+              const phone = timelinePhone || latestMessage.thread.externalPhone
+              const token = await getAccessToken()
+              const result = token
+                ? await markEngagementTextHandled({
+                    client: portalClient(token),
+                    path: { phone },
+                    body: {
+                      practiceId: practiceID,
+                      evidenceMessageId: latestMessage.id,
+                      ...(supportSessionID
+                        ? { supportSessionId: supportSessionID }
+                        : {}),
+                    },
+                  }).catch(() => undefined)
+                : undefined
+              setHandling(false)
+              if (!result?.response?.ok) {
+                setError("Text attention changed. Refresh and try again.")
+                return
+              }
               setHandledThrough(latestMessage.id)
-              const handledThreadID = latestMessage.thread.id
-              onTextEligibilityChanged?.(handledThreadID, false)
-              onTextHandled?.(handledThreadID)
+              onTextHandled?.(phone)
             }}
           >
             Looks handled — Mark complete
@@ -1342,9 +1381,6 @@ function MessageConversation({
             ...current.filter((item) => item.id !== message.id),
             messageTimelineItem(message),
           ])
-          if (items.some((item) => item.message?.direction === "INBOUND")) {
-            onTextEligibilityChanged?.(message.thread.id, true)
-          }
           onMessageSent(message)
         }}
       />

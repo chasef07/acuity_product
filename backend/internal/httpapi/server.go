@@ -17,6 +17,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
+	"github.com/chasef07/acuity_product/backend/internal/engagement"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
@@ -74,6 +75,7 @@ type Server struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	engagement    *engagement.Module
 	messaging     *messaging.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
@@ -173,6 +175,7 @@ func newServer(
 		authenticator: dependencies.authenticator,
 		events:        dependencies.events,
 		calling:       dependencies.calling,
+		engagement:    engagement.New(pool, dependencies.access),
 		messaging:     dependencies.messaging,
 		work:          dependencies.work,
 		serviceAuth:   dependencies.serviceAuth,
@@ -849,6 +852,37 @@ func (server *Server) GetCallingEngagementHistory(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) MarkEngagementTextHandled(
+	w http.ResponseWriter,
+	r *http.Request,
+	phone string,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.MarkEngagementTextHandledRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if err := server.messaging.MarkEngagementTextHandled(
+		ctx,
+		messaging.MarkEngagementTextHandledCommand{
+			Identity:          identity,
+			PracticeID:        body.PracticeId.String(),
+			Phone:             phone,
+			EvidenceMessageID: body.EvidenceMessageId.String(),
+			SupportSessionID:  uuidString(body.SupportSessionId),
+		},
+	); err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	identity, ok := server.messagingIdentity(w, r)
 	if !ok {
@@ -868,9 +902,9 @@ func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	if body.Limit != nil {
 		limit = *body.Limit
 	}
-	page, err := server.messaging.QueryEngagements(
+	page, err := server.engagement.Query(
 		ctx,
-		messaging.QueryEngagementsCommand{
+		engagement.QueryCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
 			Phone:      phone,
@@ -878,7 +912,7 @@ func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeEngagementError(w, r, err)
 		return
 	}
 	response, err := engagementPageResponse(page)
@@ -1564,7 +1598,7 @@ func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request
 		messaging.QueryThreadsCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
-			LocationID: body.LocationId.String(),
+			LocationID: uuidString(body.LocationId),
 			Search:     stringValue(body.Search),
 			Cursor:     stringValue(body.Cursor),
 			Limit:      intValue(body.Limit),
@@ -2270,6 +2304,21 @@ func (server *Server) writeMessagingError(
 	}
 }
 
+func (server *Server) writeEngagementError(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+) {
+	switch {
+	case errors.Is(err, engagement.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, engagement.ErrDenied):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
 func (server *Server) writeError(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2897,6 +2946,7 @@ func messageThreadPageResponse(
 			LatestDelivery:  visibleDelivery(item.LatestDelivery),
 			LatestActivity:  item.LatestActivity,
 			Unread:          item.Unread,
+			NeedsAttention:  item.NeedsAttention,
 		}
 		response.Items = append(response.Items, summary)
 	}
@@ -2904,18 +2954,19 @@ func messageThreadPageResponse(
 }
 
 func engagementPageResponse(
-	page messaging.EngagementPage,
+	page engagement.Page,
 ) (api.EngagementPage, error) {
 	response := api.EngagementPage{
 		Items: make([]api.EngagementSummary, 0, len(page.Items)),
 	}
 	for _, item := range page.Items {
 		summary := api.EngagementSummary{
-			Phone:          item.Phone,
-			Locations:      make([]api.EngagementLocation, 0, len(item.Locations)),
-			LatestActivity: item.LatestActivity,
-			OpenTaskCount:  item.OpenTaskCount,
-			Unread:         item.Unread,
+			Phone:              item.Phone,
+			Locations:          make([]api.EngagementLocation, 0, len(item.Locations)),
+			LatestActivity:     item.LatestActivity,
+			OpenTaskCount:      item.OpenTaskCount,
+			Unread:             item.Unread,
+			TextNeedsAttention: item.TextNeedsAttention,
 		}
 		if item.DisplayName != "" {
 			summary.DisplayName = &item.DisplayName

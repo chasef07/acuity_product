@@ -885,6 +885,37 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/engagements/{phone}/text-handled:
+    post:
+      operationId: markEngagementTextHandled
+      summary: Explicitly acknowledge currently answered inbound Texts for one exact phone.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 32
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkEngagementTextHandledRequest"
+      responses:
+        "204":
+          description: Current authorized inbound Text attention is acknowledged.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -1140,7 +1171,7 @@ paths:
   /v1/message-threads/query:
     post:
       operationId: queryMessageThreads
-      summary: Query phone-led Message Threads in one authorized Location.
+      summary: Query phone-led Message Threads across the requested authorized Location scope.
       requestBody:
         required: true
         content:
@@ -2720,6 +2751,7 @@ components:
         - latestActivity
         - openTaskCount
         - unread
+        - textNeedsAttention
       properties:
         phone:
           type: string
@@ -2738,6 +2770,8 @@ components:
           type: integer
           minimum: 0
         unread:
+          type: boolean
+        textNeedsAttention:
           type: boolean
     EngagementPage:
       type: object
@@ -2878,6 +2912,7 @@ components:
             - latestDelivery
             - latestActivity
             - unread
+            - needsAttention
           properties:
             preview:
               type: string
@@ -2889,6 +2924,8 @@ components:
               type: string
               format: date-time
             unread:
+              type: boolean
+            needsAttention:
               type: boolean
     MessageThreadPage:
       type: object
@@ -2904,7 +2941,7 @@ components:
     MessageThreadQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, locationId]
+      required: [practiceId]
       properties:
         practiceId:
           type: string
@@ -3122,6 +3159,20 @@ components:
       type: object
       additionalProperties: false
       properties:
+        supportSessionId:
+          type: string
+          format: uuid
+    MarkEngagementTextHandledRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, evidenceMessageId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        evidenceMessageId:
+          type: string
+          format: uuid
         supportSessionId:
           type: string
           format: uuid

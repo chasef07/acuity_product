@@ -88,6 +88,7 @@ type ThreadSummary struct {
 	LatestDelivery  DeliveryState
 	LatestActivity  time.Time
 	Unread          bool
+	NeedsAttention  bool
 }
 
 type Message struct {
@@ -120,261 +121,6 @@ type QueryThreadsCommand struct {
 type ThreadPage struct {
 	Items      []ThreadSummary
 	NextCursor string
-}
-
-type EngagementLocation struct {
-	ID   string
-	Name string
-}
-
-type EngagementSummary struct {
-	Phone          string
-	DisplayName    string
-	Locations      []EngagementLocation
-	LatestActivity time.Time
-	OpenTaskCount  int
-	Unread         bool
-}
-
-type QueryEngagementsCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	Phone      string
-	Limit      int
-}
-
-type EngagementPage struct {
-	Items []EngagementSummary
-}
-
-func (m *Module) QueryEngagements(
-	ctx context.Context,
-	command QueryEngagementsCommand,
-) (EngagementPage, error) {
-	command.PracticeID = strings.TrimSpace(command.PracticeID)
-	command.Phone = strings.TrimSpace(command.Phone)
-	limit := command.Limit
-	if limit == 0 {
-		limit = 7
-	}
-	if m.pool == nil || m.access == nil || command.PracticeID == "" ||
-		limit < 1 || limit > 10 {
-		return EngagementPage{}, ErrInvalidInput
-	}
-	phone := ""
-	if command.Phone != "" {
-		var err error
-		phone, err = normalizePhone(command.Phone)
-		if err != nil {
-			return EngagementPage{}, ErrInvalidInput
-		}
-	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("begin Engagement lookup: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		"",
-	)
-	if err != nil {
-		return EngagementPage{}, ErrDenied
-	}
-	locationIDs := make([]string, 0, len(authorization.Locations))
-	for _, location := range authorization.Locations {
-		locationIDs = append(locationIDs, location.ID)
-	}
-	if len(locationIDs) == 0 {
-		return EngagementPage{}, ErrDenied
-	}
-	if phone == "" {
-		rows, err := tx.Query(ctx, `
-			WITH evidence AS (
-				SELECT
-					thread.external_phone AS phone,
-					thread.updated_at AS occurred_at
-				FROM messaging_threads thread
-				WHERE thread.practice_id = $1
-					AND thread.location_id::text = ANY($2::text[])
-				UNION ALL
-				SELECT
-					COALESCE(handoff.phone, call.destination_phone),
-					call.updated_at
-				FROM human_calling_calls call
-				LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-				WHERE call.practice_id = $1
-					AND call.location_id::text = ANY($2::text[])
-				UNION ALL
-				SELECT task.phone, task.updated_at
-				FROM work_tasks task
-				WHERE task.practice_id = $1
-					AND task.location_id::text = ANY($2::text[])
-			)
-			SELECT phone
-			FROM evidence
-			WHERE phone IS NOT NULL AND phone <> ''
-			GROUP BY phone
-			ORDER BY max(occurred_at) DESC, phone
-			LIMIT $3
-		`, command.PracticeID, locationIDs, limit)
-		if err != nil {
-			return EngagementPage{}, fmt.Errorf("query recent Engagement phones: %w", err)
-		}
-		recentPhones := make([]string, 0, limit)
-		for rows.Next() {
-			var recentPhone string
-			if err := rows.Scan(&recentPhone); err != nil {
-				rows.Close()
-				return EngagementPage{}, fmt.Errorf("scan recent Engagement phone: %w", err)
-			}
-			recentPhones = append(recentPhones, recentPhone)
-		}
-		if err := rows.Err(); err != nil {
-			return EngagementPage{}, fmt.Errorf("iterate recent Engagement phones: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return EngagementPage{}, fmt.Errorf("commit recent Engagement lookup: %w", err)
-		}
-		items := make([]EngagementSummary, 0, len(recentPhones))
-		for _, recentPhone := range recentPhones {
-			page, err := m.QueryEngagements(ctx, QueryEngagementsCommand{
-				Identity:   command.Identity,
-				PracticeID: command.PracticeID,
-				Phone:      recentPhone,
-				Limit:      limit,
-			})
-			if err != nil {
-				return EngagementPage{}, err
-			}
-			items = append(items, page.Items...)
-		}
-		return EngagementPage{Items: items}, nil
-	}
-
-	var summary EngagementSummary
-	var found bool
-	err = tx.QueryRow(ctx, `
-		WITH evidence AS (
-			SELECT
-				thread.location_id,
-				thread.updated_at AS occurred_at,
-				COALESCE(thread.display_name, '') AS display_name
-			FROM messaging_threads thread
-			WHERE thread.practice_id = $1
-				AND thread.location_id::text = ANY($2::text[])
-				AND thread.external_phone = $3
-			UNION ALL
-			SELECT
-				call.location_id,
-				call.updated_at,
-				COALESCE(handoff.display_name, '')
-			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-			WHERE call.practice_id = $1
-				AND call.location_id::text = ANY($2::text[])
-				AND COALESCE(handoff.phone, call.destination_phone) = $3
-			UNION ALL
-			SELECT
-				task.location_id,
-				task.updated_at,
-				COALESCE(task.caller_name, '')
-			FROM work_tasks task
-			WHERE task.practice_id = $1
-				AND task.location_id::text = ANY($2::text[])
-				AND task.phone = $3
-		)
-		SELECT
-			$3,
-			COALESCE((
-				SELECT display_name
-				FROM evidence
-				WHERE display_name <> ''
-				ORDER BY occurred_at DESC
-				LIMIT 1
-			), ''),
-			COALESCE(max(occurred_at), '-infinity'::timestamptz),
-			(
-				SELECT count(*)
-				FROM work_tasks task
-				WHERE task.practice_id = $1
-					AND task.location_id::text = ANY($2::text[])
-					AND task.phone = $3
-					AND task.state = 'OPEN'
-			),
-			EXISTS (
-				SELECT 1
-				FROM messaging_threads thread
-				JOIN messaging_thread_unreads unread ON unread.thread_id = thread.id
-				WHERE thread.practice_id = $1
-					AND thread.location_id::text = ANY($2::text[])
-					AND thread.external_phone = $3
-					AND unread.user_subject = $4
-			),
-			count(*) > 0
-		FROM evidence
-	`, command.PracticeID, locationIDs, phone, command.Identity.Subject).Scan(
-		&summary.Phone,
-		&summary.DisplayName,
-		&summary.LatestActivity,
-		&summary.OpenTaskCount,
-		&summary.Unread,
-		&found,
-	)
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("query Engagement summary: %w", err)
-	}
-	if !found {
-		if err := tx.Commit(ctx); err != nil {
-			return EngagementPage{}, fmt.Errorf("commit empty Engagement lookup: %w", err)
-		}
-		return EngagementPage{Items: []EngagementSummary{}}, nil
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT DISTINCT location.id::text, location.name
-		FROM access_locations location
-		JOIN (
-			SELECT location_id
-			FROM messaging_threads
-			WHERE practice_id = $1 AND external_phone = $3
-			UNION
-			SELECT call.location_id
-			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-			WHERE call.practice_id = $1
-				AND COALESCE(handoff.phone, call.destination_phone) = $3
-			UNION
-			SELECT location_id
-			FROM work_tasks
-			WHERE practice_id = $1 AND phone = $3
-		) evidence ON evidence.location_id = location.id
-		WHERE location.practice_id = $1
-			AND location.id::text = ANY($2::text[])
-		ORDER BY location.name, location.id::text
-	`, command.PracticeID, locationIDs, phone)
-	if err != nil {
-		return EngagementPage{}, fmt.Errorf("query Engagement Locations: %w", err)
-	}
-	for rows.Next() {
-		var location EngagementLocation
-		if err := rows.Scan(&location.ID, &location.Name); err != nil {
-			rows.Close()
-			return EngagementPage{}, fmt.Errorf("scan Engagement Location: %w", err)
-		}
-		summary.Locations = append(summary.Locations, location)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return EngagementPage{}, fmt.Errorf("iterate Engagement Locations: %w", err)
-	}
-	rows.Close()
-	if err := tx.Commit(ctx); err != nil {
-		return EngagementPage{}, fmt.Errorf("commit Engagement lookup: %w", err)
-	}
-	return EngagementPage{Items: []EngagementSummary{summary}}, nil
 }
 
 type pageCursor struct {
@@ -746,6 +492,14 @@ type MarkReadCommand struct {
 	Identity         access.Identity
 	ThreadID         string
 	SupportSessionID string
+}
+
+type MarkEngagementTextHandledCommand struct {
+	Identity          access.Identity
+	PracticeID        string
+	Phone             string
+	EvidenceMessageID string
+	SupportSessionID  string
 }
 
 type CreateFollowUpTaskCommand struct {
@@ -2254,8 +2008,7 @@ func (m *Module) QueryThreads(
 	command.Search = strings.TrimSpace(command.Search)
 	if m.pool == nil ||
 		m.access == nil ||
-		command.PracticeID == "" ||
-		command.LocationID == "" {
+		command.PracticeID == "" {
 		return ThreadPage{}, ErrInvalidInput
 	}
 	cursor, err := decodePageCursor(command.Cursor)
@@ -2282,14 +2035,23 @@ func (m *Module) QueryThreads(
 		return ThreadPage{}, fmt.Errorf("begin Message Thread query: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := m.access.LockReadAuthorization(
+	authorization, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
 		command.Identity,
 		command.PracticeID,
 		command.LocationID,
-	); err != nil {
+	)
+	if err != nil {
 		return ThreadPage{}, ErrDenied
+	}
+	locationIDs := make([]string, 0, len(authorization.Locations))
+	if command.LocationID != "" {
+		locationIDs = append(locationIDs, command.LocationID)
+	} else {
+		for _, location := range authorization.Locations {
+			locationIDs = append(locationIDs, location.ID)
+		}
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -2304,7 +2066,7 @@ func (m *Module) QueryThreads(
 			thread.outbound_blocked,
 			thread.created_at,
 			thread.updated_at,
-			COALESCE(latest.preview, ''),
+			COALESCE(latest_inbound.preview, latest.preview, ''),
 			COALESCE(latest.direction, ''),
 			COALESCE(latest.delivery_state, ''),
 			COALESCE(activity.occurred_at, thread.updated_at),
@@ -2313,6 +2075,17 @@ func (m *Module) QueryThreads(
 				FROM messaging_thread_unreads unread
 				WHERE unread.thread_id = thread.id
 					AND unread.user_subject = $4
+			),
+			EXISTS (
+				SELECT 1
+				FROM messaging_messages inbound
+				WHERE inbound.thread_id = thread.id
+					AND inbound.direction = 'INBOUND'
+					AND inbound.created_at > COALESCE((
+						SELECT handled.handled_through
+						FROM messaging_thread_handled handled
+						WHERE handled.thread_id = thread.id
+					), '-infinity'::timestamptz)
 			)
 		FROM messaging_threads thread
 		JOIN access_locations location
@@ -2338,6 +2111,23 @@ func (m *Module) QueryThreads(
 			ORDER BY message.created_at DESC, message.id DESC
 			LIMIT 1
 		) latest ON true
+		LEFT JOIN LATERAL (
+			SELECT COALESCE(
+				message.body,
+				CASE
+					WHEN attachment.content_type = 'application/pdf' THEN 'PDF'
+					WHEN attachment.id IS NOT NULL THEN 'Image'
+					ELSE ''
+				END
+			) AS preview
+			FROM messaging_messages message
+			LEFT JOIN messaging_attachments attachment
+				ON attachment.message_id = message.id
+			WHERE message.thread_id = thread.id
+				AND message.direction = 'INBOUND'
+			ORDER BY message.created_at DESC, message.id DESC
+			LIMIT 1
+		) latest_inbound ON true
 		LEFT JOIN LATERAL (
 			SELECT max(event.occurred_at) AS occurred_at
 			FROM (
@@ -2365,7 +2155,7 @@ func (m *Module) QueryThreads(
 			) event
 		) activity ON true
 		WHERE thread.practice_id = $1
-			AND thread.location_id = $2
+			AND thread.location_id::text = ANY($2::text[])
 			AND ($3 = '' OR thread.external_phone = $3)
 			AND (
 				$6::timestamptz IS NULL
@@ -2379,7 +2169,7 @@ func (m *Module) QueryThreads(
 			COALESCE(activity.occurred_at, thread.updated_at) DESC,
 			thread.id DESC
 		LIMIT $5
-	`, command.PracticeID, command.LocationID, searchPhone,
+	`, command.PracticeID, locationIDs, searchPhone,
 		command.Identity.Subject, limit+1, nullableCursorTime(cursor),
 		nullableCursorID(cursor),
 	)
@@ -2407,6 +2197,7 @@ func (m *Module) QueryThreads(
 			&item.LatestDelivery,
 			&item.LatestActivity,
 			&item.Unread,
+			&item.NeedsAttention,
 		); err != nil {
 			return ThreadPage{}, fmt.Errorf("scan Message Thread: %w", err)
 		}
@@ -2806,6 +2597,134 @@ func (m *Module) MarkRead(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Message Thread read: %w", err)
+	}
+	return nil
+}
+
+// MarkEngagementTextHandled acknowledges every currently authorized inbound
+// Text for the exact phone only after a later outbound Message was accepted.
+func (m *Module) MarkEngagementTextHandled(
+	ctx context.Context,
+	command MarkEngagementTextHandledCommand,
+) error {
+	command.PracticeID = strings.TrimSpace(command.PracticeID)
+	command.Phone = strings.TrimSpace(command.Phone)
+	command.EvidenceMessageID = strings.TrimSpace(command.EvidenceMessageID)
+	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
+	phone, err := normalizePhone(command.Phone)
+	if err != nil || m.pool == nil || m.access == nil || command.PracticeID == "" ||
+		uuid.Validate(command.EvidenceMessageID) != nil {
+		return ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin Text acknowledgement: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	readAuthorization, err := m.access.LockReadAuthorization(
+		ctx, tx, command.Identity, command.PracticeID, "",
+	)
+	if err != nil {
+		return ErrDenied
+	}
+	locationIDs := make([]string, 0, len(readAuthorization.Locations))
+	for _, location := range readAuthorization.Locations {
+		locationIDs = append(locationIDs, location.ID)
+	}
+	var evidenceAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT message.created_at
+		FROM messaging_messages message
+		JOIN messaging_threads thread ON thread.id = message.thread_id
+		WHERE message.id = $1
+			AND message.practice_id = $2
+			AND message.location_id::text = ANY($3::text[])
+			AND thread.external_phone = $4
+			AND message.direction = 'OUTBOUND'
+			AND message.delivery_state IN ('SENDING', 'SENT', 'DELIVERED')
+	`, command.EvidenceMessageID, command.PracticeID, locationIDs, phone).Scan(&evidenceAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		return fmt.Errorf("load Text acknowledgement evidence: %w", err)
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT thread.id::text, thread.location_id::text, inbound.latest_at
+		FROM messaging_threads thread
+		JOIN LATERAL (
+			SELECT max(message.created_at) AS latest_at
+			FROM messaging_messages message
+			WHERE message.thread_id = thread.id AND message.direction = 'INBOUND'
+		) inbound ON inbound.latest_at IS NOT NULL
+		WHERE thread.practice_id = $1
+			AND thread.location_id::text = ANY($2::text[])
+			AND thread.external_phone = $3
+		FOR UPDATE OF thread
+	`, command.PracticeID, locationIDs, phone)
+	if err != nil {
+		return fmt.Errorf("lock Text attention: %w", err)
+	}
+	type pendingThread struct {
+		id, locationID string
+		latestInbound  time.Time
+	}
+	var pending []pendingThread
+	for rows.Next() {
+		var item pendingThread
+		if err := rows.Scan(&item.id, &item.locationID, &item.latestInbound); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan Text attention: %w", err)
+		}
+		pending = append(pending, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate Text attention: %w", err)
+	}
+	rows.Close()
+	if len(pending) == 0 {
+		return ErrConflict
+	}
+	for _, item := range pending {
+		if item.latestInbound.After(evidenceAt) {
+			return ErrConflict
+		}
+		authorization, authErr := m.access.LockMutationAuthorization(
+			ctx, tx, command.Identity, command.PracticeID, item.locationID, command.SupportSessionID,
+		)
+		if authErr != nil {
+			if errors.Is(authErr, access.ErrSupportRequired) || errors.Is(authErr, access.ErrSupportExpired) ||
+				errors.Is(authErr, access.ErrSupportRevoked) || errors.Is(authErr, access.ErrSupportPracticeMismatch) {
+				return authErr
+			}
+			return ErrDenied
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO messaging_thread_handled (
+				thread_id, practice_id, location_id, handled_through,
+				evidence_message_id, handled_by_subject, handled_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (thread_id) DO UPDATE SET
+				handled_through = GREATEST(messaging_thread_handled.handled_through, EXCLUDED.handled_through),
+				evidence_message_id = EXCLUDED.evidence_message_id,
+				handled_by_subject = EXCLUDED.handled_by_subject,
+				handled_at = EXCLUDED.handled_at
+		`, item.id, command.PracticeID, item.locationID, item.latestInbound,
+			command.EvidenceMessageID, command.Identity.Subject, m.now()); err != nil {
+			return fmt.Errorf("persist Text acknowledgement: %w", err)
+		}
+		if err := m.access.AuditSupportedMutation(ctx, tx, authorization, access.SupportedMutationAudit{
+			Action: "engagement.text_handled", ResourceType: "message_thread",
+			ResourceID: item.id, ResourceVersion: 1, OccurredAt: m.now(),
+		}); err != nil {
+			return err
+		}
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Text acknowledgement: %w", err)
 	}
 	return nil
 }

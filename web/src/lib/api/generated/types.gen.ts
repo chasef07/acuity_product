@@ -453,6 +453,7 @@ export type EngagementSummary = {
     latestActivity: string;
     openTaskCount: number;
     unread: boolean;
+    textNeedsAttention: boolean;
 };
 
 export type EngagementPage = {
@@ -510,6 +511,7 @@ export type MessageThreadSummary = MessageThread & {
     latestDelivery: MessageDeliveryState;
     latestActivity: string;
     unread: boolean;
+    needsAttention: boolean;
 };
 
 export type MessageThreadPage = {
@@ -519,7 +521,7 @@ export type MessageThreadPage = {
 
 export type MessageThreadQueryRequest = {
     practiceId: string;
-    locationId: string;
+    locationId?: string;
     search?: string;
     cursor?: string;
     limit?: number;
@@ -592,6 +594,12 @@ export type SendMessageAgainRequest = {
 };
 
 export type MarkMessageThreadReadRequest = {
+    supportSessionId?: string;
+};
+
+export type MarkEngagementTextHandledRequest = {
+    practiceId: string;
+    evidenceMessageId: string;
     supportSessionId?: string;
 };
 
@@ -1842,6 +1850,49 @@ export type GetEngagementTimelineResponses = {
 };
 
 export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
+
+export type MarkEngagementTextHandledData = {
+    body: MarkEngagementTextHandledRequest;
+    path: {
+        phone: string;
+    };
+    query?: never;
+    url: '/v1/engagements/{phone}/text-handled';
+};
+
+export type MarkEngagementTextHandledErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type MarkEngagementTextHandledError = MarkEngagementTextHandledErrors[keyof MarkEngagementTextHandledErrors];
+
+export type MarkEngagementTextHandledResponses = {
+    /**
+     * Current authorized inbound Text attention is acknowledged.
+     */
+    204: void;
+};
+
+export type MarkEngagementTextHandledResponse = MarkEngagementTextHandledResponses[keyof MarkEngagementTextHandledResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;

@@ -472,6 +472,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_attachments",
 		"messaging_location_configurations",
 		"messaging_messages",
+		"messaging_thread_handled",
 		"messaging_thread_unreads",
 		"messaging_threads",
 		"work_task_activities",
@@ -494,6 +495,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_timeline",
 		"messaging_attachments",
 		"messaging_messages",
+		"messaging_thread_handled",
 		"messaging_provider_commands",
 		"messaging_threads",
 		"work_task_activities",
@@ -652,6 +654,15 @@ func expectedColumnPrivileges() map[string]bool {
 		"task_id",
 		"version",
 		"updated_at",
+	)
+	grant(
+		"acuity_portal",
+		"public.messaging_thread_handled",
+		"UPDATE",
+		"handled_through",
+		"evidence_message_id",
+		"handled_by_subject",
+		"handled_at",
 	)
 	grant(
 		"acuity_portal",

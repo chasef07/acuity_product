@@ -771,7 +771,7 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query first Task page: %v", err)
 	}
-	assertTaskIDs(t, firstPage.Items, openOld.ID, openNew.ID)
+	assertTaskIDs(t, firstPage.Items, openNew.ID, openOld.ID)
 	if firstPage.NextCursor != "" {
 		t.Fatalf("last open Task page cursor = %q, want empty", firstPage.NextCursor)
 	}
@@ -934,8 +934,8 @@ func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
 		t,
 		priorityPage.Items,
 		high.ID,
-		normalOld.ID,
 		normalNew.ID,
+		normalOld.ID,
 		nonUrgent.ID,
 	)
 	firstPriorityPage, err := module.QueryTasks(
@@ -950,7 +950,7 @@ func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query first priority cursor page: %v", err)
 	}
-	assertTaskIDs(t, firstPriorityPage.Items, high.ID, normalOld.ID)
+	assertTaskIDs(t, firstPriorityPage.Items, high.ID, normalNew.ID)
 	if firstPriorityPage.NextCursor == "" {
 		t.Fatal("first priority cursor page has no next cursor")
 	}
@@ -967,7 +967,7 @@ func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query second priority cursor page: %v", err)
 	}
-	assertTaskIDs(t, secondPriorityPage.Items, normalNew.ID, nonUrgent.ID)
+	assertTaskIDs(t, secondPriorityPage.Items, normalOld.ID, nonUrgent.ID)
 }
 
 func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.T) {

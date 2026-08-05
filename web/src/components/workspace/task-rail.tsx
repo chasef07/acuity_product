@@ -59,9 +59,7 @@ type TaskRailProps = {
   messages: MessageThreadSummary[]
   engagements: EngagementSummary[]
   recent: EngagementSummary[]
-  pendingHandledTextThreadIDs: string[]
   selectedTaskID: string
-  selectedThreadID: string
   search: string
   engagementLoading: boolean
   loading: boolean
@@ -71,7 +69,6 @@ type TaskRailProps = {
   onSearchSubmit: () => void
   onEngagementSelect: (engagement: EngagementSummary) => void
   onTaskSelect: (task: Task) => void
-  onThreadSelect: (thread: MessageThreadSummary) => void
   onNewText: () => void
 }
 
@@ -83,10 +80,8 @@ export function TaskRail({
   messages,
   engagements,
   recent,
-  pendingHandledTextThreadIDs,
   practice,
   selectedTaskID,
-  selectedThreadID,
   search,
   engagementLoading,
   loading,
@@ -96,7 +91,6 @@ export function TaskRail({
   onSearchSubmit,
   onEngagementSelect,
   onTaskSelect,
-  onThreadSelect,
   onNewText,
 }: TaskRailProps) {
   const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
@@ -115,18 +109,7 @@ export function TaskRail({
   const { resolvedTheme, setTheme } = useTheme()
   const openTasks = tasks.filter((task) => task.state === "OPEN")
   const recoveryRows = useMemo(() => aggregateRecovery(openTasks), [openTasks])
-  const textRows = messages
-    .filter(
-      (thread) =>
-        thread.latestDirection === "INBOUND" ||
-        thread.unread ||
-        pendingHandledTextThreadIDs.includes(thread.id),
-    )
-    .sort(
-      (left, right) =>
-        left.latestActivity.localeCompare(right.latestActivity) ||
-        right.updatedAt.localeCompare(left.updatedAt),
-    )
+  const textRows = useMemo(() => aggregateTexts(messages, tasks), [messages, tasks])
 
   useEffect(() => {
     const restored = readSidebarState(stateKey)
@@ -245,12 +228,11 @@ export function TaskRail({
           expanded={expanded.texts}
           onToggle={() => toggle("texts")}
         >
-          {textRows.map((thread) => (
+          {textRows.map((row) => (
             <TextRow
-              key={thread.id}
-              thread={thread}
-              active={thread.id === selectedThreadID}
-              onSelect={() => onThreadSelect(thread)}
+              key={row.engagement.phone}
+              row={row}
+              onSelect={() => onEngagementSelect(row.engagement)}
             />
           ))}
           {messageLoading && textRows.length === 0 && <RailLoading />}
@@ -483,18 +465,16 @@ function RecoveryRow({
 }
 
 function TextRow({
-  thread,
-  active,
+  row,
   onSelect,
 }: {
-  thread: MessageThreadSummary
-  active: boolean
+  row: TextAttentionRow
   onSelect: () => void
 }) {
+  const thread = row.previewThread
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        isActive={active}
         className="h-auto min-h-16 rounded-none border-t px-3 py-2"
         tooltip={thread.externalPhone}
         onClick={onSelect}
@@ -513,12 +493,67 @@ function TextRow({
             {thread.preview || "Attachment"}
           </span>
         </span>
-        <time className="text-xs tabular-nums text-muted-foreground" dateTime={thread.latestActivity}>
-          {relativeTime(thread.latestActivity)}
+        <time className="text-xs tabular-nums text-muted-foreground" dateTime={row.oldestAttention}>
+          {relativeTime(row.oldestAttention)}
         </time>
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
+}
+
+type TextAttentionRow = {
+  engagement: EngagementSummary
+  previewThread: MessageThreadSummary
+  oldestAttention: string
+}
+
+function aggregateTexts(
+  messages: MessageThreadSummary[],
+  tasks: Task[],
+): TextAttentionRow[] {
+  const byPhone = new Map<string, MessageThreadSummary[]>()
+  for (const thread of messages) {
+    if (!thread.needsAttention) continue
+    byPhone.set(thread.externalPhone, [
+      ...(byPhone.get(thread.externalPhone) ?? []),
+      thread,
+    ])
+  }
+  return [...byPhone.entries()]
+    .map(([phone, threads]) => {
+      const newest = [...threads].sort((left, right) =>
+        right.latestActivity.localeCompare(left.latestActivity),
+      )[0]!
+      const locations = [...new Map(
+        threads.map((thread) => [thread.locationId, {
+          id: thread.locationId,
+          name: thread.locationName,
+        }]),
+      ).values()]
+      return {
+        previewThread: newest,
+        oldestAttention: threads.reduce(
+          (oldest, thread) =>
+            thread.latestActivity < oldest ? thread.latestActivity : oldest,
+          threads[0]!.latestActivity,
+        ),
+        engagement: {
+          phone,
+          ...(newest.displayName ? { displayName: newest.displayName } : {}),
+          locations,
+          latestActivity: newest.latestActivity,
+          openTaskCount: tasks.filter(
+            (task) => task.state === "OPEN" && task.phone === phone,
+          ).length,
+          unread: threads.some((thread) => thread.unread),
+          textNeedsAttention: true,
+        },
+      }
+    })
+    .sort((left, right) =>
+      left.oldestAttention.localeCompare(right.oldestAttention) ||
+      right.engagement.latestActivity.localeCompare(left.engagement.latestActivity),
+    )
 }
 
 function RecentRow({
@@ -600,6 +635,7 @@ function recoveryEngagement(row: RecoveryRowValue): EngagementSummary {
     latestActivity: row.latestAt,
     openTaskCount: row.tasks.length,
     unread: row.tasks.some((task) => task.unread),
+    textNeedsAttention: false,
   }
 }
 

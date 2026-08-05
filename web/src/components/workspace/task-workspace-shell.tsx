@@ -118,7 +118,6 @@ export function TaskWorkspaceShell() {
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
   const [recentInboxes, setRecentInboxes] = useState<EngagementSummary[]>([])
   const [recentLoaded, setRecentLoaded] = useState(false)
-  const [pendingHandledTextThreadIDs, setPendingHandledTextThreadIDs] = useState<string[]>([])
   const [attentionHighlightTaskID, setAttentionHighlightTaskID] = useState("")
   const [liveCalls, setLiveCalls] = useState<LiveCall[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -403,10 +402,10 @@ export function TaskWorkspaceShell() {
   )
   const loadMessageThreads = useCallback(
     async (cursor = "", append = false) => {
-      if (!practiceID || !locationID) return
+      if (!practiceID) return
       const queryKey = workspaceMessageQueryKey(
         practiceID,
-        locationID,
+        locationScopeID,
       )
       const requestGeneration = ++messageQueryGenerationRef.current
       setMessagesLoading(true)
@@ -420,7 +419,7 @@ export function TaskWorkspaceShell() {
         client: portalClient(token),
         body: {
           practiceId: practiceID,
-          locationId: locationID,
+          ...(locationScopeID ? { locationId: locationScopeID } : {}),
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -449,6 +448,36 @@ export function TaskWorkspaceShell() {
         : result.data.items
       messageThreadsRef.current = next
       setMessageThreads(next)
+      const selectedPhone = selectedPhoneRef.current
+      if (selectedPhone) {
+        const matching = next.filter(
+          (thread) => thread.externalPhone === selectedPhone,
+        )
+        setSelectedEngagement((current) =>
+          current?.phone === selectedPhone
+            ? {
+                ...current,
+                unread: matching.some((thread) => thread.unread),
+                textNeedsAttention: matching.some(
+                  (thread) => thread.needsAttention,
+                ),
+              }
+            : current,
+        )
+        setRecentInboxes((current) =>
+          current.map((engagement) =>
+            engagement.phone === selectedPhone
+              ? {
+                  ...engagement,
+                  unread: matching.some((thread) => thread.unread),
+                  textNeedsAttention: matching.some(
+                    (thread) => thread.needsAttention,
+                  ),
+                }
+              : engagement,
+          ),
+        )
+      }
 
       const selected = selectedThreadRef.current
       if (selected) {
@@ -477,7 +506,7 @@ export function TaskWorkspaceShell() {
         setView("none")
       }
     },
-    [discovery?.actor.subject, locationID, practiceID],
+    [discovery?.actor.subject, locationScopeID, practiceID],
   )
   const reconcileWorkspace = useCallback(
     async ({
@@ -505,7 +534,7 @@ export function TaskWorkspaceShell() {
       )
       const messageQueryKey = workspaceMessageQueryKey(
         scope.practiceID,
-        scope.locationID,
+        taskLocationID,
       )
       const client = portalClient(token)
       const [snapshotResult, taskResult, messageResult, selectedResult] =
@@ -533,7 +562,7 @@ export function TaskWorkspaceShell() {
             client,
             body: {
               practiceId: scope.practiceID,
-              locationId: scope.locationID,
+              ...(taskLocationID ? { locationId: taskLocationID } : {}),
               limit: 50,
             },
             signal,
@@ -631,6 +660,23 @@ export function TaskWorkspaceShell() {
             messageQueryKeyRef.current = messageQueryKey
             messageThreadsRef.current = nextMessages
             setMessageThreads(nextMessages)
+            const selectedPhone = selectedPhoneRef.current
+            if (selectedPhone) {
+              const matching = nextMessages.filter(
+                (thread) => thread.externalPhone === selectedPhone,
+              )
+              setSelectedEngagement((current) =>
+                current?.phone === selectedPhone
+                  ? {
+                      ...current,
+                      unread: matching.some((thread) => thread.unread),
+                      textNeedsAttention: matching.some(
+                        (thread) => thread.needsAttention,
+                      ),
+                    }
+                  : current,
+              )
+            }
             const selected = selectedThreadRef.current
             if (selected) {
               const current = nextMessages.find(
@@ -767,7 +813,7 @@ export function TaskWorkspaceShell() {
     }
     const queryKey = workspaceMessageQueryKey(
       practiceID,
-      locationID,
+      locationScopeID,
     )
     if (messageQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadMessageThreads(), 0)
@@ -776,6 +822,7 @@ export function TaskWorkspaceShell() {
     loadMessageThreads,
     loadState,
     locationID,
+    locationScopeID,
     practiceID,
   ])
 
@@ -958,9 +1005,15 @@ export function TaskWorkspaceShell() {
     setAttentionHighlightTaskID("")
     updateSelectedTask(task)
     if (activeCall) returnTaskIDRef.current = task.id
-    rememberInbox(taskEngagement(task))
+    const engagement = {
+      ...taskEngagement(task),
+      textNeedsAttention: messageThreadsRef.current.some(
+        (thread) => thread.externalPhone === task.phone && thread.needsAttention,
+      ),
+    }
+    rememberInbox(engagement)
     selectedPhoneRef.current = task.phone
-    setSelectedEngagement(taskEngagement(task))
+    setSelectedEngagement(engagement)
     setView("engagement")
   }
 
@@ -993,17 +1046,6 @@ export function TaskWorkspaceShell() {
     if (items[0]) selectEngagement(items[0])
   }
 
-  function selectMessageThread(thread: MessageThreadSummary) {
-    setCommittedMessage(undefined)
-    updateSelectedTask(undefined)
-    setSelectedThread(thread)
-    setComposingNew(false)
-    rememberInbox(threadEngagement(thread, tasksRef.current))
-    selectedPhoneRef.current = thread.externalPhone
-    setSelectedEngagement(threadEngagement(thread, tasksRef.current))
-    setView("engagement")
-  }
-
   function composeNewMessage() {
     setCommittedMessage(undefined)
     setSelectedThread(undefined)
@@ -1032,6 +1074,11 @@ export function TaskWorkspaceShell() {
       latestDelivery: message.delivery,
       latestActivity: message.createdAt,
       unread: false,
+      needsAttention: messageThreadsRef.current.some(
+        (thread) =>
+          thread.externalPhone === message.thread.externalPhone &&
+          thread.needsAttention,
+      ),
     }
     setSelectedThread(summary)
     setComposingNew(false)
@@ -1086,6 +1133,9 @@ export function TaskWorkspaceShell() {
     }
     focusedCallIDRef.current = call.id
     returnTaskIDRef.current = selectedTaskRef.current?.id ?? ""
+    updateSelectedTask(undefined)
+    setSelectedThread(undefined)
+    setAttentionHighlightTaskID("")
     selectedPhoneRef.current = call.phone
     const engagement: EngagementSummary = {
       phone: call.phone,
@@ -1094,6 +1144,7 @@ export function TaskWorkspaceShell() {
       latestActivity: call.connectedAt ?? new Date().toISOString(),
       openTaskCount: call.recoveryTask?.state === "OPEN" ? 1 : 0,
       unread: false,
+      textNeedsAttention: false,
     }
     rememberNumber(discovery?.actor.subject, practiceID, call.phone)
     setRecentInboxes((current) => [
@@ -1190,9 +1241,7 @@ export function TaskWorkspaceShell() {
           messages={messageThreads}
           engagements={engagements}
           recent={recentInboxes}
-          pendingHandledTextThreadIDs={pendingHandledTextThreadIDs}
           selectedTaskID={selectedTask?.id ?? attentionHighlightTaskID}
-          selectedThreadID={selectedThread?.id ?? ""}
           search={search}
           engagementLoading={engagementLoading}
           loading={tasksLoading}
@@ -1208,13 +1257,12 @@ export function TaskWorkspaceShell() {
           onSearchSubmit={submitPhoneSearch}
           onEngagementSelect={selectEngagement}
           onTaskSelect={selectTask}
-          onThreadSelect={selectMessageThread}
           onNewText={composeNewMessage}
         />
         <SidebarInset
           data-testid="mounted-workspace"
           data-workspace-version={workspace.version}
-          className="min-w-0"
+          className="h-svh min-w-0 overflow-hidden"
         >
           {workspace.supportMode && (
             <SupportBanner
@@ -1269,17 +1317,7 @@ export function TaskWorkspaceShell() {
                 }
                 void loadTasks("", false, true)
               }}
-              onTextEligibilityChanged={(threadID, eligible) => {
-                setPendingHandledTextThreadIDs((current) =>
-                  eligible
-                    ? [...new Set([...current, threadID])]
-                    : current.filter((id) => id !== threadID),
-                )
-              }}
-              onTextHandled={(threadID) => {
-                setPendingHandledTextThreadIDs((current) =>
-                  current.filter((id) => id !== threadID),
-                )
+              onTextHandled={() => {
                 void loadMessageThreads()
               }}
               taskCallPending={Boolean(taskCallRequest)}
@@ -1478,6 +1516,7 @@ function taskEngagement(task: Task): EngagementSummary {
     latestActivity: task.updatedAt,
     openTaskCount: task.state === "OPEN" ? 1 : 0,
     unread: task.unread,
+    textNeedsAttention: false,
   }
 }
 
@@ -1493,6 +1532,7 @@ function threadEngagement(
     latestActivity: thread.latestActivity,
     openTaskCount: matchingTasks.filter((task) => task.state === "OPEN").length,
     unread: thread.unread,
+    textNeedsAttention: thread.needsAttention,
   }
 }
 

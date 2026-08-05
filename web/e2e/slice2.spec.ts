@@ -639,6 +639,39 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       callCenter(winnerPage).getByText("Connected", { exact: true }),
     ).toBeVisible()
+    await expect(
+      winnerPage.getByRole("complementary", { name: "Selected item" }),
+    ).toHaveCount(0)
+    await expect(
+      winnerPage.getByRole("heading", {
+        name: "(555) 555-0100",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      winnerPage.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeEnabled()
+    const liveCallText = "I am sending this while we are connected."
+    const liveInbound = await winnerPage.request.post(
+      `${telnyxFixtureURL}/fixture/message-inbound`,
+      {
+        headers: { authorization: "Bearer fixture-control" },
+        data: {
+          eventId: "slice-2-live-call-text",
+          providerMessageId: "provider-slice-2-live-call-text",
+          from: "+15555550100",
+          to: "+17275550101",
+          text: liveCallText,
+        },
+      },
+    )
+    expect(liveInbound.ok()).toBeTruthy()
+    await expect(
+      winnerPage.getByRole("article").filter({ hasText: liveCallText }),
+    ).toBeVisible()
+    await expect(
+      winnerPage.getByRole("button", { name: /Texts [1-9]/ }),
+    ).toBeVisible()
     await expect
       .poll(async () => {
         const result = await database.query<{ count: string }>(
@@ -1318,8 +1351,38 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         .fill("We received your voicemail and will follow up.")
       await takeoverPage
         .getByLabel("Message composer")
+        .locator('input[type="file"]')
+        .setInputFiles({
+          name: "voicemail-follow-up.png",
+          mimeType: "image/png",
+          buffer: Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "base64",
+          ),
+        })
+      await takeoverPage
+        .getByLabel("Message composer")
         .getByRole("button", { name: "Send message" })
         .click()
+      await expect(
+        takeoverPage.getByRole("img", { name: "voicemail-follow-up.png" }),
+      ).toBeVisible()
+      await expect
+        .poll(async () => {
+          const response = await takeoverPage.request.get(
+            `${telnyxFixtureURL}/fixture/messages`,
+            { headers: { authorization: "Bearer fixture-control" } },
+          )
+          const body = (await response.json()) as {
+            data: Array<{ text: string; media_urls: string[] }>
+          }
+          return body.data.find(
+            (message) =>
+              message.text ===
+              "We received your voicemail and will follow up.",
+          )?.media_urls[0]
+        })
+        .toContain("/v1/provider/messaging-media/")
       await focusedVoicemail
         .getByRole("button", { name: "Close selected item" })
         .click()

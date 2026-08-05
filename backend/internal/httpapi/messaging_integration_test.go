@@ -16,6 +16,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/api"
+	engagementquery "github.com/chasef07/acuity_product/backend/internal/engagement"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -222,9 +223,10 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t.Fatalf("process HTTP inbound receipt = %t, %v", processed, err)
 	}
 
+	locationID := parsedUUID(t, authorization.Locations[0].ID)
 	queryBody, _ := json.Marshal(api.MessageThreadQueryRequest{
 		PracticeId: parsedUUID(t, authorization.Practice.ID),
-		LocationId: parsedUUID(t, authorization.Locations[0].ID),
+		LocationId: &locationID,
 	})
 	threadsResponse := request(
 		t,
@@ -241,6 +243,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	decode(t, threadsResponse, &threads)
 	if len(threads.Items) != 1 ||
 		!threads.Items[0].Unread ||
+		!threads.Items[0].NeedsAttention ||
 		threads.Items[0].Preview != "Thank you." {
 		t.Fatalf("HTTP Message Threads = %#v", threads)
 	}
@@ -263,6 +266,107 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		timeline.Items[1].Message == nil ||
 		timeline.Items[1].Message.Direction != api.MessageDirectionINBOUND {
 		t.Fatalf("HTTP conversation timeline = %#v", timeline)
+	}
+	readResponse := request(
+		t,
+		portal.Client(),
+		http.MethodPost,
+		portal.URL+"/v1/message-threads/"+threads.Items[0].Id.String()+"/read",
+		"message-token",
+		[]byte(`{}`),
+	)
+	if readResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("mark read status = %d, body = %s", readResponse.StatusCode, readBody(t, readResponse))
+	}
+	threadsAfterRead := request(t, portal.Client(), http.MethodPost,
+		portal.URL+"/v1/message-threads/query", "message-token", queryBody)
+	var readPage api.MessageThreadPage
+	decode(t, threadsAfterRead, &readPage)
+	if len(readPage.Items) != 1 || readPage.Items[0].Unread || !readPage.Items[0].NeedsAttention {
+		t.Fatalf("read cursor changed Text attention = %#v", readPage)
+	}
+	threadID := threads.Items[0].Id
+	replyBody, _ := json.Marshal(api.SendMessageRequest{
+		PracticeId:     parsedUUID(t, authorization.Practice.ID),
+		LocationId:     locationID,
+		ThreadId:       &threadID,
+		Body:           "You are welcome.",
+		IdempotencyKey: "http-message-answer-1",
+	})
+	replyResponse := request(t, portal.Client(), http.MethodPost,
+		portal.URL+"/v1/messages", "message-token", replyBody)
+	if replyResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("answer Text status = %d, body = %s", replyResponse.StatusCode, readBody(t, replyResponse))
+	}
+	var reply api.MessageReceipt
+	decode(t, replyResponse, &reply)
+	var hiddenLocationID, hiddenThreadID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM access_locations
+		WHERE practice_id = $1 AND provisioning_key = 'message-http-hidden'
+	`, authorization.Practice.ID).Scan(&hiddenLocationID); err != nil {
+		t.Fatalf("read hidden Message Location: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO messaging_threads (
+			practice_id, location_id, office_phone, external_phone, created_at, updated_at
+		) VALUES ($1, $2, '+17275550102', '+17275550199', $3, $3)
+		RETURNING id::text
+	`, authorization.Practice.ID, hiddenLocationID, now).Scan(&hiddenThreadID); err != nil {
+		t.Fatalf("create hidden exact-phone Thread: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO messaging_messages (
+			thread_id, practice_id, location_id, direction, body, sender,
+			destination, delivery_state, provider_message_id, created_at, updated_at
+		) VALUES ($1, $2, $3, 'INBOUND', 'Hidden office message.',
+			'+17275550199', '+17275550102', 'DELIVERED', 'hidden-provider-message', $4, $4)
+	`, hiddenThreadID, authorization.Practice.ID, hiddenLocationID, now); err != nil {
+		t.Fatalf("create hidden exact-phone Message: %v", err)
+	}
+	handledBody, _ := json.Marshal(api.MarkEngagementTextHandledRequest{
+		PracticeId:        parsedUUID(t, authorization.Practice.ID),
+		EvidenceMessageId: reply.Message.Id,
+	})
+	handledResponse := request(t, portal.Client(), http.MethodPost,
+		portal.URL+"/v1/engagements/+17275550199/text-handled", "message-token", handledBody)
+	if handledResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("mark Text handled status = %d, body = %s", handledResponse.StatusCode, readBody(t, handledResponse))
+	}
+	threadsAfterHandled := request(t, portal.Client(), http.MethodPost,
+		portal.URL+"/v1/message-threads/query", "message-token", queryBody)
+	var handledPage api.MessageThreadPage
+	decode(t, threadsAfterHandled, &handledPage)
+	if len(handledPage.Items) != 1 || handledPage.Items[0].NeedsAttention {
+		t.Fatalf("durable Text acknowledgement = %#v", handledPage)
+	}
+	var hiddenHandled bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1 FROM messaging_thread_handled WHERE thread_id = $1
+		)
+	`, hiddenThreadID).Scan(&hiddenHandled); err != nil {
+		t.Fatalf("inspect hidden Text acknowledgement: %v", err)
+	}
+	if hiddenHandled {
+		t.Fatal("Text acknowledgement crossed Location authorization")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO messaging_messages (
+			thread_id, practice_id, location_id, direction, body, sender,
+			destination, delivery_state, provider_message_id, created_at, updated_at
+		) VALUES ($1, $2, $3, 'INBOUND', 'One more question.',
+			'+17275550199', '+17275550100', 'DELIVERED', 'later-provider-message', $4, $4)
+	`, threadID, authorization.Practice.ID, authorization.Locations[0].ID,
+		now.Add(time.Minute)); err != nil {
+		t.Fatalf("create later inbound Message: %v", err)
+	}
+	reopenedResponse := request(t, portal.Client(), http.MethodPost,
+		portal.URL+"/v1/message-threads/query", "message-token", queryBody)
+	var reopenedPage api.MessageThreadPage
+	decode(t, reopenedResponse, &reopenedPage)
+	if len(reopenedPage.Items) != 1 || !reopenedPage.Items[0].NeedsAttention {
+		t.Fatalf("later inbound did not reopen Text attention = %#v", reopenedPage)
 	}
 	taskResponse := request(
 		t,
@@ -367,9 +471,9 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		PracticeId: parsedUUID(t, authorization.Practice.ID),
 		Phone:      &engagementPhone,
 	})
-	if _, err := messageModule.QueryEngagements(
+	if _, err := engagementquery.New(pool, accessModule).Query(
 		context.Background(),
-		messaging.QueryEngagementsCommand{
+		engagementquery.QueryCommand{
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "(727) 555-0199",
@@ -399,14 +503,6 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		engagementPage.Items[0].OpenTaskCount != 1 ||
 		len(engagementPage.Items[0].Locations) != 1 {
 		t.Fatalf("phone-led Engagement result = %#v", engagementPage)
-	}
-	var hiddenLocationID string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT id::text
-		FROM access_locations
-		WHERE practice_id = $1 AND provisioning_key = 'message-http-hidden'
-	`, authorization.Practice.ID).Scan(&hiddenLocationID); err != nil {
-		t.Fatalf("read hidden Message Location: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO messaging_threads (

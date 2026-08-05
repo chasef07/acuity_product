@@ -39,6 +39,7 @@ GRANT SELECT ON TABLE
     public.messaging_attachments,
     public.messaging_location_configurations,
     public.messaging_messages,
+    public.messaging_thread_handled,
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
@@ -88,6 +89,7 @@ GRANT INSERT ON TABLE
     public.human_calling_timeline,
     public.messaging_attachments,
     public.messaging_messages,
+    public.messaging_thread_handled,
     public.messaging_provider_commands,
     public.messaging_threads,
     public.work_task_activities,
@@ -116,6 +118,15 @@ TO acuity_portal;
 
 GRANT UPDATE (updated_at)
 ON TABLE public.messaging_threads
+TO acuity_portal;
+
+GRANT UPDATE (
+    handled_through,
+    evidence_message_id,
+    handled_by_subject,
+    handled_at
+)
+ON TABLE public.messaging_thread_handled
 TO acuity_portal;
 
 GRANT UPDATE (task_id, version, updated_at)

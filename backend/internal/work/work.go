@@ -1251,7 +1251,7 @@ func taskQuerySQL(state TaskState, ordering TaskOrdering) string {
 						WHEN 'normal' THEN 1
 						ELSE 2
 					END = $8
-					AND (task.created_at, task.id::text) > ($6, $7)
+					AND (task.updated_at, task.id::text) < ($6, $7)
 				)
 			)
 		ORDER BY
@@ -1260,8 +1260,8 @@ func taskQuerySQL(state TaskState, ordering TaskOrdering) string {
 				WHEN 'normal' THEN 1
 				ELSE 2
 			END,
-			task.created_at,
-			task.id
+			task.updated_at DESC,
+			task.id DESC
 		LIMIT $9`
 	case state == TaskOpen && ordering == TaskOrderingTime:
 		return taskQuerySelect + `
@@ -1394,7 +1394,8 @@ type taskCursor struct {
 
 func encodeTaskCursor(task Task, ordering TaskOrdering) (string, error) {
 	orderedAt := task.CreatedAt
-	if ordering == TaskOrderingRecent {
+	if ordering == TaskOrderingRecent ||
+		(ordering == TaskOrderingPriority && task.State == TaskOpen) {
 		orderedAt = task.UpdatedAt
 	} else if task.State == TaskCompleted {
 		if task.CompletedAt == nil {
