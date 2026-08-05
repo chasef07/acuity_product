@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -1456,9 +1457,12 @@ func (m *Module) MarkTaskRead(
 	ctx context.Context,
 	identity access.Identity,
 	taskID string,
+	callID string,
 ) error {
 	taskID = strings.TrimSpace(taskID)
-	if m.pool == nil || m.access == nil || taskID == "" {
+	callID = strings.TrimSpace(callID)
+	parsedCallID, parseErr := uuid.Parse(callID)
+	if m.pool == nil || m.access == nil || taskID == "" || parseErr != nil {
 		return ErrInvalidInput
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -1475,23 +1479,30 @@ func (m *Module) MarkTaskRead(
 	); err != nil {
 		return ErrDenied
 	}
+	var interactionAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT occurred_at
+		FROM work_task_interactions
+		WHERE task_id = $1 AND call_id = $2
+	`, task.ID, parsedCallID).Scan(&interactionAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidInput
+		}
+		return fmt.Errorf("read reviewed Task Interaction: %w", err)
+	}
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO work_task_reads (
 			task_id, user_subject, read_through_at,
 			read_through_call_id, recorded_at
 		)
-		SELECT $1, $2, interaction.occurred_at, interaction.call_id, $3
-		FROM work_task_interactions interaction
-		WHERE interaction.task_id = $1
-		ORDER BY interaction.occurred_at DESC, interaction.call_id DESC
-		LIMIT 1
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (task_id, user_subject) DO UPDATE
 		SET read_through_at = EXCLUDED.read_through_at,
 			read_through_call_id = EXCLUDED.read_through_call_id,
 			recorded_at = EXCLUDED.recorded_at
 		WHERE (work_task_reads.read_through_at, work_task_reads.read_through_call_id)
 			< (EXCLUDED.read_through_at, EXCLUDED.read_through_call_id)
-	`, task.ID, identity.Subject, m.now())
+	`, task.ID, identity.Subject, interactionAt, parsedCallID, m.now())
 	if err != nil {
 		return fmt.Errorf("record Task read receipt: %w", err)
 	}

@@ -1481,9 +1481,15 @@ func (server *Server) MarkTaskRead(
 	if !ok {
 		return
 	}
+	var body api.TaskReadRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	if err := server.work.MarkTaskRead(ctx, identity, taskID.String()); err != nil {
+	if err := server.work.MarkTaskRead(
+		ctx, identity, taskID.String(), body.CallId.String(),
+	); err != nil {
 		server.writeWorkError(w, r, err)
 		return
 	}

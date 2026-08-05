@@ -158,7 +158,9 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 		read.Interactions[1].CallID != voicemailCallID || !read.Unread {
 		t.Fatalf("recovery Task read model = %#v", read)
 	}
-	if err := module.MarkTaskRead(context.Background(), identity, read.ID); err != nil {
+	if err := module.MarkTaskRead(
+		context.Background(), identity, read.ID, voicemailCallID,
+	); err != nil {
 		t.Fatalf("mark recovery Task read: %v", err)
 	}
 	read, err = module.ReadTask(context.Background(), identity, read.ID)
@@ -178,7 +180,27 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	if err != nil || !read.Unread || read.ID != missed.ID {
 		t.Fatalf("recovery Task after later voicemail = %#v, %v", read, err)
 	}
-	if err := module.MarkTaskRead(context.Background(), identity, read.ID); err != nil {
+	unrelatedCallID := insertCallAt(
+		t, pool, authorization, locationID, phone, "Unrelated caller",
+		now.Add(3*time.Minute),
+	)
+	if err := module.MarkTaskRead(
+		context.Background(), identity, read.ID, unrelatedCallID,
+	); !errors.Is(err, work.ErrInvalidInput) {
+		t.Fatalf("mark unrelated Call read = %v, want invalid input", err)
+	}
+	if err := module.MarkTaskRead(
+		context.Background(), identity, read.ID, voicemailCallID,
+	); err != nil {
+		t.Fatalf("mark older recovery Interaction read: %v", err)
+	}
+	read, err = module.ReadTask(context.Background(), identity, read.ID)
+	if err != nil || !read.Unread {
+		t.Fatalf("recovery Task after older playback = %#v, %v", read, err)
+	}
+	if err := module.MarkTaskRead(
+		context.Background(), identity, read.ID, laterVoicemailCallID,
+	); err != nil {
 		t.Fatalf("mark later recovery Interaction read: %v", err)
 	}
 	read, err = module.ReadTask(context.Background(), identity, read.ID)

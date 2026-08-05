@@ -483,6 +483,10 @@ export type RenameTaskRequest = {
     supportSessionId?: string;
 };
 
+export type TaskReadRequest = {
+    callId: string;
+};
+
 export type TaskTransitionRequest = {
     expectedVersion: number;
     supportSessionId?: string;
@@ -2115,7 +2119,7 @@ export type ReadTaskResponses = {
 export type ReadTaskResponse = ReadTaskResponses[keyof ReadTaskResponses];
 
 export type MarkTaskReadData = {
-    body?: never;
+    body: TaskReadRequest;
     path: {
         taskId: string;
     };
@@ -2124,6 +2128,10 @@ export type MarkTaskReadData = {
 };
 
 export type MarkTaskReadErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
     /**
      * Missing or invalid credential.
      */
@@ -2142,7 +2150,7 @@ export type MarkTaskReadError = MarkTaskReadErrors[keyof MarkTaskReadErrors];
 
 export type MarkTaskReadResponses = {
     /**
-     * Task is read for the current User and its Work state is unchanged.
+     * Task is read through the reviewed Call for the current User and its Work state is unchanged.
      */
     204: void;
 };

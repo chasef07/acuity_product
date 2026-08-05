@@ -437,7 +437,11 @@ export const readTask = <ThrowOnError extends boolean = false>(options: Options<
 export const markTaskRead = <ThrowOnError extends boolean = false>(options: Options<MarkTaskReadData, ThrowOnError>) => (options.client ?? client).post<MarkTaskReadResponses, MarkTaskReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/v1/tasks/{taskId}/read',
-    ...options
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

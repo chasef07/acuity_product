@@ -547,6 +547,7 @@ function VoicemailPlayer({
     await markTaskRead({
       client: portalClient(token),
       path: { taskId: detail.voicemail.taskId },
+      body: { callId: callID },
     }).catch(() => undefined)
     setAudioURL(objectURL)
     setLoading(false)
