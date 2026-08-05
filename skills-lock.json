@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "skills": {
+    "telnyx-messaging-go": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-messaging-go/SKILL.md",
+      "computedHash": "a97606306a6ff41a781ee542c832518369a6ae9e26838650b44254c867098013"
+    },
+    "telnyx-numbers-config-go": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-numbers-config-go/SKILL.md",
+      "computedHash": "9839c17a4a5d0eae0cbd240b32b9e56ac372b1effe948d9631dbcdc25536c2ff"
+    },
+    "telnyx-sip-go": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-sip-go/SKILL.md",
+      "computedHash": "9836086676fdeae3eaeedc14e51f6fedd8f15b7ea9b9593c49e3a933812e8863"
+    },
+    "telnyx-voice-go": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-voice-go/SKILL.md",
+      "computedHash": "940939c15010fb81a24ef403a033aeea4778c74bbafdc2c6b1d58b7f65beecbe"
+    },
+    "telnyx-voice-media-go": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-voice-media-go/SKILL.md",
+      "computedHash": "6b1c7dd07fa1c0c44dc1397d599f34f070e57e615edf2a970d1915698b1f6bb1"
+    },
+    "telnyx-webrtc-client-js": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-webrtc-client-js/SKILL.md",
+      "computedHash": "7134c4dfdfa3333c2305da0d7d64f81813a782a1eb894e0cbe7d0608d0c5e424"
+    },
+    "telnyx-webrtc-go": {
+      "source": "team-telnyx/ai",
+      "sourceType": "github",
+      "skillPath": "skills/telnyx-webrtc-go/SKILL.md",
+      "computedHash": "8e64e18e303a51fa82a6cc4a3faee706234c350d994e42fd2e4ea56aecaa9ba9"
+    }
+  }
+}
