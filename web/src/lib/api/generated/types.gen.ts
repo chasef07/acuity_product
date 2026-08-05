@@ -599,6 +599,10 @@ export type MarkMessageThreadReadRequest = {
     supportSessionId?: string;
 };
 
+export type MarkEngagementReadRequest = {
+    practiceId: string;
+};
+
 export type MarkEngagementTextHandledRequest = {
     practiceId: string;
     evidenceMessageId: string;
@@ -1872,6 +1876,45 @@ export type GetEngagementTimelineResponses = {
 
 export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
 
+export type MarkEngagementReadData = {
+    body: MarkEngagementReadRequest;
+    path: {
+        phone: string;
+    };
+    query?: never;
+    url: '/v1/engagements/{phone}/read';
+};
+
+export type MarkEngagementReadErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type MarkEngagementReadError = MarkEngagementReadErrors[keyof MarkEngagementReadErrors];
+
+export type MarkEngagementReadResponses = {
+    /**
+     * Every currently authorized Message Thread for this User and phone is read.
+     */
+    204: void;
+};
+
+export type MarkEngagementReadResponse = MarkEngagementReadResponses[keyof MarkEngagementReadResponses];
+
 export type MarkEngagementTextHandledData = {
     body: MarkEngagementTextHandledRequest;
     path: {
@@ -2070,6 +2113,41 @@ export type ReadTaskResponses = {
 };
 
 export type ReadTaskResponse = ReadTaskResponses[keyof ReadTaskResponses];
+
+export type MarkTaskReadData = {
+    body?: never;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/read';
+};
+
+export type MarkTaskReadErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type MarkTaskReadError = MarkTaskReadErrors[keyof MarkTaskReadErrors];
+
+export type MarkTaskReadResponses = {
+    /**
+     * Task is read for the current User and its Work state is unchanged.
+     */
+    204: void;
+};
+
+export type MarkTaskReadResponse = MarkTaskReadResponses[keyof MarkTaskReadResponses];
 
 export type RenameTaskData = {
     body: RenameTaskRequest;

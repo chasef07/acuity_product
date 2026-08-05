@@ -1122,13 +1122,29 @@ export function TaskWorkspaceShell() {
     setTasks(nextTasks)
   }
 
+  function handleEngagementRead(phone: string) {
+    const nextThreads = messageThreadsRef.current.map((thread) =>
+      thread.externalPhone === phone ? { ...thread, unread: false } : thread,
+    )
+    messageThreadsRef.current = nextThreads
+    setMessageThreads(nextThreads)
+    setSelectedEngagement((current) =>
+      current?.phone === phone ? { ...current, unread: false } : current,
+    )
+    setRecentInboxes((current) =>
+      current.map((item) =>
+        item.phone === phone ? { ...item, unread: false } : item,
+      ),
+    )
+    void loadTasks("", false, true)
+  }
+
   const handleCallChanged = useCallback((call: CallingCall | undefined) => {
     setActiveCall(call)
     if (!call) return
-    // The persistent Call layer owns pre-connection states. Moving the inbox
-    // before provider-backed connection would interrupt unrelated work for an
-    // attempted or failed Call and could imply continuity that never occurred.
-    if (call.state !== "CONNECTED" || call.id === focusedCallIDRef.current) {
+    const opensInbox =
+      call.direction === "OUTBOUND" || call.state === "CONNECTED"
+    if (!opensInbox || call.id === focusedCallIDRef.current) {
       return
     }
     focusedCallIDRef.current = call.id
@@ -1147,10 +1163,20 @@ export function TaskWorkspaceShell() {
       textNeedsAttention: false,
     }
     rememberNumber(discovery?.actor.subject, practiceID, call.phone)
-    setRecentInboxes((current) => [
-      engagement,
-      ...current.filter((item) => item.phone !== engagement.phone),
-    ].slice(0, 7))
+    setRecentInboxes((current) => {
+      const next = [
+        engagement,
+        ...current.filter((item) => item.phone !== engagement.phone),
+      ].slice(0, 7)
+      if (discovery?.actor.subject && practiceID) {
+        writeRecentNumbers(
+          discovery.actor.subject,
+          practiceID,
+          next.map((item) => item.phone),
+        )
+      }
+      return next
+    })
     setSelectedEngagement(engagement)
     setView("engagement")
   }, [discovery?.actor.subject, practiceID])
@@ -1305,6 +1331,7 @@ export function TaskWorkspaceShell() {
               focusedTask={selectedTask}
               onMessageSent={handleMessageSent}
               onThreadRead={handleThreadRead}
+              onEngagementRead={handleEngagementRead}
               onTaskUpdated={(task) => {
                 updateTaskProjection(task, false)
                 if (task.state === "COMPLETED") {

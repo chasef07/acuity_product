@@ -1286,6 +1286,9 @@ func (m *Module) QueryTasks(
 		if err := m.loadRelatedInteractionCount(ctx, tx, &items[index]); err != nil {
 			return TaskPage{}, err
 		}
+		if err := loadTaskUnread(ctx, tx, command.Identity, &items[index]); err != nil {
+			return TaskPage{}, err
+		}
 	}
 
 	nextCursor := ""
@@ -1438,10 +1441,82 @@ func (m *Module) ReadTask(
 	); err != nil {
 		return Task{}, ErrDenied
 	}
+	if err := loadTaskUnread(ctx, tx, identity, &task); err != nil {
+		return Task{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, fmt.Errorf("commit Task read: %w", err)
 	}
 	return task, nil
+}
+
+// MarkTaskRead records that one User listened to or otherwise reviewed a
+// recovery Task. It deliberately does not complete or mutate the Task.
+func (m *Module) MarkTaskRead(
+	ctx context.Context,
+	identity access.Identity,
+	taskID string,
+) error {
+	taskID = strings.TrimSpace(taskID)
+	if m.pool == nil || m.access == nil || taskID == "" {
+		return ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin Task read receipt: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	task, err := loadTask(ctx, tx, taskID)
+	if err != nil {
+		return err
+	}
+	if _, err := m.access.LockReadAuthorization(
+		ctx, tx, identity, task.PracticeID, task.LocationID,
+	); err != nil {
+		return ErrDenied
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO work_task_reads (task_id, user_subject, read_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (task_id, user_subject) DO NOTHING
+	`, task.ID, identity.Subject, m.now())
+	if err != nil {
+		return fmt.Errorf("record Task read receipt: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Task read receipt: %w", err)
+	}
+	return nil
+}
+
+func loadTaskUnread(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity access.Identity,
+	task *Task,
+) error {
+	if task == nil {
+		return ErrInvalidInput
+	}
+	task.Unread = false
+	if task.State != TaskOpen ||
+		(task.Origin != TaskOriginMissedCall && task.Origin != TaskOriginVoicemail) {
+		return nil
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT NOT EXISTS (
+			SELECT 1 FROM work_task_reads
+			WHERE task_id = $1 AND user_subject = $2
+		)
+	`, task.ID, identity.Subject).Scan(&task.Unread); err != nil {
+		return fmt.Errorf("read Task unread state: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) loadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task) error {

@@ -447,8 +447,16 @@ function RecoveryRow({
       >
         <PhoneMissedIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-sm font-medium tabular-nums">
-            {formatPhone(row.phone)}
+          <span className="flex items-center gap-2">
+            {row.tasks.some((task) => task.unread) && (
+              <span
+                aria-label={row.voicemailCount > 0 ? "Unread voicemail" : "Unread missed call"}
+                className="size-1.5 rounded-full bg-warning"
+              />
+            )}
+            <span className="truncate text-sm font-medium tabular-nums">
+              {formatPhone(row.phone)}
+            </span>
           </span>
           <span className="truncate text-xs text-muted-foreground">
             {row.missedCount > 0 ? `${row.missedCount} missed` : ""}
@@ -483,7 +491,7 @@ function TextRow({
         <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-center gap-2">
-            {thread.unread && (
+            {row.engagement.unread && (
               <span aria-label="Unread message" className="size-1.5 rounded-full bg-warning" />
             )}
             <span className="truncate text-sm font-medium tabular-nums">

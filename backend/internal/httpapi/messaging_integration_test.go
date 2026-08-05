@@ -316,14 +316,46 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	`, authorization.Practice.ID, hiddenLocationID, now).Scan(&hiddenThreadID); err != nil {
 		t.Fatalf("create hidden exact-phone Thread: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `
+	var hiddenMessageID string
+	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO messaging_messages (
 			thread_id, practice_id, location_id, direction, body, sender,
 			destination, delivery_state, provider_message_id, created_at, updated_at
 		) VALUES ($1, $2, $3, 'INBOUND', 'Hidden office message.',
 			'+17275550199', '+17275550102', 'DELIVERED', 'hidden-provider-message', $4, $4)
-	`, hiddenThreadID, authorization.Practice.ID, hiddenLocationID, now); err != nil {
+		RETURNING id::text
+	`, hiddenThreadID, authorization.Practice.ID, hiddenLocationID, now).Scan(&hiddenMessageID); err != nil {
 		t.Fatalf("create hidden exact-phone Message: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO messaging_thread_unreads (
+			thread_id, user_subject, unread_since, latest_message_id
+		)
+		VALUES ($1, $3, $5, $4), ($2, $3, $5, $6)
+		ON CONFLICT DO NOTHING
+	`, threadID, hiddenThreadID, identity.Subject, timeline.Items[1].Id,
+		now, hiddenMessageID); err != nil {
+		t.Fatalf("seed exact-phone unread state: %v", err)
+	}
+	engagementReadBody, _ := json.Marshal(api.MarkEngagementReadRequest{
+		PracticeId: parsedUUID(t, authorization.Practice.ID),
+	})
+	engagementReadResponse := request(t, portal.Client(), http.MethodPost,
+		portal.URL+"/v1/engagements/+17275550199/read", "message-token", engagementReadBody)
+	if engagementReadResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("mark Engagement read status = %d, body = %s",
+			engagementReadResponse.StatusCode, readBody(t, engagementReadResponse))
+	}
+	var authorizedUnread, hiddenUnread bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			EXISTS (SELECT 1 FROM messaging_thread_unreads WHERE thread_id = $1 AND user_subject = $3),
+			EXISTS (SELECT 1 FROM messaging_thread_unreads WHERE thread_id = $2 AND user_subject = $3)
+	`, threadID, hiddenThreadID, identity.Subject).Scan(&authorizedUnread, &hiddenUnread); err != nil {
+		t.Fatalf("inspect exact-phone read boundary: %v", err)
+	}
+	if authorizedUnread || !hiddenUnread {
+		t.Fatalf("exact-phone read boundary = authorized %t, hidden %t", authorizedUnread, hiddenUnread)
 	}
 	handledBody, _ := json.Marshal(api.MarkEngagementTextHandledRequest{
 		PracticeId:        parsedUUID(t, authorization.Practice.ID),

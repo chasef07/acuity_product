@@ -44,8 +44,10 @@ import {
   getMessageThreadTimeline,
   getTaskEngagementHistory,
   issueCallingVoicemailPlayback,
+  markEngagementRead,
   markEngagementTextHandled,
   markMessageThreadRead,
+  markTaskRead,
   readTask,
   retryInboundMessageAttachment,
   reopenTask,
@@ -115,6 +117,7 @@ export function EngagementWorkspace({
   focusedTask,
   onMessageSent,
   onThreadRead,
+  onEngagementRead,
   onTaskUpdated,
   onTextHandled,
   taskCallPending,
@@ -131,6 +134,7 @@ export function EngagementWorkspace({
   focusedTask?: Task
   onMessageSent: (message: Message) => void
   onThreadRead: (threadID: string) => void
+  onEngagementRead: (phone: string) => void
   onTaskUpdated: (task: Task) => void
   onTextHandled: (phone: string) => void
   taskCallPending: boolean
@@ -250,6 +254,7 @@ export function EngagementWorkspace({
         revision={revision}
         onMessageSent={onMessageSent}
         onThreadRead={onThreadRead}
+        onEngagementRead={onEngagementRead}
         onTaskCreated={onTaskCreated}
         onTextHandled={onTextHandled}
         textNeedsAttention={engagement.textNeedsAttention}
@@ -536,6 +541,10 @@ function VoicemailPlayer({
       return
     }
     const objectURL = URL.createObjectURL(await response.blob())
+    await markTaskRead({
+      client: portalClient(token),
+      path: { taskId: detail.voicemail.taskId },
+    }).catch(() => undefined)
     setAudioURL(objectURL)
     setLoading(false)
     window.requestAnimationFrame(() => {
@@ -957,6 +966,7 @@ function MessageConversation({
   initialMessage,
   onMessageSent,
   onThreadRead,
+  onEngagementRead,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
@@ -979,6 +989,7 @@ function MessageConversation({
   initialMessage?: Message
   onMessageSent: (message: Message) => void
   onThreadRead: (threadID: string) => void
+  onEngagementRead?: (phone: string) => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (
@@ -1030,6 +1041,7 @@ function MessageConversation({
   const pendingRealtime = useRef(false)
   const initialized = useRef(false)
   const onThreadReadRef = useRef(onThreadRead)
+  const onEngagementReadRef = useRef(onEngagementRead)
   const conversationThread =
     (thread?.locationId === locationID ? thread : undefined) ??
     items.find(
@@ -1040,6 +1052,10 @@ function MessageConversation({
   useEffect(() => {
     onThreadReadRef.current = onThreadRead
   }, [onThreadRead])
+
+  useEffect(() => {
+    onEngagementReadRef.current = onEngagementRead
+  }, [onEngagementRead])
 
   useEffect(() => {
     if (initialMessage) {
@@ -1139,6 +1155,19 @@ function MessageConversation({
   }, [loadLatest, threadID])
 
   const markRead = useCallback(async () => {
+    if (timelineKind === "engagement") {
+      const token = await getAccessToken()
+      if (!token) return
+      const result = await markEngagementRead({
+        client: portalClient(token),
+        path: { phone: timelinePhone },
+        body: { practiceId: timelinePracticeID },
+      }).catch(() => undefined)
+      if (result?.response?.ok) {
+        onEngagementReadRef.current?.(timelinePhone)
+      }
+      return
+    }
     if (!readableThreadID) return
     const token = await getAccessToken()
     if (!token) return
@@ -1150,7 +1179,13 @@ function MessageConversation({
       },
     }).catch(() => undefined)
     if (result?.response?.ok) onThreadReadRef.current(readableThreadID)
-  }, [readableThreadID, supportSessionID])
+  }, [
+    readableThreadID,
+    supportSessionID,
+    timelineKind,
+    timelinePhone,
+    timelinePracticeID,
+  ])
 
   useEffect(() => {
     if (!timelineKey) return

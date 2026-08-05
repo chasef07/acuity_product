@@ -478,6 +478,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_task_activities",
 		"work_task_interactions",
 		"work_staff_notes",
+		"work_task_reads",
 		"work_tasks",
 	}
 	grant("acuity_portal", "SELECT", portalReads...)
@@ -502,6 +503,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_task_activities",
 		"work_task_interactions",
 		"work_staff_notes",
+		"work_task_reads",
 		"work_tasks",
 	)
 	grant("acuity_portal", "UPDATE",

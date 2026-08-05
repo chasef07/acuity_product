@@ -885,6 +885,35 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/engagements/{phone}/read:
+    post:
+      operationId: markEngagementRead
+      summary: Clear per-User unread state for every authorized Message Thread at one exact phone.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 32
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkEngagementReadRequest"
+      responses:
+        "204":
+          description: Every currently authorized Message Thread for this User and phone is read.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/engagements/{phone}/text-handled:
     post:
       operationId: markEngagementTextHandled
@@ -1027,6 +1056,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/read:
+    post:
+      operationId: markTaskRead
+      summary: Record that the current User reviewed a Task without completing it.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Task is read for the current User and its Work state is unchanged.
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -3205,6 +3254,14 @@ components:
       additionalProperties: false
       properties:
         supportSessionId:
+          type: string
+          format: uuid
+    MarkEngagementReadRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId:
           type: string
           format: uuid
     MarkEngagementTextHandledRequest:

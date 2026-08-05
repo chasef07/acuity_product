@@ -722,6 +722,15 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(textAttentionRows).toHaveCount(2)
     await expect(textAttentionRows.nth(0)).toContainText("(555) 555-0100")
     await expect(textAttentionRows.nth(1)).toContainText("(555) 555-0198")
+    await textAttentionRows.nth(1).click()
+    await expect(
+      winnerPage.getByRole("heading", { name: "(555) 555-0198" }),
+    ).toBeVisible()
+    await winnerPage.getByTestId("text-attention-row").nth(0).click()
+    await expect(
+      winnerPage.getByRole("heading", { name: "(555) 555-0100" }),
+    ).toBeVisible()
+    await expect(winnerPage.getByLabel("Unread message")).toHaveCount(0)
     const timelineScroller = winnerPage.getByTestId("message-timeline")
     await expect
       .poll(() =>
@@ -779,6 +788,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           .count(),
       )
       .toBeGreaterThan(1)
+    await winnerPage
+      .getByRole("button", { name: /\(555\) 555-0100/ })
+      .last()
+      .click()
+    await expect(
+      winnerPage.getByRole("heading", { name: "(555) 555-0100" }),
+    ).toBeVisible()
     await winnerPage.getByRole("button", { name: "Recent", exact: true }).click()
     await expect
       .poll(async () => {
@@ -1411,6 +1427,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           name: /Missed Calls & Voicemails [1-9]/,
         }),
       ).toHaveAttribute("aria-expanded", "true")
+      await expect(takeoverPage.getByLabel("Unread voicemail")).toBeVisible()
       await takeoverPage
         .getByRole("button", { name: /Review voicemail/ })
         .first()
@@ -1436,6 +1453,23 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await expect(
         takeoverPage.getByLabel("Voicemail recording"),
       ).toHaveAttribute("src", /^blob:/)
+      await expect(takeoverPage.getByLabel("Unread voicemail")).toHaveCount(0)
+      await expect
+        .poll(async () => {
+          const result = await database.query<{ state: string; read: boolean }>(
+            `SELECT task.state,
+                    EXISTS (
+                      SELECT 1 FROM work_task_reads receipt
+                      WHERE receipt.task_id = task.id
+                    ) AS read
+               FROM human_calling_voicemails voicemail
+               JOIN work_tasks task ON task.id = voicemail.task_id
+              WHERE voicemail.call_id = $1`,
+            [voicemailCallID],
+          )
+          return result.rows[0]
+        })
+        .toEqual({ state: "OPEN", read: true })
       await takeoverPage
         .getByRole("button", { name: /Voicemail · Open detail/ })
         .last()
@@ -2049,7 +2083,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await expect(dialer.getByLabel("Outbound destination")).toHaveValue(
         /\+1555555/,
       )
-      await dialer.getByLabel("Outbound destination").fill("+15555550100")
+      await dialer.getByLabel("Outbound destination").fill("+15555550177")
       await dialer.getByRole("button", { name: "Call", exact: true }).click()
       await expect(outboundDialog).not.toBeVisible()
       await expect(
@@ -2059,7 +2093,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         takeoverPage.getByText("Number inbox", { exact: true }),
       ).toBeVisible()
       await expect(
-        takeoverPage.getByRole("heading", { name: "(555) 555-0100" }),
+        takeoverPage.getByRole("heading", { name: "(555) 555-0177" }),
       ).toBeVisible()
       await expect(
         takeoverPage.getByRole("textbox", { name: "Message", exact: true }),
@@ -2165,6 +2199,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           return result.rows[0]
         })
         .toEqual({ state: "UNANSWERED", task_count: "0" })
+      await takeoverPage.reload()
+      await expect(
+        takeoverPage.getByRole("heading", { name: "(555) 555-0177" }),
+      ).toBeVisible()
     })
 
     await takeoverAvailability.click()
@@ -2189,6 +2227,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       })
       .toBe(false)
 
+    await takeoverPage
+      .getByRole("button", { name: /Confirm scheduling plan/ })
+      .click()
     await expect(
       takeoverPage.getByRole("heading", {
         name: "(555) 555-0100",

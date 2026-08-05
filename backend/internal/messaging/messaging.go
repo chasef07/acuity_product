@@ -136,12 +136,10 @@ type QueryTimelineCommand struct {
 	Limit    int
 }
 
-type QueryPhoneTimelineCommand struct {
+type MarkEngagementReadCommand struct {
 	Identity   access.Identity
 	PracticeID string
 	Phone      string
-	Cursor     string
-	Limit      int
 }
 
 type TimelineItem struct {
@@ -158,400 +156,6 @@ type TimelineItem struct {
 type TimelinePage struct {
 	Items      []TimelineItem
 	NextCursor string
-}
-
-func (m *Module) QueryPhoneTimeline(
-	ctx context.Context,
-	command QueryPhoneTimelineCommand,
-) (TimelinePage, error) {
-	command.PracticeID = strings.TrimSpace(command.PracticeID)
-	command.Phone = strings.TrimSpace(command.Phone)
-	if m.pool == nil ||
-		m.access == nil ||
-		command.PracticeID == "" ||
-		!canonicalPhone.MatchString(command.Phone) {
-		return TimelinePage{}, ErrInvalidInput
-	}
-	limit := command.Limit
-	if limit == 0 {
-		limit = 50
-	}
-	if limit < 1 || limit > 50 {
-		return TimelinePage{}, ErrInvalidInput
-	}
-	cursor, err := decodeTimelineItemCursor(command.Cursor)
-	if err != nil {
-		return TimelinePage{}, ErrInvalidInput
-	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("begin phone Engagement History: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		"",
-	)
-	if err != nil {
-		return TimelinePage{}, ErrDenied
-	}
-	locationIDs := make([]string, 0, len(authorization.Locations))
-	for _, location := range authorization.Locations {
-		locationIDs = append(locationIDs, location.ID)
-	}
-	if len(locationIDs) == 0 {
-		return TimelinePage{}, ErrDenied
-	}
-
-	items := make([]TimelineItem, 0, (limit+1)*3)
-	messageRows, err := tx.Query(ctx, `
-		SELECT
-			thread.id::text,
-			thread.practice_id::text,
-			thread.location_id::text,
-			location.name,
-			thread.office_phone,
-			thread.external_phone,
-			COALESCE(thread.display_name, ''),
-			COALESCE(thread.name_source, ''),
-			thread.outbound_blocked,
-			thread.created_at,
-			thread.updated_at,
-			message.id::text,
-			message.direction,
-			COALESCE(message.body, ''),
-			message.sender,
-			message.destination,
-			message.delivery_state,
-			COALESCE(message.safe_failure_code, ''),
-			COALESCE(message.provider_message_id, ''),
-			COALESCE(message.task_id::text, ''),
-			COALESCE(message.retry_of_message_id::text, ''),
-			COALESCE(attachment.id::text, ''),
-			COALESCE(attachment.direction, ''),
-			COALESCE(attachment.state, ''),
-			COALESCE(attachment.file_name, ''),
-			COALESCE(attachment.content_type, ''),
-			COALESCE(attachment.byte_size, 0),
-			COALESCE(attachment.created_at, message.created_at),
-			COALESCE(attachment.updated_at, message.updated_at),
-			message.created_at,
-			message.updated_at,
-			message.version
-		FROM messaging_messages message
-		JOIN messaging_threads thread ON thread.id = message.thread_id
-		JOIN access_locations location
-			ON location.practice_id = thread.practice_id
-			AND location.id = thread.location_id
-		LEFT JOIN messaging_attachments attachment
-			ON attachment.message_id = message.id
-		WHERE thread.practice_id = $1
-			AND thread.external_phone = $2
-			AND thread.location_id::text = ANY($3::text[])
-			AND (
-				$4::timestamptz IS NULL
-				OR message.created_at < $4
-				OR (
-					message.created_at = $4
-					AND 'MESSAGE:' || message.id::text < $5
-				)
-			)
-		ORDER BY message.created_at DESC, message.id DESC
-		LIMIT $6
-	`, command.PracticeID, command.Phone, locationIDs,
-		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query phone Messages: %w", err)
-	}
-	for messageRows.Next() {
-		var message Message
-		var attachment Attachment
-		if err := messageRows.Scan(
-			&message.Thread.ID,
-			&message.Thread.PracticeID,
-			&message.Thread.LocationID,
-			&message.Thread.LocationName,
-			&message.Thread.OfficePhone,
-			&message.Thread.ExternalPhone,
-			&message.Thread.DisplayName,
-			&message.Thread.NameSource,
-			&message.Thread.OutboundBlocked,
-			&message.Thread.CreatedAt,
-			&message.Thread.UpdatedAt,
-			&message.ID,
-			&message.Direction,
-			&message.Body,
-			&message.Sender,
-			&message.Destination,
-			&message.Delivery,
-			&message.SafeFailureCode,
-			&message.ProviderMessageID,
-			&message.TaskID,
-			&message.RetryOfMessageID,
-			&attachment.ID,
-			&attachment.Direction,
-			&attachment.State,
-			&attachment.FileName,
-			&attachment.ContentType,
-			&attachment.ByteSize,
-			&attachment.CreatedAt,
-			&attachment.UpdatedAt,
-			&message.CreatedAt,
-			&message.UpdatedAt,
-			&message.Version,
-		); err != nil {
-			messageRows.Close()
-			return TimelinePage{}, fmt.Errorf("scan phone Message: %w", err)
-		}
-		if attachment.ID != "" {
-			attachment.MessageID = message.ID
-			message.Attachment = &attachment
-		}
-		items = append(items, TimelineItem{
-			Type:       "MESSAGE",
-			ID:         message.ID,
-			OccurredAt: message.CreatedAt,
-			Message:    message,
-		})
-	}
-	if err := messageRows.Err(); err != nil {
-		messageRows.Close()
-		return TimelinePage{}, fmt.Errorf("iterate phone Messages: %w", err)
-	}
-	messageRows.Close()
-
-	callRows, err := tx.Query(ctx, `
-		SELECT
-			call.id::text,
-			call.direction,
-			call.created_at,
-			call.ended_at,
-			CASE
-				WHEN call.connected_at IS NOT NULL AND call.ended_at IS NOT NULL
-				THEN GREATEST(
-					0,
-					EXTRACT(EPOCH FROM (call.ended_at - call.connected_at))::bigint
-				)
-				ELSE 0
-			END,
-			call.location_id::text,
-			location.name,
-			COALESCE(membership.email, ''),
-			COALESCE(handoff.transfer_reason, ''),
-			call.state
-		FROM human_calling_calls call
-		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-		JOIN access_locations location
-			ON location.practice_id = call.practice_id
-			AND location.id = call.location_id
-		LEFT JOIN access_memberships membership
-			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = call.winner_subject
-		WHERE call.practice_id = $1
-			AND call.location_id::text = ANY($2::text[])
-			AND COALESCE(handoff.phone, call.destination_phone) = $3
-			AND (
-				$4::timestamptz IS NULL
-				OR call.created_at < $4
-				OR (
-					call.created_at = $4
-					AND 'CALL:' || call.id::text < $5
-				)
-			)
-		ORDER BY call.created_at DESC, call.id DESC
-		LIMIT $6
-	`, command.PracticeID, locationIDs, command.Phone,
-		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query phone Calls: %w", err)
-	}
-	for callRows.Next() {
-		var call humancalling.CallHistoryItem
-		if err := callRows.Scan(
-			&call.ID,
-			&call.Direction,
-			&call.StartedAt,
-			&call.EndedAt,
-			&call.DurationSeconds,
-			&call.LocationID,
-			&call.LocationName,
-			&call.AnsweredByEmail,
-			&call.TransferReason,
-			&call.Outcome,
-		); err != nil {
-			callRows.Close()
-			return TimelinePage{}, fmt.Errorf("scan phone Call: %w", err)
-		}
-		call.Type = "CALL"
-		items = append(items, TimelineItem{
-			Type:       "CALL",
-			ID:         call.ID,
-			OccurredAt: call.StartedAt,
-			Call:       call,
-		})
-	}
-	if err := callRows.Err(); err != nil {
-		callRows.Close()
-		return TimelinePage{}, fmt.Errorf("iterate phone Calls: %w", err)
-	}
-	callRows.Close()
-
-	taskRows, err := tx.Query(ctx, `
-		SELECT
-			activity.id::text,
-			task.id::text,
-			activity.kind,
-			activity.occurred_at
-		FROM work_tasks task
-		JOIN work_task_activities activity ON activity.task_id = task.id
-		WHERE task.practice_id = $1
-			AND task.location_id::text = ANY($2::text[])
-			AND task.phone = $3
-			AND (
-				$4::timestamptz IS NULL
-				OR activity.occurred_at < $4
-				OR (
-					activity.occurred_at = $4
-					AND 'TASK:' || activity.id::text < $5
-				)
-			)
-		ORDER BY activity.occurred_at DESC, activity.id DESC
-		LIMIT $6
-	`, command.PracticeID, locationIDs, command.Phone,
-		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query phone Tasks: %w", err)
-	}
-	type taskActivityRow struct {
-		id, taskID, kind string
-		occurredAt       time.Time
-	}
-	activities := []taskActivityRow{}
-	for taskRows.Next() {
-		var activity taskActivityRow
-		if err := taskRows.Scan(
-			&activity.id, &activity.taskID, &activity.kind, &activity.occurredAt,
-		); err != nil {
-			taskRows.Close()
-			return TimelinePage{}, fmt.Errorf("scan phone Task Activity: %w", err)
-		}
-		activities = append(activities, activity)
-	}
-	if err := taskRows.Err(); err != nil {
-		taskRows.Close()
-		return TimelinePage{}, fmt.Errorf("iterate phone Task Activities: %w", err)
-	}
-	taskRows.Close()
-	for _, activity := range activities {
-		task, err := readConversationTask(ctx, tx, activity.taskID)
-		if err != nil {
-			return TimelinePage{}, fmt.Errorf("scan phone Task: %w", err)
-		}
-		items = append(items, TimelineItem{
-			Type:         "TASK",
-			ID:           activity.id,
-			OccurredAt:   activity.occurredAt,
-			TaskActivity: activity.kind,
-			Task:         task,
-		})
-	}
-
-	noteRows, err := tx.Query(ctx, `
-		SELECT
-			note.id::text,
-			note.practice_id::text,
-			note.location_id::text,
-			location.name,
-			note.phone,
-			note.body,
-			note.created_by_subject,
-			note.created_by_email,
-			note.created_at
-		FROM work_staff_notes note
-		JOIN access_locations location
-			ON location.practice_id = note.practice_id
-			AND location.id = note.location_id
-		WHERE note.practice_id = $1
-			AND note.location_id::text = ANY($2::text[])
-			AND note.phone = $3
-			AND (
-				$4::timestamptz IS NULL
-				OR note.created_at < $4
-				OR (
-					note.created_at = $4
-					AND 'NOTE:' || note.id::text < $5
-				)
-			)
-		ORDER BY note.created_at DESC, note.id DESC
-		LIMIT $6
-	`, command.PracticeID, locationIDs, command.Phone,
-		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query phone Staff Notes: %w", err)
-	}
-	for noteRows.Next() {
-		var note work.StaffNote
-		if err := noteRows.Scan(
-			&note.ID,
-			&note.PracticeID,
-			&note.LocationID,
-			&note.LocationName,
-			&note.Phone,
-			&note.Body,
-			&note.CreatedBy.Subject,
-			&note.CreatedBy.Email,
-			&note.CreatedAt,
-		); err != nil {
-			noteRows.Close()
-			return TimelinePage{}, fmt.Errorf("scan phone Staff Note: %w", err)
-		}
-		note.CreatedBy.Kind = access.ActorHuman
-		items = append(items, TimelineItem{
-			Type:       "NOTE",
-			ID:         note.ID,
-			OccurredAt: note.CreatedAt,
-			Note:       note,
-		})
-	}
-	if err := noteRows.Err(); err != nil {
-		noteRows.Close()
-		return TimelinePage{}, fmt.Errorf("iterate phone Staff Notes: %w", err)
-	}
-	noteRows.Close()
-
-	sort.Slice(items, func(left int, right int) bool {
-		if items[left].OccurredAt.Equal(items[right].OccurredAt) {
-			return timelineItemKey(items[left]) > timelineItemKey(items[right])
-		}
-		return items[left].OccurredAt.After(items[right].OccurredAt)
-	})
-	nextCursor := ""
-	if len(items) > limit {
-		items = items[:limit]
-		last := items[len(items)-1]
-		nextCursor = encodePageCursor(pageCursor{
-			OccurredAt: last.OccurredAt,
-			ID:         timelineItemKey(last),
-		})
-	}
-	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
-		items[left], items[right] = items[right], items[left]
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return TimelinePage{}, fmt.Errorf("commit phone Engagement History: %w", err)
-	}
-	return TimelinePage{Items: items, NextCursor: nextCursor}, nil
-}
-
-func timelineItemKey(item TimelineItem) string {
-	return item.Type + ":" + item.ID
 }
 
 type MarkReadCommand struct {
@@ -2670,6 +2274,59 @@ func (m *Module) MarkRead(
 	return nil
 }
 
+// MarkEngagementRead clears navigation-only unread state across every Message
+// Thread the User may currently read for one exact phone. Threads outside the
+// User's Location Scope remain untouched.
+func (m *Module) MarkEngagementRead(
+	ctx context.Context,
+	command MarkEngagementReadCommand,
+) error {
+	command.PracticeID = strings.TrimSpace(command.PracticeID)
+	phone, err := NormalizePhone(command.Phone)
+	if err != nil || m.pool == nil || m.access == nil || command.PracticeID == "" {
+		return ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin Engagement read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	authorization, err := m.access.LockReadAuthorization(
+		ctx, tx, command.Identity, command.PracticeID, "",
+	)
+	if err != nil {
+		return ErrDenied
+	}
+	locationIDs := make([]string, 0, len(authorization.Locations))
+	for _, location := range authorization.Locations {
+		locationIDs = append(locationIDs, location.ID)
+	}
+	if len(locationIDs) == 0 {
+		return ErrDenied
+	}
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM messaging_thread_unreads unread
+		USING messaging_threads thread
+		WHERE unread.thread_id = thread.id
+			AND unread.user_subject = $1
+			AND thread.practice_id = $2
+			AND thread.location_id::text = ANY($3::text[])
+			AND thread.external_phone = $4
+	`, command.Identity.Subject, command.PracticeID, locationIDs, phone)
+	if err != nil {
+		return fmt.Errorf("mark Engagement read: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Engagement read: %w", err)
+	}
+	return nil
+}
+
 // MarkEngagementTextHandled acknowledges every currently authorized inbound
 // Text for the exact phone only after a later outbound Message was accepted.
 func (m *Module) MarkEngagementTextHandled(
@@ -2819,7 +2476,7 @@ func (m *Module) ApplyTaskUnread(
 	unreadEnabled := make([]bool, 0, len(tasks))
 	for index := range tasks {
 		task := &tasks[index]
-		task.Unread = false
+		task.Unread = task.Unread && task.State == work.TaskOpen
 		task.ConversationThreadID = ""
 		authorizationKey := task.PracticeID + ":" + task.LocationID
 		if _, ok := authorizedLocations[authorizationKey]; !ok {
@@ -2911,7 +2568,7 @@ func (m *Module) ApplyTaskUnread(
 			return fmt.Errorf("Task conversation projection index is invalid")
 		}
 		tasks[taskIndex].ConversationThreadID = threadID
-		tasks[taskIndex].Unread = unread
+		tasks[taskIndex].Unread = tasks[taskIndex].Unread || unread
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()

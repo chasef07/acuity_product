@@ -155,8 +155,15 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 	if read.RelatedInteractionCount != 2 || len(read.Interactions) != 2 ||
 		read.Interactions[0].CallID != missedCallID ||
-		read.Interactions[1].CallID != voicemailCallID {
+		read.Interactions[1].CallID != voicemailCallID || !read.Unread {
 		t.Fatalf("recovery Task read model = %#v", read)
+	}
+	if err := module.MarkTaskRead(context.Background(), identity, read.ID); err != nil {
+		t.Fatalf("mark recovery Task read: %v", err)
+	}
+	read, err = module.ReadTask(context.Background(), identity, read.ID)
+	if err != nil || read.Unread || read.State != work.TaskOpen {
+		t.Fatalf("read recovery Task after playback = %#v, %v", read, err)
 	}
 }
 

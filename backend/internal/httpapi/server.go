@@ -829,9 +829,9 @@ func (server *Server) GetCallingEngagementHistory(
 		server.writeCallingError(w, r, err)
 		return
 	}
-	timeline, err := server.messaging.QueryPhoneTimeline(
+	timeline, err := server.engagement.queryTimeline(
 		ctx,
-		messaging.QueryPhoneTimelineCommand{
+		engagementTimelineQueryCommand{
 			Identity:   identity,
 			PracticeID: call.PracticeID,
 			Phone:      call.Phone,
@@ -874,6 +874,35 @@ func (server *Server) MarkEngagementTextHandled(
 			Phone:             phone,
 			EvidenceMessageID: body.EvidenceMessageId.String(),
 			SupportSessionID:  uuidString(body.SupportSessionId),
+		},
+	); err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) MarkEngagementRead(
+	w http.ResponseWriter,
+	r *http.Request,
+	phone string,
+) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.MarkEngagementReadRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if err := server.messaging.MarkEngagementRead(
+		ctx,
+		messaging.MarkEngagementReadCommand{
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			Phone:      phone,
 		},
 	); err != nil {
 		server.writeMessagingError(w, r, err)
@@ -979,9 +1008,9 @@ func (server *Server) GetEngagementTimeline(
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	timeline, err := server.messaging.QueryPhoneTimeline(
+	timeline, err := server.engagement.queryTimeline(
 		ctx,
-		messaging.QueryPhoneTimelineCommand{
+		engagementTimelineQueryCommand{
 			Identity:   identity,
 			PracticeID: params.PracticeId.String(),
 			Phone:      normalized,
@@ -1443,6 +1472,24 @@ func (server *Server) ReadTask(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) MarkTaskRead(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if err := server.work.MarkTaskRead(ctx, identity, taskID.String()); err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (server *Server) RenameTask(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1599,9 +1646,9 @@ func (server *Server) GetTaskEngagementHistory(
 		server.writeWorkError(w, r, err)
 		return
 	}
-	timeline, err := server.messaging.QueryPhoneTimeline(
+	timeline, err := server.engagement.queryTimeline(
 		ctx,
-		messaging.QueryPhoneTimelineCommand{
+		engagementTimelineQueryCommand{
 			Identity:   identity,
 			PracticeID: task.PracticeID,
 			Phone:      task.Phone,

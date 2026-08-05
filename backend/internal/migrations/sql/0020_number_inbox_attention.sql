@@ -33,3 +33,12 @@ CREATE TABLE work_staff_notes (
 
 CREATE INDEX work_staff_notes_phone_timeline_idx
     ON work_staff_notes (practice_id, phone, created_at, id);
+
+-- Listening to voicemail is navigation state, not Task completion. Keep the
+-- receipt per User so playback can clear unread without changing Work state.
+CREATE TABLE work_task_reads (
+    task_id uuid NOT NULL REFERENCES work_tasks(id) ON DELETE CASCADE,
+    user_subject text NOT NULL,
+    read_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (task_id, user_subject)
+);
