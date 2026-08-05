@@ -68,7 +68,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 4, 9, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, _ := provisionStaff(t, accessModule, now)
+	authorization, identity := provisionStaff(t, accessModule, now)
 	module := work.New(pool, accessModule, func() time.Time { return now })
 	locationID := authorization.Locations[0].ID
 	phone := "+15555550100"
@@ -148,6 +148,15 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 			taskCount,
 			interactionCount,
 		)
+	}
+	read, err := module.ReadTask(context.Background(), identity, missed.ID)
+	if err != nil {
+		t.Fatalf("read recovery Task interactions: %v", err)
+	}
+	if read.RelatedInteractionCount != 2 || len(read.Interactions) != 2 ||
+		read.Interactions[0].CallID != missedCallID ||
+		read.Interactions[1].CallID != voicemailCallID {
+		t.Fatalf("recovery Task read model = %#v", read)
 	}
 }
 

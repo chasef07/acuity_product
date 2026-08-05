@@ -287,7 +287,10 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		t.Fatalf("project bridge delayed beyond receipt hold: processed=%t err=%v", processed, err)
 	}
 	ended, err := calling.ReadCall(context.Background(), identity, offers[0].ID)
-	if err != nil || ended.State != humancalling.CallNeedsDisposition {
+	if err != nil ||
+		ended.State != humancalling.CallNeedsDisposition ||
+		ended.DispositionDeadline == nil ||
+		!ended.DispositionDeadline.Equal(hangupAt.Add(20*time.Second)) {
 		t.Fatalf("reordered bridge/hangup Call = %#v, err = %v", ended, err)
 	}
 }
@@ -562,17 +565,19 @@ func TestOutboundBridgeReceiptAfterHangupPreservesConnectedDisposition(t *testin
 			workspaceVersionAfterBridge,
 		)
 	}
-	var endedAt, attemptBridgeAt, attemptEndedAt time.Time
+	var endedAt, dispositionDeadline, attemptBridgeAt, attemptEndedAt time.Time
 	if err := pool.QueryRow(context.Background(), `
-		SELECT call.ended_at, attempt.bridge_occurred_at, attempt.ended_at
+		SELECT call.ended_at, call.disposition_deadline,
+			attempt.bridge_occurred_at, attempt.ended_at
 		FROM human_calling_calls call
 		JOIN human_calling_connection_attempts attempt
 			ON attempt.id = call.current_attempt_id
 		WHERE call.id = $1
-	`, call.ID).Scan(&endedAt, &attemptBridgeAt, &attemptEndedAt); err != nil {
+	`, call.ID).Scan(&endedAt, &dispositionDeadline, &attemptBridgeAt, &attemptEndedAt); err != nil {
 		t.Fatalf("read reordered outbound receipt timestamps: %v", err)
 	}
 	if !endedAt.Equal(hangupAt) ||
+		!dispositionDeadline.Equal(hangupAt.Add(20*time.Second)) ||
 		!attemptBridgeAt.Equal(bridgeAt) ||
 		!attemptEndedAt.Equal(hangupAt) {
 		t.Fatalf(

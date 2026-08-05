@@ -96,31 +96,42 @@ type ActorSnapshot struct {
 }
 
 type Task struct {
-	ID                   string
-	PracticeID           string
-	LocationID           string
-	LocationName         string
-	CallID               string
-	Phone                string
-	Title                string
-	State                TaskState
-	Origin               TaskOrigin
-	Urgency              TaskUrgency
-	Category             TaskCategory
-	CallerName           string
-	SourceCallID         string
-	SourceMessage        string
-	MessageID            string
-	MessageThreadID      string
-	ConversationThreadID string
-	RecoveryOutcome      RecoveryOutcome
-	Unread               bool
-	CreatedBy            ActorSnapshot
-	CreatedAt            time.Time
-	CompletedBy          *ActorSnapshot
-	CompletedAt          *time.Time
-	Version              int64
-	UpdatedAt            time.Time
+	ID                      string
+	PracticeID              string
+	LocationID              string
+	LocationName            string
+	CallID                  string
+	Phone                   string
+	Title                   string
+	State                   TaskState
+	Origin                  TaskOrigin
+	Urgency                 TaskUrgency
+	Category                TaskCategory
+	CallerName              string
+	SourceCallID            string
+	SourceMessage           string
+	MessageID               string
+	MessageThreadID         string
+	ConversationThreadID    string
+	RecoveryOutcome         RecoveryOutcome
+	RelatedInteractionCount int
+	Interactions            []TaskInteraction
+	Unread                  bool
+	CreatedBy               ActorSnapshot
+	CreatedAt               time.Time
+	CompletedBy             *ActorSnapshot
+	CompletedAt             *time.Time
+	Version                 int64
+	UpdatedAt               time.Time
+}
+
+// TaskInteraction is the authorized communication evidence attached to a
+// Task. It remains a Call owned by HumanCalling rather than a copied Work
+// aggregate.
+type TaskInteraction struct {
+	CallID     string
+	OccurredAt time.Time
+	Type       string
 }
 
 type CreateAITaskCommand struct {
@@ -1159,6 +1170,11 @@ func (m *Module) QueryTasks(
 		return TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
 	}
 	rows.Close()
+	for index := range items {
+		if err := m.loadRelatedInteractionCount(ctx, tx, &items[index]); err != nil {
+			return TaskPage{}, err
+		}
+	}
 
 	nextCursor := ""
 	if len(items) > limit {
@@ -1295,6 +1311,12 @@ func (m *Module) ReadTask(
 	if err != nil {
 		return Task{}, err
 	}
+	if err := m.loadRelatedInteractionCount(ctx, tx, &task); err != nil {
+		return Task{}, err
+	}
+	if err := m.loadTaskInteractions(ctx, tx, &task); err != nil {
+		return Task{}, err
+	}
 	if _, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
@@ -1308,6 +1330,53 @@ func (m *Module) ReadTask(
 		return Task{}, fmt.Errorf("commit Task read: %w", err)
 	}
 	return task, nil
+}
+
+func (m *Module) loadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task) error {
+	if task == nil || task.ID == "" {
+		return ErrInvalidInput
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT
+			interaction.call_id::text,
+			interaction.occurred_at,
+			CASE WHEN voicemail.outcome = 'VOICEMAIL' THEN 'VOICEMAIL' ELSE 'CALL' END
+		FROM work_task_interactions interaction
+		LEFT JOIN human_calling_voicemails voicemail
+			ON voicemail.call_id = interaction.call_id
+		WHERE interaction.task_id = $1
+		ORDER BY interaction.occurred_at, interaction.call_id
+	`, task.ID)
+	if err != nil {
+		return fmt.Errorf("query related Task Interactions: %w", err)
+	}
+	defer rows.Close()
+	task.Interactions = nil
+	for rows.Next() {
+		var interaction TaskInteraction
+		if err := rows.Scan(&interaction.CallID, &interaction.OccurredAt, &interaction.Type); err != nil {
+			return fmt.Errorf("scan related Task Interaction: %w", err)
+		}
+		task.Interactions = append(task.Interactions, interaction)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate related Task Interactions: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) loadRelatedInteractionCount(ctx context.Context, querier taskQuerier, task *Task) error {
+	if task == nil || task.ID == "" {
+		return ErrInvalidInput
+	}
+	if err := querier.QueryRow(ctx, `
+		SELECT count(*)
+		FROM work_task_interactions
+		WHERE task_id = $1
+	`, task.ID).Scan(&task.RelatedInteractionCount); err != nil {
+		return fmt.Errorf("count related Task Interactions: %w", err)
+	}
+	return nil
 }
 
 type taskQuerier interface {

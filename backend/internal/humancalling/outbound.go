@@ -1185,8 +1185,10 @@ func (m *Module) applyOutboundBridge(
 		return ErrConflict
 	}
 	nextState := CallConnected
+	dispositionDeadline := fact.OccurredAt.Add(m.config.DispositionDuration)
 	if lateTaskBridge {
 		nextState = CallNeedsDisposition
+		dispositionDeadline = endedAt.Add(m.config.DispositionDuration)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls
@@ -1200,11 +1202,16 @@ func (m *Module) applyOutboundBridge(
 				ELSE provider_termination
 			END,
 			connected_at = $5,
+			disposition_deadline = CASE
+				WHEN $7 = 'NEEDS_DISPOSITION' THEN $8::timestamptz
+				ELSE NULL
+			END,
 			version = version + 1,
 			updated_at = $6
 		WHERE id = $1
 	`, callID, initiatingSubject, destinationControlID, destinationLegID,
-		fact.OccurredAt, m.now(), nextState); err != nil {
+		fact.OccurredAt, m.now(), nextState,
+		dispositionDeadline); err != nil {
 		return fmt.Errorf("project outbound bridge: %w", err)
 	}
 	if err := appendTimeline(
@@ -1374,6 +1381,10 @@ func (m *Module) applyOutboundHangup(
 			state = $2,
 			provider_termination = $3,
 			ended_at = $4,
+			disposition_deadline = CASE
+				WHEN $2 = 'NEEDS_DISPOSITION' THEN $6::timestamptz
+				ELSE NULL
+			END,
 			version = version + 1,
 			updated_at = $5
 		WHERE id = $1
@@ -1383,7 +1394,8 @@ func (m *Module) applyOutboundHangup(
 				'CONNECTED',
 				'RECONCILING'
 			)
-	`, callID, nextState, termination, fact.OccurredAt, m.now()); err != nil {
+	`, callID, nextState, termination, fact.OccurredAt, m.now(),
+		fact.OccurredAt.Add(m.config.DispositionDuration)); err != nil {
 		return fmt.Errorf("project outbound termination: %w", err)
 	}
 	if err := m.restoreOutboundAvailability(

@@ -612,6 +612,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 			TargetID: "caller-control",
 			Payload: map[string]any{
 				"greeting":     "Please leave a message after the beep.",
+				"stop":         "all",
 				"client_state": "opaque-voicemail",
 			},
 		},

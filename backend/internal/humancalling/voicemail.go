@@ -238,7 +238,10 @@ func (m *Module) startVoicemailGreeting(
 		CommandPlayVoicemailGreeting,
 		callerCallControlID,
 		map[string]any{
-			"greeting":     greeting,
+			"greeting": greeting,
+			// Telnyx stops the infinite ringback and starts the greeting as one
+			// idempotent command, so callers never hear both audio streams.
+			"stop":         "all",
 			"client_state": opaqueClientState(callID, "voicemail"),
 		},
 		occurredAt,

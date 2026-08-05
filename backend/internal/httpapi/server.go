@@ -2655,6 +2655,21 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		RetryAllowed:        call.RetryAllowed,
 		Version:             call.Version,
 	}
+	if call.DispositionDeadline != nil {
+		response.DispositionDeadline = call.DispositionDeadline
+	}
+	if call.RecoveryTask != nil {
+		id, err := uuid.Parse(call.RecoveryTask.ID)
+		if err != nil {
+			return api.CallingCall{}, err
+		}
+		response.RecoveryTask = &api.CallingRecoveryTask{
+			Id:                      id,
+			Title:                   call.RecoveryTask.Title,
+			State:                   api.CallingRecoveryTaskState(call.RecoveryTask.State),
+			RelatedInteractionCount: call.RecoveryTask.RelatedInteractionCount,
+		}
+	}
 	if call.TaskID != "" {
 		taskID, err := uuid.Parse(call.TaskID)
 		if err != nil {
@@ -2731,10 +2746,22 @@ func taskResponse(task work.Task) (api.Task, error) {
 			Kind:    api.TaskActorKind(task.CreatedBy.Kind),
 			Subject: task.CreatedBy.Subject,
 		},
-		CreatedAt: task.CreatedAt,
-		Unread:    task.Unread,
-		Version:   task.Version,
-		UpdatedAt: task.UpdatedAt,
+		CreatedAt:               task.CreatedAt,
+		Unread:                  task.Unread,
+		Version:                 task.Version,
+		UpdatedAt:               task.UpdatedAt,
+		RelatedInteractionCount: task.RelatedInteractionCount,
+	}
+	response.Interactions = make([]api.TaskInteraction, 0, len(task.Interactions))
+	for _, interaction := range task.Interactions {
+		callID, err := uuid.Parse(interaction.CallID)
+		if err != nil {
+			return api.Task{}, err
+		}
+		response.Interactions = append(response.Interactions, api.TaskInteraction{
+			CallId: callID, OccurredAt: interaction.OccurredAt,
+			Type: api.TaskInteractionType(interaction.Type),
+		})
 	}
 	if task.CallID != "" {
 		callID, err := uuid.Parse(task.CallID)

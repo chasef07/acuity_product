@@ -129,6 +129,7 @@ type Config struct {
 	HandoffTokenKey        []byte
 	LeaseDuration          time.Duration
 	ReadinessGrace         time.Duration
+	DispositionDuration    time.Duration
 	CallControlID          string
 	CredentialConnectionID string
 	FromNumber             string
@@ -280,6 +281,7 @@ type Call struct {
 	TaskID              string
 	State               CallState
 	Deadline            time.Time
+	DispositionDeadline *time.Time
 	ClaimantSubject     string
 	WinnerSubject       string
 	ExpectedStaffLegID  string
@@ -300,6 +302,17 @@ type Call struct {
 	Voicemail           Voicemail
 	RetryOfCallID       string
 	RetryAllowed        bool
+	RecoveryTask        *RecoveryTask
+}
+
+// RecoveryTask is the compact, authorized work context surfaced with a later
+// connected inbound call. Phone equality never creates identity; this is only
+// the exact-phone recovery Task selected at connection time.
+type RecoveryTask struct {
+	ID                      string
+	Title                   string
+	State                   work.TaskState
+	RelatedInteractionCount int
 }
 
 type CallHistoryQuery struct {
@@ -417,6 +430,9 @@ func New(
 	}
 	if config.ReadinessGrace <= 0 {
 		config.ReadinessGrace = 15 * time.Second
+	}
+	if config.DispositionDuration <= 0 {
+		config.DispositionDuration = 20 * time.Second
 	}
 	if config.WebhookTolerance <= 0 {
 		config.WebhookTolerance = 5 * time.Minute
@@ -2453,7 +2469,7 @@ func (m *Module) RecordDisposition(
 			call.state,
 			call.direction,
 			call.entry_point,
-			COALESCE(call.task_id::text, ''),
+			COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
 			COALESCE(
 				call.winner_subject,
 				call.initiating_subject,
@@ -2541,7 +2557,8 @@ func (m *Module) RecordDisposition(
 			return DispositionResult{}, err
 		}
 		if disposition != DispositionCompleteTask &&
-			disposition != DispositionKeepOpen {
+			disposition != DispositionKeepOpen &&
+			!(disposition == DispositionResolved && taskID != "") {
 			taskID = ""
 			if disposition == DispositionCreateTask ||
 				disposition == DispositionFollowUpRequired {
@@ -2579,6 +2596,20 @@ func (m *Module) RecordDisposition(
 		}
 		taskID = task.ID
 	}
+	if disposition == DispositionResolved && taskID != "" {
+		task, err := m.work.ApplyCallTaskDisposition(
+			ctx,
+			tx,
+			taskID,
+			true,
+			authorization.Actor,
+			m.now(),
+		)
+		if err != nil {
+			return DispositionResult{}, err
+		}
+		taskID = task.ID
+	}
 	if disposition == DispositionFollowUpRequired ||
 		disposition == DispositionCreateTask {
 		task, err := m.work.EnsureCallFollowUp(
@@ -2606,6 +2637,7 @@ func (m *Module) RecordDisposition(
 			disposition_actor_subject = $3,
 			disposition_at = $4,
 			disposition_outcome = $5,
+			disposition_deadline = NULL,
 			version = version + 1,
 			updated_at = $4
 		WHERE id = $1
@@ -3096,6 +3128,90 @@ func (m *Module) ExpireConnections(ctx context.Context) (int, error) {
 	return len(expired) + outboundExpired, nil
 }
 
+// ExpireDispositions commits the ordinary resolved outcome from durable
+// provider termination evidence. It intentionally does not depend on a
+// browser session or softphone lease.
+func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("begin disposition expiry: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		SELECT
+			call.id::text,
+			call.practice_id::text,
+			COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
+			call.winner_subject,
+			COALESCE(membership.email, '')
+		FROM human_calling_calls call
+		LEFT JOIN access_memberships membership
+			ON membership.practice_id = call.practice_id
+			AND membership.user_subject = call.winner_subject
+		WHERE call.state = 'NEEDS_DISPOSITION'
+			AND call.disposition_deadline <= $1
+		ORDER BY call.disposition_deadline, call.id
+		FOR UPDATE OF call SKIP LOCKED
+		LIMIT 100
+	`, m.now())
+	if err != nil {
+		return 0, fmt.Errorf("claim expired dispositions: %w", err)
+	}
+	type expiredDisposition struct {
+		callID, practiceID, taskID, subject, email string
+	}
+	items := []expiredDisposition{}
+	for rows.Next() {
+		var item expiredDisposition
+		if err := rows.Scan(&item.callID, &item.practiceID, &item.taskID, &item.subject, &item.email); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan expired disposition: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate expired dispositions: %w", err)
+	}
+	rows.Close()
+	for _, item := range items {
+		now := m.now()
+		if item.taskID != "" {
+			if item.subject == "" || item.email == "" {
+				return 0, fmt.Errorf("resolve automatic disposition actor: %w", ErrConflict)
+			}
+			if _, err := m.work.ApplyCallTaskDisposition(ctx, tx, item.taskID, true,
+				access.Actor{Subject: item.subject, Email: item.email}, now); err != nil {
+				return 0, fmt.Errorf("complete automatic disposition Task: %w", err)
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET state = 'RESOLVED',
+				disposition_actor_subject = $2,
+				disposition_at = $3,
+				disposition_outcome = 'RESOLVED',
+				disposition_deadline = NULL,
+				version = version + 1,
+				updated_at = $3
+			WHERE id = $1 AND state = 'NEEDS_DISPOSITION'
+		`, item.callID, item.subject, now); err != nil {
+			return 0, fmt.Errorf("resolve expired Call disposition: %w", err)
+		}
+		if err := appendTimeline(ctx, tx, item.callID, item.practiceID,
+			"call.dispositioned", item.subject, "", "", "", "AUTO_RESOLVED", now); err != nil {
+			return 0, err
+		}
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, item.practiceID); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit disposition expiry: %w", err)
+	}
+	return len(items), nil
+}
+
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	now := m.now()
 	if _, err := m.pool.Exec(ctx, `
@@ -3351,13 +3467,18 @@ func (m *Module) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
 			END,
 			provider_termination = 'PROVIDER_CONFIRMED_NOT_ALIVE',
 			ended_at = $2,
+			disposition_deadline = CASE
+				WHEN connected_at IS NULL THEN NULL
+				ELSE $3::timestamptz
+			END,
 			version = version + 1,
 			updated_at = $2
 		WHERE id = $1
-			AND current_attempt_id = $3
+			AND current_attempt_id = $4
 			AND state = 'CONNECTED'
 		RETURNING practice_id::text
-	`, item.callID, now, item.attemptID).Scan(&practiceID)
+	`, item.callID, now, now.Add(m.config.DispositionDuration),
+		item.attemptID).Scan(&practiceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return 0, fmt.Errorf("commit superseded provider Call state: %w", err)
@@ -5193,8 +5314,10 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		}
 	}
 	nextState := CallConnected
+	dispositionDeadline := bridgeAt.Add(m.config.DispositionDuration)
 	if attemptEndedAt != nil {
 		nextState = CallNeedsDisposition
+		dispositionDeadline = attemptEndedAt.Add(m.config.DispositionDuration)
 	} else if (state == CallResolved || state == CallFollowUpRequired) &&
 		currentWinner == claimantSubject {
 		nextState = state
@@ -5231,6 +5354,26 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			provider_termination = NULL,
 			connected_at = COALESCE(connected_at, $2),
 			ended_at = CASE WHEN $8::timestamptz IS NOT NULL THEN $8 ELSE ended_at END,
+			surfaced_task_id = COALESCE(
+				surfaced_task_id,
+				(
+					SELECT task.id
+					FROM work_tasks task
+					JOIN human_calling_handoffs handoff
+						ON handoff.id = human_calling_calls.handoff_id
+					WHERE task.practice_id = human_calling_calls.practice_id
+						AND task.location_id = human_calling_calls.location_id
+						AND task.phone = handoff.phone
+						AND task.state = 'OPEN'
+						AND task.origin IN ('VOICEMAIL_RECOVERY', 'MISSED_CALL_RECOVERY')
+					ORDER BY task.updated_at DESC, task.id DESC
+					LIMIT 1
+				)
+			),
+			disposition_deadline = CASE
+				WHEN $5 = 'NEEDS_DISPOSITION' THEN $11::timestamptz
+				ELSE NULL
+			END,
 			version = version + 1,
 			updated_at = $9
 		WHERE id = $1
@@ -5245,6 +5388,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		attemptEndedAt,
 		m.now(),
 		winningAttemptID,
+		dispositionDeadline,
 	); err != nil {
 		return fmt.Errorf("project provider-confirmed bridge: %w", err)
 	}
@@ -5472,15 +5616,20 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			nextState = CallUnanswered
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET
-				state = $2,
-				provider_termination = NULLIF($3, ''),
-				ended_at = $4,
-				version = version + 1,
-				updated_at = $4
-			WHERE id = $1
-		`, callID, nextState, fact.HangupCause, fact.OccurredAt); err != nil {
+		UPDATE human_calling_calls
+		SET
+			state = $2,
+			provider_termination = NULLIF($3, ''),
+			ended_at = $4,
+			disposition_deadline = CASE
+				WHEN $2 = 'NEEDS_DISPOSITION' THEN $5::timestamptz
+				ELSE NULL
+			END,
+			version = version + 1,
+			updated_at = $4
+		WHERE id = $1
+	`, callID, nextState, fact.HangupCause, fact.OccurredAt,
+			fact.OccurredAt.Add(m.config.DispositionDuration)); err != nil {
 			return fmt.Errorf("project connected Call termination: %w", err)
 		}
 	case CallConnecting, CallReconciling:
@@ -5623,6 +5772,8 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 
 func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 	var result Call
+	var recoveryTaskID, recoveryTaskTitle, recoveryTaskState *string
+	var recoveryInteractionCount int
 	err := m.pool.QueryRow(ctx, `
 		SELECT
 			c.id::text,
@@ -5634,9 +5785,11 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(c.task_id::text, ''),
 			c.state,
 			CASE
+				WHEN c.state = 'NEEDS_DISPOSITION' THEN c.disposition_deadline
 				WHEN c.direction = 'OUTBOUND' THEN c.connection_deadline
 				ELSE c.offer_deadline
 			END,
+			c.disposition_deadline,
 			COALESCE(c.claimant_subject, ''),
 			COALESCE(c.winner_subject, ''),
 			COALESCE(c.expected_staff_call_leg_id, ''),
@@ -5670,6 +5823,14 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			COALESCE(v.task_id::text, ''),
 			COALESCE(v.duration_millis / 1000, 0),
 			COALESCE(c.retry_of_call_id::text, ''),
+			recovery.id::text,
+			recovery.title,
+			recovery.state,
+			COALESCE((
+				SELECT count(*)
+				FROM work_task_interactions interaction
+				WHERE interaction.task_id = recovery.id
+			), 0),
 			(
 				c.direction = 'OUTBOUND'
 				AND c.state IN ('UNANSWERED', 'RESOLVED', 'RECONCILING')
@@ -5689,6 +5850,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		LEFT JOIN human_calling_connection_attempts attempt ON attempt.id = c.current_attempt_id
 		LEFT JOIN human_calling_recordings r ON r.call_id = c.id
 		LEFT JOIN human_calling_voicemails v ON v.call_id = c.id
+		LEFT JOIN work_tasks recovery ON recovery.id = c.surfaced_task_id
 		WHERE c.id = $1
 	`, callID).Scan(
 		&result.ID,
@@ -5700,6 +5862,7 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.TaskID,
 		&result.State,
 		&result.Deadline,
+		&result.DispositionDeadline,
 		&result.ClaimantSubject,
 		&result.WinnerSubject,
 		&result.ExpectedStaffLegID,
@@ -5722,6 +5885,10 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 		&result.Voicemail.TaskID,
 		&result.Voicemail.DurationSeconds,
 		&result.RetryOfCallID,
+		&recoveryTaskID,
+		&recoveryTaskTitle,
+		&recoveryTaskState,
+		&recoveryInteractionCount,
 		&result.RetryAllowed,
 	)
 	if err != nil {
@@ -5729,6 +5896,13 @@ func (m *Module) loadCall(ctx context.Context, callID string) (Call, error) {
 			return Call{}, ErrDenied
 		}
 		return Call{}, fmt.Errorf("read Call: %w", err)
+	}
+	if recoveryTaskID != nil && recoveryTaskTitle != nil && recoveryTaskState != nil {
+		result.RecoveryTask = &RecoveryTask{
+			ID: *recoveryTaskID, Title: *recoveryTaskTitle,
+			State:                   work.TaskState(*recoveryTaskState),
+			RelatedInteractionCount: recoveryInteractionCount,
+		}
 	}
 	return result, nil
 }

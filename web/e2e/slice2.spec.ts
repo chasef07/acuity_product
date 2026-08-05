@@ -1346,7 +1346,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           response.url().includes("/v1/calling/voicemail-playback/"),
       )
       await focusedVoicemailTask
-        .getByRole("button", { name: "Load recording" })
+        .getByRole("button", { name: "Play" })
         .click()
       const playback = await playbackResponse
       expect(playback.status()).toBe(200)

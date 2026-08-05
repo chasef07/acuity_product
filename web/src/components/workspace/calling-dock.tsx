@@ -1401,10 +1401,17 @@ export function CallingDock({
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Call outcome" size="sm">
             <CardHeader>
-              <CardTitle>How did the call end?</CardTitle>
+              <CardTitle>Call ended</CardTitle>
               <CardDescription>
                 {pendingOutcome.phone} · {pendingOutcome.locationName}
               </CardDescription>
+			{pendingOutcome.dispositionDeadline && (
+				<CardAction>
+					<Badge aria-label="Resolution countdown" variant="outline" className="tabular-nums">
+						{secondsRemaining(pendingOutcome.dispositionDeadline, now)}s
+					</Badge>
+				</CardAction>
+			)}
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
               {callDispositionChoices(pendingOutcome).map((choice) => (
@@ -1417,9 +1424,6 @@ export function CallingDock({
                   {choice.label}
                 </Button>
               ))}
-              <p className="basis-full text-xs text-muted-foreground">
-                Calling capacity is already available; this outcome can be saved later.
-              </p>
               {error && <p className="basis-full text-xs text-destructive">{error}</p>}
             </CardContent>
           </Card>
@@ -1825,6 +1829,9 @@ function secondsRemaining(deadline: string, now: number) {
 }
 
 function callTimerLabel(call: CallingCall, now: number) {
+	if (call.state === "NEEDS_DISPOSITION" && call.dispositionDeadline) {
+		return `${secondsRemaining(call.dispositionDeadline, now)}s`
+	}
   if (call.connectedAt) {
     const elapsed = Math.max(
       0,
