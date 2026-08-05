@@ -820,7 +820,7 @@ paths:
   /v1/engagements/query:
     post:
       operationId: queryEngagements
-      summary: Resolve one authorized exact-phone Engagement across Practice Locations.
+      summary: Resolve one exact-phone Engagement or recent authorized Engagements across Practice Locations.
       requestBody:
         required: true
         content:
@@ -2751,7 +2751,7 @@ components:
     EngagementQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, phone]
+      required: [practiceId]
       properties:
         practiceId:
           type: string
@@ -2760,6 +2760,10 @@ components:
           type: string
           minLength: 1
           maxLength: 32
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
     TaskQueryRequest:
       type: object
       additionalProperties: false

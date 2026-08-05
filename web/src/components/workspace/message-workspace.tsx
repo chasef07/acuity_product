@@ -10,12 +10,14 @@ import {
 } from "react"
 import {
   AlertTriangleIcon,
+  CheckIcon,
   CheckSquareIcon,
   DownloadIcon,
   FileTextIcon,
   MessageSquareIcon,
   PaperclipIcon,
   PhoneCallIcon,
+  PencilIcon,
   RefreshCwIcon,
   SearchIcon,
   SendIcon,
@@ -28,21 +30,30 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
-import { portalClient } from "@/lib/api/client"
+import { CallingNumberAction } from "@/components/workspace/calling-dock"
+import { portalAPIURL, portalClient } from "@/lib/api/client"
 import {
+  completeTask,
   createMessageFollowUpTask,
   getEngagementTimeline,
+  getCallingCall,
   getMessageAttachment,
   getMessageThreadTimeline,
   getTaskEngagementHistory,
+  issueCallingVoicemailPlayback,
   markMessageThreadRead,
+  readTask,
   retryInboundMessageAttachment,
+  reopenTask,
+  renameTask,
   sendMessage,
   sendMessageAgain,
   uploadMessageAttachment,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   ConversationTimelineItem,
+  CallingCall,
+  CallHistoryItem,
   EngagementSummary,
   Message,
   MessageAttachment,
@@ -77,12 +88,19 @@ type MessageWorkspaceProps = {
   onThreadRead: (threadID: string) => void
   onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
-  onCallOpen: (callID: string) => void
 }
 
 type TimelineSource =
   | { kind: "task"; taskID: string }
   | { kind: "engagement"; practiceID: string; phone: string }
+
+type RecoveryEvidence = {
+  outboundTextAfter: boolean
+  laterOutboundCallIDs: string[]
+  recoveryTask?: Task
+}
+
+type RecoveryTaskReference = Pick<Task, "id" | "title" | "state">
 
 export function EngagementWorkspace({
   engagement,
@@ -90,32 +108,95 @@ export function EngagementWorkspace({
   supportSessionID,
   canMutate,
   revision,
+  focusedTask,
+  onMessageSent,
+  onThreadRead,
+  onTaskUpdated,
+  onTextEligibilityChanged,
+  onTextHandled,
+  taskCallPending,
+  taskCallError,
+  onStartTaskCall,
   onTaskCreated,
   onTaskOpen,
-  onCallOpen,
 }: {
   engagement: EngagementSummary
   practiceID: string
   supportSessionID: string
   canMutate: boolean
   revision: number
+  focusedTask?: Task
+  onMessageSent: (message: Message) => void
+  onThreadRead: (threadID: string) => void
+  onTaskUpdated: (task: Task) => void
+  onTextEligibilityChanged: (threadID: string, eligible: boolean) => void
+  onTextHandled: (threadID: string) => void
+  taskCallPending: boolean
+  taskCallError: string
+  onStartTaskCall: (task: Task) => void
   onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
-  onCallOpen: (callID: string) => void
 }) {
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [route, setRoute] = useState(defaultRoute)
+  const [selectedTask, setSelectedTask] = useState<Task | undefined>(focusedTask)
+  const [selectedCall, setSelectedCall] = useState<{
+    detail: CallingCall
+    history?: CallHistoryItem
+    recoveryEligible: boolean
+    recoveryTask?: RecoveryTaskReference
+  }>()
+
+  async function selectCall(
+    callID: string,
+    history?: CallHistoryItem,
+    evidence?: RecoveryEvidence,
+  ) {
+    const token = await getAccessToken()
+    if (!token) return
+    const client = portalClient(token)
+    const [result, ...laterCalls] = await Promise.all([
+      getCallingCall({ client, path: { callId: callID } }).catch(
+        () => undefined,
+      ),
+      ...(evidence?.laterOutboundCallIDs ?? []).map((laterCallID) =>
+        getCallingCall({ client, path: { callId: laterCallID } }).catch(
+          () => undefined,
+        ),
+      ),
+    ])
+    if (!result?.data) return
+    const recoveryTask = evidence?.recoveryTask ?? result.data.recoveryTask
+    const connectedCallback = laterCalls.some(
+      (candidate) =>
+        candidate?.data?.direction === "OUTBOUND" &&
+        Boolean(candidate.data.connectedAt),
+    )
+    const recoveryEligible = Boolean(
+      recoveryTask?.state === "OPEN" &&
+        (connectedCallback ||
+          (Boolean(result.data.voicemail) && evidence?.outboundTextAfter)),
+    )
+    setSelectedTask(undefined)
+    setSelectedCall({
+      detail: result.data,
+      history,
+      recoveryEligible,
+      recoveryTask,
+    })
+  }
   const routeName =
     engagement.locations.find((location) => location.id === route)?.name ??
     "Choose sender route"
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    <section className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="border-b px-5 py-4">
         <div className="flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <Badge variant="outline">Engagement History</Badge>
+              <Badge variant="outline">Number inbox</Badge>
               <span className="text-xs font-medium text-muted-foreground">
                 Unverified phone context
               </span>
@@ -133,6 +214,7 @@ export function EngagementWorkspace({
           </div>
           <div className="flex items-center gap-2">
             {engagement.unread && <Badge variant="secondary">Unread</Badge>}
+            <CallingNumberAction locationID={route} phone={engagement.phone} />
             <NativeSelect
               aria-label="Sender route"
               value={route}
@@ -164,13 +246,514 @@ export function EngagementWorkspace({
         supportSessionID={supportSessionID}
         canMutate={canMutate}
         revision={revision}
-        onMessageSent={() => undefined}
-        onThreadRead={() => undefined}
+        onMessageSent={onMessageSent}
+        onThreadRead={onThreadRead}
         onTaskCreated={onTaskCreated}
-        onTaskOpen={onTaskOpen}
-        onCallOpen={onCallOpen}
+        onTextEligibilityChanged={onTextEligibilityChanged}
+        onTextHandled={onTextHandled}
+        onTaskOpen={(task) => {
+          setSelectedCall(undefined)
+          setSelectedTask(task)
+          onTaskOpen(task)
+        }}
+        onCallOpen={(callID, history, evidence) => {
+          void selectCall(callID, history, evidence)
+        }}
       />
+      </div>
+      {selectedTask && (
+        <SelectedTaskSnapshot
+          task={selectedTask}
+          supportSessionID={supportSessionID}
+          canMutate={canMutate}
+          taskCallPending={taskCallPending}
+          taskCallError={taskCallError}
+          onStartTaskCall={onStartTaskCall}
+          onClose={() => setSelectedTask(undefined)}
+          onChanged={(task) => {
+            setSelectedTask(task.state === "OPEN" ? task : undefined)
+            onTaskUpdated(task)
+          }}
+        />
+      )}
+      {!selectedTask && selectedCall && (
+        <SelectedCallSnapshot
+          call={selectedCall.detail}
+          history={selectedCall.history}
+          recoveryEligible={selectedCall.recoveryEligible}
+          recoveryTask={selectedCall.recoveryTask}
+          supportSessionID={supportSessionID}
+          canMutate={canMutate}
+          onClose={() => setSelectedCall(undefined)}
+          onTaskUpdated={onTaskUpdated}
+        />
+      )}
     </section>
+  )
+}
+
+function SelectedCallSnapshot({
+  call,
+  history,
+  recoveryEligible,
+  recoveryTask,
+  supportSessionID,
+  canMutate,
+  onClose,
+  onTaskUpdated,
+}: {
+  call: CallingCall
+  history?: CallHistoryItem
+  recoveryEligible: boolean
+  recoveryTask?: RecoveryTaskReference
+  supportSessionID: string
+  canMutate: boolean
+  onClose: () => void
+  onTaskUpdated: (task: Task) => void
+}) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+
+  async function completeRecovery() {
+    if (!recoveryTask) return
+    setPending(true)
+    setError("")
+    const token = await getAccessToken()
+    if (!token) {
+      setPending(false)
+      return
+    }
+    const client = portalClient(token)
+    const current = await readTask({
+      client,
+      path: { taskId: recoveryTask.id },
+    }).catch(() => undefined)
+    if (!current?.data) {
+      setPending(false)
+      setError("The related Task could not be loaded.")
+      return
+    }
+    if (current.data.state === "COMPLETED") {
+      setPending(false)
+      onTaskUpdated(current.data)
+      onClose()
+      return
+    }
+    const completed = await completeTask({
+      client,
+      path: { taskId: current.data.id },
+      body: {
+        expectedVersion: current.data.version,
+        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
+      },
+    }).catch(() => undefined)
+    setPending(false)
+    if (!completed?.data) {
+      setError("The related Task changed or could not be completed.")
+      return
+    }
+    onTaskUpdated(completed.data)
+    onClose()
+  }
+
+  return (
+    <aside
+      aria-label="Selected item"
+      className="flex w-80 shrink-0 flex-col border-l bg-card/45 xl:w-96"
+    >
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {call.voicemail ? "Voicemail" : "Call"}
+        </span>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="ml-auto"
+          aria-label="Close selected item"
+          onClick={onClose}
+        >
+          <XIcon />
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div>
+          <Badge variant="outline">
+            {call.direction === "INBOUND" ? "Inbound" : "Outbound"}
+          </Badge>
+          <h2 className="mt-3 text-lg font-semibold">
+            {call.voicemail ? "Voicemail" : "Call"} · {formatPhone(call.phone)}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {call.locationName} · {callStateLabel(call.state)}
+          </p>
+        </div>
+        <SnapshotField
+          label="Time"
+          value={formatDateTime(history?.startedAt ?? call.connectedAt ?? call.deadline)}
+        />
+        {history && (
+          <SnapshotField
+            label="Duration"
+            value={formatDuration(history.durationSeconds)}
+          />
+        )}
+        {call.connectedAt && (
+          <SnapshotField label="Connected" value={formatDateTime(call.connectedAt)} />
+        )}
+        {call.voicemail && (
+          <>
+            {!history && (
+              <SnapshotField
+                label="Duration"
+                value={formatDuration(call.voicemail.durationSeconds)}
+              />
+            )}
+            <VoicemailPlayer call={call} callID={call.id} />
+            {recoveryTask && (
+              <SnapshotField
+                label="Related Task"
+                value={recoveryTask.title}
+              />
+            )}
+          </>
+        )}
+        {call.transferReason && (
+          <SnapshotField label="Follow-up" value={call.transferReason} />
+        )}
+        {canMutate && (
+          <div className="mt-auto flex flex-wrap gap-2 border-t pt-4">
+            <CallingNumberAction
+              locationID={call.locationId}
+              phone={call.phone}
+            />
+            {recoveryEligible && recoveryTask?.state === "OPEN" && (
+              <Button disabled={pending} onClick={() => void completeRecovery()}>
+                {pending && <Spinner />}
+                Looks handled — Mark complete
+              </Button>
+            )}
+          </div>
+        )}
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      </div>
+    </aside>
+  )
+}
+
+function SnapshotField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 text-sm">{value}</p>
+    </div>
+  )
+}
+
+function VoicemailPlayer({
+  call,
+  callID,
+  compact = false,
+}: {
+  call?: CallingCall
+  callID: string
+  compact?: boolean
+}) {
+  const [audioURL, setAudioURL] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [unavailable, setUnavailable] = useState(
+    call?.voicemail?.audioState === "UNAVAILABLE",
+  )
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (audioURL) URL.revokeObjectURL(audioURL)
+    }
+  }, [audioURL])
+
+  async function play() {
+    if (audioURL) {
+      await audioRef.current?.play().catch(() => undefined)
+      return
+    }
+    setLoading(true)
+    const token = await getAccessToken()
+    if (!token) {
+      setLoading(false)
+      return
+    }
+    const detail =
+      call ??
+      (
+        await getCallingCall({
+          client: portalClient(token),
+          path: { callId: callID },
+        }).catch(() => undefined)
+      )?.data
+    if (!detail?.voicemail || detail.voicemail.audioState !== "READY") {
+      setLoading(false)
+      setUnavailable(detail?.voicemail?.audioState === "UNAVAILABLE")
+      return
+    }
+    const issued = await issueCallingVoicemailPlayback({
+      client: portalClient(token),
+      path: { callId: callID },
+    }).catch(() => undefined)
+    if (!issued?.data) {
+      setLoading(false)
+      setUnavailable(true)
+      return
+    }
+    const response = await fetch(
+      new URL(
+        `/v1/calling/voicemail-playback/${encodeURIComponent(issued.data.token)}`,
+        portalAPIURL(),
+      ),
+      {
+        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+      },
+    ).catch(() => undefined)
+    if (!response?.ok) {
+      setLoading(false)
+      setUnavailable(true)
+      return
+    }
+    const objectURL = URL.createObjectURL(await response.blob())
+    setAudioURL(objectURL)
+    setLoading(false)
+    window.requestAnimationFrame(() => {
+      void audioRef.current?.play().catch(() => undefined)
+    })
+  }
+
+  if (unavailable) {
+    return <p className="text-sm text-muted-foreground">Recording unavailable</p>
+  }
+  if (audioURL) {
+    return (
+      <audio
+        ref={audioRef}
+        aria-label="Voicemail recording"
+        className={compact ? "h-9 max-w-full" : undefined}
+        controls
+        controlsList="nodownload"
+        preload="metadata"
+        src={audioURL}
+      />
+    )
+  }
+  return (
+    <Button variant="outline" disabled={loading} onClick={() => void play()}>
+      {loading ? <Spinner /> : <PhoneCallIcon />}
+      {loading ? "Loading voicemail" : "Play voicemail"}
+    </Button>
+  )
+}
+
+function SelectedTaskSnapshot({
+  task,
+  supportSessionID,
+  canMutate,
+  taskCallPending,
+  taskCallError,
+  onStartTaskCall,
+  onClose,
+  onChanged,
+}: {
+  task: Task
+  supportSessionID: string
+  canMutate: boolean
+  taskCallPending: boolean
+  taskCallError: string
+  onStartTaskCall: (task: Task) => void
+  onClose: () => void
+  onChanged: (task: Task) => void
+}) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(task.title)
+
+  async function saveTitle() {
+    const title = draft.trim()
+    if (!title || title === task.title) {
+      setEditing(false)
+      setDraft(task.title)
+      return
+    }
+    setPending(true)
+    setError("")
+    const token = await getAccessToken()
+    if (!token) {
+      setPending(false)
+      return
+    }
+    const result = await renameTask({
+      client: portalClient(token),
+      path: { taskId: task.id },
+      body: {
+        expectedVersion: task.version,
+        title,
+        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
+      },
+    }).catch(() => undefined)
+    setPending(false)
+    if (!result?.data) {
+      setError("The Task changed or its title could not be saved.")
+      return
+    }
+    setEditing(false)
+    onChanged(result.data)
+  }
+
+  async function transition() {
+    setPending(true)
+    setError("")
+    const token = await getAccessToken()
+    if (!token) {
+      setPending(false)
+      return
+    }
+    const request = task.state === "OPEN" ? completeTask : reopenTask
+    const result = await request({
+      client: portalClient(token),
+      path: { taskId: task.id },
+      body: {
+        expectedVersion: task.version,
+        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
+      },
+    }).catch(() => undefined)
+    setPending(false)
+    if (!result?.data) {
+      setError("The Task changed or is temporarily unavailable.")
+      return
+    }
+    onChanged(result.data)
+  }
+
+  return (
+    <aside
+      aria-label="Selected item"
+      className="flex w-80 shrink-0 flex-col border-l bg-card/45 xl:w-96"
+    >
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Task
+        </span>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="ml-auto"
+          aria-label="Close selected item"
+          onClick={onClose}
+        >
+          <XIcon />
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div>
+          <Badge variant={task.state === "OPEN" ? "secondary" : "outline"}>
+            {task.state === "OPEN" ? "Open" : "Completed"}
+          </Badge>
+          {editing ? (
+            <div className="mt-3 flex items-center gap-1">
+              <Input
+                autoFocus
+                aria-label="Task title"
+                maxLength={500}
+                value={draft}
+                disabled={pending}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void saveTitle()
+                  if (event.key === "Escape") {
+                    setDraft(task.title)
+                    setEditing(false)
+                  }
+                }}
+              />
+              <Button
+                size="icon"
+                aria-label="Save title"
+                disabled={pending}
+                onClick={() => void saveTitle()}
+              >
+                {pending ? <Spinner /> : <CheckIcon />}
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-3 flex items-start gap-1">
+              <h2 className="min-w-0 flex-1 text-lg font-semibold tracking-[-0.015em]">
+                {task.title}
+              </h2>
+              {task.state === "OPEN" && canMutate && (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Rename task"
+                  onClick={() => {
+                    setDraft(task.title)
+                    setEditing(true)
+                  }}
+                >
+                  <PencilIcon />
+                </Button>
+              )}
+            </div>
+          )}
+          <p className="mt-1 text-sm tabular-nums text-muted-foreground">
+            {formatPhone(task.phone)} · {task.locationName}
+          </p>
+        </div>
+        {task.sourceMessage && (
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Instructions
+            </h3>
+            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">
+              {task.sourceMessage}
+            </p>
+          </section>
+        )}
+        {(task.category || task.callerName) && (
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Source context
+            </h3>
+            <p className="mt-1 text-sm">
+              {[task.callerName, task.category?.replaceAll("_", " ")]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </section>
+        )}
+        {canMutate && (
+          <div className="flex flex-col gap-2">
+            {task.state === "OPEN" && (
+              <Button
+                variant="outline"
+                disabled={taskCallPending}
+                onClick={() => onStartTaskCall(task)}
+              >
+                <PhoneCallIcon />
+                {taskCallPending ? "Preparing…" : "Call"}
+              </Button>
+            )}
+            <Button disabled={pending} onClick={() => void transition()}>
+              {pending && <Spinner />}
+              {task.state === "OPEN" ? "Complete" : "Reopen"}
+            </Button>
+          </div>
+        )}
+        {taskCallError && (
+          <p role="alert" className="text-sm text-destructive">{taskCallError}</p>
+        )}
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      </div>
+    </aside>
   )
 }
 
@@ -189,7 +772,6 @@ export function MessageWorkspace({
   onThreadRead,
   onTaskCreated,
   onTaskOpen,
-  onCallOpen,
 }: MessageWorkspaceProps) {
   const [route, setRoute] = useState(thread?.locationId ?? locationID)
 
@@ -223,9 +805,7 @@ export function MessageWorkspace({
         <div className="flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <Badge variant="outline">
-                {composingNew ? "New text" : "Engagement History"}
-              </Badge>
+              <Badge variant="outline">New text</Badge>
               <span className="text-xs font-medium text-muted-foreground">
                 {composingNew ? locationName : "Unverified phone context"}
               </span>
@@ -285,7 +865,6 @@ export function MessageWorkspace({
         onThreadRead={onThreadRead}
         onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
-        onCallOpen={onCallOpen}
       />
     </section>
   )
@@ -367,6 +946,8 @@ function MessageConversation({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
+  onTextEligibilityChanged,
+  onTextHandled,
 }: {
   thread?: MessageThreadSummary
   threadID?: string
@@ -386,7 +967,13 @@ function MessageConversation({
   onThreadRead: (threadID: string) => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
-  onCallOpen?: (callID: string) => void
+  onCallOpen?: (
+    callID: string,
+    history?: CallHistoryItem,
+    evidence?: RecoveryEvidence,
+  ) => void
+  onTextEligibilityChanged?: (threadID: string, eligible: boolean) => void
+  onTextHandled?: (threadID: string) => void
 }) {
   const timelineKind = timelineSource?.kind
   const timelineTaskID =
@@ -409,9 +996,9 @@ function MessageConversation({
   const [cursor, setCursor] = useState("")
   const [loading, setLoading] = useState(Boolean(timelineKey && !committedItem))
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const [newActivity, setNewActivity] = useState(false)
   const [findQuery, setFindQuery] = useState("")
   const [error, setError] = useState("")
+  const [handledThrough, setHandledThrough] = useState("")
   const generation = useRef(0)
   const committedMessage = useRef<
     { id: string; visibleUntil: number } | undefined
@@ -424,6 +1011,12 @@ function MessageConversation({
   const atLatest = useRef(true)
   const initialized = useRef(false)
   const onThreadReadRef = useRef(onThreadRead)
+  const conversationThread =
+    (thread?.locationId === locationID ? thread : undefined) ??
+    items.find(
+      (item) => item.message?.thread.locationId === locationID,
+    )?.message?.thread
+  const readableThreadID = conversationThread?.id ?? threadID
 
   useEffect(() => {
     onThreadReadRef.current = onThreadRead
@@ -504,7 +1097,6 @@ function MessageConversation({
         return result.data.items
       })
       setCursor(result.data.nextCursor)
-      setNewActivity(false)
       if (scroll) {
         window.requestAnimationFrame(() =>
           scroller.current?.scrollTo({
@@ -528,24 +1120,24 @@ function MessageConversation({
   }, [loadLatest, threadID])
 
   const markRead = useCallback(async () => {
-    if (!threadID) return
+    if (!readableThreadID) return
     const token = await getAccessToken()
     if (!token) return
     const result = await markMessageThreadRead({
       client: portalClient(token),
-      path: { threadId: threadID },
+      path: { threadId: readableThreadID },
       body: {
         ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
       },
     }).catch(() => undefined)
-    if (result?.response?.ok) onThreadReadRef.current(threadID)
-  }, [supportSessionID, threadID])
+    if (result?.response?.ok) onThreadReadRef.current(readableThreadID)
+  }, [readableThreadID, supportSessionID])
 
   useEffect(() => {
     if (!timelineKey) return
     const timeout = window.setTimeout(() => {
       void loadLatest(true)
-      if (threadID) void markRead()
+      void markRead()
     }, 0)
     return () => window.clearTimeout(timeout)
   }, [loadLatest, markRead, threadID, timelineKey])
@@ -554,9 +1146,7 @@ function MessageConversation({
     if (!initialized.current || !timelineKey) return
     if (atLatest.current) {
       void loadLatest(true)
-      if (threadID) void markRead()
-    } else {
-      setNewActivity(true)
+      void markRead()
     }
   }, [loadLatest, markRead, revision, threadID, timelineKey])
 
@@ -581,17 +1171,22 @@ function MessageConversation({
     })
   }
 
-  const conversationThread =
-    (thread?.locationId === locationID ? thread : undefined) ??
-    items.find(
-      (item) => item.message?.thread.locationId === locationID,
-    )?.message?.thread
   const composerThreadID =
     conversationThread?.id ??
     (timelineSource?.kind === "engagement" ? "" : threadID)
   const visibleItems = findQuery.trim()
     ? items.filter((item) => timelineItemText(item).includes(findQuery.trim().toLowerCase()))
     : items
+  const messageItems = items.filter(
+    (item): item is ConversationTimelineItem & { message: Message } =>
+      item.type === "MESSAGE" && Boolean(item.message),
+  )
+  const latestMessage = messageItems.at(-1)?.message
+  const handledEligible = Boolean(
+    latestMessage?.direction === "OUTBOUND" &&
+      latestMessage.id !== handledThrough &&
+      messageItems.some((item) => item.message.direction === "INBOUND"),
+  )
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -637,7 +1232,7 @@ function MessageConversation({
             </div>
           )}
           {!loading &&
-            visibleItems.map((item) => (
+            visibleItems.map((item, index) => (
               <TimelineEntry
                 key={`${item.type}:${item.id}`}
                 item={item}
@@ -646,7 +1241,24 @@ function MessageConversation({
                 onChanged={() => void loadLatest(true)}
                 onTaskCreated={onTaskCreated}
                 onTaskOpen={onTaskOpen}
-                onCallOpen={onCallOpen}
+                groupedWithPrevious={areConsecutiveMessages(
+                  visibleItems[index - 1],
+                  item,
+                )}
+                groupedWithNext={areConsecutiveMessages(
+                  item,
+                  visibleItems[index + 1],
+                )}
+                onCallOpen={
+                  onCallOpen
+                    ? (callID, history) =>
+                        onCallOpen(
+                          callID,
+                          history,
+                          recoveryEvidence(items, history),
+                        )
+                    : undefined
+                }
               />
             ))}
           {!loading && items.length === 0 && !composingNew && (
@@ -663,27 +1275,31 @@ function MessageConversation({
             </div>
           )}
         </div>
-        {newActivity && (
-          <div className="sticky bottom-3 flex justify-center">
-            <Button
-              size="sm"
-              className="shadow-lg"
-              onClick={() => {
-                atLatest.current = true
-                void loadLatest(true)
-                void markRead()
-              }}
-            >
-              New activity
-            </Button>
-          </div>
-        )}
       </div>
       {error && (
         <Alert variant="destructive" className="rounded-none border-x-0">
           <AlertTitle>Conversation unavailable</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+      )}
+      {handledEligible && latestMessage && (
+        <div className="flex items-center justify-end gap-3 border-t bg-muted/20 px-4 py-2">
+          <p className="text-xs text-muted-foreground">
+            The latest inbound Text has an outbound reply.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setHandledThrough(latestMessage.id)
+              const handledThreadID = latestMessage.thread.id
+              onTextEligibilityChanged?.(handledThreadID, false)
+              onTextHandled?.(handledThreadID)
+            }}
+          >
+            Looks handled — Mark complete
+          </Button>
+        </div>
       )}
       <MessageComposer
         thread={conversationThread}
@@ -726,6 +1342,9 @@ function MessageConversation({
             ...current.filter((item) => item.id !== message.id),
             messageTimelineItem(message),
           ])
+          if (items.some((item) => item.message?.direction === "INBOUND")) {
+            onTextEligibilityChanged?.(message.thread.id, true)
+          }
           onMessageSent(message)
         }}
       />
@@ -741,6 +1360,8 @@ function TimelineEntry({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
+  groupedWithPrevious,
+  groupedWithNext,
 }: {
   item: ConversationTimelineItem
   canMutate: boolean
@@ -748,7 +1369,9 @@ function TimelineEntry({
   onChanged: () => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
-  onCallOpen?: (callID: string) => void
+  onCallOpen?: (callID: string, history?: CallHistoryItem) => void
+  groupedWithPrevious: boolean
+  groupedWithNext: boolean
 }) {
   if (item.type === "MESSAGE" && item.message) {
     return (
@@ -758,29 +1381,39 @@ function TimelineEntry({
         supportSessionID={supportSessionID}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
+        groupedWithPrevious={groupedWithPrevious}
+        groupedWithNext={groupedWithNext}
       />
     )
   }
   if (item.type === "CALL" && item.call) {
+    const voicemail = item.call.outcome === "VOICEMAIL"
     return (
-      <button
-        type="button"
-        className={cn(
-          "w-full text-left",
-          onCallOpen &&
-            "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+      <article>
+        <button
+          type="button"
+          className={cn(
+            "w-full text-left",
+            onCallOpen &&
+              "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+          )}
+          disabled={!onCallOpen}
+          onClick={() => onCallOpen?.(item.call!.id, item.call!)}
+        >
+          <TimelineRule
+            icon={<PhoneCallIcon />}
+            label={`${item.call.locationName} · ${voicemail ? "Voicemail" : "Call"} · Open detail`}
+            occurredAt={item.occurredAt}
+            title={item.call.transferReason || (voicemail ? "Voicemail" : "Call")}
+            detail={`${item.call.outcome.replaceAll("_", " ")} · ${formatDuration(item.call.durationSeconds)}`}
+          />
+        </button>
+        {voicemail && (
+          <div className="ml-12 mt-2">
+            <VoicemailPlayer callID={item.call.id} compact />
+          </div>
         )}
-        disabled={!onCallOpen}
-        onClick={() => onCallOpen?.(item.call!.id)}
-      >
-        <TimelineRule
-          icon={<PhoneCallIcon />}
-          label={`${item.call.locationName} · Call · Open detail`}
-          occurredAt={item.occurredAt}
-          title={item.call.transferReason || "Inbound call"}
-          detail={`${item.call.outcome.replaceAll("_", " ")} · ${formatDuration(item.call.durationSeconds)}`}
-        />
-      </button>
+      </article>
     )
   }
   if (item.type === "TASK" && item.task) {
@@ -801,12 +1434,59 @@ function TimelineEntry({
           label={`${task.locationName} · Task · ${taskActivityLabel(item.taskActivity, task.state)}`}
           occurredAt={item.occurredAt}
           title={task.title}
-          detail={`Created by ${task.createdBy.email || task.createdBy.subject}`}
+          detail={`${task.state === "OPEN" ? "Open Task" : "Completed Task"} · ${formatPhone(task.phone)}`}
         />
       </button>
     )
   }
   return null
+}
+
+function recoveryEvidence(
+  items: ConversationTimelineItem[],
+  call?: CallHistoryItem,
+): RecoveryEvidence | undefined {
+  if (!call || (call.outcome !== "MISSED" && call.outcome !== "VOICEMAIL")) {
+    return undefined
+  }
+  const callStartedAt = new Date(call.startedAt).getTime()
+  const recoveryTask = items.find(
+    (item) =>
+      item.type === "TASK" &&
+      item.task?.state === "OPEN" &&
+      (item.task.callId === call.id ||
+        item.task.interactions.some(
+          (interaction) => interaction.callId === call.id,
+        )),
+  )?.task
+  return {
+    outboundTextAfter: items.some(
+      (item) =>
+        item.type === "MESSAGE" &&
+        item.message?.direction === "OUTBOUND" &&
+        new Date(item.occurredAt).getTime() > callStartedAt,
+    ),
+    laterOutboundCallIDs: items.flatMap((item) =>
+      item.type === "CALL" &&
+      item.call?.direction === "OUTBOUND" &&
+      new Date(item.occurredAt).getTime() > callStartedAt
+        ? [item.call.id]
+        : [],
+    ),
+    ...(recoveryTask ? { recoveryTask } : {}),
+  }
+}
+
+function areConsecutiveMessages(
+  left?: ConversationTimelineItem,
+  right?: ConversationTimelineItem,
+) {
+  return Boolean(
+    left?.type === "MESSAGE" &&
+      right?.type === "MESSAGE" &&
+      left.message?.direction === right.message?.direction &&
+      left.message?.thread.locationId === right.message?.thread.locationId,
+  )
 }
 
 function messageTimelineItem(message: Message): ConversationTimelineItem {
@@ -824,12 +1504,16 @@ function MessageEntry({
   supportSessionID,
   onChanged,
   onTaskCreated,
+  groupedWithPrevious,
+  groupedWithNext,
 }: {
   message: Message
   canMutate: boolean
   supportSessionID: string
   onChanged: () => void
   onTaskCreated: (task: Task) => void
+  groupedWithPrevious: boolean
+  groupedWithNext: boolean
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
@@ -900,6 +1584,7 @@ function MessageEntry({
     <article
       className={cn(
         "flex w-full",
+        groupedWithPrevious && "-mt-2",
         outbound ? "justify-end pl-10" : "justify-start pr-10",
       )}
     >
@@ -907,8 +1592,16 @@ function MessageEntry({
         className={cn(
           "max-w-[34rem] border px-3 py-2.5 shadow-xs",
           outbound
-            ? "rounded-l-md rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-r-md rounded-bl-md bg-background",
+            ? cn(
+                "rounded-l-md rounded-br-md bg-primary text-primary-foreground",
+                groupedWithPrevious && "rounded-tr-none",
+                groupedWithNext && "rounded-br-none",
+              )
+            : cn(
+                "rounded-r-md rounded-bl-md bg-background",
+                groupedWithPrevious && "rounded-tl-none",
+                groupedWithNext && "rounded-bl-none",
+              ),
         )}
       >
         {message.body && (
@@ -925,30 +1618,32 @@ function MessageEntry({
             inverse={outbound}
           />
         )}
-        <div
-          className={cn(
-            "mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums",
-            outbound ? "text-primary-foreground/75" : "text-muted-foreground",
-          )}
-        >
-          <time dateTime={message.createdAt}>
-            {formatDateTime(message.createdAt)}
-          </time>
-          <span aria-hidden="true">·</span>
-          <span>{message.thread.locationName}</span>
-          {outbound && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{message.delivery}</span>
-            </>
-          )}
-          {message.safeFailureCode && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{message.safeFailureCode}</span>
-            </>
-          )}
-        </div>
+        {!groupedWithNext && (
+          <div
+            className={cn(
+              "mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums",
+              outbound ? "text-primary-foreground/75" : "text-muted-foreground",
+            )}
+          >
+            <time dateTime={message.createdAt}>
+              {formatDateTime(message.createdAt)}
+            </time>
+            <span aria-hidden="true">·</span>
+            <span>{message.thread.locationName}</span>
+            {outbound && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{message.delivery}</span>
+              </>
+            )}
+            {message.safeFailureCode && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{message.safeFailureCode}</span>
+              </>
+            )}
+          </div>
+        )}
         {canMutate && (
           <div
             className={cn(
@@ -1505,6 +2200,10 @@ function formatDateTime(value: string) {
 function formatDuration(seconds: number) {
   if (seconds < 60) return `${seconds}s`
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+function callStateLabel(state: CallingCall["state"]) {
+  return state.toLowerCase().replaceAll("_", " ")
 }
 
 function formatBytes(bytes: number) {

@@ -1,16 +1,17 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
-  BotIcon,
-  CheckCircle2Icon,
-  ListTodoIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  Clock3Icon,
   LogOutIcon,
   MessageSquareIcon,
   MoonIcon,
+  PhoneMissedIcon,
   PlusIcon,
   SearchIcon,
   SunIcon,
@@ -19,16 +20,13 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/components/ui/input-group"
-import { Kbd } from "@/components/ui/kbd"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -42,17 +40,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { CallingOutboundNavigation } from "@/components/workspace/calling-dock"
 import type {
   AccessDiscovery,
-  MessageThreadSummary,
   EngagementSummary,
+  MessageThreadSummary,
   PracticeAccess,
   Task,
 } from "@/lib/api/generated/types.gen"
@@ -60,100 +51,119 @@ import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
 export type ConnectionState = "connecting" | "connected" | "degraded"
-export type RailMode = "tasks" | "messages"
 
 type TaskRailProps = {
   discovery: AccessDiscovery
   practice: PracticeAccess
-  locationScopeID: string
   tasks: Task[]
   messages: MessageThreadSummary[]
   engagements: EngagementSummary[]
-  mode: RailMode
+  recent: EngagementSummary[]
+  pendingHandledTextThreadIDs: string[]
   selectedTaskID: string
   selectedThreadID: string
   search: string
-  taskState: "OPEN" | "COMPLETED"
-  ordering: "recent" | "priority"
-  unreadOnly: boolean
   engagementLoading: boolean
   loading: boolean
   messageLoading: boolean
-  nextCursor: string
-  messageNextCursor: string
   connection: ConnectionState
-  onModeChange: (mode: RailMode) => void
   onSearchChange: (search: string) => void
-  onTaskStateChange: (state: "OPEN" | "COMPLETED") => void
-  onOrderingChange: (ordering: "recent" | "priority") => void
-  onUnreadOnlyChange: (unreadOnly: boolean) => void
   onSearchSubmit: () => void
   onEngagementSelect: (engagement: EngagementSummary) => void
   onTaskSelect: (task: Task) => void
   onThreadSelect: (thread: MessageThreadSummary) => void
   onNewText: () => void
-  onLoadMore: () => void
-  onMessageLoadMore: () => void
 }
+
+type AttentionSection = "tasks" | "calls" | "texts" | "recent"
 
 export function TaskRail({
   discovery,
-  practice,
-  locationScopeID,
   tasks,
   messages,
   engagements,
-  mode,
+  recent,
+  pendingHandledTextThreadIDs,
+  practice,
   selectedTaskID,
   selectedThreadID,
   search,
-  taskState,
-  ordering,
-  unreadOnly,
   engagementLoading,
   loading,
   messageLoading,
-  nextCursor,
-  messageNextCursor,
   connection,
-  onModeChange,
   onSearchChange,
-  onTaskStateChange,
-  onOrderingChange,
-  onUnreadOnlyChange,
   onSearchSubmit,
   onEngagementSelect,
   onTaskSelect,
   onThreadSelect,
   onNewText,
-  onLoadMore,
-  onMessageLoadMore,
 }: TaskRailProps) {
-  const showOffice = practice.locations.length > 1 && !locationScopeID
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const [expandedTaskState, setExpandedTaskState] = useState<
-    "OPEN" | "COMPLETED" | ""
-  >("")
+  const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [expanded, setExpanded] = useState<Record<AttentionSection, boolean>>(
+    () =>
+      readSidebarState(stateKey)?.expanded ?? {
+        tasks: true,
+        calls: true,
+        texts: true,
+        recent: false,
+      },
+  )
+  const scrollContainer = useRef<HTMLDivElement | null>(null)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
-  const searching = Boolean(search.trim())
-  const visibleMessages = unreadOnly
-    ? messages.filter(
-        (thread) => thread.unread || thread.id === selectedThreadID,
-      )
-    : messages
+  const openTasks = tasks.filter((task) => task.state === "OPEN")
+  const recoveryRows = useMemo(() => aggregateRecovery(openTasks), [openTasks])
+  const textRows = messages
+    .filter(
+      (thread) =>
+        thread.latestDirection === "INBOUND" ||
+        thread.unread ||
+        pendingHandledTextThreadIDs.includes(thread.id),
+    )
+    .sort(
+      (left, right) =>
+        left.latestActivity.localeCompare(right.latestActivity) ||
+        right.updatedAt.localeCompare(left.updatedAt),
+    )
 
   useEffect(() => {
-    const focusSearch = (event: KeyboardEvent) => {
+    const restored = readSidebarState(stateKey)
+    window.requestAnimationFrame(() => {
+      scrollContainer.current?.scrollTo({ top: restored?.scrollTop ?? 0 })
+    })
+  }, [stateKey])
+
+  useEffect(() => {
+    writeSidebarState(stateKey, {
+      expanded,
+      scrollTop: scrollContainer.current?.scrollTop ?? 0,
+    })
+  }, [expanded, stateKey])
+
+  useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") {
         return
       }
       event.preventDefault()
-      searchInputRef.current?.focus()
+      setSearchOpen(true)
     }
-    window.addEventListener("keydown", focusSearch)
-    return () => window.removeEventListener("keydown", focusSearch)
+    window.addEventListener("keydown", openSearch)
+    return () => window.removeEventListener("keydown", openSearch)
   }, [])
+
+  function toggle(section: AttentionSection) {
+    setExpanded((current) => ({ ...current, [section]: !current[section] }))
+  }
+
+  function rememberScroll() {
+    writeSidebarState(stateKey, {
+      expanded,
+      scrollTop: scrollContainer.current?.scrollTop ?? 0,
+    })
+  }
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -172,192 +182,92 @@ export function TaskRail({
           </p>
           <ConnectionMark state={connection} />
         </div>
-        <InputGroup>
-          <InputGroupInput
-            ref={searchInputRef}
-            aria-label={mode === "tasks" ? "Search tasks" : "Search messages"}
-            autoComplete="off"
-            inputMode="tel"
-            placeholder="Search phone number"
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault()
-                onSearchSubmit()
-              }
-            }}
-          />
-          <InputGroupAddon>
+        <div className="grid grid-cols-[1fr_auto] gap-1.5">
+          <Button
+            variant="outline"
+            className="justify-start text-muted-foreground"
+            onClick={() => setSearchOpen(true)}
+          >
             <SearchIcon />
-          </InputGroupAddon>
-          <InputGroupAddon align="inline-end">
-            <Kbd>⌘K</Kbd>
-          </InputGroupAddon>
-        </InputGroup>
-        <SidebarMenu aria-label="Workspace">
-          <SidebarMenuItem
-            className={cn(
-              "flex items-center rounded-[calc(var(--radius-sm)+2px)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-              mode === "tasks" &&
-                "bg-sidebar-accent text-sidebar-accent-foreground",
-            )}
+            Search numbers
+            <span className="ml-auto text-[0.6875rem]">⌘K</span>
+          </Button>
+          <Button
+            aria-label="New message"
+            size="icon"
+            variant="outline"
+            onClick={onNewText}
           >
-            <SidebarMenuButton
-              isActive={mode === "tasks"}
-              className="w-auto! min-w-0 flex-1 hover:bg-transparent! data-active:bg-transparent!"
-              onClick={() => onModeChange("tasks")}
-            >
-              <ListTodoIcon />
-              <span>Tasks</span>
-            </SidebarMenuButton>
-            {mode === "tasks" && (
-              <div className="mr-2 flex shrink-0 items-center gap-2">
-                <span className="text-xs font-medium">
-                  {ordering === "priority" ? "Priority" : "Recent"}
-                </span>
-                <Switch
-                  aria-label="Urgency"
-                  size="sm"
-                  checked={ordering === "priority"}
-                  onCheckedChange={(checked) =>
-                    onOrderingChange(checked ? "priority" : "recent")
-                  }
-                />
-              </div>
-            )}
-          </SidebarMenuItem>
-          <SidebarMenuItem
-            className={cn(
-              "flex items-center rounded-[calc(var(--radius-sm)+2px)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-              mode === "messages" &&
-                "bg-sidebar-accent text-sidebar-accent-foreground",
-            )}
-          >
-            <SidebarMenuButton
-              isActive={mode === "messages"}
-              className="w-auto! min-w-0 flex-1 hover:bg-transparent! data-active:bg-transparent!"
-              onClick={() => onModeChange("messages")}
-            >
-              <MessageSquareIcon />
-              <span>Messages</span>
-            </SidebarMenuButton>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="New message"
-                    size="icon-sm"
-                    variant="ghost"
-                    className="mr-1 min-h-0! opacity-100 transition-opacity motion-reduce:transition-none md:opacity-0 md:group-hover/menu-item:opacity-100 md:group-focus-within/menu-item:opacity-100"
-                    onClick={() => {
-                      if (mode !== "messages") onModeChange("messages")
-                      onNewText()
-                    }}
-                  >
-                    <PlusIcon />
-                  </Button>
-                }
-              />
-              <TooltipContent role="tooltip" side="right">
-                New message
-              </TooltipContent>
-            </Tooltip>
-            {mode === "messages" && (
-              <div className="mr-2 flex shrink-0 items-center gap-2">
-                <span className="text-xs font-medium">Unread</span>
-                <Switch
-                  aria-label="Unread only"
-                  size="sm"
-                  checked={unreadOnly}
-                  onCheckedChange={onUnreadOnlyChange}
-                />
-              </div>
-            )}
-          </SidebarMenuItem>
-          <CallingOutboundNavigation />
-        </SidebarMenu>
+            <PlusIcon />
+          </Button>
+        </div>
       </SidebarHeader>
       <Separator />
-      <SidebarContent className="gap-0">
-        {searching ? (
-          <>
-            <EngagementGroup
-              engagements={engagements}
-              onEngagementSelect={onEngagementSelect}
+      <SidebarContent
+        ref={scrollContainer}
+        className="gap-0 overflow-y-auto"
+        onScroll={rememberScroll}
+      >
+        <AttentionGroup
+          title="Tasks"
+          count={openTasks.length}
+          expanded={expanded.tasks}
+          onToggle={() => toggle("tasks")}
+        >
+          {openTasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              active={task.id === selectedTaskID}
+              onSelect={() => onTaskSelect(task)}
             />
-            {engagementLoading && <RailLoading label="Searching phones" />}
-            {!engagementLoading && engagements.length === 0 && (
-              <RailEmpty>No exact phone match</RailEmpty>
-            )}
-          </>
-        ) : mode === "tasks" ? (
-          <>
-            <div className="grid grid-cols-2 border-b p-2">
-              {(["OPEN", "COMPLETED"] as const).map((state) => (
-                <Button
-                  key={state}
-                  size="sm"
-                  variant={taskState === state ? "secondary" : "ghost"}
-                  aria-expanded={
-                    taskState === state && expandedTaskState === state
-                  }
-                  onClick={() => {
-                    if (taskState === state) {
-                      setExpandedTaskState((current) =>
-                        current === state ? "" : state,
-                      )
-                      return
-                    }
-                    onTaskStateChange(state)
-                    setExpandedTaskState(state)
-                  }}
-                >
-                  {state === "OPEN" ? "Open" : "Completed"}
-                </Button>
-              ))}
-            </div>
-            <TaskGroup
-              tasks={tasks}
-              expanded={expandedTaskState === taskState}
-              selectedTaskID={selectedTaskID}
-              showOffice={showOffice}
-              onTaskSelect={onTaskSelect}
+          ))}
+          {loading && openTasks.length === 0 && <RailLoading />}
+        </AttentionGroup>
+        <AttentionGroup
+          title="Missed Calls & Voicemails"
+          count={recoveryRows.length}
+          expanded={expanded.calls}
+          onToggle={() => toggle("calls")}
+        >
+          {recoveryRows.map((row) => (
+            <RecoveryRow
+              key={row.phone}
+              row={row}
+              active={false}
+              onSelect={() => onEngagementSelect(recoveryEngagement(row))}
             />
-            {loading && tasks.length === 0 && <RailLoading label="Loading tasks" />}
-            {!loading && tasks.length === 0 && (
-              <RailEmpty>No follow-up tasks</RailEmpty>
-            )}
-            {expandedTaskState === taskState && (
-              <RailLoadSentinel
-                label="Loading more tasks"
-                cursor={nextCursor}
-                loading={loading}
-                onLoadMore={onLoadMore}
-              />
-            )}
-          </>
-        ) : (
-          <>
-            <MessageThreadGroup
-              threads={visibleMessages}
-              selectedThreadID={selectedThreadID}
-              onThreadSelect={onThreadSelect}
+          ))}
+        </AttentionGroup>
+        <AttentionGroup
+          title="Texts"
+          count={textRows.length}
+          expanded={expanded.texts}
+          onToggle={() => toggle("texts")}
+        >
+          {textRows.map((thread) => (
+            <TextRow
+              key={thread.id}
+              thread={thread}
+              active={thread.id === selectedThreadID}
+              onSelect={() => onThreadSelect(thread)}
             />
-            {messageLoading && visibleMessages.length === 0 && <RailLoading label="Loading messages" />}
-            {!messageLoading && visibleMessages.length === 0 && (
-              <RailEmpty>
-                {unreadOnly ? "No unread conversations" : "No conversations at this office"}
-              </RailEmpty>
-            )}
-            <RailLoadSentinel
-              label="Loading more conversations"
-              cursor={messageNextCursor}
-              loading={messageLoading}
-              onLoadMore={onMessageLoadMore}
+          ))}
+          {messageLoading && textRows.length === 0 && <RailLoading />}
+        </AttentionGroup>
+        <AttentionGroup
+          title="Recent"
+          expanded={expanded.recent}
+          onToggle={() => toggle("recent")}
+        >
+          {recent.map((engagement) => (
+            <RecentRow
+              key={engagement.phone}
+              engagement={engagement}
+              onSelect={() => onEngagementSelect(engagement)}
             />
-          </>
-        )}
+          ))}
+        </AttentionGroup>
       </SidebarContent>
       <Separator />
       <SidebarFooter className="p-2">
@@ -390,302 +300,336 @@ export function TaskRail({
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
+      <Dialog
+        open={searchOpen}
+        onOpenChange={(open) => {
+          setSearchOpen(open)
+          if (!open) onSearchChange("")
+        }}
+      >
+        <DialogContent className="top-[18%] translate-y-0 sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Find a number inbox</DialogTitle>
+            <DialogDescription>
+              Search exact authorized communication history by phone number.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              onSearchSubmit()
+            }}
+          >
+            <Input
+              autoFocus
+              aria-label="Search phone histories"
+              inputMode="tel"
+              placeholder="(727) 555-0100"
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+            />
+          </form>
+          <div className="max-h-72 overflow-y-auto border-t pt-2">
+            {engagementLoading && <RailLoading />}
+            {!engagementLoading && search.trim() && engagements.length === 0 && (
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                No authorized recorded activity for that number.
+              </p>
+            )}
+            {search.trim() && engagements.map((engagement) => (
+              <Button
+                key={engagement.phone}
+                variant="ghost"
+                className="h-auto w-full justify-start px-2 py-2.5"
+                onClick={() => {
+                  onEngagementSelect(engagement)
+                  setSearchOpen(false)
+                }}
+              >
+                <span className="flex min-w-0 flex-1 flex-col items-start">
+                  <span className="font-medium tabular-nums">
+                    {formatPhone(engagement.phone)}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {engagement.locations.map((location) => location.name).join(" · ")}
+                  </span>
+                </span>
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Sidebar>
   )
 }
 
-function TaskGroup({
-  tasks,
+function AttentionGroup({
+  title,
+  count,
   expanded,
-  selectedTaskID,
-  showOffice,
-  onTaskSelect,
+  onToggle,
+  children,
 }: {
-  tasks: Task[]
+  title: string
+  count?: number
   expanded: boolean
-  selectedTaskID: string
-  showOffice: boolean
-  onTaskSelect: (task: Task) => void
+  onToggle: () => void
+  children: React.ReactNode
 }) {
-  if (tasks.length === 0) return null
   return (
-    <SidebarGroup className="p-0">
+    <SidebarGroup className="border-b p-0">
+      <Button
+        variant="ghost"
+        className="h-9 w-full justify-start rounded-none px-3 text-xs font-semibold"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        <span>{title}</span>
+        {count !== undefined && (
+          <span className="ml-auto tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        )}
+      </Button>
       <SidebarGroupContent hidden={!expanded}>
-        <SidebarMenu className="gap-0">
-          {tasks.map((task) => (
-            <SidebarMenuItem key={task.id}>
-              <SidebarMenuButton
-                isActive={task.id === selectedTaskID}
-                className={cn(
-                  "h-auto min-h-16 animate-in rounded-none border-b border-sidebar-border px-3 py-2.5 fade-in slide-in-from-top-1 duration-200",
-                  "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
-                )}
-                tooltip={task.title}
-                onClick={() => onTaskSelect(task)}
-              >
-                <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="flex min-w-0 items-center gap-2">
-                    {task.unread && task.state === "OPEN" && (
-                      <span
-                        aria-label="Unread conversation"
-                        className="size-1.5 shrink-0 rounded-full bg-warning"
-                      />
-                    )}
-                    {task.state === "COMPLETED" && (
-                      <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
-                    )}
-                    <span className="truncate text-sm font-medium">
-                      {task.title}
-                    </span>
-                    {task.origin === "ABITA_AI" && (
-                      <Badge
-                        variant="outline"
-                        className="h-4 gap-1 px-1 text-[0.6875rem]"
-                      >
-                        <BotIcon className="size-2.5" aria-hidden="true" />
-                        AI
-                      </Badge>
-                    )}
-                    {(task.origin === "VOICEMAIL_RECOVERY" ||
-                      task.origin === "MISSED_CALL_RECOVERY") &&
-                      task.relatedInteractionCount > 0 && (
-                        <span className="ml-auto shrink-0 text-xs font-normal text-muted-foreground">
-                          {task.relatedInteractionCount} related
-                        </span>
-                      )}
-                  </span>
-                  <span className="flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
-                    <span>{formatPhone(task.phone)}</span>
-                    {task.category && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="capitalize">{task.category}</span>
-                      </>
-                    )}
-                    {task.origin === "ABITA_AI" && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span
-                          className={cn(
-                            task.urgency === "high_priority" &&
-                              "text-destructive",
-                          )}
-                        >
-                          {railUrgency(task.urgency)}
-                        </span>
-                      </>
-                    )}
-                    <span aria-hidden="true">·</span>
-                    <time dateTime={taskRelativeAt(task)}>
-                      {relativeTime(taskRelativeAt(task))}
-                    </time>
-                    {showOffice && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="truncate">
-                          {task.locationName}
-                        </span>
-                      </>
-                    )}
-                  </span>
-                </span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
+        <SidebarMenu className="gap-0">{children}</SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
   )
 }
 
-function EngagementGroup({
-  engagements,
-  onEngagementSelect,
+function TaskRow({
+  task,
+  active,
+  onSelect,
 }: {
-  engagements: EngagementSummary[]
-  onEngagementSelect: (engagement: EngagementSummary) => void
+  task: Task
+  active: boolean
+  onSelect: () => void
 }) {
-  if (engagements.length === 0) return null
   return (
-    <SidebarGroup className="p-0">
-      <SidebarGroupContent>
-        <SidebarMenu className="gap-0">
-          {engagements.map((engagement) => (
-            <SidebarMenuItem key={engagement.phone}>
-              <SidebarMenuButton
-                className="h-auto min-h-20 rounded-none border-b border-sidebar-border px-3 py-2.5"
-                tooltip={engagement.phone}
-                onClick={() => onEngagementSelect(engagement)}
-              >
-                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  <span className="flex items-center gap-2">
-                    {engagement.unread && (
-                      <span
-                        aria-label="Unread activity"
-                        className="size-1.5 rounded-full bg-warning"
-                      />
-                    )}
-                    <span className="truncate font-medium tabular-nums">
-                      {formatPhone(engagement.phone)}
-                    </span>
-                    <time
-                      dateTime={engagement.latestActivity}
-                      className="ml-auto text-xs tabular-nums text-muted-foreground"
-                    >
-                      {relativeTime(engagement.latestActivity)}
-                    </time>
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {engagement.displayName || "No sourced name"}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {engagement.locations.map((location) => location.name).join(" · ")}
-                    {engagement.openTaskCount > 0
-                      ? ` · ${engagement.openTaskCount} open ${engagement.openTaskCount === 1 ? "Task" : "Tasks"}`
-                      : ""}
-                  </span>
-                </span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={active}
+        className="h-auto min-h-14 rounded-none border-t px-3 py-2"
+        tooltip={task.title}
+        onClick={onSelect}
+      >
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center gap-2">
+            {task.unread && (
+              <span aria-label="Unread conversation" className="size-1.5 rounded-full bg-warning" />
+            )}
+            <span className="truncate text-sm font-medium">{task.title}</span>
+            {task.urgency === "high_priority" && (
+              <Badge variant="destructive" className="ml-auto h-4 px-1 text-[0.625rem]">
+                Urgent
+              </Badge>
+            )}
+          </span>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {formatPhone(task.phone)}
+          </span>
+        </span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   )
 }
 
-function MessageThreadGroup({
-  threads,
-  selectedThreadID,
-  onThreadSelect,
+type RecoveryRowValue = {
+  phone: string
+  tasks: Task[]
+  voicemailCount: number
+  missedCount: number
+  oldestAt: string
+  latestAt: string
+}
+
+function RecoveryRow({
+  row,
+  active,
+  onSelect,
 }: {
-  threads: MessageThreadSummary[]
-  selectedThreadID: string
-  onThreadSelect: (thread: MessageThreadSummary) => void
+  row: RecoveryRowValue
+  active: boolean
+  onSelect: () => void
 }) {
-  if (threads.length === 0) return null
   return (
-    <SidebarGroup className="p-0">
-      <SidebarGroupContent>
-        <SidebarMenu className="gap-0">
-          {threads.map((thread) => (
-            <SidebarMenuItem key={thread.id}>
-              <SidebarMenuButton
-                isActive={thread.id === selectedThreadID}
-                className={cn(
-                  "h-auto min-h-20 animate-in rounded-none border-b border-sidebar-border px-3 py-2.5 fade-in slide-in-from-top-1 duration-200",
-                  "transition-colors motion-reduce:animate-none motion-reduce:transition-none",
-                )}
-                tooltip={thread.externalPhone}
-                onClick={() => onThreadSelect(thread)}
-              >
-                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  <span className="flex min-w-0 items-center gap-2">
-                    {thread.unread && (
-                      <span
-                        aria-label="Unread message"
-                        className="size-1.5 shrink-0 rounded-full bg-warning"
-                      />
-                    )}
-                    <MessageSquareIcon
-                      className="size-4 shrink-0 stroke-[1.75] text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium tabular-nums">
-                      {formatPhone(thread.externalPhone)}
-                    </span>
-                    <time
-                      dateTime={thread.latestActivity}
-                      className="text-xs tabular-nums text-muted-foreground"
-                    >
-                      {relativeTime(thread.latestActivity)}
-                    </time>
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {thread.displayName
-                      ? `${thread.displayName} · ${formatNameSource(thread.nameSource)}`
-                      : "No sourced name"}
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
-                    <span>
-                      {thread.latestDirection === "OUTBOUND"
-                        ? "Outbound"
-                        : "Inbound"}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="truncate">
-                      {thread.preview || "Attachment"}
-                    </span>
-                    {thread.latestDirection === "OUTBOUND" && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span>{thread.latestDelivery}</span>
-                      </>
-                    )}
-                  </span>
-                </span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={active}
+        className="h-auto min-h-14 rounded-none border-t px-3 py-2"
+        tooltip={row.phone}
+        onClick={onSelect}
+      >
+        <PhoneMissedIcon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-sm font-medium tabular-nums">
+            {formatPhone(row.phone)}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {row.missedCount > 0 ? `${row.missedCount} missed` : ""}
+            {row.missedCount > 0 && row.voicemailCount > 0 ? " · " : ""}
+            {row.voicemailCount > 0 ? `${row.voicemailCount} voicemail` : ""}
+          </span>
+        </span>
+        <time className="text-xs tabular-nums text-muted-foreground" dateTime={row.oldestAt}>
+          {relativeTime(row.oldestAt)}
+        </time>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   )
 }
 
-function RailLoading({ label }: { label: string }) {
+function TextRow({
+  thread,
+  active,
+  onSelect,
+}: {
+  thread: MessageThreadSummary
+  active: boolean
+  onSelect: () => void
+}) {
   return (
-    <div className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={active}
+        className="h-auto min-h-16 rounded-none border-t px-3 py-2"
+        tooltip={thread.externalPhone}
+        onClick={onSelect}
+      >
+        <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center gap-2">
+            {thread.unread && (
+              <span aria-label="Unread message" className="size-1.5 rounded-full bg-warning" />
+            )}
+            <span className="truncate text-sm font-medium tabular-nums">
+              {formatPhone(thread.externalPhone)}
+            </span>
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {thread.preview || "Attachment"}
+          </span>
+        </span>
+        <time className="text-xs tabular-nums text-muted-foreground" dateTime={thread.latestActivity}>
+          {relativeTime(thread.latestActivity)}
+        </time>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
+function RecentRow({
+  engagement,
+  onSelect,
+}: {
+  engagement: EngagementSummary
+  onSelect: () => void
+}) {
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        className="h-auto min-h-12 rounded-none border-t px-3 py-2"
+        tooltip={engagement.phone}
+        onClick={onSelect}
+      >
+        <Clock3Icon className="size-4 text-muted-foreground" />
+        <span className="truncate tabular-nums">{formatPhone(engagement.phone)}</span>
+        <time className="ml-auto text-xs text-muted-foreground" dateTime={engagement.latestActivity}>
+          {relativeTime(engagement.latestActivity)}
+        </time>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
+function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
+  const rows = new Map<string, RecoveryRowValue>()
+  for (const task of tasks) {
+    if (
+      task.origin !== "MISSED_CALL_RECOVERY" &&
+      task.origin !== "VOICEMAIL_RECOVERY"
+    ) {
+      continue
+    }
+    const existing = rows.get(task.phone) ?? {
+      phone: task.phone,
+      tasks: [],
+      voicemailCount: 0,
+      missedCount: 0,
+      oldestAt: task.createdAt,
+      latestAt: task.updatedAt,
+    }
+    existing.tasks.push(task)
+    const voicemailCount = task.interactions.filter(
+      (interaction) => interaction.type === "VOICEMAIL",
+    ).length
+    const missedCount = task.interactions.filter(
+      (interaction) => interaction.type === "CALL",
+    ).length
+    existing.voicemailCount +=
+      voicemailCount || (task.origin === "VOICEMAIL_RECOVERY" ? 1 : 0)
+    existing.missedCount +=
+      missedCount || (task.origin === "MISSED_CALL_RECOVERY" ? 1 : 0)
+    if (task.createdAt < existing.oldestAt) existing.oldestAt = task.createdAt
+    if (task.updatedAt > existing.latestAt) existing.latestAt = task.updatedAt
+    rows.set(task.phone, existing)
+  }
+  return [...rows.values()].sort(
+    (left, right) =>
+      left.oldestAt.localeCompare(right.oldestAt) ||
+      right.latestAt.localeCompare(left.latestAt),
+  )
+}
+
+function recoveryEngagement(row: RecoveryRowValue): EngagementSummary {
+  const locations = new Map<string, { id: string; name: string }>()
+  for (const task of row.tasks) {
+    locations.set(task.locationId, {
+      id: task.locationId,
+      name: task.locationName,
+    })
+  }
+  const callerName = row.tasks.find((task) => task.callerName)?.callerName
+  return {
+    phone: row.phone,
+    ...(callerName ? { displayName: callerName } : {}),
+    locations: [...locations.values()],
+    latestActivity: row.latestAt,
+    openTaskCount: row.tasks.length,
+    unread: row.tasks.some((task) => task.unread),
+  }
+}
+
+type SidebarState = {
+  expanded: Record<AttentionSection, boolean>
+  scrollTop: number
+}
+
+function sidebarStateKey(userSubject: string, practiceID: string) {
+  return `acuity.attentionSidebar.${userSubject}.${practiceID}`
+}
+
+function readSidebarState(key: string): SidebarState | undefined {
+  try {
+    const value = window.localStorage.getItem(key)
+    return value ? (JSON.parse(value) as SidebarState) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function writeSidebarState(key: string, value: SidebarState) {
+  window.localStorage.setItem(key, JSON.stringify(value))
+}
+
+function RailLoading() {
+  return (
+    <div className="flex items-center justify-center gap-2 border-t px-3 py-3 text-xs text-muted-foreground">
       <Spinner />
-      {label}
-    </div>
-  )
-}
-
-function RailEmpty({ children }: { children: string }) {
-  return (
-    <Empty className="min-h-32">
-      <EmptyHeader>
-        <EmptyTitle>{children}</EmptyTitle>
-      </EmptyHeader>
-    </Empty>
-  )
-}
-
-function RailLoadSentinel({
-  label,
-  cursor,
-  loading,
-  onLoadMore,
-}: {
-  label: string
-  cursor: string
-  loading: boolean
-  onLoadMore: () => void
-}) {
-  const sentinel = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const element = sentinel.current
-    if (!element || !cursor || loading) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) onLoadMore()
-      },
-      { rootMargin: "160px 0px" },
-    )
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [cursor, loading, onLoadMore])
-
-  if (!cursor) return null
-  return (
-    <div
-      ref={sentinel}
-      aria-label={label}
-      className="flex h-8 items-center justify-center text-muted-foreground"
-    >
-      {loading && <Spinner />}
+      Loading
     </div>
   )
 }
@@ -707,11 +651,7 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
         state === "degraded" && "border-destructive/30 text-destructive",
       )}
     >
-      {state === "connected"
-        ? "Live"
-        : state === "connecting"
-          ? "Sync"
-          : "Updates delayed"}
+      {state === "connected" ? "Live" : state === "connecting" ? "Sync" : "Delayed"}
     </Badge>
   )
 }
@@ -723,29 +663,11 @@ function relativeTime(value: string) {
   if (minutes < 60) return `${minutes}m`
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h`
-  const days = Math.floor(hours / 24)
-  return `${days}d`
-}
-
-function taskRelativeAt(task: Task) {
-  return task.state === "OPEN"
-    ? task.createdAt
-    : (task.completedAt ?? task.updatedAt)
+  return `${Math.floor(hours / 24)}d`
 }
 
 function formatPhone(phone: string) {
   const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
   if (!match) return phone
   return `(${match[1]}) ${match[2]}-${match[3]}`
-}
-
-function formatNameSource(source: string | undefined) {
-  if (!source) return "source unavailable"
-  return source.replaceAll("_", " ").toLowerCase()
-}
-
-function railUrgency(urgency: Task["urgency"]) {
-  if (urgency === "high_priority") return "High"
-  if (urgency === "non_urgent") return "Non-urgent"
-  return "Normal"
 }

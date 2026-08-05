@@ -336,7 +336,7 @@ export const getCallingVoicemailPlayback = <ThrowOnError extends boolean = false
 });
 
 /**
- * Resolve one authorized exact-phone Engagement across Practice Locations.
+ * Resolve one exact-phone Engagement or recent authorized Engagements across Practice Locations.
  */
 export const queryEngagements = <ThrowOnError extends boolean = false>(options: Options<QueryEngagementsData, ThrowOnError>) => (options.client ?? client).post<QueryEngagementsResponses, QueryEngagementsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

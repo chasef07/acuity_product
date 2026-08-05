@@ -30,19 +30,29 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     "Fixture Messaging Staff",
   )
 
-  await page.getByRole("button", { name: "Messages", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
   ).toContainText("Abita Eye Group · Fixture Location 1")
-  const messages = page.getByRole("button", { name: "Messages", exact: true })
+  await expect(
+    page.getByRole("button", { name: /^Tasks \d+$/ }),
+  ).toHaveAttribute("aria-expanded", "true")
+  await expect(
+    page.getByRole("button", {
+      name: /^Missed Calls & Voicemails \d+$/,
+    }),
+  ).toHaveAttribute("aria-expanded", "true")
+  await expect(
+    page.getByRole("button", { name: /^Texts \d+$/ }),
+  ).toHaveAttribute("aria-expanded", "true")
+  await expect(
+    page.getByRole("button", { name: "Recent", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false")
+  await expect(
+    page.getByRole("button", { name: "Messages", exact: true }),
+  ).toHaveCount(0)
+  const initialTaskCount = await attentionCount(page, "Tasks")
+  const initialTextCount = await attentionCount(page, "Texts")
   const newMessage = page.getByRole("button", { name: "New message" })
-  await page.mouse.move(500, 500)
-  await page.getByLabel("Search messages").focus()
-  await expect(newMessage).toHaveCSS("opacity", "0")
-  await messages.hover()
-  await expect(newMessage).toHaveCSS("opacity", "1")
-  await newMessage.hover()
-  await expect(page.getByRole("tooltip")).toHaveText("New message")
   await newMessage.click()
 
   const outgoingText = "Your records are ready for pickup."
@@ -64,7 +74,6 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     .getByRole("article")
     .filter({ hasText: outgoingText })
   await expect(outgoing).toBeVisible()
-  await expect(outgoing.getByText("Sending", { exact: true })).toBeVisible()
   await expect(outgoing.getByText("Sent", { exact: true })).toBeVisible()
   await expect(
     outgoing.getByRole("img", { name: "fixture-photo.png" }),
@@ -144,19 +153,27 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     .getByRole("button", { name: /\(727\) 555-0199/ })
     .first()
   await expect(page.getByText("Correspondence ledger", { exact: true })).toHaveCount(0)
+  await expect(
+    page.getByRole("button", {
+      name: `Texts ${initialTextCount + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible()
   await expect(firstThread.getByLabel("Unread message")).toBeVisible()
   await firstThread.click()
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(page.getByText("Engagement History", { exact: true })).toHaveCount(0)
   const inbound = page
     .getByRole("article")
     .filter({ hasText: inboundText })
   await expect(inbound).toBeVisible()
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
 
-  await page.getByRole("button", { name: "Tasks", exact: true }).click()
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
-  await page.getByRole("button", { name: "Messages", exact: true }).click()
   await inbound.getByRole("button", { name: "Create Task" }).click()
   await expect(
     page.getByRole("button", {
@@ -164,52 +181,94 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     }),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: "Tasks", exact: true }).click()
-  const openSection = page.getByRole("button", { name: "Open", exact: true })
-  await expect(openSection).toHaveAttribute("aria-expanded", "false")
-  await expect(openSection).toHaveText("Open")
-  await openSection.click()
-  await expect(openSection).toHaveAttribute("aria-expanded", "true")
+  await expect(
+    page.getByRole("button", {
+      name: `Tasks ${initialTaskCount + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible()
   await page
     .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .first()
     .click()
   await expect(
     page.getByRole("heading", { name: "Follow up on text", exact: true }),
   ).toBeVisible()
-  const taskConversation = page.getByRole("region", {
-    name: "Task conversation",
+  const selectedItem = page.getByRole("complementary", {
+    name: "Selected item",
   })
+  await expect(selectedItem).toContainText("Follow up on text")
+  await expect(selectedItem.getByText(/^Created/)).toHaveCount(0)
+  await expect(selectedItem.getByText(/^Last changed/)).toHaveCount(0)
+  await expect(selectedItem.getByText(/Task · v/)).toHaveCount(0)
+  await expect(page.getByText("More context", { exact: true })).toHaveCount(0)
+  const taskConversation = page.getByTestId("message-timeline")
   await page.reload()
   await expect(taskConversation).toBeVisible()
-  await page.getByRole("button", { name: "Open", exact: true }).click()
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(selectedItem).toHaveCount(0)
+  await page.getByRole("button", { name: "Search numbers" }).click()
+  const searchDialog = page.getByRole("dialog", { name: "Find a number inbox" })
+  await searchDialog
+    .getByRole("textbox", { name: "Search phone histories" })
+    .fill("727.555.0199")
+  const searchResult = searchDialog.getByRole("button", {
+    name: /\(727\) 555-0199/,
+  })
+  await expect(searchResult).toBeVisible()
+  await expect(searchDialog.getByRole("button", { name: /Call|Text/ })).toHaveCount(0)
+  await searchResult.click()
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  const recent = page.getByRole("button", { name: "Recent", exact: true })
+  await recent.click()
+  await expect(recent).toHaveAttribute("aria-expanded", "true")
   await page
     .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .first()
     .click()
   await expect(
     page.getByRole("heading", { name: "Follow up on text", exact: true }),
   ).toBeVisible()
   await expect(taskConversation).toContainText(inboundText)
   const taskReply = "I will call you with the pickup time."
-  await taskConversation
+  await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(taskReply)
-  await taskConversation.getByRole("button", { name: "Send message" }).click()
+  await page.getByRole("button", { name: "Send message" }).click()
   await expect(
-    taskConversation.getByRole("article").filter({ hasText: taskReply }),
+    page.getByRole("article").filter({ hasText: taskReply }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", {
+      name: `Texts ${initialTextCount + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible()
+  await page
+    .getByRole("button", { name: "Looks handled — Mark complete" })
+    .click()
+  await expect(
+    page.getByRole("button", {
+      name: `Texts ${initialTextCount}`,
+      exact: true,
+    }),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: "Complete", exact: true }).click()
+  await selectedItem.getByRole("button", { name: "Complete", exact: true }).click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled()
+  ).toBeEnabled()
   await expect(
-    page.getByText("Reopen this Task to send a message"),
+    page.getByRole("button", {
+      name: `Tasks ${initialTaskCount}`,
+      exact: true,
+    }),
   ).toBeVisible()
-  await page.getByRole("button", { name: "Messages", exact: true }).click()
-  await page
-    .getByRole("button", { name: /\(727\) 555-0199/ })
-    .first()
-    .click()
+  await expect(selectedItem).toHaveCount(0)
   const messageAfterCompletion = "The Task is complete; texting remains available."
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -220,18 +279,19 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       .getByRole("article")
       .filter({ hasText: messageAfterCompletion }),
   ).toBeVisible()
-  await page.getByRole("button", { name: "Tasks", exact: true }).click()
-  await page.getByRole("button", { name: "Completed", exact: true }).click()
   await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .getByRole("button", {
+      name: /Task · Completed.*Follow up on text/,
+    })
+    .last()
     .click()
+  await selectedItem.getByRole("button", { name: "Reopen" }).click()
   await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled()
-  await page.getByRole("button", { name: "Reopen" }).click()
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeEnabled()
+    page.getByRole("button", {
+      name: `Tasks ${initialTaskCount + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible()
 
   await sendInbound(page, "slice-5-stop", "STOP")
   await expect(
@@ -249,6 +309,15 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     page.getByText("Outbound messaging is blocked after STOP"),
   ).not.toBeVisible()
 })
+
+async function attentionCount(page: Page, section: string) {
+  const label = await page
+    .getByRole("button", { name: new RegExp(`^${section} \\d+$`) })
+    .textContent()
+  const count = label?.match(/(\d+)\s*$/)?.[1]
+  expect(count).toBeTruthy()
+  return Number(count)
+}
 
 async function signUp(
   page: Page,

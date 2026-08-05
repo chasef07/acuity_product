@@ -461,7 +461,8 @@ export type EngagementPage = {
 
 export type EngagementQueryRequest = {
     practiceId: string;
-    phone: string;
+    phone?: string;
+    limit?: number;
 };
 
 export type TaskQueryRequest = {

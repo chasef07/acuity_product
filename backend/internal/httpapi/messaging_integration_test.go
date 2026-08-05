@@ -32,15 +32,19 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		Environment: "test",
 		RequestedBy: "slice-5-http-test",
 		Practices: []access.PracticeProvision{{
-			Key:       "message-http-practice",
-			Name:      "Message HTTP Practice",
-			Locations: []access.LocationProvision{{Key: "message-http-office", Name: "Message HTTP Office"}},
+			Key:  "message-http-practice",
+			Name: "Message HTTP Practice",
+			Locations: []access.LocationProvision{
+				{Key: "message-http-office", Name: "Message HTTP Office"},
+				{Key: "message-http-hidden", Name: "Hidden Message Office"},
+			},
 			Invitations: []access.InvitationProvision{{
-				Key:           "message-http-staff",
-				Email:         "staff@message-http.test",
-				Role:          access.RoleStaff,
-				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
+				Key:                  "message-http-staff",
+				Email:                "staff@message-http.test",
+				Role:                 access.RoleStaff,
+				LocationScope:        access.LocationScopeSelected,
+				SelectedLocationKeys: []string{"message-http-office"},
+				ExpiresAt:            now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -358,9 +362,10 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		!types[api.ConversationTimelineItemTypeTASK] {
 		t.Fatalf("combined Engagement History = %#v", engagement)
 	}
+	engagementPhone := "(727) 555-0199"
 	engagementQueryBody, _ := json.Marshal(api.EngagementQueryRequest{
 		PracticeId: parsedUUID(t, authorization.Practice.ID),
-		Phone:      "(727) 555-0199",
+		Phone:      &engagementPhone,
 	})
 	if _, err := messageModule.QueryEngagements(
 		context.Background(),
@@ -394,6 +399,49 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		engagementPage.Items[0].OpenTaskCount != 1 ||
 		len(engagementPage.Items[0].Locations) != 1 {
 		t.Fatalf("phone-led Engagement result = %#v", engagementPage)
+	}
+	var hiddenLocationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_locations
+		WHERE practice_id = $1 AND provisioning_key = 'message-http-hidden'
+	`, authorization.Practice.ID).Scan(&hiddenLocationID); err != nil {
+		t.Fatalf("read hidden Message Location: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO messaging_threads (
+			practice_id, location_id, office_phone, external_phone,
+			created_at, updated_at
+		)
+		VALUES ($1, $2, '+17275550102', '+17275550198', $3, $3)
+	`, authorization.Practice.ID, hiddenLocationID, now.Add(time.Hour)); err != nil {
+		t.Fatalf("create hidden recent Engagement: %v", err)
+	}
+	recentLimit := 7
+	recentQueryBody, _ := json.Marshal(api.EngagementQueryRequest{
+		PracticeId: parsedUUID(t, authorization.Practice.ID),
+		Limit:      &recentLimit,
+	})
+	recentResponse := request(
+		t,
+		portal.Client(),
+		http.MethodPost,
+		portal.URL+"/v1/engagements/query",
+		"message-token",
+		recentQueryBody,
+	)
+	if recentResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"recent Engagements status = %d, body = %s",
+			recentResponse.StatusCode,
+			readBody(t, recentResponse),
+		)
+	}
+	var recentPage api.EngagementPage
+	decode(t, recentResponse, &recentPage)
+	if len(recentPage.Items) != 1 ||
+		recentPage.Items[0].Phone != "+17275550199" {
+		t.Fatalf("authorized recent Engagements = %#v", recentPage)
 	}
 	for _, endpoint := range []string{
 		portal.URL + "/v1/engagements/+17275550199/timeline?practiceId=" +

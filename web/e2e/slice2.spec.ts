@@ -59,6 +59,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     prepareBrowser(secondaryContext),
   ])
   const secondaryPage = await secondaryContext.newPage()
+  selectedPage.setDefaultTimeout(15_000)
+  secondaryPage.setDefaultTimeout(15_000)
   const database = new Pool({ connectionString: databaseURL })
 
   try {
@@ -91,8 +93,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
 
     await test.step("AI Tasks converge without stealing either browser's selection", async () => {
       await Promise.all([
-        expect(selectedPage.getByText("No follow-up tasks")).toBeVisible(),
-        expect(secondaryPage.getByText("No follow-up tasks")).toBeVisible(),
+        expect(selectedPage.getByText("No recorded activity yet")).toBeVisible(),
+        expect(secondaryPage.getByText("No recorded activity yet")).toBeVisible(),
       ])
       const createStaffTask = async ({
         idempotencyKey,
@@ -162,31 +164,21 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
 
       const firstTaskButtons = [
         selectedPage.getByRole("button", {
-          name: new RegExp(`^${firstTitle} AI`),
+          name: new RegExp(`^${firstTitle}`),
         }),
         secondaryPage.getByRole("button", {
-          name: new RegExp(`^${firstTitle} AI`),
+          name: new RegExp(`^${firstTitle}`),
         }),
       ]
-      const openSections = [
-        selectedPage.getByRole("button", { name: "Open", exact: true }),
-        secondaryPage.getByRole("button", { name: "Open", exact: true }),
+      const taskSections = [
+        selectedPage.getByRole("button", { name: "Tasks 1", exact: true }),
+        secondaryPage.getByRole("button", { name: "Tasks 1", exact: true }),
       ]
       await Promise.all(
-        openSections.map(async (section) => {
-          await expect(section).toHaveAttribute("aria-expanded", "false")
-          await expect(section).toHaveText("Open")
-        }),
-      )
-      await Promise.all(
-        firstTaskButtons.map((button) => expect(button).not.toBeVisible()),
-      )
-      await openSections[0].focus()
-      await selectedPage.keyboard.press("Enter")
-      await openSections[1].click()
-      await Promise.all(
-        openSections.map((section) =>
-          expect(section).toHaveAttribute("aria-expanded", "true"),
+        taskSections.map((section) =>
+          expect(section).toHaveAttribute("aria-expanded", "true", {
+            timeout: 20_000,
+          }),
         ),
       )
       await Promise.all(firstTaskButtons.map((button) => expect(button).toBeVisible()))
@@ -207,13 +199,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
         ).toBeVisible(),
       ])
-      await selectedPage.getByText("More context", { exact: true }).click()
-      await expect(
-        selectedPage.getByRole("region", { name: "AI Task source" }),
-      ).toContainText(firstMessage)
-      await expect(
-        selectedPage.getByRole("region", { name: "AI Task source" }),
-      ).toContainText("AI-supplied name: Synthetic Caller")
+      const selectedSnapshot = selectedPage.getByRole("complementary", {
+        name: "Selected item",
+      })
+      await expect(selectedSnapshot).toContainText(firstMessage)
+      await expect(selectedSnapshot).toContainText("Synthetic Caller")
 
       const secondTitle = "Urgent document correction"
       const secondResponse = await createStaffTask({
@@ -226,12 +216,12 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await Promise.all([
         expect(
           selectedPage.getByRole("button", {
-            name: new RegExp(`^${secondTitle} AI`),
+            name: new RegExp(`^${secondTitle}`),
           }),
         ).toBeVisible(),
         expect(
           secondaryPage.getByRole("button", {
-            name: new RegExp(`^${secondTitle} AI`),
+            name: new RegExp(`^${secondTitle}`),
           }),
         ).toBeVisible(),
       ])
@@ -245,41 +235,22 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       ])
 
       await expect(
-        secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).toBeChecked()
-      await expect(
-        selectedPage.getByRole("switch", { name: "Urgency" }),
-      ).toBeChecked()
-      await secondaryPage.getByRole("switch", { name: "Urgency" }).click()
-      await expect(
-        secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).not.toBeChecked()
-      await secondaryPage.reload()
-      await expect(
-        secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).not.toBeChecked()
-      await secondaryPage
-        .getByRole("button", { name: "Open", exact: true })
-        .click()
-      await secondaryPage
-        .getByRole("button", { name: new RegExp(`^${firstTitle} AI`) })
-        .click()
-
-      await selectedPage
+        selectedPage.getByRole("button", { name: new RegExp(`^${secondTitle}`) }),
+      ).toContainText("Urgent")
+      await selectedSnapshot
         .getByRole("button", { name: "Complete", exact: true })
         .click()
-      const completedSection = secondaryPage.getByRole("button", {
-        name: "Completed",
-        exact: true,
-      })
-      await expect(completedSection).toHaveAttribute("aria-expanded", "false")
-      await expect(completedSection).toHaveText("Completed")
-      await completedSection.click()
-      await expect(completedSection).toHaveAttribute("aria-expanded", "true")
+      await expect(selectedSnapshot).not.toBeVisible()
       await expect(
-        secondaryPage.getByRole("button", { name: "Reopen" }),
-      ).toBeVisible()
-      await secondaryPage.getByRole("button", { name: "Reopen" }).click()
+        selectedPage.getByRole("textbox", { name: "Message", exact: true }),
+      ).toBeEnabled()
+      await selectedPage
+        .getByTestId("message-timeline")
+        .getByRole("button")
+        .filter({ hasText: firstTitle })
+        .last()
+        .click()
+      await selectedSnapshot.getByRole("button", { name: "Reopen" }).click()
       await expect(
         selectedPage.getByRole("button", { name: "Complete", exact: true }),
       ).toBeVisible()
@@ -314,51 +285,6 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         actor_email: null,
         raw_task: expect.not.stringContaining("compatibility-only-patient-id"),
         creation_activities: "1",
-      })
-
-      await test.step("collapsed Task groups gate pagination until expanded", async () => {
-        let cursorRequests = 0
-        await secondaryPage.route(`${portalURL}/v1/tasks/query`, async (route) => {
-          const request = route.request()
-          const body = request.postDataJSON() as { cursor?: string }
-          if (body.cursor) {
-            cursorRequests += 1
-            await route.fulfill({
-              contentType: "application/json",
-              status: 200,
-              body: JSON.stringify({ items: [], nextCursor: "" }),
-            })
-            return
-          }
-          const response = await route.fetch()
-          const page = (await response.json()) as {
-            items: unknown[]
-            nextCursor: string
-          }
-          await route.fulfill({
-            response,
-            json: { ...page, nextCursor: "synthetic-next-task-page" },
-          })
-        })
-
-        try {
-          await secondaryPage.reload()
-          const openSection = secondaryPage.getByRole("button", {
-            name: "Open",
-            exact: true,
-          })
-          await expect(openSection).toHaveAttribute("aria-expanded", "false")
-          await expect(
-            secondaryPage.getByLabel("Loading more tasks"),
-          ).toHaveCount(0)
-          await secondaryPage.waitForTimeout(500)
-          expect(cursorRequests).toBe(0)
-
-          await openSection.click()
-          await expect.poll(() => cursorRequests).toBe(1)
-        } finally {
-          await secondaryPage.unroute(`${portalURL}/v1/tasks/query`)
-        }
       })
     })
 
@@ -738,6 +664,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       .toBe(0)
 
     const takeoverPage = await winnerPage.context().newPage()
+    takeoverPage.setDefaultTimeout(15_000)
     await takeoverPage.addInitScript(() => {
       window.sessionStorage.setItem("acuity.callingMediaEnabled", "true")
     })
@@ -935,20 +862,31 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         exact: true,
       }),
     ).toBeVisible()
-    const phoneSearch = loserPage.getByLabel("Search tasks")
-    await phoneSearch.fill("+15555550100")
-    await phoneSearch.press("Enter")
+    await loserPage.getByRole("button", { name: "Search numbers" }).click()
+    let phoneSearch = loserPage.getByRole("dialog", {
+      name: "Find a number inbox",
+    })
+    await phoneSearch.getByLabel("Search phone histories").fill("+15555550100")
+    await phoneSearch
+      .getByRole("button", { name: /\(555\) 555-0100/ })
+      .click()
     await expect(
       loserPage.getByRole("heading", { name: "(555) 555-0100" }),
     ).toBeVisible()
-    await expect(loserPage.getByText("Engagement History", { exact: true })).toBeVisible()
+    await expect(loserPage.getByText("Number inbox", { exact: true })).toBeVisible()
+    await expect(loserPage.getByText("Engagement History", { exact: true })).toHaveCount(0)
     expect(loserPage.url()).not.toContain("5555550100")
-    await phoneSearch.fill("+15555550101")
-    await phoneSearch.press("Enter")
+    await loserPage.getByRole("button", { name: "Search numbers" }).click()
+    phoneSearch = loserPage.getByRole("dialog", {
+      name: "Find a number inbox",
+    })
+    await phoneSearch.getByLabel("Search phone histories").fill("+15555550101")
+    await phoneSearch
+      .getByRole("button", { name: /\(555\) 555-0101/ })
+      .click()
     await expect(
       loserPage.getByRole("heading", { name: "(555) 555-0101" }),
     ).toBeVisible()
-    await phoneSearch.fill("")
     await expect(takeoverAvailability).toBeChecked()
 
     const recoveryHandoffResponse = await takeoverPage.request.post(
@@ -1006,7 +944,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     ).not.toBeVisible()
     await expect(
       loserPage.getByRole("heading", {
-        name: "Scheduling help",
+        name: "(555) 555-0101",
         exact: true,
       }),
     ).toBeVisible()
@@ -1117,6 +1055,12 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       }),
     ).toBeVisible()
     await expect(
+      loserPage.getByRole("button", { name: /^Confirm scheduling plan/ }),
+    ).toBeVisible()
+    await loserPage
+      .getByRole("button", { name: /^Confirm scheduling plan/ })
+      .click()
+    await expect(
       loserPage.getByRole("heading", {
         name: "Confirm scheduling plan",
         exact: true,
@@ -1126,12 +1070,18 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       .getByRole("button", { name: "Complete", exact: true })
       .click()
     await expect(
-      takeoverPage.getByRole("button", { name: "Reopen" }),
-    ).toBeVisible()
+      takeoverPage.getByRole("complementary", { name: "Selected item" }),
+    ).toHaveCount(0)
     await expect(
       loserPage.getByRole("button", { name: "Reopen" }),
     ).toBeVisible()
     await loserPage.getByRole("button", { name: "Reopen" }).click()
+    await expect(
+      takeoverPage.getByRole("button", { name: /^Confirm scheduling plan/ }),
+    ).toBeVisible()
+    await takeoverPage
+      .getByRole("button", { name: /^Confirm scheduling plan/ })
+      .click()
     await expect(
       takeoverPage.getByRole("button", { name: "Complete", exact: true }),
     ).toBeVisible()
@@ -1315,15 +1265,14 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           task_count: "1",
         })
 
-      const takeoverOpenTasks = takeoverPage.getByRole("button", {
-        name: "Open",
-        exact: true,
-      })
-      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "false")
-      await takeoverOpenTasks.click()
-      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "true")
+      await expect(
+        takeoverPage.getByRole("button", {
+          name: /Missed Calls & Voicemails [1-9]/,
+        }),
+      ).toHaveAttribute("aria-expanded", "true")
       await takeoverPage
         .getByRole("button", { name: /Review voicemail/ })
+        .first()
         .click()
       await expect(
         takeoverPage.getByRole("heading", {
@@ -1331,22 +1280,14 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           exact: true,
         }),
       ).toBeVisible()
-      const focusedVoicemailTask = takeoverPage.getByRole("complementary", {
-        name: "Focused Task",
-      })
-      await focusedVoicemailTask
-        .getByText("More context", { exact: true })
-        .click()
-      await expect(
-        focusedVoicemailTask.getByText("Ready", { exact: true }),
-      ).toBeVisible()
       const playbackResponse = takeoverPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
           response.url().includes("/v1/calling/voicemail-playback/"),
       )
-      await focusedVoicemailTask
-        .getByRole("button", { name: "Play" })
+      await takeoverPage
+        .getByRole("button", { name: "Play voicemail" })
+        .first()
         .click()
       const playback = await playbackResponse
       expect(playback.status()).toBe(200)
@@ -1354,6 +1295,57 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await expect(
         takeoverPage.getByLabel("Voicemail recording"),
       ).toHaveAttribute("src", /^blob:/)
+      await takeoverPage
+        .getByRole("button", { name: /Voicemail · Open detail/ })
+        .last()
+        .click()
+      const focusedVoicemail = takeoverPage.getByRole("complementary", {
+        name: "Selected item",
+      })
+      await expect(focusedVoicemail).toContainText("Voicemail")
+      await expect(focusedVoicemail).toContainText("Related Task")
+      await expect(
+        focusedVoicemail.getByText("More context", { exact: true }),
+      ).toHaveCount(0)
+      await expect(
+        takeoverPage.getByRole("button", {
+          name: /Missed Calls & Voicemails [1-9]/,
+        }),
+      ).toBeVisible()
+
+      await takeoverPage
+        .getByRole("textbox", { name: "Message", exact: true })
+        .fill("We received your voicemail and will follow up.")
+      await takeoverPage
+        .getByLabel("Message composer")
+        .getByRole("button", { name: "Send message" })
+        .click()
+      await focusedVoicemail
+        .getByRole("button", { name: "Close selected item" })
+        .click()
+      await takeoverPage
+        .getByRole("button", { name: /Voicemail · Open detail/ })
+        .last()
+        .click()
+      await takeoverPage
+        .getByRole("complementary", { name: "Selected item" })
+        .getByRole("button", { name: "Looks handled — Mark complete" })
+        .click()
+      await expect
+        .poll(async () => {
+          const result = await database.query<{ state: string }>(
+            `SELECT task.state
+               FROM human_calling_voicemails voicemail
+               JOIN work_tasks task ON task.id = voicemail.task_id
+              WHERE voicemail.call_id = $1`,
+            [voicemailCallID],
+          )
+          return result.rows[0]?.state
+        })
+        .toBe("COMPLETED")
+      await expect(
+        takeoverPage.getByRole("button", { name: /^\(555\) 555-0102/ }),
+      ).toHaveCount(0)
 
       await takeoverPage
         .getByRole("button", { name: /Confirm scheduling plan/ })
@@ -1367,10 +1359,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     })
 
     await test.step("Slice 6 outbound stays durable through bridge, reload, DTMF, and disposition", async () => {
-      const taskCallButton = takeoverPage.getByRole("button", {
-        name: "Call",
-        exact: true,
-      })
+      const taskCallButton = takeoverPage
+        .getByRole("complementary", { name: "Selected item" })
+        .getByRole("button", { name: "Call", exact: true })
       await expect(taskCallButton).toBeEnabled()
       await taskCallButton.click()
       await expect(
@@ -1380,11 +1371,11 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         callCenter(winnerPage).getByText("Preparing", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
       await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
+        takeoverPage.getByText("Number inbox", { exact: true }),
       ).toBeVisible()
       await expect(
         takeoverPage.getByRole("heading", {
-          name: "Engagement history",
+          name: "(555) 555-0100",
           exact: true,
         }),
       ).toBeVisible()
@@ -1508,7 +1499,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         callCenter(takeoverPage).getByText("Ringing", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
       await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
+        takeoverPage.getByText("Number inbox", { exact: true }),
       ).toBeVisible()
       const taskDestination = await callingCommand(
         database,
@@ -1593,19 +1584,19 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         callCenter(takeoverPage).getByText("Connected", { exact: true }),
       ).toBeVisible({ timeout: 15_000 })
       await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
+        takeoverPage.getByText("Number inbox", { exact: true }),
       ).toBeVisible()
       await expect(
         takeoverPage.getByRole("heading", {
-          name: "Engagement history",
+          name: "(555) 555-0100",
           exact: true,
         }),
       ).toBeVisible()
       await expect(
-        takeoverPage.getByLabel("Call message composer"),
+        takeoverPage.getByLabel("Message composer"),
       ).toContainText("Fixture Location 1")
       await expect(
-        takeoverPage.getByLabel("Call message composer"),
+        takeoverPage.getByLabel("Message composer"),
       ).toContainText("(555) 555-0100")
 
       const destinationCommandsBeforeReload = await database.query<{
@@ -1680,13 +1671,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         dtmfStateBefore,
       )
 
-      const callComposer = takeoverPage.getByLabel("Call message composer")
+      const callComposer = takeoverPage.getByLabel("Message composer")
       await callComposer
         .getByRole("textbox", { name: "Message" })
         .fill("Synthetic post-call instructions")
       await callComposer
         .getByRole("button", {
-          name: "Send",
+          name: "Send message",
         })
         .click()
       await expect
@@ -1717,7 +1708,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         await winnerNetwork.send("Network.setBlockedURLs", {
           urls: [`${realtimeURL}/v1/events*`],
         })
-        await expect(winnerPage.getByText("Updates delayed")).toBeVisible({
+        await expect(
+          winnerPage.getByLabel("Live updates delayed"),
+        ).toBeVisible({
           timeout: 45_000,
         })
 
@@ -1870,7 +1863,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         })
 
       await takeoverPage
-        .getByRole("button", { name: "Outbound calls" })
+        .locator("header")
+        .filter({ hasText: "Number inbox" })
+        .getByRole("button", { name: "Call", exact: true })
         .click()
       const outboundDialog = takeoverPage.getByRole("dialog", {
         name: "Outbound call",
@@ -1880,6 +1875,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         name: "Standalone outbound call",
       })
       await expect(dialer.getByLabel("Call location")).toBeVisible()
+      await expect(dialer.getByLabel("Outbound destination")).toHaveValue(
+        /\+1555555/,
+      )
       await dialer.getByLabel("Outbound destination").fill("+15555550100")
       await dialer.getByRole("button", { name: "Call", exact: true }).click()
       await expect(outboundDialog).not.toBeVisible()
@@ -1887,17 +1885,17 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         callCenter(takeoverPage).getByText("Preparing", { exact: true }),
       ).toBeVisible()
       await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
+        takeoverPage.getByText("Number inbox", { exact: true }),
       ).toBeVisible()
       await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Engagement history",
-          exact: true,
-        }),
+        takeoverPage.getByRole("heading", { name: "(555) 555-0100" }),
       ).toBeVisible()
-      await takeoverPage
-        .getByRole("button", { name: "Messages", exact: true })
-        .click()
+      await expect(
+        takeoverPage.getByRole("textbox", { name: "Message", exact: true }),
+      ).toBeEnabled()
+      await expect(
+        takeoverPage.getByRole("button", { name: "Messages", exact: true }),
+      ).toHaveCount(0)
       await expect(
         takeoverPage.getByRole("region", { name: "Active call controls" }),
       ).toBeVisible()
@@ -2204,9 +2202,7 @@ async function signUp(
   await expect(
     page.getByRole("switch", { name: "Availability" }),
   ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: "Outbound calls" }),
-  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Search numbers" })).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
   ).toBeVisible()

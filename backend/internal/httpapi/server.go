@@ -860,12 +860,21 @@ func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
+	phone := ""
+	if body.Phone != nil {
+		phone = *body.Phone
+	}
+	limit := 0
+	if body.Limit != nil {
+		limit = *body.Limit
+	}
 	page, err := server.messaging.QueryEngagements(
 		ctx,
 		messaging.QueryEngagementsCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
-			Phone:      body.Phone,
+			Phone:      phone,
+			Limit:      limit,
 		},
 	)
 	if err != nil {

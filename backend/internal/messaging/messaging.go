@@ -140,6 +140,7 @@ type QueryEngagementsCommand struct {
 	Identity   access.Identity
 	PracticeID string
 	Phone      string
+	Limit      int
 }
 
 type EngagementPage struct {
@@ -151,9 +152,22 @@ func (m *Module) QueryEngagements(
 	command QueryEngagementsCommand,
 ) (EngagementPage, error) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
-	phone, err := normalizePhone(command.Phone)
-	if m.pool == nil || m.access == nil || command.PracticeID == "" || err != nil {
+	command.Phone = strings.TrimSpace(command.Phone)
+	limit := command.Limit
+	if limit == 0 {
+		limit = 7
+	}
+	if m.pool == nil || m.access == nil || command.PracticeID == "" ||
+		limit < 1 || limit > 10 {
 		return EngagementPage{}, ErrInvalidInput
+	}
+	phone := ""
+	if command.Phone != "" {
+		var err error
+		phone, err = normalizePhone(command.Phone)
+		if err != nil {
+			return EngagementPage{}, ErrInvalidInput
+		}
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -176,6 +190,69 @@ func (m *Module) QueryEngagements(
 	}
 	if len(locationIDs) == 0 {
 		return EngagementPage{}, ErrDenied
+	}
+	if phone == "" {
+		rows, err := tx.Query(ctx, `
+			WITH evidence AS (
+				SELECT
+					thread.external_phone AS phone,
+					thread.updated_at AS occurred_at
+				FROM messaging_threads thread
+				WHERE thread.practice_id = $1
+					AND thread.location_id::text = ANY($2::text[])
+				UNION ALL
+				SELECT
+					COALESCE(handoff.phone, call.destination_phone),
+					call.updated_at
+				FROM human_calling_calls call
+				LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+				WHERE call.practice_id = $1
+					AND call.location_id::text = ANY($2::text[])
+				UNION ALL
+				SELECT task.phone, task.updated_at
+				FROM work_tasks task
+				WHERE task.practice_id = $1
+					AND task.location_id::text = ANY($2::text[])
+			)
+			SELECT phone
+			FROM evidence
+			WHERE phone IS NOT NULL AND phone <> ''
+			GROUP BY phone
+			ORDER BY max(occurred_at) DESC, phone
+			LIMIT $3
+		`, command.PracticeID, locationIDs, limit)
+		if err != nil {
+			return EngagementPage{}, fmt.Errorf("query recent Engagement phones: %w", err)
+		}
+		recentPhones := make([]string, 0, limit)
+		for rows.Next() {
+			var recentPhone string
+			if err := rows.Scan(&recentPhone); err != nil {
+				rows.Close()
+				return EngagementPage{}, fmt.Errorf("scan recent Engagement phone: %w", err)
+			}
+			recentPhones = append(recentPhones, recentPhone)
+		}
+		if err := rows.Err(); err != nil {
+			return EngagementPage{}, fmt.Errorf("iterate recent Engagement phones: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return EngagementPage{}, fmt.Errorf("commit recent Engagement lookup: %w", err)
+		}
+		items := make([]EngagementSummary, 0, len(recentPhones))
+		for _, recentPhone := range recentPhones {
+			page, err := m.QueryEngagements(ctx, QueryEngagementsCommand{
+				Identity:   command.Identity,
+				PracticeID: command.PracticeID,
+				Phone:      recentPhone,
+				Limit:      limit,
+			})
+			if err != nil {
+				return EngagementPage{}, err
+			}
+			items = append(items, page.Items...)
+		}
+		return EngagementPage{Items: items}, nil
 	}
 
 	var summary EngagementSummary

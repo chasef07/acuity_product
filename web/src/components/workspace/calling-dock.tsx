@@ -139,6 +139,7 @@ type CallingNavigationContext = {
   dialerOpen: boolean
   ownsSoftphone: boolean
   platformOperator: boolean
+  openDialer: (locationID: string, destination: string) => void
   setAvailability: (available: boolean) => void
   setDialerOpen: (open: boolean) => void
 }
@@ -205,6 +206,28 @@ export function CallingOutboundNavigation() {
         <span>Outbound calls</span>
       </SidebarMenuButton>
     </SidebarMenuItem>
+  )
+}
+
+export function CallingNumberAction({
+  locationID,
+  phone,
+}: {
+  locationID: string
+  phone: string
+}) {
+  const { activeCall, openDialer, platformOperator } = useCallingNavigation()
+  if (platformOperator) return null
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={Boolean(activeCall) || !locationID}
+      onClick={() => openDialer(locationID, phone)}
+    >
+      <PhoneCallIcon />
+      Call
+    </Button>
   )
 }
 
@@ -1218,11 +1241,17 @@ export function CallingDock({
         dialerOpen: showDialer,
         ownsSoftphone: Boolean(lease?.owner),
         platformOperator,
+        openDialer: (locationID, destination) => {
+          setDialLocationID(locationID)
+          setDialDestination(destination)
+          setShowDialer(true)
+        },
         setAvailability: (nextAvailable) =>
           void setAvailabilityIntent(nextAvailable),
         setDialerOpen: setShowDialer,
       }}
     >
+      <div className="contents md:[&:has([data-call-layer])_[data-slot=sidebar-inset]]:pr-[27rem]">
       {children}
       <audio id="acuity-calling-remote-audio" autoPlay className="hidden" />
       {!platformOperator && (
@@ -1320,7 +1349,7 @@ export function CallingDock({
         </Dialog>
       )}
       {!platformOperator && earliest && !activeCall && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
+        <div data-call-layer className="fixed inset-x-3 top-14 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
             offers={offers}
             now={now}
@@ -1330,7 +1359,7 @@ export function CallingDock({
         </div>
       )}
       {!platformOperator && activeCall && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
+        <div data-call-layer className="fixed inset-x-3 top-14 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Active call controls" size="sm">
             <CardHeader>
               <CardTitle className="flex min-w-0 items-center gap-2">
@@ -1398,20 +1427,24 @@ export function CallingDock({
         </div>
       )}
       {!platformOperator && pendingOutcome && !activeCall && !earliest && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
+        <div data-call-layer className="fixed inset-x-3 top-14 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Call outcome" size="sm">
             <CardHeader>
               <CardTitle>Call ended</CardTitle>
               <CardDescription>
                 {pendingOutcome.phone} · {pendingOutcome.locationName}
               </CardDescription>
-			{pendingOutcome.dispositionDeadline && (
-				<CardAction>
-					<Badge aria-label="Resolution countdown" variant="outline" className="tabular-nums">
-						{secondsRemaining(pendingOutcome.dispositionDeadline, now)}s
-					</Badge>
-				</CardAction>
-			)}
+              {pendingOutcome.dispositionDeadline && (
+                <CardAction>
+                  <Badge
+                    aria-label="Resolution countdown"
+                    variant="outline"
+                    className="tabular-nums"
+                  >
+                    {secondsRemaining(pendingOutcome.dispositionDeadline, now)}s
+                  </Badge>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
               {callDispositionChoices(pendingOutcome).map((choice) => (
@@ -1424,16 +1457,19 @@ export function CallingDock({
                   {choice.label}
                 </Button>
               ))}
-              {error && <p className="basis-full text-xs text-destructive">{error}</p>}
+              {error && (
+                <p className="basis-full text-xs text-destructive">{error}</p>
+              )}
             </CardContent>
           </Card>
         </div>
       )}
       {!platformOperator && !activeCall && !earliest && error && (
         <Alert
+          data-call-layer
           aria-label="Calling status"
           variant="destructive"
-          className="fixed right-4 bottom-4 z-40 max-w-sm"
+          className="fixed top-14 right-4 z-40 max-w-sm"
         >
           <ShieldAlertIcon />
           <AlertTitle>Calling needs attention</AlertTitle>
@@ -1441,10 +1477,11 @@ export function CallingDock({
         </Alert>
       )}
       {platformOperator && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[32rem]">
+        <div data-call-layer className="fixed inset-x-3 top-14 z-40 md:left-auto md:right-4 md:w-[32rem]">
           <OperatorCallInspector />
         </div>
       )}
+      </div>
     </CallingNavigationContext.Provider>
   )
 }
