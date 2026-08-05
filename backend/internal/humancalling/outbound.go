@@ -1203,7 +1203,7 @@ func (m *Module) applyOutboundBridge(
 			END,
 			connected_at = $5,
 			disposition_deadline = CASE
-				WHEN $7 = 'NEEDS_DISPOSITION' THEN $8
+				WHEN $7 = 'NEEDS_DISPOSITION' THEN $8::timestamptz
 				ELSE NULL
 			END,
 			version = version + 1,
@@ -1382,7 +1382,7 @@ func (m *Module) applyOutboundHangup(
 			provider_termination = $3,
 			ended_at = $4,
 			disposition_deadline = CASE
-				WHEN $2 = 'NEEDS_DISPOSITION' THEN $6
+				WHEN $2 = 'NEEDS_DISPOSITION' THEN $6::timestamptz
 				ELSE NULL
 			END,
 			version = version + 1,

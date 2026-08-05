@@ -176,6 +176,7 @@ func TestFollowUpDispositionAtomicallyCreatesAndReplaysOneTask(t *testing.T) {
 			winner_subject = claimant_subject,
 			connected_at = $2,
 			ended_at = $2,
+			disposition_deadline = $2::timestamptz + interval '20 seconds',
 			updated_at = $2
 		WHERE id = $1
 	`, offer.ID, endedAt); err != nil {
@@ -288,6 +289,7 @@ func TestPendingOutcomeDoesNotConsumeCallCapacity(t *testing.T) {
 			winner_subject = claimant_subject,
 			connected_at = $2,
 			ended_at = $2,
+			disposition_deadline = $2::timestamptz + interval '20 seconds',
 			updated_at = $2
 		WHERE id = $1
 	`, offer.ID, endedAt); err != nil {
@@ -438,6 +440,7 @@ func TestFollowUpTaskFailureLeavesCallNeedingDisposition(t *testing.T) {
 			winner_subject = claimant_subject,
 			connected_at = $2,
 			ended_at = $2,
+			disposition_deadline = $2::timestamptz + interval '20 seconds',
 			updated_at = $2
 		WHERE id = $1
 	`, offer.ID, endedAt); err != nil {
@@ -1301,7 +1304,10 @@ func TestCallControlsWaitForAcquireSoftphoneIdentityFenceBeforeLockingCall(t *te
 	)
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_calls
-		SET state = 'NEEDS_DISPOSITION', ended_at = $2, updated_at = $2
+		SET state = 'NEEDS_DISPOSITION',
+			disposition_deadline = $2::timestamptz + interval '20 seconds',
+			ended_at = $2,
+			updated_at = $2
 		WHERE id = $1
 	`, offer.ID, offer.Deadline.Add(-8*time.Second)); err != nil {
 		t.Fatalf("prepare disposition lock-order Call: %v", err)

@@ -287,7 +287,10 @@ func TestSignedWebhookCommitsExactReceiptBeforeIdempotentProjection(t *testing.T
 		t.Fatalf("project bridge delayed beyond receipt hold: processed=%t err=%v", processed, err)
 	}
 	ended, err := calling.ReadCall(context.Background(), identity, offers[0].ID)
-	if err != nil || ended.State != humancalling.CallNeedsDisposition {
+	if err != nil ||
+		ended.State != humancalling.CallNeedsDisposition ||
+		ended.DispositionDeadline == nil ||
+		!ended.DispositionDeadline.Equal(hangupAt.Add(20*time.Second)) {
 		t.Fatalf("reordered bridge/hangup Call = %#v, err = %v", ended, err)
 	}
 }

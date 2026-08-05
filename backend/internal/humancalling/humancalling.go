@@ -3467,13 +3467,18 @@ func (m *Module) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
 			END,
 			provider_termination = 'PROVIDER_CONFIRMED_NOT_ALIVE',
 			ended_at = $2,
+			disposition_deadline = CASE
+				WHEN connected_at IS NULL THEN NULL
+				ELSE $3::timestamptz
+			END,
 			version = version + 1,
 			updated_at = $2
 		WHERE id = $1
-			AND current_attempt_id = $3
+			AND current_attempt_id = $4
 			AND state = 'CONNECTED'
 		RETURNING practice_id::text
-	`, item.callID, now, item.attemptID).Scan(&practiceID)
+	`, item.callID, now, now.Add(m.config.DispositionDuration),
+		item.attemptID).Scan(&practiceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return 0, fmt.Errorf("commit superseded provider Call state: %w", err)
@@ -5309,8 +5314,10 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		}
 	}
 	nextState := CallConnected
+	dispositionDeadline := bridgeAt.Add(m.config.DispositionDuration)
 	if attemptEndedAt != nil {
 		nextState = CallNeedsDisposition
+		dispositionDeadline = attemptEndedAt.Add(m.config.DispositionDuration)
 	} else if (state == CallResolved || state == CallFollowUpRequired) &&
 		currentWinner == claimantSubject {
 		nextState = state
@@ -5364,7 +5371,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 				)
 			),
 			disposition_deadline = CASE
-				WHEN $5 = 'NEEDS_DISPOSITION' THEN $11
+				WHEN $5 = 'NEEDS_DISPOSITION' THEN $11::timestamptz
 				ELSE NULL
 			END,
 			version = version + 1,
@@ -5381,7 +5388,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		attemptEndedAt,
 		m.now(),
 		winningAttemptID,
-		bridgeAt.Add(m.config.DispositionDuration),
+		dispositionDeadline,
 	); err != nil {
 		return fmt.Errorf("project provider-confirmed bridge: %w", err)
 	}
@@ -5615,7 +5622,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			provider_termination = NULLIF($3, ''),
 			ended_at = $4,
 			disposition_deadline = CASE
-				WHEN $2 = 'NEEDS_DISPOSITION' THEN $5
+				WHEN $2 = 'NEEDS_DISPOSITION' THEN $5::timestamptz
 				ELSE NULL
 			END,
 			version = version + 1,

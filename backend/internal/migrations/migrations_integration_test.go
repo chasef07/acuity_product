@@ -27,8 +27,8 @@ func TestForwardMigrationsAreRepeatableAndIncludeReviewedRuntimeSchemas(t *testi
 	).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 18 {
-		t.Fatalf("migration count = %d, want 18", migrationCount)
+	if migrationCount != 19 {
+		t.Fatalf("migration count = %d, want 19", migrationCount)
 	}
 	var staffTransferTableExists bool
 	var taskInteractionTableExists bool
