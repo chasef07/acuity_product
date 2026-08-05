@@ -256,6 +256,10 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		},
 		"acuity_worker": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
+			`SELECT practice_id::text, location_id::text
+				 FROM messaging_location_configurations
+				 WHERE sender = '+17275550100' AND active
+				 FOR SHARE`,
 			`SELECT session_id
 			 FROM human_calling_softphone_leases
 			 WHERE false
@@ -657,6 +661,12 @@ func expectedColumnPrivileges() map[string]bool {
 		"state",
 		"expires_at",
 		"copy_started_at",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.messaging_location_configurations",
+		"UPDATE",
 		"updated_at",
 	)
 	grant(
