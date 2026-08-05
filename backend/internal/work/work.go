@@ -1476,9 +1476,21 @@ func (m *Module) MarkTaskRead(
 		return ErrDenied
 	}
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO work_task_reads (task_id, user_subject, read_at)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (task_id, user_subject) DO NOTHING
+		INSERT INTO work_task_reads (
+			task_id, user_subject, read_through_at,
+			read_through_call_id, recorded_at
+		)
+		SELECT $1, $2, interaction.occurred_at, interaction.call_id, $3
+		FROM work_task_interactions interaction
+		WHERE interaction.task_id = $1
+		ORDER BY interaction.occurred_at DESC, interaction.call_id DESC
+		LIMIT 1
+		ON CONFLICT (task_id, user_subject) DO UPDATE
+		SET read_through_at = EXCLUDED.read_through_at,
+			read_through_call_id = EXCLUDED.read_through_call_id,
+			recorded_at = EXCLUDED.recorded_at
+		WHERE (work_task_reads.read_through_at, work_task_reads.read_through_call_id)
+			< (EXCLUDED.read_through_at, EXCLUDED.read_through_call_id)
 	`, task.ID, identity.Subject, m.now())
 	if err != nil {
 		return fmt.Errorf("record Task read receipt: %w", err)
@@ -1509,9 +1521,18 @@ func loadTaskUnread(
 		return nil
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT NOT EXISTS (
-			SELECT 1 FROM work_task_reads
-			WHERE task_id = $1 AND user_subject = $2
+		SELECT EXISTS (
+			SELECT 1
+			FROM work_task_interactions interaction
+			LEFT JOIN work_task_reads receipt
+				ON receipt.task_id = interaction.task_id
+				AND receipt.user_subject = $2
+			WHERE interaction.task_id = $1
+				AND (
+					receipt.task_id IS NULL
+					OR (interaction.occurred_at, interaction.call_id) >
+						(receipt.read_through_at, receipt.read_through_call_id)
+				)
 		)
 	`, task.ID, identity.Subject).Scan(&task.Unread); err != nil {
 		return fmt.Errorf("read Task unread state: %w", err)

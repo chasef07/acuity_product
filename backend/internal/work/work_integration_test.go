@@ -165,6 +165,26 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	if err != nil || read.Unread || read.State != work.TaskOpen {
 		t.Fatalf("read recovery Task after playback = %#v, %v", read, err)
 	}
+	laterVoicemailCallID := insertCallAt(
+		t, pool, authorization, locationID, phone, "Later voicemail caller",
+		now.Add(2*time.Minute),
+	)
+	later := ensureRecovery(work.EnsureRecoveryTaskCommand{
+		CallID: laterVoicemailCallID, PracticeID: authorization.Practice.ID,
+		LocationID: locationID, Phone: phone, Outcome: work.RecoveryOutcomeVoicemail,
+		OccurredAt: now.Add(2 * time.Minute),
+	})
+	read, err = module.ReadTask(context.Background(), identity, later.ID)
+	if err != nil || !read.Unread || read.ID != missed.ID {
+		t.Fatalf("recovery Task after later voicemail = %#v, %v", read, err)
+	}
+	if err := module.MarkTaskRead(context.Background(), identity, read.ID); err != nil {
+		t.Fatalf("mark later recovery Interaction read: %v", err)
+	}
+	read, err = module.ReadTask(context.Background(), identity, read.ID)
+	if err != nil || read.Unread {
+		t.Fatalf("recovery Task after latest playback = %#v, %v", read, err)
+	}
 }
 
 func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {

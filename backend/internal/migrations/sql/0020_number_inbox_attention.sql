@@ -39,6 +39,8 @@ CREATE INDEX work_staff_notes_phone_timeline_idx
 CREATE TABLE work_task_reads (
     task_id uuid NOT NULL REFERENCES work_tasks(id) ON DELETE CASCADE,
     user_subject text NOT NULL,
-    read_at timestamptz NOT NULL DEFAULT now(),
+    read_through_at timestamptz NOT NULL,
+    read_through_call_id uuid NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (task_id, user_subject)
 );
