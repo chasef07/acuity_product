@@ -16,8 +16,10 @@ remaining gates are recorded separately below.
 - Telnyx Call Control and Messaging profile webhook URLs target the
   `us-east1` provider ingress. No live Call, SMS/MMS, retry, or signed burst was
   generated as part of the migration.
-- The prior `us-central1` stack remains running as an isolated rollback asset.
-  It must not receive fallback webhooks because it has a separate database.
+- The prior `us-central1` services, migration job, worker pool, Cloud SQL
+  instance, buckets, Artifact Registry repository, and database URL secrets
+  were removed on 2026-08-06. `us-east1` is the only production region; there
+  is no cross-region standby or provider fallback stack.
 - A successful automated backup and a successful on-demand backup exist in
   `us-east1`. A restore rehearsal is still required before launch.
 - PostgreSQL reports 400 total connections and three superuser-reserved slots:
@@ -30,9 +32,10 @@ latency, carrier delivery, continuous availability, or end-to-end Staff proof.
 
 ## Current automated release
 
-The checked production stack runs in `acuity-health-prod` / `us-east1`.
-The former `us-central1` pilot remains isolated as a temporary rollback asset;
-ordinary releases target only `us-east1` and never copy data between regions.
+The checked production stack runs only in `acuity-health-prod` / `us-east1`.
+Ordinary releases target that region and never copy data between regions.
+Application rollback uses compatible prior `us-east1` revisions; database
+recovery uses backup/PITR rather than a second regional stack.
 
 Every push to GitHub `main` now follows one release path:
 

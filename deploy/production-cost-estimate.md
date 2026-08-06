@@ -40,11 +40,6 @@ during a restore rehearsal. Storage and backup costs grow with retained data.
 Cloud SQL storage auto-increase protects availability, but any increase makes
 this estimate stale and requires a reviewed cost-baseline update.
 
-During migration, retaining the former `us-central1` pilot adds roughly
-$100–$130 for a full month, or about $3.30–$4.30 per day. The temporary combined
-Google Cloud run rate is therefore about $300–$330/month until the old database,
-services, worker, and storage are removed in a separate approved cleanup.
-
 The major accepted saving is the zonal Enterprise database. It removes the
 Enterprise Plus, data-cache, and regional-HA premium, but it also removes
 automatic failover. The resulting availability tradeoff is part of the runtime
