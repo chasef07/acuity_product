@@ -3,7 +3,7 @@
   "provider": "telnyx",
   "handoff": {
     "transport": "SIP_REFER",
-    "routeUserPattern": "^h_[A-Za-z0-9_-]{43}$",
+    "routeUserPattern": "^acuity-handoff$",
     "customHeadersRequired": false
   },
   "commands": {
@@ -48,7 +48,7 @@
     "staleCredentialMappingCount": 0
   },
   "requiredProbes": [
-    "refer_route_token_survival",
+    "stable_refer_normalization",
     "current_webhook_signature",
     "next_webhook_signature",
     "inbound_explicit_bridge",

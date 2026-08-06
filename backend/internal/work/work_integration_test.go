@@ -1520,7 +1520,6 @@ func insertCallAt(
 			source_call_id,
 			idempotency_key,
 			input_fingerprint,
-			token_hash,
 			phone,
 			phone_source,
 			display_name,
@@ -1531,12 +1530,12 @@ func insertCallAt(
 			consumed_at,
 			created_at
 		)
-		VALUES ($1, 'abita-synthetic', $2, $3, $4, $5, $6, $7,
-			$8, 'Abita', 'Synthetic Caller', 'Abita',
-			$9, 'Abita AI', $10, $11, $11)
+		VALUES ($1, 'abita-synthetic', $2, $3, $4, $5, $6,
+			$7, 'Abita', 'Synthetic Caller', 'Abita',
+			$8, 'Abita AI', $9, $10, $10)
 	`, handoffID, authorization.Practice.ID, locationID,
 		"source-"+callID, "idempotency-"+callID, []byte(callID),
-		[]byte("token-"+callID), phone, reason, now.Add(time.Minute), now,
+		phone, reason, now.Add(time.Minute), now,
 	); err != nil {
 		t.Fatalf("insert handoff fixture: %v", err)
 	}

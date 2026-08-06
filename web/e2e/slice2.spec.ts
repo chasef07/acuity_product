@@ -109,8 +109,8 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     const handoff = (await handoffResponse.json()) as {
       sipDestination: string
     }
-    expect(handoff.sipDestination).toMatch(
-      /^sip:h_[A-Za-z0-9_-]{43}@synthetic\.sip\.telnyx\.com$/,
+    expect(handoff.sipDestination).toBe(
+      "sip:acuity-handoff@synthetic.sip.telnyx.com",
     )
 
     const occurredAt = new Date().toISOString()
@@ -124,7 +124,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         call_leg_id: "fixture-caller-leg",
         call_session_id: "fixture-caller-session",
         from: "+15555550100",
-        to: handoff.sipDestination,
+        to: "+14843989071",
       },
     })
     const callID = await expect
