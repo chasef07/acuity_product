@@ -12,20 +12,12 @@ import {
   MessageSquareIcon,
   MoonIcon,
   PhoneMissedIcon,
-  PlusIcon,
   SearchIcon,
   SunIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -40,6 +32,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
+import { CallingOutboundAction } from "@/components/workspace/calling-dock"
 import type {
   AccessDiscovery,
   EngagementSummary,
@@ -94,7 +87,6 @@ export function TaskRail({
   onNewText,
 }: TaskRailProps) {
   const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
-  const [searchOpen, setSearchOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<AttentionSection, boolean>>(
     () =>
       readSidebarState(stateKey)?.expanded ?? {
@@ -105,6 +97,7 @@ export function TaskRail({
       },
   )
   const scrollContainer = useRef<HTMLDivElement | null>(null)
+  const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
   const openTasks = tasks.filter((task) => task.state === "OPEN")
@@ -131,7 +124,7 @@ export function TaskRail({
         return
       }
       event.preventDefault()
-      setSearchOpen(true)
+      searchInput.current?.focus()
     }
     window.addEventListener("keydown", openSearch)
     return () => window.removeEventListener("keydown", openSearch)
@@ -150,7 +143,7 @@ export function TaskRail({
 
   return (
     <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="gap-2 p-2">
+      <SidebarHeader className="gap-3 p-3">
         <div className="flex items-center gap-2">
           <Image
             src="/acuity-health-mark.png"
@@ -165,23 +158,38 @@ export function TaskRail({
           </p>
           <ConnectionMark state={connection} />
         </div>
-        <div className="grid grid-cols-[1fr_auto] gap-1.5">
-          <Button
-            variant="outline"
-            className="justify-start text-muted-foreground"
-            onClick={() => setSearchOpen(true)}
-          >
-            <SearchIcon />
-            Search numbers
-            <span className="ml-auto text-[0.6875rem]">⌘K</span>
-          </Button>
+        <form
+          className="relative"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onSearchSubmit()
+          }}
+        >
+          <SearchIcon className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+          <Input
+            ref={searchInput}
+            aria-label="Search numbers"
+            inputMode="tel"
+            placeholder="Search phone number"
+            className="h-9 bg-background pr-10 pl-8"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+          />
+          <span className="pointer-events-none absolute top-2.5 right-2.5 text-[0.6875rem] text-muted-foreground">
+            ⌘K
+          </span>
+        </form>
+        <div className="flex gap-2">
+          <CallingOutboundAction />
           <Button
             aria-label="New message"
-            size="icon"
+            size="sm"
             variant="outline"
+            className="flex-1 justify-center"
             onClick={onNewText}
           >
-            <PlusIcon />
+            <MessageSquareIcon />
+            Text
           </Button>
         </div>
       </SidebarHeader>
@@ -191,6 +199,39 @@ export function TaskRail({
         className="gap-0 overflow-y-auto"
         onScroll={rememberScroll}
       >
+        {(engagementLoading || search.trim()) && (
+          <div
+            data-testid="number-search-results"
+            className="mx-2 mb-2 rounded-md bg-muted/50 p-1.5"
+          >
+            {engagementLoading && <RailLoading />}
+            {!engagementLoading && search.trim() && engagements.length === 0 && (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                Press Enter to search authorized history.
+              </p>
+            )}
+            {!engagementLoading && engagements.map((engagement) => (
+              <Button
+                key={engagement.phone}
+                variant="ghost"
+                className="h-auto w-full justify-start px-2 py-2"
+                onClick={() => {
+                  onEngagementSelect(engagement)
+                  onSearchChange("")
+                }}
+              >
+                <span className="flex min-w-0 flex-1 flex-col items-start">
+                  <span className="font-medium tabular-nums">
+                    {formatPhone(engagement.phone)}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {engagement.locations.map((location) => location.name).join(" · ")}
+                  </span>
+                </span>
+              </Button>
+            ))}
+          </div>
+        )}
         <AttentionGroup
           title="Tasks"
           count={openTasks.length}
@@ -282,65 +323,6 @@ export function TaskRail({
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <Dialog
-        open={searchOpen}
-        onOpenChange={(open) => {
-          setSearchOpen(open)
-          if (!open) onSearchChange("")
-        }}
-      >
-        <DialogContent className="top-[18%] translate-y-0 sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Find a number inbox</DialogTitle>
-            <DialogDescription>
-              Search exact authorized communication history by phone number.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              onSearchSubmit()
-            }}
-          >
-            <Input
-              autoFocus
-              aria-label="Search phone histories"
-              inputMode="tel"
-              placeholder="(727) 555-0100"
-              value={search}
-              onChange={(event) => onSearchChange(event.target.value)}
-            />
-          </form>
-          <div className="max-h-72 overflow-y-auto border-t pt-2">
-            {engagementLoading && <RailLoading />}
-            {!engagementLoading && search.trim() && engagements.length === 0 && (
-              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                No authorized recorded activity for that number.
-              </p>
-            )}
-            {search.trim() && engagements.map((engagement) => (
-              <Button
-                key={engagement.phone}
-                variant="ghost"
-                className="h-auto w-full justify-start px-2 py-2.5"
-                onClick={() => {
-                  onEngagementSelect(engagement)
-                  setSearchOpen(false)
-                }}
-              >
-                <span className="flex min-w-0 flex-1 flex-col items-start">
-                  <span className="font-medium tabular-nums">
-                    {formatPhone(engagement.phone)}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {engagement.locations.map((location) => location.name).join(" · ")}
-                  </span>
-                </span>
-              </Button>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
     </Sidebar>
   )
 }
@@ -359,7 +341,7 @@ function AttentionGroup({
   children: React.ReactNode
 }) {
   return (
-    <SidebarGroup className="border-b p-0">
+    <SidebarGroup className="border-b border-border/60 p-0 pb-1">
       <Button
         variant="ghost"
         className="h-9 w-full justify-start rounded-none px-3 text-xs font-semibold"
@@ -394,7 +376,7 @@ function TaskRow({
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={active}
-        className="h-auto min-h-14 rounded-none border-t px-3 py-2"
+        className="mx-2 mb-1 h-auto min-h-14 w-[calc(100%-1rem)] rounded-md px-2 py-2"
         tooltip={task.title}
         onClick={onSelect}
       >
@@ -441,7 +423,7 @@ function RecoveryRow({
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={active}
-        className="h-auto min-h-14 rounded-none border-t px-3 py-2"
+        className="mx-2 mb-1 h-auto min-h-14 w-[calc(100%-1rem)] rounded-md px-2 py-2"
         tooltip={row.phone}
         onClick={onSelect}
       >
@@ -484,7 +466,7 @@ function TextRow({
     <SidebarMenuItem>
       <SidebarMenuButton
         data-testid="text-attention-row"
-        className="h-auto min-h-16 rounded-none border-t px-3 py-2"
+        className="mx-2 mb-1 h-auto min-h-16 w-[calc(100%-1rem)] rounded-md px-2 py-2"
         tooltip={thread.externalPhone}
         onClick={onSelect}
       >
@@ -577,7 +559,7 @@ function RecentRow({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        className="h-auto min-h-12 rounded-none border-t px-3 py-2"
+        className="mx-2 mb-1 h-auto min-h-12 w-[calc(100%-1rem)] rounded-md px-2 py-2"
         tooltip={engagement.phone}
         onClick={onSelect}
       >

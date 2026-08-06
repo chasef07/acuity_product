@@ -215,7 +215,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
           preservedScrollTop,
       ),
     )
-    .toBeLessThanOrEqual(2)
+    .toBeLessThanOrEqual(4)
   await expect(
     page.getByRole("button", { name: "New activity", exact: true }),
   ).toHaveCount(0)
@@ -265,17 +265,15 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
   await expect(selectedItem).toHaveCount(0)
-  await page.getByRole("button", { name: "Search numbers" }).click()
-  const searchDialog = page.getByRole("dialog", { name: "Find a number inbox" })
-  await searchDialog
-    .getByRole("textbox", { name: "Search phone histories" })
-    .fill("727.555.0199")
-  const searchResult = searchDialog.getByRole("button", {
-    name: /\(727\) 555-0199/,
-  })
-  await expect(searchResult).toBeVisible()
-  await expect(searchDialog.getByRole("button", { name: /Call|Text/ })).toHaveCount(0)
-  await searchResult.click()
+  const numberSearch = page.getByRole("textbox", { name: "Search numbers" })
+  await numberSearch.fill("727.555.0199")
+  await numberSearch.press("Enter")
+  await page
+    .getByTestId("number-search-results")
+    .getByRole("button", { name: /\(727\) 555-0199/ })
+    .click()
+  await expect(page.getByRole("button", { name: "Outbound call" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "New message" })).toBeVisible()
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()

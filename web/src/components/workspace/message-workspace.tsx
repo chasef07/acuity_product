@@ -200,16 +200,15 @@ export function EngagementWorkspace({
   return (
     <section className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
+        <header className="border-b px-4 py-3">
         <div className="flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">Number inbox</Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                Unverified phone context
-              </span>
-            </div>
-            <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
+            <p className="text-xs font-medium text-muted-foreground">
+              <span>Number inbox</span>
+              <span aria-hidden="true"> · </span>
+              <span>Unverified phone context</span>
+            </p>
+            <h1 className="mt-1 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
               {formatPhone(engagement.phone)}
             </h1>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -369,9 +368,9 @@ function SelectedCallSnapshot({
   return (
     <aside
       aria-label="Selected item"
-      className="flex w-80 shrink-0 flex-col border-l bg-card/45 xl:w-96"
+      className="flex w-80 shrink-0 flex-col border-l bg-muted/15"
     >
-      <div className="flex items-center gap-2 border-b px-4 py-3">
+      <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {call.voicemail ? "Voicemail" : "Call"}
         </span>
@@ -385,7 +384,7 @@ function SelectedCallSnapshot({
           <XIcon />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <div>
           <Badge variant="outline">
             {call.direction === "INBOUND" ? "Inbound" : "Outbound"}
@@ -443,7 +442,7 @@ function SelectedCallSnapshot({
           <SnapshotField label="Follow-up" value={call.transferReason} />
         )}
         {canMutate && (
-          <div className="mt-auto flex flex-wrap gap-2 border-t pt-4">
+          <div className="mt-auto flex flex-wrap gap-2 pt-2">
             <CallingNumberAction
               locationID={call.locationId}
               phone={call.phone}
@@ -464,11 +463,11 @@ function SelectedCallSnapshot({
 
 function SnapshotField({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="flex items-baseline justify-between gap-4">
+      <p className="text-xs font-medium text-muted-foreground">
         {label}
       </p>
-      <p className="mt-1 text-sm">{value}</p>
+      <p className="text-right text-sm">{value}</p>
     </div>
   )
 }
@@ -664,9 +663,9 @@ function SelectedTaskSnapshot({
   return (
     <aside
       aria-label="Selected item"
-      className="flex w-80 shrink-0 flex-col border-l bg-card/45 xl:w-96"
+      className="flex w-80 shrink-0 flex-col border-l bg-muted/15"
     >
-      <div className="flex items-center gap-2 border-b px-4 py-3">
+      <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Task
         </span>
@@ -680,7 +679,7 @@ function SelectedTaskSnapshot({
           <XIcon />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <div>
           <Badge variant={task.state === "OPEN" ? "secondary" : "outline"}>
             {task.state === "OPEN" ? "Open" : "Completed"}
@@ -736,7 +735,7 @@ function SelectedTaskSnapshot({
           </p>
         </div>
         {task.sourceMessage && (
-          <section>
+          <section className="rounded-lg bg-background/80 p-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Instructions
             </h3>
@@ -746,7 +745,7 @@ function SelectedTaskSnapshot({
           </section>
         )}
         {(task.category || task.callerName) && (
-          <section>
+          <section className="rounded-lg bg-background/80 p-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Source context
             </h3>
@@ -758,7 +757,7 @@ function SelectedTaskSnapshot({
           </section>
         )}
         {canMutate && (
-          <div className="flex flex-col gap-2">
+          <div className="mt-auto flex flex-col gap-2 pt-2">
             {task.state === "OPEN" && (
               <Button
                 variant="outline"
@@ -1264,8 +1263,8 @@ function MessageConversation({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b bg-muted/20 px-4 py-2">
-        <div className="relative mx-auto max-w-3xl">
+      <div className="bg-muted/20 px-4 py-2">
+        <div className="relative mx-auto max-w-5xl">
           <SearchIcon className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
           <Input
             aria-label="Find in history"
@@ -1279,7 +1278,7 @@ function MessageConversation({
       <div
         ref={scroller}
         data-testid="message-timeline"
-        className="relative min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(to_right,transparent_calc(50%-0.5px),color-mix(in_oklab,var(--border)_55%,transparent)_50%,transparent_calc(50%+0.5px))] px-4 py-5"
+        className="relative min-h-0 flex-1 overflow-y-auto bg-muted/[0.08] px-5 py-4"
         onScroll={(event) => {
           const element = event.currentTarget
           const nowAtLatest =
@@ -1292,7 +1291,7 @@ function MessageConversation({
           }
         }}
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        <div className="mx-auto flex max-w-5xl flex-col gap-2.5">
           {cursor && (
             <Button
               size="sm"
@@ -1317,11 +1316,11 @@ function MessageConversation({
                 {isDateBoundary(visibleItems[index - 1], item) && (
                   <div
                     role="separator"
-                    className="flex items-center gap-3 py-1 text-xs font-medium text-muted-foreground"
+                    className="flex justify-center py-1 text-xs font-medium text-muted-foreground"
                   >
-                    <span className="h-px flex-1 bg-border" />
-                    {formatTimelineDate(item.occurredAt)}
-                    <span className="h-px flex-1 bg-border" />
+                    <span className="rounded-full bg-muted px-2.5 py-1">
+                      {formatTimelineDate(item.occurredAt)}
+                    </span>
                   </div>
                 )}
                 <TimelineEntry
@@ -1374,7 +1373,7 @@ function MessageConversation({
         </Alert>
       )}
       {handledEligible && latestMessage && (
-        <div className="flex items-center justify-end gap-3 border-t bg-muted/20 px-4 py-2">
+        <div className="flex items-center justify-end gap-3 px-4 pt-2">
           <p className="text-xs text-muted-foreground">
             The latest inbound Text has an outbound reply.
           </p>
@@ -1415,7 +1414,7 @@ function MessageConversation({
       {canMutate &&
         locationID &&
         (timelinePhone || conversationThread?.externalPhone) && (
-          <div className="border-t bg-muted/20 px-4 py-2">
+          <div className="px-4 py-2">
             {!noteOpen ? (
               <div className="flex justify-end">
                 <Button
@@ -1429,7 +1428,7 @@ function MessageConversation({
               </div>
             ) : (
               <form
-                className="mx-auto flex max-w-3xl flex-col gap-2"
+                className="mx-auto flex max-w-5xl flex-col gap-2 rounded-lg bg-muted/40 p-3"
                 onSubmit={async (event) => {
                   event.preventDefault()
                   const body = noteBody.trim()
@@ -1796,7 +1795,7 @@ function MessageEntry({
     >
       <div
         className={cn(
-          "max-w-[34rem] border px-3 py-2.5 shadow-xs",
+          "max-w-[min(42rem,82%)] border px-3 py-2.5 shadow-xs",
           outbound
             ? cn(
                 "rounded-l-md rounded-br-md bg-primary text-primary-foreground",
@@ -1851,22 +1850,18 @@ function MessageEntry({
           </div>
         )}
         {canMutate && (
-          <div
-            className={cn(
-              "mt-2 flex flex-wrap gap-1 border-t pt-2",
-              outbound ? "border-primary-foreground/20" : "border-border",
-            )}
-          >
+          <div className="mt-1 flex flex-wrap justify-end gap-1">
             {!message.taskId && (
               <Button
                 size="sm"
                 variant={outbound ? "secondary" : "ghost"}
-                className="h-7"
+                className="size-6 p-0"
+                title="Create follow-up Task"
                 disabled={pending}
                 onClick={() => void createTask()}
               >
                 <CheckSquareIcon />
-                Create Task
+                <span className="sr-only">Create Task</span>
               </Button>
             )}
             {outbound &&
@@ -2034,7 +2029,7 @@ function AttachmentCard({
         <img
           src={objectURL}
           alt={attachment.fileName}
-          className="max-h-72 w-full bg-background object-contain"
+          className="block h-auto max-h-60 max-w-full bg-background object-contain"
         />
       ) : (
         <div
@@ -2228,10 +2223,10 @@ function MessageComposer({
   return (
     <form
       aria-label="Message composer"
-      className="border-t bg-background px-4 py-3"
+      className="border-t bg-background px-4 py-2.5"
       onSubmit={(event) => void submit(event)}
     >
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-5xl">
         <p className="mb-2 text-xs text-muted-foreground">
           Sender route: <strong className="font-medium text-foreground">{routeLabel || "Selected office"}</strong>
           {initialDestination
@@ -2253,10 +2248,10 @@ function MessageComposer({
         <div className="flex items-end gap-2">
           <textarea
             aria-label="Message"
-            rows={2}
+            rows={1}
             maxLength={maximumMessageLength}
             placeholder="Write a message"
-            className="flex min-h-16 min-w-0 flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex min-h-11 max-h-32 min-w-0 flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
             value={body}
             disabled={disabled || pending}
             onChange={(event) => setBody(event.target.value)}

@@ -209,6 +209,24 @@ export function CallingOutboundNavigation() {
   )
 }
 
+export function CallingOutboundAction() {
+  const { activeCall, platformOperator, setDialerOpen } = useCallingNavigation()
+  if (platformOperator) return null
+  return (
+    <Button
+      aria-label="Outbound call"
+      size="sm"
+      variant="outline"
+      className="flex-1 justify-center"
+      disabled={Boolean(activeCall)}
+      onClick={() => setDialerOpen(true)}
+    >
+      <PhoneOutgoingIcon />
+      Call
+    </Button>
+  )
+}
+
 export function CallingNumberAction({
   locationID,
   phone,

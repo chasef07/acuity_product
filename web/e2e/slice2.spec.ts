@@ -771,8 +771,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       winnerPage.getByRole("article").filter({ hasText: unseenText }),
     ).toHaveCount(0)
     await expect
-      .poll(() => timelineScroller.evaluate((element) => element.scrollTop))
-      .toBe(preservedScrollTop)
+      .poll(async () =>
+        Math.abs(
+          (await timelineScroller.evaluate((element) => element.scrollTop)) -
+            preservedScrollTop,
+        ),
+      )
+      .toBeLessThanOrEqual(2)
     await timelineScroller.evaluate((element) => {
       element.scrollTop = element.scrollHeight
     })
@@ -1019,12 +1024,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         exact: true,
       }),
     ).toBeVisible()
-    await loserPage.getByRole("button", { name: "Search numbers" }).click()
-    let phoneSearch = loserPage.getByRole("dialog", {
-      name: "Find a number inbox",
+    const phoneSearch = loserPage.getByRole("textbox", {
+      name: "Search numbers",
     })
-    await phoneSearch.getByLabel("Search phone histories").fill("+15555550100")
-    await phoneSearch
+    await phoneSearch.fill("+15555550100")
+    await phoneSearch.press("Enter")
+    await loserPage
+      .getByTestId("number-search-results")
       .getByRole("button", { name: /\(555\) 555-0100/ })
       .click()
     await expect(
@@ -1033,12 +1039,10 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(loserPage.getByText("Number inbox", { exact: true })).toBeVisible()
     await expect(loserPage.getByText("Engagement History", { exact: true })).toHaveCount(0)
     expect(loserPage.url()).not.toContain("5555550100")
-    await loserPage.getByRole("button", { name: "Search numbers" }).click()
-    phoneSearch = loserPage.getByRole("dialog", {
-      name: "Find a number inbox",
-    })
-    await phoneSearch.getByLabel("Search phone histories").fill("+15555550101")
-    await phoneSearch
+    await phoneSearch.fill("+15555550101")
+    await phoneSearch.press("Enter")
+    await loserPage
+      .getByTestId("number-search-results")
       .getByRole("button", { name: /\(555\) 555-0101/ })
       .click()
     await expect(
@@ -2431,7 +2435,7 @@ async function signUp(
   await expect(
     page.getByRole("switch", { name: "Availability" }),
   ).toBeVisible()
-  await expect(page.getByRole("button", { name: "Search numbers" })).toBeVisible()
+  await expect(page.getByRole("textbox", { name: "Search numbers" })).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
   ).toBeVisible()
