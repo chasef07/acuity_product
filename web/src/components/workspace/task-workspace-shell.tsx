@@ -916,8 +916,13 @@ export function TaskWorkspaceShell() {
     messageQueryKeyRef.current = ""
     tasksRef.current = []
     messageThreadsRef.current = []
+    engagementGenerationRef.current += 1
     setTasks([])
     setMessageThreads([])
+    setSearch("")
+    setSettledSearch("")
+    setEngagements([])
+    setEngagementLoading(false)
     updateSelectedTask(undefined)
     setSelectedThread(undefined)
     setComposingNew(false)
@@ -1287,10 +1292,9 @@ export function TaskWorkspaceShell() {
           connection={connection}
           onSearchChange={(value) => {
             setSearch(value)
-            if (!value.trim()) {
-              setEngagements([])
-              setEngagementLoading(false)
-            }
+            engagementGenerationRef.current += 1
+            setEngagements([])
+            setEngagementLoading(Boolean(value.trim()))
           }}
           onSearchSubmit={submitPhoneSearch}
           onEngagementSelect={selectEngagement}

@@ -268,8 +268,19 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   const numberSearch = page.getByRole("textbox", { name: "Search numbers" })
   await numberSearch.fill("727.555.0199")
   await numberSearch.press("Enter")
-  await page
-    .getByTestId("number-search-results")
+  const numberSearchResults = page.getByTestId("number-search-results")
+  const originalSearchResult = numberSearchResults.getByRole("button", {
+    name: /\(727\) 555-0199/,
+  })
+  await expect(originalSearchResult).toBeVisible()
+  await numberSearch.fill("727.555.0198")
+  await expect(originalSearchResult).toHaveCount(0)
+  await expect(
+    numberSearchResults.getByRole("button", { name: /\(727\) 555-0198/ }),
+  ).toBeVisible()
+  await numberSearch.fill("727.555.0199")
+  await numberSearch.press("Enter")
+  await numberSearchResults
     .getByRole("button", { name: /\(727\) 555-0199/ })
     .click()
   await expect(page.getByRole("button", { name: "Outbound call" })).toBeVisible()

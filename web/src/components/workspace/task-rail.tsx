@@ -207,7 +207,7 @@ export function TaskRail({
             {engagementLoading && <RailLoading />}
             {!engagementLoading && search.trim() && engagements.length === 0 && (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                Press Enter to search authorized history.
+                No authorized recorded activity for that number.
               </p>
             )}
             {!engagementLoading && engagements.map((engagement) => (
