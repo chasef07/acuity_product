@@ -1859,8 +1859,6 @@ function MessageEntry({
             <time dateTime={message.createdAt}>
               {formatTimelineTime(message.createdAt)}
             </time>
-            <span aria-hidden="true">·</span>
-            <span>{message.thread.locationName}</span>
             {outbound && (
               <>
                 <span aria-hidden="true">·</span>
@@ -2004,19 +2002,12 @@ function TimelineCard({
       )}
     >
       <div
-        className={cn(
-          "w-full max-w-lg rounded-xl border border-l-[3px] bg-background px-3 py-2.5 shadow-xs",
-          tone === "call" && "border-l-sky-500",
-          tone === "missed" && "border-l-amber-500",
-          tone === "voicemail" && "border-l-violet-500",
-          tone === "task" && "border-l-emerald-500",
-          tone === "note" && "border-l-slate-400",
-        )}
+        className="w-full max-w-lg rounded-xl border bg-background px-3 py-2.5 shadow-xs"
       >
         <div className="flex items-start gap-2.5">
           <span
             className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4",
+              "flex size-7 shrink-0 items-center justify-center rounded-md [&_svg]:size-3.5",
               tone === "call" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
               tone === "missed" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
               tone === "voicemail" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",

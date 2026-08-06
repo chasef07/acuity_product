@@ -169,6 +169,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     .getByRole("article")
     .filter({ hasText: inboundText })
   await expect(inbound).toBeVisible()
+  await expect(inbound).not.toContainText("Fixture Location 1")
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
 
   for (let index = 0; index < 16; index += 1) {
