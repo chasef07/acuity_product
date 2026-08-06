@@ -230,10 +230,11 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
+  await inbound.hover()
   await inbound.getByRole("button", { name: "Create Task" }).click()
   await expect(
     page.getByRole("button", {
-      name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+      name: /Task: Follow up on text\. Created/,
     }),
   ).toBeVisible()
 
@@ -266,6 +267,15 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   ).toBeVisible()
   await expect(selectedItem).toHaveCount(0)
   const numberSearch = page.getByRole("textbox", { name: "Search numbers" })
+  await numberSearch.fill("727")
+  await expect(
+    page.getByText("Enter a full phone number.", { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("No authorized recorded activity for that number.", {
+      exact: true,
+    }),
+  ).toHaveCount(0)
   await numberSearch.fill("727.555.0199")
   await numberSearch.press("Enter")
   const numberSearchResults = page.getByTestId("number-search-results")
@@ -367,7 +377,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   ).toBeVisible()
   await page
     .getByRole("button", {
-      name: /Task · Completed.*Follow up on text/,
+      name: /Task: Follow up on text\. Completed/,
     })
     .last()
     .click()

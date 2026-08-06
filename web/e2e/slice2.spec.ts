@@ -1475,7 +1475,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         })
         .toEqual({ state: "OPEN", read: true })
       await takeoverPage
-        .getByRole("button", { name: /Voicemail · Open detail/ })
+        .getByRole("button", { name: /Voicemail:.*Open details/ })
         .last()
         .click()
       const focusedVoicemail = takeoverPage.getByRole("complementary", {
@@ -1533,7 +1533,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         .getByRole("button", { name: "Close selected item" })
         .click()
       await takeoverPage
-        .getByRole("button", { name: /Voicemail · Open detail/ })
+        .getByRole("button", { name: /Voicemail:.*Open details/ })
         .last()
         .click()
       await takeoverPage
@@ -2241,8 +2241,8 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       }),
     ).toBeVisible()
     await takeoverPage
-      .getByRole("button", { name: /Fixture Location 1 · Call · Open detail/ })
-      .filter({ hasText: "FOLLOW UP REQUIRED" })
+      .getByRole("button", { name: /Outbound call:.*Open details/ })
+      .filter({ hasText: /Follow up required/i })
       .first()
       .click()
     const disposedCallSnapshot = takeoverPage.getByRole("complementary", {

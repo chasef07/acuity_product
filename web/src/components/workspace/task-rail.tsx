@@ -41,6 +41,7 @@ import type {
   Task,
 } from "@/lib/api/generated/types.gen"
 import { authClient } from "@/lib/auth-client"
+import { isCompletePhoneSearch } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 
 export type ConnectionState = "connecting" | "connected" | "degraded"
@@ -207,7 +208,9 @@ export function TaskRail({
             {engagementLoading && <RailLoading />}
             {!engagementLoading && search.trim() && engagements.length === 0 && (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                No authorized recorded activity for that number.
+                {isCompletePhoneSearch(search)
+                  ? "No authorized recorded activity for that number."
+                  : "Enter a full phone number."}
               </p>
             )}
             {!engagementLoading && engagements.map((engagement) => (
@@ -341,7 +344,7 @@ function AttentionGroup({
   children: React.ReactNode
 }) {
   return (
-    <SidebarGroup className="border-b border-border/60 p-0 pb-1">
+    <SidebarGroup className="p-0 pb-1">
       <Button
         variant="ghost"
         className="h-9 w-full justify-start rounded-none px-3 text-xs font-semibold"

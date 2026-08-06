@@ -82,6 +82,7 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
+import { isCompletePhoneSearch } from "@/lib/phone"
 import {
   createWorkspaceSync,
   type WorkspaceSync,
@@ -828,7 +829,7 @@ export function TaskWorkspaceShell() {
 
   useEffect(() => {
     const requestGeneration = ++engagementGenerationRef.current
-    if (!practiceID || !settledSearch) return
+    if (!practiceID || !isCompletePhoneSearch(settledSearch)) return
     const timeout = window.setTimeout(async () => {
       setEngagementLoading(true)
       const token = await getAccessToken()
@@ -1032,7 +1033,7 @@ export function TaskWorkspaceShell() {
 
   async function submitPhoneSearch() {
     const phone = search.trim()
-    if (!phone || !practiceID) return
+    if (!isCompletePhoneSearch(phone) || !practiceID) return
     const requestGeneration = ++engagementGenerationRef.current
     setEngagementLoading(true)
     const token = await getAccessToken()
@@ -1294,7 +1295,7 @@ export function TaskWorkspaceShell() {
             setSearch(value)
             engagementGenerationRef.current += 1
             setEngagements([])
-            setEngagementLoading(Boolean(value.trim()))
+            setEngagementLoading(isCompletePhoneSearch(value))
           }}
           onSearchSubmit={submitPhoneSearch}
           onEngagementSelect={selectEngagement}

@@ -17,11 +17,15 @@ import {
   MessageSquareIcon,
   PaperclipIcon,
   PhoneCallIcon,
+  PhoneIncomingIcon,
+  PhoneMissedIcon,
+  PhoneOutgoingIcon,
   PencilIcon,
   RefreshCwIcon,
   SearchIcon,
   SendIcon,
   StickyNoteIcon,
+  VoicemailIcon,
   XIcon,
 } from "lucide-react"
 
@@ -1330,10 +1334,6 @@ function MessageConversation({
                   onChanged={() => void loadLatest(true)}
                   onTaskCreated={onTaskCreated}
                   onTaskOpen={onTaskOpen}
-                  groupedWithPrevious={areConsecutiveMessages(
-                    visibleItems[index - 1],
-                    item,
-                  )}
                   groupedWithNext={areConsecutiveMessages(
                     item,
                     visibleItems[index + 1],
@@ -1552,7 +1552,6 @@ function TimelineEntry({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
-  groupedWithPrevious,
   groupedWithNext,
 }: {
   item: ConversationTimelineItem
@@ -1562,7 +1561,6 @@ function TimelineEntry({
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string, history?: CallHistoryItem) => void
-  groupedWithPrevious: boolean
   groupedWithNext: boolean
 }) {
   if (item.type === "MESSAGE" && item.message) {
@@ -1573,17 +1571,17 @@ function TimelineEntry({
         supportSessionID={supportSessionID}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
-        groupedWithPrevious={groupedWithPrevious}
         groupedWithNext={groupedWithNext}
       />
     )
   }
   if (item.type === "CALL" && item.call) {
-    const voicemail = item.call.outcome === "VOICEMAIL"
+    const presentation = callPresentation(item.call)
     return (
       <article>
         <button
           type="button"
+          aria-label={`${presentation.label}: ${presentation.title}. Open details`}
           className={cn(
             "w-full text-left",
             onCallOpen &&
@@ -1592,16 +1590,18 @@ function TimelineEntry({
           disabled={!onCallOpen}
           onClick={() => onCallOpen?.(item.call!.id, item.call!)}
         >
-          <TimelineRule
-            icon={<PhoneCallIcon />}
-            label={`${item.call.locationName} · ${voicemail ? "Voicemail" : "Call"} · Open detail`}
+          <TimelineCard
+            icon={presentation.icon}
+            kind={presentation.label}
+            meta={item.call.locationName}
             occurredAt={item.occurredAt}
-            title={item.call.transferReason || (voicemail ? "Voicemail" : "Call")}
-            detail={`${item.call.outcome.replaceAll("_", " ")} · ${formatDuration(item.call.durationSeconds)}`}
+            title={presentation.title}
+            detail={presentation.detail}
+            tone={presentation.tone}
           />
         </button>
-        {voicemail && (
-          <div className="ml-12 mt-2">
+        {item.call.outcome === "VOICEMAIL" && (
+          <div className="mx-auto mt-2 max-w-2xl pl-12">
             <VoicemailPlayer callID={item.call.id} compact />
           </div>
         )}
@@ -1613,6 +1613,7 @@ function TimelineEntry({
     return (
       <button
         type="button"
+        aria-label={`Task: ${task.title}. ${taskActivityLabel(item.taskActivity, task.state)}`}
         className={cn(
           "w-full text-left",
           onTaskOpen &&
@@ -1621,12 +1622,13 @@ function TimelineEntry({
         disabled={!onTaskOpen}
         onClick={() => onTaskOpen?.(task)}
       >
-        <TimelineRule
+        <TimelineCard
           icon={<CheckSquareIcon />}
-          label={`${task.locationName} · Task · ${taskActivityLabel(item.taskActivity, task.state)}`}
+          kind="Task"
+          meta={`${taskActivityLabel(item.taskActivity, task.state)} · ${task.locationName}`}
           occurredAt={item.occurredAt}
           title={task.title}
-          detail={`${task.state === "OPEN" ? "Open Task" : "Completed Task"} · ${formatPhone(task.phone)}`}
+          tone="task"
         />
       </button>
     )
@@ -1634,12 +1636,13 @@ function TimelineEntry({
   if (item.type === "NOTE" && item.note) {
     return (
       <article>
-        <TimelineRule
+        <TimelineCard
           icon={<StickyNoteIcon />}
-          label={`${item.note.locationName} · Staff note`}
+          kind="Staff note"
+          meta={item.note.locationName}
           occurredAt={item.occurredAt}
-          title="Staff note"
-          detail={item.note.body}
+          title={item.note.body}
+          tone="note"
         />
       </article>
     )
@@ -1709,7 +1712,6 @@ function MessageEntry({
   supportSessionID,
   onChanged,
   onTaskCreated,
-  groupedWithPrevious,
   groupedWithNext,
 }: {
   message: Message
@@ -1717,7 +1719,6 @@ function MessageEntry({
   supportSessionID: string
   onChanged: () => void
   onTaskCreated: (task: Task) => void
-  groupedWithPrevious: boolean
   groupedWithNext: boolean
 }) {
   const [pending, setPending] = useState(false)
@@ -1788,25 +1789,16 @@ function MessageEntry({
   return (
     <article
       className={cn(
-        "flex w-full",
-        groupedWithPrevious && "-mt-2",
+        "group/message flex w-full",
         outbound ? "justify-end pl-10" : "justify-start pr-10",
       )}
     >
       <div
         className={cn(
-          "max-w-[min(42rem,82%)] border px-3 py-2.5 shadow-xs",
+          "max-w-[min(42rem,82%)] rounded-xl border px-3 py-2.5 shadow-xs",
           outbound
-            ? cn(
-                "rounded-l-md rounded-br-md bg-primary text-primary-foreground",
-                groupedWithPrevious && "rounded-tr-none",
-                groupedWithNext && "rounded-br-none",
-              )
-            : cn(
-                "rounded-r-md rounded-bl-md bg-background",
-                groupedWithPrevious && "rounded-tl-none",
-                groupedWithNext && "rounded-bl-none",
-              ),
+            ? "border-sky-500/20 bg-sky-500/10"
+            : "border-border/70 bg-muted/60",
         )}
       >
         {message.body && (
@@ -1820,16 +1812,18 @@ function MessageEntry({
             canMutate={canMutate}
             supportSessionID={supportSessionID}
             onChanged={onChanged}
-            inverse={outbound}
+            inverse={false}
           />
         )}
         {!groupedWithNext && (
           <div
             className={cn(
               "mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums",
-              outbound ? "text-primary-foreground/75" : "text-muted-foreground",
+              "text-muted-foreground",
             )}
           >
+            <span>{outbound ? "Outbound text" : "Inbound text"}</span>
+            <span aria-hidden="true">·</span>
             <time dateTime={message.createdAt}>
               {formatTimelineTime(message.createdAt)}
             </time>
@@ -1854,8 +1848,8 @@ function MessageEntry({
             {!message.taskId && (
               <Button
                 size="sm"
-                variant={outbound ? "secondary" : "ghost"}
-                className="size-6 p-0"
+                variant="ghost"
+                className="pointer-events-none size-6 p-0 opacity-0 transition-opacity group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
                 title="Create follow-up Task"
                 disabled={pending}
                 onClick={() => void createTask()}
@@ -1869,7 +1863,7 @@ function MessageEntry({
                 message.delivery === "Status unknown") && (
                 <Button
                   size="sm"
-                  variant={outbound ? "secondary" : "ghost"}
+                  variant="outline"
                   className="h-7"
                   disabled={pending}
                   onClick={() => void sendAgain()}
@@ -1888,7 +1882,7 @@ function MessageEntry({
             role="alert"
             className={cn(
               "mt-2 text-xs",
-              outbound ? "text-primary-foreground" : "text-destructive",
+              "text-destructive",
             )}
           >
             {error}
@@ -1899,35 +1893,107 @@ function MessageEntry({
   )
 }
 
-function TimelineRule({
+function callPresentation(call: CallHistoryItem): {
+  icon: React.ReactNode
+  label: string
+  title: string
+  detail: string
+  tone: "call" | "missed" | "voicemail"
+} {
+  const duration = formatDuration(call.durationSeconds)
+  if (call.outcome === "VOICEMAIL") {
+    return {
+      icon: <VoicemailIcon />,
+      label: "Voicemail",
+      title: call.transferReason || "Voicemail received",
+      detail: duration,
+      tone: "voicemail",
+    }
+  }
+  if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
+    return {
+      icon: <PhoneMissedIcon />,
+      label: "Missed call",
+      title: call.transferReason || "No answer",
+      detail: duration,
+      tone: "missed",
+    }
+  }
+  return {
+    icon:
+      call.direction === "INBOUND" ? <PhoneIncomingIcon /> : <PhoneOutgoingIcon />,
+    label: call.direction === "INBOUND" ? "Inbound call" : "Outbound call",
+    title: call.transferReason || "Phone conversation",
+    detail: `${humanizeCallOutcome(call.outcome)} · ${duration}`,
+    tone: "call",
+  }
+}
+
+function humanizeCallOutcome(outcome: CallHistoryItem["outcome"]) {
+  const words = outcome.toLowerCase().replaceAll("_", " ")
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+function TimelineCard({
   icon,
-  label,
+  kind,
+  meta,
   occurredAt,
   title,
   detail,
+  tone,
 }: {
   icon: React.ReactNode
-  label: string
+  kind: string
+  meta: string
   occurredAt: string
   title: string
-  detail: string
+  detail?: string
+  tone: "call" | "missed" | "voicemail" | "task" | "note"
 }) {
   return (
-    <div className="mx-auto w-full max-w-xl border bg-muted/80 px-3 py-2 text-xs shadow-xs backdrop-blur-sm">
-      <div className="flex items-center gap-2">
-        <span className="[&_svg]:size-3.5 text-muted-foreground">{icon}</span>
-        <span className="text-xs font-medium text-muted-foreground">
-          {label}
-        </span>
-        <time
-          dateTime={occurredAt}
-          className="ml-auto text-xs tabular-nums text-muted-foreground"
+    <div
+      className={cn(
+        "mx-auto w-full max-w-2xl rounded-xl border border-l-[3px] bg-background px-4 py-3 shadow-xs",
+        tone === "call" && "border-l-sky-500",
+        tone === "missed" && "border-l-amber-500",
+        tone === "voicemail" && "border-l-violet-500",
+        tone === "task" && "border-l-emerald-500",
+        tone === "note" && "border-l-slate-400",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4",
+            tone === "call" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+            tone === "missed" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+            tone === "voicemail" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+            tone === "task" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+            tone === "note" && "bg-muted text-muted-foreground",
+          )}
         >
-          {formatTimelineTime(occurredAt)}
-        </time>
+          {icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide">
+              {kind}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">{meta}</span>
+            <time
+              dateTime={occurredAt}
+              className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground"
+            >
+              {formatTimelineTime(occurredAt)}
+            </time>
+          </div>
+          <p className="mt-1 text-sm font-medium">{title}</p>
+          {detail && (
+            <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+          )}
+        </div>
       </div>
-      <p className="mt-1.5 font-medium">{title}</p>
-      <p className="mt-0.5 text-muted-foreground">{detail}</p>
     </div>
   )
 }
