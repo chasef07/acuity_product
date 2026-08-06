@@ -276,7 +276,12 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toHaveCount(0)
-  await numberSearch.fill("+44 20 71")
+  let prefixSearchRequests = 0
+  await page.route("**/v1/engagements/query", async (route) => {
+    prefixSearchRequests += 1
+    await route.abort()
+  })
+  await numberSearch.fill("+44 20 7183")
   await expect(
     page.getByText("Enter a full phone number.", { exact: true }),
   ).toBeVisible()
@@ -285,7 +290,8 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toHaveCount(0)
-  await page.route("**/v1/engagements/query", async (route) => route.abort())
+  await page.waitForTimeout(300)
+  expect(prefixSearchRequests).toBe(0)
   await numberSearch.press("Enter")
   await expect(
     page.getByText("Number search is unavailable. Try again.", { exact: true }),
@@ -295,6 +301,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toHaveCount(0)
+  expect(prefixSearchRequests).toBe(1)
   await page.unroute("**/v1/engagements/query")
   await numberSearch.fill("+44 20 7183 8750")
   await numberSearch.press("Enter")
@@ -312,6 +319,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(originalSearchResult).toBeVisible()
   await numberSearch.fill("727.555.0198")
   await expect(originalSearchResult).toHaveCount(0)
+  await numberSearch.press("Enter")
   await expect(
     numberSearchResults.getByRole("button", { name: /\(727\) 555-0198/ }),
   ).toBeVisible()
