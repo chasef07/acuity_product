@@ -104,9 +104,24 @@ export function TaskRail({
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
-  const openTasks = tasks.filter((task) => task.state === "OPEN")
+  const openTasks = useMemo(
+    () => tasks.filter((task) => task.state === "OPEN"),
+    [tasks],
+  )
+  const generalTasks = useMemo(
+    () =>
+      openTasks.filter(
+        (task) =>
+          task.origin !== "MISSED_CALL_RECOVERY" &&
+          task.origin !== "VOICEMAIL_RECOVERY",
+      ),
+    [openTasks],
+  )
   const recoveryRows = useMemo(() => aggregateRecovery(openTasks), [openTasks])
-  const textRows = useMemo(() => aggregateTexts(messages, tasks), [messages, tasks])
+  const textRows = useMemo(
+    () => aggregateTexts(messages, tasks),
+    [messages, tasks],
+  )
 
   useEffect(() => {
     const restored = readSidebarState(stateKey)
@@ -253,11 +268,11 @@ export function TaskRail({
         )}
         <AttentionGroup
           title="Tasks"
-          count={openTasks.length}
+          count={generalTasks.length}
           expanded={expanded.tasks}
           onToggle={() => toggle("tasks")}
         >
-          {openTasks.map((task) => (
+          {generalTasks.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -265,7 +280,7 @@ export function TaskRail({
               onSelect={() => onTaskSelect(task)}
             />
           ))}
-          {loading && openTasks.length === 0 && <RailLoading />}
+          {loading && generalTasks.length === 0 && <RailLoading />}
         </AttentionGroup>
         <AttentionGroup
           title="Missed Calls & Voicemails"

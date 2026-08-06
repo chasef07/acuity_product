@@ -1048,6 +1048,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     await expect(
       loserPage.getByRole("heading", { name: "(555) 555-0101" }),
     ).toBeVisible()
+    const missedTimeline = loserPage.getByTestId("message-timeline")
+    await expect(
+      missedTimeline.getByRole("button", { name: /Missed call:.*Open details/ }),
+    ).toBeVisible()
+    await expect(
+      missedTimeline.getByRole("button", { name: /Task: Return missed call/ }),
+    ).toHaveCount(0)
     await expect(takeoverAvailability).toBeChecked()
 
     const recoveryHandoffResponse = await takeoverPage.request.post(
@@ -1443,6 +1450,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           name: /Missed Calls & Voicemails [1-9]/,
         }),
       ).toHaveAttribute("aria-expanded", "true")
+      await expect(
+        takeoverPage.getByRole("button", { name: "Tasks 1", exact: true }),
+      ).toBeVisible()
       await expect(takeoverPage.getByLabel("Unread voicemail")).toBeVisible()
       await takeoverPage
         .getByRole("button", { name: /Review voicemail/ })
@@ -1454,15 +1464,23 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
           exact: true,
         }),
       ).toBeVisible()
+      const voicemailTimeline = takeoverPage.getByTestId("message-timeline")
+      await expect(
+        voicemailTimeline.getByRole("button", { name: /Voicemail:.*Open details/ }),
+      ).toBeVisible()
+      await expect(
+        voicemailTimeline.getByRole("button", { name: /Task: Review voicemail/ }),
+      ).toHaveCount(0)
       const playbackResponse = takeoverPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
           response.url().includes("/v1/calling/voicemail-playback/"),
       )
-      await takeoverPage
+      const compactVoicemailPlay = takeoverPage
         .getByRole("button", { name: "Play voicemail" })
         .first()
-        .click()
+      await expect(compactVoicemailPlay).toHaveText("")
+      await compactVoicemailPlay.click()
       const playback = await playbackResponse
       expect(playback.status()).toBe(200)
       expect(playback.headers()["content-type"]).toBe("audio/mpeg")
@@ -1494,7 +1512,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         name: "Selected item",
       })
       await expect(focusedVoicemail).toContainText("Voicemail")
-      await expect(focusedVoicemail).toContainText("Related Task")
+      await expect(focusedVoicemail).not.toContainText("Related Task")
       await expect(
         focusedVoicemail.getByText("More context", { exact: true }),
       ).toHaveCount(0)
@@ -1553,7 +1571,7 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await voicemailTimelineCard.click()
       await takeoverPage
         .getByRole("complementary", { name: "Selected item" })
-        .getByRole("button", { name: "Looks handled — Mark complete" })
+        .getByRole("button", { name: "Complete", exact: true })
         .click()
       await expect
         .poll(async () => {

@@ -16,11 +16,13 @@ import {
   FileTextIcon,
   MessageSquareIcon,
   PaperclipIcon,
+  PauseIcon,
   PhoneCallIcon,
   PhoneIncomingIcon,
   PhoneMissedIcon,
   PhoneOutgoingIcon,
   PencilIcon,
+  PlayIcon,
   RefreshCwIcon,
   SearchIcon,
   SendIcon,
@@ -105,8 +107,6 @@ type TimelineSource =
   | { kind: "engagement"; practiceID: string; phone: string }
 
 type RecoveryEvidence = {
-  outboundTextAfter: boolean
-  laterOutboundCallIDs: string[]
   recoveryTask?: Task
 }
 
@@ -156,7 +156,6 @@ export function EngagementWorkspace({
   const [selectedCall, setSelectedCall] = useState<{
     detail: CallingCall
     history?: CallHistoryItem
-    recoveryEligible: boolean
     recoveryTask?: RecoveryTaskReference
   }>()
 
@@ -168,33 +167,16 @@ export function EngagementWorkspace({
     const token = await getAccessToken()
     if (!token) return
     const client = portalClient(token)
-    const [result, ...laterCalls] = await Promise.all([
-      getCallingCall({ client, path: { callId: callID } }).catch(
-        () => undefined,
-      ),
-      ...(evidence?.laterOutboundCallIDs ?? []).map((laterCallID) =>
-        getCallingCall({ client, path: { callId: laterCallID } }).catch(
-          () => undefined,
-        ),
-      ),
-    ])
+    const result = await getCallingCall({
+      client,
+      path: { callId: callID },
+    }).catch(() => undefined)
     if (!result?.data) return
     const recoveryTask = evidence?.recoveryTask ?? result.data.recoveryTask
-    const connectedCallback = laterCalls.some(
-      (candidate) =>
-        candidate?.data?.direction === "OUTBOUND" &&
-        Boolean(candidate.data.connectedAt),
-    )
-    const recoveryEligible = Boolean(
-      recoveryTask?.state === "OPEN" &&
-        (connectedCallback ||
-          (Boolean(result.data.voicemail) && evidence?.outboundTextAfter)),
-    )
     setSelectedTask(undefined)
     setSelectedCall({
       detail: result.data,
       history,
-      recoveryEligible,
       recoveryTask,
     })
   }
@@ -293,7 +275,6 @@ export function EngagementWorkspace({
         <SelectedCallSnapshot
           call={selectedCall.detail}
           history={selectedCall.history}
-          recoveryEligible={selectedCall.recoveryEligible}
           recoveryTask={selectedCall.recoveryTask}
           supportSessionID={supportSessionID}
           canMutate={canMutate}
@@ -308,7 +289,6 @@ export function EngagementWorkspace({
 function SelectedCallSnapshot({
   call,
   history,
-  recoveryEligible,
   recoveryTask,
   supportSessionID,
   canMutate,
@@ -317,7 +297,6 @@ function SelectedCallSnapshot({
 }: {
   call: CallingCall
   history?: CallHistoryItem
-  recoveryEligible: boolean
   recoveryTask?: RecoveryTaskReference
   supportSessionID: string
   canMutate: boolean
@@ -326,6 +305,12 @@ function SelectedCallSnapshot({
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const reviewLabel =
+    call.voicemail?.outcome === "MISSED_CALL"
+      ? "Missed call"
+      : call.voicemail
+        ? "Voicemail"
+        : "Call"
 
   async function completeRecovery() {
     if (!recoveryTask) return
@@ -376,7 +361,7 @@ function SelectedCallSnapshot({
     >
       <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {call.voicemail ? "Voicemail" : "Call"}
+          {reviewLabel}
         </span>
         <Button
           size="icon-sm"
@@ -394,7 +379,7 @@ function SelectedCallSnapshot({
             {call.direction === "INBOUND" ? "Inbound" : "Outbound"}
           </Badge>
           <h2 className="mt-3 text-lg font-semibold">
-            {call.voicemail ? "Voicemail" : "Call"} · {formatPhone(call.phone)}
+            {reviewLabel} · {formatPhone(call.phone)}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {call.locationName} · {callStateLabel(call.state)}
@@ -434,12 +419,6 @@ function SelectedCallSnapshot({
               />
             )}
             <VoicemailPlayer call={call} callID={call.id} />
-            {recoveryTask && (
-              <SnapshotField
-                label="Related Task"
-                value={recoveryTask.title}
-              />
-            )}
           </>
         )}
         {call.transferReason && (
@@ -451,10 +430,10 @@ function SelectedCallSnapshot({
               locationID={call.locationId}
               phone={call.phone}
             />
-            {recoveryEligible && recoveryTask?.state === "OPEN" && (
+            {recoveryTask?.state === "OPEN" && (
               <Button disabled={pending} onClick={() => void completeRecovery()}>
                 {pending && <Spinner />}
-                Looks handled — Mark complete
+                Complete
               </Button>
             )}
           </div>
@@ -490,6 +469,7 @@ function VoicemailPlayer({
   const [unavailable, setUnavailable] = useState(
     call?.voicemail?.audioState === "UNAVAILABLE",
   )
+  const [playing, setPlaying] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
@@ -500,7 +480,12 @@ function VoicemailPlayer({
 
   async function play() {
     if (audioURL) {
-      await audioRef.current?.play().catch(() => undefined)
+      if (!audioRef.current) return
+      if (audioRef.current.paused) {
+        await audioRef.current.play().catch(() => undefined)
+      } else {
+        audioRef.current.pause()
+      }
       return
     }
     setLoading(true)
@@ -562,12 +547,40 @@ function VoicemailPlayer({
   if (unavailable) {
     return <p className="text-sm text-muted-foreground">Recording unavailable</p>
   }
+  if (compact) {
+    return (
+      <>
+        {audioURL && (
+          <audio
+            ref={audioRef}
+            aria-label="Voicemail recording"
+            className="hidden"
+            preload="metadata"
+            src={audioURL}
+            onEnded={() => setPlaying(false)}
+            onPause={() => setPlaying(false)}
+            onPlay={() => setPlaying(true)}
+          />
+        )}
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label={loading ? "Loading voicemail" : playing ? "Pause voicemail" : "Play voicemail"}
+          className="size-7 shrink-0 rounded-md bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 hover:text-violet-800 dark:text-violet-300"
+          disabled={loading}
+          onClick={() => void play()}
+        >
+          {loading ? <Spinner /> : playing ? <PauseIcon /> : <PlayIcon />}
+        </Button>
+      </>
+    )
+  }
   if (audioURL) {
     return (
       <audio
         ref={audioRef}
         aria-label="Voicemail recording"
-        className={compact ? "h-9 max-w-full" : undefined}
         controls
         controlsList="nodownload"
         preload="metadata"
@@ -1580,9 +1593,12 @@ function TimelineEntry({
   }
   if (item.type === "CALL" && item.call) {
     const presentation = callPresentation(item.call)
+    const openLabel = `${presentation.label}: ${presentation.title}. ${presentation.detail}. ${item.call.locationName}, ${formatTimelineTime(item.occurredAt)}. Open details`
+    const voicemail = item.call.outcome === "VOICEMAIL"
     const card = (
       <TimelineCard
         icon={presentation.icon}
+        control={voicemail ? <VoicemailPlayer callID={item.call.id} compact /> : undefined}
         kind={presentation.label}
         meta={item.call.locationName}
         occurredAt={item.occurredAt}
@@ -1590,14 +1606,16 @@ function TimelineEntry({
         detail={presentation.detail}
         tone={presentation.tone}
         side={item.call.direction === "OUTBOUND" ? "outbound" : "inbound"}
+        onOpen={voicemail && onCallOpen ? () => onCallOpen(item.call!.id, item.call!) : undefined}
+        openLabel={voicemail && onCallOpen ? openLabel : undefined}
       />
     )
     return (
       <article>
-        {onCallOpen ? (
+        {onCallOpen && !voicemail ? (
           <button
             type="button"
-            aria-label={`${presentation.label}: ${presentation.title}. ${presentation.detail}. ${item.call.locationName}, ${formatTimelineTime(item.occurredAt)}. Open details`}
+            aria-label={openLabel}
             className="w-full cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             onClick={() => onCallOpen(item.call!.id, item.call!)}
           >
@@ -1605,13 +1623,6 @@ function TimelineEntry({
           </button>
         ) : (
           card
-        )}
-        {item.call.outcome === "VOICEMAIL" && (
-          <div className="flex w-full justify-start pr-12">
-            <div className="mt-2 w-full max-w-lg pl-10">
-              <VoicemailPlayer callID={item.call.id} compact />
-            </div>
-          </div>
         )}
       </article>
     )
@@ -1668,7 +1679,6 @@ function recoveryEvidence(
   if (!call || (call.outcome !== "MISSED" && call.outcome !== "VOICEMAIL")) {
     return undefined
   }
-  const callStartedAt = new Date(call.startedAt).getTime()
   const recoveryTask = items.find(
     (item) =>
       item.type === "TASK" &&
@@ -1678,22 +1688,7 @@ function recoveryEvidence(
           (interaction) => interaction.callId === call.id,
         )),
   )?.task
-  return {
-    outboundTextAfter: items.some(
-      (item) =>
-        item.type === "MESSAGE" &&
-        item.message?.direction === "OUTBOUND" &&
-        new Date(item.occurredAt).getTime() > callStartedAt,
-    ),
-    laterOutboundCallIDs: items.flatMap((item) =>
-      item.type === "CALL" &&
-      item.call?.direction === "OUTBOUND" &&
-      new Date(item.occurredAt).getTime() > callStartedAt
-        ? [item.call.id]
-        : [],
-    ),
-    ...(recoveryTask ? { recoveryTask } : {}),
-  }
+  return recoveryTask ? { recoveryTask } : {}
 }
 
 function areConsecutiveMessages(
@@ -1709,6 +1704,15 @@ function areConsecutiveMessages(
 }
 
 function consolidateTaskActivity(items: ConversationTimelineItem[]) {
+  const representedRecoveryCallIDs = new Set(
+    items.flatMap((item) =>
+      item.type === "CALL" &&
+      item.call &&
+      (item.call.outcome === "MISSED" || item.call.outcome === "VOICEMAIL")
+        ? [item.call.id]
+        : [],
+    ),
+  )
   const latestByTask = new Map<string, ConversationTimelineItem>()
   for (const item of items) {
     if (item.type !== "TASK" || !item.task) continue
@@ -1722,10 +1726,20 @@ function consolidateTaskActivity(items: ConversationTimelineItem[]) {
     }
   }
   return items.filter(
-    (item) =>
-      item.type !== "TASK" ||
-      !item.task ||
-      latestByTask.get(item.task.id) === item,
+    (item) => {
+      if (item.type !== "TASK" || !item.task) return true
+      const recoveryTask =
+        item.task.origin === "MISSED_CALL_RECOVERY" ||
+        item.task.origin === "VOICEMAIL_RECOVERY"
+      if (
+        recoveryTask &&
+        item.task.callId &&
+        representedRecoveryCallIDs.has(item.task.callId)
+      ) {
+        return false
+      }
+      return latestByTask.get(item.task.id) === item
+    },
   )
 }
 
@@ -1976,6 +1990,7 @@ function humanizeCallOutcome(outcome: CallHistoryItem["outcome"]) {
 
 function TimelineCard({
   icon,
+  control,
   kind,
   meta,
   occurredAt,
@@ -1983,8 +1998,11 @@ function TimelineCard({
   detail,
   tone,
   side,
+  onOpen,
+  openLabel,
 }: {
   icon: React.ReactNode
+  control?: React.ReactNode
   kind: string
   meta: string
   occurredAt: string
@@ -1992,7 +2010,29 @@ function TimelineCard({
   detail?: string
   tone: "call" | "missed" | "voicemail" | "task" | "note"
   side: "inbound" | "outbound"
+  onOpen?: () => void
+  openLabel?: string
 }) {
+  const content = (
+    <>
+      <div className="flex items-baseline gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide">
+          {kind}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">{meta}</span>
+        <time
+          dateTime={occurredAt}
+          className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground"
+        >
+          {formatTimelineTime(occurredAt)}
+        </time>
+      </div>
+      <p className="mt-1 text-sm font-medium">{title}</p>
+      {detail && (
+        <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+      )}
+    </>
+  )
   return (
     <div
       data-timeline-side={side}
@@ -2005,38 +2045,32 @@ function TimelineCard({
         className="w-full max-w-lg rounded-xl border bg-background px-3 py-2.5 shadow-xs"
       >
         <div className="flex items-start gap-2.5">
-          <span
-            className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-md [&_svg]:size-3.5",
-              tone === "call" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-              tone === "missed" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-              tone === "voicemail" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",
-              tone === "task" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-              tone === "note" && "bg-muted text-muted-foreground",
-            )}
-          >
-            {icon}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide">
-                {kind}
-              </span>
-              <span className="truncate text-xs text-muted-foreground">
-                {meta}
-              </span>
-              <time
-                dateTime={occurredAt}
-                className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground"
-              >
-                {formatTimelineTime(occurredAt)}
-              </time>
-            </div>
-            <p className="mt-1 text-sm font-medium">{title}</p>
-            {detail && (
-              <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
-            )}
-          </div>
+          {control ?? (
+            <span
+              className={cn(
+                "flex size-7 shrink-0 items-center justify-center rounded-md [&_svg]:size-3.5",
+                tone === "call" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+                tone === "missed" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                tone === "voicemail" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+                tone === "task" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                tone === "note" && "bg-muted text-muted-foreground",
+              )}
+            >
+              {icon}
+            </span>
+          )}
+          {onOpen ? (
+            <button
+              type="button"
+              aria-label={openLabel}
+              className="min-w-0 flex-1 cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              onClick={onOpen}
+            >
+              {content}
+            </button>
+          ) : (
+            <div className="min-w-0 flex-1">{content}</div>
+          )}
         </div>
       </div>
     </div>
