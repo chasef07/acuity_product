@@ -477,7 +477,7 @@ func TestTelnyxAdapterAcceptsRawMediaJWT(t *testing.T) {
 	}
 }
 
-func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
+func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) {
 	requests := make(chan map[string]any, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
@@ -518,15 +518,14 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		Action:   humancalling.CommandDialStaff,
 		TargetID: "caller-control",
 		Payload: map[string]any{
-			"to":                    "sip:synthetic-user@sip.telnyx.com",
-			"connection_id":         "call-control-app",
-			"from":                  "+15555550199",
-			"link_to":               "caller-control",
-			"bridge_intent":         true,
-			"bridge_on_answer":      true,
-			"prevent_double_bridge": true,
-			"client_state":          "opaque-state",
-			"timeout_secs":          float64(20),
+			"to":               "sip:synthetic-user@sip.telnyx.com",
+			"connection_id":    "call-control-app",
+			"from":             "+15555550199",
+			"link_to":          "caller-control",
+			"bridge_intent":    true,
+			"bridge_on_answer": false,
+			"client_state":     "opaque-state",
+			"timeout_secs":     float64(20),
 			"custom_headers": []map[string]string{{
 				"name":  "X-Acuity-Media-Token",
 				"value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -539,18 +538,16 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		t.Fatalf("Dial result = %#v, err = %v", dial, err)
 	}
 	if _, err := adapter.Execute(context.Background(), humancalling.ProviderCommand{
-		ID:       "command-recording-1",
-		Action:   humancalling.CommandStartRecording,
-		TargetID: "caller-control",
+		ID:       "command-bridge-1",
+		Action:   humancalling.CommandBridge,
+		TargetID: "staff-control",
 		Payload: map[string]any{
-			"format":          "wav",
-			"channels":        "dual",
-			"recording_track": "both",
-			"transcription":   false,
-			"client_state":    "opaque-recording-state",
+			"call_control_id":       "caller-control",
+			"prevent_double_bridge": true,
+			"client_state":          "opaque-bridge-state",
 		},
 	}); err != nil {
-		t.Fatalf("start recording: %v", err)
+		t.Fatalf("bridge selected Staff CallLeg: %v", err)
 	}
 
 	dialRequest := <-requests
@@ -559,22 +556,22 @@ func TestTelnyxAdapterUsesStableOpaqueCommandsAndNoTranscription(t *testing.T) {
 		dialRequest["connection_id"] != "call-control-app" ||
 		dialRequest["from"] != "+15555550199" ||
 		dialRequest["timeout_secs"] != float64(20) ||
-		dialRequest["bridge_on_answer"] != true ||
-		dialRequest["prevent_double_bridge"] != true ||
+		dialRequest["bridge_on_answer"] != false ||
+		dialRequest["prevent_double_bridge"] != nil ||
 		fmt.Sprint(dialRequest["custom_headers"]) !=
 			"[map[name:X-Acuity-Media-Token value:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]]" {
 		t.Fatalf("Telnyx Dial request = %#v", dialRequest)
 	}
-	recordingRequest := <-requests
-	if recordingRequest["_path"] != "/v2/calls/caller-control/actions/record_start" ||
-		recordingRequest["command_id"] != "command-recording-1" ||
-		recordingRequest["channels"] != "dual" ||
-		recordingRequest["transcription"] != false {
-		t.Fatalf("Telnyx recording request = %#v", recordingRequest)
+	bridgeRequest := <-requests
+	if bridgeRequest["_path"] != "/v2/calls/staff-control/actions/bridge" ||
+		bridgeRequest["command_id"] != "command-bridge-1" ||
+		bridgeRequest["call_control_id"] != "caller-control" ||
+		bridgeRequest["prevent_double_bridge"] != true {
+		t.Fatalf("Telnyx Bridge request = %#v", bridgeRequest)
 	}
 }
 
-func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
+func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 	requests := make(chan map[string]any, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
@@ -608,11 +605,12 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 	commands := []humancalling.ProviderCommand{
 		{
 			ID:       "voicemail-greeting",
-			Action:   humancalling.CommandPlayVoicemailGreeting,
+			Action:   humancalling.CommandSpeakVoicemail,
 			TargetID: "caller-control",
 			Payload: map[string]any{
-				"greeting":     "Please leave a message after the beep.",
-				"stop":         "all",
+				"payload":      "Please leave a message after the beep.",
+				"voice":        "Polly.Matthew",
+				"language":     "en-US",
 				"client_state": "opaque-voicemail",
 			},
 		},
@@ -633,7 +631,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 		},
 		{
 			ID:       "destination-dial",
-			Action:   humancalling.CommandDialDestination,
+			Action:   humancalling.CommandDialOutboundDestination,
 			TargetID: "staff-control",
 			Payload: map[string]any{
 				"to":                          "+15555550100",
@@ -641,7 +639,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 				"from":                        "+15555550199",
 				"link_to":                     "staff-control",
 				"bridge_intent":               true,
-				"bridge_on_answer":            true,
+				"bridge_on_answer":            false,
 				"answering_machine_detection": "disabled",
 				"timeout_secs":                float64(30),
 				"client_state":                "opaque-destination",
@@ -675,7 +673,7 @@ func TestTelnyxAdapterNormalizesVoicemailAndOutboundDestination(t *testing.T) {
 		destination["to"] != "+15555550100" ||
 		destination["from"] != "+15555550199" ||
 		destination["link_to"] != "staff-control" ||
-		destination["bridge_on_answer"] != true ||
+		destination["bridge_on_answer"] != false ||
 		destination["answering_machine_detection"] != "disabled" ||
 		destination["timeout_secs"] != float64(30) {
 		t.Fatalf("outbound destination request = %#v", destination)
@@ -706,15 +704,14 @@ func TestTelnyxAdapterRejectsIncompleteDurableCommand(t *testing.T) {
 		Action:   humancalling.CommandDialStaff,
 		TargetID: "caller-control",
 		Payload: map[string]any{
-			"to":                    "sip:synthetic-user@sip.telnyx.com",
-			"connection_id":         "call-control-app",
-			"from":                  "+15555550199",
-			"link_to":               "caller-control",
-			"bridge_intent":         true,
-			"bridge_on_answer":      true,
-			"prevent_double_bridge": true,
-			"client_state":          "opaque-state",
-			"timeout_secs":          float64(20),
+			"to":               "sip:synthetic-user@sip.telnyx.com",
+			"connection_id":    "call-control-app",
+			"from":             "+15555550199",
+			"link_to":          "caller-control",
+			"bridge_intent":    true,
+			"bridge_on_answer": false,
+			"client_state":     "opaque-state",
+			"timeout_secs":     float64(20),
 		},
 	}); err != humancalling.ErrInvalidInput {
 		t.Fatalf("incomplete Dial error = %v, want %v", err, humancalling.ErrInvalidInput)
@@ -737,27 +734,108 @@ func TestTelnyxAdapterClassifiesUncertainTransportWithoutBlindRetry(t *testing.T
 	}
 	_, err = adapter.Execute(context.Background(), humancalling.ProviderCommand{
 		ID:       "uncertain-command",
-		Action:   humancalling.CommandHangup,
+		Action:   humancalling.CommandHangupLeg,
 		TargetID: "opaque-control",
 		Payload:  map[string]any{},
 	})
-	if err == nil ||
-		!strings.Contains(err.Error(), humancalling.ErrAmbiguousEffect.Error()) {
+	if err == nil || !errors.Is(err, humancalling.ErrAmbiguousEffect) {
 		t.Fatalf("uncertain provider error = %v", err)
 	}
 }
 
-func TestTelnyxAdapterReadsExactCallLivenessForHangupReconciliation(t *testing.T) {
+func TestTelnyxAdapterClassifiesCallControlFailures(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		code         string
+		safeCode     string
+		definitive   bool
+		targetAbsent bool
+	}{
+		{name: "ended Call", status: 422, code: "90018", safeCode: "TELNYX_CALL_ENDED", definitive: true, targetAbsent: true},
+		{name: "Call not answered", status: 422, code: "90034", safeCode: "TELNYX_CALL_NOT_ANSWERED"},
+		{name: "user channel limit", status: 422, code: "90041", safeCode: "TELNYX_USER_CHANNEL_LIMIT", definitive: true},
+		{name: "profile channel limit", status: 422, code: "90042", safeCode: "TELNYX_PROFILE_CHANNEL_LIMIT", definitive: true},
+		{name: "connection channel limit", status: 422, code: "90043", safeCode: "TELNYX_CONNECTION_CHANNEL_LIMIT", definitive: true},
+		{name: "authentication", status: 401, safeCode: "TELNYX_AUTH_REJECTED", definitive: true},
+		{name: "malformed request", status: 400, safeCode: "TELNYX_INVALID_REQUEST", definitive: true},
+		{name: "missing target", status: 404, safeCode: "TELNYX_TARGET_ABSENT", definitive: true, targetAbsent: true},
+		{name: "rate limit", status: 429, safeCode: "TELNYX_RATE_LIMITED"},
+		{name: "server failure", status: 503, safeCode: "TELNYX_EFFECT_UNCERTAIN"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(test.status)
+				_, _ = fmt.Fprintf(writer, `{"errors":[{"code":%q,"detail":"must not escape"}]}`, test.code)
+			}))
+			defer server.Close()
+			adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+				APIKey: "synthetic-key", BaseURL: server.URL, HTTPClient: server.Client(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = adapter.Execute(context.Background(), humancalling.ProviderCommand{
+				ID: "classify-command", Action: humancalling.CommandBridge,
+				TargetID: "opaque-control", Payload: map[string]any{
+					"call_control_id": "caller-control", "prevent_double_bridge": true,
+					"client_state": "opaque-state",
+				},
+			})
+			var providerErr *humancalling.ProviderError
+			if !errors.As(err, &providerErr) || providerErr.SafeCode != test.safeCode ||
+				errors.Is(err, humancalling.ErrDefinitiveProviderFailure) != test.definitive ||
+				errors.Is(err, humancalling.ErrProviderTargetAbsent) != test.targetAbsent ||
+				strings.Contains(err.Error(), "must not escape") {
+				t.Fatalf("classified provider error = %#v, err = %v", providerErr, err)
+			}
+		})
+	}
+}
+
+func TestTelnyxAdapterObservesExactActiveCallAndProviderEvents(t *testing.T) {
+	since := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
 		request *http.Request,
 	) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/v2/calls/alive-control":
-			_, _ = writer.Write([]byte(`{"data":{"is_alive":true}}`))
-		case "/v2/calls/ended-control":
-			_, _ = writer.Write([]byte(`{"data":{"is_alive":false}}`))
+		case "/v2/connections/connection-1/active_calls":
+			if request.URL.Query().Get("page[size]") != "250" {
+				http.Error(writer, "missing active-call bound", http.StatusBadRequest)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"data":[
+				{"call_control_id":"control-1","call_leg_id":"leg-1",
+				 "call_session_id":"session-1","client_state":"opaque-state"},
+				{"call_control_id":"other-control","call_leg_id":"other-leg",
+				 "call_session_id":"other-session","client_state":"other-state"}
+			]}`))
+		case "/v2/call_events":
+			if request.URL.Query().Get("filter[leg_id]") != "leg-1" ||
+				request.URL.Query().Get("filter[type]") != "webhook" ||
+				request.URL.Query().Get("filter[occurred_at][gte]") != since.Format(time.RFC3339Nano) {
+				http.Error(writer, "wrong event filter", http.StatusBadRequest)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"data":[
+				{"name":"call.answered","call_leg_id":"leg-1",
+				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:01Z"},
+				{"name":"call.bridged","call_leg_id":"leg-1",
+				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:02Z"},
+				{"name":"call.playback.ended","call_leg_id":"leg-1",
+				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:03Z",
+				 "metadata":{"raw":{"data":{"record_type":"event",
+				 "event_type":"call.playback.ended","id":"playback-event",
+				 "occurred_at":"2026-08-05T12:00:03Z","payload":{
+				 "connection_id":"connection-1","call_control_id":"control-1",
+				 "call_leg_id":"leg-1","call_session_id":"session-1",
+				 "client_state":"eyJ2IjoyLCJjYWxsIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwiY2FsbF9sZWciOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJyb2xlIjoiQ0FMTEVSIiwia2luZCI6InJpbmdfd2luZG93In0=",
+				 "status":"completed"}}}}}
+			]}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -771,16 +849,19 @@ func TestTelnyxAdapterReadsExactCallLivenessForHangupReconciliation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	alive, err := adapter.IsCallAlive(context.Background(), "alive-control")
-	if err != nil || !alive {
-		t.Fatalf("alive Call state = %t, err = %v", alive, err)
-	}
-	alive, err = adapter.IsCallAlive(context.Background(), "ended-control")
-	if err != nil || alive {
-		t.Fatalf("ended Call state = %t, err = %v", alive, err)
-	}
-	alive, err = adapter.IsCallAlive(context.Background(), "missing-control")
-	if err != nil || alive {
-		t.Fatalf("absent Call state = %t, err = %v", alive, err)
+	observation, err := adapter.ObserveCall(
+		context.Background(), "connection-1", "control-1", "leg-1",
+		"opaque-state", since,
+	)
+	if err != nil || !observation.Active ||
+		observation.CallControlID != "control-1" ||
+		observation.CallLegID != "leg-1" ||
+		observation.CallSessionID != "session-1" ||
+		len(observation.Events) != 3 ||
+		observation.Events[0].Type != humancalling.FactCallAnswered ||
+		observation.Events[1].Type != humancalling.FactCallBridged ||
+		observation.Events[2].Type != humancalling.FactPlaybackEnded ||
+		observation.Events[2].PlaybackStatus != "completed" {
+		t.Fatalf("Call observation = %#v, err = %v", observation, err)
 	}
 }

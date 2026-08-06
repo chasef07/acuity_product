@@ -166,6 +166,38 @@
         }
       },
       {
+        "displayName": "Rejected start ring-window command",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.action=\"start_ring_window\" AND metric.label.outcome=\"rejected\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Degraded caller audio after stop ring-window failure",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.action=\"stop_ring_window\" AND (metric.label.outcome=\"rejected\" OR metric.label.outcome=\"ambiguous\")",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
         "displayName": "Ambiguous service provider command",
         "conditionThreshold": {
           "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"ambiguous\"",
@@ -332,26 +364,26 @@
     ]
   },
   {
-    "displayName": "Acuity call center - accept contention",
+    "displayName": "Acuity call center - Staff answer contention",
     "combiner": "AND_WITH_MATCHING_RESOURCE",
     "enabled": true,
     "userLabels": {
       "acuity_contract": "call_center_v1",
-      "acuity_policy": "accept_contention"
+      "acuity_policy": "staff_answer_contention"
     },
     "documentation": {
       "mimeType": "text/markdown",
-      "content": "More than half of at least ten call-offer accepts were already claimed in a five-minute window. This is an initial change detector, not an SLO."
+      "content": "More than half of at least ten provider-confirmed Staff answers lost the CallLeg winner race in a five-minute window. This is an initial change detector, not an SLO."
     },
     "alertStrategy": {
       "autoClose": "1800s"
     },
     "conditions": [
       {
-        "displayName": "Already-claimed accept ratio above 0.5",
+        "displayName": "Lost Staff answer race ratio above 0.5",
         "conditionThreshold": {
-          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_call_accept_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"already_claimed\"",
-          "denominatorFilter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_call_accept_count\" AND resource.type=\"cloud_run_revision\"",
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_staff_answer_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"lost_race\"",
+          "denominatorFilter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_staff_answer_count\" AND resource.type=\"cloud_run_revision\"",
           "aggregations": [
             {
               "alignmentPeriod": "300s",
@@ -374,9 +406,9 @@
         }
       },
       {
-        "displayName": "At least ten accepts in five minutes",
+        "displayName": "At least ten Staff answers in five minutes",
         "conditionThreshold": {
-          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_call_accept_count\" AND resource.type=\"cloud_run_revision\"",
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_staff_answer_count\" AND resource.type=\"cloud_run_revision\"",
           "aggregations": [
             {
               "alignmentPeriod": "300s",
@@ -393,25 +425,25 @@
     ]
   },
   {
-    "displayName": "Acuity call center - accept to bridge",
+    "displayName": "Acuity call center - answer to Bridge",
     "combiner": "OR",
     "enabled": true,
     "userLabels": {
       "acuity_contract": "call_center_v1",
-      "acuity_policy": "accept_to_bridge"
+      "acuity_policy": "answer_to_bridge"
     },
     "documentation": {
       "mimeType": "text/markdown",
-      "content": "Provider-confirmed accept-to-bridge p95 is above the initial eight-second objective."
+      "content": "Provider-confirmed Staff-answer-to-Bridge p95 is above the initial eight-second objective."
     },
     "alertStrategy": {
       "autoClose": "1800s"
     },
     "conditions": [
       {
-        "displayName": "Accept-to-bridge p95 above eight seconds",
+        "displayName": "Answer-to-Bridge p95 above eight seconds",
         "conditionThreshold": {
-          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_accept_to_bridge_seconds\" AND resource.type=\"cloud_run_worker_pool\"",
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_answer_to_bridge_seconds\" AND resource.type=\"cloud_run_worker_pool\"",
           "aggregations": [
             {
               "alignmentPeriod": "600s",

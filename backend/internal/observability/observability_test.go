@@ -64,8 +64,8 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	observer.Observe(observability.SSEStreamOpened())
 	observer.Observe(observability.SSEStreamClosed(observability.SSEClientClosed))
 	observer.Observe(observability.SSEListenerConnected(true))
-	observer.Observe(observability.CallAccepted(observability.AcceptAlreadyClaimed))
-	observer.Observe(observability.CallBridged(1250 * time.Millisecond))
+	observer.Observe(observability.StaffAnswered(observability.StaffAnswerLostRace))
+	observer.Observe(observability.CallLegBridged(1250 * time.Millisecond))
 	observer.Observe(observability.VoicemailPlayback(
 		observability.VoicemailPlaybackRateLimited,
 		250*time.Millisecond,
@@ -84,9 +84,9 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	assertField(t, logs, "acuity_call_center_sse_stream", "active", float64(0))
 	assertField(t, logs, "acuity_call_center_sse_listener",
 		"state", "connected")
-	assertField(t, logs, "acuity_call_center_call_accept",
-		"outcome", "already_claimed")
-	assertField(t, logs, "acuity_call_center_accept_to_bridge",
+	assertField(t, logs, "acuity_call_center_staff_answer",
+		"outcome", "lost_race")
+	assertField(t, logs, "acuity_call_center_answer_to_bridge",
 		"seconds", 1.25)
 	assertField(t, logs, "acuity_call_center_voicemail_playback",
 		"outcome", "rate_limited")

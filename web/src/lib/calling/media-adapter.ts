@@ -18,6 +18,7 @@ export type IncomingMediaLeg = {
 type CallingMediaCallbacks = {
   onState: (state: MediaState) => void
   onIncoming: (leg: IncomingMediaLeg) => void
+  refreshToken?: () => Promise<string | undefined>
 }
 
 export interface CallingMediaAdapter {
@@ -67,6 +68,7 @@ type SDKClient = {
   remoteElement: string | HTMLMediaElement
   connect: () => Promise<void>
   serverDisconnect: () => Promise<void>
+  login: (options: { creds: { login_token: string } }) => Promise<void>
   on: (event: string, callback: (value?: unknown) => void) => SDKClient
 }
 
@@ -106,6 +108,7 @@ export function callingClientOptions(token: string) {
   return {
     login_token: token,
     hangupOnBeforeUnload: false,
+    maxReconnectAttempts: 0,
     mutedMicOnStart: true,
   }
 }
@@ -146,6 +149,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
   private output?: HTMLMediaElement
   private quarantine?: HTMLAudioElement
   private readonly createClient: SDKClientFactory
+  private tokenRefresh?: Promise<void>
 
   constructor(
     createClient: SDKClientFactory = async (token) => {
@@ -191,6 +195,21 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       callbacks.onState("reconnecting")
     })
     client.on("telnyx.ready", () => callbacks.onState("ready"))
+    client.on("telnyx.warning", (value) => {
+      const warning = value as { warning?: { code?: number } }
+      if (warning.warning?.code !== 34001 || !callbacks.refreshToken) return
+      if (!this.tokenRefresh) {
+        this.tokenRefresh = callbacks
+          .refreshToken()
+          .then(async (token) => {
+            if (!token || this.client !== client) return
+            await client.login({ creds: { login_token: token } })
+          })
+          .finally(() => {
+            this.tokenRefresh = undefined
+          })
+      }
+    })
     client.on("telnyx.error", () => {
       const session = this.activeSession
       if (session) {
@@ -292,6 +311,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
   async disconnect() {
     const client = this.client
     this.client = undefined
+    this.tokenRefresh = undefined
     this.activeSession = undefined
     if (this.output) this.output.srcObject = null
     this.output = undefined

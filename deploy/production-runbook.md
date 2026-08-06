@@ -83,6 +83,37 @@ measured constraint and recalculate the connection reservation.
      deploy/production-runtime-contract.json
    ```
 
+Before the CallLeg replacement migration, capture the live Telnyx and database
+gate results in an evidence JSON file and run the read-only fail-closed check:
+
+```sh
+export TELNYX_API_KEY="$(gcloud secrets versions access latest --secret="$TELNYX_API_KEY_SECRET")"
+export TELNYX_CALL_CONTROL_ID='<Product Call Control Application ID>'
+export TELNYX_CREDENTIAL_CONNECTION_ID='<Product WebRTC Connection ID>'
+export TELNYX_FROM_NUMBER='<Product E.164 DID>'
+node deploy/check-telnyx-callleg-cutover.mjs \
+  deploy/telnyx-callleg-cutover-contract.json \
+  --print-provider-provenance
+node deploy/check-telnyx-callleg-cutover.mjs \
+  deploy/telnyx-callleg-cutover-contract.json \
+  /absolute/path/to/live-cutover-evidence.json
+```
+
+Copy only the printed hashes into the evidence provenance. The checker performs
+fresh authenticated `GET` reads for the Call Control Application, WebRTC
+credential connection, their shared outbound voice profile, and the Product
+DID's summary and voice settings; compares their sanitized snapshot hash and
+resource hashes with the evidence; rejects enabled inbound DID recording; and
+compares the live settings themselves with the checked contract. It never
+prints provider bodies, credentials, signing keys, SIP usernames, or phone
+numbers. Unset `TELNYX_API_KEY` after the check.
+
+The evidence must prove the current REFER route user survives unchanged, both
+webhook signing keys verify, explicit inbound/outbound Bridge and voicemail
+playback work live, and that old revisions, active Calls, in-flight commands,
+pending receipts, and stale credential mappings are all zero. Do not run the
+migration when any gate is missing or false.
+
 2. Confirm `us-east1` for Cloud SQL, every Cloud Run service, the worker pool,
    the recording and Messaging attachment buckets, Artifact Registry, and any
    dependent regional resources. The runtime command independently rejects a
@@ -160,6 +191,34 @@ The rehearsal is incomplete until restore and validation timings are recorded.
 The checked configuration alone is not restore evidence.
 
 ## Release sequence
+
+The CallLeg schema replacement is a one-shot exception to the ordinary rolling
+sequence. Automatic main deployment remains disabled while the repository
+variable `CALLLEG_SCHEMA_CUTOVER_COMPLETE` is not `true`.
+
+For that scheduled cutover only:
+
+1. Set the legacy portal to reject new handoffs and show calling maintenance.
+2. Drain to zero active Calls, pending/sending/ambiguous commands, every
+   unprojected receipt (including quarantined receipts), and voicemail work.
+3. Scale the old API, ingress, realtime, and worker revisions to zero; expire
+   softphone leases; switch to the pre-proven replacement Staff credentials;
+   disable old credentials; and take the final verified Cloud SQL snapshot.
+4. Capture a sanitized read-only Telnyx v2 snapshot plus referenced live-probe
+   evidence. Validate it with `deploy/check-telnyx-callleg-cutover.mjs`.
+5. Run `deploy/run-callleg-cutover.sh` with
+   `CALLLEG_CUTOVER_WINDOW_CONFIRMED=true` and
+   `CALLLEG_CUTOVER_EVIDENCE_PATH=<ephemeral-evidence.json>`. The replacement
+   portal is deliberately deployed with `HUMAN_CALLING_HANDOFF_ADMISSION=closed`.
+6. Run deterministic smoke proof and the scoped three-client/two-Call Telnyx
+   gate. If any gate fails, keep admission closed and restore the recorded
+   snapshot and revisions or forward-fix; never route the new schema to the
+   legacy runtime.
+7. Reopen admission with `HUMAN_CALLING_HANDOFF_ADMISSION=open`, then set
+   `CALLLEG_SCHEMA_CUTOVER_COMPLETE=true` for subsequent ordinary releases.
+
+Do not commit the live evidence file; it contains sanitized operational
+provenance and belongs with the cutover record.
 
 1. Build and validate one immutable backend image and one immutable web image.
 2. Run the single migration job with pool max 1 and no automatic retry. It

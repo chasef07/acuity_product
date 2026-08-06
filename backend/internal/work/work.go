@@ -502,7 +502,8 @@ func (m *Module) EnsureRecoveryTask(
 	if err != nil {
 		return Task{}, fmt.Errorf("attach recovery Interaction: %w", err)
 	}
-	if interaction.RowsAffected() == 0 {
+	interactionInserted := interaction.RowsAffected() != 0
+	if !interactionInserted {
 		var linkedTaskID string
 		if err := tx.QueryRow(ctx, `
 			SELECT task_id::text
@@ -514,38 +515,28 @@ func (m *Module) EnsureRecoveryTask(
 		if linkedTaskID != taskID {
 			return Task{}, ErrConflict
 		}
-		task, err := loadTask(ctx, tx, taskID)
-		if err != nil {
-			return Task{}, err
-		}
-		return task, nil
 	}
-	if !inserted {
-		if command.Outcome == RecoveryOutcomeVoicemail {
-			origin = TaskOriginVoicemail
-			title = "Review voicemail"
-		}
-		if _, err := tx.Exec(ctx, `
+	taskChanged := inserted
+	if !inserted && command.Outcome == RecoveryOutcomeVoicemail {
+		origin = TaskOriginVoicemail
+		title = "Review voicemail"
+		updated, err := tx.Exec(ctx, `
 			UPDATE work_tasks
 			SET
-				title = CASE
-					WHEN $2 = 'VOICEMAIL_RECOVERY' THEN $3
-					ELSE title
-				END,
-				origin = CASE
-					WHEN $2 = 'VOICEMAIL_RECOVERY' THEN $2
-					ELSE origin
-				END,
-				recovery_outcome = CASE
-					WHEN $2 = 'VOICEMAIL_RECOVERY' THEN 'VOICEMAIL'
-					ELSE recovery_outcome
-				END,
+				title = $3,
+				origin = $2,
+				recovery_outcome = 'VOICEMAIL',
 				version = version + 1,
 				updated_at = GREATEST(updated_at, $4)
 			WHERE id = $1
-		`, taskID, origin, title, command.OccurredAt); err != nil {
+				AND (title IS DISTINCT FROM $3
+					OR origin IS DISTINCT FROM $2
+					OR recovery_outcome IS DISTINCT FROM 'VOICEMAIL')
+		`, taskID, origin, title, command.OccurredAt)
+		if err != nil {
 			return Task{}, fmt.Errorf("enrich recovery Task: %w", err)
 		}
+		taskChanged = updated.RowsAffected() != 0
 	}
 	task, err := loadTask(ctx, tx, taskID)
 	if err != nil {
@@ -558,26 +549,30 @@ func (m *Module) EnsureRecoveryTask(
 			task.Origin != TaskOriginMissedCall) {
 		return Task{}, ErrConflict
 	}
-	activityKind := "TASK_CREATED"
-	if !inserted {
-		activityKind = "INTERACTION_ATTACHED"
+	if inserted || interactionInserted {
+		activityKind := "TASK_CREATED"
+		if !inserted {
+			activityKind = "INTERACTION_ATTACHED"
+		}
+		if err := appendActivity(
+			ctx,
+			tx,
+			task,
+			activityKind,
+			task.CreatedBy,
+			command.OccurredAt,
+		); err != nil {
+			return Task{}, err
+		}
 	}
-	if err := appendActivity(
-		ctx,
-		tx,
-		task,
-		activityKind,
-		task.CreatedBy,
-		command.OccurredAt,
-	); err != nil {
-		return Task{}, err
-	}
-	if _, err := m.access.RecordWorkspaceChange(
-		ctx,
-		tx,
-		task.PracticeID,
-	); err != nil {
-		return Task{}, err
+	if taskChanged || interactionInserted {
+		if _, err := m.access.RecordWorkspaceChange(
+			ctx,
+			tx,
+			task.PracticeID,
+		); err != nil {
+			return Task{}, err
+		}
 	}
 	return task, nil
 }

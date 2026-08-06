@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation"
 import {
   CheckIcon,
   ChevronsUpDownIcon,
-  CopyIcon,
-  PhoneCallIcon,
   ShieldCheckIcon,
   WifiOffIcon,
 } from "lucide-react"
@@ -66,7 +64,6 @@ import {
   enterSupportMode,
   getCallingCall,
   getWorkspace,
-  listLiveCalls,
   queryEngagements,
   queryMessageThreads,
   queryTasks,
@@ -78,7 +75,6 @@ import type {
   CallingCall,
   CallingDispositionResult,
   EngagementSummary,
-  LiveCall,
   Message,
   MessageThreadSummary,
   Task,
@@ -120,7 +116,6 @@ export function TaskWorkspaceShell() {
   const [engagements, setEngagements] = useState<EngagementSummary[]>([])
   const [engagementLoading, setEngagementLoading] = useState(false)
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
-  const [liveCalls, setLiveCalls] = useState<LiveCall[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [nextCursor, setNextCursor] = useState("")
   const [tasksLoading, setTasksLoading] = useState(false)
@@ -136,7 +131,6 @@ export function TaskWorkspaceShell() {
   const [view, setView] = useState<View>("none")
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
-  const [callRefreshRevision, setCallRefreshRevision] = useState(0)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [taskCallRequest, setTaskCallRequest] = useState<{
     id: string
@@ -715,38 +709,10 @@ export function TaskWorkspaceShell() {
   }, [practiceID, settledSearch, workspaceRevision])
 
   useEffect(() => {
-    if (!practiceID || !locationID || loadState !== "ready") return
-    const liveLocationID = railMode === "messages" ? locationID : locationScopeID
-    const timeout = window.setTimeout(async () => {
-      const token = await getAccessToken()
-      if (!token) return
-      const result = await listLiveCalls({
-        client: portalClient(token),
-        query: {
-          practiceId: practiceID,
-          ...(liveLocationID ? { locationId: liveLocationID } : {}),
-        },
-      }).catch(() => undefined)
-      setLiveCalls(result?.data?.items ?? [])
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [
-    callRefreshRevision,
-    loadState,
-    locationID,
-    locationScopeID,
-    practiceID,
-    railMode,
-    workspaceRevision,
-  ])
-
-  useEffect(() => {
     const sync = createWorkspaceSync({
       realtimeURL: realtimeURL(),
       getToken: getAccessToken,
       reconcile: (input) => reconcileWorkspaceRef.current(input),
-      onValidatedHint: () =>
-        setCallRefreshRevision((current) => current + 1),
       onStateChange: setConnection,
       onUnauthorized: () => setLoadState("unauthorized"),
     })
@@ -1046,7 +1012,6 @@ export function TaskWorkspaceShell() {
       call.state === "PREPARING" ||
       call.state === "RINGING" ||
       call.state === "CONNECTING" ||
-      call.state === "RECONCILING" ||
       call.state === "CONNECTED"
     if (!canFocus || call.id === focusedCallIDRef.current) return
     if (call.id !== previousCallID) {
@@ -1131,7 +1096,6 @@ export function TaskWorkspaceShell() {
         platformOperator={workspace.platformOperator}
         practiceID={practiceID}
         locations={practice.locations}
-        callRefreshRevision={callRefreshRevision}
         workspaceRevision={workspaceRevision}
         taskCallRequest={taskCallRequest}
         onTaskCallHandled={(requestID, requestError) => {
@@ -1229,10 +1193,6 @@ export function TaskWorkspaceShell() {
               onSelect={selectWorkspaceScope}
             />
             <CallingAvailabilityControl />
-            <LiveCallsIndicator
-              calls={liveCalls}
-              groupByLocation={railMode === "tasks" && !locationScopeID}
-            />
             {workspace.platformOperator && !workspace.supportMode && (
               <SupportDialog
                 practiceID={practiceID}
@@ -1490,105 +1450,6 @@ function readRailMode(userSubject: string, practiceID: string): RailMode {
     "messages"
     ? "messages"
     : "tasks"
-}
-
-function LiveCallsIndicator({
-  calls,
-  groupByLocation,
-}: {
-  calls: LiveCall[]
-  groupByLocation: boolean
-}) {
-  const [copiedCallID, setCopiedCallID] = useState("")
-  if (calls.length === 0) return null
-  const groups = groupByLocation
-    ? Object.values(
-        calls.reduce<Record<string, { name: string; calls: LiveCall[] }>>(
-          (current, call) => {
-            current[call.locationId] ??= {
-              name: call.locationName,
-              calls: [],
-            }
-            current[call.locationId]!.calls.push(call)
-            return current
-          },
-          {},
-        ),
-      )
-    : [{ name: "", calls }]
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button size="sm" variant="outline" aria-label="Live calls" />
-        }
-      >
-        <PhoneCallIcon />
-        {calls.length} live
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-96">
-        <PopoverHeader>
-          <PopoverTitle>Live calls</PopoverTitle>
-          <PopoverDescription>
-            Informational only. No assignment or claim is implied.
-          </PopoverDescription>
-        </PopoverHeader>
-        <div className="mt-2 flex max-h-80 flex-col overflow-y-auto">
-          {groups.map((group) => (
-            <section key={group.name || "current"} className="border-b last:border-b-0">
-              {group.name && (
-                <h3 className="sticky top-0 bg-popover py-2 text-xs font-semibold text-muted-foreground">
-                  {group.name}
-                </h3>
-              )}
-              <div className="divide-y">
-                {group.calls.map((call) => (
-                  <div key={call.id} className="flex items-start gap-3 py-3 text-sm">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium tabular-nums">
-                        {formatPhone(call.phone)} · {call.direction === "INBOUND" ? "Inbound" : "Outbound"}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {call.staffEmail || call.staffSubject}
-                        {!groupByLocation && ` · ${call.locationName}`}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Connected {new Date(call.connectedAt).toLocaleTimeString([], {
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
-                      </p>
-                    </div>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`Copy ${call.phone}`}
-                      title={copiedCallID === call.id ? "Copied" : "Copy phone"}
-                      onClick={() => {
-                        void navigator.clipboard.writeText(call.phone)
-                        setCopiedCallID(call.id)
-                        window.setTimeout(() => setCopiedCallID(""), 1500)
-                      }}
-                    >
-                      {copiedCallID === call.id ? <CheckIcon /> : <CopyIcon />}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-function formatPhone(phone: string) {
-  const digits = phone.replace(/\D/g, "")
-  if (digits.length === 11 && digits.startsWith("1")) {
-    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
-  }
-  return phone
 }
 
 function SupportDialog({

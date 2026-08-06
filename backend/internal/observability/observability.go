@@ -42,14 +42,19 @@ const (
 type CommandAction string
 
 const (
-	CommandAnswerCaller      CommandAction = "answer_caller"
-	CommandStartRingback     CommandAction = "start_ringback"
-	CommandDialStaff         CommandAction = "dial_staff"
-	CommandHangup            CommandAction = "hangup"
-	CommandStartRecording    CommandAction = "start_recording"
-	CommandCreateCredential  CommandAction = "create_credential"
-	CommandDisableCredential CommandAction = "disable_credential"
-	CommandCreateJWT         CommandAction = "create_jwt"
+	CommandAnswerCaller            CommandAction = "answer_caller"
+	CommandStartRingWindow         CommandAction = "start_ring_window"
+	CommandDialStaff               CommandAction = "dial_staff"
+	CommandBridge                  CommandAction = "bridge"
+	CommandStopRingWindow          CommandAction = "stop_ring_window"
+	CommandHangupLeg               CommandAction = "hangup_leg"
+	CommandSpeakVoicemail          CommandAction = "speak_voicemail"
+	CommandStartVoicemailRecording CommandAction = "start_voicemail_recording"
+	CommandDialOutboundStaff       CommandAction = "dial_outbound_staff"
+	CommandDialOutboundDestination CommandAction = "dial_outbound_destination"
+	CommandCreateCredential        CommandAction = "create_credential"
+	CommandDisableCredential       CommandAction = "disable_credential"
+	CommandCreateJWT               CommandAction = "create_jwt"
 )
 
 type CommandOutcome string
@@ -82,15 +87,14 @@ const (
 	SSEShutdown           SSECloseReason = "shutdown"
 )
 
-type AcceptOutcome string
+type StaffAnswerOutcome string
 
 const (
-	AcceptWon            AcceptOutcome = "won"
-	AcceptAlreadyClaimed AcceptOutcome = "already_claimed"
-	AcceptExpired        AcceptOutcome = "expired"
-	AcceptIneligible     AcceptOutcome = "ineligible"
-	AcceptDenied         AcceptOutcome = "denied"
-	AcceptFailed         AcceptOutcome = "failed"
+	StaffAnswerWinner   StaffAnswerOutcome = "winner"
+	StaffAnswerLostRace StaffAnswerOutcome = "lost_race"
+	StaffAnswerOccupied StaffAnswerOutcome = "occupied"
+	StaffAnswerTerminal StaffAnswerOutcome = "terminal"
+	StaffAnswerOutbound StaffAnswerOutcome = "outbound"
 )
 
 type VoicemailPlaybackOutcome string
@@ -145,8 +149,10 @@ func ProviderCommandCompleted(
 	queueAge, duration time.Duration,
 ) Event {
 	return event("acuity_call_center_provider_command",
-		"action", bounded(string(action), "answer_caller", "start_ringback", "dial_staff",
-			"hangup", "start_recording", "create_credential", "disable_credential", "create_jwt"),
+		"action", bounded(string(action), "answer_caller", "start_ring_window", "dial_staff",
+			"bridge", "stop_ring_window", "hangup_leg", "speak_voicemail",
+			"start_voicemail_recording", "dial_outbound_staff",
+			"dial_outbound_destination", "create_credential", "disable_credential", "create_jwt"),
 		"outcome", bounded(string(outcome), "sent", "ambiguous", "rejected", "reconciled", "obsolete"),
 		"queue_seconds", positive(queueAge).Seconds(),
 		"duration_seconds", positive(duration).Seconds())
@@ -191,15 +197,15 @@ func SSEListenerReconnectFailed() Event {
 	return event("acuity_call_center_sse_listener", "state", "reconnect_failed")
 }
 
-func CallAccepted(outcome AcceptOutcome) Event {
-	return event("acuity_call_center_call_accept",
+func StaffAnswered(outcome StaffAnswerOutcome) Event {
+	return event("acuity_call_center_staff_answer",
 		"outcome", bounded(string(outcome),
-			"won", "already_claimed", "expired", "ineligible", "denied", "failed"))
+			"winner", "lost_race", "occupied", "terminal", "outbound"))
 }
 
-func CallBridged(acceptToBridge time.Duration) Event {
-	return event("acuity_call_center_accept_to_bridge",
-		"seconds", positive(acceptToBridge).Seconds())
+func CallLegBridged(answerToBridge time.Duration) Event {
+	return event("acuity_call_center_answer_to_bridge",
+		"seconds", positive(answerToBridge).Seconds())
 }
 
 func VoicemailPlayback(

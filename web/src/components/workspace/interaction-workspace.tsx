@@ -692,8 +692,7 @@ function CallWorkspace({
                 variant="secondary"
                 className={cn(
                   call.state === "CONNECTED" && "text-success",
-                  (call.state === "CONNECTING" ||
-                    call.state === "RECONCILING") && "text-warning",
+					call.state === "CONNECTING" && "text-warning",
                 )}
               >
                 {callWorkspaceLabel(call.state)}

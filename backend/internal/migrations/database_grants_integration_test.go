@@ -264,43 +264,6 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 			 FROM human_calling_softphone_leases
 			 WHERE false
 			 FOR UPDATE`,
-			`INSERT INTO human_calling_rejected_provider_legs (
-				call_control_id,
-				call_leg_id,
-				call_session_id,
-				initiated_event_id,
-				rejected_at
-			)
-			VALUES (
-				'grant-contract-control',
-				'grant-contract-leg',
-				'grant-contract-session',
-				'grant-contract-rejected-initiation',
-				now()
-			)
-			ON CONFLICT DO NOTHING`,
-			`INSERT INTO human_calling_rejected_provider_legs (
-				call_control_id,
-				call_leg_id,
-				call_session_id,
-				initiated_event_id,
-				rejected_at
-			)
-			VALUES (
-				'grant-contract-control',
-				'grant-contract-leg',
-				'grant-contract-session',
-				'grant-contract-rejected-initiation',
-				now()
-			)
-			ON CONFLICT DO NOTHING`,
-			`SELECT EXISTS (
-				SELECT 1
-				FROM human_calling_rejected_provider_legs
-				WHERE call_control_id = 'grant-contract-control'
-					AND call_leg_id = 'grant-contract-leg'
-					AND call_session_id = 'grant-contract-session'
-			)`,
 			`INSERT INTO human_calling_projected_facts (
 				event_id,
 				event_type,
@@ -313,6 +276,25 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 			)
 			ON CONFLICT (event_id) DO NOTHING
 			RETURNING event_id`,
+			`INSERT INTO human_calling_voicemails (
+				call_id, practice_id, location_id, task_id, outcome, audio_state,
+				last_error_code, created_at, updated_at
+			)
+			SELECT
+				gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+				gen_random_uuid(), 'MISSED_CALL', 'UNAVAILABLE',
+				'VOICEMAIL_UNAVAILABLE', now(), now()
+			WHERE false
+			ON CONFLICT (call_id) DO UPDATE SET
+				task_id = EXCLUDED.task_id,
+				outcome = EXCLUDED.outcome,
+				audio_state = EXCLUDED.audio_state,
+				provider_recording_id = EXCLUDED.provider_recording_id,
+				recording_started_at = EXCLUDED.recording_started_at,
+				recording_ended_at = EXCLUDED.recording_ended_at,
+				duration_millis = EXCLUDED.duration_millis,
+				last_error_code = EXCLUDED.last_error_code,
+				updated_at = EXCLUDED.updated_at`,
 		},
 	}
 
@@ -459,13 +441,12 @@ func expectedTablePrivileges() map[string]bool {
 		"access_platform_operators",
 		"access_practices",
 		"access_support_sessions",
+		"human_calling_call_legs",
 		"human_calling_calls",
-		"human_calling_connection_attempts",
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_location_voice_numbers",
 		"human_calling_provider_commands",
-		"human_calling_recordings",
 		"human_calling_softphone_leases",
 		"human_calling_timeline",
 		"human_calling_voicemails",
@@ -485,7 +466,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_membership_locations",
 		"access_memberships",
 		"access_support_sessions",
-		"human_calling_connection_attempts",
+		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
 		"human_calling_handoffs",
@@ -506,10 +487,9 @@ func expectedTablePrivileges() map[string]bool {
 		"access_memberships",
 		"access_practices",
 		"access_support_sessions",
+		"human_calling_call_legs",
 		"human_calling_calls",
-		"human_calling_connection_attempts",
 		"human_calling_credentials",
-		"human_calling_provider_commands",
 		"human_calling_handoffs",
 		"human_calling_softphone_leases",
 		"work_tasks",
@@ -533,14 +513,13 @@ func expectedTablePrivileges() map[string]bool {
 		"access_memberships",
 		"access_operational_users",
 		"access_practices",
+		"human_calling_call_legs",
 		"human_calling_calls",
-		"human_calling_connection_attempts",
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_location_voice_numbers",
 		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
-		"human_calling_recordings",
 		"human_calling_softphone_leases",
 		"human_calling_voicemails",
 		"messaging_attachments",
@@ -555,11 +534,11 @@ func expectedTablePrivileges() map[string]bool {
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
+		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
 		"human_calling_projected_facts",
 		"human_calling_provider_commands",
-		"human_calling_recordings",
 		"human_calling_timeline",
 		"human_calling_voicemails",
 		"messaging_attachments",
@@ -572,13 +551,11 @@ func expectedTablePrivileges() map[string]bool {
 	)
 	grant("acuity_worker", "UPDATE",
 		"access_practices",
+		"human_calling_call_legs",
 		"human_calling_calls",
-		"human_calling_connection_attempts",
 		"human_calling_credentials",
 		"human_calling_handoffs",
-		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
-		"human_calling_recordings",
 		"human_calling_softphone_leases",
 		"work_tasks",
 	)
@@ -599,6 +576,42 @@ func expectedColumnPrivileges() map[string]bool {
 			result[columnPrivilegeKey(role, relation, column, privilege)] = true
 		}
 	}
+	grant(
+		"acuity_portal",
+		"public.human_calling_provider_commands",
+		"UPDATE",
+		"state",
+		"attempts",
+		"sent_at",
+		"next_attempt_at",
+		"last_error_code",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.human_calling_provider_commands",
+		"UPDATE",
+		"state",
+		"attempts",
+		"sent_at",
+		"next_attempt_at",
+		"last_error_code",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.human_calling_voicemails",
+		"UPDATE",
+		"task_id",
+		"outcome",
+		"audio_state",
+		"provider_recording_id",
+		"recording_started_at",
+		"recording_ended_at",
+		"duration_millis",
+		"last_error_code",
+		"updated_at",
+	)
 	grant(
 		"acuity_provider",
 		"public.messaging_provider_receipts",
@@ -733,24 +746,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"public.human_calling_projected_facts",
 		"SELECT",
 		"event_id",
-	)
-	grant(
-		"acuity_worker",
-		"public.human_calling_rejected_provider_legs",
-		"SELECT",
-		"call_control_id",
-		"call_leg_id",
-		"call_session_id",
-	)
-	grant(
-		"acuity_worker",
-		"public.human_calling_rejected_provider_legs",
-		"INSERT",
-		"call_control_id",
-		"call_leg_id",
-		"call_session_id",
-		"initiated_event_id",
-		"rejected_at",
 	)
 	grant(
 		"acuity_provider",

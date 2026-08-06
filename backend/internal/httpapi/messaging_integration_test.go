@@ -72,7 +72,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		workModule,
 		messageProvider,
 		messaging.Config{
-			WebhookPublicKey:   publicKey,
+			WebhookPublicKeys:  []ed25519.PublicKey{publicKey},
 			WebhookTolerance:   time.Minute,
 			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
 			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
@@ -171,8 +171,8 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			nil,
 			nil,
 			humancalling.Config{
-				WebhookPublicKey: publicKey,
-				WebhookTolerance: time.Minute,
+				WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+				WebhookTolerance:  time.Minute,
 			},
 			nil,
 		),
@@ -284,14 +284,9 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		INSERT INTO human_calling_calls (
 			practice_id,
 			location_id,
-			state,
-			offer_deadline,
-			connection_deadline,
-			claimant_subject,
-			winner_subject,
-			claimant_session_id,
 			provider_termination,
-			connected_at,
+			terminal_outcome,
+			disposition_outcome,
 			ended_at,
 			direction,
 			entry_point,
@@ -300,20 +295,30 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			initiating_subject,
 			outbound_idempotency_key,
 			outbound_input_fingerprint,
-			prior_availability_intent,
 			created_at,
 			updated_at
 		)
 		VALUES (
-			$1, $2, 'RESOLVED', $3, $3, $4, $4, 'history-session',
-			'NO_ANSWER', $3, $3, 'OUTBOUND', 'STANDALONE', $5,
-			'+17275550100', $4, 'history-call', $6, true, $3, $3
+			$1, $2, 'NO_ANSWER', 'RESOLVED', 'NO_FOLLOW_UP', $3,
+			'OUTBOUND', 'STANDALONE', $4, '+17275550100', $5,
+			'history-call', $6, $3, $3
 		)
 		RETURNING id::text
 	`, authorization.Practice.ID, authorization.Locations[0].ID, now,
-		identity.Subject, "+17275550199", make([]byte, 32),
+		"+17275550199", identity.Subject, make([]byte, 32),
 	).Scan(&engagementCallID); err != nil {
 		t.Fatalf("create Engagement History Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id,
+			answered_at, bridge_pending_at, bridged_at, ending_at, ended_at,
+			created_at, updated_at
+		) VALUES ($1, 'STAFF', 1, $2, 'history-session', 'ENDED',
+			'history-staff-control', 'history-staff-leg', $3, $3, $3, $3, $3, $3, $3)
+	`, engagementCallID, identity.Subject, now); err != nil {
+		t.Fatalf("create Engagement History Staff CallLeg: %v", err)
 	}
 	engagementResponse := request(
 		t,

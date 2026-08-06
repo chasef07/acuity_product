@@ -52,6 +52,7 @@ steps:
       - WEB_IMAGE=${_WEB_IMAGE}
       - IMAGE_TAG=${_IMAGE_TAG}
       - DEPLOYMENT_ID=$BUILD_ID
+      - CALLLEG_SCHEMA_CUTOVER_COMPLETE=${_CALLLEG_SCHEMA_CUTOVER_COMPLETE}
 
 substitutions:
   _IMAGE_TAG: DO_NOT_DEPLOY
@@ -61,6 +62,7 @@ substitutions:
   _WEB_IMAGE: web
   _PORTAL_API_URL: https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app
   _REALTIME_URL: https://acuity-realtime-cbuqwpsdsq-ue.a.run.app
+  _CALLLEG_SCHEMA_CUTOVER_COMPLETE: "false"
 
 options:
   logging: CLOUD_LOGGING_ONLY

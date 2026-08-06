@@ -233,20 +233,10 @@ createServer(async (request, response) => {
   }
   if (request.method === "POST" && request.url === "/v2/calls") {
     const payload = JSON.parse(requestBody.toString("utf8"))
-    if (
-      !payload.media_prep &&
-      payload.answering_machine_detection !== "disabled"
-    ) {
-      response.writeHead(200).end(JSON.stringify({
-        data: {
-          call_control_id: "fixture-staff-control",
-          call_leg_id: "fixture-staff-leg",
-        },
-      }))
-      return
-    }
     callSequence += 1
-    const leg = payload.media_prep ? "outbound-staff" : "outbound-destination"
+    const leg = payload.answering_machine_detection === "disabled"
+      ? "outbound-destination"
+      : "staff"
     response.writeHead(200).end(JSON.stringify({
       data: {
         call_control_id: `fixture-${leg}-control-${callSequence}`,

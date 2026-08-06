@@ -384,80 +384,23 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/calling/offers:
+  /v1/calling/state:
     get:
-      operationId: listCallingOffers
-      summary: List every current offer the User may accept now.
+      operationId: getCallingState
+      summary: Read durable softphone and CallLeg convergence state.
       responses:
         "200":
-          description: Earliest-deadline-first authoritative offers.
+          description: Current authorized calling state.
+          headers:
+            ETag:
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CallingOfferList"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/calling/live-calls:
-    get:
-      operationId: listLiveCalls
-      summary: List informational active Calls within the current User's Location Scope.
-      parameters:
-        - name: practiceId
-          in: query
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: locationId
-          in: query
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Access-filtered active Calls.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LiveCallPage"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/calling/offers/{callId}/accept:
-    post:
-      operationId: acceptCallingOffer
-      summary: Atomically claim one current offer and commit its Dial command.
-      parameters:
-        - name: callId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AcceptCallingOfferRequest"
-      responses:
-        "200":
-          description: Committed acceptance or explicit losing result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AcceptCallingOfferResult"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/CallingState"
+        "304":
+          description: Calling state has not changed.
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -2073,25 +2016,37 @@ components:
         expiresAt:
           type: string
           format: date-time
-    CallingOffer:
+    CallingState:
       type: object
       additionalProperties: false
-      required:
-        - id
-        - practiceId
-        - locationId
-        - locationName
-        - displayName
-        - nameSource
-        - transferReason
-        - reasonSource
-        - deadline
-        - state
-        - version
+      required: [softphone, ringing]
       properties:
-        id:
+        softphone:
+          $ref: "#/components/schemas/SoftphoneState"
+        ringing:
+          type: array
+          items:
+            $ref: "#/components/schemas/RingingCallLeg"
+        bridged:
+          $ref: "#/components/schemas/CallingStateCall"
+        voicemail:
+          $ref: "#/components/schemas/CallingStateCall"
+        disposition:
+          $ref: "#/components/schemas/CallingStateCall"
+    RingingCallLeg:
+      type: object
+      additionalProperties: false
+      required: [callId, callLegId, mediaToken, practiceId, locationId, locationName, displayName, transferReason, state, version, createdAt]
+      properties:
+        callId:
           type: string
           format: uuid
+        callLegId:
+          type: string
+          format: uuid
+        mediaToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
         practiceId:
           type: string
           format: uuid
@@ -2102,40 +2057,43 @@ components:
           type: string
         displayName:
           type: string
-        nameSource:
-          type: string
         transferReason:
           type: string
-        reasonSource:
-          type: string
-        deadline:
-          type: string
-          format: date-time
         state:
           type: string
-          enum: [OFFERING]
+          enum: [PENDING, DIALING, RINGING, BRIDGE_PENDING]
         version:
           type: integer
           format: int64
           minimum: 1
-    CallingOfferList:
-      type: object
-      additionalProperties: false
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/CallingOffer"
-    AcceptCallingOfferRequest:
-      type: object
-      additionalProperties: false
-      required: [sessionId]
-      properties:
-        sessionId:
+        createdAt:
           type: string
-          minLength: 1
-          maxLength: 200
+          format: date-time
+    CallingStateCall:
+      type: object
+      additionalProperties: false
+      required: [callId, callLegId, practiceId, locationId, locationName, state, version]
+      properties:
+        callId:
+          type: string
+          format: uuid
+        callLegId:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        state:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
     CallingControlRequest:
       type: object
       additionalProperties: false
@@ -2194,12 +2152,6 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-        providerSessionId:
-          type: string
-          minLength: 1
-          maxLength: 500
-          deprecated: true
-          description: Accepted for compatibility with older web clients and otherwise ignored.
     OutboundCallEligibility:
       type: object
       additionalProperties: false
@@ -2208,42 +2160,6 @@ components:
         eligible:
           type: boolean
         reason:
-          type: string
-    AcceptCallingOfferResult:
-      type: object
-      additionalProperties: false
-      required: [status, callId, state]
-      properties:
-        status:
-          type: string
-          enum: [ACCEPTED, ALREADY_CLAIMED, EXPIRED, INELIGIBLE]
-        callId:
-          type: string
-          format: uuid
-        state:
-          type: string
-          enum:
-            - OFFERING
-            - PREPARING
-            - RINGING
-            - CONNECTING
-            - CONNECTED
-            - RECONCILING
-            - UNANSWERED
-            - VOICEMAIL
-            - MISSED
-            - NEEDS_DISPOSITION
-            - RESOLVED
-            - FOLLOW_UP_REQUIRED
-    CallingRecording:
-      type: object
-      additionalProperties: false
-      required: [state]
-      properties:
-        state:
-          type: string
-          enum: [INTENDED, RECORDING, READY, FAILED]
-        failureCode:
           type: string
     CallingVoicemail:
       type: object
@@ -2284,16 +2200,12 @@ components:
         - direction
         - entryPoint
         - state
-        - deadline
         - phone
         - phoneSource
         - displayName
         - nameSource
         - transferReason
         - reasonSource
-        - expectedStaffLegId
-        - expectedMediaToken
-        - mediaReady
         - providerTermination
         - callerId
         - retryAllowed
@@ -2326,16 +2238,12 @@ components:
             - RINGING
             - CONNECTING
             - CONNECTED
-            - RECONCILING
             - UNANSWERED
             - VOICEMAIL
             - MISSED
             - NEEDS_DISPOSITION
             - RESOLVED
             - FOLLOW_UP_REQUIRED
-        deadline:
-          type: string
-          format: date-time
         dispositionDeadline:
           type: string
           format: date-time
@@ -2351,15 +2259,6 @@ components:
           type: string
         reasonSource:
           type: string
-        expectedStaffLegId:
-          type: string
-          description: Empty until Telnyx identifies the one staff leg created for this claim.
-        expectedMediaToken:
-          type: string
-          description: Opaque token that identifies the current staff-media attempt.
-        mediaReady:
-          type: boolean
-          description: Whether the current attempt durably recorded browser media readiness.
         providerTermination:
           type: string
         callerId:
@@ -2376,8 +2275,6 @@ components:
           type: integer
           format: int64
           minimum: 1
-        recording:
-          $ref: "#/components/schemas/CallingRecording"
         voicemail:
           $ref: "#/components/schemas/CallingVoicemail"
         recoveryTask:
@@ -2398,48 +2295,6 @@ components:
         relatedInteractionCount:
           type: integer
           minimum: 0
-    LiveCall:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - locationId
-        - locationName
-        - phone
-        - direction
-        - staffSubject
-        - staffEmail
-        - connectedAt
-      properties:
-        id:
-          type: string
-          format: uuid
-        locationId:
-          type: string
-          format: uuid
-        locationName:
-          type: string
-        phone:
-          type: string
-        direction:
-          type: string
-          enum: [INBOUND, OUTBOUND]
-        staffSubject:
-          type: string
-        staffEmail:
-          type: string
-        connectedAt:
-          type: string
-          format: date-time
-    LiveCallPage:
-      type: object
-      additionalProperties: false
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/LiveCall"
     CallingDispositionRequest:
       type: object
       additionalProperties: false
@@ -3219,12 +3074,10 @@ components:
         outcome:
           type: string
           enum:
-            - OFFERING
             - PREPARING
             - RINGING
             - CONNECTING
             - CONNECTED
-            - RECONCILING
             - UNANSWERED
             - VOICEMAIL
             - MISSED
@@ -3299,11 +3152,13 @@ components:
         state:
           type: string
           enum:
-            - OFFERING
+            - PREPARING
+            - RINGING
             - CONNECTING
             - CONNECTED
-            - RECONCILING
             - UNANSWERED
+            - VOICEMAIL
+            - MISSED
             - NEEDS_DISPOSITION
             - RESOLVED
             - FOLLOW_UP_REQUIRED

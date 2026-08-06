@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import {
@@ -89,10 +90,14 @@ function installMediaDOM() {
 
 function fakeClient() {
   const listeners = new Map<string, (value?: unknown) => void>()
+  const logins: string[] = []
   const client = {
     remoteElement: "",
     connect: async () => {},
     serverDisconnect: async () => {},
+    login: async ({ creds }: { creds: { login_token: string } }) => {
+      logins.push(creds.login_token)
+    },
     on: (event: string, callback: (value?: unknown) => void) => {
       listeners.set(event, callback)
       return client
@@ -100,6 +105,7 @@ function fakeClient() {
   }
   return {
     client,
+    logins,
     emit: (event: string, value?: unknown) => listeners.get(event)?.(value),
   }
 }
@@ -176,6 +182,37 @@ test("incoming media does not require a shared Call Control session", async () =
 
 test("Telnyx media starts with the microphone fenced", () => {
   assert.equal(callingClientOptions("token").mutedMicOnStart, true)
+  assert.equal(callingClientOptions("token").maxReconnectAttempts, 0)
+})
+
+test("pinned Telnyx SDK treats zero reconnect attempts as unlimited", () => {
+  const sdkPackage = JSON.parse(
+    readFileSync("node_modules/@telnyx/webrtc/package.json", "utf8"),
+  ) as { version: string }
+  const sdkBundle = readFileSync(
+    "node_modules/@telnyx/webrtc/lib/bundle.mjs",
+    "utf8",
+  )
+  assert.equal(sdkPackage.version, "2.27.8")
+  assert.match(
+    sdkBundle,
+    /maxReconnectAttempts[\s\S]{0,300}e>0&&this\._reconnectAttempts>e/,
+  )
+})
+
+test("warning 34001 refreshes login on the existing client", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+  await adapter.connect("jwt-old", output.id, {
+    onState: () => {},
+    onIncoming: () => {},
+    refreshToken: async () => "jwt-new",
+  })
+
+  sdk.emit("telnyx.warning", { warning: { code: 34001 } })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(sdk.logins, ["jwt-new"])
 })
 
 test("microphone authorization restores only the intended state", () => {

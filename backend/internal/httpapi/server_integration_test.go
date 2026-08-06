@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -277,18 +278,24 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_calls (
-			id, handoff_id, practice_id, location_id, state, offer_deadline,
-			caller_call_control_id, caller_call_leg_id, call_session_id,
-			ended_at, created_at, updated_at
+			id, source_handoff_id, practice_id, location_id, caller_phone,
+			terminal_outcome, ended_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, 'VOICEMAIL', $5,
-			'voicemail-http-control', 'voicemail-http-leg',
-			'voicemail-http-session', $6, $7, $6)
+		VALUES ($1, $2, $3, $4, '+15555550100', 'VOICEMAIL', $5, $6, $5)
 	`, callID, handoffID, authorization.Practice.ID,
-		voicemailLocationID, now.Add(20*time.Second),
-		now.Add(12*time.Second), now,
+		voicemailLocationID, now.Add(12*time.Second), now,
 	); err != nil {
 		t.Fatalf("insert voicemail HTTP Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, state, provider_call_control_id,
+			provider_call_leg_id, provider_call_session_id, ending_at, ended_at,
+			created_at, updated_at
+		) VALUES ($1, 'CALLER', 1, 'ENDED', 'voicemail-http-control',
+			'voicemail-http-leg', 'voicemail-http-session', $2, $2, $3, $2)
+	`, callID, now.Add(12*time.Second), now); err != nil {
+		t.Fatalf("insert voicemail HTTP Caller CallLeg: %v", err)
 	}
 	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
 	if err != nil {
@@ -593,32 +600,40 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_calls (
 			id,
-			handoff_id,
+			source_handoff_id,
 			practice_id,
 			location_id,
-			state,
-			offer_deadline,
-			caller_call_control_id,
-			caller_call_leg_id,
-			call_session_id,
-			claimant_subject,
-			winner_subject,
-			claimant_session_id,
 			disposition_actor_subject,
 			disposition_at,
-			connected_at,
+			disposition_outcome,
+			terminal_outcome,
+			caller_phone,
 			ended_at,
 			created_at,
 			updated_at
 		)
-		VALUES ($1, $2, $3, $4, 'FOLLOW_UP_REQUIRED', $5,
-			'task-http-control', 'task-http-leg', 'task-http-session',
-			$6, $6, 'task-http-browser', $6, $7, $7, $8, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, 'FOLLOW_UP_REQUIRED',
+			'FOLLOW_UP_REQUIRED', '+19855550100', $7, $6, $7)
 	`, callID, handoffID, authorization.Practice.ID,
-		authorization.Locations[0].ID, now.Add(20*time.Second),
-		identity.Subject, now.Add(10*time.Second), now.Add(70*time.Second),
+		authorization.Locations[0].ID, identity.Subject,
+		now.Add(10*time.Second), now.Add(70*time.Second),
 	); err != nil {
 		t.Fatalf("insert Task HTTP Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, ending_at, ended_at,
+			created_at, updated_at
+		) VALUES
+			($1, 'CALLER', 1, NULL, NULL, 'ENDED', 'task-http-control',
+				'task-http-leg', 'task-http-session', $2, $2, $2, $3, $3, $2, $3),
+			($1, 'STAFF', 1, $4, 'task-http-browser', 'ENDED',
+				'task-http-staff-control', 'task-http-staff-leg', 'task-http-session',
+				$2, $2, $2, $3, $3, $2, $3)
+	`, callID, now.Add(10*time.Second), now.Add(70*time.Second), identity.Subject); err != nil {
+		t.Fatalf("insert Task HTTP CallLegs: %v", err)
 	}
 	workModule := work.New(pool, accessModule, func() time.Time { return now })
 	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
@@ -919,13 +934,17 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate webhook key: %v", err)
 	}
+	nextPublicKey, nextPrivateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate next webhook key: %v", err)
+	}
 	calling := humancalling.New(
 		pool,
 		nil,
 		nil,
 		humancalling.Config{
-			WebhookPublicKey: publicKey,
-			WebhookTolerance: 5 * time.Minute,
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey, nextPublicKey},
+			WebhookTolerance:  5 * time.Minute,
 		},
 		func() time.Time { return now },
 	)
@@ -948,6 +967,10 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),
 	))
+	nextSignature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		nextPrivateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
 	send := func(signature string) *http.Response {
 		t.Helper()
 		request, err := http.NewRequest(
@@ -968,8 +991,8 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 		return response
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
-		response := send(signature)
+	for attempt, acceptedSignature := range []string{signature, signature, nextSignature} {
+		response := send(acceptedSignature)
 		if response.StatusCode != http.StatusNoContent {
 			t.Fatalf(
 				"signed webhook attempt %d status = %d, body = %s",
@@ -1372,9 +1395,10 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		accessModule,
 		httpCallingProvider{},
 		humancalling.Config{
-			HandoffSIPDomain: "synthetic.sip.telnyx.com",
-			OfferDuration:    20 * time.Second,
-			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			HandoffSIPDomain:   "synthetic.sip.telnyx.com",
+			RingWindowDuration: 20 * time.Second,
+			HandoffTokenKey:    []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:      "http-call-control-connection",
 		},
 		func() time.Time { return now },
 	)
@@ -1461,19 +1485,22 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		ExpiresAt      time.Time `json:"expiresAt"`
 	}
 	decode(t, created, &handoff)
-	if handoff.SIPDestination !=
-		"sip:acuity-handoff@synthetic.sip.telnyx.com" {
+	if matched, _ := regexp.MatchString(
+		`^sip:h_[A-Za-z0-9_-]{43}@synthetic\.sip\.telnyx\.com$`,
+		handoff.SIPDestination,
+	); !matched {
 		t.Fatalf("handoff response = %#v", handoff)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "http-inbound-event",
 		Type:          humancalling.FactCallInitiated,
 		OccurredAt:    now,
+		ConnectionID:  "http-call-control-connection",
 		CallControlID: "http-caller-control",
 		CallLegID:     "http-caller-leg",
 		CallSessionID: "http-call-session",
 		From:          "+15555550100",
-		To:            "+14843336938",
+		To:            handoff.SIPDestination,
 	}); err != nil {
 		t.Fatalf("admit HTTP caller: %v", err)
 	}
@@ -1514,51 +1541,47 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("readiness status = %d, body = %s", readiness.StatusCode, readBody(t, readiness))
 	}
 	_ = readiness.Body.Close()
-	offersResponse := request(
+	for {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil {
+			t.Fatalf("process caller admission command: %v", err)
+		}
+		if !processed {
+			break
+		}
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "http-inbound-answered",
+		Type:          humancalling.FactCallAnswered,
+		OccurredAt:    now.Add(time.Second),
+		CallControlID: "http-caller-control",
+		CallLegID:     "http-caller-leg",
+		CallSessionID: "http-call-session",
+	}); err != nil {
+		t.Fatalf("fan out HTTP caller: %v", err)
+	}
+	stateResponse := request(
 		t,
 		server.Client(),
 		http.MethodGet,
-		server.URL+"/v1/calling/offers",
+		server.URL+"/v1/calling/state",
 		"calling-token",
 		nil,
 	)
-	if offersResponse.StatusCode != http.StatusOK {
-		t.Fatalf("offers status = %d, body = %s", offersResponse.StatusCode, readBody(t, offersResponse))
+	if stateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("calling state status = %d, body = %s", stateResponse.StatusCode, readBody(t, stateResponse))
 	}
-	var offers struct {
-		Items []struct {
-			ID    string `json:"id"`
-			Phone string `json:"phone"`
-		} `json:"items"`
+	var state struct {
+		Ringing []struct {
+			CallID    string `json:"callId"`
+			CallLegID string `json:"callLegId"`
+		} `json:"ringing"`
 	}
-	decode(t, offersResponse, &offers)
-	if len(offers.Items) != 1 || offers.Items[0].Phone != "" {
-		t.Fatalf("HTTP offers = %#v", offers)
-	}
-	acceptBody, _ := json.Marshal(map[string]any{"sessionId": "http-browser"})
-	accepted := request(
-		t,
-		server.Client(),
-		http.MethodPost,
-		server.URL+"/v1/calling/offers/"+offers.Items[0].ID+"/accept",
-		"calling-token",
-		acceptBody,
-	)
-	if accepted.StatusCode != http.StatusOK {
-		t.Fatalf("accept status = %d, body = %s", accepted.StatusCode, readBody(t, accepted))
-	}
-	var acceptedResult struct {
-		Status string `json:"status"`
-	}
-	decode(t, accepted, &acceptedResult)
-	if acceptedResult.Status != "ACCEPTED" {
-		t.Fatalf("accepted result = %#v", acceptedResult)
-	}
-	if !strings.Contains(
-		metrics.String(),
-		`"metric":"acuity_call_center_call_accept"`,
-	) || !strings.Contains(metrics.String(), `"outcome":"won"`) {
-		t.Fatalf("won Call accept metric omitted: %s", metrics.String())
+	etag := stateResponse.Header.Get("ETag")
+	decode(t, stateResponse, &state)
+	if len(state.Ringing) != 1 || state.Ringing[0].CallID == "" ||
+		state.Ringing[0].CallLegID == "" || etag == "" {
+		t.Fatalf("HTTP Calling state = %#v, ETag = %q", state, etag)
 	}
 }
 
@@ -1618,13 +1641,20 @@ func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
 	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_calls (
-			id, handoff_id, practice_id, location_id, state, offer_deadline,
-			caller_call_control_id, caller_call_leg_id, call_session_id
+			id, source_handoff_id, practice_id, location_id, caller_phone
 		)
-		VALUES ($1, $2, $3, $4, 'OFFERING', $5,
-			'http-recovery-control', 'http-recovery-leg', 'http-recovery-session')
-	`, callID, handoffID, practiceID, locationID, now.Add(time.Hour)); err != nil {
+		VALUES ($1, $2, $3, $4, '+15555550100')
+	`, callID, handoffID, practiceID, locationID); err != nil {
 		t.Fatalf("seed HTTP recovery Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, state, provider_call_control_id,
+			provider_call_leg_id, provider_call_session_id
+		) VALUES ($1, 'CALLER', 1, 'RINGING', 'http-recovery-control',
+			'http-recovery-leg', 'http-recovery-session')
+	`, callID); err != nil {
+		t.Fatalf("seed HTTP recovery Caller CallLeg: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_provider_receipts (
@@ -1636,6 +1666,10 @@ func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
 			'QUARANTINED', 10, $3, $3, $3, $3)
 	`, eventID, callID, now); err != nil {
 		t.Fatalf("seed HTTP recovery receipt: %v", err)
+	}
+	probe := humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, func() time.Time { return now })
+	if _, err := probe.ReadOperatorTimeline(context.Background(), operator, callID); err != nil {
+		t.Fatalf("read direct operator timeline: %v", err)
 	}
 
 	handler, err := newPortalHandler(t, httpapi.Config{
@@ -1700,7 +1734,8 @@ func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
 	}
 	var result api.ProviderReceiptRecovery
 	decode(t, requeued, &result)
-	if result.ReceiptReference != recoveryReference || result.State != api.PENDING {
+	if result.ReceiptReference != recoveryReference ||
+		result.State != api.ProviderReceiptRecoveryStatePENDING {
 		t.Fatalf("operator receipt requeue = %#v", result)
 	}
 	var state humancalling.ReceiptState

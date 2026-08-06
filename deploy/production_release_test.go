@@ -157,6 +157,126 @@ func TestProductionReleaseRejectsMutableImageTagBeforeCloudMutation(t *testing.T
 	}
 }
 
+func TestProductionReleasePausesBeforeCallLegCutover(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	environment := replaceEnvironment(
+		releaseEnvironment(),
+		"CALLLEG_SCHEMA_CUTOVER_COMPLETE",
+		"false",
+	)
+	command := exec.Command("bash", filepath.Join(directory, "deploy-production-release.sh"))
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+	}, environment...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("release ran before the CallLeg cutover")
+	}
+	if !strings.Contains(string(output), "Automatic release is paused") {
+		t.Fatalf("cutover pause error = %q", output)
+	}
+	if _, err := os.Stat(gcloudCapture); !os.IsNotExist(err) {
+		t.Fatal("paused release reached gcloud")
+	}
+}
+
+func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	environment := append(
+		releaseEnvironment(),
+		"CALLLEG_DESTRUCTIVE_CUTOVER=true",
+		"CALLLEG_CUTOVER_EVIDENCE_VERIFIED=true",
+		"CALLLEG_CUTOVER_WINDOW_CONFIRMED=true",
+		"CALLLEG_CUTOVER_EVIDENCE_PATH="+filepath.Join(strings.Split(path, ":")[0], "cutover-evidence.json"),
+	)
+	command := exec.Command("bash", filepath.Join(directory, "deploy-production-release.sh"))
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+	}, environment...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("destructive CallLeg cutover: %v\n%s", err, output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	migration := commandIndex(commands, "run\tjobs\texecute\tacuity-migrate")
+	firstReplacement := commandIndex(commands, "run\tdeploy\tacuity-portal-api")
+	workerReplacement := commandIndex(commands, "run\tworker-pools\tdeploy\tacuity-worker")
+	workerZeroProof := commandIndex(commands, "run\tworker-pools\tupdate\tacuity-worker")
+	if migration < 0 || firstReplacement <= migration || workerReplacement <= migration ||
+		workerZeroProof < 0 || workerZeroProof >= migration {
+		t.Fatalf("replacement runtime crossed the zero-runtime migration gap:\n%s", strings.Join(commands, "\n"))
+	}
+	for _, service := range []string{
+		"acuity-portal-api", "acuity-provider-ingress", "acuity-realtime", "acuity-web",
+	} {
+		assertCapturedCommand(t, commands, "run\tservices\tupdate\t"+service,
+			"--scaling\t0",
+		)
+	}
+	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate\tacuity-worker",
+		"--instances\t0",
+	)
+	for _, service := range []string{"acuity-portal-api", "acuity-provider-ingress"} {
+		assertCapturedCommand(t, commands, "run\tdeploy\t"+service,
+			"--min\t1",
+			"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+		)
+	}
+	assertCapturedCommand(t, commands, "run\tworker-pools\tdeploy\tacuity-worker",
+		"--instances\t0",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+	)
+	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate\tacuity-worker",
+		"--instances\t1",
+	)
+}
+
+func TestDestructiveCutoverRestoresScalingWhenDisableFails(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	environment := append(
+		releaseEnvironment(),
+		"CALLLEG_DESTRUCTIVE_CUTOVER=true",
+		"CALLLEG_CUTOVER_EVIDENCE_VERIFIED=true",
+		"CALLLEG_CUTOVER_WINDOW_CONFIRMED=true",
+		"CALLLEG_CUTOVER_EVIDENCE_PATH="+filepath.Join(strings.Split(path, ":")[0], "cutover-evidence.json"),
+		"GCLOUD_FAIL_DISABLE_SERVICE=acuity-provider-ingress",
+	)
+	command := exec.Command("bash", filepath.Join(directory, "deploy-production-release.sh"))
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+	}, environment...)
+	if output, err := command.CombinedOutput(); err == nil {
+		t.Fatalf("destructive cutover ignored disable failure:\n%s", output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	assertCapturedCommand(t, commands, "run\tservices\tupdate\tacuity-portal-api",
+		"--scaling\t0",
+	)
+	portalZeroUpdates := 0
+	for _, captured := range commands {
+		if strings.HasPrefix(captured, "run\tservices\tupdate\tacuity-portal-api") &&
+			strings.Contains(captured, "--scaling\t0") {
+			portalZeroUpdates++
+		}
+	}
+	if portalZeroUpdates != 2 {
+		t.Fatalf("portal scaling was not restored after partial disable:\n%s",
+			strings.Join(commands, "\n"))
+	}
+	if commandIndex(commands, "run\tjobs\tupdate\tacuity-migrate") >= 0 {
+		t.Fatal("failed disable reached migration")
+	}
+}
+
 func TestProductionReleaseRejectsMissingPlaybackSigningKeyBeforeCloudMutation(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
@@ -307,6 +427,8 @@ func installReleaseFakes(t *testing.T) (string, string, string) {
 	directory := t.TempDir()
 	gcloudPath := filepath.Join(directory, "gcloud")
 	curlPath := filepath.Join(directory, "curl")
+	nodePath := filepath.Join(directory, "node")
+	evidencePath := filepath.Join(directory, "cutover-evidence.json")
 	gcloudCapture := filepath.Join(directory, "gcloud.tsv")
 	curlCapture := filepath.Join(directory, "curl.tsv")
 	gcloud := `#!/bin/sh
@@ -322,6 +444,14 @@ if [ -n "${GCLOUD_FAIL_DEPLOY_SERVICE:-}" ] &&
   [ "$1" = run ] &&
   [ "$2" = deploy ] &&
   [ "$3" = "$GCLOUD_FAIL_DEPLOY_SERVICE" ]; then
+  exit 1
+fi
+if [ -n "${GCLOUD_FAIL_DISABLE_SERVICE:-}" ] &&
+  [ "$1" = run ] &&
+  [ "$2" = services ] &&
+  [ "$3" = update ] &&
+  [ "$4" = "$GCLOUD_FAIL_DISABLE_SERVICE" ] &&
+  printf '%s\n' "$*" | grep -q -- '--scaling 0'; then
   exit 1
 fi
 
@@ -350,6 +480,15 @@ case "$*" in
       printf '%s\n' "DATABASE_URL;HUMAN_CALLING_PLAYBACK_SIGNING_KEY"
     fi
     ;;
+	"run services describe "*"spec.scaling.scalingMode"*)
+		printf '%s\n' "MANUAL"
+		;;
+	"run services describe "*"spec.scaling.manualInstanceCount"*)
+    printf '%s\n' "0"
+    ;;
+	"run services describe "*"status.conditions[0].status"*)
+		printf '%s\n' "True"
+		;;
   "run services describe acuity-portal-api "*"status.url"*)
     printf '%s\n' "https://portal.example"
     ;;
@@ -363,7 +502,11 @@ case "$*" in
     printf '%s\n' "https://portal-web.example"
     ;;
   "run worker-pools describe "*"status.instanceSplits.revisionName"*)
-    printf '%s\n' "acuity-worker-old"
+    if grep -q "acuity-worker-release-1234=100" "$GCLOUD_CAPTURE"; then
+      printf '%s\n' "acuity-worker-release-1234"
+    else
+      printf '%s\n' "acuity-worker-old"
+    fi
     ;;
   "run revisions describe "*"spec.containers[0].image"*)
     case "$4" in
@@ -378,11 +521,20 @@ case "$*" in
   "run revisions describe "*"status.conditions"*)
     printf '%s\n' "True"
     ;;
+  "run revisions describe "*"HUMAN_CALLING_HANDOFF_ADMISSION"*)
+    printf '%s\n' "closed"
+    ;;
   "run worker-pools revisions describe "*"spec.containers[0].image"*)
     printf '%s\n' "us-central1-docker.pkg.dev/acuity-test/acuity-product/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     ;;
+  "run worker-pools revisions describe "*"HUMAN_CALLING_HANDOFF_ADMISSION"*)
+    printf '%s\n' "closed"
+    ;;
   "run worker-pools describe "*"status.conditions"*)
     printf '%s\n' "True"
+    ;;
+  "run worker-pools describe "*"spec.template.scaling.manualInstanceCount"*)
+    printf '%s\n' "0"
     ;;
 esac
 `
@@ -390,11 +542,18 @@ esac
 set -eu
 printf '%s\n' "$*" >>"$CURL_CAPTURE"
 `
+	node := "#!/bin/sh\nset -eu\n"
 	if err := os.WriteFile(gcloudPath, []byte(gcloud), 0o755); err != nil {
 		t.Fatalf("write fake gcloud: %v", err)
 	}
 	if err := os.WriteFile(curlPath, []byte(curl), 0o755); err != nil {
 		t.Fatalf("write fake curl: %v", err)
+	}
+	if err := os.WriteFile(nodePath, []byte(node), 0o755); err != nil {
+		t.Fatalf("write fake node: %v", err)
+	}
+	if err := os.WriteFile(evidencePath, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write fake cutover evidence: %v", err)
 	}
 	return directory + ":" + os.Getenv("PATH"), gcloudCapture, curlCapture
 }
@@ -408,6 +567,7 @@ func releaseEnvironment() []string {
 		"WEB_IMAGE=web",
 		"IMAGE_TAG=0123456789abcdef0123456789abcdef01234567",
 		"DEPLOYMENT_ID=release-1234",
+		"CALLLEG_SCHEMA_CUTOVER_COMPLETE=true",
 	}
 }
 

@@ -536,9 +536,9 @@
     }
   },
   {
-    "name": "acuity_call_center_call_accept_count",
-    "description": "Count of call-offer accept outcomes.",
-    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_call_accept\"",
+    "name": "acuity_call_center_staff_answer_count",
+    "description": "Count of provider-confirmed Staff CallLeg answer outcomes.",
+    "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_staff_answer\"",
     "metricDescriptor": {
       "metricKind": "DELTA",
       "valueType": "INT64",
@@ -558,9 +558,9 @@
     }
   },
   {
-    "name": "acuity_call_center_accept_to_bridge_seconds",
-    "description": "Distribution of accepted-offer to provider-confirmed bridge time.",
-    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_accept_to_bridge\"",
+    "name": "acuity_call_center_answer_to_bridge_seconds",
+    "description": "Distribution of provider-confirmed Staff answer to explicit Bridge confirmation.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_answer_to_bridge\"",
     "metricDescriptor": {
       "metricKind": "DELTA",
       "valueType": "DISTRIBUTION",

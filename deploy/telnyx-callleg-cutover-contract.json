@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "provider": "telnyx",
+  "handoff": {
+    "transport": "SIP_REFER",
+    "routeUserPattern": "^h_[A-Za-z0-9_-]{43}$",
+    "customHeadersRequired": false
+  },
+  "commands": {
+    "dialBridgeOnAnswer": false,
+    "bridgePreventDoubleBridge": true,
+    "ringWindowSeconds": 20,
+    "safeRetryWindowSeconds": 55
+  },
+  "webhooks": {
+    "apiVersion": "2",
+    "primaryPath": "/v1/provider/telnyx/webhooks",
+    "timeoutSeconds": 5,
+    "maximumAcknowledgementP99Millis": 1000,
+    "minimumPublicKeys": 1,
+    "maximumPublicKeys": 2
+  },
+  "voice": {
+    "firstCommandTimeout": false,
+    "sipUriCallingPreference": "internal",
+    "simultaneousRinging": "disabled",
+    "srtpRequired": true,
+    "automaticRecording": "disabled",
+    "inboundDIDRecording": "disabled",
+    "inboundDIDStatus": "active",
+    "inboundDIDCallForwarding": "disabled",
+    "siprec": "disabled",
+    "rtcpCapture": "disabled",
+    "mediaFork": "disabled",
+    "connectedCallRecording": "disabled",
+    "minimumDeclaredChannelLimit": 5,
+    "outboundDestinations": ["US"],
+    "outboundTrafficType": "conversational",
+    "dailySpendLimitUSD": 10,
+    "maximumDestinationRateUSD": 0.2
+  },
+  "cutoverGates": {
+    "oldRevisionCount": 0,
+    "activeCallCount": 0,
+    "inFlightCommandCount": 0,
+    "unprojectedReceiptCount": 0,
+    "voicemailWorkCount": 0,
+    "staleCredentialMappingCount": 0
+  },
+  "requiredProbes": [
+    "refer_route_token_survival",
+    "current_webhook_signature",
+    "next_webhook_signature",
+    "inbound_explicit_bridge",
+    "outbound_explicit_bridge",
+    "voicemail_recording_playback",
+    "three_client_two_call_capacity"
+  ]
+}

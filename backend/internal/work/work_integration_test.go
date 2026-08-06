@@ -1543,31 +1543,39 @@ func insertCallAt(
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO human_calling_calls (
 			id,
-			handoff_id,
+			source_handoff_id,
 			practice_id,
 			location_id,
-			state,
-			offer_deadline,
-			caller_call_control_id,
-			caller_call_leg_id,
-			call_session_id,
-			claimant_subject,
-			winner_subject,
-			claimant_session_id,
 			disposition_at,
-			connected_at,
+			disposition_actor_subject,
+			disposition_outcome,
+			terminal_outcome,
+			caller_phone,
 			ended_at,
 			created_at,
 			updated_at
 		)
-		VALUES ($1, $2, $3, $4, 'FOLLOW_UP_REQUIRED', $5,
-			$6, $7, $8, $9, $9, 'browser-session', $10, $10, $10, $10, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, 'FOLLOW_UP_REQUIRED',
+			'FOLLOW_UP_REQUIRED', $7, $5, $5, $5)
 	`, callID, handoffID, authorization.Practice.ID, locationID,
-		now.Add(time.Minute), "control-"+callID, "leg-"+callID, "session-"+callID,
-		authorization.Actor.Subject,
-		now,
+		now, authorization.Actor.Subject, phone,
 	); err != nil {
 		t.Fatalf("insert Call fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, ending_at, ended_at,
+			created_at, updated_at
+		) VALUES
+			($1, 'CALLER', 1, NULL, NULL, 'ENDED', $2, $3, $4,
+				$5, $5, $5, $5, $5, $5, $5),
+			($1, 'STAFF', 1, $6, 'browser-session', 'ENDED', $7, $8, $4,
+				$5, $5, $5, $5, $5, $5, $5)
+	`, callID, "control-"+callID, "leg-"+callID, "session-"+callID, now,
+		authorization.Actor.Subject, "staff-control-"+callID, "staff-leg-"+callID); err != nil {
+		t.Fatalf("insert CallLeg fixtures: %v", err)
 	}
 	return callID
 }

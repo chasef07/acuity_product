@@ -62,9 +62,10 @@ Each database authority is delivered through a distinct Secret Manager secret;
 runtime roles never share a database credential.
 
 Deploy migrations as a blocking Cloud Run job before starting a new revision.
-Migrations are forward-only and expand first. Keep the prior revision live
-during health checks, allow old and new code to overlap within the 72-connection
-bound, then shift traffic. Never run migrations from application startup.
+Most migrations expand first, but migration 0020 is an intentional CallLeg
+replacement: run the Telnyx cutover preflight, drain the old runtime completely,
+apply the migration, and deploy only the replacement. Never overlap a pre-0020
+revision with the CallLeg schema. Never run migrations from application startup.
 
 Required service configuration:
 
@@ -73,8 +74,7 @@ Required service configuration:
   credential and Practice, Telnyx command configuration, the private
   voicemail-playback signing key, the safe voicemail greeting text, the
   Messaging attachment mount, and the shared
-  `HUMAN_CALLING_OFFER_SECONDS`,
-  `HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS`,
+  `HUMAN_CALLING_RING_WINDOW_SECONDS`,
   `HUMAN_CALLING_LEASE_SECONDS`, and
   `HUMAN_CALLING_READINESS_GRACE_SECONDS` values.
 - `realtime`: the same authority configuration plus bounded heartbeat, stream
@@ -83,10 +83,11 @@ Required service configuration:
   webhook public key. It permits public HTTPS invocation because Telnyx must
   reach it; exact-body signature and timestamp verification are the application
   authentication boundary.
-- `worker`: database settings, Telnyx command configuration, the same four
-  Human Calling timing values and safe voicemail greeting text as `portal-api`,
-  and the Messaging attachment mount. Voicemail audio has no copy worker or
-  object-store configuration.
+- `worker`: database settings, Telnyx command configuration, the same SIP
+  domains, handoff/media keys, Human Calling timing values, and safe voicemail
+  greeting text as `portal-api`, plus the Messaging attachment mount. The
+  worker owns durable receipt projection, so these values must be identical.
+  Voicemail audio has no copy worker or object-store configuration.
 - `migrate`: database settings and, only for initial provisioning, paired
   input/output paths. The output contains one-time invitation credentials and
   must be captured as a `0600` secret artifact. An invitation link uses

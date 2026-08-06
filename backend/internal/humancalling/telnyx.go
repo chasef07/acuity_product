@@ -3,6 +3,7 @@ package humancalling
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,28 @@ type TelnyxConfig struct {
 
 type TelnyxAdapter struct {
 	config TelnyxConfig
+}
+
+type ProviderError struct {
+	HTTPStatus   int
+	Code         string
+	SafeCode     string
+	Definitive   bool
+	TargetAbsent bool
+}
+
+func (err *ProviderError) Error() string {
+	return err.SafeCode
+}
+
+func (err *ProviderError) Is(target error) bool {
+	if target == ErrProviderTargetAbsent {
+		return err.TargetAbsent
+	}
+	if target == ErrDefinitiveProviderFailure {
+		return err.Definitive
+	}
+	return target == ErrAmbiguousEffect && !err.Definitive
 }
 
 var errInvalidRecordingLocation = errors.New("invalid recording location")
@@ -68,25 +91,28 @@ func (adapter *TelnyxAdapter) Execute(
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = callActionPath(command.TargetID, "answer")
-	case CommandStartRingback:
+	case CommandStartRingWindow:
 		if command.TargetID == "" ||
 			emptyString(payload["audio_url"]) ||
-			payload["loop"] != "infinity" ||
+			payload["loop"] != "1" ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = callActionPath(command.TargetID, "playback_start")
-	case CommandPlayVoicemailGreeting:
-		if command.TargetID == "" ||
-			emptyString(payload["greeting"]) ||
-			payload["stop"] != "all" ||
+	case CommandStopRingWindow:
+		if command.TargetID == "" || payload["stop"] != "all" ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}
-		payload["payload"] = payload["greeting"]
-		payload["voice"] = "Polly.Matthew"
-		payload["language"] = "en-US"
-		delete(payload, "greeting")
+		path = callActionPath(command.TargetID, "playback_stop")
+	case CommandSpeakVoicemail:
+		if command.TargetID == "" ||
+			emptyString(payload["payload"]) ||
+			emptyString(payload["voice"]) ||
+			emptyString(payload["language"]) ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
 		path = callActionPath(command.TargetID, "speak")
 	case CommandDialStaff:
 		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
@@ -102,12 +128,22 @@ func (adapter *TelnyxAdapter) Execute(
 			(!mediaPrep &&
 				(emptyString(payload["link_to"]) ||
 					payload["bridge_intent"] != true ||
-					payload["bridge_on_answer"] != true ||
-					payload["prevent_double_bridge"] != true)) {
+					payload["bridge_on_answer"] != false)) {
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = "/calls"
-	case CommandDialDestination:
+	case CommandDialOutboundStaff:
+		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
+		if emptyString(payload["to"]) ||
+			emptyString(payload["connection_id"]) ||
+			emptyString(payload["from"]) ||
+			emptyString(payload["client_state"]) ||
+			!validMediaTokenHeader(payload["custom_headers"]) ||
+			!validTimeout || timeoutSeconds <= 0 {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		path = "/calls"
+	case CommandDialOutboundDestination:
 		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
 		if emptyString(payload["to"]) ||
 			emptyString(payload["connection_id"]) ||
@@ -117,26 +153,24 @@ func (adapter *TelnyxAdapter) Execute(
 			!validTimeout ||
 			timeoutSeconds != 30 ||
 			payload["bridge_intent"] != true ||
-			payload["bridge_on_answer"] != true ||
+			payload["bridge_on_answer"] != false ||
 			payload["answering_machine_detection"] != "disabled" {
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = "/calls"
-	case CommandHangup:
+	case CommandBridge:
+		if command.TargetID == "" ||
+			emptyString(payload["call_control_id"]) ||
+			payload["prevent_double_bridge"] != true ||
+			emptyString(payload["client_state"]) {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		path = callActionPath(command.TargetID, "bridge")
+	case CommandHangupLeg:
 		if command.TargetID == "" {
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = callActionPath(command.TargetID, "hangup")
-	case CommandStartRecording:
-		if command.TargetID == "" ||
-			payload["format"] != "wav" ||
-			payload["channels"] != "dual" ||
-			payload["recording_track"] != "both" ||
-			payload["transcription"] != false ||
-			emptyString(payload["client_state"]) {
-			return ProviderResult{}, ErrInvalidInput
-		}
-		path = callActionPath(command.TargetID, "record_start")
 	case CommandStartVoicemailRecording:
 		maxLength, validMaxLength := payload["max_length"].(float64)
 		if command.TargetID == "" ||
@@ -178,15 +212,14 @@ func (adapter *TelnyxAdapter) Execute(
 
 	responseBody, err := adapter.request(ctx, method, path, payload)
 	if err != nil {
-		if (command.Action == CommandHangup ||
-			command.Action == CommandDisableCredential) &&
+		if command.Action == CommandDisableCredential &&
 			errors.Is(err, ErrProviderTargetAbsent) {
 			return ProviderResult{}, nil
 		}
 		return ProviderResult{}, err
 	}
 	switch command.Action {
-	case CommandDialStaff, CommandDialDestination:
+	case CommandDialStaff, CommandDialOutboundStaff, CommandDialOutboundDestination:
 		var response struct {
 			Data struct {
 				CallControlID string `json:"call_control_id"`
@@ -304,38 +337,166 @@ func (adapter *TelnyxAdapter) FindCredentialByName(
 	return matches[0], true, nil
 }
 
-func (adapter *TelnyxAdapter) IsCallAlive(
+func (adapter *TelnyxAdapter) ObserveCall(
 	ctx context.Context,
+	connectionID string,
 	callControlID string,
-) (bool, error) {
-	if strings.TrimSpace(callControlID) == "" {
-		return false, ErrInvalidInput
+	callLegID string,
+	clientState string,
+	since time.Time,
+) (ProviderCallObservation, error) {
+	if strings.TrimSpace(connectionID) == "" || since.IsZero() ||
+		(strings.TrimSpace(callLegID) == "" && strings.TrimSpace(clientState) == "") {
+		return ProviderCallObservation{}, ErrInvalidInput
 	}
+	activeQuery := url.Values{}
+	activeQuery.Set("page[size]", "250")
 	responseBody, err := adapter.request(
 		ctx,
 		http.MethodGet,
-		"/calls/"+url.PathEscape(callControlID),
+		"/connections/"+url.PathEscape(connectionID)+"/active_calls?"+activeQuery.Encode(),
 		nil,
 	)
-	if errors.Is(err, ErrProviderTargetAbsent) {
-		return false, nil
-	}
 	if err != nil {
-		return false, err
+		return ProviderCallObservation{}, err
 	}
-	var response struct {
-		Data struct {
-			IsAlive *bool `json:"is_alive"`
+	var activeResponse struct {
+		Data []struct {
+			CallControlID string `json:"call_control_id"`
+			CallLegID     string `json:"call_leg_id"`
+			CallSessionID string `json:"call_session_id"`
+			ClientState   string `json:"client_state"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(responseBody, &response); err != nil ||
-		response.Data.IsAlive == nil {
-		return false, fmt.Errorf(
-			"%w: invalid Telnyx Call status response",
+	if err := json.Unmarshal(responseBody, &activeResponse); err != nil {
+		return ProviderCallObservation{}, fmt.Errorf(
+			"%w: invalid Telnyx active Calls response",
 			ErrAmbiguousEffect,
 		)
 	}
-	return *response.Data.IsAlive, nil
+	observation := ProviderCallObservation{}
+	for _, active := range activeResponse.Data {
+		matchesLeg := callLegID != "" && active.CallLegID == callLegID
+		matchesState := callLegID == "" && clientState != "" && active.ClientState == clientState
+		if !matchesLeg && !matchesState {
+			continue
+		}
+		if observation.Active {
+			return ProviderCallObservation{}, fmt.Errorf(
+				"%w: multiple active Telnyx Calls match one CallLeg",
+				ErrAmbiguousEffect,
+			)
+		}
+		observation.Active = true
+		observation.CallControlID = active.CallControlID
+		observation.CallLegID = active.CallLegID
+		observation.CallSessionID = active.CallSessionID
+	}
+	if observation.Active {
+		if callControlID != "" && observation.CallControlID != callControlID {
+			return ProviderCallObservation{}, fmt.Errorf(
+				"%w: active Telnyx Call identity changed",
+				ErrDefinitiveProviderFailure,
+			)
+		}
+		callControlID = observation.CallControlID
+		callLegID = observation.CallLegID
+	}
+	if callLegID == "" {
+		return observation, nil
+	}
+
+	eventQuery := url.Values{}
+	eventQuery.Set("filter[leg_id]", callLegID)
+	eventQuery.Set("filter[type]", "webhook")
+	eventQuery.Set("filter[occurred_at][gte]", since.UTC().Format(time.RFC3339Nano))
+	eventQuery.Set("page[size]", "100")
+	eventBody, err := adapter.request(
+		ctx,
+		http.MethodGet,
+		"/call_events?"+eventQuery.Encode(),
+		nil,
+	)
+	if err != nil {
+		return ProviderCallObservation{}, err
+	}
+	var eventResponse struct {
+		Data []struct {
+			Name           string                     `json:"name"`
+			CallLegID      string                     `json:"call_leg_id"`
+			CallSessionID  string                     `json:"call_session_id"`
+			EventTimestamp time.Time                  `json:"event_timestamp"`
+			Metadata       map[string]json.RawMessage `json:"metadata"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(eventBody, &eventResponse); err != nil {
+		return ProviderCallObservation{}, fmt.Errorf(
+			"%w: invalid Telnyx Call events response",
+			ErrAmbiguousEffect,
+		)
+	}
+	for _, event := range eventResponse.Data {
+		if raw, ok := rawCallEvent(event.Metadata); ok {
+			fact, known, normalizeErr := normalizeTelnyxFact(raw)
+			if normalizeErr != nil {
+				return ProviderCallObservation{}, fmt.Errorf(
+					"%w: invalid Telnyx raw Call event",
+					ErrAmbiguousEffect,
+				)
+			}
+			if !known {
+				continue
+			}
+			if fact.CallLegID != event.CallLegID ||
+				fact.CallSessionID != event.CallSessionID {
+				return ProviderCallObservation{}, fmt.Errorf(
+					"%w: contradictory Telnyx raw Call event identity",
+					ErrDefinitiveProviderFailure,
+				)
+			}
+			observation.Events = append(observation.Events, fact)
+			continue
+		}
+		factType := FactType(event.Name)
+		switch factType {
+		case FactCallInitiated, FactCallAnswered, FactCallBridged, FactCallHangup:
+		default:
+			continue
+		}
+		if event.CallLegID != callLegID || event.EventTimestamp.IsZero() {
+			return ProviderCallObservation{}, fmt.Errorf(
+				"%w: contradictory Telnyx Call event identity",
+				ErrDefinitiveProviderFailure,
+			)
+		}
+		digest := sha256.Sum256([]byte(
+			event.Name + "\x00" + event.CallLegID + "\x00" +
+				event.CallSessionID + "\x00" + event.EventTimestamp.UTC().Format(time.RFC3339Nano),
+		))
+		observation.Events = append(observation.Events, ProviderFact{
+			EventID:       fmt.Sprintf("telnyx-call-event-%x", digest[:]),
+			Type:          factType,
+			OccurredAt:    event.EventTimestamp,
+			CallLegID:     event.CallLegID,
+			CallSessionID: event.CallSessionID,
+		})
+	}
+	return observation, nil
+}
+
+func rawCallEvent(metadata map[string]json.RawMessage) ([]byte, bool) {
+	for _, key := range []string{"raw", "raw_event", "event"} {
+		raw := metadata[key]
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var encoded string
+		if raw[0] == '"' && json.Unmarshal(raw, &encoded) == nil {
+			return []byte(encoded), true
+		}
+		return raw, true
+	}
+	return nil, false
 }
 
 func (adapter *TelnyxAdapter) OpenVoicemailRecording(
@@ -691,40 +852,87 @@ func (adapter *TelnyxAdapter) request(
 	}
 	response, err := adapter.config.HTTPClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%w: Telnyx transport failed", ErrAmbiguousEffect)
+		return nil, &ProviderError{SafeCode: "TELNYX_TRANSPORT"}
 	}
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
 	if readErr != nil {
-		return nil, fmt.Errorf("%w: Telnyx response was incomplete", ErrAmbiguousEffect)
+		return nil, &ProviderError{HTTPStatus: response.StatusCode, SafeCode: "TELNYX_INCOMPLETE_RESPONSE"}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		if response.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf(
-				"%w: %w",
-				ErrDefinitiveProviderFailure,
-				ErrProviderTargetAbsent,
-			)
-		}
-		if response.StatusCode >= 400 &&
-			response.StatusCode < 500 &&
-			response.StatusCode != http.StatusRequestTimeout &&
-			response.StatusCode != http.StatusConflict &&
-			response.StatusCode != http.StatusTooEarly &&
-			response.StatusCode != http.StatusTooManyRequests {
-			return nil, fmt.Errorf(
-				"%w: Telnyx rejected command with status %d",
-				ErrDefinitiveProviderFailure,
-				response.StatusCode,
-			)
-		}
-		return nil, fmt.Errorf(
-			"%w: Telnyx command returned status %d",
-			ErrAmbiguousEffect,
-			response.StatusCode,
-		)
+		return nil, classifyTelnyxError(response.StatusCode, responseBody)
 	}
 	return responseBody, nil
+}
+
+func classifyTelnyxError(status int, body []byte) *ProviderError {
+	var envelope struct {
+		Errors []struct {
+			Code string `json:"code"`
+		} `json:"errors"`
+	}
+	_ = json.Unmarshal(body, &envelope)
+	code := ""
+	if len(envelope.Errors) > 0 {
+		code = strings.TrimSpace(envelope.Errors[0].Code)
+	}
+	result := &ProviderError{HTTPStatus: status, Code: code}
+	switch code {
+	case "90018":
+		result.SafeCode = "TELNYX_CALL_ENDED"
+		result.Definitive = true
+		result.TargetAbsent = true
+		return result
+	case "90034":
+		result.SafeCode = "TELNYX_CALL_NOT_ANSWERED"
+		return result
+	case "90041":
+		result.SafeCode = "TELNYX_USER_CHANNEL_LIMIT"
+		result.Definitive = true
+		return result
+	case "90042":
+		result.SafeCode = "TELNYX_PROFILE_CHANNEL_LIMIT"
+		result.Definitive = true
+		return result
+	case "90043":
+		result.SafeCode = "TELNYX_CONNECTION_CHANNEL_LIMIT"
+		result.Definitive = true
+		return result
+	}
+	switch {
+	case status == http.StatusNotFound:
+		result.SafeCode = "TELNYX_TARGET_ABSENT"
+		result.Definitive = true
+		result.TargetAbsent = true
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		result.SafeCode = "TELNYX_AUTH_REJECTED"
+		result.Definitive = true
+	case status == http.StatusTooManyRequests:
+		result.SafeCode = "TELNYX_RATE_LIMITED"
+	case status == http.StatusRequestTimeout || status == http.StatusConflict ||
+		status == http.StatusTooEarly || status >= http.StatusInternalServerError:
+		result.SafeCode = "TELNYX_EFFECT_UNCERTAIN"
+	case status >= http.StatusBadRequest && status < http.StatusInternalServerError:
+		result.SafeCode = "TELNYX_INVALID_REQUEST"
+		result.Definitive = true
+	default:
+		result.SafeCode = "TELNYX_EFFECT_UNCERTAIN"
+	}
+	return result
+}
+
+func safeProviderErrorCode(err error) string {
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) {
+		return providerErr.SafeCode
+	}
+	if errors.Is(err, ErrProviderTargetAbsent) {
+		return "PROVIDER_TARGET_ABSENT"
+	}
+	if errors.Is(err, ErrDefinitiveProviderFailure) {
+		return "PROVIDER_REJECTED"
+	}
+	return "PROVIDER_EFFECT_UNCERTAIN"
 }
 
 func callActionPath(callControlID string, action string) string {

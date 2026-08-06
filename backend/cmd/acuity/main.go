@@ -93,11 +93,9 @@ func run() error {
 			nil,
 			nil,
 			messaging.Config{
-				WebhookPublicKey: ed25519.PublicKey(
-					config.Messaging.WebhookPublicKey,
-				),
-				AttachmentStore: attachmentStore,
-				MediaSigningKey: config.Messaging.MediaSigningKey,
+				WebhookPublicKeys: webhookPublicKeys(config.Messaging.WebhookPublicKeys),
+				AttachmentStore:   attachmentStore,
+				MediaSigningKey:   config.Messaging.MediaSigningKey,
 			},
 			nil,
 		)
@@ -374,9 +372,9 @@ func humanCallingConfig(
 ) humancalling.Config {
 	return humancalling.Config{
 		HandoffSIPDomain:       config.HumanCalling.HandoffSIPDomain,
+		HandoffAdmissionClosed: config.HumanCalling.HandoffAdmissionClosed,
 		StaffSIPDomain:         config.HumanCalling.StaffSIPDomain,
-		OfferDuration:          config.HumanCalling.OfferDuration,
-		ConnectionTimeout:      config.HumanCalling.ConnectionTimeout,
+		RingWindowDuration:     config.HumanCalling.RingWindowDuration,
 		HandoffTokenKey:        config.HumanCalling.HandoffTokenKey,
 		LeaseDuration:          config.HumanCalling.LeaseDuration,
 		ReadinessGrace:         config.HumanCalling.ReadinessGrace,
@@ -385,9 +383,17 @@ func humanCallingConfig(
 		FromNumber:             config.HumanCalling.FromNumber,
 		RingbackURL:            config.HumanCalling.RingbackURL,
 		PlaybackSigningKey:     config.HumanCalling.PlaybackSigningKey,
-		WebhookPublicKey:       ed25519.PublicKey(config.HumanCalling.WebhookPublicKey),
+		WebhookPublicKeys:      webhookPublicKeys(config.HumanCalling.WebhookPublicKeys),
 		Observer:               observer,
 	}
+}
+
+func webhookPublicKeys(values [][]byte) []ed25519.PublicKey {
+	keys := make([]ed25519.PublicKey, 0, len(values))
+	for _, value := range values {
+		keys = append(keys, ed25519.PublicKey(value))
+	}
+	return keys
 }
 
 func runMigrate(

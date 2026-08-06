@@ -390,6 +390,10 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--memory\t512Mi",
 		"DATABASE_POOL_MAX=1",
 		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY=handoff-token-key:latest",
+		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY=playback-signing-key:latest",
+		"HUMAN_CALLING_SIP_DOMAIN=caller.example",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN=staff.example",
 		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",
 		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging",
 		"--add-volume-mount\tvolume=messaging-attachments,mount-path=/mnt/acuity-messaging",
@@ -583,6 +587,7 @@ func assertCapturedCommand(
 			!strings.HasPrefix(command, prefix) {
 			continue
 		}
+		matches := true
 		for _, value := range required {
 			found := containsCapturedFields(command, value)
 			if strings.Contains(value, "=") &&
@@ -590,12 +595,15 @@ func assertCapturedCommand(
 				found = strings.Contains(command, value)
 			}
 			if !found {
-				t.Errorf("command %q omits %q", command, value)
+				matches = false
+				break
 			}
 		}
-		return
+		if matches {
+			return
+		}
 	}
-	t.Errorf("captured commands omit prefix %q", prefix)
+	t.Errorf("captured commands omit %q with fields %q", prefix, required)
 }
 
 func containsCapturedFields(command string, required string) bool {

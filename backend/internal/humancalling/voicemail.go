@@ -35,7 +35,6 @@ const (
 	VoicemailReady            VoicemailAudioState = "READY"
 	VoicemailUnavailable      VoicemailAudioState = "UNAVAILABLE"
 	voicemailRecordingMaximum                     = 120 * time.Second
-	voicemailCallbackGrace                        = 30 * time.Second
 	defaultVoicemailGreeting                      = "Please leave a message after the beep."
 )
 
@@ -67,41 +66,34 @@ type playbackCompletion struct {
 
 func (content PlaybackContent) Complete(err error) {
 	if content.completion != nil {
-		content.completion.once.Do(func() {
-			content.completion.fn(err)
-		})
+		content.completion.once.Do(func() { content.completion.fn(err) })
 	}
 }
 
 func (content PlaybackContent) Validate(rangeHeader string) error {
-	requested, requestedRange := parseSingleByteRange(rangeHeader)
-	if strings.TrimSpace(rangeHeader) != "" && !requestedRange {
+	requested, hasRange := parseSingleByteRange(rangeHeader)
+	if strings.TrimSpace(rangeHeader) != "" && !hasRange {
 		return voicemailUnavailable(VoicemailProviderInvalid, "")
 	}
-	if content.Body == nil ||
-		(content.StatusCode != http.StatusOK &&
-			content.StatusCode != http.StatusPartialContent) {
+	if content.Body == nil || (content.StatusCode != http.StatusOK &&
+		content.StatusCode != http.StatusPartialContent) {
 		return voicemailUnavailable(VoicemailProviderInvalid, "")
 	}
 	if content.StatusCode == http.StatusPartialContent &&
-		(!requestedRange ||
-			!matchesContentRange(requested, content.ContentRange)) {
+		(!hasRange || !matchesContentRange(requested, content.ContentRange)) {
 		return voicemailUnavailable(VoicemailProviderInvalid, "")
 	}
 	return nil
 }
 
 type byteRange struct {
-	start    uint64
-	end      uint64
-	hasStart bool
-	hasEnd   bool
+	start, end       uint64
+	hasStart, hasEnd bool
 }
 
 func parseSingleByteRange(value string) (byteRange, bool) {
 	value = strings.TrimSpace(value)
-	if len(value) > 128 || !strings.HasPrefix(value, "bytes=") ||
-		strings.Contains(value, ",") {
+	if len(value) > 128 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
 		return byteRange{}, false
 	}
 	bounds := strings.Split(strings.TrimPrefix(value, "bytes="), "-")
@@ -135,27 +127,24 @@ func matchesContentRange(requested byteRange, value string) bool {
 	if len(value) > 128 || !strings.HasPrefix(value, "bytes ") {
 		return false
 	}
-	rangeAndLength := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
-	if len(rangeAndLength) != 2 {
+	parts := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
+	if len(parts) != 2 {
 		return false
 	}
-	bounds := strings.Split(rangeAndLength[0], "-")
+	bounds := strings.Split(parts[0], "-")
 	if len(bounds) != 2 {
 		return false
 	}
 	start, startErr := strconv.ParseUint(bounds[0], 10, 64)
 	end, endErr := strconv.ParseUint(bounds[1], 10, 64)
-	length, lengthErr := strconv.ParseUint(rangeAndLength[1], 10, 64)
-	if startErr != nil || endErr != nil || lengthErr != nil ||
-		start > end || end >= length {
+	length, lengthErr := strconv.ParseUint(parts[1], 10, 64)
+	if startErr != nil || endErr != nil || lengthErr != nil || start > end || end >= length {
 		return false
 	}
 	if requested.hasStart {
-		return start == requested.start &&
-			(!requested.hasEnd || end <= requested.end)
+		return start == requested.start && (!requested.hasEnd || end <= requested.end)
 	}
-	return requested.hasEnd && end == length-1 &&
-		end-start+1 <= requested.end
+	return requested.hasEnd && end == length-1 && end-start+1 <= requested.end
 }
 
 type VoicemailAudioProvider interface {
@@ -179,9 +168,7 @@ type VoicemailUnavailableError struct {
 	RetryAfter string
 }
 
-func (err *VoicemailUnavailableError) Error() string {
-	return "voicemail is unavailable"
-}
+func (err *VoicemailUnavailableError) Error() string { return "voicemail is unavailable" }
 
 type playbackClaims struct {
 	CallID    string `json:"callId"`
@@ -189,497 +176,229 @@ type playbackClaims struct {
 	Nonce     string `json:"nonce"`
 }
 
-func (m *Module) voicemailGreeting(
-	ctx context.Context,
-	tx pgx.Tx,
-	practiceID string,
-	locationID string,
-) (string, error) {
-	var configured string
-	err := tx.QueryRow(ctx, `
-		SELECT voicemail_greeting
-		FROM human_calling_location_voice_numbers
-		WHERE practice_id = $1
-			AND location_id = $2
-			AND enabled
-		ORDER BY id
-		LIMIT 1
-	`, practiceID, locationID).Scan(&configured)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return defaultVoicemailGreeting, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("read voicemail greeting: %w", err)
-	}
-	return configured, nil
-}
-
-func (m *Module) startVoicemailGreeting(
-	ctx context.Context,
-	tx pgx.Tx,
-	callID string,
-	practiceID string,
-	locationID string,
-	callerCallControlID string,
-	occurredAt time.Time,
-) error {
-	greeting, err := m.voicemailGreeting(ctx, tx, practiceID, locationID)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(greeting) == "" {
-		return fmt.Errorf("%w: safe voicemail greeting is unavailable", ErrConflict)
-	}
-	return insertCommand(
-		ctx,
-		tx,
-		callID,
-		"",
-		CommandPlayVoicemailGreeting,
-		callerCallControlID,
-		map[string]any{
-			"greeting": greeting,
-			// Telnyx stops the infinite ringback and starts the greeting as one
-			// idempotent command, so callers never hear both audio streams.
-			"stop":         "all",
-			"client_state": opaqueClientState(callID, "voicemail"),
-		},
-		occurredAt,
-	)
-}
-
 func (m *Module) applyVoicemailGreetingStarted(
 	ctx context.Context,
 	fact ProviderFact,
 ) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin voicemail greeting start projection: %w", err)
+	state, ok := parseCallLegClientState(fact.ClientState)
+	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_greeting" {
+		return ErrConflict
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := claimProviderFact(ctx, tx, fact, m.now()); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit voicemail greeting start: %w", err)
-	}
-	return nil
+	return m.applyVoicemailSpeechFact(ctx, fact, state, false)
 }
 
 func (m *Module) applyVoicemailGreetingEnded(
 	ctx context.Context,
 	fact ProviderFact,
 ) error {
-	state, ok := parseOpaqueClientState(fact.ClientState)
-	if !ok || state.Version != 1 || state.Leg != "voicemail" {
-		return nil
+	state, ok := parseCallLegClientState(fact.ClientState)
+	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_greeting" {
+		return ErrConflict
 	}
+	return m.applyVoicemailSpeechFact(ctx, fact, state, true)
+}
+
+func (m *Module) applyVoicemailSpeechFact(
+	ctx context.Context,
+	fact ProviderFact,
+	state callLegClientState,
+	ended bool,
+) error {
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin voicemail greeting projection: %w", err)
+		return fmt.Errorf("begin voicemail speech projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil {
-		return err
-	}
-	if !claimed {
+	if err != nil || !claimed {
+		if err != nil {
+			return err
+		}
 		return tx.Commit(ctx)
 	}
-	var practiceID, callerControlID, callerLegID, callSessionID string
-	var callState CallState
+	var practiceID, callerControlID, callerLegID, callerSessionID, terminal string
 	if err := tx.QueryRow(ctx, `
-		SELECT
-			practice_id::text,
-			state,
-			caller_call_control_id,
-			caller_call_leg_id,
-			call_session_id
-		FROM human_calling_calls
-		WHERE id = $1
-		FOR UPDATE
-	`, state.CallID).Scan(
-		&practiceID,
-		&callState,
-		&callerControlID,
-		&callerLegID,
-		&callSessionID,
+		SELECT call.practice_id::text, caller.provider_call_control_id,
+			caller.provider_call_leg_id,
+			COALESCE(caller.provider_call_session_id, ''),
+			COALESCE(call.terminal_outcome, '')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.id = $2 AND caller.role = 'CALLER'
+		WHERE call.id = $1 FOR UPDATE OF call, caller
+	`, state.CallID, state.CallLegID).Scan(
+		&practiceID, &callerControlID, &callerLegID, &callerSessionID, &terminal,
 	); err != nil {
-		return fmt.Errorf("lock voicemail greeting Call: %w", err)
+		return fmt.Errorf("lock voicemail caller: %w", err)
 	}
-	if !matchesVoicemailCaller(
-		fact,
-		callerControlID,
-		callerLegID,
-		callSessionID,
-	) {
-		return tx.Commit(ctx)
+	if fact.CallControlID != callerControlID || fact.CallLegID != callerLegID ||
+		fact.CallSessionID != callerSessionID {
+		return ErrConflict
 	}
-	if callState != CallUnanswered {
-		return tx.Commit(ctx)
+	if terminal != "" && terminal != "VOICEMAIL" {
+		return ErrConflict
 	}
-	var exists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM human_calling_provider_commands
-			WHERE call_id = $1
-				AND action = 'START_VOICEMAIL_RECORDING'
-		)
-	`, state.CallID).Scan(&exists); err != nil {
-		return fmt.Errorf("check voicemail recording intent: %w", err)
-	}
-	if !exists {
-		if err := insertCommand(
-			ctx,
-			tx,
-			state.CallID,
-			"",
-			CommandStartVoicemailRecording,
-			callerControlID,
-			map[string]any{
-				"format":           "mp3",
-				"channels":         "single",
-				"recording_track":  "inbound",
-				"play_beep":        true,
-				"max_length":       120,
-				"transcription":    false,
-				"custom_file_name": "voicemail-" + strings.ReplaceAll(state.CallID, "-", ""),
-				"client_state":     opaqueClientState(state.CallID, "voicemail"),
-			},
-			m.now(),
-		); err != nil {
+	if ended {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_provider_commands SET state = 'RECONCILED',
+				sent_at = COALESCE(sent_at, $2), last_error_code = NULL, updated_at = $3
+			WHERE call_leg_id = $1 AND action = 'SPEAK_VOICEMAIL'
+				AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+		`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
+			return fmt.Errorf("reconcile voicemail Speak: %w", err)
+		}
+		if _, err := m.insertCallLegCommand(ctx, tx, state.CallID,
+			state.CallLegID, "", "", CommandStartVoicemailRecording,
+			callerControlID, map[string]any{
+				"format": "mp3", "channels": "single",
+				"recording_track": "inbound", "transcription": false,
+				"play_beep": true, "max_length": int(voicemailRecordingMaximum.Seconds()),
+				"client_state": encodeCallLegClientState(
+					state.CallID, state.CallLegID, "CALLER", "voicemail_recording",
+				),
+			}, ""); err != nil {
 			return err
 		}
 	}
-	if err := appendTimeline(
-		ctx,
-		tx,
-		state.CallID,
-		practiceID,
-		"voicemail.greeting_completed",
-		"",
-		fact.EventID,
-		"",
-		"",
-		"",
-		fact.OccurredAt,
-	); err != nil {
+	kind := "voicemail.greeting.started"
+	if ended {
+		kind = "voicemail.greeting.completed"
+	}
+	if err := appendTimeline(ctx, tx, state.CallID, practiceID, kind, "",
+		fact.EventID, "", opaqueReference(fact.CallLegID), "", fact.OccurredAt); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit voicemail greeting projection: %w", err)
-	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (m *Module) applyVoicemailRecordingSaved(
 	ctx context.Context,
 	fact ProviderFact,
-	callID string,
 ) error {
+	state, ok := parseCallLegClientState(fact.ClientState)
+	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_recording" ||
+		fact.RecordingID == "" || !fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
+		return ErrConflict
+	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin voicemail recording projection: %w", err)
+		return fmt.Errorf("begin voicemail recording save: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil {
+	if err != nil || !claimed {
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if err := m.requireExactVoicemailCaller(ctx, tx, state, fact); err != nil {
 		return err
 	}
-	if !claimed {
-		return tx.Commit(ctx)
-	}
-	hasArtifact := fact.RecordingEndedAt.Sub(fact.RecordingStartedAt).Milliseconds() > 0 &&
-		strings.TrimSpace(fact.RecordingID) != ""
-	var practiceID, callerControlID, callerLegID, callSessionID string
-	if err := tx.QueryRow(ctx, `
-		SELECT
-			practice_id::text,
-			caller_call_control_id,
-			caller_call_leg_id,
-			call_session_id
-		FROM human_calling_calls
-		WHERE id = $1
+	var existingAudioState string
+	err = tx.QueryRow(ctx, `
+		SELECT audio_state FROM human_calling_voicemails
+		WHERE call_id = $1
 		FOR UPDATE
-	`, callID).Scan(
-		&practiceID,
-		&callerControlID,
-		&callerLegID,
-		&callSessionID,
-	); err != nil {
-		return fmt.Errorf("lock voicemail recording Call: %w", err)
+	`, state.CallID).Scan(&existingAudioState)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lock voicemail outcome: %w", err)
 	}
-	if !matchesVoicemailCaller(
-		fact,
-		callerControlID,
-		callerLegID,
-		callSessionID,
-	) {
+	if existingAudioState == string(VoicemailReady) {
 		return tx.Commit(ctx)
 	}
-	outcome := RecoveryMissedCall
-	if hasArtifact {
-		outcome = RecoveryVoicemail
-	}
-	if _, err := m.ensureRecoveryOutcome(
-		ctx,
-		tx,
-		callID,
-		outcome,
-		fact,
-	); err != nil {
+	if _, err := m.ensureRecoveryOutcome(ctx, tx, state.CallID,
+		RecoveryVoicemail, "VOICEMAIL", fact); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET
-			voicemail_failure_deadline = NULL,
-			voicemail_failure_event_id = NULL
-		WHERE id = $1
-	`, callID); err != nil {
-		return fmt.Errorf("clear superseded voicemail failure: %w", err)
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		UPDATE human_calling_provider_commands SET state = 'RECONCILED',
+			sent_at = COALESCE(sent_at, $2), last_error_code = NULL, updated_at = $3
+		WHERE call_leg_id = $1 AND action = 'START_VOICEMAIL_RECORDING'
+			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit voicemail recording projection: %w", err)
+	if err := m.endVoicemailCaller(ctx, tx, state.CallID, state.CallLegID); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (m *Module) applyVoicemailRecordingError(
 	ctx context.Context,
 	fact ProviderFact,
-	callID string,
 ) error {
+	state, ok := parseCallLegClientState(fact.ClientState)
+	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_recording" {
+		return ErrConflict
+	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin voicemail recording failure: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
-	if err != nil {
-		return err
-	}
-	if !claimed {
+	if err != nil || !claimed {
+		if err != nil {
+			return err
+		}
 		return tx.Commit(ctx)
 	}
-	var practiceID, callerControlID, callerLegID, callSessionID string
-	if err := tx.QueryRow(ctx, `
-		SELECT
-			practice_id::text,
-			caller_call_control_id,
-			caller_call_leg_id,
-			call_session_id
-		FROM human_calling_calls
-		WHERE id = $1
+	if err := m.requireExactVoicemailCaller(ctx, tx, state, fact); err != nil {
+		return err
+	}
+	var existingAudioState string
+	err = tx.QueryRow(ctx, `
+		SELECT audio_state FROM human_calling_voicemails
+		WHERE call_id = $1
 		FOR UPDATE
-	`, callID).Scan(
-		&practiceID,
-		&callerControlID,
-		&callerLegID,
-		&callSessionID,
-	); err != nil {
-		return fmt.Errorf("lock failed voicemail Call: %w", err)
+	`, state.CallID).Scan(&existingAudioState)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lock voicemail outcome: %w", err)
 	}
-	if !matchesVoicemailCaller(
-		fact,
-		callerControlID,
-		callerLegID,
-		callSessionID,
-	) {
+	if existingAudioState == string(VoicemailReady) {
 		return tx.Commit(ctx)
 	}
-	if err := m.deferVoicemailFailure(
-		ctx,
-		tx,
-		callID,
-		fact.EventID,
-		m.now(),
-	); err != nil {
+	if _, err := m.ensureRecoveryOutcome(ctx, tx, state.CallID,
+		RecoveryMissedCall, "MISSED", fact); err != nil {
 		return err
 	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_voicemails SET audio_state = 'UNAVAILABLE',
+			last_error_code = 'RECORDING_FAILED', updated_at = $2 WHERE call_id = $1
+	`, state.CallID, m.now()); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit voicemail recording failure: %w", err)
+	if err := m.endVoicemailCaller(ctx, tx, state.CallID, state.CallLegID); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
-func (m *Module) deferVoicemailFailure(
+func (m *Module) requireExactVoicemailCaller(
 	ctx context.Context,
 	tx pgx.Tx,
-	callID string,
-	eventID string,
-	now time.Time,
-) error {
-	tag, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET
-			voicemail_failure_event_id = COALESCE(
-				voicemail_failure_event_id,
-				$2
-			),
-			voicemail_failure_deadline = COALESCE(
-				voicemail_failure_deadline,
-				$3
-			),
-			version = version + 1,
-			updated_at = $4
-		WHERE id = $1
-			AND direction = 'INBOUND'
-			AND state = 'UNANSWERED'
-	`, callID, eventID, now.Add(voicemailCallbackGrace), now)
-	if err != nil {
-		return fmt.Errorf("defer voicemail failure outcome: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return nil
-	}
-	return nil
-}
-
-func (m *Module) watchVoicemailRecording(
-	ctx context.Context,
-	tx pgx.Tx,
-	callID string,
-	eventID string,
-	now time.Time,
-) error {
-	tag, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET
-			voicemail_failure_deadline = $3,
-			voicemail_failure_event_id = $2,
-			version = version + 1,
-			updated_at = $4
-		WHERE id = $1
-			AND direction = 'INBOUND'
-			AND state = 'UNANSWERED'
-	`, callID, eventID,
-		now.Add(voicemailRecordingMaximum+voicemailCallbackGrace), now)
-	if err != nil {
-		return fmt.Errorf("watch voicemail recording callback: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return nil
-	}
-	return nil
-}
-
-func matchesVoicemailCaller(
+	state callLegClientState,
 	fact ProviderFact,
-	callControlID string,
-	callLegID string,
-	callSessionID string,
-) bool {
-	return fact.CallControlID == callControlID &&
-		fact.CallLegID == callLegID &&
-		fact.CallSessionID == callSessionID
-}
-
-func (m *Module) finalizeVoicemailFailure(
-	ctx context.Context,
-	tx pgx.Tx,
-	callID string,
-	eventID string,
-	occurredAt time.Time,
 ) error {
-	var state CallState
+	var controlID, legID, sessionID string
 	if err := tx.QueryRow(ctx, `
-		SELECT state
-		FROM human_calling_calls
-		WHERE id = $1
-		FOR UPDATE
-	`, callID).Scan(&state); err != nil {
-		return fmt.Errorf("lock voicemail failure Call: %w", err)
+		SELECT caller.provider_call_control_id, caller.provider_call_leg_id,
+			COALESCE(caller.provider_call_session_id, '')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.id = $2 AND caller.role = 'CALLER'
+		WHERE call.id = $1
+		FOR UPDATE OF call, caller
+	`, state.CallID, state.CallLegID).Scan(&controlID, &legID, &sessionID); err != nil {
+		return fmt.Errorf("lock voicemail recording caller: %w", err)
 	}
-	if state != CallUnanswered {
-		return nil
+	if fact.CallControlID != controlID || fact.CallLegID != legID ||
+		fact.CallSessionID != sessionID {
+		return ErrConflict
 	}
-	_, err := m.ensureRecoveryOutcome(
-		ctx,
-		tx,
-		callID,
-		RecoveryMissedCall,
-		ProviderFact{
-			EventID:    eventID,
-			OccurredAt: occurredAt,
-		},
-	)
-	return err
-}
-
-func (m *Module) ExpireVoicemailFailures(
-	ctx context.Context,
-) (int, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("begin voicemail failure expiry: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
-		SELECT id::text, voicemail_failure_event_id, voicemail_failure_deadline
-		FROM human_calling_calls
-		WHERE state = 'UNANSWERED'
-			AND voicemail_failure_deadline <= $1
-		ORDER BY voicemail_failure_deadline, id
-		FOR UPDATE
-	`, m.now())
-	if err != nil {
-		return 0, fmt.Errorf("list expired voicemail failures: %w", err)
-	}
-	type expiredFailure struct {
-		callID     string
-		eventID    string
-		occurredAt time.Time
-	}
-	expired := []expiredFailure{}
-	for rows.Next() {
-		var failure expiredFailure
-		if err := rows.Scan(
-			&failure.callID,
-			&failure.eventID,
-			&failure.occurredAt,
-		); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("scan expired voicemail failure: %w", err)
-		}
-		expired = append(expired, failure)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("iterate expired voicemail failures: %w", err)
-	}
-	rows.Close()
-	for _, failure := range expired {
-		if err := m.finalizeVoicemailFailure(
-			ctx,
-			tx,
-			failure.callID,
-			failure.eventID,
-			failure.occurredAt,
-		); err != nil {
-			return 0, err
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET
-				voicemail_failure_deadline = NULL,
-				voicemail_failure_event_id = NULL
-			WHERE id = $1
-		`, failure.callID); err != nil {
-			return 0, fmt.Errorf("clear expired voicemail failure: %w", err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit voicemail failure expiry: %w", err)
-	}
-	return len(expired), nil
+	return nil
 }
 
 func (m *Module) ensureRecoveryOutcome(
@@ -687,6 +406,7 @@ func (m *Module) ensureRecoveryOutcome(
 	tx pgx.Tx,
 	callID string,
 	outcome RecoveryOutcome,
+	terminalOutcome string,
 	fact ProviderFact,
 ) (string, error) {
 	if m.work == nil {
@@ -694,125 +414,105 @@ func (m *Module) ensureRecoveryOutcome(
 	}
 	var practiceID, locationID, phone, callerName string
 	if err := tx.QueryRow(ctx, `
-		SELECT
-			call.practice_id::text,
-			call.location_id::text,
-			COALESCE(handoff.phone, ''),
-			COALESCE(handoff.display_name, '')
+		SELECT call.practice_id::text, call.location_id::text,
+			COALESCE(call.caller_phone, ''), COALESCE(handoff.display_name, '')
 		FROM human_calling_calls call
-		JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
-		WHERE call.id = $1
-		FOR UPDATE OF call
-	`, callID).Scan(
-		&practiceID,
-		&locationID,
-		&phone,
-		&callerName,
-	); err != nil {
+		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
+		WHERE call.id = $1 FOR UPDATE OF call
+	`, callID).Scan(&practiceID, &locationID, &phone, &callerName); err != nil {
 		return "", fmt.Errorf("lock recovery Call: %w", err)
 	}
 	workOutcome := work.RecoveryOutcomeMissedCall
-	nextState := CallMissed
 	if outcome == RecoveryVoicemail {
 		workOutcome = work.RecoveryOutcomeVoicemail
-		nextState = CallVoicemail
 	}
-	task, err := m.work.EnsureRecoveryTask(
-		ctx,
-		tx,
-		work.EnsureRecoveryTaskCommand{
-			CallID:     callID,
-			PracticeID: practiceID,
-			LocationID: locationID,
-			Phone:      phone,
-			CallerName: callerName,
-			Outcome:    workOutcome,
-			OccurredAt: fact.OccurredAt,
-		},
-	)
+	task, err := m.work.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{
+		CallID: callID, PracticeID: practiceID, LocationID: locationID,
+		Phone: phone, CallerName: callerName, Outcome: workOutcome,
+		OccurredAt: fact.OccurredAt,
+	})
 	if err != nil {
 		return "", err
 	}
-	switch outcome {
-	case RecoveryVoicemail:
+	if outcome == RecoveryVoicemail {
 		duration := fact.RecordingEndedAt.Sub(fact.RecordingStartedAt)
-		if fact.RecordingID == "" ||
-			!fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
-			return "", ErrInvalidInput
-		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO human_calling_voicemails (
-				call_id,
-				practice_id,
-				location_id,
-				task_id,
-				outcome,
-				audio_state,
-				provider_recording_id,
-				recording_started_at,
-				recording_ended_at,
-				duration_millis,
-				created_at,
-				updated_at
-			)
-			VALUES (
-				$1, $2, $3, $4, 'VOICEMAIL', 'READY', $5,
-				$6, $7, $8, $9, $9
-			)
-			ON CONFLICT (call_id) DO NOTHING
+				call_id, practice_id, location_id, task_id, outcome, audio_state,
+				provider_recording_id, recording_started_at, recording_ended_at,
+				duration_millis, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, 'VOICEMAIL', 'READY', $5, $6, $7, $8, $9, $9)
+			ON CONFLICT (call_id) DO UPDATE SET
+				task_id = EXCLUDED.task_id, outcome = EXCLUDED.outcome,
+				audio_state = EXCLUDED.audio_state,
+				provider_recording_id = EXCLUDED.provider_recording_id,
+				recording_started_at = EXCLUDED.recording_started_at,
+				recording_ended_at = EXCLUDED.recording_ended_at,
+				duration_millis = EXCLUDED.duration_millis, updated_at = EXCLUDED.updated_at
 		`, callID, practiceID, locationID, task.ID, fact.RecordingID,
-			fact.RecordingStartedAt, fact.RecordingEndedAt,
-			duration.Milliseconds(), m.now(),
-		); err != nil {
-			return "", fmt.Errorf("commit voicemail source: %w", err)
+			fact.RecordingStartedAt, fact.RecordingEndedAt, duration.Milliseconds(),
+			m.now()); err != nil {
+			return "", fmt.Errorf("commit voicemail evidence: %w", err)
 		}
-	case RecoveryMissedCall:
+	} else {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO human_calling_voicemails (
-				call_id,
-				practice_id,
-				location_id,
-				task_id,
-				outcome,
-				created_at,
-				updated_at
-			)
-			VALUES ($1, $2, $3, $4, 'MISSED_CALL', $5, $5)
-			ON CONFLICT (call_id) DO NOTHING
+				call_id, practice_id, location_id, task_id, outcome, audio_state,
+				last_error_code, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, 'MISSED_CALL', 'UNAVAILABLE',
+				'VOICEMAIL_UNAVAILABLE', $5, $5)
+			ON CONFLICT (call_id) DO UPDATE SET
+				audio_state = 'UNAVAILABLE', last_error_code = 'VOICEMAIL_UNAVAILABLE',
+				updated_at = EXCLUDED.updated_at
 		`, callID, practiceID, locationID, task.ID, m.now()); err != nil {
-			return "", fmt.Errorf("commit missed-call source: %w", err)
+			return "", fmt.Errorf("commit missed Call evidence: %w", err)
 		}
-	default:
-		return "", ErrInvalidInput
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET
-			state = $2,
-			ended_at = COALESCE(ended_at, $3),
-			version = version + 1,
-			updated_at = $3
+		UPDATE human_calling_calls SET terminal_outcome = $2,
+			ended_at = COALESCE(ended_at, $3), version = version + 1, updated_at = $3
 		WHERE id = $1
-			AND state NOT IN ('VOICEMAIL', 'MISSED')
-	`, callID, nextState, fact.OccurredAt); err != nil {
-		return "", fmt.Errorf("commit recovery Call outcome: %w", err)
+	`, callID, terminalOutcome, fact.OccurredAt); err != nil {
+		return "", fmt.Errorf("commit recovery outcome: %w", err)
 	}
-	if err := appendTimeline(
-		ctx,
-		tx,
-		callID,
-		practiceID,
-		"call.recovery_task_created",
-		"",
-		fact.EventID,
-		"",
-		opaqueReference(task.ID),
-		string(outcome),
-		fact.OccurredAt,
-	); err != nil {
+	if err := appendTimeline(ctx, tx, callID, practiceID,
+		"call.recovery_task_created", "", fact.EventID, "",
+		opaqueReference(task.ID), string(outcome), fact.OccurredAt); err != nil {
 		return "", err
 	}
 	return task.ID, nil
+}
+
+func (m *Module) endVoicemailCaller(
+	ctx context.Context,
+	tx pgx.Tx,
+	callID string,
+	callerLegID string,
+) error {
+	var controlID string
+	if err := tx.QueryRow(ctx, `
+		SELECT provider_call_control_id FROM human_calling_call_legs
+		WHERE id = $1 AND call_id = $2 AND role = 'CALLER' FOR UPDATE
+	`, callerLegID, callID).Scan(&controlID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs SET state = 'ENDING',
+			ending_at = COALESCE(
+				ending_at,
+				GREATEST($2, COALESCE(answered_at, $2))
+			), updated_at = $2
+		WHERE id = $1 AND state NOT IN ('ENDED', 'FAILED')
+	`, callerLegID, m.now()); err != nil {
+		return err
+	}
+	_, err := m.insertCallLegCommand(ctx, tx, callID, callerLegID, "", "",
+		CommandHangupLeg, controlID, map[string]any{
+			"client_state": encodeCallLegClientState(
+				callID, callerLegID, "CALLER", "voicemail_complete",
+			),
+		}, "")
+	return err
 }
 
 func (m *Module) IssueVoicemailPlayback(
@@ -829,9 +529,7 @@ func (m *Module) IssueVoicemailPlayback(
 	}
 	expiresAt := m.now().Add(5 * time.Minute)
 	raw, err := json.Marshal(playbackClaims{
-		CallID:    callID,
-		ExpiresAt: expiresAt.Unix(),
-		Nonce:     uuid.NewString(),
+		CallID: callID, ExpiresAt: expiresAt.Unix(), Nonce: uuid.NewString(),
 	})
 	if err != nil {
 		return PlaybackCapability{}, fmt.Errorf("encode playback capability: %w", err)
@@ -865,60 +563,32 @@ func (m *Module) OpenVoicemailPlayback(
 		return PlaybackContent{}, fmt.Errorf("begin voicemail playback: %w", err)
 	}
 	defer func() { _ = tx.Rollback(authorizationContext) }()
-	var practiceID, locationID, providerRecordingID string
+	var practiceID, locationID, recordingID string
 	if err := tx.QueryRow(authorizationContext, `
-		SELECT
-			practice_id::text,
-			location_id::text,
-			provider_recording_id
+		SELECT practice_id::text, location_id::text, provider_recording_id
 		FROM human_calling_voicemails
-		WHERE call_id = $1
-			AND outcome = 'VOICEMAIL'
-			AND provider_recording_id IS NOT NULL
-	`, claims.CallID).Scan(
-		&practiceID,
-		&locationID,
-		&providerRecordingID,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return PlaybackContent{}, ErrDenied
-		}
-		return PlaybackContent{}, fmt.Errorf("read voicemail playback source: %w", err)
-	}
-	if _, err := m.access.LockReadAuthorization(
-		authorizationContext,
-		tx,
-		identity,
-		practiceID,
-		locationID,
-	); err != nil {
+		WHERE call_id = $1 AND outcome = 'VOICEMAIL'
+			AND audio_state = 'READY' AND provider_recording_id IS NOT NULL
+	`, claims.CallID).Scan(&practiceID, &locationID, &recordingID); err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
-	if err := appendTimeline(
-		authorizationContext,
-		tx,
-		claims.CallID,
-		practiceID,
-		"voicemail.playback_authorized",
-		identity.Subject,
-		"",
-		"",
-		opaqueReference(claims.Nonce),
-		"",
-		m.now(),
-	); err != nil {
+	if _, err := m.access.LockReadAuthorization(authorizationContext, tx,
+		identity, practiceID, locationID); err != nil {
+		return PlaybackContent{}, ErrDenied
+	}
+	if err := appendTimeline(authorizationContext, tx, claims.CallID, practiceID,
+		"voicemail.playback_authorized", identity.Subject, "", "",
+		opaqueReference(claims.Nonce), "", m.now()); err != nil {
 		return PlaybackContent{}, err
 	}
 	if err := tx.Commit(authorizationContext); err != nil {
-		return PlaybackContent{}, fmt.Errorf("commit voicemail playback: %w", err)
+		return PlaybackContent{}, err
 	}
 	if m.config.VoicemailAudioProvider == nil {
 		return PlaybackContent{}, ErrConflict
 	}
 	content, resultErr = m.config.VoicemailAudioProvider.OpenVoicemailRecording(
-		streamContext,
-		providerRecordingID,
-		rangeHeader,
+		streamContext, recordingID, rangeHeader,
 	)
 	if resultErr != nil {
 		return PlaybackContent{}, resultErr
@@ -948,10 +618,8 @@ func (m *Module) parsePlaybackCapability(token string) (playbackClaims, error) {
 		return playbackClaims{}, ErrDenied
 	}
 	var claims playbackClaims
-	if err := json.Unmarshal(raw, &claims); err != nil ||
-		claims.CallID == "" ||
-		claims.Nonce == "" ||
-		!m.now().Before(time.Unix(claims.ExpiresAt, 0)) {
+	if err := json.Unmarshal(raw, &claims); err != nil || claims.CallID == "" ||
+		claims.Nonce == "" || !m.now().Before(time.Unix(claims.ExpiresAt, 0)) {
 		return playbackClaims{}, ErrDenied
 	}
 	return claims, nil
