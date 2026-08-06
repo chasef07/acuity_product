@@ -52,6 +52,8 @@ These thresholds are operating hypotheses, not SLOs:
 | Receipt depth above 64 for five minutes | p99 over 10 minutes for 5 minutes |
 | Any quarantined provider receipt | durable depth above zero in 60 seconds, until audited requeue |
 | Dial command queue p95 above one second | p95 over 10 minutes for 60 seconds |
+| Rejected start ring-window command | any definitive rejection in 60 seconds |
+| Degraded caller audio after stop ring-window failure | any definitive or ambiguous failure in 60 seconds |
 | Ambiguous service provider command | any in 60 seconds |
 | Ambiguous worker provider command | any in 60 seconds |
 | Service database acquisition timeout | any deadline exhaustion in 60 seconds |
@@ -60,11 +62,11 @@ These thresholds are operating hypotheses, not SLOs:
 | Worker database saturation above 0.8 | p99 over 10 minutes for 5 minutes |
 | More than three listener disconnects in five minutes | four in 5 minutes |
 | Any listener reconnect failure | any in 60 seconds |
-| Already-claimed accept ratio above 0.5 | more than half in 5 minutes |
-| At least ten accepts in five minutes | contention-volume guard |
-| Accept-to-bridge p95 above eight seconds | p95 over 10 minutes for 60 seconds |
+| Lost Staff answer race ratio above 0.5 | more than half in 5 minutes |
+| At least ten Staff answers in five minutes | contention-volume guard |
+| Answer-to-Bridge p95 above eight seconds | p95 over 10 minutes for 60 seconds |
 
-Load evidence must replace the receipt-depth and accept-contention hypotheses
+Load evidence must replace the receipt-depth and Staff-answer-contention hypotheses
 with measured baselines before the production gate is complete.
 
 ## Live gates

@@ -164,7 +164,7 @@ jobs:
       - run: ./scripts/run-e2e.sh
 
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true'
     needs: [backend, web, contracts, browser]
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -190,11 +190,13 @@ jobs:
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Build and release the tested commit
+        env:
+          CALLLEG_SCHEMA_CUTOVER_COMPLETE: ${{ vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE }}
         run: |
           gcloud builds submit \
             --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${{ vars.GCP_REGION }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" \
             --config=cloudbuild.release.yaml \
-            --substitutions="_IMAGE_TAG=${GITHUB_SHA}" \
+            --substitutions="_IMAGE_TAG=${GITHUB_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE}" \
             .

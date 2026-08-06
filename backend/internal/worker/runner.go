@@ -15,11 +15,9 @@ type CallingWork interface {
 	ReportReceiptQueue(context.Context) error
 	ProcessNextCommand(context.Context) (bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
-	ExpireOffers(context.Context) (int, error)
-	ExpireConnections(context.Context) (int, error)
-	ExpireVoicemailFailures(context.Context) (int, error)
+	ReconcileStaleCalls(context.Context) (int, error)
+	ExpireDispositions(context.Context) (int, error)
 	RecoverInterruptedCommands(context.Context) error
-	ReconcileConfirmedHangups(context.Context) (int, error)
 	ReconcileCredentials(context.Context) error
 }
 
@@ -30,10 +28,6 @@ type MessagingWork interface {
 	ReconcileNextCommand(context.Context) (bool, error)
 	ProcessNextAttachment(context.Context) (bool, error)
 	ExpirePendingAttachments(context.Context) error
-}
-
-type dispositionExpiryWork interface {
-	ExpireDispositions(context.Context) (int, error)
 }
 
 type Dependency interface {
@@ -282,35 +276,15 @@ func (runner *Runner) runMaintenanceAndDelay(
 
 func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	failed := false
-	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireOffers); err != nil {
-		warn(ctx, "calling_offer_expiry_failed", err)
-		failed = ctx.Err() == nil
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireConnections); err != nil {
-		warn(ctx, "calling_connection_expiry_failed", err)
+	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ReconcileStaleCalls); err != nil {
+		warn(ctx, "calling_stale_reconciliation_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
 		return failed
 	}
-	if dispositionWork, ok := runner.work.(dispositionExpiryWork); ok {
-		if _, err := runCountWork(ctx, runner.config.WorkTimeout, dispositionWork.ExpireDispositions); err != nil {
-			warn(ctx, "calling_disposition_expiry_failed", err)
-			failed = true
-		}
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runCountWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.work.ExpireVoicemailFailures,
-	); err != nil {
-		warn(ctx, "voicemail_failure_expiry_failed", err)
+	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireDispositions); err != nil {
+		warn(ctx, "calling_disposition_expiry_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
@@ -318,17 +292,6 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	}
 	if err := runWork(ctx, runner.config.WorkTimeout, runner.work.RecoverInterruptedCommands); err != nil {
 		warn(ctx, "provider_command_recovery_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runCountWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.work.ReconcileConfirmedHangups,
-	); err != nil {
-		warn(ctx, "provider_hangup_reconciliation_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {

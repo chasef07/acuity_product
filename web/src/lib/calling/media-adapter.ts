@@ -4,6 +4,8 @@ export type MediaState =
   | "ready"
   | "unavailable"
 
+export type MediaFailure = "authentication" | "network" | "provider"
+
 export type IncomingMediaLeg = {
   providerLegID: string
   mediaToken: string
@@ -18,6 +20,18 @@ export type IncomingMediaLeg = {
 type CallingMediaCallbacks = {
   onState: (state: MediaState) => void
   onIncoming: (leg: IncomingMediaLeg) => void
+  onFailure?: (failure: MediaFailure) => void
+  refreshToken?: () => Promise<string | undefined>
+}
+
+export function classifyTelnyxError(value: unknown, online = navigator.onLine) {
+  if (!online) return "network" as const
+  const error = value as { code?: number | string; message?: string }
+  const description = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase()
+  if (/\b(401|403)\b|auth|credential|login|token/.test(description)) {
+    return "authentication" as const
+  }
+  return "provider" as const
 }
 
 export interface CallingMediaAdapter {
@@ -67,6 +81,7 @@ type SDKClient = {
   remoteElement: string | HTMLMediaElement
   connect: () => Promise<void>
   serverDisconnect: () => Promise<void>
+  login: (options: { creds: { login_token: string } }) => Promise<void>
   on: (event: string, callback: (value?: unknown) => void) => SDKClient
 }
 
@@ -106,6 +121,7 @@ export function callingClientOptions(token: string) {
   return {
     login_token: token,
     hangupOnBeforeUnload: false,
+    maxReconnectAttempts: 0,
     mutedMicOnStart: true,
   }
 }
@@ -146,6 +162,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
   private output?: HTMLMediaElement
   private quarantine?: HTMLAudioElement
   private readonly createClient: SDKClientFactory
+  private tokenRefresh?: Promise<void>
 
   constructor(
     createClient: SDKClientFactory = async (token) => {
@@ -191,12 +208,28 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       callbacks.onState("reconnecting")
     })
     client.on("telnyx.ready", () => callbacks.onState("ready"))
-    client.on("telnyx.error", () => {
+    client.on("telnyx.warning", (value) => {
+      const warning = value as { warning?: { code?: number } }
+      if (warning.warning?.code !== 34001 || !callbacks.refreshToken) return
+      if (!this.tokenRefresh) {
+        this.tokenRefresh = callbacks
+          .refreshToken()
+          .then(async (token) => {
+            if (!token || this.client !== client) return
+            await client.login({ creds: { login_token: token } })
+          })
+          .finally(() => {
+            this.tokenRefresh = undefined
+          })
+      }
+    })
+    client.on("telnyx.error", (value) => {
       const session = this.activeSession
       if (session) {
         this.activeSession = { ...session, attachmentCurrent: false }
         applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
+      callbacks.onFailure?.(classifyTelnyxError(value))
       callbacks.onState("unavailable")
     })
     client.on("telnyx.notification", (value) => {
@@ -292,6 +325,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
   async disconnect() {
     const client = this.client
     this.client = undefined
+    this.tokenRefresh = undefined
     this.activeSession = undefined
     if (this.output) this.output.srcObject = null
     this.output = undefined

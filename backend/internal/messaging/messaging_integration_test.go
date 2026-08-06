@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -98,8 +99,8 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		workModule,
 		provider,
 		messaging.Config{
-			WebhookPublicKey: publicKey,
-			WebhookTolerance: time.Minute,
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  time.Minute,
 		},
 		func() time.Time { return now },
 	)
@@ -980,14 +981,11 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 				RETURNING id
 			)
 			INSERT INTO human_calling_calls (
-				handoff_id,
+				source_handoff_id,
 				practice_id,
 				location_id,
-				state,
-				offer_deadline,
-				caller_call_control_id,
-				caller_call_leg_id,
-				call_session_id,
+				caller_phone,
+				terminal_outcome,
 				ended_at,
 				created_at,
 				updated_at
@@ -996,11 +994,8 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 				id,
 				$1,
 				$2,
+				'+17275550199',
 				'RESOLVED',
-				$6::timestamptz + interval '20 seconds',
-				$3 || '-control',
-				$3 || '-leg',
-				$3 || '-session',
 				$6::timestamptz + interval '10 seconds',
 				$6,
 				$6
@@ -1012,6 +1007,42 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			callAt,
 		); err != nil {
 			t.Fatalf("seed exact-phone Call %d: %v", index, err)
+		}
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO human_calling_call_legs (
+				call_id, role, sequence, state, provider_call_control_id,
+				provider_call_leg_id, provider_call_session_id, ending_at, ended_at,
+				created_at, updated_at
+			)
+			SELECT id, 'CALLER', 1, 'ENDED', $1 || '-control', $1 || '-leg',
+				$1 || '-session', $2::timestamptz + interval '10 seconds',
+				$2::timestamptz + interval '10 seconds', $2,
+				$2::timestamptz + interval '10 seconds'
+			FROM human_calling_calls
+			WHERE source_handoff_id = (
+				SELECT id FROM human_calling_handoffs WHERE source_call_id = $1
+			)
+		`, fmt.Sprintf("slice-5-timeline-call-%d", index), callAt); err != nil {
+			t.Fatalf("seed exact-phone Caller CallLeg %d: %v", index, err)
+		}
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO human_calling_call_legs (
+				call_id, role, sequence, staff_subject, state,
+				provider_call_control_id, provider_call_leg_id,
+				provider_call_session_id, ending_at, ended_at, created_at, updated_at
+			)
+			SELECT id, 'STAFF', 1, $3, 'ENDED', $1 || '-staff-control',
+				$1 || '-staff-leg', $1 || '-staff-session',
+				$2::timestamptz + interval '9 seconds',
+				$2::timestamptz + interval '9 seconds', $2,
+				$2::timestamptz + interval '9 seconds'
+			FROM human_calling_calls
+			WHERE source_handoff_id = (
+				SELECT id FROM human_calling_handoffs WHERE source_call_id = $1
+			)
+		`, fmt.Sprintf("slice-5-timeline-call-%d", index), callAt,
+			identity.Subject); err != nil {
+			t.Fatalf("seed unbridged Staff CallLeg %d: %v", index, err)
 		}
 	}
 	timelineWithCall, err := module.QueryTimeline(
@@ -1029,7 +1060,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		if item.Type == "CALL" {
 			callCards++
 			if item.Call.LocationID != authorization.Locations[0].ID ||
-				item.Call.Direction != "INBOUND" {
+				item.Call.Direction != "INBOUND" ||
+				item.Call.Outcome != humancalling.CallUnanswered ||
+				item.Call.AnsweredByEmail != "" {
 				t.Fatalf("conversation Call card = %#v", item)
 			}
 		}
@@ -1386,7 +1419,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		work.New(pool, accessModule, func() time.Time { return now }),
 		provider,
 		messaging.Config{
-			WebhookPublicKey:   publicKey,
+			WebhookPublicKeys:  []ed25519.PublicKey{publicKey},
 			WebhookTolerance:   time.Minute,
 			AttachmentStore:    store,
 			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",

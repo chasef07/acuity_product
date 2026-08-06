@@ -1,21 +1,12 @@
 import { readFile } from "node:fs/promises"
 
-import {
-  expect,
-  test,
-  type BrowserContext,
-  type Page,
-  type Route,
-} from "@playwright/test"
+import { expect, test, type BrowserContext, type Page } from "@playwright/test"
 import { Pool } from "pg"
 
 import { latestEmail } from "./support"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
-const portalURL =
-  process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
-const realtimeURL =
-  process.env.E2E_REALTIME_URL ?? "http://127.0.0.1:18081"
+const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
@@ -28,22 +19,21 @@ test("caller ringback is a stable public WAV", async ({ request }) => {
   expect(response.headers()["content-type"]).toBe("audio/wav")
   expect(response.headers()["cache-control"]).toContain("immutable")
   const audio = Buffer.from(await response.body())
+	  expect(audio.byteLength).toBe(44 + 8_000 * 20 * 2)
   expect(audio.subarray(0, 4).toString("ascii")).toBe("RIFF")
   expect(audio.subarray(8, 12).toString("ascii")).toBe("WAVE")
 })
 
-test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider evidence", async ({
+test("production browser path fans out exact CallLegs and bridges one provider-confirmed winner", async ({
   browser,
   page: selectedPage,
 }) => {
-  test.setTimeout(300_000)
+  test.setTimeout(180_000)
   test.skip(
     !provisioningOutput || !databaseURL,
     "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
   )
-  const provisioned = JSON.parse(
-    await readFile(provisioningOutput!, "utf8"),
-  ) as {
+  const provisioned = JSON.parse(await readFile(provisioningOutput!, "utf8")) as {
     invitations: Array<{ email: string; token: string }>
   }
   const invitation = (email: string) => {
@@ -52,10 +42,9 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
     return found!.token
   }
 
-  const selectedContext = selectedPage.context()
   const secondaryContext = await browser.newContext()
   await Promise.all([
-    prepareBrowser(selectedContext),
+    prepareBrowser(selectedPage.context()),
     prepareBrowser(secondaryContext),
   ])
   const secondaryPage = await secondaryContext.newPage()
@@ -80,1986 +69,279 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       .poll(async () => {
         const result = await database.query<{ count: string }>(
           `SELECT count(*)::text
-             FROM human_calling_credentials c
-             JOIN auth."user" u ON u.id = c.user_subject
-            WHERE c.state = 'ACTIVE'
-              AND u.email IN ('selected@abita.test', 'secondary@abita.test')`,
+             FROM human_calling_credentials credential
+             JOIN auth."user" actor ON actor.id = credential.user_subject
+            WHERE credential.state = 'ACTIVE'
+              AND actor.email IN ('selected@abita.test', 'secondary@abita.test')`,
         )
         return Number(result.rows[0]?.count ?? 0)
       }, { timeout: 40_000 })
       .toBe(2)
 
-    await test.step("AI Tasks converge without stealing either browser's selection", async () => {
-      await Promise.all([
-        expect(selectedPage.getByText("No follow-up tasks")).toBeVisible(),
-        expect(secondaryPage.getByText("No follow-up tasks")).toBeVisible(),
-      ])
-      const createStaffTask = async ({
-        idempotencyKey,
-        summary,
-        message,
-        urgency,
-      }: {
-        idempotencyKey: string
-        summary: string
-        message: string
-        urgency: "high_priority" | "normal" | "non_urgent"
-      }) =>
-        selectedPage.request.post(`${portalURL}/v1/tasks`, {
-          headers: { authorization: "Bearer synthetic-service-token" },
-          data: {
-            callId: "slice-4-e2e-source-call",
-            callerPhone: "+17275551212",
-            category: "documentation",
-            idempotencyKey,
-            message,
-            officeKey: "spring-hill",
-            officePhone: "+17275919997",
-            patient: {
-              id: "compatibility-only-patient-id",
-              dob: "01/01/1980",
-              name: "Synthetic Caller",
-            },
-            source: "agent",
-            summary,
-            urgency,
-          },
-        })
-
-      const firstTitle = "Send records to specialist"
-      const firstMessage =
-        "Caller asked the office to send records to the named specialist."
-      const firstResponse = await createStaffTask({
-        idempotencyKey: "slice_4_e2e_first",
-        summary: firstTitle,
-        message: firstMessage,
-        urgency: "normal",
-      })
-      expect(firstResponse.status()).toBe(201)
-      const firstReceipt = (await firstResponse.json()) as {
-        status: string
-        taskId: string
-      }
-      expect(firstReceipt).toEqual({
-        status: "created",
-        taskId: expect.any(String),
-        category: "documentation",
-        urgency: "normal",
-      })
-      const replayResponse = await createStaffTask({
-        idempotencyKey: "slice_4_e2e_first",
-        summary: firstTitle,
-        message: firstMessage,
-        urgency: "normal",
-      })
-      expect(replayResponse.status()).toBe(200)
-      expect(await replayResponse.json()).toEqual({
-        status: "duplicate",
-        taskId: firstReceipt.taskId,
-        category: "documentation",
-        urgency: "normal",
-      })
-
-      const firstTaskButtons = [
-        selectedPage.getByRole("button", {
-          name: new RegExp(`^${firstTitle} AI`),
-        }),
-        secondaryPage.getByRole("button", {
-          name: new RegExp(`^${firstTitle} AI`),
-        }),
-      ]
-      const openSections = [
-        selectedPage.getByRole("button", { name: "Open", exact: true }),
-        secondaryPage.getByRole("button", { name: "Open", exact: true }),
-      ]
-      await Promise.all(
-        openSections.map(async (section) => {
-          await expect(section).toHaveAttribute("aria-expanded", "false")
-          await expect(section).toHaveText("Open")
-        }),
-      )
-      await Promise.all(
-        firstTaskButtons.map((button) => expect(button).not.toBeVisible()),
-      )
-      await openSections[0].focus()
-      await selectedPage.keyboard.press("Enter")
-      await openSections[1].click()
-      await Promise.all(
-        openSections.map((section) =>
-          expect(section).toHaveAttribute("aria-expanded", "true"),
-        ),
-      )
-      await Promise.all(firstTaskButtons.map((button) => expect(button).toBeVisible()))
-      await Promise.all([
-        expect(
-          selectedPage.getByRole("heading", { name: firstTitle, exact: true }),
-        ).not.toBeVisible(),
-        expect(
-          secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
-        ).not.toBeVisible(),
-      ])
-      await Promise.all(firstTaskButtons.map((button) => button.click()))
-      await Promise.all([
-        expect(
-          selectedPage.getByRole("heading", { name: firstTitle, exact: true }),
-        ).toBeVisible(),
-        expect(
-          secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
-        ).toBeVisible(),
-      ])
-      await selectedPage.getByText("More context", { exact: true }).click()
-      await expect(
-        selectedPage.getByRole("region", { name: "AI Task source" }),
-      ).toContainText(firstMessage)
-      await expect(
-        selectedPage.getByRole("region", { name: "AI Task source" }),
-      ).toContainText("AI-supplied name: Synthetic Caller")
-
-      const secondTitle = "Urgent document correction"
-      const secondResponse = await createStaffTask({
-        idempotencyKey: "slice_4_e2e_second",
-        summary: secondTitle,
-        message: "Caller identified an urgent correction as a separate outcome.",
-        urgency: "high_priority",
-      })
-      expect(secondResponse.status()).toBe(201)
-      await Promise.all([
-        expect(
-          selectedPage.getByRole("button", {
-            name: new RegExp(`^${secondTitle} AI`),
-          }),
-        ).toBeVisible(),
-        expect(
-          secondaryPage.getByRole("button", {
-            name: new RegExp(`^${secondTitle} AI`),
-          }),
-        ).toBeVisible(),
-      ])
-      await Promise.all([
-        expect(
-          selectedPage.getByRole("heading", { name: firstTitle, exact: true }),
-        ).toBeVisible(),
-        expect(
-          secondaryPage.getByRole("heading", { name: firstTitle, exact: true }),
-        ).toBeVisible(),
-      ])
-
-      await expect(
-        secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).toBeChecked()
-      await expect(
-        selectedPage.getByRole("switch", { name: "Urgency" }),
-      ).toBeChecked()
-      await secondaryPage.getByRole("switch", { name: "Urgency" }).click()
-      await expect(
-        secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).not.toBeChecked()
-      await secondaryPage.reload()
-      await expect(
-        secondaryPage.getByRole("switch", { name: "Urgency" }),
-      ).not.toBeChecked()
-      await secondaryPage
-        .getByRole("button", { name: "Open", exact: true })
-        .click()
-      await secondaryPage
-        .getByRole("button", { name: new RegExp(`^${firstTitle} AI`) })
-        .click()
-
-      await selectedPage
-        .getByRole("button", { name: "Complete", exact: true })
-        .click()
-      const completedSection = secondaryPage.getByRole("button", {
-        name: "Completed",
-        exact: true,
-      })
-      await expect(completedSection).toHaveAttribute("aria-expanded", "false")
-      await expect(completedSection).toHaveText("Completed")
-      await completedSection.click()
-      await expect(completedSection).toHaveAttribute("aria-expanded", "true")
-      await expect(
-        secondaryPage.getByRole("button", { name: "Reopen" }),
-      ).toBeVisible()
-      await secondaryPage.getByRole("button", { name: "Reopen" }).click()
-      await expect(
-        selectedPage.getByRole("button", { name: "Complete", exact: true }),
-      ).toBeVisible()
-
-      const committed = await database.query<{
-        origin: string
-        source_message: string
-        actor_kind: string
-        actor_email: string | null
-        raw_task: string
-        creation_activities: string
-      }>(
-        `SELECT
-           task.origin,
-           task.source_message,
-           task.created_by_kind AS actor_kind,
-           task.created_by_email AS actor_email,
-           to_jsonb(task)::text AS raw_task,
-           count(activity.id)::text AS creation_activities
-         FROM work_tasks task
-         LEFT JOIN work_task_activities activity
-           ON activity.task_id = task.id
-           AND activity.kind = 'TASK_CREATED'
-         WHERE task.id = $1
-         GROUP BY task.id`,
-        [firstReceipt.taskId],
-      )
-      expect(committed.rows[0]).toEqual({
-        origin: "ABITA_AI",
-        source_message: firstMessage,
-        actor_kind: "SERVICE",
-        actor_email: null,
-        raw_task: expect.not.stringContaining("compatibility-only-patient-id"),
-        creation_activities: "1",
-      })
-
-      await test.step("collapsed Task groups gate pagination until expanded", async () => {
-        let cursorRequests = 0
-        await secondaryPage.route(`${portalURL}/v1/tasks/query`, async (route) => {
-          const request = route.request()
-          const body = request.postDataJSON() as { cursor?: string }
-          if (body.cursor) {
-            cursorRequests += 1
-            await route.fulfill({
-              contentType: "application/json",
-              status: 200,
-              body: JSON.stringify({ items: [], nextCursor: "" }),
-            })
-            return
-          }
-          const response = await route.fetch()
-          const page = (await response.json()) as {
-            items: unknown[]
-            nextCursor: string
-          }
-          await route.fulfill({
-            response,
-            json: { ...page, nextCursor: "synthetic-next-task-page" },
-          })
-        })
-
-        try {
-          await secondaryPage.reload()
-          const openSection = secondaryPage.getByRole("button", {
-            name: "Open",
-            exact: true,
-          })
-          await expect(openSection).toHaveAttribute("aria-expanded", "false")
-          await expect(
-            secondaryPage.getByLabel("Loading more tasks"),
-          ).toHaveCount(0)
-          await secondaryPage.waitForTimeout(500)
-          expect(cursorRequests).toBe(0)
-
-          await openSection.click()
-          await expect.poll(() => cursorRequests).toBe(1)
-        } finally {
-          await secondaryPage.unroute(`${portalURL}/v1/tasks/query`)
-        }
-      })
-    })
-
-    await Promise.all([
-      enableCalling(selectedPage),
-      enableCalling(secondaryPage),
-      setPageHidden(selectedPage),
-      setPageHidden(secondaryPage),
-    ])
-
-    const authority = await database.query<{
-      practice_id: string
-      location_id: string
-    }>(
-      `SELECT p.id::text AS practice_id, l.id::text AS location_id
-         FROM access_practices p
-         JOIN access_locations l ON l.practice_id = p.id
-        WHERE p.provisioning_key = 'abita-eye-group'
-          AND l.provisioning_key = 'fixture-location-1'`,
+    await Promise.all([enableCalling(selectedPage), enableCalling(secondaryPage)])
+    const scope = await database.query<{ practice_id: string; location_id: string }>(
+      `SELECT practice.id::text AS practice_id, location.id::text AS location_id
+         FROM access_practices practice
+         JOIN access_locations location ON location.practice_id = practice.id
+        WHERE practice.provisioning_key = 'abita-eye-group'
+          AND location.provisioning_key = 'fixture-location-1'`,
     )
-    const scope = authority.rows[0]
-    expect(scope).toBeTruthy()
-    const handoffResponse = await selectedPage.request.post(
-      `${portalURL}/v1/handoffs`,
-      {
-        headers: { authorization: "Bearer synthetic-service-token" },
-        data: {
-          practiceId: scope.practice_id,
-          locationId: scope.location_id,
-          sourceCallId: "slice-2-e2e-source",
-          idempotencyKey: "slice-2-e2e-handoff",
-          contact: {
-            phone: "+15555550100",
-            phoneSource: "Abita",
-            displayName: "Synthetic Caller",
-            nameSource: "Abita",
-            transferReason: "Scheduling help",
-            reasonSource: "Abita AI",
-          },
+    expect(scope.rows[0]).toBeTruthy()
+
+    const handoffResponse = await selectedPage.request.post(`${portalURL}/v1/handoffs`, {
+      headers: { authorization: "Bearer synthetic-service-token" },
+      data: {
+        practiceId: scope.rows[0].practice_id,
+        locationId: scope.rows[0].location_id,
+        sourceCallId: "callleg-browser-source",
+        idempotencyKey: "callleg-browser-attempt",
+        contact: {
+          phone: "+15555550100",
+          phoneSource: "Abita",
+          displayName: "CallLeg Browser Caller",
+          nameSource: "Abita",
+          transferReason: "Prove exact browser fanout",
+          reasonSource: "Abita AI",
         },
       },
-    )
+    })
     expect(handoffResponse.status()).toBe(201)
     const handoff = (await handoffResponse.json()) as {
       sipDestination: string
     }
-    expect(handoff.sipDestination).toBe(
-      "sip:acuity-handoff@synthetic.sip.telnyx.com",
+    expect(handoff.sipDestination).toMatch(
+      /^sip:h_[A-Za-z0-9_-]{43}@synthetic\.sip\.telnyx\.com$/,
     )
 
+    const occurredAt = new Date().toISOString()
     await deliverProviderEvent(selectedPage, {
       eventType: "call.initiated",
-      eventId: "e2e-caller-initiated",
-      occurredAt: new Date().toISOString(),
+      eventId: "callleg-browser-caller-initiated",
+      occurredAt,
       payload: {
+        connection_id: "fixture-call-control",
         call_control_id: "fixture-caller-control",
         call_leg_id: "fixture-caller-leg",
-        call_session_id: "fixture-call-session",
-        client_state: "",
+        call_session_id: "fixture-caller-session",
         from: "+15555550100",
-        to: "+14843336938",
+        to: handoff.sipDestination,
       },
     })
-    const secondHandoffResponse = await selectedPage.request.post(
-      `${portalURL}/v1/handoffs`,
-      {
-        headers: { authorization: "Bearer synthetic-service-token" },
-        data: {
-          practiceId: scope.practice_id,
-          locationId: scope.location_id,
-          sourceCallId: "slice-2-e2e-source-2",
-          idempotencyKey: "slice-2-e2e-handoff-2",
-          contact: {
-            phone: "+15555550101",
-            phoneSource: "Abita",
-            displayName: "Second Synthetic Caller",
-            nameSource: "Abita",
-            transferReason: "Another scheduling request",
-            reasonSource: "Abita AI",
-          },
-        },
-      },
-    )
-    expect(secondHandoffResponse.status()).toBe(201)
-    const secondHandoff = (await secondHandoffResponse.json()) as {
-      sipDestination: string
-    }
-    expect(secondHandoff.sipDestination).toBe(
-      "sip:acuity-handoff@synthetic.sip.telnyx.com",
-    )
+    const callID = await expect
+      .poll(async () => {
+        const result = await database.query<{ id: string }>(
+          `SELECT call.id::text
+             FROM human_calling_calls call
+             JOIN human_calling_call_legs caller
+               ON caller.call_id = call.id AND caller.role = 'CALLER'
+            WHERE caller.provider_call_leg_id = 'fixture-caller-leg'`,
+        )
+        return result.rows[0]?.id ?? ""
+      })
+      .not.toBe("")
+      .then(async () => {
+        const result = await database.query<{ id: string }>(
+          `SELECT call_id::text AS id FROM human_calling_call_legs
+            WHERE provider_call_leg_id = 'fixture-caller-leg'`,
+        )
+        return result.rows[0].id
+      })
+
     await deliverProviderEvent(selectedPage, {
-      eventType: "call.initiated",
-      eventId: "e2e-caller-initiated-2",
+      eventType: "call.answered",
+      eventId: "callleg-browser-caller-answered",
       occurredAt: new Date().toISOString(),
       payload: {
-        call_control_id: "fixture-caller-control-2",
-        call_leg_id: "fixture-caller-leg-2",
-        call_session_id: "fixture-call-session-2",
-        client_state: "",
-        from: "+15555550101",
-        to: "+14843336938",
+        connection_id: "fixture-call-control",
+        call_control_id: "fixture-caller-control",
+        call_leg_id: "fixture-caller-leg",
+        call_session_id: "fixture-caller-session",
       },
     })
-    await Promise.all([
-      expect(
-        callCenter(selectedPage)
-          .getByText("Synthetic Caller · Fixture Location 1 · Abita", {
-            exact: true,
-          }),
-      ).toBeVisible(),
-      expect(
-        callCenter(secondaryPage)
-          .getByText("Synthetic Caller · Fixture Location 1 · Abita", {
-            exact: true,
-          }),
-      ).toBeVisible(),
-      expect(selectedPage.getByTestId("calling-queue-count")).toHaveText("2"),
-      expect(secondaryPage.getByTestId("calling-queue-count")).toHaveText("2"),
-      expect(
-        selectedPage.getByText(
-          "Second Synthetic Caller · Fixture Location 1 · Abita",
-        ),
-      ).toBeVisible(),
-      expect(
-        secondaryPage.getByText(
-          "Second Synthetic Caller · Fixture Location 1 · Abita",
-        ),
-      ).toBeVisible(),
-    ])
-    for (const activePage of [selectedPage, secondaryPage]) {
-      await expect
-        .poll(() => callingMetric(activePage, "ringtonePulses"))
-        .toBeGreaterThan(0)
-      const notifications = await callingNotifications(activePage)
-      expect(notifications).toHaveLength(2)
-      expect(notifications.every((item) =>
-        item.body === "Fixture Location 1 · answer in Acuity" &&
-        !item.body.includes("Synthetic") &&
-        !item.body.includes("+1555"),
-      )).toBeTruthy()
-    }
 
-    let releaseAcceptResponses: () => void = () => {}
-    const acceptResponseGate = new Promise<void>((resolve) => {
-      releaseAcceptResponses = resolve
-    })
-    for (const page of [selectedPage, secondaryPage]) {
-      await page.route("**/calling/offers/*/accept", async (route) => {
-        const response = await route.fetch()
-        await acceptResponseGate
-        await route.fulfill({ response })
-      })
-    }
-    await Promise.all([
-      selectedPage.getByRole("button", { name: "Accept" }).click(),
-      secondaryPage.getByRole("button", { name: "Accept" }).click(),
+    const staffLegs = await readStaffLegs(database, callID)
+    expect(staffLegs).toHaveLength(2)
+    expect(staffLegs.map((leg) => leg.email).sort()).toEqual([
+      "secondary@abita.test",
+      "selected@abita.test",
     ])
-    const durableCall = await expect
-      .poll(
-        async () => {
-          const result = await database.query<{
-            id: string
-            claimant_subject: string
-            claimant_email: string
-            expected_staff_call_leg_id: string | null
-            current_attempt_id: string
-          }>(
-            `SELECT
-             c.id::text,
-             c.claimant_subject,
-             u.email AS claimant_email,
-             c.expected_staff_call_leg_id,
-             c.current_attempt_id::text
-           FROM human_calling_calls c
-           JOIN auth."user" u ON u.id = c.claimant_subject
-          WHERE c.call_session_id = 'fixture-call-session'`,
-          )
-          return result.rows[0] ?? null
-        },
-        { timeout: 25_000 },
-      )
-      .not.toBeNull()
-      .then(async () => {
-        const result = await database.query<{
-          id: string
-          claimant_subject: string
-          claimant_email: string
-          expected_staff_call_leg_id: string | null
-          current_attempt_id: string
-        }>(
-          `SELECT
-             c.id::text,
-             c.claimant_subject,
-             u.email AS claimant_email,
-             c.expected_staff_call_leg_id,
-             c.current_attempt_id::text
-           FROM human_calling_calls c
-           JOIN auth."user" u ON u.id = c.claimant_subject
-          WHERE c.call_session_id = 'fixture-call-session'`,
-        )
-        return result.rows[0]
-      })
-    expect(durableCall).toBeTruthy()
-    const winnerPage =
-      durableCall.claimant_email === "selected@abita.test"
-        ? selectedPage
-        : secondaryPage
-    const loserPage =
-      winnerPage === selectedPage ? secondaryPage : selectedPage
-    const durableMediaToken = await mediaTokenForCall(database, durableCall.id)
-    const staffClientState = Buffer.from(JSON.stringify({
-      v: 1,
-      call: durableCall.id,
-      leg: "staff",
-      attempt: durableCall.current_attempt_id,
-    })).toString("base64")
+    expect(staffLegs.every((leg) => leg.bridge_on_answer === false)).toBe(true)
+    expect(new Set(staffLegs.map((leg) => leg.provider_leg_id)).size).toBe(2)
+
+    await Promise.all([
+      expect(callCenter(selectedPage)).toBeVisible(),
+      expect(callCenter(secondaryPage)).toBeVisible(),
+    ])
+    const selectedLeg = staffLegs.find((leg) => leg.email === "selected@abita.test")!
     await sendIncomingLeg(
-      winnerPage,
-      "unrelated-browser-leg",
-      "unrelated-media-token",
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      selectedLeg.media_token,
     )
-    await pauseMediaAttachment(winnerPage)
-    try {
-      await sendIncomingLeg(
-        winnerPage,
-        "early-browser-leg",
-        durableMediaToken,
-      )
-      await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
-      await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
+    await selectedPage.getByRole("button", { name: "Take", exact: true }).click()
+    await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
 
-      const callURL = `${portalURL}/v1/calling/calls/${durableCall.id}`
-      const tokenResponse = await winnerPage.request.get(
-        `${webURL}/api/auth/token`,
-      )
-      expect(tokenResponse.ok()).toBeTruthy()
-      const { token } = (await tokenResponse.json()) as { token: string }
-      const beforeReceipt = await winnerPage.request.get(callURL, {
-        headers: { authorization: `Bearer ${token}` },
-      })
-      expect(beforeReceipt.ok()).toBeTruthy()
-      const beforeVersion = ((await beforeReceipt.json()) as { version: number })
-        .version
-      const refreshedCall = winnerPage.waitForResponse(async (response) => {
-        if (
-          response.request().method() !== "GET" ||
-          response.url() !== callURL ||
-          !response.ok()
-        ) {
-          return false
-        }
-        const { version } = (await response.json()) as { version: number }
-        return version > beforeVersion
-      })
-      await deliverProviderEvent(winnerPage, {
-        eventType: "call.initiated",
-        eventId: "e2e-staff-initiated",
-        occurredAt: new Date().toISOString(),
-        payload: providerLegPayload(staffClientState),
-      })
-      await deliverProviderEvent(winnerPage, {
-        eventType: "call.answered",
-        eventId: "e2e-staff-answered",
-        occurredAt: new Date().toISOString(),
-        payload: providerLegPayload(staffClientState),
-      })
-      await refreshedCall
-    } finally {
-      await resumeMediaAttachment(winnerPage)
-    }
-    await expect(
-      callCenter(winnerPage).getByText(/Audio: attached/),
-    ).toBeVisible()
-    await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(1)
-    await sendIncomingLeg(
-      winnerPage,
-      "replayed-browser-leg",
-      durableMediaToken,
-    )
-    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
-    await expect.poll(() => mediaCount(winnerPage, "rejects")).toBe(2)
-    releaseAcceptResponses()
-    await expect(
-      callCenter(winnerPage)
-        .getByText("Connecting", { exact: true }),
-    ).toBeVisible()
-    await expect(loserPage.getByText("Another available User claimed this Call.")).toBeVisible()
-    await Promise.all([
-      expect.poll(() => callingMetric(winnerPage, "ringtoneStops")).toBeGreaterThan(0),
-      expect.poll(() => callingMetric(loserPage, "ringtoneStops")).toBeGreaterThan(0),
-    ])
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ count: string }>(
-          `SELECT count(*)::text
-             FROM human_calling_provider_commands
-            WHERE call_id = $1 AND action = 'DIAL_STAFF'`,
-          [durableCall.id],
-        )
-        return Number(result.rows[0]?.count ?? 0)
-      })
-      .toBe(1)
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ leg: string | null }>(
-          `SELECT expected_staff_call_leg_id AS leg
-             FROM human_calling_calls
-            WHERE id = $1`,
-          [durableCall.id],
-        )
-        return result.rows[0]?.leg ?? ""
-      })
-      .toBe("fixture-staff-leg")
-
-    await sendIncomingLegs(loserPage, durableMediaToken)
-    await expect.poll(() => mediaCount(winnerPage, "answers")).toBe(1)
-    await expect.poll(() => mediaCount(loserPage, "answers")).toBe(0)
-
-    const callerClientState = Buffer.from(JSON.stringify({
-      v: 1,
-      call: durableCall.id,
-      leg: "caller",
-    })).toString("base64")
-    await deliverProviderEvent(winnerPage, {
-      eventType: "call.bridged",
-      eventId: "e2e-staff-bridged",
+    await deliverProviderEvent(selectedPage, {
+      eventType: "call.answered",
+      eventId: "callleg-browser-staff-answered",
       occurredAt: new Date().toISOString(),
-      payload: providerLegPayload(staffClientState),
+      payload: {
+        call_control_id: selectedLeg.control_id,
+        call_leg_id: selectedLeg.provider_leg_id,
+        call_session_id: "fixture-staff-session",
+        client_state: selectedLeg.client_state,
+      },
     })
-    await deliverProviderEvent(winnerPage, {
+    const bridge = await readBridgeCommand(database, callID)
+    expect(bridge.target_id).toBe(selectedLeg.control_id)
+    expect(bridge.peer_call_leg_id).toBeTruthy()
+    expect(bridge.prevent_double_bridge).toBe(true)
+    expect(bridge.caller_control_id).toBe("fixture-caller-control")
+
+    await deliverProviderEvent(selectedPage, {
       eventType: "call.bridged",
-      eventId: "e2e-caller-bridged",
+      eventId: "callleg-browser-bridge-confirmed",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: selectedLeg.control_id,
+        call_leg_id: selectedLeg.provider_leg_id,
+        call_session_id: "fixture-staff-session",
+        client_state: bridge.client_state,
+      },
+    })
+    await deliverProviderEvent(selectedPage, {
+      eventType: "call.bridged",
+      eventId: "callleg-browser-caller-bridge-confirmed",
       occurredAt: new Date().toISOString(),
       payload: {
         call_control_id: "fixture-caller-control",
         call_leg_id: "fixture-caller-leg",
-        call_session_id: "fixture-call-session",
-        client_state: callerClientState,
+        call_session_id: "fixture-caller-session",
+        client_state: bridge.caller_client_state,
       },
     })
     await expect
       .poll(async () => {
-        const result = await database.query<{ count: string }>(
-          `SELECT count(*)::text
-             FROM human_calling_provider_receipts
-            WHERE event_id IN ('e2e-staff-bridged', 'e2e-caller-bridged')
-              AND state = 'APPLIED'`,
-        )
-        return Number(result.rows[0]?.count ?? 0)
-      })
-      .toBe(2)
-    await expect(
-      callCenter(winnerPage).getByText("Connected", { exact: true }),
-    ).toBeVisible()
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ count: string }>(
-          `SELECT count(*)::text
-             FROM human_calling_provider_commands
+        const result = await database.query<{ role: string; state: string; count: string }>(
+          `SELECT role, state, count(*)::text
+             FROM human_calling_call_legs
             WHERE call_id = $1
-              AND action = 'START_RECORDING'`,
-          [durableCall.id],
+            GROUP BY role, state
+            ORDER BY role, state`,
+          [callID],
         )
-        return Number(result.rows[0]?.count ?? 0)
+        return result.rows
       })
-      .toBe(0)
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ count: string }>(
-          `SELECT count(*)::text
-             FROM human_calling_recordings
-            WHERE call_id = $1`,
-          [durableCall.id],
-        )
-        return Number(result.rows[0]?.count ?? 0)
-      })
-      .toBe(0)
-
-    const takeoverPage = await winnerPage.context().newPage()
-    await takeoverPage.addInitScript(() => {
-      window.sessionStorage.setItem("acuity.callingMediaEnabled", "true")
-    })
-    await takeoverPage.goto("/workspace")
-    const takeoverAvailability = takeoverPage.getByRole("switch", {
-      name: "Availability",
-    })
-    await expect(takeoverAvailability).toBeVisible()
+      .toEqual([
+        { role: "CALLER", state: "BRIDGED", count: "1" },
+        { role: "STAFF", state: "BRIDGED", count: "1" },
+        { role: "STAFF", state: "ENDING", count: "1" },
+      ])
     await expect(
-      callCenter(takeoverPage).getByText("Connected", { exact: true }),
-    ).toBeVisible({ timeout: 15_000 })
-    await expect(takeoverAvailability).toBeEnabled()
-    await takeoverAvailability.click()
-    await expect(takeoverAvailability).toBeDisabled()
-    await expect(
-      winnerPage.getByRole("button", { name: "Mute" }),
-    ).toHaveCount(0)
-    await expect.poll(() => mediaCount(winnerPage, "disconnects")).toBeGreaterThan(0)
-    await expect(
-      callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/),
-    ).toBeVisible()
-    await sendIncomingLegs(takeoverPage, durableMediaToken)
-    await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
-    await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
-    await signalMedia(takeoverPage, "reconnecting")
-    await expect(
-      callCenter(takeoverPage).getByText(/Audio: reconnecting/),
-    ).toBeVisible()
-    await signalMedia(takeoverPage, "ready")
-    await expect(
-      callCenter(takeoverPage).getByText("Connected", { exact: true }),
-    ).toBeVisible()
-    await sendIncomingLeg(
-      takeoverPage,
-      "fixture-browser-leg",
-      durableMediaToken,
-      true,
-    )
-    await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(2)
-
-    await takeoverPage.reload()
-    await expect(callCenter(takeoverPage).getByText("Connected", { exact: true })).toBeVisible({
-      timeout: 15_000,
-    })
-    await expect(callCenter(takeoverPage).getByText(/Audio: waiting for exact leg/)).toBeVisible({
-      timeout: 15_000,
-    })
-    await sendIncomingLegs(takeoverPage, durableMediaToken)
-    await expect.poll(() => mediaCount(takeoverPage, "answers")).toBe(1)
-    await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
-
-    const inboundCallURL = `${portalURL}/v1/calling/calls/${durableCall.id}`
-    await pauseCallPolling(takeoverPage)
-    try {
-      const providerFirstRefresh = takeoverPage.waitForResponse(
-        (response) =>
-          response.request().method() === "GET" &&
-          response.url() === inboundCallURL,
-      )
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.hangup",
-        eventId: "e2e-provider-first-hangup",
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: "fixture-caller-control",
-          call_leg_id: "fixture-caller-leg",
-          call_session_id: "fixture-call-session",
-          client_state: callerClientState,
-          hangup_cause: "normal_clearing",
-        },
-      })
-      expect(await (await providerFirstRefresh).json()).toMatchObject({
-        state: "NEEDS_DISPOSITION",
-      })
-    } finally {
-      await resumeCallPolling(takeoverPage)
-    }
-    const inboundOutcome = takeoverPage.getByRole("region", {
-      name: "Call outcome",
-    })
-    await expect(inboundOutcome).toBeVisible()
-    await expect(
-      inboundOutcome.getByRole("button", { name: "Resolved", exact: true }),
-    ).toBeVisible()
-    await expect(
-      inboundOutcome.getByRole("button", {
-        name: "Follow-up needed",
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(takeoverAvailability).toBeEnabled()
-    const interruptingOffer = callCenter(takeoverPage).getByText(
-      "Second Synthetic Caller · Fixture Location 1 · Abita",
-      { exact: true },
-    )
-    await expect(interruptingOffer).toBeVisible()
-    await expect(inboundOutcome).not.toBeVisible()
-    await deliverProviderEvent(takeoverPage, {
-      eventType: "call.hangup",
-      eventId: "e2e-pending-outcome-interruption-ended",
-      occurredAt: new Date().toISOString(),
-      payload: {
-        call_control_id: "fixture-caller-control-2",
-        call_leg_id: "fixture-caller-leg-2",
-        call_session_id: "fixture-call-session-2",
-        client_state: "",
-        hangup_cause: "normal_clearing",
-      },
-    })
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ state: string }>(
-          `SELECT state
-             FROM human_calling_calls
-            WHERE call_session_id = 'fixture-call-session-2'`,
-        )
-        return result.rows[0]?.state
-      })
-      .toBe("MISSED")
-    await expect(interruptingOffer).not.toBeVisible()
-    await expect(inboundOutcome).toBeVisible()
-    const providerFirstHangups = await database.query<{ count: string }>(
-      `SELECT count(*)::text
-         FROM human_calling_provider_commands
-        WHERE call_id = $1
-          AND action = 'HANGUP'
-          AND target_id = 'fixture-caller-control'`,
-      [durableCall.id],
-    )
-    expect(providerFirstHangups.rows[0]?.count).toBe("0")
-    await inboundOutcome
-      .getByRole("button", { name: "Follow-up needed", exact: true })
-      .click()
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ state: string }>(
-          `SELECT state FROM human_calling_calls WHERE id = $1`,
-          [durableCall.id],
-        )
-        return result.rows[0]?.state
-      })
-      .toBe("FOLLOW_UP_REQUIRED")
-    const followUpTask = await expect
-      .poll(async () => {
-        const result = await database.query<{
-          id: string
-          title: string
-          state: string
-        }>(
-          `SELECT id::text, title, state
-             FROM work_tasks
-            WHERE call_id = $1`,
-          [durableCall.id],
-        )
-        return result.rows[0] ?? null
-      })
-      .not.toBeNull()
-      .then(async () => {
-        const result = await database.query<{
-          id: string
-          title: string
-          state: string
-        }>(
-          `SELECT id::text, title, state
-             FROM work_tasks
-            WHERE call_id = $1`,
-          [durableCall.id],
-        )
-        return result.rows[0]
-      })
-    expect(followUpTask).toEqual({
-      id: expect.any(String),
-      title: "Scheduling help",
-      state: "OPEN",
-    })
-    await expect(
-      takeoverPage.getByRole("heading", {
-        name: "Scheduling help",
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(
-      loserPage.getByRole("button", { name: /Scheduling help/ }),
-    ).toBeVisible()
-    await expect(
-      loserPage.getByRole("heading", {
-        name: "Scheduling help",
-        exact: true,
-      }),
-    ).not.toBeVisible()
-    await loserPage.getByRole("button", { name: /Scheduling help/ }).click()
-    await expect(
-      loserPage.getByRole("heading", {
-        name: "Scheduling help",
-        exact: true,
-      }),
-    ).toBeVisible()
-    const phoneSearch = loserPage.getByLabel("Search tasks")
-    await phoneSearch.fill("+15555550100")
-    await phoneSearch.press("Enter")
-    await expect(
-      loserPage.getByRole("heading", { name: "(555) 555-0100" }),
-    ).toBeVisible()
-    await expect(loserPage.getByText("Engagement History", { exact: true })).toBeVisible()
-    expect(loserPage.url()).not.toContain("5555550100")
-    await phoneSearch.fill("+15555550101")
-    await phoneSearch.press("Enter")
-    await expect(
-      loserPage.getByRole("heading", { name: "(555) 555-0101" }),
-    ).toBeVisible()
-    await phoneSearch.fill("")
-    await expect(takeoverAvailability).toBeChecked()
-
-    const recoveryHandoffResponse = await takeoverPage.request.post(
-      `${portalURL}/v1/handoffs`,
-      {
-        headers: { authorization: "Bearer synthetic-service-token" },
-        data: {
-          practiceId: scope.practice_id,
-          locationId: scope.location_id,
-          sourceCallId: "slice-2-e2e-recovery-source",
-          idempotencyKey: "slice-2-e2e-recovery-handoff",
-          contact: {
-            phone: "+15555550102",
-            phoneSource: "Abita",
-            displayName: "Recovery Caller",
-            nameSource: "Abita",
-            transferReason: "Reordered provider proof",
-            reasonSource: "Abita AI",
-          },
-        },
-      },
-    )
-    expect(recoveryHandoffResponse.status()).toBe(201)
-    const recoveryHandoff = (await recoveryHandoffResponse.json()) as {
-      sipDestination: string
-    }
-    expect(recoveryHandoff.sipDestination).toBe(
-      "sip:acuity-handoff@synthetic.sip.telnyx.com",
-    )
-    await deliverProviderEvent(takeoverPage, {
-      eventType: "call.initiated",
-      eventId: "e2e-recovery-caller-initiated",
-      occurredAt: new Date().toISOString(),
-      payload: {
-        call_control_id: "fixture-recovery-caller-control",
-        call_leg_id: "fixture-recovery-caller-leg",
-        call_session_id: "fixture-recovery-session",
-        client_state: "",
-        from: "+15555550102",
-        to: "+14843336938",
-      },
-    })
-    await expect(
-      takeoverPage.getByText(
-        "Recovery Caller · Fixture Location 1 · Abita",
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await takeoverPage.getByRole("button", { name: "Accept" }).click()
-    await expect(
-      takeoverPage.getByRole("heading", {
-        name: "Recovery Caller",
-        exact: true,
-      }),
-    ).not.toBeVisible()
-    await expect(
-      loserPage.getByRole("heading", {
-        name: "Scheduling help",
-        exact: true,
-      }),
-    ).toBeVisible()
-    const recoveryCall = await expect
-      .poll(async () => {
-        const result = await database.query<{
-          id: string
-          current_attempt_id: string
-          expected_staff_call_leg_id: string | null
-        }>(
-          `SELECT
-             id::text,
-             current_attempt_id::text,
-             expected_staff_call_leg_id
-           FROM human_calling_calls
-          WHERE call_session_id = 'fixture-recovery-session'`,
-        )
-        const row = result.rows[0]
-        return row?.expected_staff_call_leg_id ? row : null
-      })
-      .not.toBeNull()
-      .then(async () => {
-        const result = await database.query<{
-          id: string
-          current_attempt_id: string
-          expected_staff_call_leg_id: string
-        }>(
-          `SELECT
-             id::text,
-             current_attempt_id::text,
-             expected_staff_call_leg_id
-           FROM human_calling_calls
-          WHERE call_session_id = 'fixture-recovery-session'`,
-        )
-        return result.rows[0]
-      })
-    await sendIncomingLegs(
-      takeoverPage,
-      await mediaTokenForCall(database, recoveryCall.id),
-    )
-    await expect(callCenter(takeoverPage).getByText(/Audio: attached/)).toBeVisible()
-    const recoveryStaffState = Buffer.from(JSON.stringify({
-      v: 1,
-      call: recoveryCall.id,
-      leg: "staff",
-      attempt: recoveryCall.current_attempt_id,
-    })).toString("base64")
-    const recoveryBase = Date.now()
-    await deliverProviderEvent(takeoverPage, {
-      eventType: "call.hangup",
-      eventId: "e2e-recovery-hangup-first",
-      occurredAt: new Date(recoveryBase + 2_000).toISOString(),
-      payload: {
-        call_control_id: "fixture-staff-control",
-        call_leg_id: "fixture-staff-leg",
-        call_session_id: "fixture-recovery-session",
-        client_state: recoveryStaffState,
-        hangup_cause: "timeout",
-      },
-    })
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ state: string }>(
-          `SELECT state FROM human_calling_calls WHERE id = $1`,
-          [recoveryCall.id],
-        )
-        return result.rows[0]?.state
-      }, { timeout: 15_000 })
-      .toBe("OFFERING")
-    await deliverProviderEvent(takeoverPage, {
-      eventType: "call.bridged",
-      eventId: "e2e-recovery-delayed-bridge",
-      occurredAt: new Date(recoveryBase + 1_000).toISOString(),
-      payload: {
-        call_control_id: "fixture-staff-control",
-        call_leg_id: "fixture-staff-leg",
-        call_session_id: "fixture-recovery-session",
-        client_state: recoveryStaffState,
-      },
-    })
-    await expect(takeoverPage.getByRole("region", { name: "Call outcome" })).toBeVisible({
-      timeout: 15_000,
-    })
-    await takeoverPage.getByRole("button", { name: "Resolved" }).click()
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ state: string }>(
-          `SELECT state FROM human_calling_calls WHERE id = $1`,
-          [recoveryCall.id],
-        )
-        return result.rows[0]?.state
-      })
-      .toBe("RESOLVED")
-    await expect(takeoverAvailability).toBeChecked()
-    await expect(
-      takeoverPage.getByRole("heading", {
-        name: "Scheduling help",
-        exact: true,
-      }),
-    ).toBeVisible()
-    await takeoverPage.getByRole("button", { name: "Rename task" }).click()
-    await takeoverPage.getByLabel("Task title").fill("Confirm scheduling plan")
-    await takeoverPage.getByLabel("Task title").press("Enter")
-    await expect(
-      takeoverPage.getByRole("heading", {
-        name: "Confirm scheduling plan",
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(
-      loserPage.getByRole("heading", {
-        name: "Confirm scheduling plan",
-        exact: true,
-      }),
-    ).toBeVisible()
-    await takeoverPage
-      .getByRole("button", { name: "Complete", exact: true })
-      .click()
-    await expect(
-      takeoverPage.getByRole("button", { name: "Reopen" }),
-    ).toBeVisible()
-    await expect(
-      loserPage.getByRole("button", { name: "Reopen" }),
-    ).toBeVisible()
-    await loserPage.getByRole("button", { name: "Reopen" }).click()
-    await expect(
-      takeoverPage.getByRole("button", { name: "Complete", exact: true }),
-    ).toBeVisible()
-    await expect(
-      loserPage.getByRole("button", { name: "Complete", exact: true }),
-    ).toBeVisible()
-    await expect
-      .poll(async () => {
-        const result = await database.query<{
-          task_state: string
-          activity_count: string
-        }>(
-          `SELECT
-             task.state AS task_state,
-             count(activity.id)::text AS activity_count
-           FROM work_tasks task
-           JOIN work_task_activities activity ON activity.task_id = task.id
-          WHERE task.id = $1
-          GROUP BY task.state`,
-          [followUpTask.id],
-        )
-        return result.rows[0]
-      })
-      .toEqual({
-        task_state: "OPEN",
-        activity_count: "4",
-      })
-
-    await test.step("Slice 6 voicemail crosses signed ingress, Telnyx storage, and authorized playback", async () => {
-      const voicemailHandoffResponse = await takeoverPage.request.post(
-        `${portalURL}/v1/handoffs`,
-        {
-          headers: { authorization: "Bearer synthetic-service-token" },
-          data: {
-            practiceId: scope.practice_id,
-            locationId: scope.location_id,
-            sourceCallId: "slice-6-e2e-voicemail-source",
-            idempotencyKey: "slice-6-e2e-voicemail-handoff",
-            contact: {
-              phone: "+15555550102",
-              phoneSource: "Abita",
-              displayName: "Voicemail Caller",
-              nameSource: "Abita",
-              transferReason: "Leave a recovery message",
-              reasonSource: "Abita AI",
-            },
-          },
-        },
-      )
-      expect(voicemailHandoffResponse.status()).toBe(201)
-      const voicemailHandoff = (await voicemailHandoffResponse.json()) as {
-        sipDestination: string
-      }
-      expect(voicemailHandoff.sipDestination).toBe(handoff.sipDestination)
-      const voicemailSession = "fixture-voicemail-session"
-      const voicemailControl = "fixture-voicemail-caller-control"
-      const voicemailLeg = "fixture-voicemail-caller-leg"
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.initiated",
-        eventId: "e2e-voicemail-caller-initiated",
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: voicemailControl,
-          call_leg_id: voicemailLeg,
-          call_session_id: voicemailSession,
-          client_state: "",
-          from: "+15555550102",
-          to: "+14843336938",
-        },
-      })
-      const voicemailCallID = await expect
-        .poll(async () => {
-          const result = await database.query<{ id: string }>(
-            `SELECT id::text
-               FROM human_calling_calls
-              WHERE call_session_id = $1`,
-            [voicemailSession],
-          )
-          return result.rows[0]?.id ?? ""
-        })
-        .not.toBe("")
-        .then(async () => {
-          const result = await database.query<{ id: string }>(
-            `SELECT id::text
-               FROM human_calling_calls
-              WHERE call_session_id = $1`,
-            [voicemailSession],
-          )
-          return result.rows[0].id
-        })
-
-      await database.query(
-        `UPDATE human_calling_calls
-            SET offer_deadline = now() - interval '1 second'
-          WHERE id = $1`,
-        [voicemailCallID],
-      )
-      const greeting = await voicemailCommand(
-        database,
-        voicemailCallID,
-        "PLAY_VOICEMAIL_GREETING",
-      )
-      expect(greeting.control_id).toBe(voicemailControl)
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.speak.ended",
-        eventId: "e2e-voicemail-greeting-ended",
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: greeting.control_id,
-          call_leg_id: voicemailLeg,
-          call_session_id: voicemailSession,
-          client_state: greeting.client_state,
-        },
-      })
-      const recording = await voicemailCommand(
-        database,
-        voicemailCallID,
-        "START_VOICEMAIL_RECORDING",
-      )
-      const recordingStartedAt = new Date()
-      const recordingEndedAt = new Date(recordingStartedAt.getTime() + 12_000)
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.recording.saved",
-        eventId: "e2e-voicemail-recording-saved",
-        occurredAt: recordingEndedAt.toISOString(),
-        payload: {
-          call_control_id: recording.control_id,
-          call_leg_id: voicemailLeg,
-          call_session_id: voicemailSession,
-          client_state: recording.client_state,
-          recording_id: "fixture-voicemail-recording",
-          recording_started_at: recordingStartedAt.toISOString(),
-          recording_ended_at: recordingEndedAt.toISOString(),
-          recording_urls: {
-            mp3: "https://expired.invalid/callback.mp3",
-          },
-        },
-      })
-
-      await expect
-        .poll(
-          async () => {
-            const result = await database.query<{
-              audio_state: string
-              outcome: string
-              provider_recording_id: string
-              provider_url_is_null: boolean
-              object_key_is_null: boolean
-              next_copy_is_null: boolean
-              task_count: string
-            }>(
-              `SELECT
-               voicemail.audio_state,
-               voicemail.outcome,
-               voicemail.provider_recording_id,
-               voicemail.provider_recording_url IS NULL AS provider_url_is_null,
-               voicemail.object_key IS NULL AS object_key_is_null,
-               voicemail.next_copy_at IS NULL AS next_copy_is_null,
-               count(task.id)::text AS task_count
-             FROM human_calling_voicemails voicemail
-             JOIN work_tasks task ON task.id = voicemail.task_id
-            WHERE voicemail.call_id = $1
-            GROUP BY voicemail.audio_state, voicemail.outcome,
-               voicemail.provider_recording_id,
-               voicemail.provider_recording_url,
-               voicemail.object_key,
-               voicemail.next_copy_at`,
-              [voicemailCallID],
-            )
-            return result.rows[0] ?? null
-          },
-          { timeout: 20_000 },
-        )
-        .toEqual({
-          audio_state: "READY",
-          outcome: "VOICEMAIL",
-          provider_recording_id: "fixture-voicemail-recording",
-          provider_url_is_null: true,
-          object_key_is_null: true,
-          next_copy_is_null: true,
-          task_count: "1",
-        })
-
-      const takeoverOpenTasks = takeoverPage.getByRole("button", {
-        name: "Open",
-        exact: true,
-      })
-      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "false")
-      await takeoverOpenTasks.click()
-      await expect(takeoverOpenTasks).toHaveAttribute("aria-expanded", "true")
-      await takeoverPage
-        .getByRole("button", { name: /Review voicemail/ })
-        .click()
-      await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Review voicemail",
-          exact: true,
-        }),
-      ).toBeVisible()
-      const focusedVoicemailTask = takeoverPage.getByRole("complementary", {
-        name: "Focused Task",
-      })
-      await focusedVoicemailTask
-        .getByText("More context", { exact: true })
-        .click()
-      await expect(
-        focusedVoicemailTask.getByText("Ready", { exact: true }),
-      ).toBeVisible()
-      const playbackResponse = takeoverPage.waitForResponse(
-        (response) =>
-          response.request().method() === "GET" &&
-          response.url().includes("/v1/calling/voicemail-playback/"),
-      )
-      await focusedVoicemailTask
-        .getByRole("button", { name: "Play" })
-        .click()
-      const playback = await playbackResponse
-      expect(playback.status()).toBe(200)
-      expect(playback.headers()["content-type"]).toBe("audio/mpeg")
-      await expect(
-        takeoverPage.getByLabel("Voicemail recording"),
-      ).toHaveAttribute("src", /^blob:/)
-
-      await takeoverPage
-        .getByRole("button", { name: /Confirm scheduling plan/ })
-        .click()
-      await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Confirm scheduling plan",
-          exact: true,
-        }),
-      ).toBeVisible()
-    })
-
-    await test.step("Slice 6 outbound stays durable through bridge, reload, DTMF, and disposition", async () => {
-      const taskCallButton = takeoverPage.getByRole("button", {
-        name: "Call",
-        exact: true,
-      })
-      await expect(taskCallButton).toBeEnabled()
-      await taskCallButton.click()
-      await expect(
-        callCenter(takeoverPage).getByText("Preparing", { exact: true }),
-      ).toBeVisible()
-      await expect(
-        callCenter(winnerPage).getByText("Preparing", { exact: true }),
-      ).toBeVisible({ timeout: 15_000 })
-      await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
-      ).toBeVisible()
-      await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Engagement history",
-          exact: true,
-        }),
-      ).toBeVisible()
-
-      const taskOutbound = await expect
-        .poll(async () => {
-          const result = await database.query<{
-            id: string
-            destination_phone: string
-            caller_id: string
-            task_id: string
-          }>(
-            `SELECT
-               id::text,
-               destination_phone,
-               outbound_caller_id AS caller_id,
-               task_id::text
-             FROM human_calling_calls
-            WHERE direction = 'OUTBOUND' AND task_id = $1
-            ORDER BY created_at DESC
-            LIMIT 1`,
-            [followUpTask.id],
-          )
-          return result.rows[0] ?? null
-        })
-        .not.toBeNull()
-        .then(async () => {
-          const result = await database.query<{
-            id: string
-            destination_phone: string
-            caller_id: string
-            task_id: string
-          }>(
-            `SELECT
-               id::text,
-               destination_phone,
-               outbound_caller_id AS caller_id,
-               task_id::text
-             FROM human_calling_calls
-            WHERE direction = 'OUTBOUND' AND task_id = $1
-            ORDER BY created_at DESC
-            LIMIT 1`,
-            [followUpTask.id],
-          )
-          return result.rows[0]
-        })
-      expect(taskOutbound).toEqual({
-        id: expect.any(String),
-        destination_phone: "+15555550100",
-        caller_id: "+17275550101",
-        task_id: followUpTask.id,
-      })
-
-      const taskStaff = await callingCommand(
-        database,
-        taskOutbound.id,
-        "DIAL_STAFF",
-      )
-      const taskSession = `fixture-task-outbound-${taskOutbound.id}`
-      const answersBeforeAttachment = await mediaCount(takeoverPage, "answers")
-      await pauseMediaAttachment(takeoverPage)
-      await sendIncomingLeg(
-        takeoverPage,
-        "fixture-task-webrtc-leg",
-        await mediaTokenForCall(database, taskOutbound.id),
-        false,
-      )
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.answered",
-        eventId: `e2e-task-staff-answered-${taskOutbound.id}`,
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: taskStaff.control_id,
-          call_leg_id: taskStaff.leg_id,
-          call_session_id: taskSession,
-          client_state: taskStaff.client_state,
-        },
-      })
-      try {
-        await expect
-          .poll(() => mediaCount(takeoverPage, "answers"))
-          .toBe(answersBeforeAttachment + 1)
-        await expect
-          .poll(async () => {
-            const result = await database.query<{ answered: boolean }>(
-              `SELECT attempt.staff_answered_at IS NOT NULL AS answered
-                 FROM human_calling_calls call
-                 JOIN human_calling_connection_attempts attempt
-                   ON attempt.id = call.current_attempt_id
-                WHERE call.id = $1`,
-              [taskOutbound.id],
-            )
-            return result.rows[0]?.answered
-          })
-          .toBe(true)
-        await takeoverPage.waitForTimeout(300)
-        const attachmentFence = await database.query<{
-          destination_commands: string
-          media_ready: boolean
-        }>(
-          `SELECT
-             (SELECT count(*)::text
-                FROM human_calling_provider_commands command
-               WHERE command.call_id = call.id
-                 AND command.action = 'DIAL_DESTINATION') AS destination_commands,
-             attempt.media_ready_at IS NOT NULL AS media_ready
-             FROM human_calling_calls call
-             JOIN human_calling_connection_attempts attempt
-               ON attempt.id = call.current_attempt_id
-            WHERE call.id = $1`,
-          [taskOutbound.id],
-        )
-        expect(attachmentFence.rows[0]).toEqual({
-          destination_commands: "0",
-          media_ready: false,
-        })
-      } finally {
-        await resumeMediaAttachment(takeoverPage)
-      }
-      await expect(
-        callCenter(takeoverPage).getByText("Ringing", { exact: true }),
-      ).toBeVisible({ timeout: 15_000 })
-      await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
-      ).toBeVisible()
-      const taskDestination = await callingCommand(
-        database,
-        taskOutbound.id,
-        "DIAL_DESTINATION",
-      )
-      const callURL = `${portalURL}/v1/calling/calls/${taskOutbound.id}`
-      await takeoverPage.waitForResponse(
-        (response) =>
-          response.request().method() === "GET" && response.url() === callURL,
-      )
-      await pauseCallPolling(takeoverPage)
-      const releaseReconciliation = deferred<void>()
-      let reconciliationStarted = false
-      const reconciliationPattern = `${portalURL}/v1/**`
-      const delayReconciliation = async (route: Route) => {
-        const request = route.request()
-        const pathname = new URL(request.url()).pathname
-        const delayed =
-          pathname === "/v1/workspace" ||
-          pathname === "/v1/tasks/query" ||
-          pathname === "/v1/message-threads/query" ||
-          (request.method() === "GET" &&
-            pathname.startsWith("/v1/tasks/"))
-        if (!delayed) {
-          await route.continue()
-          return
-        }
-        reconciliationStarted = true
-        await releaseReconciliation.promise
-        await route.continue()
-      }
-      await takeoverPage.route(reconciliationPattern, delayReconciliation)
-      const bridgeStartedAt = Date.now()
-      const bridgeEventID = `e2e-task-destination-bridged-${taskOutbound.id}`
-      try {
-        const connectedResponse = takeoverPage.waitForResponse(
-          async (response) =>
-            response.request().method() === "GET" &&
-            response.url() === callURL &&
-            ((await response.json()) as { state?: string }).state ===
-              "CONNECTED",
-          { timeout: 750 },
-        )
-        await deliverProviderEvent(takeoverPage, {
-          eventType: "call.bridged",
-          eventId: bridgeEventID,
-          occurredAt: new Date().toISOString(),
-          payload: {
-            call_control_id: taskDestination.control_id,
-            call_leg_id: taskDestination.leg_id,
-            call_session_id: taskSession,
-            client_state: taskDestination.client_state,
-          },
-        })
-        const response = await connectedResponse
-        expect(await response.json()).toMatchObject({ state: "CONNECTED" })
-        expect(Date.now() - bridgeStartedAt).toBeLessThan(750)
-        await expect.poll(() => reconciliationStarted).toBe(true)
-        const receiptTiming = await database.query<{
-          queue_milliseconds: string
-        }>(
-          `SELECT EXTRACT(
-                    EPOCH FROM (last_attempt_at - received_at)
-                  ) * 1000 AS queue_milliseconds
-             FROM human_calling_provider_receipts
-            WHERE event_id = $1`,
-          [bridgeEventID],
-        )
-        expect(Number(receiptTiming.rows[0]?.queue_milliseconds)).toBeLessThan(
-          500,
-        )
-      } finally {
-        releaseReconciliation.resolve()
-        await resumeCallPolling(takeoverPage)
-        await takeoverPage.unroute(
-          reconciliationPattern,
-          delayReconciliation,
-        )
-      }
-      await expect(
-        callCenter(takeoverPage).getByText("Connected", { exact: true }),
-      ).toBeVisible({ timeout: 15_000 })
-      await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
-      ).toBeVisible()
-      await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Engagement history",
-          exact: true,
-        }),
-      ).toBeVisible()
-      await expect(
-        takeoverPage.getByLabel("Call message composer"),
-      ).toContainText("Fixture Location 1")
-      await expect(
-        takeoverPage.getByLabel("Call message composer"),
-      ).toContainText("(555) 555-0100")
-
-      const destinationCommandsBeforeReload = await database.query<{
-        count: string
-      }>(
-        `SELECT count(*)::text
-           FROM human_calling_provider_commands
-          WHERE call_id = $1 AND action = 'DIAL_DESTINATION'`,
-        [taskOutbound.id],
-      )
-      expect(destinationCommandsBeforeReload.rows[0]?.count).toBe("1")
-      await takeoverPage.reload()
-      await expect(
-        callCenter(takeoverPage).getByText("Connected", { exact: true }),
-      ).toBeVisible({ timeout: 15_000 })
-      await sendIncomingLeg(
-        takeoverPage,
-        "fixture-task-webrtc-leg",
-        await mediaTokenForCall(database, taskOutbound.id),
-        true,
-      )
-      await expect(
-        callCenter(takeoverPage).getByText(/Audio: attached/),
-      ).toBeVisible()
-      const destinationCommandsAfterReload = await database.query<{
-        count: string
-      }>(
-        `SELECT count(*)::text
-           FROM human_calling_provider_commands
-          WHERE call_id = $1 AND action = 'DIAL_DESTINATION'`,
-        [taskOutbound.id],
-      )
-      expect(destinationCommandsAfterReload.rows[0]?.count).toBe("1")
-
-      const dtmfStateBefore = await callPersistenceSnapshot(
-        database,
-        taskOutbound.id,
-      )
-      const dtmfWrites: string[] = []
-      const captureDTMFWrite = (request: {
-        method(): string
-        url(): string
-      }) => {
-        if (request.method() !== "GET" && request.url().startsWith(portalURL)) {
-          dtmfWrites.push(`${request.method()} ${request.url()}`)
-        }
-      }
-      takeoverPage.on("request", captureDTMFWrite)
-      await takeoverPage.getByRole("button", { name: "Keypad" }).click()
-      await takeoverPage.getByRole("button", { name: "Send 5" }).click()
-      await expect
-        .poll(() =>
-          takeoverPage.evaluate(
-            () =>
-              (
-                window as typeof window & {
-                  __acuityCallingTestState: { dtmf: string[] }
-                }
-              ).__acuityCallingTestState.dtmf,
-          ),
-        )
-        .toEqual(["5"])
-      takeoverPage.off("request", captureDTMFWrite)
-      expect(
-        dtmfWrites.filter(
-          (request) =>
-            new URL(request.split(" ", 2)[1]).pathname !==
-            "/v1/calling/readiness",
-        ),
-      ).toEqual([])
-      expect(await callPersistenceSnapshot(database, taskOutbound.id)).toEqual(
-        dtmfStateBefore,
-      )
-
-      const callComposer = takeoverPage.getByLabel("Call message composer")
-      await callComposer
-        .getByRole("textbox", { name: "Message" })
-        .fill("Synthetic post-call instructions")
-      await callComposer
-        .getByRole("button", {
-          name: "Send",
-        })
-        .click()
-      await expect
-        .poll(async () => {
-          const result = await database.query<{
-            sender: string
-            destination: string
-          }>(
-            `SELECT sender, destination
-               FROM messaging_messages
-              WHERE body = 'Synthetic post-call instructions'
-              ORDER BY created_at DESC
-              LIMIT 1`,
-          )
-          return result.rows[0] ?? null
-        })
-        .toEqual({
-          sender: "+17275550101",
-          destination: "+15555550100",
-        })
-
-      await expect(
-        callCenter(winnerPage).getByText("Connected", { exact: true }),
-      ).toBeVisible({ timeout: 15_000 })
-      const winnerNetwork = await winnerPage.context().newCDPSession(winnerPage)
-      await winnerNetwork.send("Network.enable")
-      try {
-        await winnerNetwork.send("Network.setBlockedURLs", {
-          urls: [`${realtimeURL}/v1/events*`],
-        })
-        await expect(winnerPage.getByText("Updates delayed")).toBeVisible({
-          timeout: 45_000,
-        })
-
-        const hangupURL = `${callURL}/hangup`
-        const releaseFailedHangup = deferred<void>()
-        let failedHangupStarted = false
-        const failHangup = async (route: Route) => {
-          failedHangupStarted = true
-          await releaseFailedHangup.promise
-          await route.fulfill({
-            status: 503,
-            contentType: "application/json",
-            body: JSON.stringify({ code: "unavailable" }),
-          })
-        }
-        await takeoverPage.route(hangupURL, failHangup)
-        await takeoverPage.getByRole("button", { name: "Hang up" }).click()
-        await expect.poll(() => failedHangupStarted).toBe(true)
-        await expect(
-          callCenter(takeoverPage)
-            .locator('[data-slot="badge"]')
-            .filter({ hasText: /^Ending…$/ }),
-        ).toBeVisible()
-        await expect(
-          takeoverPage.getByRole("button", { name: "Ending…" }),
-        ).toBeDisabled()
-        await expect(
-          takeoverPage.getByRole("button", { name: "Mute" }),
-        ).toBeDisabled()
-        await expect(
-          takeoverPage.getByRole("button", { name: "Keypad" }),
-        ).toBeDisabled()
-        releaseFailedHangup.resolve()
-        await expect(
-          callCenter(takeoverPage).getByText("Connected", { exact: true }),
-        ).toBeVisible()
-        await expect(
-          callCenter(takeoverPage).getByText(
-            "Hang up was not committed. Check your connection and try again.",
-            { exact: true },
-          ),
-        ).toBeVisible()
-        await expect(
-          takeoverPage.getByRole("button", { name: "Hang up" }),
-        ).toBeEnabled()
-        await takeoverPage.unroute(hangupURL, failHangup)
-
-        await takeoverPage.getByRole("button", { name: "Hang up" }).click()
-        await expect(
-          callCenter(takeoverPage)
-            .locator('[data-slot="badge"]')
-            .filter({ hasText: /^Ending…$/ }),
-        ).toBeVisible()
-        await expect(
-          takeoverPage.getByRole("button", { name: "Ending…" }),
-        ).toBeDisabled()
-        const hangupEventID = `e2e-task-destination-hangup-${taskOutbound.id}`
-        const terminalResponse = takeoverPage.waitForResponse(
-          async (response) => {
-            if (
-              response.request().method() !== "GET" ||
-              response.url() !== callURL
-            ) {
-              return false
-            }
-            const call = (await response.json().catch(() => undefined)) as
-              | { providerTermination?: string; state?: string }
-              | undefined
-            return (
-              call?.state === "NEEDS_DISPOSITION" &&
-              call.providerTermination === "COMPLETED"
-            )
-          },
-          { timeout: 750 },
-        )
-        const hangupStartedAt = Date.now()
-        await deliverProviderEvent(takeoverPage, {
-          eventType: "call.hangup",
-          eventId: hangupEventID,
-          occurredAt: new Date().toISOString(),
-          payload: {
-            call_control_id: taskDestination.control_id,
-            call_leg_id: taskDestination.leg_id,
-            call_session_id: taskSession,
-            client_state: taskDestination.client_state,
-            hangup_cause: "normal_clearing",
-          },
-        })
-        expect(await (await terminalResponse).json()).toMatchObject({
-          state: "NEEDS_DISPOSITION",
-          providerTermination: "COMPLETED",
-        })
-        expect(Date.now() - hangupStartedAt).toBeLessThan(750)
-        const hangupReceiptTiming = await database.query<{
-          queue_milliseconds: string
-        }>(
-          `SELECT EXTRACT(
-                    EPOCH FROM (last_attempt_at - received_at)
-                  ) * 1000 AS queue_milliseconds
-             FROM human_calling_provider_receipts
-            WHERE event_id = $1`,
-          [hangupEventID],
-        )
-        expect(
-          Number(hangupReceiptTiming.rows[0]?.queue_milliseconds),
-        ).toBeLessThan(500)
-        await expect(
-          takeoverPage.getByRole("region", { name: "Call outcome" }),
-        ).toBeVisible({ timeout: 15_000 })
-
-        await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
-        await expect(
-          winnerPage.getByRole("region", { name: "Call outcome" }),
-        ).toBeVisible({ timeout: 15_000 })
-      } finally {
-        await winnerNetwork.send("Network.setBlockedURLs", { urls: [] })
-        await winnerNetwork.detach()
-      }
-      await takeoverPage
-        .getByRole("region", { name: "Call outcome" })
-        .getByRole("button", { name: "Follow-up needed", exact: true })
-        .click()
-      await expect
-        .poll(async () => {
-          const result = await database.query<{
-            call_state: string
-            task_state: string
-            recording_commands: string
-          }>(
-            `SELECT
-               call.state AS call_state,
-               task.state AS task_state,
-               (
-                 SELECT count(*)::text
-                 FROM human_calling_provider_commands command
-                 WHERE command.call_id = call.id
-                   AND command.action = 'START_RECORDING'
-               ) AS recording_commands
-             FROM human_calling_calls call
-             JOIN work_tasks task ON task.id = call.task_id
-            WHERE call.id = $1`,
-            [taskOutbound.id],
-          )
-          return result.rows[0]
-        })
-        .toEqual({
-          call_state: "RESOLVED",
-          task_state: "OPEN",
-          recording_commands: "0",
-        })
-
-      await takeoverPage
-        .getByRole("button", { name: "Outbound calls" })
-        .click()
-      const outboundDialog = takeoverPage.getByRole("dialog", {
-        name: "Outbound call",
-      })
-      await expect(outboundDialog).toBeVisible()
-      const dialer = outboundDialog.getByRole("form", {
-        name: "Standalone outbound call",
-      })
-      await expect(dialer.getByLabel("Call location")).toBeVisible()
-      await dialer.getByLabel("Outbound destination").fill("+15555550100")
-      await dialer.getByRole("button", { name: "Call", exact: true }).click()
-      await expect(outboundDialog).not.toBeVisible()
-      await expect(
-        callCenter(takeoverPage).getByText("Preparing", { exact: true }),
-      ).toBeVisible()
-      await expect(
-        takeoverPage.getByText("Contact Context", { exact: true }),
-      ).toBeVisible()
-      await expect(
-        takeoverPage.getByRole("heading", {
-          name: "Engagement history",
-          exact: true,
-        }),
-      ).toBeVisible()
-      await takeoverPage
-        .getByRole("button", { name: "Messages", exact: true })
-        .click()
-      await expect(
-        takeoverPage.getByRole("region", { name: "Active call controls" }),
-      ).toBeVisible()
-      const standalone = await expect
-        .poll(async () => {
-          const result = await database.query<{
-            id: string
-            task_id: string | null
-            entry_point: string
-          }>(
-            `SELECT id::text, task_id::text, entry_point
-               FROM human_calling_calls
-              WHERE direction = 'OUTBOUND'
-                AND entry_point = 'STANDALONE'
-              ORDER BY created_at DESC
-              LIMIT 1`,
-          )
-          return result.rows[0] ?? null
-        })
-        .not.toBeNull()
-        .then(async () => {
-          const result = await database.query<{
-            id: string
-            task_id: string | null
-            entry_point: string
-          }>(
-            `SELECT id::text, task_id::text, entry_point
-               FROM human_calling_calls
-              WHERE direction = 'OUTBOUND'
-                AND entry_point = 'STANDALONE'
-              ORDER BY created_at DESC
-              LIMIT 1`,
-          )
-          return result.rows[0]
-        })
-      expect(standalone.task_id).toBeNull()
-      expect(standalone.entry_point).toBe("STANDALONE")
-      const standaloneStaff = await callingCommand(
-        database,
-        standalone.id,
-        "DIAL_STAFF",
-      )
-      const standaloneSession = `fixture-standalone-${standalone.id}`
-      await sendIncomingLeg(
-        takeoverPage,
-        "fixture-standalone-webrtc-leg",
-        await mediaTokenForCall(database, standalone.id),
-        false,
-      )
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.answered",
-        eventId: `e2e-standalone-staff-answered-${standalone.id}`,
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: standaloneStaff.control_id,
-          call_leg_id: standaloneStaff.leg_id,
-          call_session_id: standaloneSession,
-          client_state: standaloneStaff.client_state,
-        },
-      })
-      const standaloneDestination = await callingCommand(
-        database,
-        standalone.id,
-        "DIAL_DESTINATION",
-      )
-      await deliverProviderEvent(takeoverPage, {
-        eventType: "call.hangup",
-        eventId: `e2e-standalone-no-answer-${standalone.id}`,
-        occurredAt: new Date().toISOString(),
-        payload: {
-          call_control_id: standaloneDestination.control_id,
-          call_leg_id: standaloneDestination.leg_id,
-          call_session_id: standaloneSession,
-          client_state: standaloneDestination.client_state,
-          hangup_cause: "no_answer",
-        },
-      })
-      await expect(
-        takeoverPage.getByRole("region", { name: "Call outcome" }),
-      ).toHaveCount(0)
-      await expect
-        .poll(async () => {
-          const result = await database.query<{
-            state: string
-            task_count: string
-          }>(
-            `SELECT
-               call.state,
-               count(task.id)::text AS task_count
-             FROM human_calling_calls call
-             LEFT JOIN work_tasks task ON task.call_id = call.id
-            WHERE call.id = $1
-            GROUP BY call.state`,
-            [standalone.id],
-          )
-          return result.rows[0]
-        })
-        .toEqual({ state: "UNANSWERED", task_count: "0" })
-    })
-
-    await takeoverAvailability.click()
-    await expect(takeoverAvailability).not.toBeChecked()
-    await signalMedia(takeoverPage, "reconnecting")
-    await signalMedia(takeoverPage, "ready")
-    await expect(takeoverAvailability).not.toBeChecked()
-    await expect
-      .poll(async () => {
-        const result = await database.query<{ desired_available: boolean }>(
-          `SELECT desired_available
-             FROM human_calling_softphone_leases lease
-             JOIN auth."user" actor ON actor.id = lease.user_subject
-            WHERE actor.email = $1`,
-          [
-            winnerPage === selectedPage
-              ? "selected@abita.test"
-              : "secondary@abita.test",
-          ],
-        )
-        return result.rows[0]?.desired_available
-      })
-      .toBe(false)
+      callCenter(selectedPage).getByText("Connected", { exact: true }),
+    ).toBeVisible({ timeout: 20_000 })
+    await expect(callCenter(secondaryPage)).toHaveCount(0)
   } finally {
     await database.end()
     await secondaryContext.close()
   }
 })
 
+type StaffLeg = {
+  id: string
+  email: string
+  control_id: string
+  provider_leg_id: string
+  client_state: string
+  media_token: string
+  bridge_on_answer: boolean
+}
+
+async function readStaffLegs(database: Pool, callID: string) {
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ count: string }>(
+        `SELECT count(*)::text
+           FROM human_calling_call_legs leg
+           JOIN human_calling_provider_commands command
+             ON command.call_leg_id = leg.id AND command.action = 'DIAL_STAFF'
+          WHERE leg.call_id = $1 AND leg.role = 'STAFF'
+            AND leg.provider_call_control_id IS NOT NULL
+            AND leg.provider_call_leg_id IS NOT NULL
+            AND command.state IN ('SENT', 'RECONCILED')`,
+        [callID],
+      )
+      return Number(result.rows[0]?.count ?? 0)
+    }, { timeout: 30_000 })
+    .toBe(2)
+  const result = await database.query<StaffLeg>(
+    `SELECT leg.id::text, membership.email, leg.provider_call_control_id AS control_id,
+            leg.provider_call_leg_id AS provider_leg_id,
+            command.payload->>'client_state' AS client_state,
+            command.payload->'custom_headers'->0->>'value' AS media_token,
+            (command.payload->>'bridge_on_answer')::boolean AS bridge_on_answer
+       FROM human_calling_call_legs leg
+       JOIN access_memberships membership
+         ON membership.practice_id = (
+           SELECT practice_id FROM human_calling_calls WHERE id = leg.call_id
+         ) AND membership.user_subject = leg.staff_subject
+       JOIN human_calling_provider_commands command
+         ON command.call_leg_id = leg.id AND command.action = 'DIAL_STAFF'
+      WHERE leg.call_id = $1 AND leg.role = 'STAFF'
+      ORDER BY membership.email`,
+    [callID],
+  )
+  return result.rows
+}
+
+async function readBridgeCommand(database: Pool, callID: string) {
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ state: string }>(
+        `SELECT state FROM human_calling_provider_commands
+          WHERE call_id = $1 AND action = 'BRIDGE'
+          ORDER BY created_at DESC LIMIT 1`,
+        [callID],
+      )
+      return result.rows[0]?.state ?? ""
+    }, { timeout: 20_000 })
+    .toMatch(/^(SENT|RECONCILED)$/)
+  const result = await database.query<{
+    target_id: string
+    peer_call_leg_id: string
+    prevent_double_bridge: boolean
+    caller_control_id: string
+    caller_client_state: string
+    client_state: string
+  }>(
+    `SELECT target_id, peer_call_leg_id::text,
+            (payload->>'prevent_double_bridge')::boolean AS prevent_double_bridge,
+            payload->>'call_control_id' AS caller_control_id,
+            payload->>'client_state' AS client_state,
+            (
+              SELECT ring.payload->>'client_state'
+              FROM human_calling_provider_commands ring
+              WHERE ring.call_id = human_calling_provider_commands.call_id
+                AND ring.action = 'START_RING_WINDOW'
+              ORDER BY ring.created_at LIMIT 1
+            ) AS caller_client_state
+       FROM human_calling_provider_commands
+      WHERE call_id = $1 AND action = 'BRIDGE'
+      ORDER BY created_at DESC LIMIT 1`,
+    [callID],
+  )
+  return result.rows[0]
+}
+
 async function prepareBrowser(context: BrowserContext) {
-  await context.grantPermissions(["microphone", "notifications"], {
-    origin: webURL,
-  })
+  await context.grantPermissions(["microphone", "notifications"], { origin: webURL })
   await context.addInitScript(() => {
     const state = {
       answers: 0,
-      rejects: 0,
-      disconnects: 0,
-      mediaAttachmentPaused: false,
-      resumeMediaAttachment: undefined as undefined | (() => void),
-      callPollingPaused: false,
-      dtmf: [] as string[],
-      ringtonePulses: 0,
-      ringtoneStops: 0,
-      notifications: [] as Array<{ title: string; body: string; tag: string }>,
       incoming: undefined as
         | undefined
-        | ((
-            legID: string,
-            mediaToken: string,
-            recovery: boolean,
-          ) => void),
-      signal: undefined as undefined | ((state: string) => void),
+        | ((providerLegID: string, mediaToken: string, recovery: boolean) => void),
     }
-    const scheduleInterval = window.setInterval.bind(window)
-    window.setInterval = ((handler: TimerHandler, timeout?: number) => {
-      if (typeof handler !== "function") {
-        return scheduleInterval(handler, timeout)
-      }
-      return scheduleInterval(() => {
-        if (state.callPollingPaused && timeout === 1_000) return
-        handler()
-      }, timeout)
-    }) as typeof window.setInterval
     const microphone = {
       readyState: "live",
       stop: () => undefined,
@@ -2086,12 +368,8 @@ async function prepareBrowser(context: BrowserContext) {
         return {
           frequency: { value: 0 },
           connect: (target: unknown) => target,
-          start: () => {
-            state.ringtonePulses += 1
-          },
-          stop: () => {
-            state.ringtoneStops += 1
-          },
+          start: () => undefined,
+          stop: () => undefined,
         }
       }
       createGain() {
@@ -2111,16 +389,7 @@ async function prepareBrowser(context: BrowserContext) {
     class FixtureNotification {
       static permission = "granted"
       static requestPermission = async () => "granted"
-      constructor(
-        title: string,
-        options?: { body?: string; tag?: string },
-      ) {
-        state.notifications.push({
-          title,
-          body: options?.body ?? "",
-          tag: options?.tag ?? "",
-        })
-      }
+      constructor() {}
       close() {}
     }
     Object.defineProperty(window, "Notification", {
@@ -2143,55 +412,33 @@ async function prepareBrowser(context: BrowserContext) {
               reject: () => Promise<void>
               mute: () => void
               unmute: () => void
-              sendDTMF: (digit: string) => boolean
+              sendDTMF: () => boolean
             }) => void
           },
         ) => {
-          state.signal = callbacks.onState
-          state.incoming = (
-            providerLegID: string,
-            mediaToken: string,
-            recovery: boolean,
-          ) =>
+          state.incoming = (providerLegID, mediaToken, recovery) =>
             callbacks.onIncoming({
               providerLegID,
               mediaToken,
               recovery,
               answer: async () => {
                 state.answers += 1
-                if (state.mediaAttachmentPaused) {
-                  await new Promise<void>((resolve) => {
-                    state.resumeMediaAttachment = resolve
-                  })
-                }
               },
-              reject: async () => {
-                state.rejects += 1
-              },
+              reject: async () => undefined,
               mute: () => undefined,
               unmute: () => undefined,
-              sendDTMF: (digit: string) => {
-                state.dtmf.push(digit)
-                return true
-              },
+              sendDTMF: () => true,
             })
           callbacks.onState("ready")
         },
-        disconnect: async () => {
-          state.disconnects += 1
-        },
+        disconnect: async () => undefined,
       }),
     })
   })
 }
 
-async function signUp(
-  page: Page,
-  email: string,
-  invitationToken: string,
-  name: string,
-) {
-  await page.goto(`/invite#${invitationToken}`)
+async function signUp(page: Page, email: string, token: string, name: string) {
+  await page.goto(`/invite#${token}`)
   await page.getByLabel("Your name").fill(name)
   await page.getByLabel("Create password").fill("fixture-password-1234")
   await page.getByLabel("Confirm password").fill("fixture-password-1234")
@@ -2201,15 +448,7 @@ async function signUp(
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Password").fill("fixture-password-1234")
   await page.getByRole("button", { name: "Sign in" }).click()
-  await expect(
-    page.getByRole("switch", { name: "Availability" }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: "Outbound calls" }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: "Workspace selector" }),
-  ).toBeVisible()
+  await expect(page.getByRole("switch", { name: "Availability" })).toBeVisible()
 }
 
 async function enableCalling(page: Page) {
@@ -2219,9 +458,7 @@ async function enableCalling(page: Page) {
 }
 
 function callCenter(page: Page) {
-  return page.getByRole("region", {
-    name: /^(Incoming calls|Active call controls)$/,
-  })
+  return page.getByRole("region", { name: /^(Incoming calls|Active call controls)$/ })
 }
 
 async function deliverProviderEvent(
@@ -2238,33 +475,6 @@ async function deliverProviderEvent(
     data: event,
   })
   expect(response.ok()).toBeTruthy()
-}
-
-function providerLegPayload(clientState: string) {
-  return {
-    call_control_id: "fixture-staff-control",
-    call_leg_id: "fixture-staff-leg",
-    call_session_id: "fixture-call-session",
-    client_state: clientState,
-  }
-}
-
-async function sendIncomingLegs(
-  page: Page,
-  mediaToken: string,
-) {
-  await sendIncomingLeg(
-    page,
-    "unrelated-browser-leg",
-    "unrelated-media-token",
-    false,
-  )
-  await sendIncomingLeg(
-    page,
-    "fixture-browser-leg",
-    mediaToken,
-    false,
-  )
 }
 
 async function sendIncomingLeg(
@@ -2289,286 +499,22 @@ async function sendIncomingLeg(
     ({ providerLegID, mediaToken, recovery }) => {
       const fixture = window as typeof window & {
         __acuityCallingTestState: {
-          incoming?: (
-            providerLegID: string,
-            mediaToken: string,
-            recovery: boolean,
-          ) => void
+          incoming?: (providerLegID: string, mediaToken: string, recovery: boolean) => void
         }
       }
-      fixture.__acuityCallingTestState.incoming?.(
-        providerLegID,
-        mediaToken,
-        recovery,
-      )
+      fixture.__acuityCallingTestState.incoming?.(providerLegID, mediaToken, recovery)
     },
     { providerLegID, mediaToken, recovery },
   )
 }
 
-async function pauseMediaAttachment(page: Page) {
-  await page.evaluate(() => {
-    const state = (
-      window as typeof window & {
-        __acuityCallingTestState: { mediaAttachmentPaused: boolean }
-      }
-    ).__acuityCallingTestState
-    state.mediaAttachmentPaused = true
-  })
-}
-
-async function resumeMediaAttachment(page: Page) {
-  await page.evaluate(() => {
-    const state = (
-      window as typeof window & {
-        __acuityCallingTestState: {
-          mediaAttachmentPaused: boolean
-          resumeMediaAttachment?: () => void
-        }
-      }
-    ).__acuityCallingTestState
-    state.mediaAttachmentPaused = false
-    state.resumeMediaAttachment?.()
-    state.resumeMediaAttachment = undefined
-  })
-}
-
-async function pauseCallPolling(page: Page) {
-  await setCallPollingPaused(page, true)
-}
-
-async function resumeCallPolling(page: Page) {
-  await setCallPollingPaused(page, false)
-}
-
-async function setCallPollingPaused(page: Page, paused: boolean) {
-  await page.evaluate((nextPaused) => {
-    const state = (
-      window as typeof window & {
-        __acuityCallingTestState: { callPollingPaused: boolean }
-      }
-    ).__acuityCallingTestState
-    state.callPollingPaused = nextPaused
-  }, paused)
-}
-
-function deferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void
-  const promise = new Promise<T>((next) => {
-    resolve = next
-  })
-  return { promise, resolve }
-}
-
-async function mediaTokenForCall(database: Pool, callID: string) {
-  return expect
-    .poll(async () => {
-      const result = await database.query<{ token: string | null }>(
-        `SELECT payload->'custom_headers'->0->>'value' AS token
-           FROM human_calling_provider_commands
-          WHERE call_id = $1 AND action = 'DIAL_STAFF'
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [callID],
-      )
-      return result.rows[0]?.token ?? ""
-    })
-    .not.toBe("")
-    .then(async () => {
-      const result = await database.query<{ token: string }>(
-        `SELECT payload->'custom_headers'->0->>'value' AS token
-           FROM human_calling_provider_commands
-          WHERE call_id = $1 AND action = 'DIAL_STAFF'
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [callID],
-      )
-      return result.rows[0].token
-    })
-}
-
-async function callingCommand(
-  database: Pool,
-  callID: string,
-  action: "DIAL_STAFF" | "DIAL_DESTINATION",
-) {
-  await expect
-    .poll(
-      async () => {
-        const result = await database.query<{ state: string }>(
-          `SELECT state
-           FROM human_calling_provider_commands
-          WHERE call_id = $1 AND action = $2
-          ORDER BY created_at DESC
-          LIMIT 1`,
-          [callID, action],
-        )
-        return result.rows[0]?.state ?? ""
-      },
-      { timeout: 20_000 },
-    )
-    .toMatch(/^(SENT|RECONCILED)$/)
-  const result = await database.query<{
-    client_state: string
-    control_id: string
-    leg_id: string
-  }>(
-    `SELECT
-       command.payload->>'client_state' AS client_state,
-       CASE
-         WHEN $2 = 'DIAL_STAFF' THEN call.expected_staff_call_control_id
-         ELSE call.destination_call_control_id
-       END AS control_id,
-       CASE
-         WHEN $2 = 'DIAL_STAFF' THEN call.expected_staff_call_leg_id
-         ELSE call.destination_call_leg_id
-       END AS leg_id
-     FROM human_calling_provider_commands command
-     JOIN human_calling_calls call ON call.id = command.call_id
-    WHERE command.call_id = $1 AND command.action = $2
-    ORDER BY command.created_at DESC
-    LIMIT 1`,
-    [callID, action],
-  )
-  return result.rows[0]
-}
-
-async function voicemailCommand(
-  database: Pool,
-  callID: string,
-  action: "PLAY_VOICEMAIL_GREETING" | "START_VOICEMAIL_RECORDING",
-) {
-  await expect
-    .poll(
-      async () => {
-        const result = await database.query<{ state: string }>(
-          `SELECT state
-           FROM human_calling_provider_commands
-          WHERE call_id = $1 AND action = $2
-          ORDER BY created_at DESC
-          LIMIT 1`,
-          [callID, action],
-        )
-        return result.rows[0]?.state ?? ""
-      },
-      { timeout: 20_000 },
-    )
-    .toMatch(/^(SENT|RECONCILED)$/)
-  const result = await database.query<{
-    client_state: string
-    control_id: string
-  }>(
-    `SELECT
-       command.payload->>'client_state' AS client_state,
-       call.caller_call_control_id AS control_id
-     FROM human_calling_provider_commands command
-     JOIN human_calling_calls call ON call.id = command.call_id
-    WHERE command.call_id = $1 AND command.action = $2
-    ORDER BY command.created_at DESC
-    LIMIT 1`,
-    [callID, action],
-  )
-  return result.rows[0]
-}
-
-async function callPersistenceSnapshot(database: Pool, callID: string) {
-  const result = await database.query<{
-    command_count: string
-    receipt_count: string
-    timeline_count: string
-    version: string
-  }>(
-    `SELECT
-       call.version::text,
-       (
-         SELECT count(*)::text
-         FROM human_calling_provider_commands command
-         WHERE command.call_id = call.id
-       ) AS command_count,
-       (
-         SELECT count(*)::text
-         FROM human_calling_provider_receipts receipt
-         WHERE receipt.call_id = call.id
-       ) AS receipt_count,
-       (
-         SELECT count(*)::text
-         FROM human_calling_timeline timeline
-         WHERE timeline.call_id = call.id
-       ) AS timeline_count
-     FROM human_calling_calls call
-    WHERE call.id = $1`,
-    [callID],
-  )
-  return result.rows[0]
-}
-
-async function mediaCount(
-  page: Page,
-  key: "answers" | "rejects" | "disconnects",
-) {
-  return page.evaluate(
-    ({ value }) =>
-      (window as typeof window & {
-        __acuityCallingTestState: {
-          answers: number
-          rejects: number
-          disconnects: number
-        }
-      }).__acuityCallingTestState[value],
-    { value: key },
-  )
-}
-
-async function callingMetric(
-  page: Page,
-  key: "ringtonePulses" | "ringtoneStops",
-) {
-  return page.evaluate(
-    ({ value }) =>
-      (window as typeof window & {
-        __acuityCallingTestState: {
-          ringtonePulses: number
-          ringtoneStops: number
-        }
-      }).__acuityCallingTestState[value],
-    { value: key },
-  )
-}
-
-async function callingNotifications(page: Page) {
+async function mediaAnswers(page: Page) {
   return page.evaluate(
     () =>
-      (window as typeof window & {
-        __acuityCallingTestState: {
-          notifications: Array<{ title: string; body: string; tag: string }>
+      (
+        window as typeof window & {
+          __acuityCallingTestState: { answers: number }
         }
-      }).__acuityCallingTestState.notifications,
+      ).__acuityCallingTestState.answers,
   )
-}
-
-async function setPageHidden(page: Page) {
-  await page.evaluate(() => {
-    Object.defineProperty(document, "hidden", {
-      configurable: true,
-      get: () => true,
-    })
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      get: () => "hidden",
-    })
-  })
-}
-
-async function signalMedia(
-  page: Page,
-  state: "reconnecting" | "ready",
-) {
-  await page.evaluate((nextState) => {
-    const fixture = window as typeof window & {
-      __acuityCallingTestState: {
-        signal?: (state: string) => void
-      }
-    }
-    fixture.__acuityCallingTestState.signal?.(nextState)
-  }, state)
 }

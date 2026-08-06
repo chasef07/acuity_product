@@ -680,110 +680,30 @@ func (server *Server) IssueCallingMediaToken(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (server *Server) ListCallingOffers(w http.ResponseWriter, r *http.Request) {
+func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
 	identity, ok := server.callingIdentity(w, r)
 	if !ok {
 		return
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	offers, err := server.calling.ListOffers(ctx, identity)
+	state, err := server.calling.ReadCallingState(ctx, identity)
 	if err != nil {
 		server.writeCallingError(w, r, err)
 		return
 	}
-	response := api.CallingOfferList{Items: make([]api.CallingOffer, 0, len(offers))}
-	for _, offer := range offers {
-		converted, err := callingOfferResponse(offer)
-		if err != nil {
-			server.writeCallingError(w, r, err)
-			return
-		}
-		response.Items = append(response.Items, converted)
+	if r.Header.Get("If-None-Match") == state.ETag {
+		w.Header().Set("ETag", state.ETag)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("ETag", state.ETag)
+	response, err := callingStateResponse(state)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) ListLiveCalls(
-	w http.ResponseWriter,
-	r *http.Request,
-	params api.ListLiveCallsParams,
-) {
-	identity, ok := server.callingIdentity(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.databaseContext(r)
-	defer cancel()
-	liveCalls, err := server.calling.ListLiveCalls(
-		ctx,
-		identity,
-		params.PracticeId.String(),
-		uuidString(params.LocationId),
-	)
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	response := api.LiveCallPage{Items: make([]api.LiveCall, 0, len(liveCalls))}
-	for _, liveCall := range liveCalls {
-		item, err := liveCallResponse(liveCall)
-		if err != nil {
-			server.writeCallingError(w, r, err)
-			return
-		}
-		response.Items = append(response.Items, item)
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) AcceptCallingOffer(
-	w http.ResponseWriter,
-	r *http.Request,
-	callID openapi_types.UUID,
-) {
-	identity, ok := server.callingIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.AcceptCallingOfferRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.databaseContext(r)
-	defer cancel()
-	result, err := server.calling.AcceptOffer(ctx, identity, body.SessionId, callID.String())
-	if err != nil {
-		outcome := observability.AcceptFailed
-		if errors.Is(err, humancalling.ErrDenied) {
-			outcome = observability.AcceptDenied
-		}
-		observability.Record(server.observer, observability.CallAccepted(outcome))
-		server.writeCallingError(w, r, err)
-		return
-	}
-	outcome := observability.AcceptFailed
-	switch result.Status {
-	case humancalling.Accepted:
-		outcome = observability.AcceptWon
-	case humancalling.AlreadyClaimed:
-		outcome = observability.AcceptAlreadyClaimed
-	case humancalling.AcceptExpired:
-		outcome = observability.AcceptExpired
-	case humancalling.AcceptIneligible:
-		outcome = observability.AcceptIneligible
-	}
-	observability.Record(server.observer, observability.CallAccepted(outcome))
-	convertedID, err := uuid.Parse(result.CallID)
-	if err != nil {
-		server.writeCallingError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, api.AcceptCallingOfferResult{
-		CallId: convertedID,
-		Status: api.AcceptCallingOfferResultStatus(result.Status),
-		State:  api.AcceptCallingOfferResultState(result.State),
-	})
 }
 
 func (server *Server) GetCallingCall(
@@ -2173,8 +2093,7 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 		errors.Is(err, access.ErrSupportPracticeMismatch):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, humancalling.ErrConflict),
-		errors.Is(err, humancalling.ErrExpired),
-		errors.Is(err, humancalling.ErrAlreadyClaimed):
+		errors.Is(err, humancalling.ErrExpired):
 		server.writeError(w, r, http.StatusConflict, "CALL_CONFLICT", "The Call state changed. Refresh and try again.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
@@ -2570,53 +2489,74 @@ func softphoneResponse(state humancalling.SoftphoneState) api.SoftphoneState {
 	}
 }
 
-func callingOfferResponse(offer humancalling.Offer) (api.CallingOffer, error) {
-	id, err := uuid.Parse(offer.ID)
-	if err != nil {
-		return api.CallingOffer{}, err
+func callingStateResponse(state humancalling.CallingState) (api.CallingState, error) {
+	response := api.CallingState{
+		Softphone: softphoneResponse(state.Softphone),
+		Ringing:   make([]api.RingingCallLeg, 0, len(state.Ringing)),
 	}
-	practiceID, err := uuid.Parse(offer.PracticeID)
-	if err != nil {
-		return api.CallingOffer{}, err
+	for _, leg := range state.Ringing {
+		callID, err := uuid.Parse(leg.CallID)
+		if err != nil {
+			return api.CallingState{}, err
+		}
+		callLegID, err := uuid.Parse(leg.CallLegID)
+		if err != nil {
+			return api.CallingState{}, err
+		}
+		practiceID, err := uuid.Parse(leg.PracticeID)
+		if err != nil {
+			return api.CallingState{}, err
+		}
+		locationID, err := uuid.Parse(leg.LocationID)
+		if err != nil {
+			return api.CallingState{}, err
+		}
+		response.Ringing = append(response.Ringing, api.RingingCallLeg{
+			CallId: callID, CallLegId: callLegID, PracticeId: practiceID,
+			MediaToken: leg.MediaToken,
+			LocationId: locationID, LocationName: leg.LocationName,
+			DisplayName: leg.DisplayName, TransferReason: leg.TransferReason,
+			State: api.RingingCallLegState(leg.State), Version: leg.Version,
+			CreatedAt: leg.CreatedAt,
+		})
 	}
-	locationID, err := uuid.Parse(offer.LocationID)
-	if err != nil {
-		return api.CallingOffer{}, err
+	convert := func(call *humancalling.CallingStateCall) (*api.CallingStateCall, error) {
+		if call == nil {
+			return nil, nil
+		}
+		callID, err := uuid.Parse(call.CallID)
+		if err != nil {
+			return nil, err
+		}
+		callLegID, err := uuid.Parse(call.CallLegID)
+		if err != nil {
+			return nil, err
+		}
+		practiceID, err := uuid.Parse(call.PracticeID)
+		if err != nil {
+			return nil, err
+		}
+		locationID, err := uuid.Parse(call.LocationID)
+		if err != nil {
+			return nil, err
+		}
+		return &api.CallingStateCall{
+			CallId: callID, CallLegId: callLegID, PracticeId: practiceID,
+			LocationId: locationID, LocationName: call.LocationName,
+			State: call.State, Version: call.Version,
+		}, nil
 	}
-	return api.CallingOffer{
-		Id:             id,
-		PracticeId:     practiceID,
-		LocationId:     locationID,
-		LocationName:   offer.LocationName,
-		DisplayName:    offer.DisplayName,
-		NameSource:     offer.NameSource,
-		TransferReason: offer.TransferReason,
-		ReasonSource:   offer.ReasonSource,
-		Deadline:       offer.Deadline,
-		State:          api.CallingOfferState(offer.State),
-		Version:        offer.Version,
-	}, nil
-}
-
-func liveCallResponse(call humancalling.LiveCall) (api.LiveCall, error) {
-	id, err := uuid.Parse(call.ID)
-	if err != nil {
-		return api.LiveCall{}, err
+	var err error
+	if response.Bridged, err = convert(state.Bridged); err != nil {
+		return api.CallingState{}, err
 	}
-	locationID, err := uuid.Parse(call.LocationID)
-	if err != nil {
-		return api.LiveCall{}, err
+	if response.Voicemail, err = convert(state.Voicemail); err != nil {
+		return api.CallingState{}, err
 	}
-	return api.LiveCall{
-		Id:           id,
-		LocationId:   locationID,
-		LocationName: call.LocationName,
-		Phone:        call.Phone,
-		Direction:    api.LiveCallDirection(call.Direction),
-		StaffSubject: call.StaffSubject,
-		StaffEmail:   call.StaffEmail,
-		ConnectedAt:  call.ConnectedAt,
-	}, nil
+	if response.Disposition, err = convert(state.Disposition); err != nil {
+		return api.CallingState{}, err
+	}
+	return response, nil
 }
 
 func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
@@ -2640,7 +2580,6 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		Direction:           api.CallingCallDirection(call.Direction),
 		EntryPoint:          api.CallingCallEntryPoint(call.EntryPoint),
 		State:               api.CallingCallState(call.State),
-		Deadline:            call.Deadline,
 		Phone:               call.Phone,
 		CallerId:            call.CallerID,
 		PhoneSource:         call.PhoneSource,
@@ -2648,9 +2587,6 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		NameSource:          call.NameSource,
 		TransferReason:      call.TransferReason,
 		ReasonSource:        call.ReasonSource,
-		ExpectedStaffLegId:  call.ExpectedStaffLegID,
-		ExpectedMediaToken:  call.ExpectedMediaToken,
-		MediaReady:          call.MediaReady,
 		ProviderTermination: call.ProviderTermination,
 		RetryAllowed:        call.RetryAllowed,
 		Version:             call.Version,
@@ -2686,15 +2622,6 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 	}
 	if call.ConnectedAt != nil {
 		response.ConnectedAt = call.ConnectedAt
-	}
-	if call.Recording.State != "" {
-		recording := api.CallingRecording{
-			State: api.CallingRecordingState(call.Recording.State),
-		}
-		if call.Recording.FailureCode != "" {
-			recording.FailureCode = &call.Recording.FailureCode
-		}
-		response.Recording = &recording
 	}
 	if call.Voicemail.Outcome != "" {
 		taskID, err := uuid.Parse(call.Voicemail.TaskID)

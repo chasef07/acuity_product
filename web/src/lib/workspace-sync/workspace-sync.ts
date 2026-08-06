@@ -20,7 +20,6 @@ type WorkspaceSyncOptions = {
     signal: AbortSignal
     minimumVersion: number
   }) => Promise<Reconciliation>
-  onValidatedHint?: () => void
   onStateChange: (state: WorkspaceSyncState) => void
   onUnauthorized?: () => void
   random?: () => number
@@ -167,9 +166,7 @@ export function createWorkspaceSync(
 
     function queueHint(version: number) {
       if (signal.aborted) return
-      const newlyObserved = version > highestHint && version > appliedVersion
       highestHint = Math.max(highestHint, version)
-      if (newlyObserved) options.onValidatedHint?.()
       if (
         highestHint <= appliedVersion ||
         reconciliation ||

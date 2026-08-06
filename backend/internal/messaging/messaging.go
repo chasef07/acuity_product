@@ -22,6 +22,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -196,7 +197,7 @@ func (m *Module) QueryEngagements(
 				call.updated_at,
 				COALESCE(handoff.display_name, '')
 			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 			WHERE call.practice_id = $1
 				AND call.location_id::text = ANY($2::text[])
 				AND COALESCE(handoff.phone, call.destination_phone) = $3
@@ -266,7 +267,7 @@ func (m *Module) QueryEngagements(
 			UNION
 			SELECT call.location_id
 			FROM human_calling_calls call
-			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 			WHERE call.practice_id = $1
 				AND COALESCE(handoff.phone, call.destination_phone) = $3
 			UNION
@@ -506,10 +507,10 @@ func (m *Module) QueryPhoneTimeline(
 			call.created_at,
 			call.ended_at,
 			CASE
-				WHEN call.connected_at IS NOT NULL AND call.ended_at IS NOT NULL
+				WHEN bridged_staff.bridged_at IS NOT NULL AND call.ended_at IS NOT NULL
 				THEN GREATEST(
 					0,
-					EXTRACT(EPOCH FROM (call.ended_at - call.connected_at))::bigint
+					EXTRACT(EPOCH FROM (call.ended_at - bridged_staff.bridged_at))::bigint
 				)
 				ELSE 0
 			END,
@@ -517,15 +518,35 @@ func (m *Module) QueryPhoneTimeline(
 			location.name,
 			COALESCE(membership.email, ''),
 			COALESCE(handoff.transfer_reason, ''),
-			call.state
+			CASE
+				WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
+					THEN 'FOLLOW_UP_REQUIRED'
+				WHEN call.disposition_outcome IS NOT NULL THEN 'RESOLVED'
+				WHEN call.terminal_outcome = 'VOICEMAIL' THEN 'VOICEMAIL'
+				WHEN call.terminal_outcome IN ('MISSED', 'ABANDONED') THEN 'MISSED'
+				WHEN call.terminal_outcome IS NOT NULL AND bridged_staff.id IS NOT NULL
+					THEN 'NEEDS_DISPOSITION'
+				WHEN call.terminal_outcome IS NOT NULL THEN 'UNANSWERED'
+				WHEN bridged_staff.state = 'BRIDGED' THEN 'CONNECTED'
+				WHEN bridged_staff.state = 'BRIDGE_PENDING' THEN 'CONNECTING'
+				ELSE 'RINGING'
+			END
 		FROM human_calling_calls call
-		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
+		LEFT JOIN LATERAL (
+			SELECT leg.id, leg.staff_subject, leg.state, leg.bridged_at
+			FROM human_calling_call_legs leg
+			WHERE leg.call_id = call.id AND leg.role = 'STAFF'
+				AND leg.bridged_at IS NOT NULL
+			ORDER BY leg.bridged_at DESC NULLS LAST, leg.updated_at DESC, leg.id DESC
+			LIMIT 1
+		) bridged_staff ON true
 		LEFT JOIN access_memberships membership
 			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = call.winner_subject
+			AND membership.user_subject = bridged_staff.staff_subject
 		WHERE call.practice_id = $1
 			AND call.location_id::text = ANY($2::text[])
 			AND COALESCE(handoff.phone, call.destination_phone) = $3
@@ -736,7 +757,7 @@ type Provider interface {
 }
 
 type Config struct {
-	WebhookPublicKey   ed25519.PublicKey
+	WebhookPublicKeys  []ed25519.PublicKey
 	WebhookTolerance   time.Duration
 	AttachmentStore    AttachmentObjectStore
 	MediaPublicBaseURL string
@@ -1911,8 +1932,10 @@ func (m *Module) ReceiveWebhook(
 	signatureTimestamp string,
 	signature string,
 ) (WebhookReceipt, error) {
-	if m.pool == nil ||
-		len(m.config.WebhookPublicKey) != ed25519.PublicKeySize ||
+	verifier, validVerifier := telnyxsignature.New(
+		m.config.WebhookPublicKeys, m.config.WebhookTolerance, m.now,
+	)
+	if m.pool == nil || !validVerifier ||
 		m.config.WebhookTolerance <= 0 ||
 		len(rawBody) == 0 ||
 		len(rawBody) > 2*1024*1024 {
@@ -1931,13 +1954,7 @@ func (m *Module) ReceiveWebhook(
 		delta > m.config.WebhookTolerance {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
-	decodedSignature, err := base64.StdEncoding.DecodeString(signature)
-	if err != nil ||
-		!ed25519.Verify(
-			m.config.WebhookPublicKey,
-			append([]byte(signatureTimestamp+"|"), rawBody...),
-			decodedSignature,
-		) {
+	if !verifier.Verify(rawBody, signatureTimestamp, signature) {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
 	envelope, err := decodeWebhook(rawBody)
@@ -2269,7 +2286,7 @@ func (m *Module) QueryThreads(
 				SELECT call.created_at
 				FROM human_calling_calls call
 				JOIN human_calling_handoffs handoff
-					ON handoff.id = call.handoff_id
+					ON handoff.id = call.source_handoff_id
 				WHERE call.practice_id = thread.practice_id
 					AND call.location_id = thread.location_id
 					AND handoff.phone = thread.external_phone
@@ -2487,10 +2504,10 @@ func (m *Module) QueryTimeline(
 			call.created_at,
 			call.ended_at,
 			CASE
-				WHEN call.connected_at IS NOT NULL AND call.ended_at IS NOT NULL
+				WHEN bridged_staff.bridged_at IS NOT NULL AND call.ended_at IS NOT NULL
 				THEN GREATEST(
 					0,
-					EXTRACT(EPOCH FROM (call.ended_at - call.connected_at))::bigint
+					EXTRACT(EPOCH FROM (call.ended_at - bridged_staff.bridged_at))::bigint
 				)
 				ELSE 0
 			END,
@@ -2498,15 +2515,35 @@ func (m *Module) QueryTimeline(
 			location.name,
 			COALESCE(membership.email, ''),
 			COALESCE(handoff.transfer_reason, ''),
-			call.state
+			CASE
+				WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
+					THEN 'FOLLOW_UP_REQUIRED'
+				WHEN call.disposition_outcome IS NOT NULL THEN 'RESOLVED'
+				WHEN call.terminal_outcome = 'VOICEMAIL' THEN 'VOICEMAIL'
+				WHEN call.terminal_outcome IN ('MISSED', 'ABANDONED') THEN 'MISSED'
+				WHEN call.terminal_outcome IS NOT NULL AND bridged_staff.id IS NOT NULL
+					THEN 'NEEDS_DISPOSITION'
+				WHEN call.terminal_outcome IS NOT NULL THEN 'UNANSWERED'
+				WHEN bridged_staff.state = 'BRIDGED' THEN 'CONNECTED'
+				WHEN bridged_staff.state = 'BRIDGE_PENDING' THEN 'CONNECTING'
+				ELSE 'RINGING'
+			END
 		FROM human_calling_calls call
-		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.handoff_id
+		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
+		LEFT JOIN LATERAL (
+			SELECT leg.id, leg.staff_subject, leg.state, leg.bridged_at
+			FROM human_calling_call_legs leg
+			WHERE leg.call_id = call.id AND leg.role = 'STAFF'
+				AND leg.bridged_at IS NOT NULL
+			ORDER BY leg.bridged_at DESC NULLS LAST, leg.updated_at DESC, leg.id DESC
+			LIMIT 1
+		) bridged_staff ON true
 		LEFT JOIN access_memberships membership
 			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = call.winner_subject
+			AND membership.user_subject = bridged_staff.staff_subject
 		WHERE call.practice_id = $1
 			AND call.location_id = $2
 			AND COALESCE(handoff.phone, call.destination_phone) = $3

@@ -77,7 +77,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 36. As a practice staff member, I want abandoned or spam calls without meaningful caller context to remain in the call log rather than creating tasks, so that the queue stays useful.
 37. As a staff member, I want to answer, mute, use the keypad, hold, transfer, and end a human call from the engagement workspace, so that calling does not require a separate product.
 38. As a staff member, I want the active human call to remain mounted while I inspect SMS and call history, so that navigating the workspace cannot accidentally destroy the call.
-39. As a staff member, I want human inbound calls recorded and transcribed after I connect, so that the resulting work has evidence.
+39. As a staff member, I want provider-confirmed human inbound call outcomes and quality facts captured after I connect, so that the resulting work has evidence without recording the conversation.
 40. As a staff member, I want staff-initiated outbound calls recorded and transcribed, so that follow-up conversations are captured.
 41. As a staff member, I want an outbound call started from a task linked automatically to the task with its contact snapshot, so that I perform no filing work.
 42. As a staff member, I want to place a standalone outbound call from the Call Center, so that I can contact a patient before a task exists.
@@ -94,7 +94,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 53. As an operator, I want duplicate AI requests and provider webhooks to produce one durable result, so that retries do not duplicate work.
 54. As an operator, I want task updates to appear promptly in other staff browsers, so that the shared queue remains coordinated.
 55. As an operator, I want the portal to recover from a lost realtime connection by loading a fresh authoritative snapshot, so that stale sockets cannot lose state.
-56. As an operator, I want a searchable Recordings archive for every human inbound call, human outbound call, and voicemail, so that communication evidence remains accessible.
+56. As an operator, I want searchable human call history and a protected voicemail archive, so that communication evidence remains accessible without recording connected calls.
 57. As an operator, I want short-lived protected access to recordings rather than public URLs, so that sensitive audio is not exposed.
 58. As a product owner, I want every critical journey exercised against production-like Telnyx, SMS, Better Auth, and database dependencies before launch, so that August 6 is a production release rather than a demo.
 59. As an invited user, I want to verify my email and create my own password, so that no administrator creates or knows my credentials.
@@ -200,8 +200,8 @@ an analytics dashboard and does not reuse an existing portal implementation.
 Primary navigation:
 
 1. **Tasks** — default shared operating workspace.
-2. **Call Center** — availability, live offers, active human calls, and standalone dialer.
-3. **Recordings** — searchable human-call and voicemail archive.
+2. **Call Center** — availability, ringing CallLegs, active human calls, and standalone dialer.
+3. **Voicemail** — protected playback of provider-owned voicemail recordings.
 4. **Settings** — practice, location, staff, routing credentials, and integrations.
 
 Fixed task views:
@@ -228,21 +228,19 @@ Visual system:
 
 - Staff explicitly toggle Available before receiving transfers.
 - Only staff authorized for the call's practice and location are eligible.
-- An AI-to-human transfer simultaneously offers one logical call to every available, authorized staff member for the location.
+- An AI-to-human transfer answers the caller, starts one 20-second ringback window, and asks Telnyx to dial one independent CallLeg for every available, authorized staff member for the Location.
 - The transfer creates no task.
-- The first valid acceptance wins through an atomic PostgreSQL transition.
-- Losing or stale accept attempts receive an explicit already-claimed result.
-- The offer window is 20 seconds.
-- If no staff member answers, the provider routes the caller to voicemail.
+- The first eligible provider-confirmed Staff answer moves directly to `BRIDGE_PENDING` and commits one explicit Bridge command in the same PostgreSQL transaction.
+- Later Staff answers are ended; the browser never elects the winner.
+- If no Staff CallLeg bridges during the full ring window, HumanCalling starts the Location greeting and voicemail sequence.
 - A voicemail creates a task; a meaningful missed call without voicemail creates a callback task.
-- The winning staff member's workspace is populated with the available phone number, optional name, AI handoff details, SMS history, and call history.
+- The bridged Staff member's workspace is populated with the available phone number, optional name, AI handoff details, SMS history, and call history.
 - When an answered call ends, its durable disposition becomes `NEEDS_DISPOSITION`.
 - `Resolved on call` closes the disposition without creating a task.
 - `Create follow-up task` creates one prefilled task linked to the call, assigned to the winner, and initially `IN_PROGRESS`.
 - Human call state is not considered connected solely because a browser clicked Answer.
 - Telnyx provider events confirm ringing, answered legs, bridging, recording, and termination.
-- Human inbound recording begins after the staff connection.
-- Staff outbound calls are recorded from initiation.
+- Connected human calls are never recorded. Only voicemail uses Telnyx recording commands.
 - AI-only receptionist audio is outside the portal recording archive.
 - Browser calling uses one TelnyxRTC client per tab. The Telnyx SDK owns its signaling WebSocket and WebRTC media.
 
@@ -304,7 +302,7 @@ PostgreSQL
 
 - `Access` owns human and service principals, invitations, memberships, roles, location scope, and authorization decisions.
 - `Work` owns task creation, assignment, priority, status, completion, reopening, task activity, and queue projections.
-- `HumanCalling` owns availability, call offers, winner election, logical call state, bridge confirmation, disposition, canonical voicemail lifecycle, recording identity, authorization metadata, and playback audit. Telnyx voice behavior and provider-owned audio stay behind its provider adapter.
+- `HumanCalling` owns availability, Call and CallLeg state, provider-confirmed answer arbitration, explicit Bridge commands, disposition, canonical voicemail lifecycle, recording identity, authorization metadata, and playback audit. Telnyx decides voice outcomes; PostgreSQL records requested commands and observed facts.
 - `Messaging` owns Location-scoped conversations, inbound correlation, durable
   send intent, delivery evidence, attachment state, per-user unread state, and
   explicit send-again attempts. It asks `Work` to create a Task only after an
@@ -346,7 +344,7 @@ all Go roles ── bounded connections ──> PostgreSQL
 
 - HTTP carries staff commands and AI tool requests.
 - Command responses return committed state, stable IDs, and the new row version immediately. The UI renders requested or connecting state without waiting for a provider webhook.
-- SSE carries one-way task, offer, call, and message update hints.
+- SSE carries one-way task and message update hints. Calling state uses one single-flight authoritative poll, every two seconds while visible and approximately ten seconds while hidden.
 - SSE payloads contain stable IDs and monotonically increasing versions, not authoritative state.
 - SSE streams have a bounded lifetime, heartbeats, and jittered reconnect. Initial connection and every reconnect reload the current authorized snapshot from `portal-api`.
 - PostgreSQL `LISTEN/NOTIFY` may wake `realtime` instances through one dedicated direct connection per instance; committed rows remain the only durable state.
@@ -386,9 +384,9 @@ all Go roles ── bounded connections ──> PostgreSQL
 - **Task** with tenant, location, contact-context snapshot, source, title, status, priority, optional assignee, version, optional due time, and completion metadata
 - **Activity** with task, actor, type, timestamp, and normalized display payload
 - **Interaction** with channel, direction, provider identity, contact-context snapshot, optional task, and lifecycle timestamps
-- **Call** with logical call identity, provider session and leg identifiers, offer state, winning staff member, bridge state, disposition, and human-segment timing
-- **Recording** with protected object reference, availability, retention metadata, call, and optional task
-- **Transcript** with recording/call reference and protected text
+- **Call** with logical identity, direction, terminal outcome, disposition, and human-segment timing
+- **CallLeg** with role, provider identity, Staff lease snapshot, monotonic lifecycle timestamps, bridge evidence, and termination evidence
+- **Voicemail** with provider recording identity, timing, availability, protected playback, and recovery Task
 - **Message** with provider message identity, direction, delivery state, contact-context snapshot, and optional task
 - **ProviderEvent** with provider, unique event identity, receipt state, processing state, and normalized linkage
 - **ProviderCommand** with stable command identity, target, action, requested state, attempt state, and provider-event reconciliation
@@ -405,7 +403,7 @@ The first API surface should remain narrow:
 - Task list, task detail, manual creation, edit, claim, assign, status, priority, complete, reopen, and note commands
 - Phone-number engagement-history query scoped to practice and location
 - AI integration task-creation command
-- Call Center availability, offer acceptance, outbound initiation, privileged call-control, and post-call disposition commands
+- Call Center readiness/state, outbound initiation, exact media confirmation, privileged call-control, and post-call disposition commands
 - SMS send command
 - Recording and transcript lookup with short-lived protected access
 - Telnyx voice and messaging webhook receivers
@@ -477,7 +475,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Use one public product domain with path routing to the web and API services.
 - Publish immutable frontend and backend images by digest. Deploy backend roles from the same tested backend digest.
 - Deploy request-role revisions with no traffic and smoke-test startup, run `migrate` once, exercise the tagged revisions against the expanded schema, deploy the compatible worker and realtime revisions, then shift traffic gradually.
-- Keep migrations expand/contract compatible through every overlapping revision and rollback. Additive schema changes precede backfills; destructive contractions occur only in a later release.
+- The CallLeg replacement uses one guarded maintenance cutover. Admission closes, old revisions and in-flight work drain, a snapshot and parity checks complete, the destructive migration runs once, and only the new runtime reopens admission. There is no mixed-schema rollback after reopen.
 - Every runtime handles termination by stopping new work, releasing job leases, closing pools, and ending streams. Correctness never depends on shutdown cleanup completing.
 - Rollback switches staff and provider routing to the old portal, freezes new-portal writes, and preserves all new database state for reconciliation. It never destructively reverses the database.
 - Confirm executed BAAs and service eligibility/configuration before protected health information enters production.
@@ -486,7 +484,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 
 - Emit structured logs without patient names, phone numbers, transcript content, message bodies, or recording URLs.
 - Trace commands through database transaction, provider command, provider event, and visible state transition.
-- Record metrics for task creation, provider receipt and processing delay, webhook acknowledgment, duplicate suppression, job/outbox depth, pool acquisition and saturation, SSE connections and reconnects, call offers, accept races, answer-to-bridge time, voicemail creation, missed-call creation, SMS delivery, and recording/transcript readiness.
+- Record metrics for task creation, provider receipt and processing delay, webhook acknowledgment, duplicate suppression, job/outbox depth, pool acquisition and saturation, SSE connections and reconnects, Staff answer races, answer-to-bridge time, voicemail creation, missed-call creation, SMS delivery, and voicemail readiness.
 - Partition operational metrics by runtime role and revision so a noisy role or unsafe rollout is visible.
 - Alert on failed webhook verification, slow or failed durable receipt, growing unprocessed-event backlog, failed durable jobs, database saturation, pool wait, elevated call-bridge failure, and cross-tenant authorization denial anomalies.
 
@@ -507,12 +505,12 @@ This is the highest useful seam because it proves the product promise while allo
 - Exercise `portal-api`, `provider-ingress`, and `realtime` through their public interfaces and `worker` through durable jobs.
 - Exercise the portal with Playwright against the real runtime roles and provider simulators.
 - Maintain signed Telnyx webhook fixtures for voice, recording, transcription, and messaging events.
-- Run controlled live Telnyx acceptance tests before release for the paths that simulation cannot prove: WebRTC readiness, transfer offer, answer, bridge, media, recording, transcription, SMS delivery, and voicemail.
+- Run controlled live Telnyx acceptance tests before release for the paths that simulation cannot prove: REFER route-token survival, WebRTC readiness, independent fan-out, answer, explicit Bridge event shape, media, voicemail recording, and SMS delivery.
 - Run every production journey in two browser sessions to verify shared visibility and realtime recovery.
 
 ### Required invariant tests
 
-1. Two simultaneous call accepts produce exactly one winner.
+1. Two simultaneous provider-confirmed Staff answers produce exactly one provisional bridge winner and one durable Bridge command.
 2. Replaying an AI task request produces one task.
 3. Replaying, reordering, or concurrently delivering provider events does not corrupt call or message state.
 4. A browser click cannot mark a call connected before provider evidence.
@@ -550,9 +548,9 @@ This is the highest useful seam because it proves the product promise while allo
 - Staff commands acknowledge committed state within 300 ms at p95, excluding provider network time.
 - A committed task or call-state change becomes visible in another active browser within 2 seconds at p95.
 - Initial task workspace load completes within 1.5 seconds at p95 under the target production dataset.
-- Accepted transfer to provider-confirmed bridge completes within 3 seconds at p95 in the controlled acceptance environment.
+- Provider-confirmed Staff answer to provider-confirmed bridge completes within 3 seconds at p95 in the controlled acceptance environment.
 - Signed provider webhooks commit durable receipt and return `2xx` within 2 seconds at p99 under the target burst load when PostgreSQL is healthy.
-- The 20-second offer fallback is accurate within one second.
+- The 20-second ring-window fallback is accurate within one second.
 - Duplicate tasks and duplicate bridged winners remain zero under replay and concurrency tests.
 - Pool acquisition time and total open connections remain inside the tested per-role budget during peak load and overlapping deployment.
 
@@ -610,7 +608,7 @@ The August 6 release does not ship until all conditions are proven:
 | Wed Jul 29 | Location-scoped SMS/MMS conversations work | `Messaging`, signed webhooks, durable send/reconciliation, delivery and attachment state | Message rail, mixed timeline, composer, explicit Message-derived Task | Exact Location/sender/phone thread; inbound creates no Task; explicit Task link; no blind retry |
 | Thu Jul 30 | No-answer and call-disposition recovery work | 20-second fallback, voicemail, missed call, durable `NEEDS_DISPOSITION` | Recovery UI, post-call outcomes, prefilled follow-up task | Timeout falls back; browser loss preserves disposition; both outcome paths pass |
 | Fri Jul 31 | Outbound calling and call controls work | Task-originated and standalone outbound commands and linkage | Dialer, mute, keypad, hold, transfer, end, persistent active-call workspace | Task call links to task; standalone resolved call creates no task |
-| Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Recordings navigation, playback, transcript, failure states | Inbound/outbound/voicemail evidence appears and unauthorized access fails |
+| Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Call history, voicemail playback, transcript, failure states | Human-call facts and voicemail evidence appear and unauthorized access fails |
 | Sun Aug 2 | Administration and complete access boundaries work | Invitations, memberships, service scope, authorization audit | Staff/location settings and access-denied states | Email-bound invite activates exact scope; cross-location reads/writes/streams fail |
 | Mon Aug 3 | Feature complete; scope closes | Failure recovery, durable jobs, audit, tenant authorization | Empty/error/reconnect states, accessibility, full journey cleanup | All release-bar journeys pass in simulation |
 | Tue Aug 4 | Production hardening complete | Load/concurrency, connection ceiling, Cloud SQL outage/restore, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, SSE/runtime termination, performance, operator runbook | Peak load, role isolation, restore, replay, backup, rollback, and observability gates pass |

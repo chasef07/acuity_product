@@ -1,5 +1,5 @@
 const sampleRate = 8_000
-const seconds = 6
+const seconds = 20
 const toneSeconds = 2
 const bytesPerSample = 2
 const headerBytes = 44
@@ -37,7 +37,7 @@ function ringbackWav(): ArrayBuffer {
   for (let index = 0; index < samples; index += 1) {
     const time = index / sampleRate
     const tone =
-      time < toneSeconds
+      time % 6 < toneSeconds
         ? 0.14 *
           (Math.sin(2 * Math.PI * 440 * time) +
             Math.sin(2 * Math.PI * 480 * time))

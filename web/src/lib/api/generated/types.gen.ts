@@ -207,26 +207,36 @@ export type MediaToken = {
     expiresAt: string;
 };
 
-export type CallingOffer = {
-    id: string;
+export type CallingState = {
+    softphone: SoftphoneState;
+    ringing: Array<RingingCallLeg>;
+    bridged?: CallingStateCall;
+    voicemail?: CallingStateCall;
+    disposition?: CallingStateCall;
+};
+
+export type RingingCallLeg = {
+    callId: string;
+    callLegId: string;
+    mediaToken: string;
     practiceId: string;
     locationId: string;
     locationName: string;
     displayName: string;
-    nameSource: string;
     transferReason: string;
-    reasonSource: string;
-    deadline: string;
-    state: 'OFFERING';
+    state: 'PENDING' | 'DIALING' | 'RINGING' | 'BRIDGE_PENDING';
     version: number;
+    createdAt: string;
 };
 
-export type CallingOfferList = {
-    items: Array<CallingOffer>;
-};
-
-export type AcceptCallingOfferRequest = {
-    sessionId: string;
+export type CallingStateCall = {
+    callId: string;
+    callLegId: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    state: string;
+    version: number;
 };
 
 export type CallingControlRequest = {
@@ -250,28 +260,11 @@ export type RetryOutboundCallRequest = {
 export type ConfirmCallingMediaRequest = {
     sessionId: string;
     mediaToken: string;
-    /**
-     * Accepted for compatibility with older web clients and otherwise ignored.
-     *
-     * @deprecated
-     */
-    providerSessionId?: string;
 };
 
 export type OutboundCallEligibility = {
     eligible: boolean;
     reason: string;
-};
-
-export type AcceptCallingOfferResult = {
-    status: 'ACCEPTED' | 'ALREADY_CLAIMED' | 'EXPIRED' | 'INELIGIBLE';
-    callId: string;
-    state: 'OFFERING' | 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
-};
-
-export type CallingRecording = {
-    state: 'INTENDED' | 'RECORDING' | 'READY' | 'FAILED';
-    failureCode?: string;
 };
 
 export type CallingVoicemail = {
@@ -294,8 +287,7 @@ export type CallingCall = {
     direction: 'INBOUND' | 'OUTBOUND';
     entryPoint: 'AI_HANDOFF' | 'TASK' | 'STANDALONE';
     taskId?: string;
-    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
-    deadline: string;
+    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     dispositionDeadline?: string;
     phone: string;
     phoneSource: string;
@@ -303,25 +295,12 @@ export type CallingCall = {
     nameSource: string;
     transferReason: string;
     reasonSource: string;
-    /**
-     * Empty until Telnyx identifies the one staff leg created for this claim.
-     */
-    expectedStaffLegId: string;
-    /**
-     * Opaque token that identifies the current staff-media attempt.
-     */
-    expectedMediaToken: string;
-    /**
-     * Whether the current attempt durably recorded browser media readiness.
-     */
-    mediaReady: boolean;
     providerTermination: string;
     callerId: string;
     retryOfCallId?: string;
     retryAllowed: boolean;
     connectedAt?: string;
     version: number;
-    recording?: CallingRecording;
     voicemail?: CallingVoicemail;
     recoveryTask?: CallingRecoveryTask;
 };
@@ -331,21 +310,6 @@ export type CallingRecoveryTask = {
     title: string;
     state: 'OPEN' | 'COMPLETED';
     relatedInteractionCount: number;
-};
-
-export type LiveCall = {
-    id: string;
-    locationId: string;
-    locationName: string;
-    phone: string;
-    direction: 'INBOUND' | 'OUTBOUND';
-    staffSubject: string;
-    staffEmail: string;
-    connectedAt: string;
-};
-
-export type LiveCallPage = {
-    items: Array<LiveCall>;
 };
 
 export type CallingDispositionRequest = {
@@ -625,7 +589,7 @@ export type CallHistoryItem = {
     locationName: string;
     answeredByEmail: string;
     transferReason: string;
-    outcome: 'OFFERING' | 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    outcome: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     current: boolean;
     originating: boolean;
 };
@@ -651,7 +615,7 @@ export type OperatorCallingTimelineEntry = {
 export type OperatorCallingTimeline = {
     callId: string;
     practiceId: string;
-    state: 'OFFERING' | 'CONNECTING' | 'CONNECTED' | 'RECONCILING' | 'UNANSWERED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     version: number;
     entries: Array<OperatorCallingTimelineEntry>;
 };
@@ -1196,14 +1160,14 @@ export type IssueCallingMediaTokenResponses = {
 
 export type IssueCallingMediaTokenResponse = IssueCallingMediaTokenResponses[keyof IssueCallingMediaTokenResponses];
 
-export type ListCallingOffersData = {
+export type GetCallingStateData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/v1/calling/offers';
+    url: '/v1/calling/state';
 };
 
-export type ListCallingOffersErrors = {
+export type GetCallingStateErrors = {
     /**
      * Missing or invalid credential.
      */
@@ -1218,95 +1182,16 @@ export type ListCallingOffersErrors = {
     503: ErrorEnvelope;
 };
 
-export type ListCallingOffersError = ListCallingOffersErrors[keyof ListCallingOffersErrors];
+export type GetCallingStateError = GetCallingStateErrors[keyof GetCallingStateErrors];
 
-export type ListCallingOffersResponses = {
+export type GetCallingStateResponses = {
     /**
-     * Earliest-deadline-first authoritative offers.
+     * Current authorized calling state.
      */
-    200: CallingOfferList;
+    200: CallingState;
 };
 
-export type ListCallingOffersResponse = ListCallingOffersResponses[keyof ListCallingOffersResponses];
-
-export type ListLiveCallsData = {
-    body?: never;
-    path?: never;
-    query: {
-        practiceId: string;
-        locationId?: string;
-    };
-    url: '/v1/calling/live-calls';
-};
-
-export type ListLiveCallsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type ListLiveCallsError = ListLiveCallsErrors[keyof ListLiveCallsErrors];
-
-export type ListLiveCallsResponses = {
-    /**
-     * Access-filtered active Calls.
-     */
-    200: LiveCallPage;
-};
-
-export type ListLiveCallsResponse = ListLiveCallsResponses[keyof ListLiveCallsResponses];
-
-export type AcceptCallingOfferData = {
-    body: AcceptCallingOfferRequest;
-    path: {
-        callId: string;
-    };
-    query?: never;
-    url: '/v1/calling/offers/{callId}/accept';
-};
-
-export type AcceptCallingOfferErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type AcceptCallingOfferError = AcceptCallingOfferErrors[keyof AcceptCallingOfferErrors];
-
-export type AcceptCallingOfferResponses = {
-    /**
-     * Committed acceptance or explicit losing result.
-     */
-    200: AcceptCallingOfferResult;
-};
-
-export type AcceptCallingOfferResponse = AcceptCallingOfferResponses[keyof AcceptCallingOfferResponses];
+export type GetCallingStateResponse = GetCallingStateResponses[keyof GetCallingStateResponses];
 
 export type StartOutboundCallData = {
     body: StartOutboundCallRequest;

@@ -14,6 +14,16 @@ import (
 
 // Open returns a clean, migrated pool to an explicitly named test database.
 func Open(t *testing.T) *pgxpool.Pool {
+	return open(t, "")
+}
+
+// OpenThrough returns a clean pool migrated through the named migration.
+func OpenThrough(t *testing.T, last string) *pgxpool.Pool {
+	t.Helper()
+	return open(t, last)
+}
+
+func open(t *testing.T, last string) *pgxpool.Pool {
 	t.Helper()
 
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -84,8 +94,14 @@ func Open(t *testing.T) *pgxpool.Pool {
 	`); err != nil {
 		t.Fatalf("reset test database: %v", err)
 	}
-	if err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatalf("apply migrations: %v", err)
+	var migrationErr error
+	if last == "" {
+		migrationErr = migrations.Apply(ctx, pool)
+	} else {
+		migrationErr = migrations.ApplyThrough(ctx, pool, last)
+	}
+	if migrationErr != nil {
+		t.Fatalf("apply migrations: %v", migrationErr)
 	}
 	return pool
 }

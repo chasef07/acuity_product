@@ -207,53 +207,6 @@ test("hint bursts coalesce to the newest version without regression", async () =
   sync.stop()
 })
 
-test("a validated hint refreshes the authoritative Call before workspace reconciliation finishes", async () => {
-  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
-  const releaseReconciliation = deferred<void>()
-  const applied: number[] = []
-  let authoritativeCallRefreshes = 0
-
-  const sync = createWorkspaceSync({
-    realtimeURL: "https://realtime.example",
-    fetch: async () =>
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller
-          },
-        }),
-      ),
-    getToken: async () => "token",
-    reconcile: async ({ minimumVersion }) => {
-      if (minimumVersion === 2) await releaseReconciliation.promise
-      return {
-        version: minimumVersion,
-        apply: () => applied.push(minimumVersion),
-      }
-    },
-    onValidatedHint: () => {
-      authoritativeCallRefreshes += 1
-    },
-    onStateChange: () => {},
-  })
-
-  try {
-    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
-    await eventually(() => assert.ok(stream))
-    stream!.enqueue(readyEvent(1))
-    await eventually(() => assert.deepEqual(applied, [1]))
-
-    stream!.enqueue(hintEvent(2))
-    await eventually(() => assert.equal(authoritativeCallRefreshes, 1))
-    assert.deepEqual(applied, [1])
-
-    releaseReconciliation.resolve()
-    await eventually(() => assert.deepEqual(applied, [1, 2]))
-  } finally {
-    sync.stop()
-  }
-})
-
 test("failed hint reconciliation retries once immediately then backs off", async () => {
   const clock = new ManualClock()
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined

@@ -2,6 +2,26 @@
 
 set -Eeuo pipefail
 
+destructive_cutover="${CALLLEG_DESTRUCTIVE_CUTOVER:-false}"
+schema_cutover_complete="${CALLLEG_SCHEMA_CUTOVER_COMPLETE:-false}"
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$destructive_cutover" == true ]]; then
+  evidence_path="${CALLLEG_CUTOVER_EVIDENCE_PATH:-}"
+  if [[ "${CALLLEG_CUTOVER_EVIDENCE_VERIFIED:-false}" != true ||
+    "${CALLLEG_CUTOVER_WINDOW_CONFIRMED:-false}" != true ||
+    -z "$evidence_path" || ! -f "$evidence_path" ]]; then
+    echo "The destructive CallLeg release requires a confirmed zero-runtime window and verified cutover evidence." >&2
+    exit 1
+  fi
+  node \
+    "$script_directory/check-telnyx-callleg-cutover.mjs" \
+    "$script_directory/telnyx-callleg-cutover-contract.json" \
+    "$evidence_path"
+elif [[ "$schema_cutover_complete" != true ]]; then
+  echo "Automatic release is paused until the scheduled CallLeg cutover completes." >&2
+  exit 1
+fi
+
 require_value() {
   local name="$1"
   local value="${!name:-}"
@@ -68,8 +88,18 @@ service_runtime() {
   runtime_environment="DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
   runtime_timeout=0
   case "$1" in
-    acuity-portal-api) read -r concurrency minimum maximum <<<"20 1 3" ;;
-    acuity-provider-ingress) read -r concurrency minimum maximum <<<"20 1 2" ;;
+    acuity-portal-api)
+      read -r concurrency minimum maximum <<<"20 1 3"
+      if [[ "$destructive_cutover" == true ]]; then
+        runtime_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
+      fi
+      ;;
+    acuity-provider-ingress)
+      read -r concurrency minimum maximum <<<"20 1 2"
+      if [[ "$destructive_cutover" == true ]]; then
+        runtime_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
+      fi
+      ;;
     acuity-realtime)
       read -r concurrency minimum maximum <<<"50 1 2"
       runtime_environment+=",REALTIME_STREAM_SECONDS=270,REALTIME_STREAM_JITTER_SECONDS=30"
@@ -177,6 +207,34 @@ require_service_environment \
 touched_services=()
 worker_promoted=false
 release_complete=false
+migration_started=false
+disabled_service_count=0
+worker_stop_attempted=false
+previous_scaling_modes=()
+previous_manual_instances=()
+previous_worker_instances=""
+if [[ "$destructive_cutover" == true ]]; then
+  for service in "${services[@]}"; do
+    previous_scaling_modes+=("$(
+      gcloud run services describe "$service" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format 'value(spec.scaling.scalingMode)'
+    )")
+    previous_manual_instances+=("$(
+      gcloud run services describe "$service" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format 'value(spec.scaling.manualInstanceCount)'
+    )")
+  done
+  previous_worker_instances="$(
+    gcloud run worker-pools describe acuity-worker \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(spec.template.scaling.manualInstanceCount)'
+  )"
+fi
 previous_service_revision() {
   case "$1" in
     acuity-portal-api) printf '%s\n' "$previous_portal_revision" ;;
@@ -189,9 +247,11 @@ previous_service_revision() {
       ;;
   esac
 }
-for service in "${services[@]}"; do
-  ensure_service_traffic "$service" "$(previous_service_revision "$service")"
-done
+if [[ "$destructive_cutover" != true ]]; then
+  for service in "${services[@]}"; do
+    ensure_service_traffic "$service" "$(previous_service_revision "$service")"
+  done
+fi
 
 rollback() {
   local exit_code=$?
@@ -199,7 +259,33 @@ rollback() {
   if [[ "$release_complete" == true ]]; then
     return
   fi
+  if [[ "$destructive_cutover" == true && "$migration_started" == true ]]; then
+    echo "CallLeg cutover failed after migration began. Keep handoff admission closed; restore the recorded snapshot and old revisions, or forward-fix the replacement." >&2
+    exit "$exit_code"
+  fi
   set +e
+  if [[ "$destructive_cutover" == true ]]; then
+    for ((index = disabled_service_count - 1; index >= 0; index--)); do
+      service="${services[$index]}"
+      if [[ "${previous_scaling_modes[$index]}" == MANUAL ]]; then
+        scaling="${previous_manual_instances[$index]}"
+      else
+        scaling=auto
+      fi
+      gcloud run services update "$service" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --scaling "$scaling" \
+        --quiet
+    done
+    if [[ "$worker_stop_attempted" == true && -n "$previous_worker_instances" ]]; then
+      gcloud run worker-pools update acuity-worker \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --instances "$previous_worker_instances" \
+        --quiet
+    fi
+  fi
   for ((index = ${#touched_services[@]} - 1; index >= 0; index--)); do
     service="${touched_services[$index]}"
     gcloud run services update-traffic "$service" \
@@ -260,76 +346,208 @@ smoke() {
     "$1" >/dev/null
 }
 
-gcloud run jobs update acuity-migrate \
-  --project "$PROJECT_ID" \
-  --region "$REGION" \
-  --image "$backend_digest" \
-  --tasks 1 \
-  --max-retries 0 \
-  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000" \
-  --remove-env-vars "MIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER" \
-  --quiet
-gcloud run jobs execute acuity-migrate \
-  --project "$PROJECT_ID" \
-  --region "$REGION" \
-  --wait \
-  --quiet
+stage_backend_services() {
+  for service in "${backend_services[@]}"; do
+    service_runtime "$service"
+    revision="$service-$DEPLOYMENT_ID"
+    touched_services+=("$service")
+    set -- gcloud run deploy "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --image "$backend_digest" \
+      --revision-suffix "$DEPLOYMENT_ID" \
+      --no-traffic \
+      --cpu 1 \
+      --memory 512Mi \
+      --concurrency "$concurrency" \
+      --min "$minimum" \
+      --max "$maximum" \
+      --update-env-vars "$runtime_environment"
+    if ((runtime_timeout > 0)); then
+      set -- "$@" --timeout "$runtime_timeout"
+    fi
+    set -- "$@" \
+      --startup-probe "httpGet.path=/health/live,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
+      --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=3" \
+      --quiet
+    "$@"
+    verify_service_revision "$revision" "$backend_digest"
+    if [[ "$destructive_cutover" == true && \
+      ("$service" == acuity-portal-api || "$service" == acuity-provider-ingress) ]]; then
+      admission="$(
+        gcloud run revisions describe "$revision" \
+          --project "$PROJECT_ID" \
+          --region "$REGION" \
+          --format "value(spec.containers[0].env[?name='HUMAN_CALLING_HANDOFF_ADMISSION'].value)"
+      )"
+      if [[ "$admission" != closed ]]; then
+        echo "$revision must close handoff admission before cutover traffic." >&2
+        return 1
+      fi
+    fi
+  done
+}
 
-for service in "${backend_services[@]}"; do
-  service_runtime "$service"
-  revision="$service-$DEPLOYMENT_ID"
-  touched_services+=("$service")
-  set -- gcloud run deploy "$service" \
+stage_worker() {
+  local instances="$1"
+  local worker_environment="DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
+  if [[ "$destructive_cutover" == true ]]; then
+    worker_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
+  fi
+  worker_revision="acuity-worker-$DEPLOYMENT_ID"
+  gcloud run worker-pools deploy acuity-worker \
     --project "$PROJECT_ID" \
     --region "$REGION" \
     --image "$backend_digest" \
     --revision-suffix "$DEPLOYMENT_ID" \
-    --no-traffic \
+    --no-promote \
     --cpu 1 \
     --memory 512Mi \
-    --concurrency "$concurrency" \
-    --min "$minimum" \
-    --max "$maximum" \
-    --update-env-vars "$runtime_environment"
-  if ((runtime_timeout > 0)); then
-    set -- "$@" --timeout "$runtime_timeout"
-  fi
-  set -- "$@" \
-    --startup-probe "httpGet.path=/health/live,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=15" \
-    --readiness-probe "httpGet.path=/health/ready,httpGet.port=8080,timeoutSeconds=1,periodSeconds=2,failureThreshold=3" \
+    --instances "$instances" \
+    --update-env-vars "$worker_environment" \
     --quiet
-  "$@"
-  verify_service_revision "$revision" "$backend_digest"
-done
-
-worker_revision="acuity-worker-$DEPLOYMENT_ID"
-gcloud run worker-pools deploy acuity-worker \
-  --project "$PROJECT_ID" \
-  --region "$REGION" \
-  --image "$backend_digest" \
-  --revision-suffix "$DEPLOYMENT_ID" \
-  --no-promote \
-  --cpu 1 \
-  --memory 512Mi \
-  --instances 1 \
-  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500" \
-  --quiet
-worker_image="$(
-  gcloud run worker-pools revisions describe "$worker_revision" \
+  worker_image="$(
+    gcloud run worker-pools revisions describe "$worker_revision" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(spec.containers[0].image)'
+  )"
+  if [[ "$worker_image" != "$backend_digest" ]]; then
+    echo "$worker_revision does not use the expected immutable image." >&2
+    return 1
+  fi
+  if [[ "$destructive_cutover" == true ]]; then
+    worker_admission="$(
+      gcloud run worker-pools revisions describe "$worker_revision" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format "value(spec.containers[0].env[?name='HUMAN_CALLING_HANDOFF_ADMISSION'].value)"
+    )"
+    if [[ "$worker_admission" != closed ]]; then
+      echo "$worker_revision must close handoff admission during cutover." >&2
+      return 1
+    fi
+  fi
+  gcloud run worker-pools update-instance-split acuity-worker \
     --project "$PROJECT_ID" \
     --region "$REGION" \
-    --format 'value(spec.containers[0].image)'
-)"
-if [[ "$worker_image" != "$backend_digest" ]]; then
-  echo "$worker_revision does not use the expected immutable image." >&2
-  exit 1
+    --to-revisions "$worker_revision=100" \
+    --quiet
+  worker_promoted=true
+}
+
+run_migration() {
+  gcloud run jobs update acuity-migrate \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --image "$backend_digest" \
+    --tasks 1 \
+    --max-retries 0 \
+    --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000" \
+    --remove-env-vars "MIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER" \
+    --quiet
+  migration_started=true
+  gcloud run jobs execute acuity-migrate \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --wait \
+    --quiet
+}
+
+disable_legacy_runtime() {
+  for service in "${services[@]}"; do
+    gcloud run services update "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --scaling 0 \
+      --quiet
+    disabled_service_count=$((disabled_service_count + 1))
+    scaling_mode="$(
+      gcloud run services describe "$service" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format 'value(spec.scaling.scalingMode)'
+    )"
+    manual_instances="$(
+      gcloud run services describe "$service" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format 'value(spec.scaling.manualInstanceCount)'
+    )"
+    reconciled="$(
+      gcloud run services describe "$service" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format 'value(status.conditions[0].status)'
+    )"
+    if [[ "$scaling_mode" != MANUAL || "$manual_instances" != 0 ||
+      "$reconciled" != True ]]; then
+      echo "$service did not reach the disabled zero-instance state." >&2
+      return 1
+    fi
+  done
+  worker_stop_attempted=true
+  gcloud run worker-pools update acuity-worker \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --instances 0 \
+    --quiet
+  worker_instances="$(
+    gcloud run worker-pools describe acuity-worker \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(spec.template.scaling.manualInstanceCount)'
+  )"
+  worker_reconciled="$(
+    gcloud run worker-pools describe acuity-worker \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --format 'value(status.conditions[0].status)'
+  )"
+  if [[ "$worker_instances" != 0 || "$worker_reconciled" != True ]]; then
+    echo "acuity-worker did not reach the disabled zero-instance state." >&2
+    return 1
+  fi
+}
+
+if [[ "$destructive_cutover" == true ]]; then
+  disable_legacy_runtime
+  run_migration
+  stage_backend_services
+  stage_worker 0
+  for service in "${backend_services[@]}"; do
+    revision="$service-$DEPLOYMENT_ID"
+    gcloud run services update-traffic "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --to-revisions "$revision=100" \
+      --quiet
+    ensure_service_traffic "$service" "$revision"
+    gcloud run services update "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --scaling auto \
+      --quiet
+  done
+  gcloud run worker-pools update acuity-worker \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --instances 1 \
+    --quiet
+else
+  run_migration
+  stage_backend_services
+  stage_worker 1
+  for service in "${backend_services[@]}"; do
+    revision="$service-$DEPLOYMENT_ID"
+    gcloud run services update-traffic "$service" \
+      --project "$PROJECT_ID" \
+      --region "$REGION" \
+      --to-revisions "$revision=100" \
+      --quiet
+  done
 fi
-gcloud run worker-pools update-instance-split acuity-worker \
-  --project "$PROJECT_ID" \
-  --region "$REGION" \
-  --to-revisions "$worker_revision=100" \
-  --quiet
-worker_promoted=true
+
 worker_ready="$(
   gcloud run worker-pools describe acuity-worker \
     --project "$PROJECT_ID" \
@@ -340,14 +558,7 @@ if [[ "$worker_ready" != "True" ]]; then
   echo "$worker_revision did not become ready." >&2
   exit 1
 fi
-
 for service in "${backend_services[@]}"; do
-  revision="$service-$DEPLOYMENT_ID"
-  gcloud run services update-traffic "$service" \
-    --project "$PROJECT_ID" \
-    --region "$REGION" \
-    --to-revisions "$revision=100" \
-    --quiet
   smoke "$(service_url "$service")/health/ready"
 done
 
@@ -373,6 +584,14 @@ gcloud run services update-traffic acuity-web \
   --region "$REGION" \
   --to-revisions "$web_revision=100" \
   --quiet
+if [[ "$destructive_cutover" == true ]]; then
+  ensure_service_traffic acuity-web "$web_revision"
+  gcloud run services update acuity-web \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --scaling auto \
+    --quiet
+fi
 web_url="$(service_url acuity-web)"
 smoke "$web_url/sign-in"
 smoke "$web_url/api/auth/get-session"

@@ -26,13 +26,12 @@ GRANT SELECT ON TABLE
     public.access_platform_operators,
     public.access_practices,
     public.access_support_sessions,
+    public.human_calling_call_legs,
     public.human_calling_calls,
-    public.human_calling_connection_attempts,
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_location_voice_numbers,
     public.human_calling_provider_commands,
-    public.human_calling_recordings,
     public.human_calling_softphone_leases,
     public.human_calling_timeline,
     public.human_calling_voicemails,
@@ -79,7 +78,7 @@ GRANT INSERT ON TABLE
     public.access_membership_locations,
     public.access_memberships,
     public.access_support_sessions,
-    public.human_calling_connection_attempts,
+	public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_handoffs,
@@ -95,17 +94,27 @@ GRANT INSERT ON TABLE
     public.work_tasks
 TO acuity_portal;
 
+GRANT UPDATE (
+    state,
+    attempts,
+    sent_at,
+    next_attempt_at,
+    last_error_code,
+    updated_at
+)
+ON TABLE public.human_calling_provider_commands
+TO acuity_portal;
+
 GRANT UPDATE ON TABLE
     public.access_invitations,
     public.access_locations,
     public.access_memberships,
     public.access_practices,
     public.access_support_sessions,
+	public.human_calling_call_legs,
     public.human_calling_calls,
-    public.human_calling_connection_attempts,
     public.human_calling_credentials,
     public.human_calling_handoffs,
-    public.human_calling_provider_commands,
     public.human_calling_softphone_leases,
     public.work_tasks
 TO acuity_portal;
@@ -228,15 +237,15 @@ GRANT SELECT ON TABLE
     public.access_memberships,
     public.access_operational_users,
     public.access_practices,
+	public.human_calling_call_legs,
     public.human_calling_calls,
-    public.human_calling_connection_attempts,
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_location_voice_numbers,
     public.human_calling_provider_commands,
     public.human_calling_provider_receipts,
-    public.human_calling_recordings,
     public.human_calling_softphone_leases,
+    public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
     public.messaging_location_configurations,
@@ -251,11 +260,11 @@ GRANT SELECT ON TABLE
 TO acuity_worker;
 
 GRANT INSERT ON TABLE
+	public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_projected_facts,
     public.human_calling_provider_commands,
-    public.human_calling_recordings,
     public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
@@ -271,35 +280,40 @@ GRANT SELECT (event_id)
 ON TABLE public.human_calling_projected_facts
 TO acuity_worker;
 
-GRANT SELECT (
-    call_control_id,
-    call_leg_id,
-    call_session_id
-)
-ON TABLE public.human_calling_rejected_provider_legs
-TO acuity_worker;
-
-GRANT INSERT (
-    call_control_id,
-    call_leg_id,
-    call_session_id,
-    initiated_event_id,
-    rejected_at
-)
-ON TABLE public.human_calling_rejected_provider_legs
-TO acuity_worker;
-
 GRANT UPDATE ON TABLE
     public.access_practices,
+	public.human_calling_call_legs,
     public.human_calling_calls,
-    public.human_calling_connection_attempts,
     public.human_calling_credentials,
     public.human_calling_handoffs,
-    public.human_calling_provider_commands,
     public.human_calling_provider_receipts,
-    public.human_calling_recordings,
     public.human_calling_softphone_leases,
     public.work_tasks
+TO acuity_worker;
+
+GRANT UPDATE (
+    state,
+    attempts,
+    sent_at,
+    next_attempt_at,
+    last_error_code,
+    updated_at
+)
+ON TABLE public.human_calling_provider_commands
+TO acuity_worker;
+
+GRANT UPDATE (
+    task_id,
+    outcome,
+    audio_state,
+    provider_recording_id,
+    recording_started_at,
+    recording_ended_at,
+    duration_millis,
+    last_error_code,
+    updated_at
+)
+ON TABLE public.human_calling_voicemails
 TO acuity_worker;
 
 GRANT UPDATE (updated_at)

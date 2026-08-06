@@ -3,8 +3,6 @@ package humancalling
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -59,16 +58,21 @@ type telnyxEnvelope struct {
 }
 
 type telnyxVoicePayload struct {
-	CallControlID      string    `json:"call_control_id"`
-	CallLegID          string    `json:"call_leg_id"`
-	CallSessionID      string    `json:"call_session_id"`
-	ClientState        string    `json:"client_state"`
-	From               string    `json:"from"`
-	To                 string    `json:"to"`
-	HangupCause        string    `json:"hangup_cause"`
-	RecordingID        string    `json:"recording_id"`
-	RecordingStartedAt time.Time `json:"recording_started_at"`
-	RecordingEndedAt   time.Time `json:"recording_ended_at"`
+	CallControlID      string         `json:"call_control_id"`
+	CallLegID          string         `json:"call_leg_id"`
+	CallSessionID      string         `json:"call_session_id"`
+	ConnectionID       string         `json:"connection_id"`
+	ClientState        string         `json:"client_state"`
+	From               string         `json:"from"`
+	To                 string         `json:"to"`
+	HangupCause        string         `json:"hangup_cause"`
+	HangupSource       string         `json:"hangup_source"`
+	SIPHangupCause     string         `json:"sip_hangup_cause"`
+	Status             string         `json:"status"`
+	CallQualityStats   map[string]any `json:"call_quality_stats"`
+	RecordingID        string         `json:"recording_id"`
+	RecordingStartedAt time.Time      `json:"recording_started_at"`
+	RecordingEndedAt   time.Time      `json:"recording_ended_at"`
 }
 
 func (m *Module) ReceiveWebhook(
@@ -77,31 +81,16 @@ func (m *Module) ReceiveWebhook(
 	timestampHeader string,
 	signatureHeader string,
 ) (WebhookReceipt, error) {
-	if len(raw) == 0 ||
-		len(raw) > 256*1024 ||
-		len(m.config.WebhookPublicKey) != ed25519.PublicKeySize {
+	verifier, valid := telnyxsignature.New(
+		m.config.WebhookPublicKeys, m.config.WebhookTolerance, m.now,
+	)
+	if len(raw) == 0 || len(raw) > 256*1024 || !valid {
 		return WebhookReceipt{}, ErrInvalidWebhook
 	}
-	timestamp, err := strconv.ParseInt(timestampHeader, 10, 64)
-	if err != nil {
+	if !verifier.Verify(raw, timestampHeader, signatureHeader) {
 		return WebhookReceipt{}, ErrInvalidWebhook
 	}
-	sentAt := time.Unix(timestamp, 0)
-	age := m.now().Sub(sentAt)
-	if age < -m.config.WebhookTolerance || age > m.config.WebhookTolerance {
-		return WebhookReceipt{}, ErrInvalidWebhook
-	}
-	signature, err := base64.StdEncoding.DecodeString(signatureHeader)
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		return WebhookReceipt{}, ErrInvalidWebhook
-	}
-	signed := make([]byte, 0, len(timestampHeader)+1+len(raw))
-	signed = append(signed, timestampHeader...)
-	signed = append(signed, '|')
-	signed = append(signed, raw...)
-	if !ed25519.Verify(m.config.WebhookPublicKey, signed, signature) {
-		return WebhookReceipt{}, ErrInvalidWebhook
-	}
+	timestamp, _ := strconv.ParseInt(timestampHeader, 10, 64)
 	envelope, err := decodeTelnyxEnvelope(raw)
 	if err != nil {
 		return WebhookReceipt{}, ErrInvalidWebhook
@@ -477,21 +466,12 @@ func (m *Module) replayProviderReceipt(
 	err = m.attachReceiptCall(ctx, eventID, fact)
 	if err == nil {
 		err = m.ApplyProviderFact(ctx, fact)
+		if err == nil {
+			err = m.attachReceiptCall(ctx, eventID, fact)
+		}
 	}
 	if errors.Is(err, ErrInvalidHandoff) {
-		if err := m.rememberRejectedProviderLeg(ctx, fact); err != nil {
-			return ReceiptPending, "PROJECTION_RETRY"
-		}
 		return ReceiptFailed, "HANDOFF_REJECTED"
-	}
-	if errors.Is(err, ErrConflict) && rejectedHandoffLifecycle(fact.Type) {
-		rejected, lookupErr := m.providerLegWasRejected(ctx, fact)
-		if lookupErr != nil {
-			return ReceiptPending, "PROJECTION_RETRY"
-		}
-		if rejected {
-			return ReceiptFailed, "RELATED_HANDOFF_REJECTED"
-		}
 	}
 	switch {
 	case err == nil:
@@ -500,61 +480,6 @@ func (m *Module) replayProviderReceipt(
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
 	default:
 		return ReceiptPending, "PROJECTION_RETRY"
-	}
-}
-
-func (m *Module) rememberRejectedProviderLeg(
-	ctx context.Context,
-	fact ProviderFact,
-) error {
-	_, err := m.pool.Exec(ctx, `
-		INSERT INTO human_calling_rejected_provider_legs (
-			call_control_id,
-			call_leg_id,
-			call_session_id,
-			initiated_event_id,
-			rejected_at
-		)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT DO NOTHING
-	`,
-		fact.CallControlID,
-		fact.CallLegID,
-		fact.CallSessionID,
-		fact.EventID,
-		m.now(),
-	)
-	if err != nil {
-		return fmt.Errorf("remember rejected provider leg: %w", err)
-	}
-	return nil
-}
-
-func (m *Module) providerLegWasRejected(
-	ctx context.Context,
-	fact ProviderFact,
-) (bool, error) {
-	var rejected bool
-	if err := m.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM human_calling_rejected_provider_legs
-			WHERE call_control_id = $1
-				AND call_leg_id = $2
-				AND call_session_id = $3
-		)
-	`, fact.CallControlID, fact.CallLegID, fact.CallSessionID).Scan(&rejected); err != nil {
-		return false, fmt.Errorf("find rejected provider leg: %w", err)
-	}
-	return rejected, nil
-}
-
-func rejectedHandoffLifecycle(factType FactType) bool {
-	switch factType {
-	case FactCallAnswered, FactCallBridged, FactCallHangup:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -574,7 +499,7 @@ func (m *Module) attachReceiptCall(
 	eventID string,
 	fact ProviderFact,
 ) error {
-	if clientState, ok := parseOpaqueClientState(fact.ClientState); ok {
+	if clientState, ok := parseCallLegClientState(fact.ClientState); ok {
 		tag, err := m.pool.Exec(ctx, `
 			UPDATE human_calling_provider_receipts receipt
 			SET call_id = call.id
@@ -590,37 +515,18 @@ func (m *Module) attachReceiptCall(
 			return nil
 		}
 	}
-	if fact.CallSessionID == "" ||
-		fact.CallControlID == "" ||
-		fact.CallLegID == "" {
+	if fact.CallControlID == "" || fact.CallLegID == "" {
 		return nil
 	}
 	if _, err := m.pool.Exec(ctx, `
 		UPDATE human_calling_provider_receipts receipt
-		SET call_id = matched.call_id
-		FROM (
-			SELECT call.id AS call_id
-			FROM human_calling_calls call
-			WHERE call.call_session_id = $2
-				AND (
-					(
-						call.caller_call_control_id = $3
-						AND call.caller_call_leg_id = $4
-					)
-					OR EXISTS (
-						SELECT 1
-						FROM human_calling_connection_attempts attempt
-						WHERE attempt.call_id = call.id
-							AND attempt.staff_call_control_id = $3
-							AND attempt.staff_call_leg_id = $4
-					)
-				)
-			ORDER BY call.created_at, call.id
-			LIMIT 1
-		) matched
+		SET call_id = leg.call_id
+		FROM human_calling_call_legs leg
 		WHERE receipt.event_id = $1
 			AND receipt.call_id IS NULL
-	`, eventID, fact.CallSessionID, fact.CallControlID, fact.CallLegID); err != nil {
+			AND leg.provider_call_control_id = $2
+			AND leg.provider_call_leg_id = $3
+	`, eventID, fact.CallControlID, fact.CallLegID); err != nil {
 		return fmt.Errorf("attach correlated provider receipt Call: %w", err)
 	}
 	return nil
@@ -674,29 +580,35 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	fact.CallControlID = payload.CallControlID
 	fact.CallLegID = payload.CallLegID
 	fact.CallSessionID = payload.CallSessionID
+	fact.ConnectionID = payload.ConnectionID
 	fact.ClientState = payload.ClientState
 	fact.From = payload.From
 	fact.To = payload.To
 	fact.HangupCause = payload.HangupCause
+	fact.TerminationSource = payload.HangupSource
+	fact.SIPCause = payload.SIPHangupCause
+	fact.PlaybackStatus = payload.Status
+	fact.CallQualityStats = payload.CallQualityStats
 	fact.RecordingID = payload.RecordingID
 	fact.RecordingStartedAt = payload.RecordingStartedAt
 	fact.RecordingEndedAt = payload.RecordingEndedAt
-	if fact.CallControlID == "" ||
+	if fact.Type == FactSpeakEnded &&
+		fact.PlaybackStatus != "completed" &&
+		fact.PlaybackStatus != "call_hangup" &&
+		fact.PlaybackStatus != "cancelled_amd" {
+		return ProviderFact{}, false, ErrInvalidWebhook
+	}
+	if (fact.Type != FactRecordingSaved && fact.Type != FactRecordingError &&
+		fact.CallControlID == "") ||
 		fact.CallLegID == "" ||
 		fact.CallSessionID == "" {
 		return ProviderFact{}, false, ErrInvalidWebhook
 	}
 	if fact.ClientState != "" {
-		state, ok := parseOpaqueClientState(fact.ClientState)
-		if !ok ||
-			state.Version != 1 ||
-			(state.Leg != "caller" &&
-				state.Leg != "staff" &&
-				state.Leg != "recording" &&
-				state.Leg != "voicemail" &&
-				state.Leg != "destination") ||
-			!validUUID(state.CallID) ||
-			(state.AttemptID != "" && !validUUID(state.AttemptID)) {
+		state, ok := parseCallLegClientState(fact.ClientState)
+		if !ok || !validUUID(state.CallID) || !validUUID(state.CallLegID) ||
+			(state.Role != "CALLER" && state.Role != "STAFF" &&
+				state.Role != "DESTINATION") {
 			return ProviderFact{}, false, ErrInvalidWebhook
 		}
 	}

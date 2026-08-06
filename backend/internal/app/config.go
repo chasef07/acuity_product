@@ -53,9 +53,10 @@ type ServiceConfig struct {
 
 type HumanCallingConfig struct {
 	HandoffSIPDomain       string
+	HandoffAdmissionClosed bool
 	StaffSIPDomain         string
 	HandoffTokenKey        []byte
-	WebhookPublicKey       []byte
+	WebhookPublicKeys      [][]byte
 	TelnyxAPIKey           string
 	TelnyxAPIBaseURL       string
 	CallControlID          string
@@ -63,15 +64,14 @@ type HumanCallingConfig struct {
 	FromNumber             string
 	RingbackURL            string
 	PlaybackSigningKey     []byte
-	OfferDuration          time.Duration
-	ConnectionTimeout      time.Duration
+	RingWindowDuration     time.Duration
 	LeaseDuration          time.Duration
 	ReadinessGrace         time.Duration
 }
 
 type MessagingConfig struct {
 	WebhookBaseURL      string
-	WebhookPublicKey    []byte
+	WebhookPublicKeys   [][]byte
 	AttachmentDirectory string
 	MediaPublicBaseURL  string
 	MediaSigningKey     []byte
@@ -143,10 +143,12 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			return Config{}, err
 		}
 	}
-	if role == RolePortalAPI {
+	if role == RolePortalAPI || role == RoleWorker {
 		if config.HumanCalling, err = loadHandoffConfig(getenv); err != nil {
 			return Config{}, err
 		}
+	}
+	if role == RolePortalAPI {
 		if config.Service, err = loadServiceConfig(getenv); err != nil {
 			return Config{}, err
 		}
@@ -188,14 +190,27 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		}
 	}
 	if role == RoleProviderIngress {
-		if config.HumanCalling.WebhookPublicKey, err = requiredBase64Key(
+		primaryKey, keyErr := requiredBase64Key(
 			getenv,
 			"TELNYX_WEBHOOK_PUBLIC_KEY",
 			32,
-		); err != nil {
-			return Config{}, err
+		)
+		if keyErr != nil {
+			return Config{}, keyErr
 		}
-		config.Messaging.WebhookPublicKey = config.HumanCalling.WebhookPublicKey
+		config.HumanCalling.WebhookPublicKeys = [][]byte{primaryKey}
+		if strings.TrimSpace(getenv("TELNYX_WEBHOOK_NEXT_PUBLIC_KEY")) != "" {
+			nextKey, keyErr := requiredBase64Key(
+				getenv, "TELNYX_WEBHOOK_NEXT_PUBLIC_KEY", 32,
+			)
+			if keyErr != nil {
+				return Config{}, keyErr
+			}
+			config.HumanCalling.WebhookPublicKeys = append(
+				config.HumanCalling.WebhookPublicKeys, nextKey,
+			)
+		}
+		config.Messaging.WebhookPublicKeys = config.HumanCalling.WebhookPublicKeys
 	}
 	if role == RoleMigrate && (config.ProvisioningInput == "") != (config.ProvisioningOutput == "") {
 		return Config{}, fmt.Errorf("PROVISIONING_INPUT and PROVISIONING_OUTPUT must be set together")
@@ -261,6 +276,15 @@ func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 	); err != nil {
 		return HumanCallingConfig{}, err
 	}
+	switch strings.TrimSpace(getenv("HUMAN_CALLING_HANDOFF_ADMISSION")) {
+	case "", "open":
+	case "closed":
+		result.HandoffAdmissionClosed = true
+	default:
+		return HumanCallingConfig{}, fmt.Errorf(
+			"HUMAN_CALLING_HANDOFF_ADMISSION must be open or closed",
+		)
+	}
 	return result, nil
 }
 
@@ -311,8 +335,7 @@ func loadTelnyxCommandConfig(
 		name   string
 		target *time.Duration
 	}{
-		{"HUMAN_CALLING_OFFER_SECONDS", &result.OfferDuration},
-		{"HUMAN_CALLING_CONNECTION_TIMEOUT_SECONDS", &result.ConnectionTimeout},
+		{"HUMAN_CALLING_RING_WINDOW_SECONDS", &result.RingWindowDuration},
 		{"HUMAN_CALLING_LEASE_SECONDS", &result.LeaseDuration},
 		{"HUMAN_CALLING_READINESS_GRACE_SECONDS", &result.ReadinessGrace},
 	}

@@ -10,8 +10,8 @@ import (
 
 func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *testing.T) {
 	work := newControlledWork()
-	work.reconciliationStarted = make(chan struct{}, 1)
-	work.blockReconciliation = true
+	work.staleReconciliationStarted = make(chan struct{}, 1)
+	work.blockStaleReconciliation = true
 	runner, err := New(Config{
 		WorkInterval:       time.Millisecond,
 		WorkTimeout:        time.Second,
@@ -35,7 +35,7 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 
 	waitForSignal(t, work.slowCommandStarted, "slow provider command to start")
 	waitForSignal(t, work.receiptQueueReported, "receipt queue metric")
-	waitForSignal(t, work.reconciliationStarted, "slow provider reconciliation to start")
+	waitForSignal(t, work.staleReconciliationStarted, "slow CallLeg reconciliation to start")
 	waitForSignal(t, work.receiptProjected, "receipt projection during slow provider command")
 	waitForSignal(t, work.readyCommandFinished, "another ready provider command")
 
@@ -170,8 +170,8 @@ func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
 
 func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 	work := newControlledWork()
-	work.offerExpiryStarted = make(chan struct{}, 1)
-	work.blockOfferExpiry = true
+	work.staleReconciliationStarted = make(chan struct{}, 1)
+	work.blockStaleReconciliation = true
 	work.maintenanceStarted = make(chan struct{}, 1)
 	runner, err := New(Config{
 		WorkInterval:       time.Hour,
@@ -193,7 +193,7 @@ func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 	go func() {
 		runDone <- runner.Run(ctx)
 	}()
-	waitForSignal(t, work.offerExpiryStarted, "maintenance operation to start")
+	waitForSignal(t, work.staleReconciliationStarted, "maintenance operation to start")
 	cancel()
 	select {
 	case err := <-runDone:
@@ -314,18 +314,18 @@ func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
 }
 
 type controlledWork struct {
-	commandCalls          atomic.Int32
-	receiptCalls          atomic.Int32
-	slowCommandStarted    chan struct{}
-	releaseSlowCommand    chan struct{}
-	readyCommandFinished  chan struct{}
-	receiptProjected      chan struct{}
-	maintenanceStarted    chan struct{}
-	offerExpiryStarted    chan struct{}
-	reconciliationStarted chan struct{}
-	receiptQueueReported  chan struct{}
-	blockOfferExpiry      bool
-	blockReconciliation   bool
+	commandCalls               atomic.Int32
+	receiptCalls               atomic.Int32
+	slowCommandStarted         chan struct{}
+	releaseSlowCommand         chan struct{}
+	readyCommandFinished       chan struct{}
+	receiptProjected           chan struct{}
+	maintenanceStarted         chan struct{}
+	staleReconciliationStarted chan struct{}
+	reconciliationStarted      chan struct{}
+	receiptQueueReported       chan struct{}
+	blockStaleReconciliation   bool
+	blockReconciliation        bool
 }
 
 type credentialReconciliationFailureWork struct {
@@ -405,14 +405,19 @@ func (*controlledWork) ProcessNextCredentialReconciliation(context.Context) (boo
 	return false, nil
 }
 
-func (work *controlledWork) ExpireOffers(ctx context.Context) (int, error) {
-	if work.offerExpiryStarted != nil {
-		work.offerExpiryStarted <- struct{}{}
+func (work *controlledWork) ReconcileStaleCalls(ctx context.Context) (int, error) {
+	if work.staleReconciliationStarted != nil {
+		work.staleReconciliationStarted <- struct{}{}
 	}
-	if work.blockOfferExpiry {
+	if work.blockStaleReconciliation {
 		<-ctx.Done()
 		return 0, ctx.Err()
 	}
+	work.signalMaintenance()
+	return 0, nil
+}
+
+func (*controlledWork) ExpireDispositions(context.Context) (int, error) {
 	return 0, nil
 }
 
@@ -422,28 +427,8 @@ func (work *controlledWork) signalMaintenance() {
 	}
 }
 
-func (work *controlledWork) ExpireConnections(context.Context) (int, error) {
-	work.signalMaintenance()
-	return 0, nil
-}
-
-func (*controlledWork) ExpireVoicemailFailures(context.Context) (int, error) {
-	return 0, nil
-}
-
 func (*controlledWork) RecoverInterruptedCommands(context.Context) error {
 	return nil
-}
-
-func (work *controlledWork) ReconcileConfirmedHangups(ctx context.Context) (int, error) {
-	if work.reconciliationStarted != nil {
-		work.reconciliationStarted <- struct{}{}
-	}
-	if work.blockReconciliation {
-		<-ctx.Done()
-		return 0, ctx.Err()
-	}
-	return 0, nil
 }
 
 func (*controlledWork) ReconcileCredentials(context.Context) error {

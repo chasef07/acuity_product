@@ -1,0 +1,2084 @@
+package humancalling_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
+	currentTime := now
+	accessModule := access.New(pool, func() time.Time { return currentTime })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "call-leg-fanout", 2,
+	)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{CallControlID: "staff-control-1", CallLegID: "staff-provider-leg-1"},
+		{CallControlID: "staff-control-2", CallLegID: "staff-provider-leg-2"},
+	}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.mp3",
+	}, func() time.Time { return currentTime })
+
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "call-leg-browser")
+	handoff, err := calling.CreateHandoff(
+		context.Background(),
+		humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject:    "abita-call-leg-fanout",
+				PracticeID: authorization.Practice.ID,
+			},
+			LocationID:     authorization.Locations[0].ID,
+			SourceCallID:   "abita-source-call",
+			IdempotencyKey: "abita-handoff-attempt",
+			Contact: humancalling.ContactContext{
+				Phone:          "+15555550100",
+				PhoneSource:    "Abita",
+				DisplayName:    "Synthetic Caller",
+				NameSource:     "Abita",
+				TransferReason: "Scheduling help",
+				ReasonSource:   "Abita AI",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("create handoff: %v", err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID:       "caller-initiated",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: "caller-control",
+		CallLegID:     "caller-provider-leg",
+		CallSessionID: "caller-session",
+		From:          "+15555550100",
+		To:            handoff.SIPDestination,
+	}
+	wrongConnection := caller
+	wrongConnection.EventID = "caller-initiated-wrong-connection"
+	wrongConnection.ConnectionID = "unrelated-call-control-connection"
+	if err := calling.ApplyProviderFact(
+		context.Background(), wrongConnection,
+	); !errors.Is(err, humancalling.ErrInvalidHandoff) {
+		t.Fatalf("wrong-connection REFER error = %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("admit REFER caller: %v", err)
+	}
+	processAllCommands(t, calling)
+
+	caller.EventID = "caller-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("fan out caller answer: %v", err)
+	}
+	processAllCommands(t, calling)
+
+	if provider.count(humancalling.CommandStartRingWindow) != 1 ||
+		provider.count(humancalling.CommandDialStaff) != 2 ||
+		!provider.ordered(
+			humancalling.CommandStartRingWindow,
+			humancalling.CommandDialStaff,
+		) {
+		t.Fatalf("provider commands = %#v, want ring then two Staff Dials", provider.commands)
+	}
+
+	dials := provider.all(humancalling.CommandDialStaff)
+	answers := make([]humancalling.ProviderFact, len(dials))
+	for index, dial := range dials {
+		clientState, _ := dial.Payload["client_state"].(string)
+		initiated := humancalling.ProviderFact{
+			EventID:       fmt.Sprintf("staff-initiated-%d", index+1),
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    now.Add(2 * time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: fmt.Sprintf("staff-control-%d", index+1),
+			CallLegID:     fmt.Sprintf("staff-provider-leg-%d", index+1),
+			CallSessionID: fmt.Sprintf("staff-session-%d", index+1),
+			ClientState:   clientState,
+		}
+		if err := calling.ApplyProviderFact(context.Background(), initiated); err != nil {
+			t.Fatalf("project Staff initiation %d: %v", index+1, err)
+		}
+		initiated.EventID = fmt.Sprintf("staff-answered-%d", index+1)
+		initiated.Type = humancalling.FactCallAnswered
+		initiated.OccurredAt = now.Add(3 * time.Second)
+		answers[index] = initiated
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO access_platform_operators (email, user_subject)
+		VALUES ($1, $2)
+	`, staff[1].Email, staff[1].Subject); err != nil {
+		t.Fatalf("promote ringing Staff to Platform Operator: %v", err)
+	}
+	answerErrors := make(chan error, len(answers))
+	var answersDone sync.WaitGroup
+	for _, answer := range answers {
+		answersDone.Add(1)
+		go func(fact humancalling.ProviderFact) {
+			defer answersDone.Done()
+			answerErrors <- calling.ApplyProviderFact(context.Background(), fact)
+		}(answer)
+	}
+	answersDone.Wait()
+	close(answerErrors)
+	for err := range answerErrors {
+		if err != nil {
+			t.Fatalf("project concurrent Staff answer: %v", err)
+		}
+	}
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringClientState, _ := ring.Payload["client_state"].(string)
+	currentTime = now.Add(6 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ring-window-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(4 * time.Second), CallControlID: "caller-control",
+		CallLegID: "caller-provider-leg", CallSessionID: "caller-session",
+		ClientState: ringClientState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatalf("complete ring window after provisional winner: %v", err)
+	}
+	processAllCommands(t, calling)
+
+	bridge := provider.last(humancalling.CommandBridge)
+	if bridge.CallLegID == "" || bridge.PeerCallLegID == "" ||
+		bridge.Payload["call_control_id"] != "caller-control" ||
+		bridge.Payload["prevent_double_bridge"] != true {
+		t.Fatalf("explicit Bridge command = %#v", bridge)
+	}
+	if provider.count(humancalling.CommandBridge) != 1 ||
+		provider.count(humancalling.CommandHangupLeg) != 1 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("provider winner commands = %#v", provider.commands)
+	}
+	bridgeClientState, _ := bridge.Payload["client_state"].(string)
+	var winnerControlID, winnerProviderLegID, winnerSessionID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT provider_call_control_id, provider_call_leg_id, provider_call_session_id
+		FROM human_calling_call_legs WHERE id = $1
+	`, bridge.CallLegID).Scan(&winnerControlID, &winnerProviderLegID, &winnerSessionID); err != nil {
+		t.Fatalf("read winning provider identity: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "winner-bridge-mismatched", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: winnerControlID,
+		CallLegID: "wrong-provider-leg", CallSessionID: winnerSessionID,
+		ClientState: bridgeClientState,
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("mismatched Bridge identity error = %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "winner-bridge-confirmed", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: winnerControlID,
+		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
+	}); err != nil {
+		t.Fatalf("confirm explicit Bridge: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "caller-bridge-confirmed", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: "caller-control",
+		CallLegID: "caller-provider-leg", CallSessionID: "caller-session",
+	}); err != nil {
+		t.Fatalf("confirm caller Bridge: %v", err)
+	}
+	processAllCommands(t, calling)
+	stop := provider.last(humancalling.CommandStopRingWindow)
+	if stop.Payload["stop"] != "all" {
+		t.Fatalf("Stop ring-window payload = %#v", stop.Payload)
+	}
+	var bridgedLegs, endingLosers int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_call_legs
+		WHERE state = 'BRIDGED'
+	`).Scan(&bridgedLegs); err != nil {
+		t.Fatalf("count bridged CallLegs: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_legs
+		WHERE role = 'STAFF' AND state = 'ENDING'
+	`).Scan(&endingLosers); err != nil {
+		t.Fatalf("count ending Staff losers: %v", err)
+	}
+	if bridgedLegs != 2 || endingLosers != 1 {
+		t.Fatalf("CallLeg states = %d bridged, %d ending; want 2 and 1",
+			bridgedLegs, endingLosers)
+	}
+	var loserControlID, loserProviderLegID, loserSessionID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT provider_call_control_id, provider_call_leg_id, provider_call_session_id
+		FROM human_calling_call_legs
+		WHERE role = 'STAFF' AND state = 'ENDING'
+	`).Scan(&loserControlID, &loserProviderLegID, &loserSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "loser-cleanup-hangup", Type: humancalling.FactCallHangup,
+		OccurredAt: now.Add(6 * time.Second), CallControlID: loserControlID,
+		CallLegID: loserProviderLegID, CallSessionID: loserSessionID,
+		HangupCause: "NORMAL_CLEARING", TerminationSource: "CALL_CONTROL",
+	}); err != nil {
+		t.Fatalf("project losing Staff cleanup Hangup: %v", err)
+	}
+	var prematureTerminal *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome FROM human_calling_calls
+	`).Scan(&prematureTerminal); err != nil {
+		t.Fatal(err)
+	}
+	if prematureTerminal != nil {
+		t.Fatalf("loser cleanup ended connected Call as %s", *prematureTerminal)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "winner-hangup", Type: humancalling.FactCallHangup,
+		OccurredAt: now.Add(6 * time.Second), CallControlID: winnerControlID,
+		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
+		HangupCause: "NORMAL_CLEARING", TerminationSource: "STAFF",
+	}); err != nil {
+		t.Fatalf("end connected winner: %v", err)
+	}
+	var bridgedCallID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs WHERE id = $1
+	`, bridge.CallLegID).Scan(&bridgedCallID); err != nil {
+		t.Fatal(err)
+	}
+	connectedCall, err := calling.ReadCall(context.Background(), staff[0], bridgedCallID)
+	if err != nil || connectedCall.State != humancalling.CallNeedsDisposition ||
+		connectedCall.DispositionDeadline == nil {
+		t.Fatalf("completed connected Call = %#v, %v", connectedCall, err)
+	}
+	processAllCommands(t, calling)
+	currentTime = now.Add(30 * time.Second)
+	if expired, err := calling.ExpireDispositions(context.Background()); err != nil || expired != 1 {
+		t.Fatalf("expire connected disposition = %d, %v", expired, err)
+	}
+	connectedCall, err = calling.ReadCall(context.Background(), staff[0], bridgedCallID)
+	if err != nil || connectedCall.State != humancalling.CallResolved ||
+		connectedCall.DispositionDeadline != nil {
+		t.Fatalf("auto-resolved connected Call = %#v, %v", connectedCall, err)
+	}
+	if err := calling.RecoverInterruptedCommands(context.Background()); err != nil {
+		t.Fatalf("recover interrupted commands: %v", err)
+	}
+	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
+		t.Fatalf("reconcile stale CallLegs: %v", err)
+	}
+}
+
+func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "call-leg-outbound", 2,
+	)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{CallControlID: "outbound-staff-control", CallLegID: "outbound-staff-provider-leg"},
+		{CallControlID: "destination-control", CallLegID: "destination-provider-leg"},
+	}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "outbound-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "call-leg-outbound-practice",
+			LocationKey: "call-leg-outbound-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: "outbound-browser-1",
+			IdempotencyKey: "outbound-callleg-proof",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	var callerLegs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'CALLER'
+	`, call.ID).Scan(&callerLegs); err != nil || callerLegs != 1 {
+		t.Fatalf("outbound caller CallLegs = %d, err = %v", callerLegs, err)
+	}
+	processAllCommands(t, calling)
+	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
+	staffClientState, _ := staffDial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: "outbound-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "outbound-staff-control", CallLegID: "outbound-staff-provider-leg",
+		CallSessionID: "outbound-staff-session", ClientState: staffClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	staffFact.EventID = "outbound-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(2 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff answer: %v", err)
+	}
+	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(callingState.Ringing) != 1 {
+		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[0], SessionID: "outbound-browser-1", CallID: call.ID,
+			MediaToken: callingState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm outbound Staff media: %v", err)
+	}
+	processAllCommands(t, calling)
+	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
+	if destinationDial.Payload["bridge_on_answer"] != false ||
+		destinationDial.Payload["link_to"] != "outbound-staff-control" ||
+		destinationDial.Payload["from"] != "+14843336938" {
+		t.Fatalf("outbound destination Dial = %#v", destinationDial)
+	}
+	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
+	destinationFact := humancalling.ProviderFact{
+		EventID: "destination-answered-first", Type: humancalling.FactCallAnswered,
+		OccurredAt: now.Add(3 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "destination-control", CallLegID: "destination-provider-leg",
+		CallSessionID: "destination-session", ClientState: destinationClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project reordered destination answer: %v", err)
+	}
+	destinationFact.EventID = "destination-initiated-after-answer"
+	destinationFact.Type = humancalling.FactCallInitiated
+	destinationFact.OccurredAt = now.Add(4 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project reordered destination initiation: %v", err)
+	}
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	if bridge.TargetID != "destination-control" ||
+		bridge.Payload["call_control_id"] != "outbound-staff-control" ||
+		bridge.Payload["prevent_double_bridge"] != true {
+		t.Fatalf("outbound explicit Bridge = %#v", bridge)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "outbound-destination-hangup-delivered-first", Type: humancalling.FactCallHangup,
+		OccurredAt: now.Add(6 * time.Second), CallControlID: "destination-control",
+		CallLegID: "destination-provider-leg", CallSessionID: "destination-session",
+		HangupCause: "NORMAL_CLEARING", TerminationSource: "DESTINATION",
+	}); err != nil {
+		t.Fatalf("project outbound Hangup before Bridge delivery: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "outbound-bridge-confirmed", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: "destination-control",
+		CallLegID: "destination-provider-leg", CallSessionID: "destination-session",
+	}); err != nil {
+		t.Fatalf("confirm outbound Bridge: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "outbound-staff-bridge-confirmed", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: "outbound-staff-control",
+		CallLegID: "outbound-staff-provider-leg", CallSessionID: "outbound-staff-session",
+	}); err != nil {
+		t.Fatalf("confirm outbound Staff Bridge: %v", err)
+	}
+	destinationFact.EventID = "destination-initiated-after-bridge"
+	destinationFact.OccurredAt = now.Add(6 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project late destination initiation: %v", err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 1 {
+		t.Fatalf("reordered destination facts created duplicate Bridge: %#v", provider.commands)
+	}
+	var bridgedLegs int
+	var terminal string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_legs
+		WHERE call_id = $1 AND bridged_at IS NOT NULL
+	`, call.ID).Scan(&bridgedLegs); err != nil || bridgedLegs != 2 {
+		t.Fatalf("outbound historical bridged CallLegs = %d, err = %v", bridgedLegs, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome FROM human_calling_calls WHERE id = $1
+	`, call.ID).Scan(&terminal); err != nil || terminal != "ENDED" {
+		t.Fatalf("outbound reordered Bridge terminal = %s, err = %v", terminal, err)
+	}
+	if _, err := calling.RequestHangup(
+		context.Background(), staff[1], "outbound-browser-2", call.ID,
+	); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("non-owner Hangup error = %v", err)
+	}
+}
+
+func TestCallerAbandonmentCancelsUnsentFanout(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "abandon-staff-control", CallLegID: "abandon-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-abandon", provider, 1,
+	)
+	caller.EventID = "abandon-caller-hangup"
+	caller.Type = humancalling.FactCallHangup
+	caller.OccurredAt = now.Add(2 * time.Second)
+	caller.HangupCause = "NORMAL_CLEARING"
+	caller.TerminationSource = "CALLER"
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("apply caller abandonment: %v", err)
+	}
+	processAllCommands(t, calling)
+
+	var cancelled, failedLegs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands
+		WHERE action IN ('START_RING_WINDOW', 'DIAL_STAFF') AND state = 'FAILED'
+	`).Scan(&cancelled); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_legs
+		WHERE role = 'STAFF' AND state = 'FAILED'
+	`).Scan(&failedLegs); err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 2 || failedLegs != 1 ||
+		provider.count(humancalling.CommandStartRingWindow) != 0 ||
+		provider.count(humancalling.CommandDialStaff) != 0 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("abandonment cleanup = cancelled:%d failed:%d commands:%#v",
+			cancelled, failedLegs, provider.commands)
+	}
+}
+
+func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 5, 14, 5, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "hangup-before-answer", 1,
+	)
+	provider := &recordingProvider{}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.wav",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "hangup-before-answer-browser")
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: "abita-hangup-before-answer", PracticeID: authorization.Practice.ID,
+		},
+		LocationID:   authorization.Locations[0].ID,
+		SourceCallID: "hangup-before-answer-source", IdempotencyKey: "hangup-before-answer",
+		Contact: humancalling.ContactContext{Phone: "+15555550100"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: "hangup-before-answer-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "hangup-before-answer-control", CallLegID: "hangup-before-answer-leg",
+		CallSessionID: "hangup-before-answer-session", From: "+15555550100",
+		To: handoff.SIPDestination,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	caller.EventID = "hangup-before-answer-hangup"
+	caller.Type = humancalling.FactCallHangup
+	caller.OccurredAt = now.Add(2 * time.Second)
+	caller.HangupCause = "NORMAL_CLEARING"
+	caller.TerminationSource = "CALLER"
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatal(err)
+	}
+	caller.EventID = "hangup-before-answer-late-answer"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	var terminal string
+	var staffLegs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome,
+			(SELECT count(*) FROM human_calling_call_legs WHERE role = 'STAFF')
+		FROM human_calling_calls
+	`).Scan(&terminal, &staffLegs); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "ABANDONED" || staffLegs != 0 ||
+		provider.count(humancalling.CommandStartRingWindow) != 0 ||
+		provider.count(humancalling.CommandDialStaff) != 0 {
+		t.Fatalf("late caller answer revived terminal Call: terminal=%s legs=%d commands=%#v",
+			terminal, staffLegs, provider.commands)
+	}
+}
+
+func TestPeerBridgeEvidencePreventsAbandonmentAcrossEventOrder(t *testing.T) {
+	for _, staffBridgeFirst := range []bool{true, false} {
+		name := "caller-bridge-first"
+		if staffBridgeFirst {
+			name = "staff-bridge-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			now := time.Date(2026, time.August, 5, 14, 15, 0, 0, time.UTC)
+			prefix := "peer-order-caller"
+			if staffBridgeFirst {
+				prefix = "peer-order-staff"
+			}
+			provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+				CallControlID: prefix + "-staff-control",
+				CallLegID:     prefix + "-staff-leg",
+			}}}
+			pool, calling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+			processAllCommands(t, calling)
+			dial := provider.last(humancalling.CommandDialStaff)
+			staffState, _ := dial.Payload["client_state"].(string)
+			staff := humancalling.ProviderFact{
+				EventID: prefix + "-staff-initiated", Type: humancalling.FactCallInitiated,
+				OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+				CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+				CallSessionID: prefix + "-staff-session", ClientState: staffState,
+			}
+			if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+				t.Fatal(err)
+			}
+			staff.EventID = prefix + "-staff-answered"
+			staff.Type = humancalling.FactCallAnswered
+			staff.OccurredAt = now.Add(3 * time.Second)
+			if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+				t.Fatal(err)
+			}
+			processAllCommands(t, calling)
+			if staffBridgeFirst {
+				if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+					EventID: prefix + "-staff-bridged", Type: humancalling.FactCallBridged,
+					OccurredAt: now.Add(4 * time.Second), CallControlID: staff.CallControlID,
+					CallLegID: staff.CallLegID, CallSessionID: staff.CallSessionID,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				caller.EventID = prefix + "-caller-hangup"
+				caller.Type = humancalling.FactCallHangup
+				caller.OccurredAt = now.Add(5 * time.Second)
+				caller.HangupCause = "NORMAL_CLEARING"
+				caller.TerminationSource = "CALLER"
+				if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+					EventID: prefix + "-caller-bridged", Type: humancalling.FactCallBridged,
+					OccurredAt: now.Add(4 * time.Second), CallControlID: caller.CallControlID,
+					CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				staff.EventID = prefix + "-staff-hangup"
+				staff.Type = humancalling.FactCallHangup
+				staff.OccurredAt = now.Add(5 * time.Second)
+				staff.HangupCause = "NORMAL_CLEARING"
+				staff.TerminationSource = "STAFF"
+				if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var terminal string
+			if err := pool.QueryRow(context.Background(), `
+				SELECT terminal_outcome FROM human_calling_calls
+			`).Scan(&terminal); err != nil {
+				t.Fatal(err)
+			}
+			if terminal != "ENDED" {
+				t.Fatalf("peer-first Bridge terminal outcome = %s", terminal)
+			}
+		})
+	}
+}
+
+func TestBridgeBeforeHangupUpgradesWhenDeliveredAfterHangup(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 35, 0, 0, time.UTC)
+	prefix := "bridge-delivered-after-hangup"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: prefix + "-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+		CallSessionID: prefix + "-staff-session", ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = prefix + "-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	staff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	caller.EventID = prefix + "-caller-hangup-delivered-first"
+	caller.Type = humancalling.FactCallHangup
+	caller.OccurredAt = now.Add(5 * time.Second)
+	caller.HangupCause = "NORMAL_CLEARING"
+	caller.TerminationSource = "CALLER"
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatal(err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-staff-bridge-delivered-late", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(4 * time.Second), CallControlID: staff.CallControlID,
+		CallLegID: staff.CallLegID, CallSessionID: staff.CallSessionID,
+		ClientState: bridgeState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var terminal string
+	var bridgedAt, dispositionDeadline *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, leg.bridged_at, call.disposition_deadline
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg ON leg.call_id = call.id AND leg.role = 'STAFF'
+	`).Scan(&terminal, &bridgedAt, &dispositionDeadline); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "ENDED" || bridgedAt == nil || dispositionDeadline == nil {
+		t.Fatalf("historical Bridge upgrade = terminal:%s bridged:%v disposition:%v",
+			terminal, bridgedAt, dispositionDeadline)
+	}
+}
+
+func TestUnresolvedBridgeFencesVoicemailUntilReconciled(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 40, 0, 0, time.UTC)
+	prefix := "bridge-voicemail-fence"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: prefix + "-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+		CallSessionID: prefix + "-staff-session", ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = prefix + "-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	staff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(4 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = prefix + "-staff-hangup-delivered-first"
+	staff.Type = humancalling.FactCallHangup
+	staff.OccurredAt = now.Add(6 * time.Second)
+	staff.HangupCause = "NORMAL_CLEARING"
+	staff.TerminationSource = "STAFF"
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("unresolved Bridge allowed voicemail: %#v", provider.commands)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, bridge.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands SET created_at = $2, updated_at = $2
+		WHERE id = $1
+	`, bridge.ID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Events: []humancalling.ProviderFact{{
+			EventID: prefix + "-staff-bridge-reconciled", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: staff.CallControlID,
+			CallLegID: staff.CallLegID, CallSessionID: staff.CallSessionID,
+			ClientState: bridgeState,
+		}},
+	})
+	provider.mu.Unlock()
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile delayed Bridge = %d, %v", reconciled, err)
+	}
+	var terminal string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome FROM human_calling_calls
+	`).Scan(&terminal); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "ENDED" || provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("reconciled Bridge outcome=%s commands=%#v", terminal, provider.commands)
+	}
+}
+
+func TestAbsentBridgeReconciliationReleasesVoicemailFence(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 42, 0, 0, time.UTC)
+	prefix := "absent-bridge-voicemail"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: prefix + "-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+		CallSessionID: prefix + "-staff-session", ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = prefix + "-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	staff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(4 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = prefix + "-staff-hangup"
+	staff.Type = humancalling.FactCallHangup
+	staff.OccurredAt = now.Add(5 * time.Second)
+	staff.HangupCause = "NORMAL_CLEARING"
+	staff.TerminationSource = "STAFF"
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	if provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("unresolved absent Bridge allowed voicemail early: %#v", provider.commands)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, bridge.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands SET created_at = $2, updated_at = $2
+		WHERE id = $1
+	`, bridge.ID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{})
+	provider.mu.Unlock()
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile absent Bridge = %d, %v", reconciled, err)
+	}
+	processAllCommands(t, calling)
+	var bridgeState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, bridge.ID).Scan(&bridgeState); err != nil {
+		t.Fatal(err)
+	}
+	if bridgeState != "FAILED" || provider.count(humancalling.CommandSpeakVoicemail) != 1 {
+		t.Fatalf("absent Bridge release = state:%s commands:%#v", bridgeState, provider.commands)
+	}
+}
+
+func TestInboundAnswerAndOutboundStartShareOneSoftphoneLease(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 45, 0, 0, time.UTC)
+	prefix := "lease-answer-outbound"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+	}}}
+	pool, calling, _, staff := prepareInboundFanout(t, now, prefix, provider, 1)
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: prefix + "-practice", LocationKey: prefix + "-location",
+			Number: "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	var practiceID, locationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.id::text, location.id::text
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = $1 AND location.provisioning_key = $2
+	`, prefix+"-practice", prefix+"-location").Scan(&practiceID, &locationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: prefix + "-browser-1",
+			IdempotencyKey: prefix + "-pending-outbound", PracticeID: practiceID,
+			LocationID: locationID, Destination: "+15555550123",
+		}); !errors.Is(err, humancalling.ErrIneligible) {
+		t.Fatalf("outbound start with pending inbound Staff leg error = %v", err)
+	}
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: prefix + "-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-staff-control", CallLegID: prefix + "-staff-leg",
+		CallSessionID: prefix + "-staff-session", ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatal(err)
+	}
+	staffFact.EventID = prefix + "-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	answerResult := make(chan error, 1)
+	outboundResult := make(chan error, 1)
+	go func() {
+		answerResult <- calling.ApplyProviderFact(context.Background(), staffFact)
+	}()
+	go func() {
+		_, err := calling.StartOutboundCall(context.Background(),
+			humancalling.StartOutboundCallCommand{
+				Identity: staff[0], SessionID: prefix + "-browser-1",
+				IdempotencyKey: prefix + "-outbound", PracticeID: practiceID,
+				LocationID: locationID, Destination: "+15555550123",
+			})
+		outboundResult <- err
+	}()
+	if err := <-answerResult; err != nil {
+		t.Fatalf("concurrent inbound answer: %v", err)
+	}
+	outboundErr := <-outboundResult
+	if outboundErr != nil && !errors.Is(outboundErr, humancalling.ErrIneligible) {
+		t.Fatalf("concurrent outbound start: %v", outboundErr)
+	}
+	var occupyingLegs, outboundCalls int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM human_calling_call_legs
+			 WHERE role = 'STAFF' AND staff_subject = $1
+				AND state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED')),
+			(SELECT count(*) FROM human_calling_calls WHERE direction = 'OUTBOUND')
+	`, staff[0].Subject).Scan(&occupyingLegs, &outboundCalls); err != nil {
+		t.Fatal(err)
+	}
+	if occupyingLegs != 1 || (outboundErr == nil) != (outboundCalls == 1) {
+		t.Fatalf("lease race left %d occupying legs and %d outbound Calls; outbound err=%v",
+			occupyingLegs, outboundCalls, outboundErr)
+	}
+}
+
+func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 50, 0, 0, time.UTC)
+	prefix := "uncertain-loser"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg"},
+		{CallControlID: prefix + "-loser-control", CallLegID: prefix + "-loser-leg"},
+	}}
+	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 2)
+	processAllCommands(t, calling)
+	dials := provider.all(humancalling.CommandDialStaff)
+	winnerState, _ := dials[0].Payload["client_state"].(string)
+	winner := humancalling.ProviderFact{
+		EventID: prefix + "-winner-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg",
+		CallSessionID: prefix + "-winner-session", ClientState: winnerState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), winner); err != nil {
+		t.Fatal(err)
+	}
+	winner.EventID = prefix + "-winner-answered"
+	winner.Type = humancalling.FactCallAnswered
+	if err := calling.ApplyProviderFact(context.Background(), winner); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'DIALING', provider_call_control_id = NULL,
+			provider_call_leg_id = NULL, provider_call_session_id = NULL
+		WHERE id = $1
+	`, dials[1].CallLegID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'AMBIGUOUS', last_error_code = 'SYNTHETIC_TIMEOUT'
+		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
+	`, dials[1].CallLegID); err != nil {
+		t.Fatal(err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-winner-bridged", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(time.Second), CallControlID: winner.CallControlID,
+		CallLegID: winner.CallLegID, CallSessionID: winner.CallSessionID,
+		ClientState: bridgeState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var loserState, dialState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE leg.id = $1 AND command.action = 'DIAL_STAFF'
+	`, dials[1].CallLegID).Scan(&loserState, &dialState); err != nil {
+		t.Fatal(err)
+	}
+	if loserState != "ENDING" || dialState != "AMBIGUOUS" {
+		t.Fatalf("uncertain loser after Bridge = leg:%s Dial:%s", loserState, dialState)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, dials[1].CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
+	`, dials[1].CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active: true, CallControlID: prefix + "-late-control",
+		CallLegID: prefix + "-late-leg", CallSessionID: prefix + "-late-session",
+	})
+	provider.mu.Unlock()
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile uncertain losing Dial = %d, %v", reconciled, err)
+	}
+	var hangupID, hangupTarget string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text, target_id FROM human_calling_provider_commands
+		WHERE call_leg_id = $1 AND action = 'HANGUP_LEG' AND state = 'PENDING'
+	`, dials[1].CallLegID).Scan(&hangupID, &hangupTarget); err != nil {
+		t.Fatal(err)
+	}
+	if hangupTarget != prefix+"-late-control" {
+		t.Fatalf("reconciled loser Hangup target = %s", hangupTarget)
+	}
+	processAllCommands(t, calling)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, dials[1].CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE id = $1
+	`, hangupID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active: true, CallControlID: prefix + "-late-control",
+		CallLegID: prefix + "-late-leg", CallSessionID: prefix + "-late-session",
+	})
+	provider.mu.Unlock()
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile accepted Hangup without webhook = %d, %v", reconciled, err)
+	}
+	var failedHangups, pendingHangups int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FILTER (WHERE state = 'FAILED'),
+			count(*) FILTER (WHERE state = 'PENDING')
+		FROM human_calling_provider_commands
+		WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+	`, dials[1].CallLegID).Scan(&failedHangups, &pendingHangups); err != nil {
+		t.Fatal(err)
+	}
+	if failedHangups != 1 || pendingHangups != 1 {
+		t.Fatalf("active Hangup continuation = %d failed, %d pending",
+			failedHangups, pendingHangups)
+	}
+}
+
+func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 14, 55, 0, 0, time.UTC)
+	prefix := "sending-loser"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg"},
+		{CallControlID: prefix + "-initial-loser-control", CallLegID: prefix + "-initial-loser-leg"},
+	}}
+	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 2)
+	processAllCommands(t, calling)
+	dials := provider.all(humancalling.CommandDialStaff)
+	winnerState, _ := dials[0].Payload["client_state"].(string)
+	winner := humancalling.ProviderFact{
+		EventID: prefix + "-winner-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg",
+		CallSessionID: prefix + "-winner-session", ClientState: winnerState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), winner); err != nil {
+		t.Fatal(err)
+	}
+	winner.EventID = prefix + "-winner-answered"
+	winner.Type = humancalling.FactCallAnswered
+	if err := calling.ApplyProviderFact(context.Background(), winner); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'PENDING', provider_call_control_id = NULL,
+			provider_call_leg_id = NULL, provider_call_session_id = NULL
+		WHERE id = $1
+	`, dials[1].CallLegID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'PENDING', next_attempt_at = $2
+		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
+	`, dials[1].CallLegID, now); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.dialResults = append(provider.dialResults, humancalling.ProviderResult{
+		CallControlID: prefix + "-late-control", CallLegID: prefix + "-late-leg",
+	})
+	provider.blockAction = humancalling.CommandDialStaff
+	provider.blockStarted = make(chan struct{})
+	provider.blockRelease = make(chan struct{})
+	started, release := provider.blockStarted, provider.blockRelease
+	provider.mu.Unlock()
+	processed := make(chan error, 1)
+	go func() {
+		ok, err := calling.ProcessNextCommand(context.Background())
+		if !ok && err == nil {
+			err = errors.New("no command processed")
+		}
+		processed <- err
+	}()
+	<-started
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-winner-bridged", Type: humancalling.FactCallBridged,
+		OccurredAt: now.Add(time.Second), CallControlID: winner.CallControlID,
+		CallLegID: winner.CallLegID, CallSessionID: winner.CallSessionID,
+		ClientState: bridgeState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-processed; err != nil {
+		t.Fatal(err)
+	}
+	var legState, controlID, hangupTarget string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, leg.provider_call_control_id, command.target_id
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command
+			ON command.call_leg_id = leg.id AND command.action = 'HANGUP_LEG'
+		WHERE leg.id = $1 AND command.state = 'PENDING'
+	`, dials[1].CallLegID).Scan(&legState, &controlID, &hangupTarget); err != nil {
+		t.Fatal(err)
+	}
+	if legState != "ENDING" || controlID != prefix+"-late-control" ||
+		hangupTarget != prefix+"-late-control" {
+		t.Fatalf("sending loser cleanup = state:%s control:%s target:%s",
+			legState, controlID, hangupTarget)
+	}
+}
+
+func TestClosedHandoffAdmissionFailsBeforeDatabaseMutation(t *testing.T) {
+	calling := humancalling.New(nil, nil, nil, humancalling.Config{
+		HandoffAdmissionClosed: true,
+	}, nil)
+	if _, err := calling.CreateHandoff(
+		context.Background(), humancalling.CreateHandoffCommand{},
+	); !errors.Is(err, humancalling.ErrHandoffAdmissionClosed) {
+		t.Fatalf("closed handoff admission error = %v", err)
+	}
+}
+
+func TestClosedHandoffAdmissionRejectsPreviouslyIssuedReferToken(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 5, 14, 30, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(
+		t, accessModule, now, "closed-refer-admission", 1,
+	)
+	config := humancalling.Config{
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:    "staff-call-control-connection",
+	}
+	open := humancalling.New(pool, accessModule, &recordingProvider{}, config, func() time.Time {
+		return now
+	})
+	handoff, err := open.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: "abita-closed-refer-admission", PracticeID: authorization.Practice.ID,
+		},
+		LocationID: authorization.Locations[0].ID, SourceCallID: "closed-refer-source",
+		IdempotencyKey: "closed-refer-handoff",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100", PhoneSource: "Abita",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.HandoffAdmissionClosed = true
+	closed := humancalling.New(pool, accessModule, &recordingProvider{}, config, func() time.Time {
+		return now
+	})
+	err = closed.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "closed-refer-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: config.CallControlID,
+		CallControlID: "closed-refer-control", CallLegID: "closed-refer-leg",
+		CallSessionID: "closed-refer-session", To: handoff.SIPDestination,
+	})
+	if !errors.Is(err, humancalling.ErrHandoffAdmissionClosed) {
+		t.Fatalf("closed delayed REFER error = %v", err)
+	}
+	var calls, consumed int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM human_calling_calls),
+			(SELECT count(*) FROM human_calling_handoffs WHERE consumed_at IS NOT NULL)
+	`).Scan(&calls, &consumed); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || consumed != 0 {
+		t.Fatalf("closed delayed REFER mutated calls=%d consumed=%d", calls, consumed)
+	}
+}
+
+func TestBridgeFailureAfterRingCompletionStartsVoicemailOnce(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "failed-bridge-staff-control",
+			CallLegID:     "failed-bridge-staff-leg",
+		}},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandBridge: {
+				fmt.Errorf("%w: synthetic rejected Bridge", humancalling.ErrDefinitiveProviderFailure),
+			},
+		},
+	}
+	_, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-bridge-failure", provider, 1,
+	)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	clientState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: "failed-bridge-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: "failed-bridge-staff-control",
+		CallLegID:     "failed-bridge-staff-leg", CallSessionID: "failed-bridge-session",
+		ClientState: clientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = "failed-bridge-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	staff.OccurredAt = now
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "failed-bridge-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now, CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := calling.ProcessNextCommand(context.Background())
+	if !processed || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
+		t.Fatalf("rejected Bridge processing = %t, %v", processed, err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 1 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 1 {
+		t.Fatalf("Bridge recovery commands = %#v", provider.commands)
+	}
+}
+
+func TestPlaybackStartedReconcilesStartRingWindow(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 20, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "started-staff-control",
+		CallLegID:     "started-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-playback-started", provider, 1,
+	)
+	processAllCommands(t, calling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ring-window-started", Type: humancalling.FactPlaybackStarted,
+		OccurredAt: now.Add(2 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var commandState string
+	var terminalOutcome *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE action = 'START_RING_WINDOW'
+	`).Scan(&commandState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome FROM human_calling_calls
+	`).Scan(&terminalOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "RECONCILED" || terminalOutcome != nil {
+		t.Fatalf("started ring window = state:%s terminal:%v", commandState, terminalOutcome)
+	}
+}
+
+func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 22, 0, 0, time.UTC)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"test-revision",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "ambiguous-start-staff-control",
+		CallLegID:     "ambiguous-start-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-ambiguous-start", provider, 1, observer,
+	)
+	processAllCommands(t, calling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, ring.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE id = $1
+	`, ring.ID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active: true, CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+	})
+	provider.mu.Unlock()
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile ambiguous Start ring window = %d, %v", reconciled, err)
+	}
+	var commandState string
+	var terminalOutcome *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, ring.ID).Scan(&commandState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome FROM human_calling_calls
+	`).Scan(&terminalOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "AMBIGUOUS" || terminalOutcome != nil {
+		t.Fatalf("active absent playback = state:%s terminal:%v", commandState, terminalOutcome)
+	}
+	if count := strings.Count(metrics.String(), `"outcome":"ambiguous"`); count != 1 {
+		t.Fatalf("ambiguous provider command metrics = %d, want 1: %s", count, metrics.String())
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, ring.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active: true, CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+	})
+	provider.mu.Unlock()
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("repeat ambiguous Start ring window reconciliation = %d, %v", reconciled, err)
+	}
+	if count := strings.Count(metrics.String(), `"outcome":"ambiguous"`); count != 1 {
+		t.Fatalf("repeat reconciliation emitted %d ambiguous metrics, want 1", count)
+	}
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ambiguous-ring-window-started", Type: humancalling.FactPlaybackStarted,
+		OccurredAt: now.Add(time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, ring.ID).Scan(&commandState); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "RECONCILED" {
+		t.Fatalf("late positive playback state = %s", commandState)
+	}
+}
+
+func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 25, 0, 0, time.UTC)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "stop-failure-staff-control",
+			CallLegID:     "stop-failure-staff-leg",
+		}},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandStopRingWindow: {
+				fmt.Errorf("%w: synthetic Stop rejection", humancalling.ErrDefinitiveProviderFailure),
+			},
+		},
+	}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-stop-failure", provider, 1,
+	)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: "stop-failure-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "stop-failure-staff-control",
+		CallLegID:     "stop-failure-staff-leg", CallSessionID: "stop-failure-session",
+		ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = "stop-failure-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	staff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := calling.ProcessNextCommand(context.Background())
+	if !processed || err != nil {
+		t.Fatalf("Bridge processing = %t, %v", processed, err)
+	}
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	staff.EventID = "stop-failure-staff-bridged"
+	staff.Type = humancalling.FactCallBridged
+	staff.OccurredAt = now.Add(4 * time.Second)
+	staff.ClientState = bridgeState
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processed, err = calling.ProcessNextCommand(context.Background())
+	if !processed || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
+		t.Fatalf("Stop processing = %t, %v", processed, err)
+	}
+	var degraded int
+	var stopState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_timeline
+		WHERE kind = 'caller_audio.degraded'
+	`).Scan(&degraded); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE action = 'STOP_RING_WINDOW'
+	`).Scan(&stopState); err != nil {
+		t.Fatal(err)
+	}
+	if degraded != 1 || stopState != "FAILED" {
+		t.Fatalf("degraded caller audio = timeline:%d state:%s", degraded, stopState)
+	}
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "stop-failure-playback-ended", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "cancelled",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var converged int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_timeline
+		WHERE kind = 'caller_audio.converged'
+	`).Scan(&converged); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE action = 'STOP_RING_WINDOW'
+	`).Scan(&stopState); err != nil {
+		t.Fatal(err)
+	}
+	if converged != 1 || stopState != "RECONCILED" {
+		t.Fatalf("converged caller audio = timeline:%d state:%s", converged, stopState)
+	}
+}
+
+func TestRingWindowFailureCreatesMissedRecoveryWithRoutingOutcome(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 30, 0, 0, time.UTC)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "routing-failure-staff-control",
+			CallLegID:     "routing-failure-staff-leg",
+		}},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandStartRingWindow: {
+				fmt.Errorf("%w: synthetic ring window rejection", humancalling.ErrDefinitiveProviderFailure),
+			},
+		},
+	}
+	pool, calling, _, _ := prepareInboundFanout(
+		t, now, "call-leg-routing-failure", provider, 1,
+	)
+	processed, err := calling.ProcessNextCommand(context.Background())
+	if !processed || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
+		t.Fatalf("ring-window rejection = processed:%t err:%v", processed, err)
+	}
+	var terminal, voicemailOutcome, audioState, taskOutcome string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, voicemail.outcome, voicemail.audio_state,
+			task.recovery_outcome
+		FROM human_calling_calls call
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		JOIN work_tasks task ON task.id = voicemail.task_id
+	`).Scan(&terminal, &voicemailOutcome, &audioState, &taskOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "ROUTING_FAILED" || voicemailOutcome != "MISSED_CALL" ||
+		audioState != "UNAVAILABLE" || taskOutcome != "MISSED_CALL" {
+		t.Fatalf("routing recovery = %s %s %s %s",
+			terminal, voicemailOutcome, audioState, taskOutcome)
+	}
+}
+
+func TestCancelledRingWindowWithProvisionalBridgeFailsRouting(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 16, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "cancelled-ring-staff-control",
+		CallLegID:     "cancelled-ring-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-cancelled-ring", provider, 1,
+	)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: "cancelled-ring-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "cancelled-ring-staff-control",
+		CallLegID:     "cancelled-ring-staff-leg", CallSessionID: "cancelled-ring-session",
+		ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = "cancelled-ring-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "cancelled-ring-ended", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now, CallControlID: caller.CallControlID, CallLegID: caller.CallLegID,
+		CallSessionID: caller.CallSessionID, ClientState: ringState,
+		PlaybackStatus: "cancelled",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var terminal string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome FROM human_calling_calls
+	`).Scan(&terminal); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "ROUTING_FAILED" || provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("cancelled provisional Bridge outcome=%s commands=%#v", terminal, provider.commands)
+	}
+}
+
+func TestLateStaffAnswerCannotBridgeAfterVoicemailStarts(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 16, 30, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "late-answer-staff-control", CallLegID: "late-answer-staff-leg",
+	}}}
+	_, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-late-answer", provider, 1,
+	)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: "late-answer-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "late-answer-staff-control", CallLegID: "late-answer-staff-leg",
+		CallSessionID: "late-answer-session", ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "late-answer-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now, CallControlID: caller.CallControlID, CallLegID: caller.CallLegID,
+		CallSessionID: caller.CallSessionID, ClientState: ringState,
+		PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = "late-answer-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 0 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 1 {
+		t.Fatalf("late answer commands = %#v", provider.commands)
+	}
+}
+
+func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 17, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "voicemail-staff-control", CallLegID: "voicemail-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "call-leg-voicemail-evidence", provider, 1,
+	)
+	processAllCommands(t, calling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "voicemail-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	speak := provider.last(humancalling.CommandSpeakVoicemail)
+	speakState, _ := speak.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "voicemail-speak-wrong-caller", Type: humancalling.FactSpeakEnded,
+		OccurredAt: now.Add(21 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: "wrong-caller-leg", CallSessionID: caller.CallSessionID,
+		ClientState: speakState, PlaybackStatus: "completed",
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("mismatched voicemail greeting identity error = %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "voicemail-speak-completed", Type: humancalling.FactSpeakEnded,
+		OccurredAt: now.Add(21 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: speakState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	record := provider.last(humancalling.CommandStartVoicemailRecording)
+	recordState, _ := record.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "voicemail-recording-wrong-caller", Type: humancalling.FactRecordingError,
+		OccurredAt: now.Add(22 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: "wrong-caller-session",
+		ClientState: recordState,
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("mismatched voicemail recording identity error = %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "voicemail-recording-error", Type: humancalling.FactRecordingError,
+		OccurredAt: now.Add(22 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: recordState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provider.recording = humancalling.ProviderRecording{
+		ID: "recording-after-error", CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		StartedAt: now.Add(15 * time.Second), EndedAt: now.Add(23 * time.Second),
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "voicemail-recording-saved-after-error", Type: humancalling.FactRecordingSaved,
+		OccurredAt: now.Add(23 * time.Second),
+		CallLegID:  caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState:        recordState,
+		RecordingStartedAt: now.Add(15 * time.Second),
+		RecordingEndedAt:   now.Add(23 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, voicemail.outcome, voicemail.audio_state,
+			task.title, task.origin, task.recovery_outcome
+		FROM human_calling_calls call
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		JOIN work_tasks task ON task.id = voicemail.task_id
+	`).Scan(
+		&callOutcome, &voicemailOutcome, &audioState,
+		&taskTitle, &taskOrigin, &taskOutcome,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if callOutcome != "VOICEMAIL" || voicemailOutcome != "VOICEMAIL" ||
+		audioState != "READY" || taskTitle != "Review voicemail" ||
+		taskOrigin != "VOICEMAIL_RECOVERY" || taskOutcome != "VOICEMAIL" {
+		t.Fatalf("upgraded voicemail recovery = %s %s %s %s %s %s",
+			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome)
+	}
+}
+
+func TestFailedVoicemailGreetingCreatesMissedCallWithoutRecording(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 17, 15, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "failed-greeting-staff-control", CallLegID: "failed-greeting-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "failed-voicemail-greeting", provider, 1,
+	)
+	processAllCommands(t, calling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "failed-greeting-ring-completed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	speak := provider.last(humancalling.CommandSpeakVoicemail)
+	speakState, _ := speak.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "failed-greeting-ended", Type: humancalling.FactSpeakEnded,
+		OccurredAt: now.Add(21 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: speakState, PlaybackStatus: "call_hangup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	var terminal, audioState, taskOrigin string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, voicemail.audio_state, task.origin
+		FROM human_calling_calls call
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		JOIN work_tasks task ON task.id = voicemail.task_id
+	`).Scan(&terminal, &audioState, &taskOrigin); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "MISSED" || audioState != "UNAVAILABLE" ||
+		taskOrigin != "MISSED_CALL_RECOVERY" ||
+		provider.count(humancalling.CommandStartVoicemailRecording) != 0 {
+		t.Fatalf("failed greeting outcome = %s %s %s commands=%#v",
+			terminal, audioState, taskOrigin, provider.commands)
+	}
+}
+
+type recordingProvider struct {
+	mu           sync.Mutex
+	commands     []humancalling.ProviderCommand
+	dialResults  []humancalling.ProviderResult
+	actionErrors map[humancalling.CommandAction][]error
+	observations []humancalling.ProviderCallObservation
+	recording    humancalling.ProviderRecording
+	recordingErr error
+	blockAction  humancalling.CommandAction
+	blockStarted chan struct{}
+	blockRelease chan struct{}
+}
+
+func (provider *recordingProvider) ResolveRecording(
+	_ context.Context,
+	callLegID string,
+	callSessionID string,
+) (humancalling.ProviderRecording, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if provider.recordingErr != nil {
+		return humancalling.ProviderRecording{}, provider.recordingErr
+	}
+	if provider.recording.CallLegID != callLegID ||
+		provider.recording.CallSessionID != callSessionID {
+		return humancalling.ProviderRecording{}, humancalling.ErrAmbiguousEffect
+	}
+	return provider.recording, nil
+}
+
+func (provider *recordingProvider) ObserveCall(
+	_ context.Context,
+	_ string,
+	callControlID string,
+	callLegID string,
+	_ string,
+	_ time.Time,
+) (humancalling.ProviderCallObservation, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.observations) > 0 {
+		observation := provider.observations[0]
+		provider.observations = provider.observations[1:]
+		return observation, nil
+	}
+	return humancalling.ProviderCallObservation{
+		Active: true, CallControlID: callControlID, CallLegID: callLegID,
+	}, nil
+}
+
+func (provider *recordingProvider) Execute(
+	_ context.Context,
+	command humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	provider.mu.Lock()
+	provider.commands = append(provider.commands, command)
+	if queued := provider.actionErrors[command.Action]; len(queued) > 0 {
+		err := queued[0]
+		provider.actionErrors[command.Action] = queued[1:]
+		provider.mu.Unlock()
+		return humancalling.ProviderResult{}, err
+	}
+	if provider.blockAction == command.Action && provider.blockStarted != nil &&
+		provider.blockRelease != nil {
+		started, release := provider.blockStarted, provider.blockRelease
+		provider.blockAction = ""
+		provider.mu.Unlock()
+		close(started)
+		<-release
+		provider.mu.Lock()
+	}
+	defer provider.mu.Unlock()
+	switch command.Action {
+	case humancalling.CommandCreateCredential:
+		name, _ := command.Payload["name"].(string)
+		return humancalling.ProviderResult{
+			CredentialID: "credential-" + name,
+			SIPUsername:  "sip-" + name,
+		}, nil
+	case humancalling.CommandDialStaff, humancalling.CommandDialOutboundStaff,
+		humancalling.CommandDialOutboundDestination:
+		if len(provider.dialResults) > 0 {
+			result := provider.dialResults[0]
+			provider.dialResults = provider.dialResults[1:]
+			return result, nil
+		}
+	}
+	return humancalling.ProviderResult{}, nil
+}
+
+func prepareInboundFanout(
+	t *testing.T,
+	now time.Time,
+	prefix string,
+	provider *recordingProvider,
+	staffCount int,
+	observers ...observability.Observer,
+) (*pgxpool.Pool, *humancalling.Module, humancalling.ProviderFact, []access.Identity) {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, staffCount)
+	var observer observability.Observer
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.wav",
+		Observer:               observer,
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: "abita-" + prefix, PracticeID: authorization.Practice.ID,
+		},
+		LocationID: authorization.Locations[0].ID, SourceCallID: prefix + "-source",
+		IdempotencyKey: prefix + "-handoff",
+		Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: prefix + "-caller-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-caller-control", CallLegID: prefix + "-caller-leg",
+		CallSessionID: prefix + "-caller-session", From: "+15555550100",
+		To: handoff.SIPDestination,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatal(err)
+	}
+	processAllCommands(t, calling)
+	caller.EventID = prefix + "-caller-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatal(err)
+	}
+	return pool, calling, caller, staff
+}
+
+func (provider *recordingProvider) count(action humancalling.CommandAction) int {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	count := 0
+	for _, command := range provider.commands {
+		if command.Action == action {
+			count++
+		}
+	}
+	return count
+}
+
+func (provider *recordingProvider) last(
+	action humancalling.CommandAction,
+) humancalling.ProviderCommand {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	for index := len(provider.commands) - 1; index >= 0; index-- {
+		if provider.commands[index].Action == action {
+			return provider.commands[index]
+		}
+	}
+	return humancalling.ProviderCommand{}
+}
+
+func (provider *recordingProvider) all(
+	action humancalling.CommandAction,
+) []humancalling.ProviderCommand {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	result := []humancalling.ProviderCommand{}
+	for _, command := range provider.commands {
+		if command.Action == action {
+			result = append(result, command)
+		}
+	}
+	return result
+}
+
+func (provider *recordingProvider) ordered(
+	first humancalling.CommandAction,
+	second humancalling.CommandAction,
+) bool {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	firstIndex, secondIndex := -1, -1
+	for index, command := range provider.commands {
+		if command.Action == first && firstIndex == -1 {
+			firstIndex = index
+		}
+		if command.Action == second && secondIndex == -1 {
+			secondIndex = index
+		}
+	}
+	return firstIndex >= 0 && secondIndex > firstIndex
+}
+
+func prepareCredentials(t *testing.T, calling *humancalling.Module) {
+	t.Helper()
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatalf("reconcile managed credentials: %v", err)
+	}
+	processAllCommands(t, calling)
+}
+
+func provisionConcurrentStaff(
+	t *testing.T,
+	accessModule *access.Module,
+	now time.Time,
+	prefix string,
+	count int,
+) (access.Authorization, []access.Identity) {
+	t.Helper()
+	invitations := make([]access.InvitationProvision, count)
+	identities := make([]access.Identity, count)
+	for index := range count {
+		email := fmt.Sprintf("%s-staff-%d@synthetic.test", prefix, index+1)
+		invitations[index] = access.InvitationProvision{
+			Key: fmt.Sprintf("%s-staff-%d", prefix, index+1), Email: email,
+			Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			ExpiresAt: now.Add(time.Hour),
+		}
+		identities[index] = access.Identity{
+			Subject: fmt.Sprintf("%s-staff-%d", prefix, index+1),
+			Email:   email, EmailVerified: true,
+		}
+	}
+	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: prefix + "-test",
+		Practices: []access.PracticeProvision{{
+			Key: prefix + "-practice", Name: prefix + " practice",
+			Locations: []access.LocationProvision{{
+				Key: prefix + "-location", Name: prefix + " location",
+			}},
+			Invitations: invitations,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision %s staff: %v", prefix, err)
+	}
+	var authorization access.Authorization
+	for index, identity := range identities {
+		authorization, err = accessModule.AcceptInvitation(
+			context.Background(), identity, provisioned.Invitations[index].Token,
+		)
+		if err != nil {
+			t.Fatalf("accept %s invitation %d: %v", prefix, index+1, err)
+		}
+	}
+	return authorization, identities
+}
+
+func readyConcurrentStaff(
+	t *testing.T,
+	calling *humancalling.Module,
+	identities []access.Identity,
+	sessionPrefix string,
+) {
+	t.Helper()
+	for index, identity := range identities {
+		sessionID := fmt.Sprintf("%s-%d", sessionPrefix, index+1)
+		if _, err := calling.AcquireSoftphone(
+			context.Background(), identity, sessionID, false,
+		); err != nil {
+			t.Fatalf("acquire %s softphone %d: %v", sessionPrefix, index+1, err)
+		}
+		if _, err := calling.SetReadiness(context.Background(),
+			humancalling.ReadinessCommand{
+				Identity: identity, SessionID: sessionID, Registered: true,
+				MicrophoneReady: true, AudioReady: true, SessionHealthy: true,
+				Available: true,
+			}); err != nil {
+			t.Fatalf("ready %s softphone %d: %v", sessionPrefix, index+1, err)
+		}
+	}
+}
+
+func processAllCommands(t *testing.T, calling *humancalling.Module) {
+	t.Helper()
+	for {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil {
+			t.Fatalf("process provider command: %v", err)
+		}
+		if !processed {
+			return
+		}
+	}
+}

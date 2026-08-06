@@ -58,13 +58,12 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import {
-  acceptCallingOffer,
   acquireSoftphone,
   confirmCallingMediaReady,
   getCallingCall,
+  getCallingState,
   getOperatorCallingTimeline,
   issueCallingMediaToken,
-  listCallingOffers,
   recordCallingDisposition,
   requestCallingHangup,
   retryOutboundCall,
@@ -74,9 +73,9 @@ import {
 import type {
   CallingCall,
   CallingDispositionResult,
-  CallingOffer,
   Location,
   OperatorCallingTimeline,
+  RingingCallLeg,
   SoftphoneState,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
@@ -86,7 +85,12 @@ import {
   type IncomingMediaLeg,
   type MediaState,
 } from "@/lib/calling/media-adapter"
-import { mediaConfirmationDecision } from "@/lib/calling/media-confirmation"
+import {
+  confirmOutboundMediaWithRetry,
+  mediaAttachmentAfterState,
+  microphoneFailureMessage,
+  routeIncomingMedia,
+} from "@/lib/calling/dock-media-state"
 import { providerOutcomeLabel } from "@/lib/calling/outcomes"
 import { portalClient } from "@/lib/api/client"
 import { cn } from "@/lib/utils"
@@ -96,7 +100,6 @@ type CallingDockProps = {
   platformOperator: boolean
   practiceID: string
   locations: Location[]
-  callRefreshRevision: number
   workspaceRevision: number
   taskCallRequest?: { id: string; taskID: string }
   onTaskCallHandled: (requestID: string, error?: string) => void
@@ -107,29 +110,6 @@ type CallingDockProps = {
 const sessionStorageKey = "acuity.callingSession"
 const mediaEnabledStorageKey = "acuity.callingMediaEnabled"
 const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
-
-function callStillOwnsMediaLeg(
-  call: CallingCall | undefined,
-  expectedCallID: string,
-  attachedCallID: string,
-  mediaToken: string,
-) {
-  if (
-    !call ||
-    call.id !== expectedCallID ||
-    call.id !== attachedCallID ||
-    call.expectedMediaToken !== mediaToken
-  ) {
-    return false
-  }
-  return (
-    call.state === "PREPARING" ||
-    call.state === "RINGING" ||
-    call.state === "CONNECTING" ||
-    call.state === "RECONCILING" ||
-    call.state === "CONNECTED"
-  )
-}
 
 type CallingNavigationContext = {
   activeCall: CallingCall | undefined
@@ -213,7 +193,6 @@ export function CallingDock({
   platformOperator,
   practiceID,
   locations,
-  callRefreshRevision,
   workspaceRevision,
   taskCallRequest,
   onTaskCallHandled,
@@ -224,7 +203,7 @@ export function CallingDock({
   const [lease, setLease] = useState<SoftphoneState>()
   const [mediaState, setMediaState] = useState<MediaState>("unavailable")
   const [available, setAvailable] = useState(false)
-  const [offers, setOffers] = useState<CallingOffer[]>([])
+  const [ringingLegs, setRingingLegs] = useState<RingingCallLeg[]>([])
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [pendingOutcome, setPendingOutcome] = useState<CallingCall>()
   const [expectedCallID, setExpectedCallID] = useState("")
@@ -244,10 +223,13 @@ export function CallingDock({
   const expectedCallRef = useRef("")
   const activeCallSnapshotRef = useRef<CallingCall | undefined>(undefined)
   const ownerRef = useRef(false)
+  const mediaStateRef = useRef<MediaState>("unavailable")
   const availabilityRef = useRef(false)
   const availabilityIntentRef = useRef(false)
-  const announcedOffersRef = useRef(new Set<string>())
-  const pendingMediaLegsRef = useRef(new Map<string, string>())
+  const announcedRingingLegsRef = useRef(new Set<string>())
+  const incomingLegsRef = useRef(new Map<string, IncomingMediaLeg>())
+  const callingStateETagRef = useRef("")
+  const statePollRef = useRef<Promise<void> | null>(null)
   const ringtoneRef = useRef<(() => void) | null>(null)
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
@@ -280,6 +262,9 @@ export function CallingDock({
   useEffect(() => {
     ownerRef.current = Boolean(lease?.owner)
   }, [lease?.owner])
+  useEffect(() => {
+    mediaStateRef.current = mediaState
+  }, [mediaState])
   useEffect(() => {
     availabilityRef.current = available
   }, [available])
@@ -408,190 +393,56 @@ export function CallingDock({
   const handleIncoming = useCallback(
     async (leg: IncomingMediaLeg) => {
       const attached = mediaLegRef.current
-      const replacesAttachedRecovery =
-        attached &&
-        leg.recovery &&
-        attached.providerLegID === leg.providerLegID &&
-        attached.mediaToken === leg.mediaToken
-      if (attached && !replacesAttachedRecovery) {
-        if (
-          attached.providerLegID !== leg.providerLegID ||
-          attached.mediaToken !== leg.mediaToken
-        ) {
-          await leg.reject().catch(() => undefined)
-        }
-        return
-      }
-      const pendingProviderLegID = pendingMediaLegsRef.current.get(
-        leg.mediaToken,
+      const route = routeIncomingMedia(
+        attached,
+        leg,
+        ownerRef.current,
+        mediaStateRef.current,
+        expectedCallRef.current,
       )
-      if (pendingProviderLegID) {
-        if (pendingProviderLegID !== leg.providerLegID) {
-          await leg.reject().catch(() => undefined)
-        }
+      if (route === "RECOVER_ATTACHED") {
+        await leg.answer().catch(() => undefined)
+        mediaLegRef.current = leg
+        setMediaAttached(true)
         return
       }
-      pendingMediaLegsRef.current.set(leg.mediaToken, leg.providerLegID)
-      try {
-        for (let attempt = 0; attempt < 200; attempt += 1) {
-          const token = await getAccessToken()
-          if (!token) {
-            await leg.reject().catch(() => undefined)
-            return
-          }
-          const currentLease = await acquireSoftphone({
-            client: portalClient(token),
-            body: { sessionId: sessionID, takeover: false },
-          }).catch(() => undefined)
-          if (!currentLease?.data?.owner) {
-            setLease(currentLease?.data)
-            setAvailable(false)
-            ownerRef.current = false
-            await leg.reject().catch(() => undefined)
-            return
-          }
-          setLease(currentLease.data)
-          ownerRef.current = true
-          const callID =
-            expectedCallRef.current || currentLease.data.activeCallId
-          if (!callID) {
-            await new Promise((resolve) => window.setTimeout(resolve, 100))
-            continue
-          }
-          if (!expectedCallRef.current) {
-            expectedCallRef.current = callID
-            setExpectedCallID(callID)
-            setAvailable(false)
-            availabilityRef.current = false
-          }
-          const current = await getCallingCall({
+      if (route === "REJECT") {
+        await leg.reject().catch(() => undefined)
+        return
+      }
+      if (route === "CONFIRM_OUTBOUND") {
+        const token = await getAccessToken()
+        if (!token) {
+          await leg.reject().catch(() => undefined)
+          return
+        }
+        await leg.answer()
+        const callID = expectedCallRef.current
+        const confirmed = await confirmOutboundMediaWithRetry(async () => {
+          const result = await confirmCallingMediaReady({
             client: portalClient(token),
             path: { callId: callID },
-          }).catch(() => undefined)
-          if (!current?.data) {
-            await leg.reject().catch(() => undefined)
-            return
-          }
-          if (
-            current.data.expectedMediaToken &&
-            current.data.expectedMediaToken !== leg.mediaToken
-          ) {
-            await leg.reject().catch(() => undefined)
-            return
-          }
-          if (current.data.expectedMediaToken === leg.mediaToken) {
-            const currentAttached = mediaLegRef.current
-            const replacesCurrentRecovery =
-              currentAttached &&
-              leg.recovery &&
-              currentAttached.providerLegID === leg.providerLegID &&
-              currentAttached.mediaToken === leg.mediaToken
-            if (currentAttached && !replacesCurrentRecovery) {
-              await leg.reject().catch(() => undefined)
-              return
-            }
-            await leg.answer()
-            let attachedCall = current.data
-            if (
-              current.data.direction === "OUTBOUND" &&
-              (current.data.state === "PREPARING" ||
-                current.data.state === "RECONCILING")
-            ) {
-              let confirmed = false
-              for (
-                let confirmationAttempt = 0;
-                confirmationAttempt < 100;
-                confirmationAttempt += 1
-              ) {
-                const result = await confirmCallingMediaReady({
-                  client: portalClient(token),
-                  path: { callId: current.data.id },
-                  body: {
-                    sessionId: sessionID,
-                    mediaToken: leg.mediaToken,
-                  },
-                }).catch(() => undefined)
-                if (result?.data) {
-                  attachedCall = result.data
-                  confirmed = true
-                  break
-                }
-                if (
-                  mediaConfirmationDecision(
-                    undefined,
-                    result?.response?.status,
-                    leg.mediaToken,
-                  ) === "stop"
-                ) {
-                  break
-                }
-                if (result?.response?.status === 409) {
-                  const refreshed = await getCallingCall({
-                    client: portalClient(token),
-                    path: { callId: current.data.id },
-                  }).catch(() => undefined)
-                  const decision = mediaConfirmationDecision(
-                    refreshed?.data,
-                    refreshed?.response?.status,
-                    leg.mediaToken,
-                  )
-                  if (decision === "stop") {
-                    break
-                  }
-                }
-                await new Promise((resolve) => window.setTimeout(resolve, 100))
-              }
-              if (!confirmed) {
-                throw new Error("staff media readiness was not committed")
-              }
-            }
-            if (
-              !applyActiveCall(attachedCall) &&
-              !callStillOwnsMediaLeg(
-                activeCallSnapshotRef.current,
-                expectedCallRef.current,
-                attachedCall.id,
-                leg.mediaToken,
-              )
-            ) {
-              await leg.reject().catch(() => undefined)
-              return
-            }
-            mediaLegRef.current = leg
-            setMediaAttached(true)
-            return
-          }
-          if (
-            current.data.state !== "PREPARING" &&
-            current.data.state !== "RINGING" &&
-            current.data.state !== "CONNECTING" &&
-            current.data.state !== "RECONCILING" &&
-            current.data.state !== "CONNECTED"
-          ) {
-            await leg.reject().catch(() => undefined)
-            return
-          }
-          await new Promise((resolve) => window.setTimeout(resolve, 100))
+            body: { sessionId: sessionID, mediaToken: leg.mediaToken },
+          })
+          return { data: result.data, status: result.response?.status }
+        })
+        if (!confirmed) {
+          await leg.reject().catch(() => undefined)
+          return
         }
-        await leg.reject().catch(() => undefined)
-        setError("The browser audio leg did not become authoritative before the connection deadline.")
-        setAvailable(false)
-        await updateReadiness(false, "unavailable")
-      } catch {
-        await leg.reject().catch(() => undefined)
-        setError("The accepted browser audio leg could not be answered.")
-        setAvailable(false)
-        await updateReadiness(false, "unavailable")
-      } finally {
-        if (
-          pendingMediaLegsRef.current.get(leg.mediaToken) ===
-          leg.providerLegID
-        ) {
-          pendingMediaLegsRef.current.delete(leg.mediaToken)
-        }
+        applyActiveCall(confirmed)
+        mediaLegRef.current = leg
+        setMediaAttached(true)
+        return
       }
+      const existing = incomingLegsRef.current.get(leg.mediaToken)
+      if (existing && existing.providerLegID !== leg.providerLegID) {
+        await leg.reject().catch(() => undefined)
+        return
+      }
+      incomingLegsRef.current.set(leg.mediaToken, leg)
     },
-    [applyActiveCall, sessionID, updateReadiness],
+    [applyActiveCall, sessionID],
   )
 
   const connectMedia = useCallback(async () => {
@@ -681,13 +532,13 @@ export function CallingDock({
         const audioContext = new AudioContext()
         await audioContext.resume()
         await audioContext.close()
-        if ("Notification" in window && Notification.permission === "default") {
-          await Notification.requestPermission()
-        }
-      } catch {
-        setError("Microphone and browser audio permission are required.")
+      } catch (error) {
+        setError(microphoneFailureMessage(error))
         setAvailabilityPending(false)
         return
+      }
+      if ("Notification" in window && Notification.permission === "default") {
+        void Notification.requestPermission().catch(() => undefined)
       }
       const issued = await issueCallingMediaToken({
         client: portalClient(token),
@@ -710,24 +561,46 @@ export function CallingDock({
       adapterRef.current = adapter
       await adapter.connect(issued.data.token, "acuity-calling-remote-audio", {
         onState: (state) => {
+          mediaStateRef.current = state
           setMediaState(state)
           if (state === "ready") {
-            const mayReceiveOffers =
+            const mayReceiveCalls =
               availabilityIntentRef.current &&
               expectedCallRef.current === ""
             setAvailable(false)
             availabilityRef.current = false
-            void updateReadiness(mayReceiveOffers, state)
+            void updateReadiness(mayReceiveCalls, state)
           } else if (state === "unavailable" || state === "reconnecting") {
             setAvailable(false)
             availabilityRef.current = false
-            mediaLegRef.current = null
+            mediaLegRef.current = mediaAttachmentAfterState(
+              state,
+              mediaLegRef.current,
+            )
             setMediaAttached(false)
             setMuted(false)
             void updateReadiness(false, state)
           }
         },
         onIncoming: (leg) => void handleIncoming(leg),
+        onFailure: (failure) => {
+          setError(
+            failure === "authentication"
+              ? "Calling authentication expired. Reconnect calling to refresh it."
+              : failure === "network"
+                ? "Calling lost its network connection. Check your connection and reconnect."
+                : "Telnyx calling is unavailable. Reconnect calling and try again.",
+          )
+        },
+        refreshToken: async () => {
+          const accessToken = await getAccessToken()
+          if (!accessToken) return undefined
+          const refreshed = await issueCallingMediaToken({
+            client: portalClient(accessToken),
+            body: { sessionId: sessionID },
+          }).catch(() => undefined)
+          return refreshed?.data?.token
+        },
       })
       window.sessionStorage.setItem(mediaEnabledStorageKey, "true")
     } catch {
@@ -746,18 +619,38 @@ export function CallingDock({
     updateReadiness,
   ])
 
-  const refreshOffers = useCallback(async () => {
-    if (!ownerRef.current || !availabilityRef.current) {
-      setOffers([])
+  const refreshCallingState = useCallback(async () => {
+    if (!ownerRef.current) {
+      setRingingLegs([])
       return
     }
-    const token = await getAccessToken()
-    if (!token) return
-    const result = await listCallingOffers({
-      client: portalClient(token),
-    }).catch(() => undefined)
-    if (!result?.data) return
-    setOffers(result.data.items)
+    if (statePollRef.current) return statePollRef.current
+    const poll = (async () => {
+      const token = await getAccessToken()
+      if (!token) return
+      const result = await getCallingState({
+        client: portalClient(token),
+        headers: callingStateETagRef.current
+          ? { "If-None-Match": callingStateETagRef.current }
+          : undefined,
+      }).catch(() => undefined)
+      if (!result?.data) return
+      const etag = result.response?.headers.get("ETag")
+      if (etag) callingStateETagRef.current = etag
+      setLease(result.data.softphone)
+      setAvailable(result.data.softphone.available)
+      setRingingLegs(result.data.ringing)
+      const currentCallID =
+        result.data.bridged?.callId ?? result.data.disposition?.callId
+      if (currentCallID && currentCallID !== expectedCallRef.current) {
+        expectedCallRef.current = currentCallID
+        setExpectedCallID(currentCallID)
+      }
+    })().finally(() => {
+      statePollRef.current = null
+    })
+    statePollRef.current = poll
+    return poll
   }, [])
 
   const refreshCall = useCallback(async () => {
@@ -905,27 +798,40 @@ export function CallingDock({
 
   useEffect(() => {
     if (platformOperator) return
-    const timeout = window.setTimeout(() => void refreshCall(), 0)
-    return () => window.clearTimeout(timeout)
-  }, [callRefreshRevision, platformOperator, refreshCall])
-
-  useEffect(() => {
-    if (platformOperator) return
     const timeout = window.setTimeout(() => {
       void refreshOwnership()
-      void refreshOffers()
+      void refreshCallingState()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [platformOperator, refreshOffers, refreshOwnership, workspaceRevision])
+  }, [platformOperator, refreshCallingState, refreshOwnership, workspaceRevision])
 
   useEffect(() => {
     if (platformOperator || !lease?.owner) return
-    const interval = window.setInterval(() => {
-      void refreshOffers()
-      void refreshCall()
-    }, 1000)
-    return () => window.clearInterval(interval)
-  }, [lease?.owner, platformOperator, refreshCall, refreshOffers])
+    let timeout = 0
+    let cancelled = false
+    const schedule = () => {
+      if (cancelled) return
+      timeout = window.setTimeout(
+        async () => {
+          await refreshCallingState()
+          await refreshCall()
+          schedule()
+        },
+        document.hidden ? 10_000 : 2_000,
+      )
+    }
+    const handleVisibility = () => {
+      window.clearTimeout(timeout)
+      void refreshCallingState().finally(schedule)
+    }
+    document.addEventListener("visibilitychange", handleVisibility)
+    schedule()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+      document.removeEventListener("visibilitychange", handleVisibility)
+    }
+  }, [lease?.owner, platformOperator, refreshCall, refreshCallingState])
 
   useEffect(() => {
     if (platformOperator || !lease?.owner) return
@@ -934,35 +840,35 @@ export function CallingDock({
   }, [lease?.owner, platformOperator, refreshOwnership])
 
   useEffect(() => {
-    const activeOfferIDs = new Set(offers.map((offer) => offer.id))
-    for (const [offerID, notification] of notificationsRef.current) {
-      if (activeOfferIDs.has(offerID)) continue
+    const activeLegIDs = new Set(ringingLegs.map((leg) => leg.callLegId))
+    for (const [legID, notification] of notificationsRef.current) {
+      if (activeLegIDs.has(legID)) continue
       notification.close()
-      notificationsRef.current.delete(offerID)
-      announcedOffersRef.current.delete(offerID)
+      notificationsRef.current.delete(legID)
+      announcedRingingLegsRef.current.delete(legID)
     }
-    if (offers.length === 0) {
+    if (ringingLegs.length === 0) {
       ringtoneRef.current?.()
       ringtoneRef.current = null
       return
     }
     if (!ringtoneRef.current) ringtoneRef.current = startRingtone()
-    for (const offer of offers) {
-      if (announcedOffersRef.current.has(offer.id)) continue
-      announcedOffersRef.current.add(offer.id)
+    for (const leg of ringingLegs) {
+      if (announcedRingingLegsRef.current.has(leg.callLegId)) continue
+      announcedRingingLegsRef.current.add(leg.callLegId)
       if (
         document.hidden &&
         "Notification" in window &&
         Notification.permission === "granted"
       ) {
         const notification = new Notification("Incoming Acuity transfer", {
-          body: `${offer.locationName} · answer in Acuity`,
-          tag: offer.id,
+          body: `${leg.locationName} · answer in Acuity`,
+          tag: leg.callLegId,
         })
-        notificationsRef.current.set(offer.id, notification)
+        notificationsRef.current.set(leg.callLegId, notification)
       }
     }
-  }, [offers])
+  }, [ringingLegs])
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 250)
@@ -1048,32 +954,27 @@ export function CallingDock({
     await resumeCalling()
   }
 
-  async function acceptOffer(offer: CallingOffer) {
-    const token = await getAccessToken()
-    if (!token) return
+  async function takeRingingLeg(ringingLeg: RingingCallLeg) {
     setError("")
-    const result = await acceptCallingOffer({
-      client: portalClient(token),
-      path: { callId: offer.id },
-      body: { sessionId: sessionID },
-    }).catch(() => undefined)
-    if (!result?.data) {
-      setError("The offer could not be claimed. It may have changed.")
-      await refreshOffers()
+    const leg = incomingLegsRef.current.get(ringingLeg.mediaToken)
+    if (!leg) {
+      setError("The browser media invite is still converging. Try Take again.")
+      await refreshCallingState()
       return
     }
-    if (result.data.status !== "ACCEPTED") {
-      setError(acceptanceMessage(result.data.status))
-      await refreshOffers()
-      return
-    }
-    setExpectedCallID(result.data.callId)
-    expectedCallRef.current = result.data.callId
+    await leg.answer()
+    incomingLegsRef.current.delete(ringingLeg.mediaToken)
+    mediaLegRef.current = leg
+    setMediaAttached(true)
+    setExpectedCallID(ringingLeg.callId)
+    expectedCallRef.current = ringingLeg.callId
     setAvailable(false)
     availabilityRef.current = false
     ringtoneRef.current?.()
     ringtoneRef.current = null
-    setOffers((current) => current.filter((item) => item.id !== offer.id))
+    setRingingLegs((current) =>
+      current.filter((item) => item.callLegId !== ringingLeg.callLegId),
+    )
     await refreshCall()
   }
 
@@ -1207,7 +1108,7 @@ export function CallingDock({
     }
   }
 
-  const earliest = offers[0]
+  const earliest = ringingLegs[0]
   return (
     <CallingNavigationContext.Provider
       value={{
@@ -1322,10 +1223,9 @@ export function CallingDock({
       {!platformOperator && earliest && !activeCall && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
-            offers={offers}
-            now={now}
+            ringingLegs={ringingLegs}
             error={error}
-            onAccept={(offer) => void acceptOffer(offer)}
+            onTake={(leg) => void takeRingingLeg(leg)}
           />
         </div>
       )}
@@ -1341,8 +1241,7 @@ export function CallingDock({
                   className={cn(
                     activeCall.state === "CONNECTED" && "text-success",
                     endingCallID === activeCall.id && "text-warning",
-                    (activeCall.state === "CONNECTING" ||
-                      activeCall.state === "RECONCILING") && "text-warning",
+					activeCall.state === "CONNECTING" && "text-warning",
                   )}
                 >
                   {endingCallID === activeCall.id
@@ -1450,17 +1349,15 @@ export function CallingDock({
 }
 
 function IncomingCallControls({
-  offers,
-  now,
+  ringingLegs,
   error,
-  onAccept,
+  onTake,
 }: {
-  offers: CallingOffer[]
-  now: number
+  ringingLegs: RingingCallLeg[]
   error: string
-  onAccept: (offer: CallingOffer) => void
+  onTake: (leg: RingingCallLeg) => void
 }) {
-  const earliest = offers[0]
+  const earliest = ringingLegs[0]
   if (!earliest) return null
   return (
     <Card role="region" aria-label="Incoming calls" size="sm">
@@ -1471,7 +1368,6 @@ function IncomingCallControls({
         </CardTitle>
         <CardDescription>
           {earliest.displayName || "Incoming caller"} · {earliest.locationName}
-          {earliest.nameSource ? ` · ${earliest.nameSource}` : ""}
         </CardDescription>
         <CardAction>
           <Badge
@@ -1479,7 +1375,7 @@ function IncomingCallControls({
             variant="secondary"
             className="tabular-nums text-warning"
           >
-            {offers.length}
+            {ringingLegs.length}
           </Badge>
         </CardAction>
       </CardHeader>
@@ -1487,34 +1383,30 @@ function IncomingCallControls({
         {earliest.transferReason && (
           <p className="text-muted-foreground">
             {earliest.transferReason}
-            {earliest.reasonSource ? ` · ${earliest.reasonSource}` : ""}
           </p>
         )}
-        {offers.slice(1).map((offer) => (
+        {ringingLegs.slice(1).map((leg) => (
           <Button
-            key={offer.id}
+            key={leg.callLegId}
             type="button"
             variant="outline"
             className="h-auto w-full justify-between"
-            onClick={() => onAccept(offer)}
+            onClick={() => onTake(leg)}
           >
             <span className="truncate">
-              {offer.displayName || "Incoming caller"} · {offer.locationName}
-              {offer.nameSource ? ` · ${offer.nameSource}` : ""}
+              {leg.displayName || "Incoming caller"} · {leg.locationName}
             </span>
-            <span className="tabular-nums">
-              {secondsRemaining(offer.deadline, now)}s
-            </span>
+            <span className="text-warning">Ringing</span>
           </Button>
         ))}
         {error && <p className="text-destructive">{error}</p>}
       </CardContent>
       <CardFooter className="justify-between">
         <Badge variant="outline" className="tabular-nums text-warning">
-          {secondsRemaining(earliest.deadline, now)}s
+          Ringing
         </Badge>
-        <Button size="sm" onClick={() => onAccept(earliest)}>
-          Accept
+        <Button size="sm" onClick={() => onTake(earliest)}>
+          Take
         </Button>
       </CardFooter>
     </Card>
@@ -1672,9 +1564,8 @@ function ActiveCallControls({
           ? ` · ${providerOutcomeLabel(call.providerTermination)}`
           : ""}
       </p>
-      {owner && (call.state === "CONNECTING" ||
-        call.state === "RECONCILING" ||
-        call.state === "CONNECTED") && (
+		{owner &&
+			(call.state === "CONNECTING" || call.state === "CONNECTED") && (
         <Button
           size="sm"
           variant="outline"
@@ -1739,7 +1630,7 @@ function ActiveCallControls({
         <>
           {terminal && (
             <span className="text-xs text-muted-foreground">
-              Disposition saved · recording {call.recording?.state.toLowerCase() ?? "not reported"}
+              Disposition saved
             </span>
           )}
           <Button size="sm" variant="ghost" onClick={onClose}>
@@ -1844,18 +1735,11 @@ function callTimerLabel(call: CallingCall, now: number) {
   if (
     call.state === "PREPARING" ||
     call.state === "RINGING" ||
-    call.state === "CONNECTING" ||
-    call.state === "RECONCILING"
+	call.state === "CONNECTING"
   ) {
-    return `${secondsRemaining(call.deadline, now)}s`
+	return callStateLabel(call.state)
   }
   return "Ended"
-}
-
-function acceptanceMessage(status: string) {
-  if (status === "ALREADY_CLAIMED") return "Another available User claimed this Call."
-  if (status === "EXPIRED") return "The offer expired before it could be claimed."
-  return "Your current Access or technical readiness no longer permits this Call."
 }
 
 function callStateLabel(state: CallingCall["state"]) {
@@ -1866,8 +1750,6 @@ function callStateLabel(state: CallingCall["state"]) {
       return "Ringing"
     case "CONNECTING":
       return "Connecting"
-    case "RECONCILING":
-      return "Confirming provider state"
     case "CONNECTED":
       return "Connected"
     case "NEEDS_DISPOSITION":

@@ -357,8 +357,8 @@ func expectedLogMetrics() map[string]expectedMetric {
 		"acuity_call_center_sse_stream_active":                    distribution("acuity_call_center_sse_stream", "active"),
 		"acuity_call_center_sse_listener_disconnect_count":        counter("acuity_call_center_sse_listener"),
 		"acuity_call_center_sse_listener_reconnect_failure_count": counter("acuity_call_center_sse_listener"),
-		"acuity_call_center_call_accept_count":                    counter("acuity_call_center_call_accept"),
-		"acuity_call_center_accept_to_bridge_seconds":             distribution("acuity_call_center_accept_to_bridge", "seconds"),
+		"acuity_call_center_staff_answer_count":                   counter("acuity_call_center_staff_answer"),
+		"acuity_call_center_answer_to_bridge_seconds":             distribution("acuity_call_center_answer_to_bridge", "seconds"),
 	}
 }
 
@@ -370,6 +370,8 @@ func expectedAlerts() map[string]expectedAlert {
 		"Receipt depth above 64 for five minutes":              {"acuity_call_center_receipt_queue_depth", 64, "300s"},
 		"Any quarantined provider receipt":                     {"acuity_call_center_receipt_quarantine_depth", 0, "0s"},
 		"Dial command queue p95 above one second":              {"acuity_call_center_provider_command_queue_seconds", 1, "60s"},
+		"Rejected start ring-window command":                   {"acuity_call_center_provider_command_count", 0, "0s"},
+		"Degraded caller audio after stop ring-window failure": {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Ambiguous service provider command":                   {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Ambiguous worker provider command":                    {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Service database acquisition timeout":                 {"acuity_call_center_database_pool_acquire_count", 0, "0s"},
@@ -378,9 +380,9 @@ func expectedAlerts() map[string]expectedAlert {
 		"Worker database saturation above 0.8":                 {"acuity_call_center_database_pool_saturation_ratio", 0.8, "300s"},
 		"More than three listener disconnects in five minutes": {"acuity_call_center_sse_listener_disconnect_count", 3, "0s"},
 		"Any listener reconnect failure":                       {"acuity_call_center_sse_listener_reconnect_failure_count", 0, "0s"},
-		"Already-claimed accept ratio above 0.5":               {"acuity_call_center_call_accept_count", 0.5, "0s"},
-		"At least ten accepts in five minutes":                 {"acuity_call_center_call_accept_count", 9, "0s"},
-		"Accept-to-bridge p95 above eight seconds":             {"acuity_call_center_accept_to_bridge_seconds", 8, "60s"},
+		"Lost Staff answer race ratio above 0.5":               {"acuity_call_center_staff_answer_count", 0.5, "0s"},
+		"At least ten Staff answers in five minutes":           {"acuity_call_center_staff_answer_count", 9, "0s"},
+		"Answer-to-Bridge p95 above eight seconds":             {"acuity_call_center_answer_to_bridge_seconds", 8, "60s"},
 	}
 }
 

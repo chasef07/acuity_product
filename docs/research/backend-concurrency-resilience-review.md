@@ -1,6 +1,6 @@
 # Backend concurrency and resilience review
 
-Audited 2026-07-24 against the current Acuity Portal specifications and primary documentation from Google Cloud, PostgreSQL, Telnyx, and Better Auth.
+Audited 2026-07-24 against the Acuity Portal specifications and primary documentation from Google Cloud, PostgreSQL, Telnyx, and Better Auth. The CallLeg routing and maintenance-cutover sections below have been updated to the binding Issue #51 replacement contract; the rest remains historical infrastructure rationale.
 
 ## Verdict
 
@@ -8,7 +8,7 @@ Keep **Next.js + one Go modular monolith + PostgreSQL**. It is a strong fit for 
 
 The choice is strong because the hardest correctness problems are transactional:
 
-- exactly one staff member wins a call offer;
+- exactly one Staff CallLeg becomes `BRIDGE_PENDING` or `BRIDGED`;
 - a replayed command or webhook produces one effect;
 - task ownership and provider intent change together;
 - provider-confirmed facts cannot be replaced by browser intent;
@@ -55,7 +55,7 @@ Multiple logins and concurrent calls are normal workload, not a reason to abando
 
 Use database-enforced transitions rather than process locks:
 
-- elect one call winner with one conditional `UPDATE ... WHERE offer_state = 'OFFERED' RETURNING ...`, or an equivalent unique invariant;
+- elect one provisional bridge winner by locking the Call and enforcing one `BRIDGE_PENDING` or `BRIDGED` Staff CallLeg per Call;
 - use a monotonically increasing row version for stale browser commands;
 - insert idempotency receipts and provider event IDs behind unique constraints;
 - keep transactions short and lock shared entities in one deterministic order;
@@ -200,7 +200,7 @@ Use one immutable image digest for every role and this release order:
 5. backfill asynchronously when needed; and
 6. remove old columns or behavior only in a later release.
 
-Every database change must use expand/contract compatibility so both old and new revisions can run during rollout and rollback. Cloud Run can split traffic and preserve in-flight requests while revisions overlap, so rollback is only safe if the schema remains backward-compatible. [Cloud Run rollouts and rollbacks](https://docs.cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration)
+Ordinary database changes use expand/contract compatibility. The CallLeg replacement is the explicit exception: admission closes, old revisions and in-flight work drain, a snapshot and parity checks complete, one destructive migration runs, and only the new runtime reopens admission. Mixed old/new calling runtimes and post-reopen schema rollback are forbidden.
 
 Do not run migrations from every application instance. For large live tables:
 
@@ -216,7 +216,7 @@ All processes must handle `SIGTERM`: stop taking new work, cancel or finish shor
 
 The architecture is ready to build, but it is not production-proven until these tests pass:
 
-1. simultaneous accepts across multiple Go instances produce one call winner;
+1. simultaneous provider-confirmed Staff answers across multiple Go instances produce one provisional bridge winner and one durable Bridge command;
 2. reordered, duplicate, and concurrent Telnyx events produce one valid state;
 3. a process killed after database commit but before or after a Telnyx request reconciles correctly;
 4. webhook receipt stays below Telnyx's two-second deadline under burst load;
@@ -224,7 +224,7 @@ The architecture is ready to build, but it is not production-proven until these 
 6. a Cloud SQL outage causes visible errors and recovery after restore without false success;
 7. SSE clients reconnect and reconstruct current state after timeout, revision rollout, and instance death;
 8. a worker killed mid-job does not lose or double-apply the effect;
-9. an application rollback works after every migration; and
+9. the CallLeg cutover aborts before mutation unless every drain, snapshot, mapping, and parity gate passes; and
 10. backup restore and regional recovery procedures meet the chosen RTO/RPO.
 
 The first checked envelope is 5–10 logged-in staff, 7 webhook requests in the

@@ -185,10 +185,11 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		humancalling.Config{
 			HandoffSIPDomain: "synthetic.sip.telnyx.com",
 			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:    "realtime-call-control-connection",
 		},
 		func() time.Time { return now },
 	)
-	_, err = calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-realtime-test",
 			PracticeID: practice.ID,
@@ -207,11 +208,12 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		EventID:       "realtime-call-initiated",
 		Type:          humancalling.FactCallInitiated,
 		OccurredAt:    now,
+		ConnectionID:  "realtime-call-control-connection",
 		CallControlID: "realtime-caller-control",
 		CallLegID:     "realtime-caller-leg",
 		CallSessionID: "realtime-call-session",
 		From:          "+15555550100",
-		To:            "+14843336938",
+		To:            handoff.SIPDestination,
 	}); err != nil {
 		t.Fatalf("publish HumanCalling mutation: %v", err)
 	}
@@ -224,10 +226,16 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	var callID string
 	if err := pool.QueryRow(context.Background(), `
 		UPDATE human_calling_calls
-		SET state = 'FOLLOW_UP_REQUIRED'
-		WHERE call_session_id = 'realtime-call-session'
+		SET terminal_outcome = 'FOLLOW_UP_REQUIRED',
+			disposition_outcome = 'FOLLOW_UP_REQUIRED',
+			ended_at = $1, updated_at = $1
+		WHERE id = (
+			SELECT call_id FROM human_calling_call_legs
+			WHERE provider_call_session_id = 'realtime-call-session'
+			LIMIT 1
+		)
 		RETURNING id::text
-	`).Scan(&callID); err != nil {
+	`, now).Scan(&callID); err != nil {
 		t.Fatalf("prepare realtime Task Call: %v", err)
 	}
 	workModule := work.New(pool, accessModule, func() time.Time { return now })

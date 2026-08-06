@@ -63,6 +63,53 @@ func TestRecordingSavedNormalizationDoesNotDependOnCallbackURL(t *testing.T) {
 	}
 }
 
+func TestRecordingSavedNormalizationAcceptsCanonicalTelnyxCallback(t *testing.T) {
+	raw := []byte(`{
+		"data": {
+			"record_type": "event",
+			"event_type": "call.recording.saved",
+			"id": "recording-event",
+			"occurred_at": "2026-07-27T12:00:00Z",
+			"payload": {
+				"call_leg_id": "caller-leg",
+				"call_session_id": "provider-session",
+				"client_state": "",
+				"recording_started_at": "2026-07-27T11:59:30Z",
+				"recording_ended_at": "2026-07-27T12:00:00Z"
+			}
+		}
+	}`)
+	fact, known, err := normalizeTelnyxFact(raw)
+	if err != nil || !known {
+		t.Fatalf("normalize canonical recording callback: known=%t err=%v", known, err)
+	}
+	if fact.CallControlID != "" || fact.RecordingID != "" ||
+		fact.CallLegID != "caller-leg" || fact.CallSessionID != "provider-session" {
+		t.Fatalf("canonical recording fact = %#v", fact)
+	}
+}
+
+func TestRecordingErrorNormalizationAcceptsCanonicalTelnyxCallback(t *testing.T) {
+	raw := []byte(`{
+		"data": {
+			"record_type": "event",
+			"event_type": "call.recording.error",
+			"id": "recording-error-event",
+			"occurred_at": "2026-07-27T12:00:00Z",
+			"payload": {
+				"call_leg_id": "caller-leg",
+				"call_session_id": "provider-session",
+				"client_state": ""
+			}
+		}
+	}`)
+	fact, known, err := normalizeTelnyxFact(raw)
+	if err != nil || !known || fact.Type != FactRecordingError ||
+		fact.CallControlID != "" || fact.CallLegID != "caller-leg" {
+		t.Fatalf("normalize canonical recording error: fact=%#v known=%t err=%v", fact, known, err)
+	}
+}
+
 func TestSpeakEventNormalizationRecognizesVoicemailLifecycle(t *testing.T) {
 	for _, eventType := range []FactType{FactSpeakStarted, FactSpeakEnded} {
 		t.Run(string(eventType), func(t *testing.T) {
@@ -75,10 +122,11 @@ func TestSpeakEventNormalizationRecognizesVoicemailLifecycle(t *testing.T) {
 					"payload": {
 						"call_control_id": "caller-control",
 						"call_leg_id": "caller-leg",
-						"call_session_id": "provider-session"
+						"call_session_id": "provider-session",
+						"status": %q
 					}
 				}
-			}`, eventType))
+			}`, eventType, map[bool]string{true: "completed"}[eventType == FactSpeakEnded]))
 			fact, known, err := normalizeTelnyxFact(raw)
 			if err != nil || !known || fact.Type != eventType {
 				t.Fatalf("normalize %s: fact=%#v known=%t err=%v", eventType, fact, known, err)

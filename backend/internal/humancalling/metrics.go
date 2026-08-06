@@ -110,14 +110,24 @@ func (m *Module) recordProviderCommand(
 	switch command.Action {
 	case CommandAnswerCaller:
 		action = observability.CommandAnswerCaller
-	case CommandStartRingback:
-		action = observability.CommandStartRingback
+	case CommandStartRingWindow:
+		action = observability.CommandStartRingWindow
 	case CommandDialStaff:
 		action = observability.CommandDialStaff
-	case CommandHangup:
-		action = observability.CommandHangup
-	case CommandStartRecording:
-		action = observability.CommandStartRecording
+	case CommandBridge:
+		action = observability.CommandBridge
+	case CommandStopRingWindow:
+		action = observability.CommandStopRingWindow
+	case CommandHangupLeg:
+		action = observability.CommandHangupLeg
+	case CommandSpeakVoicemail:
+		action = observability.CommandSpeakVoicemail
+	case CommandStartVoicemailRecording:
+		action = observability.CommandStartVoicemailRecording
+	case CommandDialOutboundStaff:
+		action = observability.CommandDialOutboundStaff
+	case CommandDialOutboundDestination:
+		action = observability.CommandDialOutboundDestination
 	case CommandCreateCredential:
 		action = observability.CommandCreateCredential
 	case CommandDisableCredential:

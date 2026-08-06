@@ -356,6 +356,8 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--max\t2",
 		"DATABASE_POOL_MAX=1",
 		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
+		"TELNYX_WEBHOOK_PUBLIC_KEY=test-public-key",
+		"TELNYX_WEBHOOK_NEXT_PUBLIC_KEY=test-next-public-key",
 		"MESSAGING_ATTACHMENT_DIRECTORY=/mnt/acuity-messaging",
 		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging,readonly=true",
 		"--add-volume-mount\tvolume=messaging-attachments,mount-path=/mnt/acuity-messaging",
@@ -390,6 +392,10 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--memory\t512Mi",
 		"DATABASE_POOL_MAX=1",
 		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY=handoff-token-key:latest",
+		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY=playback-signing-key:latest",
+		"HUMAN_CALLING_SIP_DOMAIN=caller.example",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN=staff.example",
 		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",
 		"--add-volume\tname=messaging-attachments,type=cloud-storage,bucket=acuity-messaging",
 		"--add-volume-mount\tvolume=messaging-attachments,mount-path=/mnt/acuity-messaging",
@@ -583,6 +589,7 @@ func assertCapturedCommand(
 			!strings.HasPrefix(command, prefix) {
 			continue
 		}
+		matches := true
 		for _, value := range required {
 			found := containsCapturedFields(command, value)
 			if strings.Contains(value, "=") &&
@@ -590,12 +597,15 @@ func assertCapturedCommand(
 				found = strings.Contains(command, value)
 			}
 			if !found {
-				t.Errorf("command %q omits %q", command, value)
+				matches = false
+				break
 			}
 		}
-		return
+		if matches {
+			return
+		}
 	}
-	t.Errorf("captured commands omit prefix %q", prefix)
+	t.Errorf("captured commands omit %q with fields %q", prefix, required)
 }
 
 func containsCapturedFields(command string, required string) bool {
@@ -657,6 +667,7 @@ func productionRuntimeEnvironment() []string {
 		"TELNYX_FROM_NUMBER=+15555550100",
 		"TELNYX_RINGBACK_URL=https://portal.example/ringback.wav",
 		"TELNYX_WEBHOOK_PUBLIC_KEY=test-public-key",
+		"TELNYX_WEBHOOK_NEXT_PUBLIC_KEY=test-next-public-key",
 		"MESSAGING_WEBHOOK_BASE_URL=https://ingress.example/v1/provider/telnyx/messaging-webhooks",
 		"MESSAGING_MEDIA_PUBLIC_BASE_URL=https://ingress.example/v1/provider/messaging-media",
 		"MESSAGING_ATTACHMENT_BUCKET=acuity-messaging",
