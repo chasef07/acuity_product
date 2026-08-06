@@ -4,6 +4,8 @@ export type MediaState =
   | "ready"
   | "unavailable"
 
+export type MediaFailure = "authentication" | "network" | "provider"
+
 export type IncomingMediaLeg = {
   providerLegID: string
   mediaToken: string
@@ -18,7 +20,18 @@ export type IncomingMediaLeg = {
 type CallingMediaCallbacks = {
   onState: (state: MediaState) => void
   onIncoming: (leg: IncomingMediaLeg) => void
+  onFailure?: (failure: MediaFailure) => void
   refreshToken?: () => Promise<string | undefined>
+}
+
+export function classifyTelnyxError(value: unknown, online = navigator.onLine) {
+  if (!online) return "network" as const
+  const error = value as { code?: number | string; message?: string }
+  const description = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase()
+  if (/\b(401|403)\b|auth|credential|login|token/.test(description)) {
+    return "authentication" as const
+  }
+  return "provider" as const
 }
 
 export interface CallingMediaAdapter {
@@ -210,12 +223,13 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
           })
       }
     })
-    client.on("telnyx.error", () => {
+    client.on("telnyx.error", (value) => {
       const session = this.activeSession
       if (session) {
         this.activeSession = { ...session, attachmentCurrent: false }
         applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
+      callbacks.onFailure?.(classifyTelnyxError(value))
       callbacks.onState("unavailable")
     })
     client.on("telnyx.notification", (value) => {

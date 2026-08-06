@@ -87,6 +87,8 @@ func (adapter *TelnyxAdapter) Execute(
 	case CommandAnswerCaller:
 		if command.TargetID == "" ||
 			payload["transcription"] != false ||
+			!validWebhookRetryPolicies(payload["webhook_retries_policies"],
+				FactCallAnswered, FactCallHangup) ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}
@@ -122,6 +124,8 @@ func (adapter *TelnyxAdapter) Execute(
 			emptyString(payload["from"]) ||
 			emptyString(payload["client_state"]) ||
 			!validMediaTokenHeader(payload["custom_headers"]) ||
+			!validWebhookRetryPolicies(payload["webhook_retries_policies"],
+				FactCallInitiated, FactCallAnswered, FactCallHangup) ||
 			!validTimeout ||
 			timeoutSeconds <= 0 ||
 			timeoutSeconds != float64(int(timeoutSeconds)) ||
@@ -139,6 +143,8 @@ func (adapter *TelnyxAdapter) Execute(
 			emptyString(payload["from"]) ||
 			emptyString(payload["client_state"]) ||
 			!validMediaTokenHeader(payload["custom_headers"]) ||
+			!validWebhookRetryPolicies(payload["webhook_retries_policies"],
+				FactCallInitiated, FactCallAnswered, FactCallHangup) ||
 			!validTimeout || timeoutSeconds <= 0 {
 			return ProviderResult{}, ErrInvalidInput
 		}
@@ -150,6 +156,8 @@ func (adapter *TelnyxAdapter) Execute(
 			emptyString(payload["from"]) ||
 			emptyString(payload["link_to"]) ||
 			emptyString(payload["client_state"]) ||
+			!validWebhookRetryPolicies(payload["webhook_retries_policies"],
+				FactCallInitiated, FactCallAnswered, FactCallHangup) ||
 			!validTimeout ||
 			timeoutSeconds != 30 ||
 			payload["bridge_intent"] != true ||
@@ -280,6 +288,48 @@ func (adapter *TelnyxAdapter) Execute(
 	}
 }
 
+func validWebhookRetryPolicies(value any, events ...FactType) bool {
+	policies, ok := value.(map[string]any)
+	if !ok || len(policies) != len(events) {
+		return false
+	}
+	for _, event := range events {
+		policy, ok := policies[string(event)].(map[string]any)
+		if !ok || len(policy) != 1 || !validRetryMilliseconds(policy["retries_ms"]) {
+			return false
+		}
+	}
+	return true
+}
+
+func validRetryMilliseconds(value any) bool {
+	values, ok := value.([]any)
+	if !ok {
+		if integers, integersOK := value.([]int); integersOK {
+			if len(integers) != len(telnyxWebhookRetryMilliseconds) {
+				return false
+			}
+			for index := range integers {
+				if integers[index] != telnyxWebhookRetryMilliseconds[index] {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	if len(values) != len(telnyxWebhookRetryMilliseconds) {
+		return false
+	}
+	for index, value := range values {
+		milliseconds, ok := value.(float64)
+		if !ok || milliseconds != float64(telnyxWebhookRetryMilliseconds[index]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (adapter *TelnyxAdapter) FindCredentialByName(
 	ctx context.Context,
 	name string,
@@ -335,6 +385,65 @@ func (adapter *TelnyxAdapter) FindCredentialByName(
 		)
 	}
 	return matches[0], true, nil
+}
+
+func (adapter *TelnyxAdapter) ResolveRecording(
+	ctx context.Context,
+	callLegID string,
+	callSessionID string,
+) (ProviderRecording, error) {
+	callLegID = strings.TrimSpace(callLegID)
+	callSessionID = strings.TrimSpace(callSessionID)
+	if callLegID == "" || callSessionID == "" {
+		return ProviderRecording{}, ErrInvalidInput
+	}
+	query := url.Values{}
+	query.Set("filter[call_leg_id]", callLegID)
+	query.Set("filter[call_session_id]", callSessionID)
+	query.Set("page[size]", "2")
+	responseBody, err := adapter.request(
+		ctx,
+		http.MethodGet,
+		"/recordings?"+query.Encode(),
+		nil,
+	)
+	if err != nil {
+		return ProviderRecording{}, err
+	}
+	var response struct {
+		Data []struct {
+			ID               string    `json:"id"`
+			CallControlID    string    `json:"call_control_id"`
+			CallLegID        string    `json:"call_leg_id"`
+			CallSessionID    string    `json:"call_session_id"`
+			Status           string    `json:"status"`
+			RecordingStarted time.Time `json:"recording_started_at"`
+			RecordingEnded   time.Time `json:"recording_ended_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return ProviderRecording{}, fmt.Errorf("%w: invalid Telnyx recording response", ErrAmbiguousEffect)
+	}
+	var resolved *ProviderRecording
+	for _, recording := range response.Data {
+		if recording.Status != "completed" || recording.ID == "" ||
+			recording.CallLegID != callLegID || recording.CallSessionID != callSessionID ||
+			!recording.RecordingEnded.After(recording.RecordingStarted) {
+			continue
+		}
+		if resolved != nil {
+			return ProviderRecording{}, fmt.Errorf("%w: multiple completed Telnyx recordings", ErrAmbiguousEffect)
+		}
+		resolved = &ProviderRecording{
+			ID: recording.ID, CallControlID: recording.CallControlID,
+			CallLegID: recording.CallLegID, CallSessionID: recording.CallSessionID,
+			StartedAt: recording.RecordingStarted, EndedAt: recording.RecordingEnded,
+		}
+	}
+	if resolved == nil {
+		return ProviderRecording{}, fmt.Errorf("%w: Telnyx recording is not available", ErrAmbiguousEffect)
+	}
+	return *resolved, nil
 }
 
 func (adapter *TelnyxAdapter) ObserveCall(

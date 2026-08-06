@@ -540,6 +540,7 @@ func (m *Module) QueryPhoneTimeline(
 			SELECT leg.id, leg.staff_subject, leg.state, leg.bridged_at
 			FROM human_calling_call_legs leg
 			WHERE leg.call_id = call.id AND leg.role = 'STAFF'
+				AND leg.bridged_at IS NOT NULL
 			ORDER BY leg.bridged_at DESC NULLS LAST, leg.updated_at DESC, leg.id DESC
 			LIMIT 1
 		) bridged_staff ON true
@@ -2536,6 +2537,7 @@ func (m *Module) QueryTimeline(
 			SELECT leg.id, leg.staff_subject, leg.state, leg.bridged_at
 			FROM human_calling_call_legs leg
 			WHERE leg.call_id = call.id AND leg.role = 'STAFF'
+				AND leg.bridged_at IS NOT NULL
 			ORDER BY leg.bridged_at DESC NULLS LAST, leg.updated_at DESC, leg.id DESC
 			LIMIT 1
 		) bridged_staff ON true

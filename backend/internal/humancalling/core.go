@@ -70,6 +70,18 @@ const (
 
 const safeProviderRetryWindow = 55 * time.Second
 
+var telnyxWebhookRetryMilliseconds = []int{1000, 2000, 5000, 15000, 30000}
+
+func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {
+	policies := make(map[string]any, len(events))
+	for _, event := range events {
+		policies[string(event)] = map[string]any{
+			"retries_ms": telnyxWebhookRetryMilliseconds,
+		}
+	}
+	return policies
+}
+
 var (
 	ErrDenied                    = errors.New("human calling access denied")
 	ErrInvalidInput              = errors.New("invalid human calling input")
@@ -195,6 +207,15 @@ type ProviderCallObservation struct {
 	Events        []ProviderFact
 }
 
+type ProviderRecording struct {
+	ID            string
+	CallControlID string
+	CallLegID     string
+	CallSessionID string
+	StartedAt     time.Time
+	EndedAt       time.Time
+}
+
 type Provider interface {
 	Execute(context.Context, ProviderCommand) (ProviderResult, error)
 }
@@ -212,6 +233,10 @@ type CallStateProvider interface {
 		string,
 		time.Time,
 	) (ProviderCallObservation, error)
+}
+
+type RecordingStateProvider interface {
+	ResolveRecording(context.Context, string, string) (ProviderRecording, error)
 }
 
 type SoftphoneState struct {
@@ -411,6 +436,13 @@ func New(
 func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error {
 	if fact.EventID == "" || fact.Type == "" || fact.OccurredAt.IsZero() {
 		return ErrInvalidInput
+	}
+	if fact.Type == FactCallBridged && fact.ClientState == "" {
+		var err error
+		fact, err = m.correlateBridgeFact(ctx, fact)
+		if err != nil {
+			return err
+		}
 	}
 	state, hasState := parseCallLegClientState(fact.ClientState)
 	switch fact.Type {

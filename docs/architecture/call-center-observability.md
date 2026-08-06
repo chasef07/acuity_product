@@ -30,8 +30,8 @@ numeric fields.
 | `acuity_call_center_database_pool` | `acquired`, `idle`, `max`, `saturation_ratio` | None | Runtime |
 | `acuity_call_center_sse_stream` | `active` | `state`, `reason` | Realtime |
 | `acuity_call_center_sse_listener` | None | `state`, `reconnect` | Realtime |
-| `acuity_call_center_call_accept` | None | `outcome` | Portal API |
-| `acuity_call_center_accept_to_bridge` | `seconds` | None | HumanCalling |
+| `acuity_call_center_staff_answer` | None | `outcome` | HumanCalling |
+| `acuity_call_center_answer_to_bridge` | `seconds` | None | HumanCalling |
 
 Allowed outcomes and actions are declared in
 `backend/internal/observability/observability.go`. Unknown values become
@@ -62,9 +62,9 @@ Neither the actual `call_id` nor `event_type` should become a metric label.
 - Alert if any pool acquisition exhausts its deadline, the SSE listener
   repeatedly disconnects, or any reconnect attempt fails. Client and
   shutdown cancellation is reported as `canceled`, not `timeout`.
-- Track `already_claimed` accepts as expected contention, but alert on a sharp
-  change in its ratio to `won`.
-- Alert if accept-to-bridge p95 exceeds eight seconds.
+- Track `lost_race` Staff answers as expected contention, but alert on a sharp
+  change in their ratio to all Staff answers.
+- Alert if answer-to-bridge p95 exceeds eight seconds.
 
 Thresholds are starting operating hypotheses. The load/failure workstream must
 replace them with measured baselines before declaring the production gate

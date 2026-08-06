@@ -1,8 +1,8 @@
 # Architecture
 
-> Target architecture for the August 6, 2026 release. The repository is greenfield; this document defines intended ownership and flow, not code that already exists.
+> Current architecture for the CallLeg fan-out cutover. GitHub Issue #51 is the binding release contract for provider behavior and live proof.
 
-Acuity Portal is a Next.js web application backed by one Go modular monolith and PostgreSQL. The backend has one codebase, binary, image, domain implementation, and database authority, while unlike workloads run in isolated runtime roles. Staff commands use HTTP, browser updates use SSE hints, human-call media uses TelnyxRTC/WebRTC, and provider events arrive through signed webhooks.
+Acuity Portal is a Next.js web application backed by one Go modular monolith and PostgreSQL. The backend has one codebase, binary, image, domain implementation, and database authority, while unlike workloads run in isolated runtime roles. Staff commands use HTTP, calling state converges through polling, general workspace updates use SSE hints, human-call media uses TelnyxRTC/WebRTC, and provider events arrive through signed webhooks.
 
 The [product and technical specification](../acuity-portal-product-technical-spec.md) is the source of truth for product behavior and the release bar.
 
@@ -44,7 +44,7 @@ The Go runtime contains five deep modules. Each module has one behavior-oriented
 |---|---|---|
 | `Access` | Human and service principals, invitations, memberships, Platform Operators, Support Mode, roles, location scope, authorization decisions | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
-| `HumanCalling` | Availability, simultaneous offers, winner election, logical call state, bridge confirmation, post-call disposition, voicemail lifecycle, recording identity, and authorized playback | Task lifecycle, SMS correlation, provider-owned audio bytes |
+| `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, post-call disposition, voicemail recording identity, and authorized playback | Browser-selected winners, connected-call recording, task lifecycle, SMS correlation, provider-owned audio bytes |
 | `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts | Task lifecycle, contact identity, call state |
 | `EvidenceArchive` | Canonical recording/transcript metadata, protected grants, access audit, retention, deletion | Call control, task completion, provider-owned audio bytes |
 
@@ -232,7 +232,7 @@ flowchart TD
     AI{"AI outcome"}
     Human["Live human transfer"]
     Async["Asynchronous follow-up"]
-    Offer["Offer all available authorized staff"]
+    Fanout["Dial all eligible Staff CallLegs"]
     Answered{"Answered within 20s?"}
     Disposition{"Staff disposition"}
     Voicemail["Voicemail or meaningful missed call"]
@@ -248,8 +248,8 @@ flowchart TD
     AI -->|"task tool"| Async
     Async --> Work
 
-    Human --> Offer
-    Offer --> Answered
+    Human --> Fanout
+    Fanout --> Answered
     Answered -->|"yes"| Disposition
     Answered -->|"no"| Voicemail
     Disposition -->|"Resolved on call"| NoTask
@@ -337,13 +337,13 @@ sequenceDiagram
     participant Work
 
     Start->>Calling: Initiate transfer with ContactContext
-    Calling->>DB: Create logical call and 20s offer
-    Calling-->>Staff: SSE offer hint
-    Staff->>Calling: Concurrent accept attempts
-    Calling->>DB: Atomically elect one winner
-    Calling-->>Staff: One winner; losers see claimed
-    Calling->>Telnyx: Bridge winning staff leg
-    Telnyx-->>Calling: Provider-confirmed bridge
+    Calling->>DB: Create Call, caller CallLeg, and one 20s ring window
+    Calling->>Telnyx: Dial every eligible Staff CallLeg
+    Telnyx-->>Staff: Independent WebRTC invites
+    Telnyx-->>Calling: Staff answered facts
+    Calling->>DB: First eligible answer becomes BRIDGE_PENDING with one durable Bridge command
+    Calling->>Telnyx: Execute explicit Bridge and end losing CallLegs
+    Telnyx-->>Calling: Provider-confirmed bridge facts
     Calling-->>Staff: Populate active engagement workspace
     Telnyx-->>Calling: Provider-confirmed termination
     Calling->>DB: Set NEEDS_DISPOSITION
@@ -427,7 +427,7 @@ The highest test seam is:
 ## Invariants
 
 - One task represents one accountable outcome.
-- One call offer produces at most one winner.
+- One Call has at most one `BRIDGE_PENDING` or `BRIDGED` Staff CallLeg.
 - One retryable input produces at most one durable result.
 - A resolved interaction creates no task.
 - An answered transfer remains `NEEDS_DISPOSITION` until staff chooses an outcome.

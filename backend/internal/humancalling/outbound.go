@@ -235,8 +235,7 @@ func (m *Module) StartOutboundCall(
 		SELECT EXISTS (
 			SELECT 1 FROM human_calling_call_legs
 			WHERE staff_subject = $1 AND role = 'STAFF'
-				AND (state IN ('BRIDGE_PENDING', 'BRIDGED')
-					OR (state = 'ENDING' AND answered_at IS NOT NULL))
+				AND state NOT IN ('ENDED', 'FAILED')
 		)
 	`, command.Identity.Subject).Scan(&occupied); err != nil || occupied {
 		return Call{}, ErrIneligible
@@ -270,7 +269,7 @@ func (m *Module) StartOutboundCall(
 	}
 
 	now := m.now()
-	callID, staffLegID := uuid.NewString(), uuid.NewString()
+	callID, callerLegID, staffLegID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO human_calling_calls (
 			id, practice_id, location_id, direction, entry_point, task_id,
@@ -288,6 +287,13 @@ func (m *Module) StartOutboundCall(
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO human_calling_call_legs (
+			id, call_id, role, sequence, state, created_at, updated_at
+		) VALUES ($1, $2, 'CALLER', 1, 'PENDING', $3, $3)
+	`, callerLegID, callID, now); err != nil {
+		return Call{}, fmt.Errorf("create outbound caller CallLeg: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO human_calling_call_legs (
 			id, call_id, role, sequence, staff_subject, staff_session_id,
 			state, created_at, updated_at
 		) VALUES ($1, $2, 'STAFF', 1, $3, $4, 'PENDING', $5, $5)
@@ -300,7 +306,12 @@ func (m *Module) StartOutboundCall(
 		"from":             callerID,
 		"bridge_on_answer": false,
 		"timeout_secs":     int(m.config.RingWindowDuration.Seconds()),
-		"client_state":     encodeCallLegClientState(callID, staffLegID, "STAFF", "outbound_media"),
+		"webhook_retries_policies": telnyxWebhookRetryPolicies(
+			FactCallInitiated,
+			FactCallAnswered,
+			FactCallHangup,
+		),
+		"client_state": encodeCallLegClientState(callID, staffLegID, "STAFF", "outbound_media"),
 		"custom_headers": []map[string]string{{
 			"name": "X-Acuity-Media-Token", "value": m.staffMediaToken(callID, staffLegID),
 		}},
@@ -413,6 +424,11 @@ func (m *Module) ConfirmOutboundMedia(
 			"from": callerID, "link_to": staffControlID,
 			"bridge_intent": true, "bridge_on_answer": false, "timeout_secs": 30,
 			"answering_machine_detection": "disabled",
+			"webhook_retries_policies": telnyxWebhookRetryPolicies(
+				FactCallInitiated,
+				FactCallAnswered,
+				FactCallHangup,
+			),
 			"client_state": encodeCallLegClientState(
 				command.CallID, destinationLegID, "DESTINATION", "dial",
 			),

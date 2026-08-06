@@ -16,6 +16,17 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 )
 
+func telnyxLifecycleRetries() map[string]any {
+	policy := func() map[string]any {
+		return map[string]any{"retries_ms": []int{1000, 2000, 5000, 15000, 30000}}
+	}
+	return map[string]any{
+		"call.initiated": policy(),
+		"call.answered":  policy(),
+		"call.hangup":    policy(),
+	}
+}
+
 func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
 	audio := []byte("synthetic-mp3")
 	var server *httptest.Server
@@ -518,14 +529,15 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 		Action:   humancalling.CommandDialStaff,
 		TargetID: "caller-control",
 		Payload: map[string]any{
-			"to":               "sip:synthetic-user@sip.telnyx.com",
-			"connection_id":    "call-control-app",
-			"from":             "+15555550199",
-			"link_to":          "caller-control",
-			"bridge_intent":    true,
-			"bridge_on_answer": false,
-			"client_state":     "opaque-state",
-			"timeout_secs":     float64(20),
+			"to":                       "sip:synthetic-user@sip.telnyx.com",
+			"connection_id":            "call-control-app",
+			"from":                     "+15555550199",
+			"link_to":                  "caller-control",
+			"bridge_intent":            true,
+			"bridge_on_answer":         false,
+			"client_state":             "opaque-state",
+			"timeout_secs":             float64(20),
+			"webhook_retries_policies": telnyxLifecycleRetries(),
 			"custom_headers": []map[string]string{{
 				"name":  "X-Acuity-Media-Token",
 				"value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -557,6 +569,8 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 		dialRequest["from"] != "+15555550199" ||
 		dialRequest["timeout_secs"] != float64(20) ||
 		dialRequest["bridge_on_answer"] != false ||
+		fmt.Sprint(dialRequest["webhook_retries_policies"]) !=
+			"map[call.answered:map[retries_ms:[1000 2000 5000 15000 30000]] call.hangup:map[retries_ms:[1000 2000 5000 15000 30000]] call.initiated:map[retries_ms:[1000 2000 5000 15000 30000]]]" ||
 		dialRequest["prevent_double_bridge"] != nil ||
 		fmt.Sprint(dialRequest["custom_headers"]) !=
 			"[map[name:X-Acuity-Media-Token value:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]]" {
@@ -643,6 +657,7 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 				"answering_machine_detection": "disabled",
 				"timeout_secs":                float64(30),
 				"client_state":                "opaque-destination",
+				"webhook_retries_policies":    telnyxLifecycleRetries(),
 			},
 		},
 	}
@@ -677,6 +692,37 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 		destination["answering_machine_detection"] != "disabled" ||
 		destination["timeout_secs"] != float64(30) {
 		t.Fatalf("outbound destination request = %#v", destination)
+	}
+}
+
+func TestTelnyxAdapterResolvesCanonicalRecordingCallbackIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v2/recordings" ||
+			request.URL.Query().Get("filter[call_leg_id]") != "caller-leg" ||
+			request.URL.Query().Get("filter[call_session_id]") != "caller-session" ||
+			request.URL.Query().Get("page[size]") != "2" {
+			http.Error(writer, "unexpected recording lookup", http.StatusBadRequest)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"data":[{
+			"id":"recording-1","call_control_id":"caller-control",
+			"call_leg_id":"caller-leg","call_session_id":"caller-session",
+			"status":"completed","recording_started_at":"2026-08-05T12:00:00Z",
+			"recording_ended_at":"2026-08-05T12:00:30Z"
+		}]}`))
+	}))
+	defer server.Close()
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey: "synthetic-key", BaseURL: server.URL + "/v2", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recording, err := adapter.ResolveRecording(context.Background(), "caller-leg", "caller-session")
+	if err != nil || recording.ID != "recording-1" ||
+		recording.CallControlID != "caller-control" ||
+		recording.EndedAt.Sub(recording.StartedAt) != 30*time.Second {
+		t.Fatalf("resolved recording = %#v, err = %v", recording, err)
 	}
 }
 

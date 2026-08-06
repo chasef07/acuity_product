@@ -5,10 +5,17 @@ import test from "node:test"
 import {
   applyMicrophoneFence,
   callingClientOptions,
+	classifyTelnyxError,
   createCallingMediaAdapter,
   type IncomingMediaLeg,
   rejectMediaCall,
 } from "./media-adapter.ts"
+
+test("Telnyx errors distinguish authentication network and provider failures", () => {
+	assert.equal(classifyTelnyxError({ code: 401 }, true), "authentication")
+	assert.equal(classifyTelnyxError(new Error("socket closed"), false), "network")
+	assert.equal(classifyTelnyxError(new Error("unknown"), true), "provider")
+})
 
 class FakeAudioElement {
   id = ""

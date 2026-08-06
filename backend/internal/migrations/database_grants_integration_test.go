@@ -256,6 +256,11 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		},
 		"acuity_worker": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
+			`SELECT EXISTS (
+				SELECT 1 FROM human_calling_timeline
+				WHERE call_id = gen_random_uuid()
+					AND kind = 'ring_window.COMPLETED'
+			)`,
 			`SELECT practice_id::text, location_id::text
 				 FROM messaging_location_configurations
 				 WHERE sender = '+17275550100' AND active
@@ -521,6 +526,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
 		"human_calling_softphone_leases",
+		"human_calling_timeline",
 		"human_calling_voicemails",
 		"messaging_attachments",
 		"messaging_location_configurations",

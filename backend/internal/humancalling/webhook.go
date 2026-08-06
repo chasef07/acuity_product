@@ -592,7 +592,14 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	fact.RecordingID = payload.RecordingID
 	fact.RecordingStartedAt = payload.RecordingStartedAt
 	fact.RecordingEndedAt = payload.RecordingEndedAt
-	if fact.CallControlID == "" ||
+	if fact.Type == FactSpeakEnded &&
+		fact.PlaybackStatus != "completed" &&
+		fact.PlaybackStatus != "call_hangup" &&
+		fact.PlaybackStatus != "cancelled_amd" {
+		return ProviderFact{}, false, ErrInvalidWebhook
+	}
+	if (fact.Type != FactRecordingSaved && fact.Type != FactRecordingError &&
+		fact.CallControlID == "") ||
 		fact.CallLegID == "" ||
 		fact.CallSessionID == "" {
 		return ProviderFact{}, false, ErrInvalidWebhook

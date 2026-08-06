@@ -86,7 +86,9 @@ import {
   type MediaState,
 } from "@/lib/calling/media-adapter"
 import {
+  confirmOutboundMediaWithRetry,
   mediaAttachmentAfterState,
+  microphoneFailureMessage,
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
 import { providerOutcomeLabel } from "@/lib/calling/outcomes"
@@ -415,16 +417,20 @@ export function CallingDock({
           return
         }
         await leg.answer()
-        const confirmed = await confirmCallingMediaReady({
-          client: portalClient(token),
-          path: { callId: expectedCallRef.current },
-          body: { sessionId: sessionID, mediaToken: leg.mediaToken },
-        }).catch(() => undefined)
-        if (!confirmed?.data) {
+        const callID = expectedCallRef.current
+        const confirmed = await confirmOutboundMediaWithRetry(async () => {
+          const result = await confirmCallingMediaReady({
+            client: portalClient(token),
+            path: { callId: callID },
+            body: { sessionId: sessionID, mediaToken: leg.mediaToken },
+          })
+          return { data: result.data, status: result.response?.status }
+        })
+        if (!confirmed) {
           await leg.reject().catch(() => undefined)
           return
         }
-        applyActiveCall(confirmed.data)
+        applyActiveCall(confirmed)
         mediaLegRef.current = leg
         setMediaAttached(true)
         return
@@ -526,13 +532,13 @@ export function CallingDock({
         const audioContext = new AudioContext()
         await audioContext.resume()
         await audioContext.close()
-        if ("Notification" in window && Notification.permission === "default") {
-          await Notification.requestPermission()
-        }
-      } catch {
-        setError("Microphone and browser audio permission are required.")
+      } catch (error) {
+        setError(microphoneFailureMessage(error))
         setAvailabilityPending(false)
         return
+      }
+      if ("Notification" in window && Notification.permission === "default") {
+        void Notification.requestPermission().catch(() => undefined)
       }
       const issued = await issueCallingMediaToken({
         client: portalClient(token),
@@ -577,6 +583,15 @@ export function CallingDock({
           }
         },
         onIncoming: (leg) => void handleIncoming(leg),
+        onFailure: (failure) => {
+          setError(
+            failure === "authentication"
+              ? "Calling authentication expired. Reconnect calling to refresh it."
+              : failure === "network"
+                ? "Calling lost its network connection. Check your connection and reconnect."
+                : "Telnyx calling is unavailable. Reconnect calling and try again.",
+          )
+        },
         refreshToken: async () => {
           const accessToken = await getAccessToken()
           if (!accessToken) return undefined
