@@ -2207,6 +2207,15 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await expect(
         takeoverPage.getByRole("heading", { name: "(555) 555-0177" }),
       ).toBeVisible()
+      const standaloneTimeline = takeoverPage.getByTestId("message-timeline")
+      await expect(
+        standaloneTimeline.getByRole("button", {
+          name: /Outbound call:.*Unanswered.*Open details/,
+        }),
+      ).toBeVisible()
+      await expect(
+        standaloneTimeline.getByRole("button", { name: /Missed call:/ }),
+      ).toHaveCount(0)
     })
 
     await takeoverAvailability.click()

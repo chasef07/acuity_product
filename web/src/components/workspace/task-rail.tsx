@@ -41,7 +41,6 @@ import type {
   Task,
 } from "@/lib/api/generated/types.gen"
 import { authClient } from "@/lib/auth-client"
-import { isCompletePhoneSearch } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 
 export type ConnectionState = "connecting" | "connected" | "degraded"
@@ -55,6 +54,7 @@ type TaskRailProps = {
   recent: EngagementSummary[]
   selectedTaskID: string
   search: string
+  searchSubmitted: boolean
   engagementLoading: boolean
   loading: boolean
   messageLoading: boolean
@@ -77,6 +77,7 @@ export function TaskRail({
   practice,
   selectedTaskID,
   search,
+  searchSubmitted,
   engagementLoading,
   loading,
   messageLoading,
@@ -175,6 +176,11 @@ export function TaskRail({
             className="h-9 bg-background pr-10 pl-8"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return
+              event.preventDefault()
+              onSearchSubmit()
+            }}
           />
           <span className="pointer-events-none absolute top-2.5 right-2.5 text-[0.6875rem] text-muted-foreground">
             ⌘K
@@ -208,7 +214,7 @@ export function TaskRail({
             {engagementLoading && <RailLoading />}
             {!engagementLoading && search.trim() && engagements.length === 0 && (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                {isCompletePhoneSearch(search)
+                {searchSubmitted
                   ? "No authorized recorded activity for that number."
                   : "Enter a full phone number."}
               </p>

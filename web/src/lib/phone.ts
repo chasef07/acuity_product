@@ -1,4 +1,4 @@
-export function isCompletePhoneSearch(value: string) {
+export function hasE164DigitCount(value: string) {
   const digits = value.replaceAll(/\D/g, "")
-  return digits.length === 10 || (digits.length === 11 && digits.startsWith("1"))
+  return digits.length >= 8 && digits.length <= 15
 }

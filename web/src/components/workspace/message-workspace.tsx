@@ -1577,29 +1577,31 @@ function TimelineEntry({
   }
   if (item.type === "CALL" && item.call) {
     const presentation = callPresentation(item.call)
+    const card = (
+      <TimelineCard
+        icon={presentation.icon}
+        kind={presentation.label}
+        meta={item.call.locationName}
+        occurredAt={item.occurredAt}
+        title={presentation.title}
+        detail={presentation.detail}
+        tone={presentation.tone}
+      />
+    )
     return (
       <article>
-        <button
-          type="button"
-          aria-label={`${presentation.label}: ${presentation.title}. Open details`}
-          className={cn(
-            "w-full text-left",
-            onCallOpen &&
-              "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-          )}
-          disabled={!onCallOpen}
-          onClick={() => onCallOpen?.(item.call!.id, item.call!)}
-        >
-          <TimelineCard
-            icon={presentation.icon}
-            kind={presentation.label}
-            meta={item.call.locationName}
-            occurredAt={item.occurredAt}
-            title={presentation.title}
-            detail={presentation.detail}
-            tone={presentation.tone}
-          />
-        </button>
+        {onCallOpen ? (
+          <button
+            type="button"
+            aria-label={`${presentation.label}: ${presentation.title}. ${presentation.detail}. ${item.call.locationName}, ${formatTimelineTime(item.occurredAt)}. Open details`}
+            className="w-full cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            onClick={() => onCallOpen(item.call!.id, item.call!)}
+          >
+            {card}
+          </button>
+        ) : (
+          card
+        )}
         {item.call.outcome === "VOICEMAIL" && (
           <div className="mx-auto mt-2 max-w-2xl pl-12">
             <VoicemailPlayer callID={item.call.id} compact />
@@ -1610,27 +1612,28 @@ function TimelineEntry({
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
-    return (
+    const activity = taskActivityLabel(item.taskActivity, task.state)
+    const card = (
+      <TimelineCard
+        icon={<CheckSquareIcon />}
+        kind="Task"
+        meta={`${activity} · ${task.locationName}`}
+        occurredAt={item.occurredAt}
+        title={task.title}
+        tone="task"
+      />
+    )
+    return onTaskOpen ? (
       <button
         type="button"
-        aria-label={`Task: ${task.title}. ${taskActivityLabel(item.taskActivity, task.state)}`}
-        className={cn(
-          "w-full text-left",
-          onTaskOpen &&
-            "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-        )}
-        disabled={!onTaskOpen}
-        onClick={() => onTaskOpen?.(task)}
+        aria-label={`Task: ${task.title}. ${activity} at ${task.locationName}, ${formatTimelineTime(item.occurredAt)}. Open details`}
+        className="w-full cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        onClick={() => onTaskOpen(task)}
       >
-        <TimelineCard
-          icon={<CheckSquareIcon />}
-          kind="Task"
-          meta={`${taskActivityLabel(item.taskActivity, task.state)} · ${task.locationName}`}
-          occurredAt={item.occurredAt}
-          title={task.title}
-          tone="task"
-        />
+        {card}
       </button>
+    ) : (
+      card
     )
   }
   if (item.type === "NOTE" && item.note) {
@@ -1917,7 +1920,10 @@ function callPresentation(call: CallHistoryItem): {
       tone: "voicemail",
     }
   }
-  if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
+  if (
+    call.direction === "INBOUND" &&
+    (call.outcome === "MISSED" || call.outcome === "UNANSWERED")
+  ) {
     return {
       icon: <PhoneMissedIcon />,
       label: "Missed call",

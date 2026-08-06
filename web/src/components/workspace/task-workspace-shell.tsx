@@ -82,7 +82,7 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
-import { isCompletePhoneSearch } from "@/lib/phone"
+import { hasE164DigitCount } from "@/lib/phone"
 import {
   createWorkspaceSync,
   type WorkspaceSync,
@@ -112,6 +112,7 @@ export function TaskWorkspaceShell() {
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
   const [settledSearch, setSettledSearch] = useState("")
+  const [searchSubmitted, setSearchSubmitted] = useState(false)
   const [ordering, setOrdering] = useState<TaskOrdering>("priority")
   const [taskState] = useState<"OPEN" | "COMPLETED">("OPEN")
   const [engagements, setEngagements] = useState<EngagementSummary[]>([])
@@ -829,7 +830,7 @@ export function TaskWorkspaceShell() {
 
   useEffect(() => {
     const requestGeneration = ++engagementGenerationRef.current
-    if (!practiceID || !isCompletePhoneSearch(settledSearch)) return
+    if (!practiceID || !hasE164DigitCount(settledSearch)) return
     const timeout = window.setTimeout(async () => {
       setEngagementLoading(true)
       const token = await getAccessToken()
@@ -922,6 +923,7 @@ export function TaskWorkspaceShell() {
     setMessageThreads([])
     setSearch("")
     setSettledSearch("")
+    setSearchSubmitted(false)
     setEngagements([])
     setEngagementLoading(false)
     updateSelectedTask(undefined)
@@ -1033,7 +1035,9 @@ export function TaskWorkspaceShell() {
 
   async function submitPhoneSearch() {
     const phone = search.trim()
-    if (!isCompletePhoneSearch(phone) || !practiceID) return
+    const searchable = hasE164DigitCount(phone)
+    setSearchSubmitted(searchable)
+    if (!searchable || !practiceID) return
     const requestGeneration = ++engagementGenerationRef.current
     setEngagementLoading(true)
     const token = await getAccessToken()
@@ -1287,15 +1291,17 @@ export function TaskWorkspaceShell() {
           recent={recentInboxes}
           selectedTaskID={selectedTask?.id ?? attentionHighlightTaskID}
           search={search}
+          searchSubmitted={searchSubmitted}
           engagementLoading={engagementLoading}
           loading={tasksLoading}
           messageLoading={messagesLoading}
           connection={connection}
           onSearchChange={(value) => {
             setSearch(value)
+            setSearchSubmitted(false)
             engagementGenerationRef.current += 1
             setEngagements([])
-            setEngagementLoading(isCompletePhoneSearch(value))
+            setEngagementLoading(hasE164DigitCount(value))
           }}
           onSearchSubmit={submitPhoneSearch}
           onEngagementSelect={selectEngagement}

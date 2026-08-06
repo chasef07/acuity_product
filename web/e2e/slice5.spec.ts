@@ -276,6 +276,13 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toHaveCount(0)
+  await numberSearch.fill("+44 20 7183 8750")
+  await numberSearch.press("Enter")
+  await expect(
+    page.getByText("No authorized recorded activity for that number.", {
+      exact: true,
+    }),
+  ).toBeVisible()
   await numberSearch.fill("727.555.0199")
   await numberSearch.press("Enter")
   const numberSearchResults = page.getByTestId("number-search-results")
