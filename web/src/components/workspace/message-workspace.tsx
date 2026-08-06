@@ -1250,9 +1250,12 @@ function MessageConversation({
   const composerThreadID =
     conversationThread?.id ??
     (timelineSource?.kind === "engagement" ? "" : threadID)
+  const consolidatedItems = consolidateTaskActivity(items)
   const visibleItems = findQuery.trim()
-    ? items.filter((item) => timelineItemText(item).includes(findQuery.trim().toLowerCase()))
-    : items
+    ? consolidatedItems.filter((item) =>
+        timelineItemText(item).includes(findQuery.trim().toLowerCase()),
+      )
+    : consolidatedItems
   const messageItems = items.filter(
     (item): item is ConversationTimelineItem & { message: Message } =>
       item.type === "MESSAGE" && Boolean(item.message),
@@ -1586,6 +1589,7 @@ function TimelineEntry({
         title={presentation.title}
         detail={presentation.detail}
         tone={presentation.tone}
+        side={item.call.direction === "OUTBOUND" ? "outbound" : "inbound"}
       />
     )
     return (
@@ -1603,8 +1607,10 @@ function TimelineEntry({
           card
         )}
         {item.call.outcome === "VOICEMAIL" && (
-          <div className="mx-auto mt-2 max-w-2xl pl-12">
-            <VoicemailPlayer callID={item.call.id} compact />
+          <div className="flex w-full justify-start pr-12">
+            <div className="mt-2 w-full max-w-lg pl-10">
+              <VoicemailPlayer callID={item.call.id} compact />
+            </div>
           </div>
         )}
       </article>
@@ -1621,6 +1627,7 @@ function TimelineEntry({
         occurredAt={item.occurredAt}
         title={task.title}
         tone="task"
+        side="outbound"
       />
     )
     return onTaskOpen ? (
@@ -1646,6 +1653,7 @@ function TimelineEntry({
           occurredAt={item.occurredAt}
           title={item.note.body}
           tone="note"
+          side="outbound"
         />
       </article>
     )
@@ -1697,6 +1705,27 @@ function areConsecutiveMessages(
       right?.type === "MESSAGE" &&
       left.message?.direction === right.message?.direction &&
       left.message?.thread.locationId === right.message?.thread.locationId,
+  )
+}
+
+function consolidateTaskActivity(items: ConversationTimelineItem[]) {
+  const latestByTask = new Map<string, ConversationTimelineItem>()
+  for (const item of items) {
+    if (item.type !== "TASK" || !item.task) continue
+    const current = latestByTask.get(item.task.id)
+    if (
+      !current ||
+      new Date(item.occurredAt).getTime() >=
+        new Date(current.occurredAt).getTime()
+    ) {
+      latestByTask.set(item.task.id, item)
+    }
+  }
+  return items.filter(
+    (item) =>
+      item.type !== "TASK" ||
+      !item.task ||
+      latestByTask.get(item.task.id) === item,
   )
 }
 
@@ -1793,12 +1822,12 @@ function MessageEntry({
     <article
       className={cn(
         "group/message flex w-full",
-        outbound ? "justify-end pl-10" : "justify-start pr-10",
+        outbound ? "justify-end pl-12" : "justify-start pr-12",
       )}
     >
       <div
         className={cn(
-          "relative max-w-[min(42rem,82%)] rounded-xl border px-3 py-2.5 shadow-xs",
+          "relative max-w-[min(36rem,78%)] rounded-xl border px-3 py-2.5 shadow-xs",
           outbound
             ? "border-sky-500/20 bg-sky-500/10"
             : "border-border/70 bg-muted/60",
@@ -1955,6 +1984,7 @@ function TimelineCard({
   title,
   detail,
   tone,
+  side,
 }: {
   icon: React.ReactNode
   kind: string
@@ -1963,48 +1993,59 @@ function TimelineCard({
   title: string
   detail?: string
   tone: "call" | "missed" | "voicemail" | "task" | "note"
+  side: "inbound" | "outbound"
 }) {
   return (
     <div
+      data-timeline-side={side}
       className={cn(
-        "mx-auto w-full max-w-2xl rounded-xl border border-l-[3px] bg-background px-4 py-3 shadow-xs",
-        tone === "call" && "border-l-sky-500",
-        tone === "missed" && "border-l-amber-500",
-        tone === "voicemail" && "border-l-violet-500",
-        tone === "task" && "border-l-emerald-500",
-        tone === "note" && "border-l-slate-400",
+        "flex w-full",
+        side === "outbound" ? "justify-end pl-12" : "justify-start pr-12",
       )}
     >
-      <div className="flex items-start gap-3">
-        <span
-          className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4",
-            tone === "call" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-            tone === "missed" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-            tone === "voicemail" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",
-            tone === "task" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-            tone === "note" && "bg-muted text-muted-foreground",
-          )}
-        >
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide">
-              {kind}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">{meta}</span>
-            <time
-              dateTime={occurredAt}
-              className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground"
-            >
-              {formatTimelineTime(occurredAt)}
-            </time>
+      <div
+        className={cn(
+          "w-full max-w-lg rounded-xl border border-l-[3px] bg-background px-3 py-2.5 shadow-xs",
+          tone === "call" && "border-l-sky-500",
+          tone === "missed" && "border-l-amber-500",
+          tone === "voicemail" && "border-l-violet-500",
+          tone === "task" && "border-l-emerald-500",
+          tone === "note" && "border-l-slate-400",
+        )}
+      >
+        <div className="flex items-start gap-2.5">
+          <span
+            className={cn(
+              "flex size-8 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4",
+              tone === "call" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+              tone === "missed" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              tone === "voicemail" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+              tone === "task" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+              tone === "note" && "bg-muted text-muted-foreground",
+            )}
+          >
+            {icon}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide">
+                {kind}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">
+                {meta}
+              </span>
+              <time
+                dateTime={occurredAt}
+                className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground"
+              >
+                {formatTimelineTime(occurredAt)}
+              </time>
+            </div>
+            <p className="mt-1 text-sm font-medium">{title}</p>
+            {detail && (
+              <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+            )}
           </div>
-          <p className="mt-1 text-sm font-medium">{title}</p>
-          {detail && (
-            <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
-          )}
         </div>
       </div>
     </div>

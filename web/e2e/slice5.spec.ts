@@ -428,6 +428,18 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toBeVisible()
+  const consolidatedFollowUp = page
+    .getByTestId("message-timeline")
+    .getByRole("button", { name: /Task: Follow up on text\. Reopened/ })
+  await expect(consolidatedFollowUp).toHaveCount(1)
+  await expect(
+    page
+      .getByTestId("message-timeline")
+      .getByRole("button", { name: /Task: Follow up on text\./ }),
+  ).toHaveCount(1)
+  await expect(
+    consolidatedFollowUp.locator('[data-timeline-side="outbound"]'),
+  ).toBeVisible()
 
   await sendInbound(page, "slice-5-stop", "STOP")
   await expect(

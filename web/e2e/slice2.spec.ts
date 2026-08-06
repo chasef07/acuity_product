@@ -1270,6 +1270,18 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         task_state: "OPEN",
         activity_count: "4",
       })
+    const consolidatedTask = takeoverPage
+      .getByTestId("message-timeline")
+      .getByRole("button", { name: /Task: Confirm scheduling plan\. Reopened/ })
+    await expect(consolidatedTask).toHaveCount(1)
+    await expect(
+      takeoverPage
+        .getByTestId("message-timeline")
+        .getByRole("button", { name: /Task: Confirm scheduling plan\./ }),
+    ).toHaveCount(1)
+    await expect(
+      consolidatedTask.locator('[data-timeline-side="outbound"]'),
+    ).toBeVisible()
 
     await test.step("Slice 6 voicemail crosses signed ingress, Telnyx storage, and authorized playback", async () => {
       const voicemailHandoffResponse = await takeoverPage.request.post(
@@ -1532,10 +1544,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
       await focusedVoicemail
         .getByRole("button", { name: "Close selected item" })
         .click()
-      await takeoverPage
+      const voicemailTimelineCard = takeoverPage
         .getByRole("button", { name: /Voicemail:.*Open details/ })
         .last()
-        .click()
+      await expect(
+        voicemailTimelineCard.locator('[data-timeline-side="inbound"]'),
+      ).toBeVisible()
+      await voicemailTimelineCard.click()
       await takeoverPage
         .getByRole("complementary", { name: "Selected item" })
         .getByRole("button", { name: "Looks handled — Mark complete" })
@@ -2212,6 +2227,13 @@ test("Slice 2 real HTTP/PostgreSQL path elects one browser and requires provider
         standaloneTimeline.getByRole("button", {
           name: /Outbound call:.*Unanswered.*Open details/,
         }),
+      ).toBeVisible()
+      await expect(
+        standaloneTimeline
+          .getByRole("button", {
+            name: /Outbound call:.*Unanswered.*Open details/,
+          })
+          .locator('[data-timeline-side="outbound"]'),
       ).toBeVisible()
       await expect(
         standaloneTimeline.getByRole("button", { name: /Missed call:/ }),
