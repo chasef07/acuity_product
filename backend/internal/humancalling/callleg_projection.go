@@ -1225,8 +1225,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_legs
-		SET state = 'ENDED', ending_at = COALESCE(ending_at, $2),
-			ended_at = GREATEST($2, COALESCE(ending_at, $2), COALESCE(answered_at, $2)),
+		SET state = 'ENDED', ending_at = COALESCE(ending_at, $2), ended_at = $2,
 			hangup_cause = NULLIF($3, ''), termination_source = NULLIF($4, ''),
 			sip_cause = NULLIF($5, ''), call_quality_stats = COALESCE($6, call_quality_stats),
 			updated_at = $7

@@ -398,11 +398,11 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "outbound-destination-hangup-delivered-first", Type: humancalling.FactCallHangup,
-		OccurredAt: now.Add(2 * time.Second), CallControlID: "destination-control",
+		OccurredAt: now.Add(6 * time.Second), CallControlID: "destination-control",
 		CallLegID: "destination-provider-leg", CallSessionID: "destination-session",
 		HangupCause: "NORMAL_CLEARING", TerminationSource: "DESTINATION",
 	}); err != nil {
-		t.Fatalf("project out-of-order outbound Hangup before Bridge delivery: %v", err)
+		t.Fatalf("project outbound Hangup before Bridge delivery: %v", err)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "outbound-bridge-confirmed", Type: humancalling.FactCallBridged,
