@@ -1795,7 +1795,7 @@ function MessageEntry({
     >
       <div
         className={cn(
-          "max-w-[min(42rem,82%)] rounded-xl border px-3 py-2.5 shadow-xs",
+          "relative max-w-[min(42rem,82%)] rounded-xl border px-3 py-2.5 shadow-xs",
           outbound
             ? "border-sky-500/20 bg-sky-500/10"
             : "border-border/70 bg-muted/60",
@@ -1843,21 +1843,28 @@ function MessageEntry({
             )}
           </div>
         )}
-        {canMutate && (
-          <div className="mt-1 flex flex-wrap justify-end gap-1">
-            {!message.taskId && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="pointer-events-none size-6 p-0 opacity-0 transition-opacity group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
-                title="Create follow-up Task"
-                disabled={pending}
-                onClick={() => void createTask()}
-              >
-                <CheckSquareIcon />
-                <span className="sr-only">Create Task</span>
-              </Button>
+        {canMutate && !message.taskId && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn(
+              "pointer-events-none absolute top-1/2 size-7 -translate-y-1/2 p-0 opacity-0 transition-opacity group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
+              outbound ? "-left-9" : "-right-9",
             )}
+            title="Create follow-up Task"
+            disabled={pending}
+            onClick={() => void createTask()}
+          >
+            <CheckSquareIcon />
+            <span className="sr-only">Create Task</span>
+          </Button>
+        )}
+        {canMutate &&
+          (pending ||
+            (outbound &&
+              (message.delivery === "Failed" ||
+                message.delivery === "Status unknown"))) && (
+          <div className="mt-1 flex flex-wrap justify-end gap-1">
             {outbound &&
               (message.delivery === "Failed" ||
                 message.delivery === "Status unknown") && (
@@ -1876,7 +1883,7 @@ function MessageEntry({
               )}
             {pending && <Spinner />}
           </div>
-        )}
+          )}
         {error && (
           <p
             role="alert"
