@@ -189,7 +189,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		},
 		func() time.Time { return now },
 	)
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err = calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject:    "abita-realtime-test",
 			PracticeID: practice.ID,
@@ -213,7 +213,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		CallLegID:     "realtime-caller-leg",
 		CallSessionID: "realtime-call-session",
 		From:          "+15555550100",
-		To:            handoff.SIPDestination,
+		To:            "+14843989071",
 	}); err != nil {
 		t.Fatalf("publish HumanCalling mutation: %v", err)
 	}

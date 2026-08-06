@@ -66,6 +66,9 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create handoff: %v", err)
 	}
+	if handoff.SIPDestination != "sip:acuity-handoff@synthetic.sip.telnyx.com" {
+		t.Fatalf("handoff SIP destination = %q", handoff.SIPDestination)
+	}
 	caller := humancalling.ProviderFact{
 		EventID:       "caller-initiated",
 		Type:          humancalling.FactCallInitiated,
@@ -75,7 +78,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		CallLegID:     "caller-provider-leg",
 		CallSessionID: "caller-session",
 		From:          "+15555550100",
-		To:            handoff.SIPDestination,
+		To:            "+14843989071",
 	}
 	wrongConnection := caller
 	wrongConnection.EventID = "caller-initiated-wrong-connection"
@@ -287,6 +290,55 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}
 	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
 		t.Fatalf("reconcile stale CallLegs: %v", err)
+	}
+}
+
+func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 5, 12, 30, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(
+		t, accessModule, now, "ambiguous-handoff", 1,
+	)
+	calling := humancalling.New(pool, accessModule, &recordingProvider{}, humancalling.Config{
+		HandoffSIPDomain: "synthetic.sip.telnyx.com",
+		HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:    "staff-call-control-connection",
+	}, func() time.Time { return now })
+	for _, suffix := range []string{"one", "two"} {
+		if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject: "abita-ambiguous-handoff", PracticeID: authorization.Practice.ID,
+			},
+			LocationID:     authorization.Locations[0].ID,
+			SourceCallID:   "ambiguous-source-" + suffix,
+			IdempotencyKey: "ambiguous-attempt-" + suffix,
+			Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+		}); err != nil {
+			t.Fatalf("create handoff %s: %v", suffix, err)
+		}
+	}
+
+	err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ambiguous-caller-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "ambiguous-caller-control", CallLegID: "ambiguous-caller-leg",
+		CallSessionID: "ambiguous-caller-session", From: "+15555550100",
+		To: "+14843989071",
+	})
+	if !errors.Is(err, humancalling.ErrInvalidHandoff) {
+		t.Fatalf("ambiguous REFER error = %v", err)
+	}
+	var calls, consumed int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM human_calling_calls),
+			(SELECT count(*) FROM human_calling_handoffs WHERE consumed_at IS NOT NULL)
+	`).Scan(&calls, &consumed); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || consumed != 0 {
+		t.Fatalf("ambiguous REFER mutated calls=%d consumed=%d", calls, consumed)
 	}
 }
 
@@ -506,7 +558,7 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, staff, "hangup-before-answer-browser")
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject: "abita-hangup-before-answer", PracticeID: authorization.Practice.ID,
 		},
@@ -522,7 +574,7 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		OccurredAt: now, ConnectionID: "staff-call-control-connection",
 		CallControlID: "hangup-before-answer-control", CallLegID: "hangup-before-answer-leg",
 		CallSessionID: "hangup-before-answer-session", From: "+15555550100",
-		To: handoff.SIPDestination,
+		To: "+14843989071",
 	}
 	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
@@ -1177,7 +1229,7 @@ func TestClosedHandoffAdmissionFailsBeforeDatabaseMutation(t *testing.T) {
 	}
 }
 
-func TestClosedHandoffAdmissionRejectsPreviouslyIssuedReferToken(t *testing.T) {
+func TestClosedHandoffAdmissionRejectsPreviouslyIssuedRefer(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 5, 14, 30, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -1192,7 +1244,7 @@ func TestClosedHandoffAdmissionRejectsPreviouslyIssuedReferToken(t *testing.T) {
 	open := humancalling.New(pool, accessModule, &recordingProvider{}, config, func() time.Time {
 		return now
 	})
-	handoff, err := open.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err := open.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject: "abita-closed-refer-admission", PracticeID: authorization.Practice.ID,
 		},
@@ -1213,7 +1265,7 @@ func TestClosedHandoffAdmissionRejectsPreviouslyIssuedReferToken(t *testing.T) {
 		EventID: "closed-refer-initiated", Type: humancalling.FactCallInitiated,
 		OccurredAt: now, ConnectionID: config.CallControlID,
 		CallControlID: "closed-refer-control", CallLegID: "closed-refer-leg",
-		CallSessionID: "closed-refer-session", To: handoff.SIPDestination,
+		CallSessionID: "closed-refer-session", To: "+14843989071",
 	})
 	if !errors.Is(err, humancalling.ErrHandoffAdmissionClosed) {
 		t.Fatalf("closed delayed REFER error = %v", err)
@@ -1902,7 +1954,7 @@ func prepareInboundFanout(
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
-	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
 		Service: humancalling.ServiceIdentity{
 			Subject: "abita-" + prefix, PracticeID: authorization.Practice.ID,
 		},
@@ -1918,7 +1970,7 @@ func prepareInboundFanout(
 		OccurredAt: now, ConnectionID: "staff-call-control-connection",
 		CallControlID: prefix + "-caller-control", CallLegID: prefix + "-caller-leg",
 		CallSessionID: prefix + "-caller-session", From: "+15555550100",
-		To: handoff.SIPDestination,
+		To: "+14843989071",
 	}
 	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)

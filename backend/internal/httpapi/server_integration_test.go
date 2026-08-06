@@ -15,7 +15,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -266,13 +265,13 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_handoffs (
 			id, service_subject, practice_id, location_id, source_call_id,
-			idempotency_key, input_fingerprint, token_hash, phone,
+			idempotency_key, input_fingerprint, phone,
 			expires_at, consumed_at, created_at
 		)
 		VALUES ($1, 'voicemail-http-service', $2, $3, 'voicemail-http-source',
-			'voicemail-http-key', $4, $5, '+15555550100', $6, $7, $7)
+			'voicemail-http-key', $4, '+15555550100', $5, $6, $6)
 	`, handoffID, authorization.Practice.ID, voicemailLocationID,
-		[]byte(callID), []byte("token-"+callID), now.Add(time.Minute), now,
+		[]byte(callID), now.Add(time.Minute), now,
 	); err != nil {
 		t.Fatalf("insert voicemail HTTP handoff: %v", err)
 	}
@@ -578,7 +577,6 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 			source_call_id,
 			idempotency_key,
 			input_fingerprint,
-			token_hash,
 			phone,
 			phone_source,
 			display_name,
@@ -590,10 +588,10 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 			created_at
 		)
 		VALUES ($1, 'abita-task-http', $2, $3, 'task-http-source',
-			'task-http-idempotency', $4, $5, '+19855550100', 'Abita',
-			'HTTP Caller', 'Abita', 'Verify referral', 'Abita AI', $6, $7, $7)
+			'task-http-idempotency', $4, '+19855550100', 'Abita',
+			'HTTP Caller', 'Abita', 'Verify referral', 'Abita AI', $5, $6, $6)
 	`, handoffID, authorization.Practice.ID, authorization.Locations[0].ID,
-		[]byte(callID), []byte("token-"+callID), now.Add(time.Minute), now,
+		[]byte(callID), now.Add(time.Minute), now,
 	); err != nil {
 		t.Fatalf("insert Task HTTP handoff: %v", err)
 	}
@@ -1485,10 +1483,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		ExpiresAt      time.Time `json:"expiresAt"`
 	}
 	decode(t, created, &handoff)
-	if matched, _ := regexp.MatchString(
-		`^sip:h_[A-Za-z0-9_-]{43}@synthetic\.sip\.telnyx\.com$`,
-		handoff.SIPDestination,
-	); !matched {
+	if handoff.SIPDestination != "sip:acuity-handoff@synthetic.sip.telnyx.com" {
 		t.Fatalf("handoff response = %#v", handoff)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -1500,7 +1495,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		CallLegID:     "http-caller-leg",
 		CallSessionID: "http-call-session",
 		From:          "+15555550100",
-		To:            handoff.SIPDestination,
+		To:            "+14843989071",
 	}); err != nil {
 		t.Fatalf("admit HTTP caller: %v", err)
 	}
@@ -1632,10 +1627,10 @@ func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_handoffs (
 			id, service_subject, practice_id, location_id, source_call_id,
-			idempotency_key, input_fingerprint, token_hash, expires_at
+			idempotency_key, input_fingerprint, expires_at
 		)
 		VALUES ($1, 'http-recovery-service', $2, $3, 'source', 'idempotency',
-			'\x01', '\x02', $4)
+			'\x01', $4)
 	`, handoffID, practiceID, locationID, now.Add(time.Hour)); err != nil {
 		t.Fatalf("seed HTTP recovery handoff: %v", err)
 	}

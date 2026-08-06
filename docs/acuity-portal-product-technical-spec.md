@@ -505,7 +505,7 @@ This is the highest useful seam because it proves the product promise while allo
 - Exercise `portal-api`, `provider-ingress`, and `realtime` through their public interfaces and `worker` through durable jobs.
 - Exercise the portal with Playwright against the real runtime roles and provider simulators.
 - Maintain signed Telnyx webhook fixtures for voice, recording, transcription, and messaging events.
-- Run controlled live Telnyx acceptance tests before release for the paths that simulation cannot prove: REFER route-token survival, WebRTC readiness, independent fan-out, answer, explicit Bridge event shape, media, voicemail recording, and SMS delivery.
+- Run controlled live Telnyx acceptance tests before release for the paths that simulation cannot prove: stable REFER normalization, WebRTC readiness, independent fan-out, answer, explicit Bridge event shape, media, voicemail recording, and SMS delivery.
 - Run every production journey in two browser sessions to verify shared visibility and realtime recovery.
 
 ### Required invariant tests

@@ -959,7 +959,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 					source_call_id,
 					idempotency_key,
 					input_fingerprint,
-					token_hash,
 					phone,
 					phone_source,
 					expires_at,
@@ -972,11 +971,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 					$3,
 					$3,
 					$4,
-					$5,
 					'+17275550199',
 					'fixture',
-					$6::timestamptz + interval '1 hour',
-					$6
+					$5::timestamptz + interval '1 hour',
+					$5
 				)
 				RETURNING id
 			)
@@ -996,14 +994,13 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 				$2,
 				'+17275550199',
 				'RESOLVED',
-				$6::timestamptz + interval '10 seconds',
-				$6,
-				$6
+				$5::timestamptz + interval '10 seconds',
+				$5,
+				$5
 			FROM handoff
 		`, authorization.Practice.ID, locationID,
 			fmt.Sprintf("slice-5-timeline-call-%d", index),
 			bytes.Repeat([]byte{byte(index + 1)}, 32),
-			bytes.Repeat([]byte{byte(index + 11)}, 32),
 			callAt,
 		); err != nil {
 			t.Fatalf("seed exact-phone Call %d: %v", index, err)

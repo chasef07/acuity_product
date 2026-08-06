@@ -32,8 +32,8 @@ func TestForwardMigrationsAreRepeatableAndExposeOnlyCallLegTopology(t *testing.T
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 20 {
-		t.Fatalf("migration count = %d, want 20", migrationCount)
+	if migrationCount != 21 {
+		t.Fatalf("migration count = %d, want 21", migrationCount)
 	}
 
 	for _, relation := range []string{
@@ -73,12 +73,14 @@ func TestForwardMigrationsAreRepeatableAndExposeOnlyCallLegTopology(t *testing.T
 	var legacyColumns, commandLegColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT
-			count(*) FILTER (WHERE table_name = 'human_calling_calls' AND column_name IN (
-				'state', 'offer_deadline', 'connection_deadline', 'claimant_subject',
-				'winner_subject', 'claimant_session_id', 'current_attempt_id',
-				'caller_call_control_id', 'caller_call_leg_id', 'call_session_id',
-				'destination_call_control_id', 'destination_call_leg_id', 'connected_at'
-			)),
+			count(*) FILTER (WHERE
+				(table_name = 'human_calling_calls' AND column_name IN (
+					'state', 'offer_deadline', 'connection_deadline', 'claimant_subject',
+					'winner_subject', 'claimant_session_id', 'current_attempt_id',
+					'caller_call_control_id', 'caller_call_leg_id', 'call_session_id',
+					'destination_call_control_id', 'destination_call_leg_id', 'connected_at'
+				)) OR (table_name = 'human_calling_handoffs' AND column_name = 'token_hash')
+			),
 			count(*) FILTER (WHERE table_name = 'human_calling_provider_commands'
 				AND column_name IN ('call_leg_id', 'peer_call_leg_id'))
 		FROM information_schema.columns
@@ -87,7 +89,7 @@ func TestForwardMigrationsAreRepeatableAndExposeOnlyCallLegTopology(t *testing.T
 		t.Fatal(err)
 	}
 	if legacyColumns != 0 || commandLegColumns != 2 {
-		t.Fatalf("legacy Call columns = %d, command CallLeg columns = %d", legacyColumns, commandLegColumns)
+		t.Fatalf("legacy calling columns = %d, command CallLeg columns = %d", legacyColumns, commandLegColumns)
 	}
 	var legacyVoicemailColumns int
 	if err := pool.QueryRow(ctx, `

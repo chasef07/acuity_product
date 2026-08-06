@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,7 +48,7 @@ func (m *Module) CreateHandoff(
 		if !hmac.Equal(existingFingerprint, fingerprint[:]) {
 			return Handoff{}, fmt.Errorf("%w: idempotency key belongs to another handoff", ErrConflict)
 		}
-		existing.SIPDestination = m.sipDestination(existing.ID)
+		existing.SIPDestination = m.sipDestination()
 		if err := tx.Commit(ctx); err != nil {
 			return Handoff{}, fmt.Errorf("commit replayed handoff: %w", err)
 		}
@@ -61,26 +60,24 @@ func (m *Module) CreateHandoff(
 
 	issuedAt := m.now()
 	result := Handoff{ID: uuid.NewString(), ExpiresAt: issuedAt.Add(m.config.HandoffLifetime)}
-	routeToken := m.handoffRouteToken(result.ID)
-	tokenHash := sha256.Sum256([]byte(routeToken))
 	var insertedID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO human_calling_handoffs (
 			id, service_subject, practice_id, location_id, source_call_id,
-			idempotency_key, input_fingerprint, token_hash, phone, phone_source,
+			idempotency_key, input_fingerprint, phone, phone_source,
 			display_name, name_source, transfer_reason, reason_source, expires_at,
 			created_at
 		)
 		VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8,
-			NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''),
-			NULLIF($13, ''), NULLIF($14, ''), $15, $16
+			$1, $2, $3, $4, $5, $6, $7,
+			NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''),
+			NULLIF($12, ''), NULLIF($13, ''), $14, $15
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING id::text
 	`, result.ID, command.Service.Subject, command.Service.PracticeID,
 		command.LocationID, command.SourceCallID, command.IdempotencyKey,
-		fingerprint[:], tokenHash[:], command.Contact.Phone,
+		fingerprint[:], command.Contact.Phone,
 		command.Contact.PhoneSource, command.Contact.DisplayName,
 		command.Contact.NameSource, command.Contact.TransferReason,
 		command.Contact.ReasonSource, result.ExpiresAt, issuedAt,
@@ -112,7 +109,7 @@ func (m *Module) CreateHandoff(
 	if err := tx.Commit(ctx); err != nil {
 		return Handoff{}, fmt.Errorf("commit handoff: %w", err)
 	}
-	result.SIPDestination = m.sipDestination(result.ID)
+	result.SIPDestination = m.sipDestination()
 	return result, nil
 }
 
@@ -121,24 +118,36 @@ func (m *Module) resolveHandoffForRefer(
 	tx pgx.Tx,
 	fact ProviderFact,
 ) (string, string, string, error) {
-	routeToken, ok := parseHandoffRouteToken(fact.To, m.config.HandoffSIPDomain)
-	if !ok {
+	if !canonicalE164.MatchString(fact.From) || !canonicalE164.MatchString(fact.To) {
 		return "", "", "", ErrInvalidHandoff
 	}
-	tokenHash := sha256.Sum256([]byte(routeToken))
-	var handoffID, practiceID, locationID string
-	err := tx.QueryRow(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT id::text, practice_id::text, location_id::text
 		FROM human_calling_handoffs
-		WHERE token_hash = $1 AND consumed_at IS NULL
+		WHERE phone = $1 AND consumed_at IS NULL
 			AND created_at <= $2 AND expires_at > $2
+		ORDER BY created_at, id
+		LIMIT 2
 		FOR UPDATE
-	`, tokenHash[:], m.now()).Scan(&handoffID, &practiceID, &locationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", "", ErrInvalidHandoff
-	}
+	`, fact.From, fact.OccurredAt)
 	if err != nil {
 		return "", "", "", fmt.Errorf("correlate handoff admission: %w", err)
+	}
+	defer rows.Close()
+
+	var handoffID, practiceID, locationID string
+	candidateCount := 0
+	for rows.Next() {
+		candidateCount++
+		if err := rows.Scan(&handoffID, &practiceID, &locationID); err != nil {
+			return "", "", "", fmt.Errorf("scan handoff admission: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", "", fmt.Errorf("read handoff admission: %w", err)
+	}
+	if candidateCount != 1 {
+		return "", "", "", ErrInvalidHandoff
 	}
 	return handoffID, practiceID, locationID, nil
 }
@@ -219,29 +228,6 @@ func handoffFingerprint(command CreateHandoffCommand) ([32]byte, error) {
 	return sha256.Sum256(encoded), nil
 }
 
-func (m *Module) handoffRouteToken(handoffID string) string {
-	mac := hmac.New(sha256.New, m.tokenKey)
-	_, _ = mac.Write([]byte("handoff-route-v1\x00" + handoffID))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-func (m *Module) sipDestination(handoffID string) string {
-	return "sip:h_" + m.handoffRouteToken(handoffID) + "@" + m.config.HandoffSIPDomain
-}
-
-func parseHandoffRouteToken(destination string, domain string) (string, bool) {
-	if len(destination) >= 256 || !strings.HasPrefix(destination, "sip:h_") {
-		return "", false
-	}
-	user, destinationDomain, ok := strings.Cut(destination[4:], "@")
-	if !ok || strings.Contains(destinationDomain, "@") || destinationDomain != domain ||
-		!strings.HasPrefix(user, "h_") {
-		return "", false
-	}
-	token := strings.TrimPrefix(user, "h_")
-	decoded, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil || len(token) != 43 || len(decoded) != sha256.Size {
-		return "", false
-	}
-	return token, true
+func (m *Module) sipDestination() string {
+	return "sip:acuity-handoff@" + m.config.HandoffSIPDomain
 }
