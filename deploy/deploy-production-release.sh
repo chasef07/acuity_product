@@ -266,7 +266,8 @@ gcloud run jobs update acuity-migrate \
   --image "$backend_digest" \
   --tasks 1 \
   --max-retries 0 \
-  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,MIGRATE_VOICE_PRACTICE_KEY=abita-eye-group,MIGRATE_VOICE_LOCATION_KEY=demo-484,MIGRATE_VOICE_NUMBER=+14843989071" \
+  --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000" \
+  --remove-env-vars "MIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER" \
   --quiet
 gcloud run jobs execute acuity-migrate \
   --project "$PROJECT_ID" \

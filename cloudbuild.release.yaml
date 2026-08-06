@@ -55,12 +55,12 @@ steps:
 
 substitutions:
   _IMAGE_TAG: DO_NOT_DEPLOY
-  _REGION: us-central1
+  _REGION: us-east1
   _REPOSITORY: acuity-product
   _BACKEND_IMAGE: backend
   _WEB_IMAGE: web
-  _PORTAL_API_URL: https://acuity-portal-api-cbuqwpsdsq-uc.a.run.app
-  _REALTIME_URL: https://acuity-realtime-cbuqwpsdsq-uc.a.run.app
+  _PORTAL_API_URL: https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app
+  _REALTIME_URL: https://acuity-realtime-cbuqwpsdsq-ue.a.run.app
 
 options:
   logging: CLOUD_LOGGING_ONLY

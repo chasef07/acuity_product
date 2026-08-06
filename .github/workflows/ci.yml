@@ -176,7 +176,7 @@ jobs:
       cancel-in-progress: false
     environment:
       name: production
-      url: https://acuity-web-cbuqwpsdsq-uc.a.run.app
+      url: https://acuity-web-cbuqwpsdsq-ue.a.run.app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

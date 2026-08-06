@@ -1,13 +1,41 @@
 # Production deployment and recovery runbook
 
-This runbook operates the checked lean production contract. It does not assert
-that any Google Cloud or Telnyx resource has been deployed or accepted.
+This runbook operates the checked lean production contract. The contract and
+commands do not by themselves prove live acceptance; dated rollout evidence and
+remaining gates are recorded separately below.
+
+## Migration checkpoint: 2026-08-06
+
+- The isolated `us-east1` stack exists with the checked Cloud SQL shape, four
+  Cloud Run services, one worker-pool instance, regional buckets, secrets, and
+  Artifact Registry. Service liveness/readiness and the web sign-in database
+  path passed.
+- The database contains the current schema plus one required Practice,
+  Location, voice-number mapping, and Messaging-profile mapping. It contains no
+  migrated users, invitations, calls, messages, or patient history.
+- Telnyx Call Control and Messaging profile webhook URLs target the
+  `us-east1` provider ingress. No live Call, SMS/MMS, retry, or signed burst was
+  generated as part of the migration.
+- The prior `us-central1` services, migration job, worker pool, Cloud SQL
+  instance, buckets, Artifact Registry repository, and database URL secrets
+  were removed on 2026-08-06. `us-east1` is the only production region; there
+  is no cross-region standby or provider fallback stack.
+- A successful automated backup and a successful on-demand backup exist in
+  `us-east1`. A restore rehearsal is still required before launch.
+- PostgreSQL reports 400 total connections and three superuser-reserved slots:
+  a 397-connection non-superuser ceiling. The 22-connection production
+  reservation therefore has 375 connections of configured ceiling headroom;
+  eight client connections were active at the dated snapshot.
+
+This checkpoint is infrastructure and configuration evidence, not Florida
+latency, carrier delivery, continuous availability, or end-to-end Staff proof.
 
 ## Current automated release
 
-The currently deployed pilot runs in `acuity-health-prod` / `us-central1`.
-That is an in-place release target, not a database or regional migration to the
-checked `us-east1` production contract below.
+The checked production stack runs only in `acuity-health-prod` / `us-east1`.
+Ordinary releases target that region and never copy data between regions.
+Application rollback uses compatible prior `us-east1` revisions; database
+recovery uses backup/PITR rather than a second regional stack.
 
 Every push to GitHub `main` now follows one release path:
 
@@ -27,7 +55,7 @@ Every push to GitHub `main` now follows one release path:
 Operators do not run `pnpm` or a deployment script for an ordinary release.
 Push the reviewed commit to `main`, then follow the GitHub Actions run and its
 linked Cloud Build. The web URL is
-`https://acuity-web-cbuqwpsdsq-uc.a.run.app`.
+`https://acuity-web-cbuqwpsdsq-ue.a.run.app`.
 
 ## Owners and stop conditions
 
@@ -98,6 +126,18 @@ logs, seven retained backups, deletion protection, and storage auto-increase.
 Data cache is off. Alert at 70% disk use and investigate growth before the
 automatic increase changes the cost baseline; never trade database availability
 for an unreviewed fixed-disk ceiling.
+
+## Clean-stack bootstrap
+
+A schema-only database is intentionally unusable for provider traffic. Before
+provider routing, provision only the required Practice, Location, voice number,
+and Messaging profile configuration through the reviewed provisioning path.
+Invitations may remain empty until a real operator is invited. Do not copy
+calls, messages, users, or patient history merely to create this configuration.
+
+Ordinary releases never seed a hard-coded demo number. The migration job
+removes the legacy `MIGRATE_VOICE_*` environment variables and preserves the
+already reviewed configuration rows.
 
 ## Restore rehearsal
 

@@ -36,7 +36,8 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		t.Fatalf("migration was not completed before service staging:\n%s", strings.Join(commands, "\n"))
 	}
 	assertCapturedCommand(t, commands, "run\tjobs\tupdate\tacuity-migrate",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000,MIGRATE_VOICE_PRACTICE_KEY=abita-eye-group,MIGRATE_VOICE_LOCATION_KEY=demo-484,MIGRATE_VOICE_NUMBER=+14843989071",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000",
+		"--remove-env-vars\tMIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER",
 	)
 
 	for _, service := range []string{
@@ -256,6 +257,7 @@ func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 		"google-github-actions/auth",
 		"gcloud builds submit",
 		"cloudbuild.release.yaml",
+		"url: https://acuity-web-cbuqwpsdsq-ue.a.run.app",
 	} {
 		if !strings.Contains(content, required) {
 			t.Errorf("main deployment workflow omits %q", required)
@@ -281,6 +283,9 @@ func TestCloudBuildReleaseBuildsBothImagesBeforeDeploy(t *testing.T) {
 		"gcr.io/google.com/cloudsdktool/google-cloud-cli:578.0.0-slim",
 		"deploy/deploy-production-release.sh",
 		"IMAGE_TAG=${_IMAGE_TAG}",
+		"_REGION: us-east1",
+		"_PORTAL_API_URL: https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app",
+		"_REALTIME_URL: https://acuity-realtime-cbuqwpsdsq-ue.a.run.app",
 	} {
 		if !strings.Contains(content, required) {
 			t.Errorf("Cloud Build release config omits %q", required)

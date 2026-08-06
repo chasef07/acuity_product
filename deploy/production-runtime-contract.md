@@ -128,11 +128,11 @@ checked proof deliberately exceeds that observation:
 - one worker connection keeps receipt and command lanes moving while a provider
   command is held.
 
-Ten repeated runs on 2026-07-29 passed at the one-connection portal floor. HTTP
-webhook burst maxima were about 56–91 ms, mixed-role webhook p99 was about
-74–100 ms, and ten-command p99 was about 47–63 ms. Cumulative portal pool wait
-during each ten-command window was about 370–501 ms. These are deterministic
-local PostgreSQL measurements, not
+Ten repeated runs on 2026-08-06 passed at the one-connection portal floor. HTTP
+webhook burst maxima were about 20–66 ms, mixed-role webhook p99 was about
+16–169 ms, and ten-command p99 was about 10–41 ms. Cumulative portal pool wait
+during each ten-command window was about 80–334 ms. These are deterministic
+local PostgreSQL 16 measurements, not
 Cloud Run, Cloud SQL, network, Florida-user, or Telnyx production evidence.
 
 ## Operator use
