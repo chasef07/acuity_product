@@ -55,6 +55,7 @@ type TaskRailProps = {
   selectedTaskID: string
   search: string
   searchSubmitted: boolean
+  engagementSearchUnavailable: boolean
   engagementLoading: boolean
   loading: boolean
   messageLoading: boolean
@@ -78,6 +79,7 @@ export function TaskRail({
   selectedTaskID,
   search,
   searchSubmitted,
+  engagementSearchUnavailable,
   engagementLoading,
   loading,
   messageLoading,
@@ -212,13 +214,21 @@ export function TaskRail({
             className="mx-2 mb-2 rounded-md bg-muted/50 p-1.5"
           >
             {engagementLoading && <RailLoading />}
-            {!engagementLoading && search.trim() && engagements.length === 0 && (
+            {!engagementLoading && engagementSearchUnavailable && (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                {searchSubmitted
-                  ? "No authorized recorded activity for that number."
-                  : "Enter a full phone number."}
+                Number search is unavailable. Try again.
               </p>
             )}
+            {!engagementLoading &&
+              !engagementSearchUnavailable &&
+              search.trim() &&
+              engagements.length === 0 && (
+                <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                  {searchSubmitted
+                    ? "No authorized recorded activity for that number."
+                    : "Enter a full phone number."}
+                </p>
+              )}
             {!engagementLoading && engagements.map((engagement) => (
               <Button
                 key={engagement.phone}

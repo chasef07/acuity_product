@@ -276,6 +276,26 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       exact: true,
     }),
   ).toHaveCount(0)
+  await numberSearch.fill("+44 20 71")
+  await expect(
+    page.getByText("Enter a full phone number.", { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("No authorized recorded activity for that number.", {
+      exact: true,
+    }),
+  ).toHaveCount(0)
+  await page.route("**/v1/engagements/query", async (route) => route.abort())
+  await numberSearch.press("Enter")
+  await expect(
+    page.getByText("Number search is unavailable. Try again.", { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("No authorized recorded activity for that number.", {
+      exact: true,
+    }),
+  ).toHaveCount(0)
+  await page.unroute("**/v1/engagements/query")
   await numberSearch.fill("+44 20 7183 8750")
   await numberSearch.press("Enter")
   await expect(

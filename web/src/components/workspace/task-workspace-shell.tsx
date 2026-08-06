@@ -111,12 +111,13 @@ export function TaskWorkspaceShell() {
   const [locationID, setLocationID] = useState("")
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
-  const [settledSearch, setSettledSearch] = useState("")
   const [searchSubmitted, setSearchSubmitted] = useState(false)
   const [ordering, setOrdering] = useState<TaskOrdering>("priority")
   const [taskState] = useState<"OPEN" | "COMPLETED">("OPEN")
   const [engagements, setEngagements] = useState<EngagementSummary[]>([])
   const [engagementLoading, setEngagementLoading] = useState(false)
+  const [engagementSearchUnavailable, setEngagementSearchUnavailable] =
+    useState(false)
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
   const [recentInboxes, setRecentInboxes] = useState<EngagementSummary[]>([])
   const [recentLoaded, setRecentLoaded] = useState(false)
@@ -157,7 +158,6 @@ export function TaskWorkspaceShell() {
   const snapshotGenerationRef = useRef(0)
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
-  const settledSearchRef = useRef("")
   const orderingRef = useRef<TaskOrdering>("priority")
   const taskStateRef = useRef<"OPEN" | "COMPLETED">("OPEN")
   const locationScopeRef = useRef("")
@@ -181,9 +181,6 @@ export function TaskWorkspaceShell() {
     viewRef.current = view
   }, [view])
   useEffect(() => {
-    settledSearchRef.current = settledSearch
-  }, [settledSearch])
-  useEffect(() => {
     orderingRef.current = ordering
   }, [ordering])
   useEffect(() => {
@@ -192,14 +189,6 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
-  useEffect(() => {
-    const timeout = window.setTimeout(
-      () => setSettledSearch(search.trim()),
-      200,
-    )
-    return () => window.clearTimeout(timeout)
-  }, [search])
-
   useEffect(() => {
     if (!discovery || !practiceID || loadState !== "ready") return
     const generation = ++recentGenerationRef.current
@@ -829,24 +818,6 @@ export function TaskWorkspaceShell() {
   ])
 
   useEffect(() => {
-    const requestGeneration = ++engagementGenerationRef.current
-    if (!practiceID || !hasE164DigitCount(settledSearch)) return
-    const timeout = window.setTimeout(async () => {
-      setEngagementLoading(true)
-      const token = await getAccessToken()
-      if (!token) return
-      const result = await queryEngagements({
-        client: portalClient(token),
-        body: { practiceId: practiceID, phone: settledSearch },
-      }).catch(() => undefined)
-      if (requestGeneration !== engagementGenerationRef.current) return
-      setEngagementLoading(false)
-      setEngagements(result?.data?.items ?? [])
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [practiceID, settledSearch, workspaceRevision])
-
-  useEffect(() => {
     if (!practiceID || !locationID || loadState !== "ready") return
     const liveLocationID = locationScopeID
     const timeout = window.setTimeout(async () => {
@@ -922,10 +893,10 @@ export function TaskWorkspaceShell() {
     setTasks([])
     setMessageThreads([])
     setSearch("")
-    setSettledSearch("")
     setSearchSubmitted(false)
     setEngagements([])
     setEngagementLoading(false)
+    setEngagementSearchUnavailable(false)
     updateSelectedTask(undefined)
     setSelectedThread(undefined)
     setComposingNew(false)
@@ -1037,12 +1008,15 @@ export function TaskWorkspaceShell() {
     const phone = search.trim()
     const searchable = hasE164DigitCount(phone)
     setSearchSubmitted(searchable)
+    setEngagementSearchUnavailable(false)
     if (!searchable || !practiceID) return
     const requestGeneration = ++engagementGenerationRef.current
     setEngagementLoading(true)
     const token = await getAccessToken()
     if (!token) {
+      if (requestGeneration !== engagementGenerationRef.current) return
       setEngagementLoading(false)
+      setEngagementSearchUnavailable(true)
       return
     }
     const result = await queryEngagements({
@@ -1051,6 +1025,10 @@ export function TaskWorkspaceShell() {
     }).catch(() => undefined)
     if (requestGeneration !== engagementGenerationRef.current) return
     setEngagementLoading(false)
+    if (!result?.data) {
+      setEngagementSearchUnavailable(true)
+      return
+    }
     const items = result?.data?.items ?? []
     setEngagements(items)
     if (items[0]) selectEngagement(items[0])
@@ -1292,6 +1270,7 @@ export function TaskWorkspaceShell() {
           selectedTaskID={selectedTask?.id ?? attentionHighlightTaskID}
           search={search}
           searchSubmitted={searchSubmitted}
+          engagementSearchUnavailable={engagementSearchUnavailable}
           engagementLoading={engagementLoading}
           loading={tasksLoading}
           messageLoading={messagesLoading}
@@ -1301,7 +1280,8 @@ export function TaskWorkspaceShell() {
             setSearchSubmitted(false)
             engagementGenerationRef.current += 1
             setEngagements([])
-            setEngagementLoading(hasE164DigitCount(value))
+            setEngagementLoading(false)
+            setEngagementSearchUnavailable(false)
           }}
           onSearchSubmit={submitPhoneSearch}
           onEngagementSelect={selectEngagement}
