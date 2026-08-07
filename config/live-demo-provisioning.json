@@ -8,6 +8,36 @@
       "Name": "Abita Eye Group",
       "Locations": [
         {
+          "Key": "spring-hill",
+          "Name": "Spring Hill",
+          "AbitaOfficeKey": "spring-hill",
+          "VoiceNumber": "+17275919997"
+        },
+        {
+          "Key": "crystal-river",
+          "Name": "Crystal River",
+          "AbitaOfficeKey": "crystal-river",
+          "VoiceNumber": "+13523202007"
+        },
+        {
+          "Key": "hollywood",
+          "Name": "Hollywood",
+          "AbitaOfficeKey": "hollywood",
+          "VoiceNumber": "+19542872010"
+        },
+        {
+          "Key": "sweetwater",
+          "Name": "Sweetwater",
+          "AbitaOfficeKey": "sweetwater",
+          "VoiceNumber": "+17864654836"
+        },
+        {
+          "Key": "north-miami-beach-optical",
+          "Name": "North Miami Beach Optical",
+          "AbitaOfficeKey": "north-miami-beach-optical",
+          "VoiceNumber": "+13055095333"
+        },
+        {
           "Key": "demo-484",
           "Name": "Demo — 484"
         }

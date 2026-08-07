@@ -5,6 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY api ./api
 COPY backend ./backend
+COPY config/live-demo-provisioning.json /app/config/live-demo-provisioning.json
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/acuity ./backend/cmd/acuity
 
 FROM alpine:3.23
@@ -13,5 +14,6 @@ RUN apk add --no-cache ca-certificates \
     && addgroup -S acuity \
     && adduser -S -G acuity -u 10001 acuity
 COPY --from=build /out/acuity /usr/local/bin/acuity
+COPY --from=build /app/config/live-demo-provisioning.json /app/config/live-demo-provisioning.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/acuity"]
