@@ -136,12 +136,12 @@ func (m *Module) providerCommandResult(
 		return "SENT", ""
 	}
 	errorCode := safeProviderErrorCode(executeErr)
-	if errors.Is(executeErr, ErrDefinitiveProviderFailure) ||
-		(errors.Is(executeErr, ErrProviderTargetAbsent) && command.Action != CommandHangupLeg) {
-		return "FAILED", errorCode
-	}
 	if errors.Is(executeErr, ErrProviderTargetAbsent) && command.Action == CommandHangupLeg {
 		return "SENT", ""
+	}
+	if errors.Is(executeErr, ErrDefinitiveProviderFailure) ||
+		errors.Is(executeErr, ErrProviderTargetAbsent) {
+		return "FAILED", errorCode
 	}
 	if m.now().Sub(command.createdAt) < safeProviderRetryWindow {
 		return "PENDING", errorCode
