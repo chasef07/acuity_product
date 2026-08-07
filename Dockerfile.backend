@@ -13,5 +13,6 @@ RUN apk add --no-cache ca-certificates \
     && addgroup -S acuity \
     && adduser -S -G acuity -u 10001 acuity
 COPY --from=build /out/acuity /usr/local/bin/acuity
+COPY config/production-provisioning.json /etc/acuity/production-provisioning.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/acuity"]

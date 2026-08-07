@@ -84,10 +84,11 @@ type ServiceAuthorization struct {
 }
 
 type Provisioning struct {
-	Environment       string
-	RequestedBy       string
-	PlatformOperators []string
-	Practices         []PracticeProvision
+	Environment             string
+	RequestedBy             string
+	RequireEmptyAccessState bool
+	PlatformOperators       []string
+	Practices               []PracticeProvision
 }
 
 type PracticeProvision struct {
@@ -100,7 +101,7 @@ type PracticeProvision struct {
 type LocationProvision struct {
 	Key                string
 	Name               string
-	AbitaOfficeKey     string
+	AbitaOfficeKeys    []string
 	MessagingSender    string
 	MessagingProfileID string
 	MessagingActive    *bool
@@ -272,15 +273,56 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Module {
 }
 
 func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned, error) {
-	if err := validateProvisioning(input, m.now()); err != nil {
-		return Provisioned{}, err
+	if m.pool == nil {
+		return Provisioned{}, ErrInvalidInput
 	}
-
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Provisioned{}, fmt.Errorf("begin provisioning: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := m.ProvisionInTx(ctx, tx, input)
+	if err != nil {
+		return Provisioned{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Provisioned{}, fmt.Errorf("commit provisioning: %w", err)
+	}
+	return result, nil
+}
+
+func (m *Module) ProvisionInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	input Provisioning,
+) (Provisioned, error) {
+	if tx == nil {
+		return Provisioned{}, ErrInvalidInput
+	}
+	if err := validateProvisioning(input, m.now()); err != nil {
+		return Provisioned{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended('acuity.access.provision', 0))
+	`); err != nil {
+		return Provisioned{}, fmt.Errorf("lock provisioning: %w", err)
+	}
+	if input.RequireEmptyAccessState {
+		var existing bool
+		if err := tx.QueryRow(ctx, `
+			SELECT
+				EXISTS (SELECT 1 FROM access_practices)
+				OR EXISTS (SELECT 1 FROM access_platform_operators)
+		`).Scan(&existing); err != nil {
+			return Provisioned{}, fmt.Errorf("check provisioning target: %w", err)
+		}
+		if existing {
+			return Provisioned{}, fmt.Errorf(
+				"%w: provisioning requires empty Access state",
+				ErrInvalidInput,
+			)
+		}
+	}
 
 	result := Provisioned{Invitations: []InvitationCredential{}}
 	operatorEmails := make([]string, 0, len(input.PlatformOperators))
@@ -334,7 +376,7 @@ func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned
 				return Provisioned{}, fmt.Errorf("provision location %q: %w", locationInput.Key, err)
 			}
 			locationIDs[locationInput.Key] = locationID
-			if locationInput.AbitaOfficeKey != "" {
+			for _, officeKey := range locationInput.AbitaOfficeKeys {
 				if _, err := tx.Exec(ctx, `
 					INSERT INTO access_abita_office_locations (
 						practice_id,
@@ -344,10 +386,10 @@ func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned
 					VALUES ($1, $2, $3)
 					ON CONFLICT (practice_id, office_key)
 					DO UPDATE SET location_id = EXCLUDED.location_id
-				`, practiceID, locationInput.AbitaOfficeKey, locationID); err != nil {
+				`, practiceID, officeKey, locationID); err != nil {
 					return Provisioned{}, fmt.Errorf(
 						"provision Abita office route %q: %w",
-						locationInput.AbitaOfficeKey,
+						officeKey,
 						err,
 					)
 				}
@@ -429,9 +471,6 @@ func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return Provisioned{}, fmt.Errorf("commit provisioning: %w", err)
-	}
 	return result, nil
 }
 
@@ -2011,21 +2050,19 @@ func validateProvisioning(input Provisioning, now time.Time) error {
 		if strings.TrimSpace(practice.Key) == "" || strings.TrimSpace(practice.Name) == "" {
 			return fmt.Errorf("%w: practice key and name are required", ErrInvalidInput)
 		}
-		officeKeys := make(map[string]struct{}, len(practice.Locations))
+		officeKeys := make(map[string]struct{})
 		for _, location := range practice.Locations {
 			if strings.TrimSpace(location.Key) == "" || strings.TrimSpace(location.Name) == "" {
 				return fmt.Errorf("%w: location key and name are required", ErrInvalidInput)
 			}
-			if location.AbitaOfficeKey != "" &&
-				!abitaOfficeKey.MatchString(location.AbitaOfficeKey) {
-				return fmt.Errorf("%w: invalid Abita office key", ErrInvalidInput)
-			}
-			if _, duplicate := officeKeys[location.AbitaOfficeKey]; duplicate &&
-				location.AbitaOfficeKey != "" {
-				return fmt.Errorf("%w: duplicate Abita office key", ErrInvalidInput)
-			}
-			if location.AbitaOfficeKey != "" {
-				officeKeys[location.AbitaOfficeKey] = struct{}{}
+			for _, officeKey := range location.AbitaOfficeKeys {
+				if !abitaOfficeKey.MatchString(officeKey) {
+					return fmt.Errorf("%w: invalid Abita office key", ErrInvalidInput)
+				}
+				if _, duplicate := officeKeys[officeKey]; duplicate {
+					return fmt.Errorf("%w: duplicate Abita office key", ErrInvalidInput)
+				}
+				officeKeys[officeKey] = struct{}{}
 			}
 			if input.Environment != "test" && input.Environment != "development" &&
 				strings.HasPrefix(strings.ToLower(location.Name), "fixture ") {

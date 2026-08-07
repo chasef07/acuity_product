@@ -1034,9 +1034,9 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 				Key:  "calling-practice",
 				Name: "Calling Practice",
 				Locations: []access.LocationProvision{{
-					Key:            "calling-location",
-					Name:           "Calling Location",
-					AbitaOfficeKey: "spring-hill",
+					Key:             "calling-location",
+					Name:            "Calling Location",
+					AbitaOfficeKeys: []string{"spring-hill"},
 				}},
 				Invitations: []access.InvitationProvision{{
 					Key:           "calling-staff",

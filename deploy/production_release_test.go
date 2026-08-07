@@ -37,7 +37,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 	}
 	assertCapturedCommand(t, commands, "run\tjobs\tupdate\tacuity-migrate",
 		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000",
-		"--remove-env-vars\tMIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER",
+		"--remove-env-vars\tMIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER,PROVISIONING_INPUT,PROVISIONING_OUTPUT",
 	)
 
 	for _, service := range []string{
@@ -125,6 +125,23 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		if !strings.Contains(string(curlCalls), expected) {
 			t.Errorf("release smoke omits %s:\n%s", expected, curlCalls)
 		}
+	}
+}
+
+func TestBackendImageIncludesReviewedProductionProvisioning(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate production release test")
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "Dockerfile.backend"))
+	if err != nil {
+		t.Fatalf("read backend Dockerfile: %v", err)
+	}
+	if !strings.Contains(
+		string(raw),
+		"COPY config/production-provisioning.json /etc/acuity/production-provisioning.json",
+	) {
+		t.Fatal("backend image omits the reviewed production provisioning input")
 	}
 }
 

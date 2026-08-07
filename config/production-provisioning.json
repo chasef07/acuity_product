@@ -1,0 +1,63 @@
+{
+  "Environment": "production",
+  "RequestedBy": "acuity-production-launch",
+  "RequireEmptyAccessState": true,
+  "PlatformOperators": [],
+  "Practices": [
+    {
+      "Key": "abita-eye-group",
+      "Name": "Abita Eye Group",
+      "Locations": [
+        {
+          "Key": "spring-hill",
+          "Name": "Spring Hill",
+          "AbitaOfficeKeys": ["spring-hill"],
+          "VoiceNumber": "+17275919997",
+          "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923.",
+          "MessagingSender": "+17275919997",
+          "MessagingProfileID": "40019e5f-3772-4c25-a9df-b0990499d947"
+        },
+        {
+          "Key": "crystal-river",
+          "Name": "Crystal River",
+          "AbitaOfficeKeys": ["crystal-river"],
+          "VoiceNumber": "+13523202007",
+          "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
+        },
+        {
+          "Key": "south-florida-medical",
+          "Name": "South Florida Medical",
+          "AbitaOfficeKeys": ["hollywood", "sweetwater"],
+          "VoiceNumber": "+17864654836",
+          "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923.",
+          "MessagingSender": "+17864654836",
+          "MessagingProfileID": "40019e5f-3772-4c25-a9df-b0990499d947"
+        },
+        {
+          "Key": "south-florida-optical",
+          "Name": "South Florida Optical",
+          "AbitaOfficeKeys": ["north-miami-beach-optical"],
+          "VoiceNumber": "+13055095333",
+          "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
+        }
+      ],
+      "Invitations": []
+    },
+    {
+      "Key": "acuity-demo",
+      "Name": "Acuity Demo",
+      "Locations": [
+        {
+          "Key": "demo-484",
+          "Name": "Demo — 484",
+          "AbitaOfficeKeys": ["dev"],
+          "VoiceNumber": "+14843989071",
+          "VoicemailGreeting": "Thank you for calling Acuity Demo. Please leave a message after the tone.",
+          "MessagingSender": "+14843989071",
+          "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
+        }
+      ],
+      "Invitations": []
+    }
+  ]
+}

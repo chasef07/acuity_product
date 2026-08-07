@@ -166,9 +166,85 @@ and Messaging profile configuration through the reviewed provisioning path.
 Invitations may remain empty until a real operator is invited. Do not copy
 calls, messages, users, or patient history merely to create this configuration.
 
-Ordinary releases never seed a hard-coded demo number. The migration job
-removes the legacy `MIGRATE_VOICE_*` environment variables and preserves the
-already reviewed configuration rows.
+The reviewed bootstrap input is
+`config/production-provisioning.json`; the backend image carries the same file
+at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
+
+| Practice | Operational Location | Source office routes | Voice | Messaging |
+| --- | --- | --- | --- | --- |
+| Abita Eye Group | Spring Hill | `spring-hill` | `+17275919997` | `+17275919997` |
+| Abita Eye Group | Crystal River | `crystal-river` | `+13523202007` | Not activated |
+| Abita Eye Group | South Florida Medical | `hollywood`, `sweetwater` | `+17864654836` | `+17864654836` |
+| Abita Eye Group | South Florida Optical | `north-miami-beach-optical` | `+13055095333` | Not activated |
+| Acuity Demo | Demo — 484 | `dev` | `+14843989071` | `+14843989071` |
+
+The Abita Locations share the reviewed “Abeeta Eye Group” voicemail greeting.
+The Demo Practice is a separate tenant and uses its own greeting and Telnyx
+Messaging profile. Hollywood and Sweetwater deliberately share the Sweetwater
+sender; there is no second queue or duplicate physical Location. No invitation
+or human credential is provisioned by this file.
+
+This production input fails inside the atomic provisioning transaction unless
+`access_practices` and `access_platform_operators` are empty. That prevents the
+known legacy test Location from surviving as hidden configuration. Better Auth
+owns `auth.user`, so the operator must verify it separately before execution.
+The current pre-launch database must therefore be reset to the reviewed schema
+as a separate approved destructive action before this command is run; this
+pull request neither resets that database nor preserves test data. Verify all
+three preconditions directly:
+
+```sql
+SELECT
+  (SELECT count(*) FROM access_practices) AS practices,
+  (SELECT count(*) FROM access_platform_operators) AS platform_operators,
+  (SELECT count(*) FROM auth."user") AS users;
+```
+
+All three values must be zero. A nonzero Access value is also rejected by the
+checked input. Any nonzero value is a stop condition, not a reason to delete
+data ad hoc.
+
+After reviewing the exact image digest and JSON, an operator may run the
+one-time bootstrap against the existing `acuity-migrate` job:
+
+```sh
+gcloud run jobs update acuity-migrate \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --update-env-vars \
+  PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json \
+  --quiet
+
+gcloud run jobs execute acuity-migrate \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --wait \
+  --quiet
+
+gcloud run jobs update acuity-migrate \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --remove-env-vars PROVISIONING_INPUT,PROVISIONING_OUTPUT \
+  --quiet
+```
+
+Access, Messaging, and voice configuration commit in one PostgreSQL
+transaction; any validation failure rolls the entire customer topology back.
+The restricted provisioning output is synced before that commit. Stop after
+any failed command and inspect the migration execution before doing anything
+else. Do not rerun merely because environment cleanup failed. Ordinary releases
+also remove these one-time variables before migration, so they preserve the
+provisioned rows without silently replaying this bootstrap.
+
+The checked JSON and deterministic PostgreSQL test prove only the intended
+database topology. Before provider traffic, separately prove the production
+service identity and UUID authorization, Telnyx number/application routing,
+signed webhook receipt, staff call fanout, shared voicemail playback, outbound
+caller ID, and real SMS send/receive plus STOP/HELP behavior. Crystal River's
+AI transfer to the external cell remains owned by `abita_agent` and needs a
+live transfer test. The Demo path still needs a signed-in portal-to-database-to-
+worker-to-provider/handset test. Add real staff invitations only after their
+email addresses and exact Location scopes are approved.
 
 ## Restore rehearsal
 

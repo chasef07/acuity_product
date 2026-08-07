@@ -3,6 +3,7 @@ package access_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,9 +129,9 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 		}
 		switch routeLocation {
 		case "office-1":
-			locations[0].AbitaOfficeKey = "spring-hill"
+			locations[0].AbitaOfficeKeys = []string{"spring-hill"}
 		case "office-2":
-			locations[1].AbitaOfficeKey = "spring-hill"
+			locations[1].AbitaOfficeKeys = []string{"spring-hill"}
 		}
 		if _, err := module.Provision(
 			context.Background(),
@@ -210,6 +211,114 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 	provision("")
 	if _, err := authorize(); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("removed Abita route error = %v, want denied", err)
+	}
+}
+
+func TestProvisioningRoutesMultipleOfficesToOneOperationalLocation(t *testing.T) {
+	pool := testdb.Open(t)
+	module := access.New(pool, func() time.Time {
+		return time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
+	})
+
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "operational-location-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "abita-eye-group",
+			Name: "Abita Eye Group",
+			Locations: []access.LocationProvision{{
+				Key:             "south-florida-medical",
+				Name:            "South Florida Medical",
+				AbitaOfficeKeys: []string{"hollywood", "sweetwater"},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision operational Location: %v", err)
+	}
+
+	var practiceID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM access_practices
+		WHERE provisioning_key = 'abita-eye-group'
+	`).Scan(&practiceID); err != nil {
+		t.Fatalf("load Practice: %v", err)
+	}
+	service := access.ServiceIdentity{
+		Subject:       "abita-route-test",
+		PracticeID:    practiceID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	resolve := func(officeKey string) access.ServiceAuthorization {
+		t.Helper()
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin service authorization: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		authorization, err := module.LockServiceAuthorization(
+			context.Background(),
+			tx,
+			service,
+			officeKey,
+			access.ServiceCapabilityCreateTask,
+		)
+		if err != nil {
+			t.Fatalf("authorize office %q: %v", officeKey, err)
+		}
+		return authorization
+	}
+
+	hollywood := resolve("hollywood")
+	sweetwater := resolve("sweetwater")
+	if hollywood.LocationID != sweetwater.LocationID {
+		t.Fatalf(
+			"South Florida office routes diverged: Hollywood %q, Sweetwater %q",
+			hollywood.LocationID,
+			sweetwater.LocationID,
+		)
+	}
+}
+
+func TestProvisioningRequireEmptyAccessStateRejectsExistingConfiguration(t *testing.T) {
+	pool := testdb.Open(t)
+	module := access.New(pool, nil)
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "legacy-configuration-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "legacy-practice",
+			Name: "Legacy Practice",
+			Locations: []access.LocationProvision{{
+				Key:  "legacy-location",
+				Name: "Legacy Location",
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("seed legacy access state: %v", err)
+	}
+
+	_, err := module.Provision(context.Background(), access.Provisioning{
+		Environment:             "production",
+		RequestedBy:             "clean-launch-test",
+		RequireEmptyAccessState: true,
+		Practices: []access.PracticeProvision{{
+			Key:  "new-practice",
+			Name: "New Practice",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires empty Access state") {
+		t.Fatalf("nonempty Access provisioning error = %v", err)
+	}
+
+	var practiceCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM access_practices
+	`).Scan(&practiceCount); err != nil {
+		t.Fatalf("count Practices after rejected provisioning: %v", err)
+	}
+	if practiceCount != 1 {
+		t.Fatalf("Practices after rejected provisioning = %d, want 1", practiceCount)
 	}
 }
 
