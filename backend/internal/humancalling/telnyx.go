@@ -94,9 +94,10 @@ func (adapter *TelnyxAdapter) Execute(
 		}
 		path = callActionPath(command.TargetID, "answer")
 	case CommandStartRingWindow:
+		_, hasLoop := payload["loop"]
 		if command.TargetID == "" ||
 			emptyString(payload["audio_url"]) ||
-			payload["loop"] != "1" ||
+			hasLoop ||
 			emptyString(payload["client_state"]) {
 			return ProviderResult{}, ErrInvalidInput
 		}
@@ -129,6 +130,7 @@ func (adapter *TelnyxAdapter) Execute(
 			!validTimeout ||
 			timeoutSeconds <= 0 ||
 			timeoutSeconds != float64(int(timeoutSeconds)) ||
+			payload["retry_on_timeout"] != false ||
 			(!mediaPrep &&
 				(emptyString(payload["link_to"]) ||
 					payload["bridge_intent"] != true ||

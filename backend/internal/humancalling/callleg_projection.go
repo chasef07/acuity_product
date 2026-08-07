@@ -209,7 +209,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		return fmt.Errorf("project caller answer: %w", err)
 	}
 
-	ringCommandID, err := m.insertCallLegCommand(
+	if _, err := m.insertCallLegCommand(
 		ctx,
 		tx,
 		callID,
@@ -220,7 +220,6 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		fact.CallControlID,
 		map[string]any{
 			"audio_url": m.config.RingbackURL,
-			"loop":      "1",
 			"client_state": encodeCallLegClientState(
 				callID,
 				callerLegID,
@@ -229,8 +228,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			),
 		},
 		"",
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 
@@ -316,6 +314,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			"bridge_intent":    true,
 			"bridge_on_answer": false,
 			"timeout_secs":     int(m.config.RingWindowDuration.Seconds()),
+			"retry_on_timeout": false,
 			"webhook_retries_policies": telnyxWebhookRetryPolicies(
 				FactCallInitiated,
 				FactCallAnswered,
@@ -334,7 +333,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		}
 		if _, err := m.insertCallLegCommand(
 			ctx, tx, callID, legID, "", target.subject, CommandDialStaff,
-			fact.CallControlID, payload, ringCommandID,
+			fact.CallControlID, payload, "",
 		); err != nil {
 			return err
 		}

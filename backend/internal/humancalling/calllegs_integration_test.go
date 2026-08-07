@@ -102,17 +102,30 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	processAllCommands(t, calling)
 
 	if provider.count(humancalling.CommandStartRingWindow) != 1 ||
-		provider.count(humancalling.CommandDialStaff) != 2 ||
-		!provider.ordered(
-			humancalling.CommandStartRingWindow,
-			humancalling.CommandDialStaff,
-		) {
-		t.Fatalf("provider commands = %#v, want ring then two Staff Dials", provider.commands)
+		provider.count(humancalling.CommandDialStaff) != 2 {
+		t.Fatalf("provider commands = %#v, want ring and two independent Staff Dials", provider.commands)
 	}
 
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	if _, hasLoop := ring.Payload["loop"]; hasLoop {
+		t.Fatalf("ring-window playback unexpectedly loops: %#v", ring.Payload)
+	}
 	dials := provider.all(humancalling.CommandDialStaff)
+	var dependentDials int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands
+		WHERE action = 'DIAL_STAFF' AND depends_on_command_id IS NOT NULL
+	`).Scan(&dependentDials); err != nil {
+		t.Fatal(err)
+	}
+	if dependentDials != 0 {
+		t.Fatalf("Staff Dials gated by another provider command = %d", dependentDials)
+	}
 	answers := make([]humancalling.ProviderFact, len(dials))
 	for index, dial := range dials {
+		if dial.Payload["retry_on_timeout"] != false {
+			t.Fatalf("Staff Dial retry_on_timeout = %#v", dial.Payload["retry_on_timeout"])
+		}
 		clientState, _ := dial.Payload["client_state"].(string)
 		initiated := humancalling.ProviderFact{
 			EventID:       fmt.Sprintf("staff-initiated-%d", index+1),
@@ -154,7 +167,6 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 			t.Fatalf("project concurrent Staff answer: %v", err)
 		}
 	}
-	ring := provider.last(humancalling.CommandStartRingWindow)
 	ringClientState, _ := ring.Payload["client_state"].(string)
 	currentTime = now.Add(6 * time.Second)
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -1567,7 +1579,7 @@ func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T
 	}
 }
 
-func TestRingWindowFailureCreatesMissedRecoveryWithRoutingOutcome(t *testing.T) {
+func TestRingWindowFailureDoesNotBlockStaffDial(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 15, 30, 0, 0, time.UTC)
 	provider := &recordingProvider{
 		dialResults: []humancalling.ProviderResult{{
@@ -1583,24 +1595,47 @@ func TestRingWindowFailureCreatesMissedRecoveryWithRoutingOutcome(t *testing.T) 
 	pool, calling, _, _ := prepareInboundFanout(
 		t, now, "call-leg-routing-failure", provider, 1,
 	)
-	processed, err := calling.ProcessNextCommand(context.Background())
-	if !processed || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
-		t.Fatalf("ring-window rejection = processed:%t err:%v", processed, err)
+	sawRingFailure := false
+	for {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
+			sawRingFailure = true
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if !processed {
+			break
+		}
 	}
-	var terminal, voicemailOutcome, audioState, taskOutcome string
+	if !sawRingFailure {
+		t.Fatal("ring-window rejection was not observed")
+	}
+	var terminal *string
+	var staffState, ringState, dialState string
+	var degraded int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT call.terminal_outcome, voicemail.outcome, voicemail.audio_state,
-			task.recovery_outcome
+		SELECT call.terminal_outcome, staff.state,
+			ring.state, dial.state,
+			(
+				SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id
+					AND timeline.kind = 'caller_audio.degraded'
+			)
 		FROM human_calling_calls call
-		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
-		JOIN work_tasks task ON task.id = voicemail.task_id
-	`).Scan(&terminal, &voicemailOutcome, &audioState, &taskOutcome); err != nil {
+		JOIN human_calling_call_legs staff
+			ON staff.call_id = call.id AND staff.role = 'STAFF'
+		JOIN human_calling_provider_commands ring
+			ON ring.call_id = call.id AND ring.action = 'START_RING_WINDOW'
+		JOIN human_calling_provider_commands dial
+			ON dial.call_id = call.id AND dial.action = 'DIAL_STAFF'
+	`).Scan(&terminal, &staffState, &ringState, &dialState, &degraded); err != nil {
 		t.Fatal(err)
 	}
-	if terminal != "ROUTING_FAILED" || voicemailOutcome != "MISSED_CALL" ||
-		audioState != "UNAVAILABLE" || taskOutcome != "MISSED_CALL" {
-		t.Fatalf("routing recovery = %s %s %s %s",
-			terminal, voicemailOutcome, audioState, taskOutcome)
+	if terminal != nil || staffState != "DIALING" || ringState != "FAILED" ||
+		dialState != "SENT" || degraded != 1 ||
+		provider.count(humancalling.CommandDialStaff) != 1 {
+		t.Fatalf("ring-window degradation = terminal:%v Staff:%s ring:%s dial:%s timeline:%d commands:%#v",
+			terminal, staffState, ringState, dialState, degraded, provider.commands)
 	}
 }
 
@@ -2022,24 +2057,6 @@ func (provider *recordingProvider) all(
 		}
 	}
 	return result
-}
-
-func (provider *recordingProvider) ordered(
-	first humancalling.CommandAction,
-	second humancalling.CommandAction,
-) bool {
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	firstIndex, secondIndex := -1, -1
-	for index, command := range provider.commands {
-		if command.Action == first && firstIndex == -1 {
-			firstIndex = index
-		}
-		if command.Action == second && secondIndex == -1 {
-			secondIndex = index
-		}
-	}
-	return firstIndex >= 0 && secondIndex > firstIndex
 }
 
 func prepareCredentials(t *testing.T, calling *humancalling.Module) {

@@ -248,7 +248,7 @@ func (m *Module) finishCallLegCommand(
 			); err != nil {
 				return err
 			}
-		case CommandAnswerCaller, CommandStartRingWindow,
+		case CommandAnswerCaller,
 			CommandSpeakVoicemail, CommandStartVoicemailRecording:
 			var callID string
 			if err := tx.QueryRow(ctx, `SELECT call_id::text FROM human_calling_call_legs WHERE id = $1`,
@@ -260,7 +260,8 @@ func (m *Module) finishCallLegCommand(
 			}
 		}
 	}
-	if command.CallLegID != "" && command.Action == CommandStopRingWindow &&
+	if command.CallLegID != "" &&
+		(command.Action == CommandStartRingWindow || command.Action == CommandStopRingWindow) &&
 		(state == "FAILED" || state == "AMBIGUOUS") {
 		if err := m.recordDegradedCallerAudio(
 			ctx, tx, command.ID, command.CallLegID, errorCode,

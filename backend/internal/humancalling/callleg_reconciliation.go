@@ -330,7 +330,7 @@ func (m *Module) rejectUnobservedCommand(
 		err = m.failDialCallLeg(ctx, tx, callLegID, action, errorCode)
 	case CommandBridge:
 		err = m.failBridgeCallLeg(ctx, tx, callLegID, errorCode)
-	case CommandAnswerCaller, CommandStartRingWindow,
+	case CommandAnswerCaller,
 		CommandSpeakVoicemail, CommandStartVoicemailRecording:
 		var callID string
 		if queryErr := tx.QueryRow(ctx, `
@@ -339,7 +339,7 @@ func (m *Module) rejectUnobservedCommand(
 			return queryErr
 		}
 		err = m.failRoutingCall(ctx, tx, callID, errorCode)
-	case CommandStopRingWindow:
+	case CommandStartRingWindow, CommandStopRingWindow:
 		err = m.recordDegradedCallerAudio(
 			ctx, tx, commandID, callLegID, errorCode,
 		)

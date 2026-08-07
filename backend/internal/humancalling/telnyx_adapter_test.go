@@ -537,6 +537,7 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 			"bridge_on_answer":         false,
 			"client_state":             "opaque-state",
 			"timeout_secs":             float64(20),
+			"retry_on_timeout":         false,
 			"webhook_retries_policies": telnyxLifecycleRetries(),
 			"custom_headers": []map[string]string{{
 				"name":  "X-Acuity-Media-Token",
@@ -568,6 +569,7 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 		dialRequest["connection_id"] != "call-control-app" ||
 		dialRequest["from"] != "+15555550199" ||
 		dialRequest["timeout_secs"] != float64(20) ||
+		dialRequest["retry_on_timeout"] != false ||
 		dialRequest["bridge_on_answer"] != false ||
 		fmt.Sprint(dialRequest["webhook_retries_policies"]) !=
 			"map[call.answered:map[retries_ms:[1000 2000 5000 15000 30000]] call.hangup:map[retries_ms:[1000 2000 5000 15000 30000]] call.initiated:map[retries_ms:[1000 2000 5000 15000 30000]]]" ||
