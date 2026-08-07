@@ -64,7 +64,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t20",
 		"--min\t1",
 		"--max\t3",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--cpu\t1",
@@ -91,7 +91,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--cpu\t1",
 		"--memory\t512Mi",
 		"--instances\t1",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate-instance-split\tacuity-worker",
 		"--to-revisions\tacuity-worker-release-1234=100",
@@ -222,15 +222,17 @@ func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate\tacuity-worker",
 		"--instances\t0",
 	)
-	for _, service := range []string{"acuity-portal-api", "acuity-provider-ingress"} {
-		assertCapturedCommand(t, commands, "run\tdeploy\t"+service,
-			"--min\t1",
-			"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
-		)
-	}
+	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
+		"--min\t1",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+	)
+	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
+		"--min\t1",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tdeploy\tacuity-worker",
 		"--instances\t0",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate\tacuity-worker",
 		"--instances\t1",
