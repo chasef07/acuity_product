@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
@@ -10,6 +9,7 @@ import {
   WifiOffIcon,
 } from "lucide-react"
 
+import { AcuityMark } from "@/components/acuity-mark"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -1251,15 +1251,7 @@ function WorkspaceLoading() {
       </aside>
       <main className="flex flex-1 items-center justify-center">
         <Skeleton className="p-3" role="status">
-          <Image
-            src="/acuity-health-mark.png"
-            alt=""
-            aria-hidden="true"
-            width={48}
-            height={48}
-            className="size-12"
-            priority
-          />
+          <AcuityMark className="size-12" />
           <span className="sr-only">Loading Acuity workspace</span>
         </Skeleton>
       </main>

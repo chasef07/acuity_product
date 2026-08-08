@@ -5,6 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
 
+import { AcuityMark as AcuityHealthMark } from "@/components/acuity-mark"
 import {
   PortalSignInTrigger,
   SignInDialog,
@@ -153,13 +154,7 @@ function HeroTaskGlyph({ kind }: { kind: (typeof heroTasks)[number]["kind"] }) {
 function AcuityMark() {
   return (
     <span className={styles.brandMark} aria-hidden="true">
-      <Image
-        src="/acuity-health-mark.png"
-        alt=""
-        width={36}
-        height={36}
-        priority
-      />
+      <AcuityHealthMark className={styles.brandGlyph} />
     </span>
   )
 }

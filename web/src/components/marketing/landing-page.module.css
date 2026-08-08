@@ -44,15 +44,11 @@
   width: 31px;
   height: 31px;
   place-items: center;
-  overflow: hidden;
-  border-radius: 8px;
-  background: white;
 }
 
-.brandMark img {
+.brandGlyph {
   width: 29px;
   height: 29px;
-  mix-blend-mode: multiply;
 }
 
 .nav {

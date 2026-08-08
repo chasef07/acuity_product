@@ -1,10 +1,10 @@
 "use client"
 
 import { ArrowRight } from "lucide-react"
-import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { Suspense, useState } from "react"
 
+import { AcuityMark } from "@/components/acuity-mark"
 import { SignInForm } from "@/components/auth/sign-in-form"
 import { Button } from "@/components/ui/button"
 import {
@@ -63,25 +63,9 @@ export function SignInDialog({
           data-testid="sign-in-card"
           className="relative gap-0 rounded-xl py-0 ring-0"
         >
-          <Image
-            src="/acuity-health-mark.png"
-            alt=""
-            aria-hidden="true"
-            width={448}
-            height={448}
-            className="pointer-events-none absolute -right-56 -bottom-56 size-[28rem] max-w-none opacity-[0.025] select-none"
-            priority
-          />
+          <AcuityMark className="pointer-events-none absolute -right-56 -bottom-56 size-[28rem] max-w-none opacity-[0.025] select-none" />
           <CardHeader className="relative justify-items-center gap-3 px-6 pt-8 pb-5 text-center sm:px-8">
-            <Image
-              src="/acuity-health-mark.png"
-              alt=""
-              aria-hidden="true"
-              width={40}
-              height={40}
-              className="size-10"
-              priority
-            />
+            <AcuityMark className="size-10" />
             <CardTitle>
               <DialogTitle className="text-xl font-semibold tracking-tight">
                 Sign in to Acuity
