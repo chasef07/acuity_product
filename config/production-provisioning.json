@@ -51,7 +51,224 @@
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
         }
       ],
-      "Invitations": []
+      "AccessGrants": [
+        {
+          "Key": "abel-alvarez",
+          "Email": "abel@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "aileen",
+          "Email": "aileen@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
+        },
+        {
+          "Key": "ari-nussbaum",
+          "Email": "anussbaum@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "everth-sanchez",
+          "Email": "everth@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
+        },
+        {
+          "Key": "carolina-m",
+          "Email": "abita.insurance@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
+        },
+        {
+          "Key": "gustavo-martinez",
+          "Email": "gustavo@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
+        },
+        {
+          "Key": "ivan",
+          "Email": "doralreception@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater", "sweetwater-optical"]
+        },
+        {
+          "Key": "debbie",
+          "Email": "debbie@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["spring-hill"]
+        },
+        {
+          "Key": "denise-rivera",
+          "Email": "denise@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "doral-office",
+          "Email": "doraloffice@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "betty-mesa",
+          "Email": "doraloptical@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "dr-licht",
+          "Email": "drjlicht@gmail.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["crystal-river"]
+        },
+        {
+          "Key": "eligibility",
+          "Email": "eligibility@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "emilyisha-padilla",
+          "Email": "emilyisha@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["spring-hill"]
+        },
+        {
+          "Key": "front-desk",
+          "Email": "frontdesk@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "hollywood-reception",
+          "Email": "hollywoodreception@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "hollywood-sweetwater-portal",
+          "Email": "hollywoodsweetwater@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "jianna",
+          "Email": "jianna@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "justin",
+          "Email": "justin@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "madelyn",
+          "Email": "madylen@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "katie-einsohn",
+          "Email": "mobileoptical@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "kathia",
+          "Email": "optical@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "sasha-ojinaga",
+          "Email": "sashao@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "scheduler",
+          "Email": "scheduler@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "sherry",
+          "Email": "sherry@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["spring-hill"]
+        },
+        {
+          "Key": "crystal-gamble",
+          "Email": "springhillreception@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["spring-hill"]
+        },
+        {
+          "Key": "olivia-toledo",
+          "Email": "sweetwateroptical@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "sweetwater-optical-call-center",
+          "Email": "sweetwateropticals@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
+        },
+        {
+          "Key": "jason",
+          "Email": "telemed@abitaeye.com",
+          "Role": "ADMIN",
+          "LocationScope": "ALL"
+        },
+        {
+          "Key": "v-vicuna",
+          "Email": "v.vicuna@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["hollywood", "sweetwater"]
+        },
+        {
+          "Key": "w-licht",
+          "Email": "wlicht@abitaeye.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["crystal-river"]
+        }
+      ]
     },
     {
       "Key": "acuity-demo",
@@ -67,22 +284,18 @@
           "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
         }
       ],
-      "Invitations": [
+      "AccessGrants": [
         {
           "Key": "chase-demo-staff",
           "Email": "chase@acuityhealth.io",
           "Role": "STAFF",
-          "LocationScope": "ALL",
-          "SelectedLocationKeys": [],
-          "ExpiresAt": "2026-12-31T23:59:59Z"
+          "LocationScope": "ALL"
         },
         {
           "Key": "kyle-demo-staff",
           "Email": "kyle@acuityhealth.io",
           "Role": "STAFF",
-          "LocationScope": "ALL",
-          "SelectedLocationKeys": [],
-          "ExpiresAt": "2026-12-31T23:59:59Z"
+          "LocationScope": "ALL"
         }
       ]
     }

@@ -23,7 +23,7 @@ export const getLiveness = <ThrowOnError extends boolean = false>(options?: Opti
 export const getReadiness = <ThrowOnError extends boolean = false>(options?: Options<GetReadinessData, ThrowOnError>) => (options?.client ?? client).get<GetReadinessResponses, GetReadinessErrors, ThrowOnError>({ url: '/health/ready', ...options });
 
 /**
- * Validate an invitation or provisioned Platform Operator email.
+ * Validate an Access Grant or provisioned Platform Operator email.
  */
 export const inspectSignUpEligibility = <ThrowOnError extends boolean = false>(options: Options<InspectSignUpEligibilityData, ThrowOnError>) => (options.client ?? client).post<InspectSignUpEligibilityResponses, InspectSignUpEligibilityErrors, ThrowOnError>({
     url: '/v1/access/sign-up-eligibility',

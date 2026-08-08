@@ -33,10 +33,7 @@ test("Better Auth user creation fails closed when Access denies the email", asyn
   })
 
   assert.equal(
-    await gate(
-      { email: "unknown@example.com" },
-      { headers: new Headers() }
-    ),
+    await gate({ email: "unknown@example.com" }),
     false
   )
 })

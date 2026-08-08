@@ -20,7 +20,11 @@ export type ErrorEnvelope = {
 
 export type SignUpEligibilityRequest = {
     email: string;
-    invitationToken?: string;
+};
+
+export type SignUpEligibility = {
+    kind: 'ACCESS_GRANT' | 'PLATFORM_OPERATOR';
+    email: string;
 };
 
 export type InvitationCredentialRequest = {
@@ -662,7 +666,7 @@ export type InspectSignUpEligibilityResponses = {
     /**
      * The verified-email sign-up is eligible.
      */
-    200: InvitationPreview;
+    200: SignUpEligibility;
 };
 
 export type InspectSignUpEligibilityResponse = InspectSignUpEligibilityResponses[keyof InspectSignUpEligibilityResponses];

@@ -32,12 +32,13 @@ const (
 )
 
 var (
-	ErrDenied            = errors.New("access denied")
-	ErrEmailNotVerified  = errors.New("verified email required")
-	ErrInvitationExpired = errors.New("invitation expired")
-	ErrInvitationRevoked = errors.New("invitation revoked")
-	ErrInvitationUsed    = errors.New("invitation already accepted")
-	ErrInvalidInput      = errors.New("invalid access input")
+	ErrDenied             = errors.New("access denied")
+	ErrEmailNotVerified   = errors.New("verified email required")
+	ErrInvitationExpired  = errors.New("invitation expired")
+	ErrInvitationRevoked  = errors.New("invitation revoked")
+	ErrInvitationUsed     = errors.New("invitation already accepted")
+	ErrAccessGrantClaimed = errors.New("Access Grant already claimed")
+	ErrInvalidInput       = errors.New("invalid access input")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
@@ -88,10 +89,11 @@ type Provisioning struct {
 }
 
 type PracticeProvision struct {
-	Key         string
-	Name        string
-	Locations   []LocationProvision
-	Invitations []InvitationProvision
+	Key          string
+	Name         string
+	Locations    []LocationProvision
+	AccessGrants []AccessGrantProvision
+	Invitations  []InvitationProvision
 }
 
 type LocationProvision struct {
@@ -115,8 +117,17 @@ type InvitationProvision struct {
 	ExpiresAt            time.Time
 }
 
+type AccessGrantProvision struct {
+	Key                  string
+	Email                string
+	Role                 Role
+	LocationScope        LocationScope
+	SelectedLocationKeys []string
+}
+
 type Provisioned struct {
-	Invitations []InvitationCredential `json:"invitations"`
+	AccessGrantCount int                    `json:"accessGrantCount"`
+	Invitations      []InvitationCredential `json:"invitations"`
 }
 
 type InvitationCredential struct {
@@ -190,6 +201,12 @@ type RevokeInvitationCommand struct {
 	InvitationID string
 }
 
+type RevokeAccessGrantCommand struct {
+	Identity      Identity
+	PracticeID    string
+	AccessGrantID string
+}
+
 type RevokeMembershipCommand struct {
 	Identity     Identity
 	PracticeID   string
@@ -240,6 +257,18 @@ type InvitationPreview struct {
 	LocationScope LocationScope  `json:"locationScope,omitempty"`
 	Locations     []Location     `json:"locations"`
 	ExpiresAt     time.Time      `json:"expiresAt,omitempty"`
+}
+
+type SignUpEligibilityKind string
+
+const (
+	SignUpEligibilityAccessGrant      SignUpEligibilityKind = "ACCESS_GRANT"
+	SignUpEligibilityPlatformOperator SignUpEligibilityKind = "PLATFORM_OPERATOR"
+)
+
+type SignUpEligibility struct {
+	Kind  SignUpEligibilityKind `json:"kind"`
+	Email string                `json:"email"`
 }
 
 // Module is the Access implementation. Its public methods are the product
@@ -380,6 +409,67 @@ func (m *Module) ProvisionInTx(
 			}
 		}
 
+		for _, grantInput := range practiceInput.AccessGrants {
+			var grantID, email string
+			var role Role
+			var scope LocationScope
+			err := tx.QueryRow(ctx, `
+				SELECT id::text, email, role, location_scope
+				FROM access_grants
+				WHERE practice_id = $1 AND provisioning_key = $2
+				FOR UPDATE
+			`, practiceID, grantInput.Key).Scan(&grantID, &email, &role, &scope)
+			if err == nil {
+				matches, err := accessGrantMatchesProvisioning(
+					ctx, tx, grantID, email, role, scope, grantInput,
+				)
+				if err != nil {
+					return Provisioned{}, err
+				}
+				if !matches {
+					return Provisioned{}, fmt.Errorf(
+						"%w: existing Access Grant %q differs from provisioning input",
+						ErrInvalidInput,
+						grantInput.Key,
+					)
+				}
+				continue
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return Provisioned{}, fmt.Errorf("load Access Grant %q: %w", grantInput.Key, err)
+			}
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO access_grants (
+					provisioning_key, practice_id, email, role, location_scope
+				)
+				VALUES ($1, $2, $3, $4, $5)
+				RETURNING id::text
+			`,
+				grantInput.Key,
+				practiceID,
+				normalizeEmail(grantInput.Email),
+				grantInput.Role,
+				grantInput.LocationScope,
+			).Scan(&grantID); err != nil {
+				return Provisioned{}, fmt.Errorf("create Access Grant %q: %w", grantInput.Key, err)
+			}
+			result.AccessGrantCount++
+			for _, locationKey := range grantInput.SelectedLocationKeys {
+				locationID, ok := locationIDs[locationKey]
+				if !ok {
+					return Provisioned{}, fmt.Errorf("%w: Access Grant %q references Location %q", ErrInvalidInput, grantInput.Key, locationKey)
+				}
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO access_grant_locations (
+						access_grant_id, location_id, practice_id
+					)
+					VALUES ($1, $2, $3)
+				`, grantID, locationID, practiceID); err != nil {
+					return Provisioned{}, fmt.Errorf("grant Access Grant Location %q: %w", locationKey, err)
+				}
+			}
+		}
+
 		for _, invitationInput := range practiceInput.Invitations {
 			var exists bool
 			if err := tx.QueryRow(ctx, `
@@ -441,9 +531,10 @@ func (m *Module) ProvisionInTx(
 		}
 
 		details, _ := json.Marshal(map[string]any{
-			"practiceKey": practiceInput.Key,
-			"locations":   len(practiceInput.Locations),
-			"invitations": len(practiceInput.Invitations),
+			"practiceKey":  practiceInput.Key,
+			"locations":    len(practiceInput.Locations),
+			"accessGrants": len(practiceInput.AccessGrants),
+			"invitations":  len(practiceInput.Invitations),
 		})
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO access_audit_events (
@@ -456,6 +547,55 @@ func (m *Module) ProvisionInTx(
 	}
 
 	return result, nil
+}
+
+func accessGrantMatchesProvisioning(
+	ctx context.Context,
+	tx pgx.Tx,
+	grantID string,
+	email string,
+	role Role,
+	scope LocationScope,
+	input AccessGrantProvision,
+) (bool, error) {
+	if email != normalizeEmail(input.Email) || role != input.Role || scope != input.LocationScope {
+		return false, nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT location.provisioning_key
+		FROM access_grant_locations allowed
+		JOIN access_locations location
+			ON location.practice_id = allowed.practice_id
+			AND location.id = allowed.location_id
+		WHERE allowed.access_grant_id = $1
+		ORDER BY location.provisioning_key
+	`, grantID)
+	if err != nil {
+		return false, fmt.Errorf("load Access Grant Locations: %w", err)
+	}
+	defer rows.Close()
+	actual := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return false, fmt.Errorf("scan Access Grant Location: %w", err)
+		}
+		actual = append(actual, key)
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate Access Grant Locations: %w", err)
+	}
+	expected := append([]string(nil), input.SelectedLocationKeys...)
+	sort.Strings(expected)
+	if len(actual) != len(expected) {
+		return false, nil
+	}
+	for index := range actual {
+		if actual[index] != expected[index] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (m *Module) AcceptInvitation(ctx context.Context, identity Identity, token string) (Authorization, error) {
@@ -556,35 +696,57 @@ func (m *Module) AcceptInvitation(ctx context.Context, identity Identity, token 
 	return authorized, nil
 }
 
-// InspectInvitation is used by the invite-only authentication hook and invite
-// screen. It returns only scope attached to the presented credential.
+func (m *Module) InspectSignUpEligibility(
+	ctx context.Context,
+	emailInput string,
+) (SignUpEligibility, error) {
+	email := normalizeEmail(emailInput)
+	if email == "" {
+		return SignUpEligibility{}, ErrDenied
+	}
+	var grantExists bool
+	if err := m.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM access_grants
+			WHERE email = $1
+				AND revoked_at IS NULL
+				AND claimed_at IS NULL
+		)
+	`, email).Scan(&grantExists); err != nil {
+		return SignUpEligibility{}, fmt.Errorf("inspect Access Grant eligibility: %w", err)
+	}
+	if grantExists {
+		return SignUpEligibility{Kind: SignUpEligibilityAccessGrant, Email: email}, nil
+	}
+	var operatorExists bool
+	if err := m.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM access_platform_operators
+			WHERE email = $1
+		)
+	`, email).Scan(&operatorExists); err != nil {
+		return SignUpEligibility{}, fmt.Errorf("inspect Platform Operator eligibility: %w", err)
+	}
+	if !operatorExists {
+		return SignUpEligibility{}, ErrDenied
+	}
+	return SignUpEligibility{
+		Kind:  SignUpEligibilityPlatformOperator,
+		Email: email,
+	}, nil
+}
+
+// InspectInvitation returns only scope attached to the presented legacy
+// credential. New human access is provisioned through Access Grants.
 func (m *Module) InspectInvitation(
 	ctx context.Context,
 	inspection InvitationInspection,
 ) (InvitationPreview, error) {
 	email := normalizeEmail(inspection.Email)
 	if strings.TrimSpace(inspection.Token) == "" {
-		if email == "" {
-			return InvitationPreview{}, ErrDenied
-		}
-		var exists bool
-		if err := m.pool.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM access_platform_operators
-				WHERE email = $1
-			)
-		`, email).Scan(&exists); err != nil {
-			return InvitationPreview{}, fmt.Errorf("inspect Platform Operator eligibility: %w", err)
-		}
-		if !exists {
-			return InvitationPreview{}, ErrDenied
-		}
-		return InvitationPreview{
-			Kind:      InvitationKindPlatformOperator,
-			Email:     email,
-			Locations: []Location{},
-		}, nil
+		return InvitationPreview{}, ErrDenied
 	}
 
 	tokenHash := sha256.Sum256([]byte(inspection.Token))
@@ -991,6 +1153,13 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	if err != nil {
 		return Discovery{}, err
 	}
+	auditActorType := "HUMAN"
+	if isOperator {
+		auditActorType = "PLATFORM_OPERATOR"
+	}
+	if err := m.activateProvisionedEmail(ctx, tx, identity, m.now(), auditActorType); err != nil {
+		return Discovery{}, err
+	}
 	if !isOperator {
 		rows, err := tx.Query(ctx, `
 			SELECT practice_id::text
@@ -1051,9 +1220,6 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return result, nil
 	}
 	_ = operatorID
-	if err := m.activatePendingOperatorMemberships(ctx, tx, identity); err != nil {
-		return Discovery{}, err
-	}
 
 	result := Discovery{
 		Actor: Actor{
@@ -1133,62 +1299,99 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	return result, nil
 }
 
-func (m *Module) activatePendingOperatorMemberships(
+func (m *Module) activateProvisionedEmail(
 	ctx context.Context,
 	tx pgx.Tx,
 	identity Identity,
+	now time.Time,
+	auditActorType string,
 ) error {
 	type pendingAccess struct {
-		invitationID string
-		practiceID   string
-		role         Role
-		scope        LocationScope
+		grantID    string
+		practiceID string
+		role       Role
+		scope      LocationScope
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT id::text, practice_id::text, role, location_scope
-		FROM access_invitations
+		FROM access_grants
 		WHERE email = $1
 			AND revoked_at IS NULL
-			AND accepted_at IS NULL
-			AND expires_at > $2
+			AND claimed_at IS NULL
 		ORDER BY created_at, id
 		FOR UPDATE
-	`, normalizeEmail(identity.Email), m.now())
+	`, normalizeEmail(identity.Email))
 	if err != nil {
-		return fmt.Errorf("load operator access grants: %w", err)
+		return fmt.Errorf("load provisioned email access: %w", err)
 	}
 	pending := []pendingAccess{}
 	for rows.Next() {
 		var item pendingAccess
 		if err := rows.Scan(
-			&item.invitationID,
+			&item.grantID,
 			&item.practiceID,
 			&item.role,
 			&item.scope,
 		); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan operator access grant: %w", err)
+			return fmt.Errorf("scan provisioned email access: %w", err)
 		}
 		pending = append(pending, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate operator access grants: %w", err)
+		return fmt.Errorf("iterate provisioned email access: %w", err)
 	}
 	rows.Close()
 
 	for _, item := range pending {
-		_, err := m.activateInvitation(ctx, tx, identity, invitationActivation{
-			ID:                 item.invitationID,
-			PracticeID:         item.practiceID,
-			Email:              normalizeEmail(identity.Email),
-			Role:               item.role,
-			Scope:              item.scope,
-			AuditActorType:     "PLATFORM_OPERATOR",
-			AuditAction:        "access_grant.claimed",
-			AuditInvitationKey: "accessGrantId",
+		var membershipID string
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO access_memberships (
+				user_subject, email, practice_id, role, location_scope, access_grant_id
+			)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id::text
+		`,
+			identity.Subject,
+			normalizeEmail(identity.Email),
+			item.practiceID,
+			item.role,
+			item.scope,
+			item.grantID,
+		).Scan(&membershipID); err != nil {
+			return fmt.Errorf("activate provisioned email access: %w", err)
+		}
+		if item.scope == LocationScopeSelected {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO access_membership_locations (membership_id, location_id, practice_id)
+				SELECT $1, location_id, practice_id
+				FROM access_grant_locations
+				WHERE access_grant_id = $2
+			`, membershipID, item.grantID); err != nil {
+				return fmt.Errorf("activate provisioned Location access: %w", err)
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE access_grants
+			SET claimed_at = $2, claimed_by_subject = $3
+			WHERE id = $1
+		`, item.grantID, now, identity.Subject); err != nil {
+			return fmt.Errorf("claim provisioned email access: %w", err)
+		}
+		details, _ := json.Marshal(map[string]any{
+			"accessGrantId": item.grantID,
+			"membershipId":  membershipID,
 		})
-		if err != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO access_audit_events (
+				actor_type, actor_subject, practice_id, action, details
+			)
+			VALUES ($1, $2, $3, 'access_grant.claimed', $4)
+		`, auditActorType, identity.Subject, item.practiceID, details); err != nil {
+			return fmt.Errorf("audit provisioned email access: %w", err)
+		}
+		if _, err := m.RecordWorkspaceChange(ctx, tx, item.practiceID); err != nil {
 			return err
 		}
 	}
@@ -1262,6 +1465,73 @@ func (m *Module) activateInvitation(
 		return "", err
 	}
 	return membershipID, nil
+}
+
+func (m *Module) RevokeAccessGrant(
+	ctx context.Context,
+	command RevokeAccessGrantCommand,
+) error {
+	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
+		command.PracticeID == "" || command.AccessGrantID == "" {
+		return ErrDenied
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin Access Grant revocation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
+		return err
+	} else if !isOperator {
+		return ErrDenied
+	}
+
+	var claimedAt, revokedAt *time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT claimed_at, revoked_at
+		FROM access_grants
+		WHERE id = $1 AND practice_id = $2
+		FOR UPDATE
+	`, command.AccessGrantID, command.PracticeID).Scan(&claimedAt, &revokedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDenied
+		}
+		return fmt.Errorf("load Access Grant for revocation: %w", err)
+	}
+	if claimedAt != nil {
+		return ErrAccessGrantClaimed
+	}
+	if revokedAt != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit repeated Access Grant revocation: %w", err)
+		}
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE access_grants
+		SET revoked_at = $2
+		WHERE id = $1
+	`, command.AccessGrantID, m.now()); err != nil {
+		return fmt.Errorf("revoke Access Grant: %w", err)
+	}
+	if err := auditRevocation(
+		ctx,
+		tx,
+		command.Identity.Subject,
+		command.PracticeID,
+		"access_grant.revoked",
+		"accessGrantId",
+		command.AccessGrantID,
+	); err != nil {
+		return err
+	}
+	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Access Grant revocation: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) RevokeInvitation(
@@ -1902,6 +2172,20 @@ func validateProvisioning(input Provisioning, now time.Time) error {
 			if input.Environment != "test" && input.Environment != "development" &&
 				strings.HasPrefix(strings.ToLower(location.Name), "fixture ") {
 				return fmt.Errorf("%w: fixture locations are forbidden outside test/development", ErrInvalidInput)
+			}
+		}
+		for _, grant := range practice.AccessGrants {
+			if grant.Role != RoleAdmin && grant.Role != RoleStaff {
+				return fmt.Errorf("%w: unsupported Access Grant role", ErrInvalidInput)
+			}
+			if grant.Role == RoleAdmin && grant.LocationScope != LocationScopeAll {
+				return fmt.Errorf("%w: Admin requires ALL location scope", ErrInvalidInput)
+			}
+			if grant.LocationScope != LocationScopeAll && grant.LocationScope != LocationScopeSelected {
+				return fmt.Errorf("%w: unsupported Location scope", ErrInvalidInput)
+			}
+			if grant.LocationScope == LocationScopeSelected && len(grant.SelectedLocationKeys) == 0 {
+				return fmt.Errorf("%w: SELECTED scope requires a Location", ErrInvalidInput)
 			}
 		}
 		for _, invitation := range practice.Invitations {

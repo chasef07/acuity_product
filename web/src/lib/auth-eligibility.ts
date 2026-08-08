@@ -2,7 +2,6 @@ type EligibilityRequest = typeof fetch
 
 type SignUpEligibility = {
   email: string
-  invitationToken?: string
   portalAPIURL: string
   request?: EligibilityRequest
 }
@@ -12,22 +11,13 @@ type UserEligibilityGate = {
   request?: EligibilityRequest
 }
 
-type UserCreationContext = {
-  headers?: Headers
-} | null
-
 export function createUserEligibilityGate({
   portalAPIURL,
   request = fetch,
 }: UserEligibilityGate) {
-  return async (
-    user: { email: string },
-    context: UserCreationContext
-  ): Promise<boolean> =>
+  return async (user: { email: string }): Promise<boolean> =>
     isSignUpEligible({
       email: user.email,
-      invitationToken:
-        context?.headers?.get("x-acuity-invitation-token") ?? undefined,
       portalAPIURL,
       request,
     })
@@ -35,7 +25,6 @@ export function createUserEligibilityGate({
 
 export async function isSignUpEligible({
   email,
-  invitationToken,
   portalAPIURL,
   request = fetch,
 }: SignUpEligibility): Promise<boolean> {
@@ -44,10 +33,7 @@ export async function isSignUpEligible({
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        email,
-        ...(invitationToken ? { invitationToken } : {}),
-      }),
+      body: JSON.stringify({ email }),
       signal: AbortSignal.timeout(2_000),
     }
   ).catch(() => undefined)

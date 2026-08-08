@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-test("homepage opens a Google-first sign-in dialog with in-card email", async ({
+test("homepage opens a Google-only sign-in dialog", async ({
   page,
 }) => {
   await page.goto("/")
@@ -17,18 +17,7 @@ test("homepage opens a Google-first sign-in dialog with in-card email", async ({
   ).toBeVisible()
   await expect(card.getByText("Invite-only access")).toBeVisible()
   await expect(card.getByLabel("Email")).toBeHidden()
-
-  const emailAction = card.getByRole("button", { name: "Use email instead" })
-  await expect(emailAction).toHaveAttribute("aria-expanded", "false")
-  await emailAction.click()
-
-  await expect(emailAction).toHaveAttribute("aria-expanded", "true")
-  await expect(card.getByLabel("Email")).toBeVisible()
-  await expect(card.getByLabel("Password")).toBeVisible()
-  await expect(
-    card.getByRole("link", { name: "Forgot password?" }),
-  ).toBeVisible()
-  await expect(card.getByRole("button", { name: "Sign in" })).toBeVisible()
+  await expect(card.getByLabel("Password")).toBeHidden()
 })
 
 test("Google sign-in opens in a popup and leaves the portal in place", async ({
@@ -58,19 +47,4 @@ test("Google sign-in opens in a popup and leaves the portal in place", async ({
     page.getByRole("dialog", { name: "Sign in to Acuity" }),
   ).toBeVisible()
   await popup.close()
-})
-
-test("sign-in deep links open the dialog with verified invitation state", async ({
-  page,
-}) => {
-  await page.goto("/sign-in?verified=1&next=%2Faccept-invitation")
-
-  const card = page.getByTestId("sign-in-card")
-  await expect(card.getByText("Email verified")).toBeVisible()
-  await expect(
-    card.getByText("Sign in to activate your Acuity invitation."),
-  ).toBeVisible()
-  await expect(
-    card.getByRole("button", { name: "Continue with Google" }),
-  ).toBeVisible()
 })

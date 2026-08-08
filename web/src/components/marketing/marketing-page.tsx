@@ -14,18 +14,13 @@ const display = Newsreader({
 })
 
 export function MarketingPage({
-  googleEnabled,
   initiallyOpen = false,
 }: {
-  googleEnabled: boolean
   initiallyOpen?: boolean
 }) {
   return (
     <div className={cn(sans.variable, display.variable)}>
-      <LandingPage
-        googleEnabled={googleEnabled}
-        initiallyOpen={initiallyOpen}
-      />
+      <LandingPage initiallyOpen={initiallyOpen} />
     </div>
   )
 }

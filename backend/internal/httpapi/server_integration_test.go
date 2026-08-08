@@ -37,7 +37,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "slice-1-http-test",
 		PlatformOperators: []string{"founder@acuity.test"},
@@ -48,13 +48,12 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 				{Key: "fixture-location-1", Name: "Fixture Location 1"},
 				{Key: "fixture-location-2", Name: "Fixture Location 2"},
 			},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:                  "selected-staff",
 				Email:                "selected@abita.test",
 				Role:                 access.RoleStaff,
 				LocationScope:        access.LocationScopeSelected,
 				SelectedLocationKeys: []string{"fixture-location-1"},
-				ExpiresAt:            now.Add(24 * time.Hour),
 			}},
 		}},
 	})
@@ -78,46 +77,28 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	invitationBody, _ := json.Marshal(api.InvitationCredentialRequest{
-		Token: provisioned.Invitations[0].Token,
+	eligibleBody, _ := json.Marshal(api.SignUpEligibilityRequest{
+		Email: "selected@abita.test",
 	})
-	previewResponse := request(t, server.Client(), http.MethodPost,
-		server.URL+"/v1/invitations/inspect",
-		"", invitationBody,
-	)
-	if previewResponse.StatusCode != http.StatusOK {
-		t.Fatalf("invitation preview status = %d, body = %s", previewResponse.StatusCode, readBody(t, previewResponse))
-	}
-	_ = previewResponse.Body.Close()
-
-	ineligibleBody, _ := json.Marshal(api.SignUpEligibilityRequest{
-		Email: "somebody-else@abita.test",
-		InvitationToken: func() *string {
-			token := provisioned.Invitations[0].Token
-			return &token
-		}(),
-	})
-	ineligible := request(t, server.Client(), http.MethodPost,
+	eligible := request(t, server.Client(), http.MethodPost,
 		server.URL+"/v1/access/sign-up-eligibility",
-		"", ineligibleBody,
+		"", eligibleBody,
 	)
-	if ineligible.StatusCode != http.StatusForbidden {
-		t.Fatalf("ineligible sign-up status = %d, body = %s", ineligible.StatusCode, readBody(t, ineligible))
+	if eligible.StatusCode != http.StatusOK {
+		t.Fatalf("eligible Google sign-up status = %d, body = %s", eligible.StatusCode, readBody(t, eligible))
 	}
-	_ = ineligible.Body.Close()
-
-	accepted := request(t, server.Client(), http.MethodPost,
-		server.URL+"/v1/invitations/accept",
-		"selected-token", invitationBody,
+	_ = eligible.Body.Close()
+	unknownBody, _ := json.Marshal(api.SignUpEligibilityRequest{
+		Email: "somebody-else@abita.test",
+	})
+	unknown := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/access/sign-up-eligibility",
+		"", unknownBody,
 	)
-	if accepted.StatusCode != http.StatusOK {
-		t.Fatalf("accept status = %d, body = %s", accepted.StatusCode, readBody(t, accepted))
+	if unknown.StatusCode != http.StatusForbidden {
+		t.Fatalf("unknown Google sign-up status = %d, body = %s", unknown.StatusCode, readBody(t, unknown))
 	}
-	var authorization api.Authorization
-	decode(t, accepted, &authorization)
-	if authorization.Membership == nil || len(authorization.Locations) != 1 {
-		t.Fatalf("accepted authorization = %#v", authorization)
-	}
+	_ = unknown.Body.Close()
 
 	discovered := request(t, server.Client(), http.MethodGet,
 		server.URL+"/v1/access",
@@ -129,13 +110,14 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	var accessDiscovery api.AccessDiscovery
 	decode(t, discovered, &accessDiscovery)
 	if len(accessDiscovery.Practices) != 1 ||
+		accessDiscovery.Practices[0].Membership == nil ||
 		len(accessDiscovery.Practices[0].Locations) != 1 {
 		t.Fatalf("discovery = %#v", accessDiscovery)
 	}
 
 	workspaceURL := server.URL + "/v1/workspace?" + url.Values{
-		"practiceId": {authorization.Practice.Id.String()},
-		"locationId": {authorization.Locations[0].Id.String()},
+		"practiceId": {accessDiscovery.Practices[0].Id.String()},
+		"locationId": {accessDiscovery.Practices[0].Locations[0].Id.String()},
 	}.Encode()
 	workspace := request(t, server.Client(), http.MethodGet, workspaceURL, "selected-token", nil)
 	if workspace.StatusCode != http.StatusOK {
@@ -160,7 +142,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	}
 	unauthorizedLocationID := operatorDiscovery.Practices[0].Locations[1].ID
 	crossLocationURL := server.URL + "/v1/workspace?" + url.Values{
-		"practiceId": {authorization.Practice.Id.String()},
+		"practiceId": {accessDiscovery.Practices[0].Id.String()},
 		"locationId": {unauthorizedLocationID},
 	}.Encode()
 	crossLocation := request(t, server.Client(), http.MethodGet, crossLocationURL, "selected-token", nil)
