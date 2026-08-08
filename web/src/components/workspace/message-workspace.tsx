@@ -91,7 +91,6 @@ type TimelineSource = {
 export function EngagementWorkspace({
   engagement,
   practiceID,
-  supportSessionID,
   canMutate,
   revision,
   headerLeading,
@@ -102,7 +101,6 @@ export function EngagementWorkspace({
 }: {
   engagement: EngagementSummary
   practiceID: string
-  supportSessionID: string
   canMutate: boolean
   revision: number
   headerLeading?: ReactNode
@@ -231,7 +229,6 @@ export function EngagementWorkspace({
         practiceID={practiceID}
         locationID={route}
         initialDestination={engagement.phone}
-        supportSessionID={supportSessionID}
         canMutate={canMutate}
         revision={revision}
         onTaskCreated={onTaskCreated}
@@ -247,7 +244,6 @@ function MessageConversation({
   practiceID,
   locationID,
   initialDestination,
-  supportSessionID,
   canMutate,
   revision,
   onTaskCreated,
@@ -258,7 +254,6 @@ function MessageConversation({
   practiceID: string
   locationID: string
   initialDestination?: string
-  supportSessionID: string
   canMutate: boolean
   revision: number
   onTaskCreated: (task: Task) => void
@@ -426,7 +421,6 @@ function MessageConversation({
                 key={`${item.type}:${item.id}`}
                 item={item}
                 canMutate={canMutate}
-                supportSessionID={supportSessionID}
                 onChanged={() => void loadLatest(true)}
                 onTaskCreated={onTaskCreated}
                 onTaskOpen={onTaskOpen}
@@ -470,7 +464,6 @@ function MessageConversation({
         practiceID={practiceID}
         locationID={locationID}
         destination={initialDestination ?? ""}
-        supportSessionID={supportSessionID}
         disabled={
           !canMutate ||
           !locationID ||
@@ -508,7 +501,6 @@ function MessageConversation({
 function TimelineEntry({
   item,
   canMutate,
-  supportSessionID,
   onChanged,
   onTaskCreated,
   onTaskOpen,
@@ -516,7 +508,6 @@ function TimelineEntry({
 }: {
   item: ConversationTimelineItem
   canMutate: boolean
-  supportSessionID: string
   onChanged: () => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
@@ -527,7 +518,6 @@ function TimelineEntry({
       <MessageEntry
         message={item.message}
         canMutate={canMutate}
-        supportSessionID={supportSessionID}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
       />
@@ -575,13 +565,11 @@ function messageTimelineItem(message: Message): ConversationTimelineItem {
 function MessageEntry({
   message,
   canMutate,
-  supportSessionID,
   onChanged,
   onTaskCreated,
 }: {
   message: Message
   canMutate: boolean
-  supportSessionID: string
   onChanged: () => void
   onTaskCreated: (task: Task) => void
 }) {
@@ -601,9 +589,7 @@ function MessageEntry({
     const result = await createMessageFollowUpTask({
       client: portalClient(token),
       path: { messageId: message.id },
-      body: {
-        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
-      },
+      body: {},
     }).catch(() => undefined)
     setPending(false)
     if (!result?.data) {
@@ -638,7 +624,6 @@ function MessageEntry({
       body: {
         idempotencyKey: sendAgainAttemptKey.current,
         duplicateRiskAcknowledged: duplicateRisk,
-        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
       },
     }).catch(() => undefined)
     setPending(false)
@@ -674,7 +659,6 @@ function MessageEntry({
           <AttachmentCard
             attachment={message.attachment}
             canMutate={canMutate}
-            supportSessionID={supportSessionID}
             onChanged={onChanged}
             inverse={outbound}
           />
@@ -813,13 +797,11 @@ function ActivityBubble({
 function AttachmentCard({
   attachment,
   canMutate,
-  supportSessionID,
   onChanged,
   inverse,
 }: {
   attachment: MessageAttachment
   canMutate: boolean
-  supportSessionID: string
   onChanged: () => void
   inverse: boolean
 }) {
@@ -870,9 +852,7 @@ function AttachmentCard({
     const result = await retryInboundMessageAttachment({
       client: portalClient(token),
       path: { attachmentId: attachment.id },
-      body: {
-        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
-      },
+      body: {},
     }).catch(() => undefined)
     setPending(false)
     if (!result?.data) {
@@ -958,7 +938,6 @@ function MessageComposer({
   practiceID,
   locationID,
   destination,
-  supportSessionID,
   disabled,
   disabledReason,
   onSent,
@@ -967,7 +946,6 @@ function MessageComposer({
   practiceID: string
   locationID: string
   destination: string
-  supportSessionID: string
   disabled: boolean
   disabledReason: string
   onSent: (message: Message) => void
@@ -1046,7 +1024,6 @@ function MessageComposer({
             | "image/webp"
             | "application/pdf",
           contentBase64: await fileToBase64(file),
-          ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
         },
       }).catch(() => undefined)
       if (!upload?.data) {
@@ -1067,7 +1044,6 @@ function MessageComposer({
         body: body.trim(),
         ...(attachmentID ? { attachmentId: attachmentID } : {}),
         idempotencyKey: attempt.idempotencyKey,
-        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
       },
     }).catch(() => undefined)
     setPending(false)

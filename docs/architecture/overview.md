@@ -42,7 +42,7 @@ The Go runtime contains five deep modules. Each module has one behavior-oriented
 
 | Module | Owns | Does not own |
 |---|---|---|
-| `Access` | Human and service principals, invitations, memberships, Platform Operators, Support Mode, roles, location scope, authorization decisions | Better Auth session implementation, task state, provider credentials |
+| `Access` | Human and service principals, invitations, memberships, Platform Operators, roles, location scope, authorization decisions, operator audit | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
 | `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, post-call disposition, voicemail recording identity, and authorized playback | Browser-selected winners, connected-call recording, task lifecycle, SMS correlation, provider-owned audio bytes |
 | `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts | Task lifecycle, contact identity, call state |
@@ -60,7 +60,6 @@ flowchart LR
     Practice["Practice"]
     Locations["Current and future Locations"]
     Selected["Selected Locations"]
-    Support["Time-limited Support Mode"]
 
     User --> Operator
     User --> Membership
@@ -68,16 +67,15 @@ flowchart LR
     Membership -->|"Admin or ALL"| Locations
     Membership -->|"Staff SELECTED"| Selected
     Operator -->|"global visibility"| Practice
-    Operator -->|"mutations with reason"| Support
-    Support --> Practice
+    Operator -->|"direct audited mutations"| Practice
 ```
 
 - Practice is the customer tenant and security boundary; Location is its physical or operational subdivision.
 - Admin always receives dynamic `ALL` scope. Staff receives either dynamic `ALL` scope or explicit `SELECTED` location grants.
 - Dynamic `ALL` scope includes locations created after the membership. `SELECTED` scope does not.
 - Platform Operator is a distinct Acuity-internal role rather than a replicated Practice membership.
-- Platform Operators keep global visibility but operate within an explicit active practice/location. Customer-data mutations additionally require unexpired, practice-scoped Support Mode with a reason and persistent UI indication.
-- Authorization records the real human or service actor. Support Mode never impersonates a customer user.
+- Platform Operators keep global visibility and direct write authority while operating within an explicit active practice/location.
+- Authorization records the real human or service actor. Platform Operators never impersonate customer users, and their mutations are audited atomically.
 - Human accounts are fresh and invite-only. Better Auth owns Google identity, verified email/password credentials, and recovery; `Access` gates account creation and owns invitations, roles, scopes, and authorization.
 
 ## Browser shell
@@ -173,7 +171,7 @@ flowchart LR
 
 Dependency rules:
 
-1. `Access` resolves Platform Operator or Practice membership, role, dynamic or selected location scope, and Support Mode before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
+1. `Access` resolves Platform Operator or Practice membership, role, and dynamic or selected location scope before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
 2. `HumanCalling` and `Messaging` may ask `Work` to create accountable work. `Work` does not know Telnyx.
 3. `HumanCalling` and `EvidenceArchive` grant protected access after authorization. PostgreSQL stores the durable Telnyx recording identity; the backend refreshes and proxies provider audio without exposing a raw provider URL.
 4. PostgreSQL is the sole durable product authority. SSE, browser state, and provider commands are projections or requests.
@@ -436,7 +434,7 @@ The highest test seam is:
 - Phone-number history is context, not verified identity.
 - `Access` resolves practice and location scope before every protected module invocation; caller-supplied IDs never grant authority.
 - Admin and `ALL`-scope Staff automatically receive current and future Practice locations; `SELECTED`-scope Staff receive only explicit grants.
-- Platform Operator visibility never implies mutation authority; customer-data changes require an active, audited, practice-scoped Support Mode without impersonation.
+- Platform Operators mutate directly under their real identity, and the mutation and operator audit commit atomically without impersonation.
 - Public sign-up is disabled; accepting an invitation never requires an operator to create or know another user's password.
 - Realtime transport loss cannot lose durable work.
 - A provider webhook receives `2xx` only after its unique durable receipt commits.

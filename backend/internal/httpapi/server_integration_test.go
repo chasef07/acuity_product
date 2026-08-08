@@ -1580,7 +1580,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 }
 
-func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
+func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 19, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -1608,19 +1608,6 @@ func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
 	}
 	practiceID := discovery.Practices[0].ID
 	locationID := discovery.Practices[0].Locations[0].ID
-	support, err := accessModule.EnterSupportMode(
-		context.Background(),
-		access.EnterSupportModeCommand{
-			Identity:   operator,
-			PracticeID: practiceID,
-			Reason:     "Repair quarantined provider receipt",
-			Duration:   time.Hour,
-		},
-	)
-	if err != nil {
-		t.Fatalf("enter HTTP recovery Support Mode: %v", err)
-	}
-
 	const callID = "00000000-0000-0000-0000-000000000701"
 	const handoffID = "00000000-0000-0000-0000-000000000702"
 	const eventID = "http-quarantined-receipt"
@@ -1704,9 +1691,7 @@ func TestOperatorCanRequeueTimelineReceiptOnlyInSupportMode(t *testing.T) {
 		t.Fatalf("HTTP recovery reference = %q", recoveryReference)
 	}
 
-	body, _ := json.Marshal(api.ProviderReceiptRecoveryRequest{
-		SupportSessionId: uuid.MustParse(support.ID),
-	})
+	body, _ := json.Marshal(api.ProviderReceiptRecoveryRequest{})
 	requeued := request(
 		t,
 		server.Client(),

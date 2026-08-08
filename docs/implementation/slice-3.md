@@ -11,8 +11,8 @@ provider acceptance gate recorded for Slice 2.
 ordering, protected search, optimistic version, and mutation rules.
 `HumanCalling` continues to own the canonical phone, transfer reason, call
 outcome, and exact-phone Call Engagement History. `Access` remains the sole
-authority for current Practice and Location visibility and for Platform
-Operator Support Mode.
+authority for current Practice and Location visibility and Platform Operator
+write access.
 
 The vertical path is:
 
@@ -60,9 +60,9 @@ authoritative; generated HTTP clients and SSE are adapters.
   Concurrent attempts serialize under the Task row and create one Activity.
 - A stale rename returns conflict. The browser refetches the committed version
   while retaining the attempted title for an explicit retry.
-- Practice Users mutate within current membership scope. Platform Operators can
-  read globally, but a mutation requires a current Practice-scoped Support Mode
-  session. Revocation is checked inside the mutation transaction.
+- Practice Users mutate within current membership scope. Platform Operators
+  read and mutate globally under their own identity; operator audits are
+  committed inside the mutation transaction.
 
 There is no manual Task creation, deletion, assignment, priority, due date,
 note, message composer, or right-side context drawer in this slice.
@@ -88,7 +88,7 @@ to small state transitions and honors reduced-motion and dark-mode parity.
 ## Deterministic proof
 
 `TEST_DATABASE_URL=... go test ./backend/...` exercises the Work lifecycle,
-current-access reads, Support Mode mutation gate, location scope, protected
+current-access reads, direct operator mutation audit, location scope, protected
 search, cursor ordering, concurrent transitions, migration, atomic
 disposition/Task creation, exact-phone history, authenticated HTTP surface, and
 realtime hints against PostgreSQL.

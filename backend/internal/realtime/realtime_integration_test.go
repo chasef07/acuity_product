@@ -77,16 +77,6 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if err != nil {
 		t.Fatalf("accept realtime member invitation: %v", err)
 	}
-	support, err := accessModule.EnterSupportMode(context.Background(), access.EnterSupportModeCommand{
-		Identity:   operator,
-		PracticeID: practice.ID,
-		Reason:     "Exercise the realtime version hint",
-		Duration:   time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("enter Support Mode: %v", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	streams, err := realtime.New(realtime.Config{
@@ -148,11 +138,10 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	}
 
 	mutation, err := accessModule.AddLocation(context.Background(), access.AddLocationCommand{
-		Identity:         operator,
-		PracticeID:       practice.ID,
-		SupportSessionID: support.ID,
-		Key:              "fixture-2",
-		Name:             "Fixture 2",
+		Identity:   operator,
+		PracticeID: practice.ID,
+		Key:        "fixture-2",
+		Name:       "Fixture 2",
 	})
 	if err != nil {
 		t.Fatalf("publish Access mutation: %v", err)
@@ -290,10 +279,9 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if err := accessModule.RevokeMembership(
 		context.Background(),
 		access.RevokeMembershipCommand{
-			Identity:         operator,
-			PracticeID:       practice.ID,
-			SupportSessionID: support.ID,
-			MembershipID:     memberAuthorization.Membership.ID,
+			Identity:     operator,
+			PracticeID:   practice.ID,
+			MembershipID: memberAuthorization.Membership.ID,
 		},
 	); err != nil {
 		t.Fatalf("revoke streamed Membership: %v", err)

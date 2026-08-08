@@ -14,7 +14,7 @@ const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 const replacementRealtimePIDFile =
   process.env.E2E_REALTIME_REPLACEMENT_PID_FILE
 
-test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async ({
+test("Slice 1 invite, authority, operator analytics, recovery, and reconnect", async ({
   browser,
   page,
 }, testInfo) => {
@@ -118,12 +118,6 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
   await expect(
     secondCustomerPage.getByLabel("Live updates connected"),
   ).toBeVisible()
-  const initialVersion = Number(
-    await page.getByTestId("mounted-workspace").getAttribute(
-      "data-workspace-version",
-    ),
-  )
-
   await test.step("both established browsers recover from realtime instance death", async () => {
     const realtimePID = Number(process.env.E2E_REALTIME_PID)
     const runtimeBinary = process.env.E2E_RUNTIME_BINARY
@@ -188,7 +182,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
 
   const operatorContext = await browser.newContext()
   const operatorPage = await operatorContext.newPage()
-  await test.step("Platform Operator needs visible Practice-scoped Support Mode", async () => {
+  await test.step("Platform Operator writes directly and gets workspace analytics", async () => {
     await operatorPage.goto("/operator-access")
     await operatorPage.getByLabel("Your name").fill("Fixture Founder")
     await operatorPage
@@ -214,84 +208,42 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await operatorPage.getByLabel("Password").fill("operator-password-1234")
     await operatorPage.getByRole("button", { name: "Sign in" }).click()
     await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
+    await expect(
+      operatorPage.getByRole("region", { name: "Call diagnostics" }),
+    ).toHaveCount(0)
 
-    await operatorPage
-      .getByRole("button", { name: "Enter Support Mode" })
-      .click()
-    const dialog = operatorPage.getByRole("dialog")
-    await dialog.getByLabel("Reason").fill("Validate Slice 1 browser workflow")
-    await dialog.getByLabel("Duration").selectOption("30")
-    await dialog
-      .getByRole("button", { name: "Enter Support Mode" })
-      .click()
-    await expect(operatorPage.getByText("Support Mode active")).toBeVisible()
-    await expect(
-      operatorPage.getByText("Validate Slice 1 browser workflow"),
-    ).toBeVisible()
-    await operatorPage
-      .getByRole("button", { name: "Workspace selector" })
-      .click()
-    await operatorPage
-      .getByRole("button", { name: "Fixture Location 1", exact: true })
-      .click()
-    await expect(
-      operatorPage.getByRole("button", { name: "Workspace selector" }),
-    ).toContainText("Abita Eye Group")
-    await expect(
-      operatorPage.getByRole("button", { name: "Workspace selector" }),
-    ).toContainText("Fixture Location 1")
-
+    const initialVersion = Number(
+      await page.getByTestId("mounted-workspace").getAttribute(
+        "data-workspace-version",
+      ),
+    )
     const operatorToken = await accessToken(operatorPage)
     const accessResponse = await operatorPage.request.get(
       `${portalURL}/v1/access`,
-      {
-        headers: { authorization: `Bearer ${operatorToken}` },
-      },
+      { headers: { authorization: `Bearer ${operatorToken}` } },
     )
     expect(accessResponse.ok()).toBeTruthy()
     const access = (await accessResponse.json()) as {
-      practices: Array<{
-        id: string
-        name: string
-        locations: Array<{ id: string; name: string }>
-      }>
+      practices: Array<{ id: string; name: string }>
     }
     const operatorPractice = access.practices.find(
       (practice) => practice.name === "Abita Eye Group",
     )
     expect(operatorPractice?.id).toBeTruthy()
-    const operatorLocation = operatorPractice?.locations.find(
-      (location) => location.name === "Fixture Location 1",
-    )
-    expect(operatorLocation?.id).toBeTruthy()
-    const snapshotResponse = await operatorPage.request.get(
-      `${portalURL}/v1/workspace`,
-      {
-        headers: { authorization: `Bearer ${operatorToken}` },
-        params: {
-          practiceId: operatorPractice!.id,
-          locationId: operatorLocation!.id,
-        },
-      },
-    )
-    expect(snapshotResponse.ok()).toBeTruthy()
-    const snapshot = await snapshotResponse.json()
     const mutation = await operatorPage.request.post(
-      `${portalURL}/v1/practices/${snapshot.practice.id}/locations`,
+      `${portalURL}/v1/practices/${operatorPractice!.id}/locations`,
       {
         headers: {
           authorization: `Bearer ${operatorToken}`,
           origin: webURL,
         },
         data: {
-          supportSessionId: snapshot.supportMode.id,
           key: "fixture-location-7",
           name: "Fixture Location 7",
         },
       },
     )
     expect(mutation.status()).toBe(201)
-
     await expect
       .poll(async () =>
         Number(
@@ -301,18 +253,13 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
         ),
       )
       .toBeGreaterThan(initialVersion)
-    await expect
-      .poll(async () =>
-        Number(
-          await secondCustomerPage
-            .getByTestId("mounted-workspace")
-            .getAttribute("data-workspace-version"),
-        ),
-      )
-      .toBeGreaterThan(initialVersion)
 
-    await operatorPage.getByRole("button", { name: "Exit" }).click()
-    await expect(operatorPage.getByText("Support Mode active")).toBeHidden()
+    const analytics = operatorPage.getByRole("button", { name: "Analytics" })
+    await expect(analytics).toBeVisible()
+    await analytics.click()
+    await expect(
+      operatorPage.getByRole("region", { name: "Analytics" }),
+    ).toContainText("Transcripts, latency, and call performance")
   })
 
   await test.step("recovery, persisted theme, and explicit browser states", async () => {

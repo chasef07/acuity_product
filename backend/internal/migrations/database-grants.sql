@@ -25,7 +25,6 @@ GRANT SELECT ON TABLE
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
-    public.access_support_sessions,
     public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -77,8 +76,7 @@ GRANT INSERT ON TABLE
     public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
-    public.access_support_sessions,
-	public.human_calling_call_legs,
+    public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_handoffs,
@@ -110,8 +108,7 @@ GRANT UPDATE ON TABLE
     public.access_locations,
     public.access_memberships,
     public.access_practices,
-    public.access_support_sessions,
-	public.human_calling_call_legs,
+    public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_handoffs,
@@ -222,8 +219,7 @@ GRANT SELECT ON TABLE
     public.access_membership_locations,
     public.access_memberships,
     public.access_platform_operators,
-    public.access_practices,
-    public.access_support_sessions
+    public.access_practices
 TO acuity_realtime;
 
 GRANT UPDATE (user_subject)

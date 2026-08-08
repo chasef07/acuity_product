@@ -446,7 +446,7 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 	}
 }
 
-func TestPlatformOperatorMutationRequiresPracticeScopedSupportModeAndKeepsRealActor(t *testing.T) {
+func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	module := access.New(pool, func() time.Time { return now })
@@ -487,68 +487,46 @@ func TestPlatformOperatorMutationRequiresPracticeScopedSupportModeAndKeepsRealAc
 	practiceA := discovery.Practices[0]
 	practiceB := discovery.Practices[1]
 
-	_, err = module.AddLocation(context.Background(), access.AddLocationCommand{
+	mutation, err := module.AddLocation(context.Background(), access.AddLocationCommand{
 		Identity:   operator,
 		PracticeID: practiceA.ID,
 		Key:        "fixture-a-2",
 		Name:       "Fixture A 2",
 	})
-	if !errors.Is(err, access.ErrSupportRequired) {
-		t.Fatalf("mutation without Support Mode error = %v", err)
-	}
-
-	support, err := module.EnterSupportMode(context.Background(), access.EnterSupportModeCommand{
-		Identity:   operator,
-		PracticeID: practiceA.ID,
-		Reason:     "Validate the Slice 1 operator workflow",
-		Duration:   30 * time.Minute,
-	})
 	if err != nil {
-		t.Fatalf("enter Support Mode: %v", err)
+		t.Fatalf("add Location as operator: %v", err)
 	}
-
-	_, err = module.AddLocation(context.Background(), access.AddLocationCommand{
-		Identity:         operator,
-		PracticeID:       practiceB.ID,
-		SupportSessionID: support.ID,
-		Key:              "fixture-b-2",
-		Name:             "Fixture B 2",
-	})
-	if !errors.Is(err, access.ErrSupportPracticeMismatch) {
-		t.Fatalf("cross-Practice Support Mode error = %v", err)
-	}
-
-	mutation, err := module.AddLocation(context.Background(), access.AddLocationCommand{
-		Identity:         operator,
-		PracticeID:       practiceA.ID,
-		SupportSessionID: support.ID,
-		Key:              "fixture-a-2",
-		Name:             "Fixture A 2",
-	})
-	if err != nil {
-		t.Fatalf("add Location in Support Mode: %v", err)
-	}
-	if mutation.Audit.ActorSubject != operator.Subject ||
-		mutation.Audit.Reason != "Validate the Slice 1 operator workflow" ||
-		mutation.Audit.SupportSessionID != support.ID {
+	if mutation.Audit.ActorSubject != operator.Subject || mutation.Audit.Action != "location.added" {
 		t.Fatalf("mutation audit = %#v", mutation.Audit)
 	}
 
-	now = now.Add(31 * time.Minute)
 	_, err = module.AddLocation(context.Background(), access.AddLocationCommand{
-		Identity:         operator,
-		PracticeID:       practiceA.ID,
-		SupportSessionID: support.ID,
-		Key:              "fixture-a-3",
-		Name:             "Fixture A 3",
+		Identity:   operator,
+		PracticeID: practiceB.ID,
+		Key:        "fixture-b-2",
+		Name:       "Fixture B 2",
 	})
-	if !errors.Is(err, access.ErrSupportExpired) {
-		t.Fatalf("expired Support Mode error = %v", err)
+	if err != nil {
+		t.Fatalf("add Location in second Practice: %v", err)
+	}
+
+	_, err = module.AddLocation(context.Background(), access.AddLocationCommand{
+		Identity: access.Identity{
+			Subject:       "unknown-subject",
+			Email:         "unknown@acuity.test",
+			EmailVerified: true,
+		},
+		PracticeID: practiceA.ID,
+		Key:        "denied-location",
+		Name:       "Denied Location",
+	})
+	if !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("non-operator mutation error = %v", err)
 	}
 
 	stillVisible, err := module.ResolveActor(context.Background(), operator, practiceB.ID, "")
 	if err != nil {
-		t.Fatalf("global discovery after Support Mode expiry: %v", err)
+		t.Fatalf("global operator resolution: %v", err)
 	}
 	if !stillVisible.PlatformOperator || stillVisible.Practice.ID != practiceB.ID {
 		t.Fatalf("operator visibility = %#v", stillVisible)
@@ -752,21 +730,10 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 		t.Fatalf("discover operator: %v", err)
 	}
 	practiceID := discovery.Practices[0].ID
-	support, err := module.EnterSupportMode(ctx, access.EnterSupportModeCommand{
-		Identity:   operator,
-		PracticeID: practiceID,
-		Reason:     "Revoke fixture access",
-		Duration:   time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("enter Support Mode: %v", err)
-	}
-
 	if err := module.RevokeInvitation(ctx, access.RevokeInvitationCommand{
-		Identity:         operator,
-		PracticeID:       practiceID,
-		SupportSessionID: support.ID,
-		InvitationID:     provisioned.Invitations[0].ID,
+		Identity:     operator,
+		PracticeID:   practiceID,
+		InvitationID: provisioned.Invitations[0].ID,
 	}); err != nil {
 		t.Fatalf("revoke invitation: %v", err)
 	}
@@ -789,10 +756,9 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 		t.Fatalf("accept active invitation: %v", err)
 	}
 	if err := module.RevokeMembership(ctx, access.RevokeMembershipCommand{
-		Identity:         operator,
-		PracticeID:       practiceID,
-		SupportSessionID: support.ID,
-		MembershipID:     authorization.Membership.ID,
+		Identity:     operator,
+		PracticeID:   practiceID,
+		MembershipID: authorization.Membership.ID,
 	}); err != nil {
 		t.Fatalf("revoke membership: %v", err)
 	}
@@ -808,9 +774,7 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 	for _, event := range events {
 		actions[event.Action] = true
 		if event.Action == "invitation.revoked" || event.Action == "membership.revoked" {
-			if event.ActorSubject != operator.Subject ||
-				event.SupportSessionID != support.ID ||
-				event.Reason != "Revoke fixture access" {
+			if event.ActorSubject != operator.Subject {
 				t.Fatalf("revocation audit = %#v", event)
 			}
 		}

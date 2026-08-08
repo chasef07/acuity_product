@@ -687,16 +687,14 @@ func timelineItemKey(item TimelineItem) string {
 }
 
 type MarkReadCommand struct {
-	Identity         access.Identity
-	ThreadID         string
-	SupportSessionID string
+	Identity access.Identity
+	ThreadID string
 }
 
 type CreateFollowUpTaskCommand struct {
-	Identity         access.Identity
-	MessageID        string
-	Title            string
-	SupportSessionID string
+	Identity  access.Identity
+	MessageID string
+	Title     string
 }
 
 type SendCommand struct {
@@ -711,7 +709,6 @@ type SendCommand struct {
 	RetryOfMessageID          string
 	DuplicateRiskAcknowledged bool
 	IdempotencyKey            string
-	SupportSessionID          string
 }
 
 type SendAgainCommand struct {
@@ -719,7 +716,6 @@ type SendAgainCommand struct {
 	MessageID                 string
 	IdempotencyKey            string
 	DuplicateRiskAcknowledged bool
-	SupportSessionID          string
 }
 
 type LocationProvision struct {
@@ -955,15 +951,8 @@ func (m *Module) Send(
 		command.Identity,
 		command.PracticeID,
 		command.LocationID,
-		command.SupportSessionID,
 	)
 	if err != nil {
-		if errors.Is(err, access.ErrSupportRequired) ||
-			errors.Is(err, access.ErrSupportExpired) ||
-			errors.Is(err, access.ErrSupportRevoked) ||
-			errors.Is(err, access.ErrSupportPracticeMismatch) {
-			return Message{}, "", err
-		}
 		return Message{}, "", ErrDenied
 	}
 	var originalAttachmentFileName, originalAttachmentType string
@@ -1300,11 +1289,11 @@ func (m *Module) Send(
 	); err != nil {
 		return Message{}, "", fmt.Errorf("commit Message provider command: %w", err)
 	}
-	if err := m.access.AuditSupportedMutation(
+	if err := m.access.AuditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
-		access.SupportedMutationAudit{
+		access.OperatorMutationAudit{
 			Action:          "message.sent",
 			ResourceType:    "message",
 			ResourceID:      messageID,
@@ -1348,7 +1337,6 @@ func (m *Module) SendAgain(
 	command.Identity.Subject = strings.TrimSpace(command.Identity.Subject)
 	command.MessageID = strings.TrimSpace(command.MessageID)
 	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
-	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
 	if command.Identity.Subject == "" ||
 		command.MessageID == "" ||
 		!idempotencyKey.MatchString(command.IdempotencyKey) {
@@ -1395,13 +1383,12 @@ func (m *Module) SendAgain(
 			}, "\x00")),
 		).String()
 		clone, err := m.uploadAttachment(ctx, UploadAttachmentCommand{
-			Identity:         command.Identity,
-			PracticeID:       original.Thread.PracticeID,
-			LocationID:       original.Thread.LocationID,
-			FileName:         content.Attachment.FileName,
-			DeclaredType:     content.Attachment.ContentType,
-			Content:          content.Content,
-			SupportSessionID: command.SupportSessionID,
+			Identity:     command.Identity,
+			PracticeID:   original.Thread.PracticeID,
+			LocationID:   original.Thread.LocationID,
+			FileName:     content.Attachment.FileName,
+			DeclaredType: content.Attachment.ContentType,
+			Content:      content.Content,
 		}, retryAttachmentID, command.IdempotencyKey, original.ID)
 		if err != nil {
 			return Message{}, "", err
@@ -1420,7 +1407,6 @@ func (m *Module) SendAgain(
 		RetryOfMessageID:          original.ID,
 		DuplicateRiskAcknowledged: command.DuplicateRiskAcknowledged,
 		IdempotencyKey:            command.IdempotencyKey,
-		SupportSessionID:          command.SupportSessionID,
 	})
 }
 
@@ -1515,11 +1501,7 @@ func (m *Module) loadSendAgainReplay(
 		command.Identity,
 		replayed.Thread.PracticeID,
 		replayed.Thread.LocationID,
-		command.SupportSessionID,
 	); err != nil {
-		if isSupportAuthorizationError(err) {
-			return Message{}, false, err
-		}
 		return Message{}, false, ErrDenied
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -2724,7 +2706,6 @@ func (m *Module) MarkRead(
 	command MarkReadCommand,
 ) error {
 	command.ThreadID = strings.TrimSpace(command.ThreadID)
-	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
 	if m.pool == nil || m.access == nil || command.ThreadID == "" {
 		return ErrInvalidInput
 	}
@@ -2746,15 +2727,8 @@ func (m *Module) MarkRead(
 		command.Identity,
 		thread.PracticeID,
 		thread.LocationID,
-		command.SupportSessionID,
 	)
 	if err != nil {
-		if errors.Is(err, access.ErrSupportRequired) ||
-			errors.Is(err, access.ErrSupportExpired) ||
-			errors.Is(err, access.ErrSupportRevoked) ||
-			errors.Is(err, access.ErrSupportPracticeMismatch) {
-			return err
-		}
 		return ErrDenied
 	}
 	tag, err := tx.Exec(ctx, `
@@ -2765,11 +2739,11 @@ func (m *Module) MarkRead(
 		return fmt.Errorf("mark Message Thread read: %w", err)
 	}
 	if tag.RowsAffected() > 0 {
-		if err := m.access.AuditSupportedMutation(
+		if err := m.access.AuditOperatorMutation(
 			ctx,
 			tx,
 			authorization,
-			access.SupportedMutationAudit{
+			access.OperatorMutationAudit{
 				Action:          "message_thread.read",
 				ResourceType:    "message_thread",
 				ResourceID:      thread.ID,
@@ -2925,7 +2899,6 @@ func (m *Module) CreateFollowUpTask(
 ) (work.Task, work.TaskCreateStatus, error) {
 	command.MessageID = strings.TrimSpace(command.MessageID)
 	command.Title = strings.TrimSpace(command.Title)
-	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
 	if m.pool == nil ||
 		m.access == nil ||
 		m.work == nil ||
@@ -2966,15 +2939,8 @@ func (m *Module) CreateFollowUpTask(
 		command.Identity,
 		practiceID,
 		locationID,
-		command.SupportSessionID,
 	)
 	if err != nil {
-		if errors.Is(err, access.ErrSupportRequired) ||
-			errors.Is(err, access.ErrSupportExpired) ||
-			errors.Is(err, access.ErrSupportRevoked) ||
-			errors.Is(err, access.ErrSupportPracticeMismatch) {
-			return work.Task{}, "", err
-		}
 		return work.Task{}, "", ErrDenied
 	}
 	task, status, err := m.work.EnsureMessageFollowUp(
@@ -3015,11 +2981,11 @@ func (m *Module) CreateFollowUpTask(
 		return work.Task{}, "", ErrConflict
 	}
 	if status == work.TaskCreated {
-		if err := m.access.AuditSupportedMutation(
+		if err := m.access.AuditOperatorMutation(
 			ctx,
 			tx,
 			authorization,
-			access.SupportedMutationAudit{
+			access.OperatorMutationAudit{
 				Action:          "task.created_from_message",
 				ResourceType:    "task",
 				ResourceID:      task.ID,
@@ -4042,7 +4008,6 @@ func normalizeSendCommand(command *SendCommand) {
 	command.AttachmentID = strings.TrimSpace(command.AttachmentID)
 	command.RetryOfMessageID = strings.TrimSpace(command.RetryOfMessageID)
 	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
-	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
 }
 
 func normalizePhone(value string) (string, error) {

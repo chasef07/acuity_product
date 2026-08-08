@@ -7,10 +7,10 @@ approved test seams and the implementation choices made before code.
 ## Modules and interfaces
 
 `Access` is the first deep product module. Its Go interface exposes only
-provisioning, invitation inspection/acceptance, actor resolution, Support Mode,
-Location creation, and audit lookup. Its implementation owns the focused SQL,
+provisioning, invitation inspection/acceptance, actor resolution, Location
+creation, and audit lookup. Its implementation owns the focused SQL,
 transactions, invitation-token hashing, dynamic scope calculation, Platform
-Operator binding, Support Mode enforcement, workspace version increments, and
+Operator binding, operator audit enforcement, workspace version increments, and
 audit writes. Deleting the module would spread those rules across every caller,
 so the module provides depth, leverage, and locality.
 
@@ -31,7 +31,7 @@ No Task, Call, Message, or Evidence module or model is introduced in this slice.
 
 - Better Auth owns passwords, sessions, verification, recovery, JWT signing,
   and JWKS. `Access` owns invitations, memberships, scope, Platform Operators,
-  Support Mode, and authorization.
+  operator audit, and authorization.
 - Public sign-up is rejected. A customer sign-up must match an unexpired,
   unrevoked, email-bound invitation. A provisioned Platform Operator email is
   also eligible, but gains the role only after Better Auth proves that verified
@@ -47,10 +47,9 @@ No Task, Call, Message, or Evidence module or model is introduced in this slice.
   Membership.
 - Admin is always dynamic `ALL`. Staff is dynamic `ALL` or explicit `SELECTED`.
   Client Practice/Location IDs are requested context and never authority.
-- Platform Operator discovery is global. A customer-data mutation is allowed
-  only with an active, unrevoked, unexpired Support Mode for the same Practice.
-  The mutation and audit row commit together with the real operator, reason,
-  and Support Mode ID; there is no impersonation.
+- Platform Operator discovery and write authority are global. Each mutation and
+  audit row commit together under the real operator identity; there is no
+  impersonation.
 - Realtime events are disposable hints. Initial connection and reconnect fetch
   a fresh short-lived JWT and the authoritative versioned workspace snapshot
   from `portal-api`.
@@ -68,8 +67,8 @@ error; it never renders false success. Authentication denials use stable error
 codes without protected data.
 
 SSE streams have a bounded lifetime, heartbeat, and authorization revalidation
-interval. Membership revocation, Support Mode expiry/revocation, and unknown
-JWT keys are therefore bounded and recoverable. An unknown JWT `kid` forces one
+interval. Membership revocation and unknown JWT keys are therefore bounded and
+recoverable. An unknown JWT `kid` forces one
 safe JWKS refresh before denial.
 
 ## Required configuration and performance

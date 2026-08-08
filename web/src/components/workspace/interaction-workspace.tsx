@@ -40,7 +40,6 @@ type InteractionWorkspaceProps = {
   task: Task | undefined
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
-  supportSessionID: string
   canMutate: boolean
   historyHint: number
   taskCallPending: boolean
@@ -54,7 +53,6 @@ export function InteractionWorkspace({
   task,
   activeCall,
   view,
-  supportSessionID,
   canMutate,
   historyHint,
   taskCallPending,
@@ -91,7 +89,6 @@ export function InteractionWorkspace({
         key={task.id}
         task={task}
         activeCall={activeCall}
-        supportSessionID={supportSessionID}
         canMutate={canMutate}
         historyHint={historyHint}
         taskCallPending={taskCallPending}
@@ -108,7 +105,6 @@ export function InteractionWorkspace({
 function TaskWorkspace({
   task,
   activeCall,
-  supportSessionID,
   canMutate,
   historyHint,
   taskCallPending,
@@ -119,7 +115,6 @@ function TaskWorkspace({
 }: {
   task: Task
   activeCall: CallingCall | undefined
-  supportSessionID: string
   canMutate: boolean
   historyHint: number
   taskCallPending: boolean
@@ -190,9 +185,6 @@ function TaskWorkspace({
       body: {
         expectedVersion: task.version,
         title: attempted,
-        ...(supportSessionID
-          ? { supportSessionId: supportSessionID }
-          : {}),
       },
     }).catch(() => undefined)
     setPending(false)
@@ -227,9 +219,6 @@ function TaskWorkspace({
       path: { taskId: task.id },
       body: {
         expectedVersion: task.version,
-        ...(supportSessionID
-          ? { supportSessionId: supportSessionID }
-          : {}),
       },
     }).catch(() => undefined)
     setPending(false)
@@ -319,7 +308,7 @@ function TaskWorkspace({
           </Button>
         )}
         {!canMutate ? (
-          <Badge variant="outline">Read only · enter Support Mode</Badge>
+          <Badge variant="outline">Read only</Badge>
         ) : task.state === "OPEN" ? (
           <>
             {!activeCall && (

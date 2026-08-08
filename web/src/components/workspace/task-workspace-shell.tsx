@@ -1,35 +1,16 @@
 "use client"
 
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
   ChevronsUpDownIcon,
   PanelRightCloseIcon,
-  ShieldCheckIcon,
   WifiOffIcon,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
   Popover,
   PopoverContent,
@@ -51,6 +32,7 @@ import {
 } from "@/components/workspace/calling-dock"
 import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
 import { EngagementWorkspace } from "@/components/workspace/message-workspace"
+import { OperatorAnalytics } from "@/components/workspace/operator-analytics"
 import {
   type ConnectionState,
   TaskRail,
@@ -58,14 +40,12 @@ import {
 import { portalClient, realtimeURL } from "@/lib/api/client"
 import {
   discoverAccess,
-  enterSupportMode,
   getCallingCall,
   getWorkspace,
   markMessageThreadRead,
   queryMessageThreads,
   queryTasks,
   readTask,
-  revokeSupportMode,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
@@ -85,7 +65,7 @@ import {
 } from "@/lib/workspace-sync/workspace-sync"
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
-type View = "none" | "engagement"
+type View = "none" | "engagement" | "analytics"
 type ContextView = "none" | "task" | "call"
 
 const practiceStorageKey = "acuity.selectedPractice"
@@ -162,63 +142,6 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
-  const loadSnapshot = useCallback(
-    async (
-      selectedPractice: string,
-      selectedLocation: string,
-      showLoading = true,
-    ) => {
-      const scope = `${selectedPractice}:${selectedLocation}`
-      if (scope !== snapshotScopeRef.current) return false
-      const requestGeneration = ++snapshotGenerationRef.current
-      if (showLoading && !workspaceRef.current) setLoadState("loading")
-      const token = await getAccessToken()
-      if (
-        requestGeneration !== snapshotGenerationRef.current ||
-        scope !== snapshotScopeRef.current
-      ) {
-        return false
-      }
-      if (!token) {
-        setLoadState("unauthorized")
-        return false
-      }
-      const result = await getWorkspace({
-        client: portalClient(token),
-        query: {
-          practiceId: selectedPractice,
-          locationId: selectedLocation,
-        },
-      }).catch(() => undefined)
-      if (
-        requestGeneration !== snapshotGenerationRef.current ||
-        scope !== snapshotScopeRef.current
-      ) {
-        return false
-      }
-      if (!result?.data) {
-        const status = result?.response?.status
-        if (status === 401 || status === 403) {
-          setLoadState("unauthorized")
-        } else if (!workspaceRef.current) {
-          setLoadState("unavailable")
-        }
-        return false
-      }
-      if (
-        workspaceRef.current &&
-        result.data.version < workspaceRef.current.version
-      ) {
-        return true
-      }
-      workspaceRef.current = result.data
-      setWorkspace(result.data)
-      setLoadState("ready")
-      return true
-    },
-    [],
-  )
-
   const loadTasks = useCallback(
     async (cursor = "", append = false) => {
       if (!practiceID) return
@@ -760,21 +683,19 @@ export function TaskWorkspaceShell() {
   }
 
   async function markEngagementRead(phone: string) {
+    if (workspaceRef.current?.platformOperator) return
     const unreadThreadIDs = messageThreadsRef.current
       .filter((thread) => thread.externalPhone === phone && thread.unread)
       .map((thread) => thread.id)
     if (unreadThreadIDs.length === 0) return
     const token = await getAccessToken()
     if (!token) return
-    const supportSessionID = workspaceRef.current?.supportMode?.id ?? ""
     const results = await Promise.all(
       unreadThreadIDs.map(async (threadID) => {
         const result = await markMessageThreadRead({
           client: portalClient(token),
           path: { threadId: threadID },
-          body: {
-            ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
-          },
+          body: {},
         }).catch(() => undefined)
         return result?.response?.ok ? threadID : ""
       }),
@@ -1000,11 +921,16 @@ export function TaskWorkspaceShell() {
           nextCursor={nextCursor}
           messageNextCursor={messageNextCursor}
           connection={connection}
+          analyticsActive={view === "analytics"}
           onSearchChange={(value) => {
             setSearch(value)
             setEngagementError("")
           }}
           onSearchSubmit={submitPhoneSearch}
+          onAnalyticsSelect={() => {
+            setContextView("none")
+            setView("analytics")
+          }}
           onEngagementSelect={selectEngagement}
           onTaskSelect={selectTask}
           onLoadMore={() => void loadTasks(nextCursor, true)}
@@ -1017,53 +943,26 @@ export function TaskWorkspaceShell() {
           data-workspace-version={workspace.version}
           className="min-w-0"
         >
-          {workspace.supportMode && (
-            <SupportBanner
-              supportMode={workspace.supportMode}
-              onChanged={() => void loadSnapshot(practiceID, locationID, false)}
-            />
-          )}
           {view !== "engagement" && (
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
               <SidebarTrigger />
               <div className="flex-1" />
               <CallingAvailabilityControl />
-              {workspace.platformOperator && !workspace.supportMode && (
-                <SupportDialog
-                  practiceID={practiceID}
-                  onEntered={() =>
-                    void loadSnapshot(practiceID, locationID, false)
-                  }
-                />
-              )}
             </header>
           )}
-          {view === "engagement" && selectedEngagement ? (
+          {view === "analytics" ? (
+            <OperatorAnalytics />
+          ) : view === "engagement" && selectedEngagement ? (
             <div className="relative flex min-h-0 flex-1 bg-muted/20">
               <div className="flex min-h-0 min-w-0 flex-1 bg-background">
                 <EngagementWorkspace
                   key={selectedEngagement.phone}
                   engagement={selectedEngagement}
                   practiceID={practiceID}
-                  supportSessionID={workspace.supportMode?.id ?? ""}
-                  canMutate={
-                    !workspace.platformOperator || Boolean(workspace.supportMode)
-                  }
+                  canMutate
                   revision={workspaceRevision}
                   headerLeading={<SidebarTrigger />}
-                  headerTrailing={
-                    <>
-                      <CallingAvailabilityControl />
-                      {workspace.platformOperator && !workspace.supportMode && (
-                        <SupportDialog
-                          practiceID={practiceID}
-                          onEntered={() =>
-                            void loadSnapshot(practiceID, locationID, false)
-                          }
-                        />
-                      )}
-                    </>
-                  }
+                  headerTrailing={<CallingAvailabilityControl />}
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}
@@ -1096,11 +995,7 @@ export function TaskWorkspaceShell() {
                         task={selectedTask}
                         activeCall={historicalCall ?? activeCall}
                         view={contextView}
-                        supportSessionID={workspace.supportMode?.id ?? ""}
-                        canMutate={
-                          !workspace.platformOperator ||
-                          Boolean(workspace.supportMode)
-                        }
+                        canMutate
                         historyHint={workspaceRevision}
                         taskCallPending={Boolean(taskCallRequest)}
                         taskCallError={taskCallError}
@@ -1343,144 +1238,6 @@ function writeRecentInboxes(
   window.sessionStorage.setItem(
     recentInboxesKey(userSubject, practiceID),
     JSON.stringify(engagements),
-  )
-}
-
-function SupportDialog({
-  practiceID,
-  onEntered,
-}: {
-  practiceID: string
-  onEntered: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState("")
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setPending(true)
-    setError("")
-    const data = new FormData(event.currentTarget)
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      setError("Your authentication needs to be refreshed.")
-      return
-    }
-    const result = await enterSupportMode({
-      client: portalClient(token),
-      body: {
-        practiceId: practiceID,
-        reason: String(data.get("reason") ?? ""),
-        durationMinutes: Number(data.get("duration") ?? 30),
-      },
-    }).catch(() => undefined)
-    setPending(false)
-    if (!result?.data) {
-      setError("Support Mode could not be entered.")
-      return
-    }
-    setOpen(false)
-    onEntered()
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>
-        <ShieldCheckIcon />
-        Enter Support Mode
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Enter Practice-scoped Support Mode</DialogTitle>
-          <DialogDescription>
-            Your Platform Operator identity remains the actor for every Task
-            change.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit}>
-          <FieldGroup>
-            <Field data-invalid={Boolean(error)}>
-              <FieldLabel htmlFor="support-reason">Reason</FieldLabel>
-              <Input
-                id="support-reason"
-                name="reason"
-                minLength={8}
-                maxLength={240}
-                required
-              />
-              <FieldDescription>
-                The reason is recorded with supported mutations.
-              </FieldDescription>
-              <FieldError>{error}</FieldError>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="support-duration">Duration</FieldLabel>
-              <NativeSelect
-                id="support-duration"
-                name="duration"
-                defaultValue="30"
-              >
-                <NativeSelectOption value="15">15 minutes</NativeSelectOption>
-                <NativeSelectOption value="30">30 minutes</NativeSelectOption>
-                <NativeSelectOption value="60">1 hour</NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <DialogFooter>
-              <Button type="submit" disabled={pending}>
-                {pending && <Spinner />}
-                Enter Support Mode
-              </Button>
-            </DialogFooter>
-          </FieldGroup>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function SupportBanner({
-  supportMode,
-  onChanged,
-}: {
-  supportMode: NonNullable<WorkspaceSnapshot["supportMode"]>
-  onChanged: () => void
-}) {
-  const [pending, setPending] = useState(false)
-
-  async function exitSupport() {
-    setPending(true)
-    const token = await getAccessToken()
-    if (token) {
-      await revokeSupportMode({
-        client: portalClient(token),
-        path: { supportSessionId: supportMode.id },
-      })
-    }
-    setPending(false)
-    onChanged()
-  }
-
-  return (
-    <div
-      role="status"
-      className="flex items-center gap-3 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[13px]"
-    >
-      <ShieldCheckIcon className="size-4 stroke-[1.75] text-warning" />
-      <span className="min-w-0 flex-1 truncate">
-        Support Mode active · {supportMode.reason}
-      </span>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => void exitSupport()}
-        disabled={pending}
-      >
-        {pending && <Spinner />}
-        Exit
-      </Button>
-    </div>
   )
 }
 

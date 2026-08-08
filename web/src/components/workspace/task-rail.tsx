@@ -13,6 +13,7 @@ import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
   BotIcon,
+  ChartNoAxesCombinedIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
   FolderIcon,
@@ -80,8 +81,10 @@ type TaskRailProps = {
   nextCursor: string
   messageNextCursor: string
   connection: ConnectionState
+  analyticsActive: boolean
   onSearchChange: (search: string) => void
   onSearchSubmit: () => void
+  onAnalyticsSelect: () => void
   onEngagementSelect: (engagement: EngagementSummary) => void
   onTaskSelect: (task: Task) => void
   onLoadMore: () => void
@@ -105,8 +108,10 @@ export function TaskRail({
   nextCursor,
   messageNextCursor,
   connection,
+  analyticsActive,
   onSearchChange,
   onSearchSubmit,
+  onAnalyticsSelect,
   onEngagementSelect,
   onTaskSelect,
   onLoadMore,
@@ -356,6 +361,18 @@ export function TaskRail({
         </SidebarContent>
         <SidebarFooter className="p-2">
           <SidebarMenu>
+            {discovery.platformOperator && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={analyticsActive}
+                  tooltip="Analytics"
+                  onClick={onAnalyticsSelect}
+                >
+                  <ChartNoAxesCombinedIcon />
+                  <span>Analytics</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip={resolvedTheme === "dark" ? "Use light mode" : "Use dark mode"}

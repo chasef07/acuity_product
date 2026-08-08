@@ -100,7 +100,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 59. As an invited user, I want to verify my email and create my own password, so that no administrator creates or knows my credentials.
 60. As an administrator, I want every current and future location in my practice to be available automatically, so that adding a location does not silently exclude practice leadership.
 61. As a Platform Operator, I want to discover every practice and location while working inside an explicit active scope, so that I can support customers without mixing their work.
-62. As a Platform Operator, I want customer-data changes to require a reasoned, time-limited Support Mode that preserves my real identity, so that elevated support access is visible and auditable.
+62. As a Platform Operator, I want to change customer data directly under my real identity, so that operational work stays simple and every elevated action remains auditable.
 
 ## Implementation Decisions
 
@@ -121,8 +121,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 - **Location:** one physical or operational office within a practice.
 - **Abita office route:** one Abita Agent office key mapped to the operational Location that owns its calls and Tasks. Multiple Abita office routes may converge on one Location.
 - **Membership:** one user's Admin or Staff role in one practice plus an `ALL` or `SELECTED` location scope.
-- **Platform Operator:** an internal Acuity Health user with global visibility and explicit audited Support Mode for customer-data changes.
-- **Support Mode:** a time-limited, practice-scoped mutation grant for a Platform Operator; it never impersonates a customer user.
+- **Platform Operator:** an internal Acuity Health user with global visibility and direct audited write authority under their own identity.
 - **Task:** the primary object and one accountable piece of patient work.
 - **Interaction:** a call, voicemail, SMS message, or staff note that may exist with or without a task.
 - **Contact context:** a snapshot of the phone number, optional name, and handoff details known for one task or interaction. It is not a global person or verified patient identity.
@@ -379,7 +378,6 @@ all Go roles ── bounded connections ──> PostgreSQL
 - **PlatformOperator** for the small set of internal Acuity users with global visibility
 - **Membership** with Admin or Staff role and `ALL` or `SELECTED` location scope
 - **MembershipLocation** entries for each explicitly selected location
-- **SupportSession** with Platform Operator, practice, reason, start, expiration, and revocation
 - **Invitation** with email, practice, role, location scope, expiration, revocation, and acceptance state
 - **ServiceIdentity** with minimum practice/location scope
 - **Task** with tenant, location, contact-context snapshot, source, title, status, priority, optional assignee, version, optional due time, and completion metadata
@@ -436,7 +434,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Admin always has `ALL` location scope for the practice. Staff may have `ALL` or `SELECTED` scope.
 - `ALL` includes every current and future location in the practice. `SELECTED` includes only explicit membership-location grants.
 - Platform Operators are not duplicated as Admin memberships in every practice. They can discover and read every current and future practice/location but still select an explicit active practice and location.
-- A Platform Operator must enter time-limited, practice-scoped Support Mode with a reason before mutating customer data. The UI shows a persistent banner, every action records the real Platform Operator, and expiration or revocation ends mutation access. Support Mode never impersonates a customer user.
+- A Platform Operator mutates customer data directly under their real identity. Every operator mutation records the real Platform Operator in the same transaction and never impersonates a customer user.
 - Each invitation is email-bound, expiring, and revocable and specifies practice, role, and location scope before send.
 - Practice, Location, Abita Office Route, Platform Operator, and initial invitation records are created through an auditable provisioning path that accepts business facts, not human passwords. Provisioning may map several Abita office keys to one operational Location, but each office key has exactly one Location owner within its Practice. A clean-launch contract may require empty Access-owned state and must fail inside the provisioning transaction before customer-data mutation when that precondition is false. Better Auth User emptiness remains a separate migration preflight because Better Auth owns that table.
 - Integration credentials are separate service identities with the minimum required practice/location scope. Mutations record `actor_type=service` and the stable service actor ID.
@@ -582,7 +580,7 @@ The August 6 release does not ship until all conditions are proven:
 17. The maximum connection budget holds under peak traffic, webhook bursts, worker backlog, SSE load, and an overlapping rollout.
 18. Cloud SQL outage/restore, runtime termination, webhook retry, worker recovery, SSE reconnect, and traffic rollback are rehearsed without data loss or false success.
 19. The approved capacity envelope and burst factor are exercised successfully with measurable database, pool, runtime, and provider headroom.
-20. Invite-only access, dynamic location scope, Platform Operator Support Mode, and the persistent sidebar workspace pass their authorization and browser acceptance journeys.
+20. Invite-only access, dynamic location scope, direct audited Platform Operator writes, and the persistent sidebar workspace pass their authorization and browser acceptance journeys.
 
 ## Rollout Plan
 
