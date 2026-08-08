@@ -50,10 +50,12 @@ card. Refetches preserve the current selection; creation adds no modal, sound,
 notification, or automatic focus change.
 
 Provisioning maps each Abita source office key to one controlled operational
-Location. Several source offices may converge on one Location; Hollywood and
-Sweetwater intentionally converge on South Florida Medical. Production routes
-remain inert until an operator runs the reviewed one-time provisioning command
-and separately completes the provider and service-credential gates.
+Location. Hollywood, Sweetwater, Sweetwater Optical, and North Miami Beach
+Optical remain independent authorization scopes. The `sweetwater-optical`
+route is provisioned but remains inert until its upstream source and provider
+configuration are separately enabled. Production routes remain inert until an
+operator runs the reviewed provisioning command and separately completes the
+provider and service-credential gates.
 
 ## Deterministic proof
 
