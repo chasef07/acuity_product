@@ -76,6 +76,7 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
+import { normalizeUSPhone } from "@/lib/phone"
 import {
   createWorkspaceSync,
   type WorkspaceSync,
@@ -1216,13 +1217,6 @@ function taskEngagement(task: Task): EngagementSummary {
     openTaskCount: task.state === "OPEN" ? 1 : 0,
     unread: task.unread,
   }
-}
-
-function normalizeUSPhone(value: string) {
-  const digits = value.replace(/\D/g, "")
-  if (digits.length === 10) return `+1${digits}`
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
-  return ""
 }
 
 function newNumberEngagement(

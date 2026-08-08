@@ -9,6 +9,7 @@ const telnyxFixtureURL =
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 
 test("Slice 5 sends, receives, and turns exact-phone correspondence into explicit work", async ({
+  context,
   page,
 }) => {
   test.setTimeout(180_000)
@@ -47,8 +48,14 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(page.getByRole("button", { name: "Recent" })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
-  await openNumberInbox(page, "+1 (727) 555-0199")
+  await openNumberInbox(page, "7275550199")
   await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
+  await context.grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.getByRole("button", { name: "Copy phone number" }).click()
+  await expect(page.getByRole("button", { name: "Number copied" })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("+17275550199")
 
   const outgoingText = "Your records are ready for pickup."
   await page
@@ -129,7 +136,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   expect(delivery.ok()).toBeTruthy()
   await expect(outgoing.getByText("Delivered", { exact: true })).toBeVisible()
 
-  await openNumberInbox(page, "+1 (727) 555-0198")
+  await openNumberInbox(page, "(727) 555-0198")
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Keep this second conversation selected.")
