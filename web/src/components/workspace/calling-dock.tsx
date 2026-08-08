@@ -70,7 +70,7 @@ import { cn } from "@/lib/utils"
 
 type CallingDockProps = {
   children: ReactNode
-  platformOperator: boolean
+  callingEnabled: boolean
   practiceID: string
   workspaceRevision: number
   taskCallRequest?: { id: string; taskID: string }
@@ -89,7 +89,7 @@ type CallingNavigationContext = {
   available: boolean
   ownsSoftphone: boolean
   outboundPending: boolean
-  platformOperator: boolean
+  callingEnabled: boolean
   setAvailability: (available: boolean) => void
   startOutbound: (locationID: string, destination: string) => Promise<string | undefined>
 }
@@ -113,10 +113,10 @@ export function CallingAvailabilityControl() {
     availabilityPending,
     available,
     ownsSoftphone,
-    platformOperator,
+    callingEnabled,
     setAvailability,
   } = useCallingNavigation()
-  if (platformOperator) return null
+  if (!callingEnabled) return null
   return (
     <div className="ml-auto flex items-center gap-2">
       <span className="text-sm font-medium">Availability</span>
@@ -143,7 +143,7 @@ export function CallingAvailabilityControl() {
 
 export function CallingDock({
   children,
-  platformOperator,
+  callingEnabled,
   practiceID,
   workspaceRevision,
   taskCallRequest,
@@ -277,6 +277,7 @@ export function CallingDock({
             destination: string
           },
     ) => {
+      if (!callingEnabled) return "Calling is not enabled for this account."
       if (!lease?.owner) return "Enable or take over calling first."
       if (mediaState !== "ready") return "Browser calling audio is not ready."
       if (activeCall || expectedCallRef.current) {
@@ -315,7 +316,7 @@ export function CallingDock({
       availabilityRef.current = false
       return undefined
     },
-    [activeCall, applyActiveCall, lease?.owner, mediaState, sessionID],
+    [activeCall, applyActiveCall, callingEnabled, lease?.owner, mediaState, sessionID],
   )
 
   useEffect(() => {
@@ -746,16 +747,16 @@ export function CallingDock({
   }, [applyActiveCall, connectMedia, refreshCall, sessionID, updateReadiness])
 
   useEffect(() => {
-    if (platformOperator) return
+    if (!callingEnabled && !lease?.owner) return
     const timeout = window.setTimeout(() => {
       void refreshOwnership()
       void refreshCallingState()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [platformOperator, refreshCallingState, refreshOwnership, workspaceRevision])
+  }, [callingEnabled, lease?.owner, refreshCallingState, refreshOwnership, workspaceRevision])
 
   useEffect(() => {
-    if (platformOperator || !lease?.owner) return
+    if (!lease?.owner) return
     let timeout = 0
     let cancelled = false
     const schedule = () => {
@@ -780,13 +781,20 @@ export function CallingDock({
       window.clearTimeout(timeout)
       document.removeEventListener("visibilitychange", handleVisibility)
     }
-  }, [lease?.owner, platformOperator, refreshCall, refreshCallingState])
+  }, [lease?.owner, refreshCall, refreshCallingState])
 
   useEffect(() => {
-    if (platformOperator || !lease?.owner) return
+    if (!lease?.owner) return
     const interval = window.setInterval(() => void refreshOwnership(), 5_000)
     return () => window.clearInterval(interval)
-  }, [lease?.owner, platformOperator, refreshOwnership])
+  }, [lease?.owner, refreshOwnership])
+
+  useEffect(() => {
+    if (callingEnabled || !ownerRef.current) return
+    rememberAvailabilityIntent(false)
+    setAvailabilityPending(true)
+    void updateReadiness(false)
+  }, [callingEnabled, rememberAvailabilityIntent, updateReadiness])
 
   useEffect(() => {
     const activeLegIDs = new Set(ringingLegs.map((leg) => leg.callLegId))
@@ -1067,7 +1075,7 @@ export function CallingDock({
         available,
         ownsSoftphone: Boolean(lease?.owner),
         outboundPending,
-        platformOperator,
+        callingEnabled,
         setAvailability: (nextAvailable) =>
           void setAvailabilityIntent(nextAvailable),
         startOutbound: startNumberCall,
@@ -1075,7 +1083,7 @@ export function CallingDock({
     >
       {children}
       <audio id="acuity-calling-remote-audio" autoPlay className="hidden" />
-      {!platformOperator && earliest && !activeCall && (
+      {(callingEnabled || lease?.owner) && earliest && !activeCall && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
             ringingLegs={ringingLegs}
@@ -1084,7 +1092,7 @@ export function CallingDock({
           />
         </div>
       )}
-      {!platformOperator && activeCall && (
+      {activeCall && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Active call controls" size="sm">
             <CardHeader>
@@ -1151,7 +1159,7 @@ export function CallingDock({
           </Card>
         </div>
       )}
-      {!platformOperator && pendingOutcome && !activeCall && !earliest && (
+      {pendingOutcome && !activeCall && !earliest && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Call outcome" size="sm">
             <CardHeader>
@@ -1183,7 +1191,7 @@ export function CallingDock({
           </Card>
         </div>
       )}
-      {!platformOperator && !activeCall && !earliest && error && (
+      {(callingEnabled || lease?.owner) && !activeCall && !earliest && error && (
         <Alert
           aria-label="Calling status"
           variant="destructive"

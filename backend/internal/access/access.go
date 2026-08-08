@@ -159,14 +159,22 @@ type Authorization struct {
 
 type PracticeAccess struct {
 	Practice
-	Membership *Membership `json:"membership,omitempty"`
-	Locations  []Location  `json:"locations"`
+	Membership     *Membership `json:"membership,omitempty"`
+	Locations      []Location  `json:"locations"`
+	CallingEnabled bool        `json:"callingEnabled"`
 }
 
 type Discovery struct {
 	Actor            Actor            `json:"actor"`
 	PlatformOperator bool             `json:"platformOperator"`
 	Practices        []PracticeAccess `json:"practices"`
+}
+
+// CallingEnabled is the shared capability rule for human calling. Platform
+// Operators need an explicit Staff Membership; global visibility is not enough.
+func CallingEnabled(platformOperator bool, membership *Membership) bool {
+	return membership != nil &&
+		(!platformOperator || membership.Role == RoleStaff)
 }
 
 type AddLocationCommand struct {
@@ -524,48 +532,17 @@ func (m *Module) AcceptInvitation(ctx context.Context, identity Identity, token 
 		return authorized, nil
 	}
 
-	var membershipID string
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO access_memberships (
-			user_subject, email, practice_id, role, location_scope, invitation_id
-		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id::text
-	`, identity.Subject, invitationEmail, practiceID, role, scope, invitationID).Scan(&membershipID); err != nil {
-		return Authorization{}, fmt.Errorf("create membership: %w", err)
-	}
-	if scope == LocationScopeSelected {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO access_membership_locations (membership_id, location_id, practice_id)
-			SELECT $1, location_id, practice_id
-			FROM access_invitation_locations
-			WHERE invitation_id = $2
-		`, membershipID, invitationID); err != nil {
-			return Authorization{}, fmt.Errorf("copy selected location grants: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE access_invitations
-		SET accepted_at = $2, accepted_by_subject = $3
-		WHERE id = $1
-	`, invitationID, m.now(), identity.Subject); err != nil {
-		return Authorization{}, fmt.Errorf("mark invitation accepted: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, action, details
-		)
-		VALUES (
-			'HUMAN', $1, $2, 'invitation.accepted',
-			jsonb_build_object(
-				'invitationId', $3::text,
-				'membershipId', $4::text
-			)
-		)
-	`, identity.Subject, practiceID, invitationID, membershipID); err != nil {
-		return Authorization{}, fmt.Errorf("audit invitation acceptance: %w", err)
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+	_, err = m.activateInvitation(ctx, tx, identity, invitationActivation{
+		ID:                 invitationID,
+		PracticeID:         practiceID,
+		Email:              invitationEmail,
+		Role:               role,
+		Scope:              scope,
+		AuditActorType:     "HUMAN",
+		AuditAction:        "invitation.accepted",
+		AuditInvitationKey: "invitationId",
+	})
+	if err != nil {
 		return Authorization{}, err
 	}
 
@@ -759,24 +736,27 @@ func (m *Module) LockMembershipAuthorization(
 		strings.TrimSpace(locationID) == "" {
 		return Authorization{}, ErrDenied
 	}
-	if _, isOperator, err := bindPlatformOperator(ctx, tx, identity); err != nil {
+	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	if err != nil {
 		return Authorization{}, err
-	} else if isOperator {
-		return Authorization{}, ErrDenied
 	}
 	var membershipID string
+	var role Role
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text
+		SELECT id::text, role
 		FROM access_memberships
 		WHERE user_subject = $1
 			AND practice_id = $2
 			AND revoked_at IS NULL
 		FOR SHARE
-	`, identity.Subject, practiceID).Scan(&membershipID); err != nil {
+	`, identity.Subject, practiceID).Scan(&membershipID, &role); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Authorization{}, ErrDenied
 		}
 		return Authorization{}, fmt.Errorf("lock Membership authorization: %w", err)
+	}
+	if !CallingEnabled(isOperator, &Membership{Role: role}) {
+		return Authorization{}, ErrDenied
 	}
 	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
 	if err != nil {
@@ -945,8 +925,9 @@ func (m *Module) LockServiceAuthorization(
 	}, nil
 }
 
-// LockOperationalActor holds the actor's current Memberships against revocation,
-// returns their Practice IDs, and applies Platform Operator precedence.
+// LockOperationalActor holds the actor's current Memberships against revocation
+// and returns their operational Practice IDs. Platform Operators need an
+// explicit Staff Membership; their global visibility alone is not operational.
 func (m *Module) LockOperationalActor(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -957,13 +938,12 @@ func (m *Module) LockOperationalActor(
 		strings.TrimSpace(identity.Subject) == "" {
 		return nil, ErrDenied
 	}
-	if _, isOperator, err := bindPlatformOperator(ctx, tx, identity); err != nil {
+	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	if err != nil {
 		return nil, err
-	} else if isOperator {
-		return nil, ErrDenied
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT practice_id::text
+		SELECT practice_id::text, role
 		FROM access_memberships
 		WHERE user_subject = $1
 			AND revoked_at IS NULL
@@ -977,8 +957,12 @@ func (m *Module) LockOperationalActor(
 	practiceIDs := []string{}
 	for rows.Next() {
 		var practiceID string
-		if err := rows.Scan(&practiceID); err != nil {
+		var role Role
+		if err := rows.Scan(&practiceID, &role); err != nil {
 			return nil, fmt.Errorf("scan operational Practice: %w", err)
+		}
+		if !CallingEnabled(isOperator, &Membership{Role: role}) {
+			continue
 		}
 		practiceIDs = append(practiceIDs, practiceID)
 	}
@@ -1049,9 +1033,10 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 			}
 			membership := authorization.Membership
 			result.Practices = append(result.Practices, PracticeAccess{
-				Practice:   authorization.Practice,
-				Membership: &membership,
-				Locations:  authorization.Locations,
+				Practice:       authorization.Practice,
+				Membership:     &membership,
+				Locations:      authorization.Locations,
+				CallingEnabled: CallingEnabled(false, &membership),
 			})
 		}
 		sort.Slice(result.Practices, func(i, j int) bool {
@@ -1066,6 +1051,9 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return result, nil
 	}
 	_ = operatorID
+	if err := m.activatePendingOperatorMemberships(ctx, tx, identity); err != nil {
+		return Discovery{}, err
+	}
 
 	result := Discovery{
 		Actor: Actor{
@@ -1097,7 +1085,43 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return Discovery{}, fmt.Errorf("iterate discovered Practices: %w", err)
 	}
 	rows.Close()
+	memberships := make(map[string]Membership)
+	rows, err = tx.Query(ctx, `
+		SELECT practice_id::text, id::text, role, location_scope
+		FROM access_memberships
+		WHERE user_subject = $1 AND revoked_at IS NULL
+		ORDER BY practice_id
+	`, identity.Subject)
+	if err != nil {
+		return Discovery{}, fmt.Errorf("discover operator Memberships: %w", err)
+	}
+	for rows.Next() {
+		var practiceID string
+		var membership Membership
+		if err := rows.Scan(
+			&practiceID,
+			&membership.ID,
+			&membership.Role,
+			&membership.LocationScope,
+		); err != nil {
+			rows.Close()
+			return Discovery{}, fmt.Errorf("scan operator Membership: %w", err)
+		}
+		memberships[practiceID] = membership
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Discovery{}, fmt.Errorf("iterate operator Memberships: %w", err)
+	}
+	rows.Close()
 	for index := range result.Practices {
+		if membership, ok := memberships[result.Practices[index].ID]; ok {
+			result.Practices[index].Membership = &membership
+		}
+		result.Practices[index].CallingEnabled = CallingEnabled(
+			true,
+			result.Practices[index].Membership,
+		)
 		result.Practices[index].Locations, err = loadLocations(ctx, tx, result.Practices[index].ID)
 		if err != nil {
 			return Discovery{}, err
@@ -1107,6 +1131,137 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return Discovery{}, fmt.Errorf("commit actor discovery: %w", err)
 	}
 	return result, nil
+}
+
+func (m *Module) activatePendingOperatorMemberships(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+) error {
+	type pendingAccess struct {
+		invitationID string
+		practiceID   string
+		role         Role
+		scope        LocationScope
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id::text, practice_id::text, role, location_scope
+		FROM access_invitations
+		WHERE email = $1
+			AND revoked_at IS NULL
+			AND accepted_at IS NULL
+			AND expires_at > $2
+		ORDER BY created_at, id
+		FOR UPDATE
+	`, normalizeEmail(identity.Email), m.now())
+	if err != nil {
+		return fmt.Errorf("load operator access grants: %w", err)
+	}
+	pending := []pendingAccess{}
+	for rows.Next() {
+		var item pendingAccess
+		if err := rows.Scan(
+			&item.invitationID,
+			&item.practiceID,
+			&item.role,
+			&item.scope,
+		); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan operator access grant: %w", err)
+		}
+		pending = append(pending, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate operator access grants: %w", err)
+	}
+	rows.Close()
+
+	for _, item := range pending {
+		_, err := m.activateInvitation(ctx, tx, identity, invitationActivation{
+			ID:                 item.invitationID,
+			PracticeID:         item.practiceID,
+			Email:              normalizeEmail(identity.Email),
+			Role:               item.role,
+			Scope:              item.scope,
+			AuditActorType:     "PLATFORM_OPERATOR",
+			AuditAction:        "access_grant.claimed",
+			AuditInvitationKey: "accessGrantId",
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type invitationActivation struct {
+	ID                 string
+	PracticeID         string
+	Email              string
+	Role               Role
+	Scope              LocationScope
+	AuditActorType     string
+	AuditAction        string
+	AuditInvitationKey string
+}
+
+func (m *Module) activateInvitation(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	invitation invitationActivation,
+) (string, error) {
+	var membershipID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO access_memberships (
+			user_subject, email, practice_id, role, location_scope, invitation_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id::text
+	`, identity.Subject, invitation.Email, invitation.PracticeID, invitation.Role,
+		invitation.Scope, invitation.ID).Scan(&membershipID); err != nil {
+		return "", fmt.Errorf("activate invitation Membership: %w", err)
+	}
+	if invitation.Scope == LocationScopeSelected {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO access_membership_locations (
+				membership_id, location_id, practice_id
+			)
+			SELECT $1, location_id, practice_id
+			FROM access_invitation_locations
+			WHERE invitation_id = $2
+		`, membershipID, invitation.ID); err != nil {
+			return "", fmt.Errorf("activate invitation Location grants: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE access_invitations
+		SET accepted_at = $2, accepted_by_subject = $3
+		WHERE id = $1
+	`, invitation.ID, m.now(), identity.Subject); err != nil {
+		return "", fmt.Errorf("mark invitation accepted: %w", err)
+	}
+	details, err := json.Marshal(map[string]string{
+		invitation.AuditInvitationKey: invitation.ID,
+		"membershipId":                membershipID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode invitation audit details: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO access_audit_events (
+			actor_type, actor_subject, practice_id, action, details
+		)
+		VALUES ($1, $2, $3, $4, $5)
+	`, invitation.AuditActorType, identity.Subject, invitation.PracticeID,
+		invitation.AuditAction, details); err != nil {
+		return "", fmt.Errorf("audit invitation activation: %w", err)
+	}
+	if _, err := m.RecordWorkspaceChange(ctx, tx, invitation.PracticeID); err != nil {
+		return "", err
+	}
+	return membershipID, nil
 }
 
 func (m *Module) RevokeInvitation(

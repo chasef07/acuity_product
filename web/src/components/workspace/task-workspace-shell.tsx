@@ -1,6 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
@@ -845,7 +851,7 @@ export function TaskWorkspaceShell() {
     }
   }
 
-  if (session.isPending || (loadState === "loading" && !workspace)) {
+  if (session.isPending || (loadState === "loading" && !discovery)) {
     return <WorkspaceLoading />
   }
   if (loadState === "unauthorized") {
@@ -860,18 +866,13 @@ export function TaskWorkspaceShell() {
       />
     )
   }
-  if (loadState === "unavailable" || !discovery || !workspace) {
+  if (!discovery) {
     return (
       <WorkspaceFailure
         title="Workspace temporarily disconnected"
         description="No data was reconstructed. Retry the authoritative request when the service is available."
         action="Retry"
         onAction={() => {
-          if (discovery && practiceID && locationID) {
-            setLoadState("loading")
-            workspaceSyncRef.current?.refresh()
-            return
-          }
           void loadAuthority()
         }}
       />
@@ -881,10 +882,11 @@ export function TaskWorkspaceShell() {
   const practice =
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
-  return (
+  const callingEnabled = practice.callingEnabled
+  const callingShell = (children: ReactNode) => (
     <SidebarProvider>
       <CallingDock
-        platformOperator={workspace.platformOperator}
+        callingEnabled={callingEnabled}
         practiceID={practiceID}
         workspaceRevision={workspaceRevision}
         taskCallRequest={taskCallRequest}
@@ -897,6 +899,32 @@ export function TaskWorkspaceShell() {
         onCallChanged={handleCallChanged}
         onDisposition={(result) => void handleDisposition(result)}
       >
+        {children}
+      </CallingDock>
+    </SidebarProvider>
+  )
+  if (loadState === "loading" && !workspace) {
+    return callingShell(<WorkspaceLoading />)
+  }
+  if (loadState === "unavailable" || !workspace) {
+    return callingShell(
+      <WorkspaceFailure
+        title="Workspace temporarily disconnected"
+        description="No data was reconstructed. Retry the authoritative request when the service is available."
+        action="Retry"
+        onAction={() => {
+          if (practiceID && locationID) {
+            setLoadState("loading")
+            workspaceSyncRef.current?.refresh()
+            return
+          }
+          void loadAuthority()
+        }}
+      />,
+    )
+  }
+  return callingShell(
+    <>
         <TaskRail
           discovery={discovery}
           practice={practice}
@@ -996,6 +1024,7 @@ export function TaskWorkspaceShell() {
                         activeCall={historicalCall ?? activeCall}
                         view={contextView}
                         canMutate
+                        canCall={callingEnabled}
                         historyHint={workspaceRevision}
                         taskCallPending={Boolean(taskCallRequest)}
                         taskCallError={taskCallError}
@@ -1026,8 +1055,7 @@ export function TaskWorkspaceShell() {
             <section aria-label="No number selected" className="min-h-0 flex-1" />
           )}
         </SidebarInset>
-      </CallingDock>
-    </SidebarProvider>
+    </>,
   )
 }
 

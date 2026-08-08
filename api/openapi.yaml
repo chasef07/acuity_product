@@ -1660,7 +1660,7 @@ components:
         - $ref: "#/components/schemas/Practice"
         - type: object
           additionalProperties: false
-          required: [locations]
+          required: [locations, callingEnabled]
           properties:
             membership:
               $ref: "#/components/schemas/Membership"
@@ -1668,6 +1668,8 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Location"
+            callingEnabled:
+              type: boolean
     AccessDiscovery:
       type: object
       additionalProperties: false

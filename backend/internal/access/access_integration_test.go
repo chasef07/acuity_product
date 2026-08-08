@@ -685,6 +685,121 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 	}
 }
 
+func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	module := access.New(pool, func() time.Time { return now })
+	operator := access.Identity{
+		Subject:       "founder-subject",
+		Email:         "founder@acuity.test",
+		EmailVerified: true,
+	}
+
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "operator-staff-test",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{
+			{
+				Key:       "customer-practice",
+				Name:      "Customer Practice",
+				Locations: []access.LocationProvision{{Key: "customer", Name: "Customer"}},
+				Invitations: []access.InvitationProvision{{
+					Key:           "founder-customer-admin",
+					Email:         operator.Email,
+					Role:          access.RoleAdmin,
+					LocationScope: access.LocationScopeAll,
+					ExpiresAt:     now.Add(time.Hour),
+				}},
+			},
+			{
+				Key:       "acuity-demo",
+				Name:      "Acuity Demo",
+				Locations: []access.LocationProvision{{Key: "demo", Name: "Demo"}},
+				Invitations: []access.InvitationProvision{{
+					Key:           "founder-demo-staff",
+					Email:         operator.Email,
+					Role:          access.RoleStaff,
+					LocationScope: access.LocationScopeAll,
+					ExpiresAt:     now.Add(time.Hour),
+				}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("provision operator Staff access: %v", err)
+	}
+	eligibility, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
+		Email: operator.Email,
+	})
+	if err != nil || eligibility.Kind != access.InvitationKindPlatformOperator {
+		t.Fatalf("operator sign-up eligibility = %#v, err = %v", eligibility, err)
+	}
+
+	discovery, err := module.DiscoverActor(context.Background(), operator)
+	if err != nil {
+		t.Fatalf("discover dual-role operator: %v", err)
+	}
+	if !discovery.PlatformOperator || len(discovery.Practices) != 2 {
+		t.Fatalf("operator discovery = %#v", discovery)
+	}
+	var demo, customer access.PracticeAccess
+	for _, practice := range discovery.Practices {
+		switch practice.Name {
+		case "Acuity Demo":
+			demo = practice
+		case "Customer Practice":
+			customer = practice
+		}
+	}
+	if demo.Membership == nil || demo.Membership.Role != access.RoleStaff {
+		t.Fatalf("demo Membership = %#v", demo.Membership)
+	}
+	if !demo.CallingEnabled {
+		t.Fatal("demo Staff Membership did not enable calling")
+	}
+	if customer.Membership == nil || customer.Membership.Role != access.RoleAdmin {
+		t.Fatalf("customer Membership = %#v, want Admin", customer.Membership)
+	}
+	if customer.CallingEnabled {
+		t.Fatal("customer Admin Membership enabled operator calling")
+	}
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	practiceIDs, err := module.LockOperationalActor(context.Background(), tx, operator)
+	if err != nil {
+		t.Fatalf("lock dual-role operator: %v", err)
+	}
+	if len(practiceIDs) != 1 || practiceIDs[0] != demo.ID {
+		t.Fatalf("operational Practices = %#v, want only %s", practiceIDs, demo.ID)
+	}
+	if _, err := module.LockMembershipAuthorization(
+		context.Background(), tx, operator, demo.ID, demo.Locations[0].ID,
+	); err != nil {
+		t.Fatalf("authorize demo Staff operation: %v", err)
+	}
+	if _, err := module.LockMembershipAuthorization(
+		context.Background(), tx, operator, customer.ID, customer.Locations[0].ID,
+	); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("customer Staff authorization error = %v, want denied", err)
+	}
+
+	var operational bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1 FROM access_operational_users WHERE user_subject = $1
+		)
+	`, operator.Subject).Scan(&operational); err != nil {
+		t.Fatal(err)
+	}
+	if !operational {
+		t.Fatal("dual-role operator is missing from access_operational_users")
+	}
+}
+
 func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudited(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
