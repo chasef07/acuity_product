@@ -228,6 +228,9 @@ Visual system:
 
 - Staff explicitly toggle Available before receiving transfers.
 - Only staff authorized for the call's practice and location are eligible.
+- Platform Operator visibility alone never grants calling access. An operator
+  receives Staff calling controls only where the same identity has an explicit
+  active Staff Membership.
 - An AI-to-human transfer answers the caller, starts one 20-second ringback window, and asks Telnyx to dial one independent CallLeg for every available, authorized staff member for the Location.
 - The transfer creates no task.
 - The first eligible provider-confirmed Staff answer moves directly to `BRIDGE_PENDING` and commits one explicit Bridge command in the same PostgreSQL transaction.

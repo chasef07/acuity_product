@@ -28,6 +28,34 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		t.Fatalf("run production provisioning: %v", err)
 	}
 
+	operatorEmails := []string{}
+	operatorRows, err := pool.Query(context.Background(), `
+		SELECT email FROM access_platform_operators ORDER BY email
+	`)
+	if err != nil {
+		t.Fatalf("read Platform Operators: %v", err)
+	}
+	for operatorRows.Next() {
+		var email string
+		if err := operatorRows.Scan(&email); err != nil {
+			operatorRows.Close()
+			t.Fatalf("scan Platform Operator: %v", err)
+		}
+		operatorEmails = append(operatorEmails, email)
+	}
+	if err := operatorRows.Err(); err != nil {
+		operatorRows.Close()
+		t.Fatalf("iterate Platform Operators: %v", err)
+	}
+	operatorRows.Close()
+	wantOperatorEmails := []string{
+		"chase@acuityhealth.io",
+		"kyle@acuityhealth.io",
+	}
+	if !reflect.DeepEqual(operatorEmails, wantOperatorEmails) {
+		t.Fatalf("Platform Operators = %#v, want %#v", operatorEmails, wantOperatorEmails)
+	}
+
 	type route struct {
 		Practice string
 		Office   string
@@ -263,14 +291,24 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		t.Fatalf("voicemail greetings = %#v, want %#v", greetings, wantGreetings)
 	}
 
-	var invitationCount int
+	var invitationCount, demoInvitationCount int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM access_invitations
-	`).Scan(&invitationCount); err != nil {
+		SELECT count(*), count(*) FILTER (
+			WHERE practice.provisioning_key = 'acuity-demo'
+				AND invitation.email IN (
+					'chase@acuityhealth.io',
+					'kyle@acuityhealth.io'
+				)
+				AND invitation.role = 'STAFF'
+		)
+		FROM access_invitations invitation
+		JOIN access_practices practice ON practice.id = invitation.practice_id
+	`).Scan(&invitationCount, &demoInvitationCount); err != nil {
 		t.Fatalf("count provisioned invitations: %v", err)
 	}
-	if invitationCount != 0 {
-		t.Fatalf("provisioned invitations = %d, want 0", invitationCount)
+	if invitationCount != 2 || demoInvitationCount != 2 {
+		t.Fatalf("provisioned invitations = total:%d demo:%d, want 2 each",
+			invitationCount, demoInvitationCount)
 	}
 	var provisioned access.Provisioned
 	outputFile, err := os.Open(output)
@@ -281,8 +319,10 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if len(provisioned.Invitations) != 0 {
-		t.Fatalf("provisioning output invitations = %d, want 0", len(provisioned.Invitations))
+	if len(provisioned.Invitations) != 2 ||
+		provisioned.Invitations[0].Email != "chase@acuityhealth.io" ||
+		provisioned.Invitations[1].Email != "kyle@acuityhealth.io" {
+		t.Fatalf("provisioning output invitations = %#v", provisioned.Invitations)
 	}
 }
 
@@ -316,7 +356,7 @@ func ensureRuntimeRoles(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-func TestProductionProvisioningRejectsLegacyTestConfiguration(t *testing.T) {
+func TestProductionProvisioningReconcilesExistingConfiguration(t *testing.T) {
 	pool := testdb.Open(t)
 	ensureRuntimeRoles(t, pool)
 	if _, err := pool.Exec(context.Background(), `
@@ -332,8 +372,8 @@ func TestProductionProvisioningRejectsLegacyTestConfiguration(t *testing.T) {
 		),
 		ProvisioningOutput: filepath.Join(t.TempDir(), "provisioning-output.json"),
 	}, pool)
-	if err == nil || !strings.Contains(err.Error(), "requires empty Access state") {
-		t.Fatalf("legacy production provisioning error = %v", err)
+	if err != nil {
+		t.Fatalf("reconcile production provisioning: %v", err)
 	}
 
 	var practiceCount int
@@ -342,8 +382,8 @@ func TestProductionProvisioningRejectsLegacyTestConfiguration(t *testing.T) {
 	`).Scan(&practiceCount); err != nil {
 		t.Fatalf("count Practices after rejected provisioning: %v", err)
 	}
-	if practiceCount != 1 {
-		t.Fatalf("Practices after rejected provisioning = %d, want 1", practiceCount)
+	if practiceCount != 2 {
+		t.Fatalf("Practices after reconciled provisioning = %d, want 2", practiceCount)
 	}
 }
 

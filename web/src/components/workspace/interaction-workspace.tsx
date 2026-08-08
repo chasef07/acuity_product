@@ -41,6 +41,7 @@ type InteractionWorkspaceProps = {
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
   canMutate: boolean
+  canCall: boolean
   historyHint: number
   taskCallPending: boolean
   taskCallError: string
@@ -54,6 +55,7 @@ export function InteractionWorkspace({
   activeCall,
   view,
   canMutate,
+  canCall,
   historyHint,
   taskCallPending,
   taskCallError,
@@ -90,6 +92,7 @@ export function InteractionWorkspace({
         task={task}
         activeCall={activeCall}
         canMutate={canMutate}
+        canCall={canCall}
         historyHint={historyHint}
         taskCallPending={taskCallPending}
         taskCallError={taskCallError}
@@ -106,6 +109,7 @@ function TaskWorkspace({
   task,
   activeCall,
   canMutate,
+  canCall,
   historyHint,
   taskCallPending,
   taskCallError,
@@ -116,6 +120,7 @@ function TaskWorkspace({
   task: Task
   activeCall: CallingCall | undefined
   canMutate: boolean
+  canCall: boolean
   historyHint: number
   taskCallPending: boolean
   taskCallError: string
@@ -131,6 +136,7 @@ function TaskWorkspace({
   const [callReason, setCallReason] = useState("Checking Call route…")
 
   useEffect(() => {
+    if (!canCall) return
     let current = true
     const timeout = window.setTimeout(async () => {
       const token = await getAccessToken()
@@ -152,7 +158,12 @@ function TaskWorkspace({
       current = false
       window.clearTimeout(timeout)
     }
-  }, [historyHint, task.id, task.state, task.version])
+  }, [canCall, historyHint, task.id, task.state, task.version])
+
+  const taskCallingEligible = canCall && callEligible
+  const taskCallingReason = canCall
+    ? callReason
+    : "Calling is not enabled for this account."
 
   async function refreshTask() {
     const token = await getAccessToken()
@@ -314,8 +325,8 @@ function TaskWorkspace({
             {!activeCall && (
               <Button
                 variant="outline"
-                disabled={!callEligible || taskCallPending}
-                title={callEligible ? "Call this Task" : callReason}
+                disabled={!taskCallingEligible || taskCallPending}
+                title={taskCallingEligible ? "Call this Task" : taskCallingReason}
                 onClick={() => onStartTaskCall(task)}
               >
                 <PhoneCallIcon /> {taskCallPending ? "Preparing…" : "Call"}
@@ -338,9 +349,9 @@ function TaskWorkspace({
           </Button>
         )}
       </div>
-      {(taskCallError || (!callEligible && callReason)) && (
+      {(taskCallError || (!taskCallingEligible && taskCallingReason)) && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {taskCallError || callReason}
+          {taskCallError || taskCallingReason}
         </p>
       )}
       {error && (

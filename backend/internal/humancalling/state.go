@@ -53,7 +53,7 @@ func (m *Module) ReadCallingState(
 		return CallingState{}, ErrDenied
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
-	if err != nil || discovery.PlatformOperator || len(discovery.Practices) == 0 {
+	if err != nil || !hasOperationalCallingAccess(discovery) {
 		return CallingState{}, ErrDenied
 	}
 
@@ -157,6 +157,15 @@ func (m *Module) ReadCallingState(
 
 	state.ETag = callingStateETag(state, leaseVersion)
 	return state, nil
+}
+
+func hasOperationalCallingAccess(discovery access.Discovery) bool {
+	for _, practice := range discovery.Practices {
+		if practice.CallingEnabled {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Module) readStaffStateCall(

@@ -18,6 +18,111 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	operator := access.Identity{
+		Subject:       "demo-operator-subject",
+		Email:         "operator@acuity.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "demo-operator-calling-test",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{{
+			Key:       "acuity-demo",
+			Name:      "Acuity Demo",
+			Locations: []access.LocationProvision{{Key: "demo", Name: "Demo"}},
+			Invitations: []access.InvitationProvision{{
+				Key:           "demo-operator-staff",
+				Email:         operator.Email,
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+				ExpiresAt:     now.Add(time.Hour),
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision demo operator: %v", err)
+	}
+	discovery, err := accessModule.DiscoverActor(context.Background(), operator)
+	if err != nil {
+		t.Fatalf("discover demo operator: %v", err)
+	}
+	if len(discovery.Practices) != 1 || discovery.Practices[0].Membership == nil {
+		t.Fatalf("demo operator discovery = %#v", discovery)
+	}
+	demo := discovery.Practices[0]
+
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "demo-operator-control",
+		CallLegID:     "demo-operator-provider-leg",
+	}}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.mp3",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, []access.Identity{operator}, "demo-operator-browser")
+
+	handoff, err := calling.CreateHandoff(context.Background(),
+		humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject:    "demo-agent",
+				PracticeID: demo.ID,
+			},
+			LocationID:     demo.Locations[0].ID,
+			SourceCallID:   "demo-operator-source-call",
+			IdempotencyKey: "demo-operator-handoff",
+			Contact: humancalling.ContactContext{
+				Phone:          "+15555550100",
+				PhoneSource:    "Demo",
+				DisplayName:    "Demo Caller",
+				NameSource:     "Demo",
+				TransferReason: "Demo test",
+				ReasonSource:   "Demo",
+			},
+		})
+	if err != nil {
+		t.Fatalf("create demo handoff: %v", err)
+	}
+	if handoff.SIPDestination == "" {
+		t.Fatal("demo handoff is missing its SIP destination")
+	}
+	fact := humancalling.ProviderFact{
+		EventID:       "demo-operator-caller-initiated",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: "demo-caller-control",
+		CallLegID:     "demo-caller-provider-leg",
+		CallSessionID: "demo-caller-session",
+		From:          "+15555550100",
+		To:            "+14843989071",
+	}
+	if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		t.Fatalf("admit demo caller: %v", err)
+	}
+	processAllCommands(t, calling)
+	fact.EventID = "demo-operator-caller-answered"
+	fact.Type = humancalling.FactCallAnswered
+	fact.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+		t.Fatalf("answer demo caller: %v", err)
+	}
+	processAllCommands(t, calling)
+	if got := provider.count(humancalling.CommandDialStaff); got != 1 {
+		t.Fatalf("demo Staff dials = %d, want 1", got)
+	}
+}
+
 func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)

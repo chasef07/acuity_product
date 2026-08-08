@@ -19,7 +19,7 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, ErrDenied
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
-	if err != nil || discovery.PlatformOperator || len(discovery.Practices) == 0 {
+	if err != nil || !hasOperationalCallingAccess(discovery) {
 		return SoftphoneState{}, ErrDenied
 	}
 	now := m.now()

@@ -1,8 +1,8 @@
 {
   "Environment": "production",
   "RequestedBy": "acuity-production-launch",
-  "RequireEmptyAccessState": true,
-  "PlatformOperators": ["chase@acuityhealth.io"],
+  "RequireEmptyAccessState": false,
+  "PlatformOperators": ["chase@acuityhealth.io", "kyle@acuityhealth.io"],
   "Practices": [
     {
       "Key": "abita-eye-group",
@@ -67,7 +67,24 @@
           "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
         }
       ],
-      "Invitations": []
+      "Invitations": [
+        {
+          "Key": "chase-demo-staff",
+          "Email": "chase@acuityhealth.io",
+          "Role": "STAFF",
+          "LocationScope": "ALL",
+          "SelectedLocationKeys": [],
+          "ExpiresAt": "2026-12-31T23:59:59Z"
+        },
+        {
+          "Key": "kyle-demo-staff",
+          "Email": "kyle@acuityhealth.io",
+          "Role": "STAFF",
+          "LocationScope": "ALL",
+          "SelectedLocationKeys": [],
+          "ExpiresAt": "2026-12-31T23:59:59Z"
+        }
+      ]
     }
   ]
 }
