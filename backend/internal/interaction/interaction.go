@@ -651,8 +651,12 @@ func applyAppointmentEvidence(
 	interaction.ExternalPatientID = evidence.ExternalPatientID
 	interaction.OldAppointmentID = evidence.OldAppointmentID
 	interaction.NewAppointmentID = evidence.NewAppointmentID
-	interaction.BookingResult = evidence.BookingResult
-	interaction.CancellationResult = evidence.CancellationResult
+	if len(evidence.BookingResult) > 0 {
+		interaction.BookingResult = evidence.BookingResult
+	}
+	if len(evidence.CancellationResult) > 0 {
+		interaction.CancellationResult = evidence.CancellationResult
+	}
 	return nil
 }
 

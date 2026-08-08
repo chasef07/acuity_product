@@ -53,6 +53,7 @@ import type {
 import {
   aiCallCompletionLabel,
   appointmentFolder,
+  appointmentOutcomeLabel,
 } from "@/lib/ai-interactions"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
@@ -66,6 +67,7 @@ type AttentionSection =
   | "bookings"
   | "cancellations"
   | "reschedules"
+  | "aiReview"
   | "texts"
   | "recent"
 
@@ -141,6 +143,7 @@ export function TaskRail({
       bookings: false,
       cancellations: false,
       reschedules: false,
+      aiReview: false,
       texts: false,
       recent: false,
       ...readSidebarState(stateKey)?.expanded,
@@ -338,6 +341,19 @@ export function TaskRail({
             showOffice={showOffice}
             loading={outcomesLoading}
             onToggle={() => toggle("reschedules")}
+            onTaskSelect={onTaskSelect}
+            onAIInteractionSelect={onAIInteractionSelect}
+          />
+          <AppointmentGroup
+            title="AI review"
+            tasks={[]}
+            outcomes={categorizedAIOutcomes.review}
+            expanded={expanded.aiReview}
+            selectedTaskID={selectedTaskID}
+            selectedAIInteractionID={selectedAIInteractionID}
+            showOffice={showOffice}
+            loading={outcomesLoading}
+            onToggle={() => toggle("aiReview")}
             onTaskSelect={onTaskSelect}
             onAIInteractionSelect={onAIInteractionSelect}
           />
@@ -573,6 +589,8 @@ function AIOutcomeRow({
             </Badge>
           </span>
           <span className="flex min-w-0 items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+            <span>{appointmentOutcomeLabel(interaction.appointmentOutcome)}</span>
+            <span aria-hidden="true">·</span>
             <span>{aiCallCompletionLabel(interaction.status)}</span>
             <span aria-hidden="true">·</span>
             <time className="tabular-nums" dateTime={occurredAt}>
@@ -822,10 +840,12 @@ function categorizeAIOutcomes(outcomes: AiOutcomeItem[]) {
     bookings: [] as AiOutcomeItem[],
     cancellations: [] as AiOutcomeItem[],
     reschedules: [] as AiOutcomeItem[],
+    review: [] as AiOutcomeItem[],
   }
   for (const outcome of outcomes) {
     const folder = appointmentFolder(outcome.appointmentOutcome)
     if (folder) categorized[folder].push(outcome)
+    else categorized.review.push(outcome)
   }
   return categorized
 }

@@ -151,8 +151,16 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         >
           {formatDateTime(detail.startedAt)}
         </time>
-        {(detail.oldAppointmentId || detail.newAppointmentId) && (
+        {(detail.externalPatientId ||
+          detail.oldAppointmentId ||
+          detail.newAppointmentId) && (
           <dl className="grid gap-2 text-xs sm:col-span-2 sm:grid-cols-2">
+            {detail.externalPatientId && (
+              <EvidenceValue
+                label="External patient"
+                value={detail.externalPatientId}
+              />
+            )}
             {detail.oldAppointmentId && (
               <EvidenceValue
                 label="Previous appointment"
@@ -168,6 +176,34 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
           </dl>
         )}
       </section>
+
+      {(detail.bookingResult || detail.cancellationResult) && (
+        <section
+          aria-labelledby="ai-appointment-evidence-title"
+          className="border-b px-5 py-4"
+        >
+          <h2
+            id="ai-appointment-evidence-title"
+            className="mb-3 text-sm font-semibold"
+          >
+            Appointment evidence
+          </h2>
+          <div className="space-y-2">
+            {detail.bookingResult && (
+              <ReceiptEvidence
+                label="Booking receipt"
+                value={detail.bookingResult}
+              />
+            )}
+            {detail.cancellationResult && (
+              <ReceiptEvidence
+                label="Cancellation receipt"
+                value={detail.cancellationResult}
+              />
+            )}
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="ai-transcript-title" className="px-5 py-4">
         <div className="mb-4 flex items-center gap-2">
@@ -207,6 +243,23 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         )}
       </section>
     </div>
+  )
+}
+
+function ReceiptEvidence({
+  label,
+  value,
+}: {
+  label: string
+  value: Record<string, unknown>
+}) {
+  return (
+    <details className="group rounded-lg border bg-muted/20 px-3 py-2">
+      <summary className="cursor-pointer text-xs font-medium">{label}</summary>
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-background p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </details>
   )
 }
 

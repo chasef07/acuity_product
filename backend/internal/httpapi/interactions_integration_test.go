@@ -796,14 +796,18 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			sequenceDetail.StatusCode, readBody(t, sequenceDetail))
 	}
 	var sequenceStored struct {
-		AppointmentOutcome string `json:"appointmentOutcome"`
-		ExternalPatientID  string `json:"externalPatientId"`
-		OldAppointmentID   string `json:"oldAppointmentId"`
+		AppointmentOutcome string          `json:"appointmentOutcome"`
+		ExternalPatientID  string          `json:"externalPatientId"`
+		OldAppointmentID   string          `json:"oldAppointmentId"`
+		BookingResult      json.RawMessage `json:"bookingResult"`
+		CancellationResult json.RawMessage `json:"cancellationResult"`
 	}
 	decode(t, sequenceDetail, &sequenceStored)
 	if sequenceStored.AppointmentOutcome != "CANCELLATION" ||
 		sequenceStored.ExternalPatientID != "patient-sequence" ||
-		sequenceStored.OldAppointmentID != "appointment-sequence-new" {
+		sequenceStored.OldAppointmentID != "appointment-sequence-new" ||
+		!bytes.Contains(sequenceStored.BookingResult, []byte(`"appointmentId":"appointment-sequence-new"`)) ||
+		!bytes.Contains(sequenceStored.CancellationResult, []byte(`"status":"cancelled"`)) {
 		t.Fatalf("latest appointment projection = %#v", sequenceStored)
 	}
 	if err := pool.QueryRow(context.Background(), `

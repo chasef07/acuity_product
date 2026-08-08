@@ -14,19 +14,43 @@ export type TranscriptTurn = {
   text: string
 }
 
+const appointmentPresentations: Record<
+  AiAppointmentOutcome,
+  {
+    folder?: AppointmentFolder
+    label: string
+    title: string
+  }
+> = {
+  BOOKING: {
+    folder: "bookings",
+    label: "Booking",
+    title: "Appointment booked",
+  },
+  CANCELLATION: {
+    folder: "cancellations",
+    label: "Cancellation",
+    title: "Appointment cancelled",
+  },
+  RESCHEDULE: {
+    folder: "reschedules",
+    label: "Reschedule",
+    title: "Appointment rescheduled",
+  },
+  PARTIAL: {
+    label: "Partially completed",
+    title: "Appointment change needs review",
+  },
+  INDETERMINATE: {
+    label: "No verified appointment outcome",
+    title: "AI call needs review",
+  },
+}
+
 export function appointmentFolder(
   outcome: AiAppointmentOutcome,
 ): AppointmentFolder | undefined {
-  switch (outcome) {
-    case "BOOKING":
-      return "bookings"
-    case "CANCELLATION":
-      return "cancellations"
-    case "RESCHEDULE":
-      return "reschedules"
-    default:
-      return undefined
-  }
+  return appointmentPresentations[outcome].folder
 }
 
 export function aiCallCompletionLabel(status: AiInteractionCallStatus) {
@@ -43,33 +67,11 @@ export function aiCallCompletionLabel(status: AiInteractionCallStatus) {
 }
 
 export function appointmentOutcomeLabel(outcome: AiAppointmentOutcome) {
-  switch (outcome) {
-    case "BOOKING":
-      return "Booking"
-    case "CANCELLATION":
-      return "Cancellation"
-    case "RESCHEDULE":
-      return "Reschedule"
-    case "PARTIAL":
-      return "Partially completed"
-    default:
-      return "No verified appointment outcome"
-  }
+  return appointmentPresentations[outcome].label
 }
 
 export function appointmentOutcomeTitle(outcome: AiAppointmentOutcome) {
-  switch (outcome) {
-    case "BOOKING":
-      return "Appointment booked"
-    case "CANCELLATION":
-      return "Appointment cancelled"
-    case "RESCHEDULE":
-      return "Appointment rescheduled"
-    case "PARTIAL":
-      return "Appointment change needs review"
-    default:
-      return "AI call"
-  }
+  return appointmentPresentations[outcome].title
 }
 
 export function transcriptTurns(

@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   aiCallCompletionLabel,
   appointmentFolder,
+  appointmentOutcomeLabel,
   appointmentOutcomeTitle,
   transcriptTurns,
 } from "./ai-interactions.ts"
@@ -14,6 +15,14 @@ test("routes verified outcomes to their operator folders", () => {
   assert.equal(appointmentFolder("RESCHEDULE"), "reschedules")
   assert.equal(appointmentFolder("PARTIAL"), undefined)
   assert.equal(appointmentFolder("INDETERMINATE"), undefined)
+})
+
+test("keeps ambiguous outcomes distinguishable for operator review", () => {
+  assert.equal(appointmentOutcomeLabel("PARTIAL"), "Partially completed")
+  assert.equal(
+    appointmentOutcomeLabel("INDETERMINATE"),
+    "No verified appointment outcome",
+  )
 })
 
 test("labels AI completion separately from staff transfer", () => {
