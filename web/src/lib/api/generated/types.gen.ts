@@ -448,6 +448,9 @@ export type AiAppointmentEvidence = {
     };
 };
 
+/**
+ * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; SUMMARY uses a terminal status with endedAt and summaryPayload; CLOSEOUT uses a terminal status with endedAt and closeoutPayload. The service validates these kind-specific requirements.
+ */
 export type AiInteractionIngestRequest = {
     kind: AiInteractionMessageKind;
     officeKey?: string;

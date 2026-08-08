@@ -61,6 +61,14 @@ const (
 	StatusUpdated UpsertStatus = "updated"
 )
 
+type LifecycleStage int16
+
+const (
+	LifecycleStarted    LifecycleStage = 1
+	LifecycleSummarized LifecycleStage = 2
+	LifecycleClosed     LifecycleStage = 3
+)
+
 var (
 	ErrDenied       = errors.New("AI Interaction access denied")
 	ErrInvalidInput = errors.New("invalid AI Interaction input")
@@ -69,13 +77,13 @@ var (
 )
 
 type AppointmentEvidence struct {
-	Action             AppointmentAction
-	OccurredAt         time.Time
-	ExternalPatientID  string
-	OldAppointmentID   string
-	NewAppointmentID   string
-	BookingResult      json.RawMessage
-	CancellationResult json.RawMessage
+	Action             AppointmentAction `json:"action"`
+	OccurredAt         time.Time         `json:"occurredAt"`
+	ExternalPatientID  string            `json:"externalPatientId,omitempty"`
+	OldAppointmentID   string            `json:"oldAppointmentId,omitempty"`
+	NewAppointmentID   string            `json:"newAppointmentId,omitempty"`
+	BookingResult      json.RawMessage   `json:"bookingResult,omitempty"`
+	CancellationResult json.RawMessage   `json:"cancellationResult,omitempty"`
 }
 
 type IngestCommand struct {
@@ -110,16 +118,16 @@ type Interaction struct {
 	Status                CallStatus
 	Summary               string
 	Transcript            json.RawMessage
+	AppointmentAction     AppointmentAction
 	AppointmentOutcome    AppointmentOutcome
 	AppointmentOccurredAt *time.Time
 	OldAppointmentID      string
 	NewAppointmentID      string
 	BookingResult         json.RawMessage
 	CancellationResult    json.RawMessage
-	OutcomeCompleteness   int
 	SummaryPayload        json.RawMessage
 	CloseoutPayload       json.RawMessage
-	Completeness          int
+	LifecycleStage        LifecycleStage
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
@@ -342,85 +350,21 @@ func (m *Module) Ingest(
 	command IngestCommand,
 ) (Interaction, UpsertStatus, error) {
 	normalizeCommand(&command)
-	stage := messageCompleteness(command.Kind)
+	stage := messageLifecycleStage(command.Kind)
 	if m.pool == nil || m.access == nil || stage == 0 || !validCommand(command) {
 		return Interaction{}, "", ErrInvalidInput
 	}
 
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	now := m.now().UTC().Truncate(time.Microsecond)
+	payload, fingerprint, err := receiptPayload(command)
 	if err != nil {
-		return Interaction{}, "", fmt.Errorf("begin AI Interaction ingestion: %w", err)
+		return Interaction{}, "", fmt.Errorf("encode AI Interaction receipt: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var authorization access.ServiceAuthorization
-	if command.OfficeKey != "" {
-		authorization, err = m.access.LockServiceAuthorization(
-			ctx,
-			tx,
-			command.Service,
-			command.OfficeKey,
-			access.ServiceCapabilityIngestAIInteraction,
-		)
-	} else {
-		authorization, err = m.access.LockServiceVoiceAuthorization(
-			ctx,
-			tx,
-			command.Service,
-			command.OfficePhone,
-			access.ServiceCapabilityIngestAIInteraction,
-		)
-	}
-	if err != nil {
-		return Interaction{}, "", ErrDenied
-	}
-	if _, err := tx.Exec(ctx, `
-		SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))
-	`, authorization.PracticeID, command.SourceCallID); err != nil {
-		return Interaction{}, "", fmt.Errorf("lock AI Interaction source: %w", err)
-	}
-
-	current, found, err := lockBySourceCall(
-		ctx,
-		tx,
-		authorization.PracticeID,
-		command.SourceCallID,
-	)
+	receipt, err := m.acceptReceipt(ctx, command, payload, fingerprint, now)
 	if err != nil {
 		return Interaction{}, "", err
 	}
-	now := m.now().UTC()
-	status := StatusUpdated
-	if !found {
-		current = Interaction{
-			ID:                 uuid.NewString(),
-			ServiceSubject:     command.Service.Subject,
-			PracticeID:         authorization.PracticeID,
-			LocationID:         authorization.LocationID,
-			SourceCallID:       command.SourceCallID,
-			Phone:              command.CallerPhone,
-			OfficePhone:        command.OfficePhone,
-			StartedAt:          command.StartedAt,
-			AppointmentOutcome: OutcomeIndeterminate,
-			CreatedAt:          now,
-			UpdatedAt:          now,
-		}
-		status = StatusCreated
-	} else if current.ServiceSubject != command.Service.Subject ||
-		current.LocationID != authorization.LocationID ||
-		current.Phone != command.CallerPhone ||
-		current.OfficePhone != command.OfficePhone ||
-		!current.StartedAt.Equal(command.StartedAt) {
-		return Interaction{}, "", ErrConflict
-	}
-
-	applyMessage(&current, command, stage, now)
-	if err := save(ctx, tx, current, found); err != nil {
-		return Interaction{}, "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Interaction{}, "", fmt.Errorf("commit AI Interaction ingestion: %w", err)
-	}
-	return current, status, nil
+	return m.projectReceipt(ctx, receipt, command, stage, now)
 }
 
 func normalizeCommand(command *IngestCommand) {
@@ -429,9 +373,9 @@ func normalizeCommand(command *IngestCommand) {
 	command.CallerPhone = strings.TrimSpace(command.CallerPhone)
 	command.OfficePhone = strings.TrimSpace(command.OfficePhone)
 	command.Summary = strings.TrimSpace(command.Summary)
-	command.StartedAt = command.StartedAt.UTC().Round(time.Microsecond)
+	command.StartedAt = command.StartedAt.UTC().Truncate(time.Microsecond)
 	if command.EndedAt != nil {
-		endedAt := command.EndedAt.UTC().Round(time.Microsecond)
+		endedAt := command.EndedAt.UTC().Truncate(time.Microsecond)
 		command.EndedAt = &endedAt
 	}
 	if command.Appointment != nil {
@@ -444,7 +388,7 @@ func normalizeCommand(command *IngestCommand) {
 		command.Appointment.NewAppointmentID = strings.TrimSpace(
 			command.Appointment.NewAppointmentID,
 		)
-		command.Appointment.OccurredAt = command.Appointment.OccurredAt.UTC().Round(time.Microsecond)
+		command.Appointment.OccurredAt = command.Appointment.OccurredAt.UTC().Truncate(time.Microsecond)
 	}
 }
 
@@ -464,18 +408,31 @@ func validCommand(command IngestCommand) bool {
 	}
 	switch command.Kind {
 	case MessageStart:
-		return command.Status == CallInProgress && command.EndedAt == nil
+		return command.Status == CallInProgress && command.EndedAt == nil &&
+			command.Summary == "" && len(command.Transcript) == 0 &&
+			command.Appointment == nil && len(command.SummaryPayload) == 0 &&
+			len(command.CloseoutPayload) == 0
 	case MessageSummary:
-		return command.EndedAt != nil && command.Status != CallInProgress
+		return command.EndedAt != nil && command.Status != CallInProgress &&
+			len(command.SummaryPayload) > 0 && len(command.CloseoutPayload) == 0 &&
+			validOptionalAppointmentEvidence(command.Appointment)
 	case MessageCloseout:
 		return command.EndedAt != nil &&
 			command.Status != CallInProgress &&
-			len(command.CloseoutPayload) > 0
+			len(command.CloseoutPayload) > 0 && len(command.SummaryPayload) == 0 &&
+			validOptionalAppointmentEvidence(command.Appointment)
 	case MessageOutcomeCheckpoint:
-		return validAppointmentEvidence(command.Appointment)
+		return command.Status == CallInProgress && command.EndedAt == nil &&
+			command.Summary == "" && len(command.Transcript) == 0 &&
+			len(command.SummaryPayload) == 0 && len(command.CloseoutPayload) == 0 &&
+			validAppointmentEvidence(command.Appointment)
 	default:
 		return false
 	}
+}
+
+func validOptionalAppointmentEvidence(evidence *AppointmentEvidence) bool {
+	return evidence == nil || validAppointmentEvidence(evidence)
 }
 
 func validAppointmentEvidence(evidence *AppointmentEvidence) bool {
@@ -518,14 +475,14 @@ func textLengthBetween(value string, minimum int, maximum int) bool {
 	return length >= minimum && length <= maximum
 }
 
-func messageCompleteness(kind MessageKind) int {
+func messageLifecycleStage(kind MessageKind) LifecycleStage {
 	switch kind {
 	case MessageStart, MessageOutcomeCheckpoint:
-		return 1
+		return LifecycleStarted
 	case MessageSummary:
-		return 2
+		return LifecycleSummarized
 	case MessageCloseout:
-		return 3
+		return LifecycleClosed
 	default:
 		return 0
 	}
@@ -534,49 +491,78 @@ func messageCompleteness(kind MessageKind) int {
 func applyMessage(
 	interaction *Interaction,
 	command IngestCommand,
-	stage int,
+	stage LifecycleStage,
 	now time.Time,
-) {
-	advancesLifecycle := stage > interaction.Completeness
-	if stage > interaction.Completeness {
+) error {
+	advancesLifecycle := stage > interaction.LifecycleStage
+	sameLifecycle := stage == interaction.LifecycleStage
+	if advancesLifecycle {
 		interaction.Status = command.Status
 		interaction.EndedAt = command.EndedAt
-		interaction.Completeness = stage
+		interaction.LifecycleStage = stage
+	} else if sameLifecycle &&
+		(interaction.Status != command.Status ||
+			!equalOptionalTime(interaction.EndedAt, command.EndedAt)) {
+		return ErrConflict
 	}
-	if interaction.Summary == "" && command.Summary != "" {
-		interaction.Summary = command.Summary
+	if command.Summary != "" {
+		if interaction.Summary == "" || advancesLifecycle {
+			interaction.Summary = command.Summary
+		} else if sameLifecycle && interaction.Summary != command.Summary {
+			return ErrConflict
+		}
 	}
-	interaction.Transcript = mergeEvidenceJSON(
-		interaction.Transcript,
-		command.Transcript,
-		advancesLifecycle,
-	)
-	interaction.SummaryPayload = mergeEvidenceJSON(
+	if advancesLifecycle && len(command.Transcript) > 0 {
+		interaction.Transcript = command.Transcript
+	} else if len(interaction.Transcript) == 0 && len(command.Transcript) > 0 {
+		interaction.Transcript = command.Transcript
+	} else if sameLifecycle {
+		var err error
+		interaction.Transcript, err = richerEvidenceJSON(
+			interaction.Transcript,
+			command.Transcript,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	var err error
+	interaction.SummaryPayload, err = richerEvidenceJSON(
 		interaction.SummaryPayload,
 		command.SummaryPayload,
-		advancesLifecycle,
 	)
-	interaction.CloseoutPayload = mergeEvidenceJSON(
+	if err != nil {
+		return err
+	}
+	interaction.CloseoutPayload, err = richerEvidenceJSON(
 		interaction.CloseoutPayload,
 		command.CloseoutPayload,
-		advancesLifecycle,
 	)
+	if err != nil {
+		return err
+	}
 	if command.Appointment != nil {
-		applyAppointmentEvidence(interaction, *command.Appointment)
+		if err := applyAppointmentEvidence(
+			interaction,
+			*command.Appointment,
+			advancesLifecycle,
+		); err != nil {
+			return err
+		}
 	}
 	interaction.UpdatedAt = now
+	return nil
 }
 
-func mergeEvidenceJSON(
+func richerEvidenceJSON(
 	current json.RawMessage,
 	candidate json.RawMessage,
-	replaceArrays bool,
-) json.RawMessage {
+) (json.RawMessage, error) {
 	if len(candidate) == 0 {
-		return current
+		return current, nil
 	}
 	if len(current) == 0 {
-		return candidate
+		return candidate, nil
 	}
 	var currentValue, candidateValue any
 	currentDecoder := json.NewDecoder(bytes.NewReader(current))
@@ -585,66 +571,81 @@ func mergeEvidenceJSON(
 	candidateDecoder.UseNumber()
 	if currentDecoder.Decode(&currentValue) != nil ||
 		candidateDecoder.Decode(&candidateValue) != nil {
-		return current
+		return nil, ErrConflict
 	}
-	merged, err := json.Marshal(mergeEvidenceValue(
-		currentValue,
-		candidateValue,
-		replaceArrays,
-	))
-	if err != nil {
-		return current
+	if evidenceValueContains(candidateValue, currentValue) {
+		return candidate, nil
 	}
-	return merged
+	if evidenceValueContains(currentValue, candidateValue) {
+		return current, nil
+	}
+	return nil, ErrConflict
 }
 
-func mergeEvidenceValue(current any, candidate any, replaceArrays bool) any {
+func evidenceValueContains(candidate any, current any) bool {
 	switch currentValue := current.(type) {
 	case map[string]any:
 		candidateValue, ok := candidate.(map[string]any)
 		if !ok {
-			return current
+			return false
 		}
-		for key, value := range candidateValue {
-			if existing, found := currentValue[key]; found {
-				currentValue[key] = mergeEvidenceValue(existing, value, replaceArrays)
-			} else {
-				currentValue[key] = value
+		for key, value := range currentValue {
+			candidateItem, found := candidateValue[key]
+			if !found || !evidenceValueContains(candidateItem, value) {
+				return false
 			}
 		}
-		return currentValue
+		return true
 	case []any:
 		candidateValue, ok := candidate.([]any)
-		if !ok || len(candidateValue) == 0 {
-			return current
+		if !ok || len(candidateValue) < len(currentValue) {
+			return false
 		}
-		if replaceArrays || len(currentValue) == 0 ||
-			evidenceArrayExtends(currentValue, candidateValue) {
-			return candidateValue
+		for index := range currentValue {
+			if !evidenceValueContains(candidateValue[index], currentValue[index]) {
+				return false
+			}
 		}
-		return current
+		return true
 	default:
-		return current
+		return reflect.DeepEqual(candidate, current)
 	}
 }
 
-func evidenceArrayExtends(current []any, candidate []any) bool {
-	return len(candidate) >= len(current) &&
-		reflect.DeepEqual(current, candidate[:len(current)])
+func equalOptionalTime(left *time.Time, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 func applyAppointmentEvidence(
 	interaction *Interaction,
 	evidence AppointmentEvidence,
-) {
-	outcome := deriveOutcome(evidence)
-	completeness := outcomeCompleteness(evidence, outcome)
-	if completeness < interaction.OutcomeCompleteness ||
-		(completeness == interaction.OutcomeCompleteness &&
-			interaction.AppointmentOccurredAt != nil &&
-			evidence.OccurredAt.Before(*interaction.AppointmentOccurredAt)) {
-		return
+	candidateWins bool,
+) error {
+	if interaction.AppointmentOccurredAt != nil {
+		if evidence.OccurredAt.Before(*interaction.AppointmentOccurredAt) {
+			return nil
+		}
+		if evidence.OccurredAt.Equal(*interaction.AppointmentOccurredAt) {
+			if interaction.AppointmentAction != "" &&
+				interaction.AppointmentAction != evidence.Action {
+				return ErrConflict
+			}
+			var err error
+			evidence, err = mergeSameAppointmentEvidence(
+				*interaction,
+				evidence,
+				candidateWins,
+			)
+			if err != nil {
+				return err
+			}
+		}
 	}
+	outcome := deriveOutcome(evidence)
+	interaction.AppointmentAction = evidence.Action
 	interaction.AppointmentOutcome = outcome
 	interaction.AppointmentOccurredAt = &evidence.OccurredAt
 	interaction.ExternalPatientID = evidence.ExternalPatientID
@@ -652,7 +653,73 @@ func applyAppointmentEvidence(
 	interaction.NewAppointmentID = evidence.NewAppointmentID
 	interaction.BookingResult = evidence.BookingResult
 	interaction.CancellationResult = evidence.CancellationResult
-	interaction.OutcomeCompleteness = completeness
+	return nil
+}
+
+func mergeSameAppointmentEvidence(
+	current Interaction,
+	candidate AppointmentEvidence,
+	candidateWins bool,
+) (AppointmentEvidence, error) {
+	var err error
+	candidate.ExternalPatientID, err = mergeEvidenceText(
+		current.ExternalPatientID,
+		candidate.ExternalPatientID,
+		candidateWins,
+	)
+	if err != nil {
+		return AppointmentEvidence{}, err
+	}
+	candidate.OldAppointmentID, err = mergeEvidenceText(
+		current.OldAppointmentID,
+		candidate.OldAppointmentID,
+		candidateWins,
+	)
+	if err != nil {
+		return AppointmentEvidence{}, err
+	}
+	candidate.NewAppointmentID, err = mergeEvidenceText(
+		current.NewAppointmentID,
+		candidate.NewAppointmentID,
+		candidateWins,
+	)
+	if err != nil {
+		return AppointmentEvidence{}, err
+	}
+	if candidateWins {
+		if len(candidate.BookingResult) == 0 {
+			candidate.BookingResult = current.BookingResult
+		}
+		if len(candidate.CancellationResult) == 0 {
+			candidate.CancellationResult = current.CancellationResult
+		}
+	} else {
+		candidate.BookingResult, err = richerEvidenceJSON(
+			current.BookingResult,
+			candidate.BookingResult,
+		)
+		if err != nil {
+			return AppointmentEvidence{}, err
+		}
+		candidate.CancellationResult, err = richerEvidenceJSON(
+			current.CancellationResult,
+			candidate.CancellationResult,
+		)
+		if err != nil {
+			return AppointmentEvidence{}, err
+		}
+	}
+	return candidate, nil
+}
+
+func mergeEvidenceText(current string, candidate string, candidateWins bool) (string, error) {
+	if candidate == "" {
+		return current, nil
+	}
+	if current == "" || current == candidate || candidateWins {
+		return candidate, nil
+	}
+	return "", ErrConflict
 }
 
 func deriveOutcome(evidence AppointmentEvidence) AppointmentOutcome {
@@ -692,34 +759,6 @@ func resultStatus(value json.RawMessage) string {
 	return strings.ToLower(strings.TrimSpace(result.Status))
 }
 
-func outcomeCompleteness(
-	evidence AppointmentEvidence,
-	outcome AppointmentOutcome,
-) int {
-	score := 1
-	if evidence.ExternalPatientID != "" {
-		score++
-	}
-	if evidence.OldAppointmentID != "" {
-		score++
-	}
-	if evidence.NewAppointmentID != "" {
-		score++
-	}
-	if len(evidence.BookingResult) > 0 {
-		score += 3
-	}
-	if len(evidence.CancellationResult) > 0 {
-		score += 3
-	}
-	if outcome == OutcomePartial {
-		score++
-	} else if outcome != OutcomeIndeterminate {
-		score += 2
-	}
-	return score
-}
-
 func lockBySourceCall(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -756,16 +795,16 @@ const interactionSelect = `
 		interaction.status,
 		COALESCE(interaction.summary, ''),
 		interaction.transcript,
+		COALESCE(interaction.appointment_action, ''),
 		interaction.appointment_outcome,
 		interaction.appointment_occurred_at,
 		COALESCE(interaction.old_appointment_id, ''),
 		COALESCE(interaction.new_appointment_id, ''),
 		interaction.booking_result,
 		interaction.cancellation_result,
-		interaction.outcome_completeness,
 		interaction.summary_payload,
 		interaction.closeout_payload,
-		interaction.completeness,
+		interaction.lifecycle_stage,
 		interaction.created_at,
 		interaction.updated_at
 	FROM ai_interactions interaction
@@ -794,16 +833,16 @@ func scanInteraction(row rowScanner) (Interaction, error) {
 		&interaction.Status,
 		&interaction.Summary,
 		&interaction.Transcript,
+		&interaction.AppointmentAction,
 		&interaction.AppointmentOutcome,
 		&interaction.AppointmentOccurredAt,
 		&interaction.OldAppointmentID,
 		&interaction.NewAppointmentID,
 		&interaction.BookingResult,
 		&interaction.CancellationResult,
-		&interaction.OutcomeCompleteness,
 		&interaction.SummaryPayload,
 		&interaction.CloseoutPayload,
-		&interaction.Completeness,
+		&interaction.LifecycleStage,
 		&interaction.CreatedAt,
 		&interaction.UpdatedAt,
 	)
@@ -821,10 +860,11 @@ func save(
 			INSERT INTO ai_interactions (
 				id, service_subject, practice_id, location_id, source_call_id,
 				phone, office_phone, external_patient_id, started_at, ended_at,
-				status, summary, transcript, appointment_outcome,
+				status, summary, transcript, appointment_action,
+				appointment_outcome,
 				appointment_occurred_at, old_appointment_id, new_appointment_id,
-				booking_result, cancellation_result, outcome_completeness,
-				summary_payload, closeout_payload, completeness, created_at, updated_at
+				booking_result, cancellation_result,
+				summary_payload, closeout_payload, lifecycle_stage, created_at, updated_at
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 				$11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
@@ -843,16 +883,16 @@ func save(
 			status = $4,
 			summary = $5,
 			transcript = $6,
-			appointment_outcome = $7,
-			appointment_occurred_at = $8,
-			old_appointment_id = $9,
-			new_appointment_id = $10,
-			booking_result = $11,
-			cancellation_result = $12,
-			outcome_completeness = $13,
+			appointment_action = $7,
+			appointment_outcome = $8,
+			appointment_occurred_at = $9,
+			old_appointment_id = $10,
+			new_appointment_id = $11,
+			booking_result = $12,
+			cancellation_result = $13,
 			summary_payload = $14,
 			closeout_payload = $15,
-			completeness = $16,
+			lifecycle_stage = $16,
 			updated_at = $17
 		WHERE id = $1
 	`,
@@ -862,16 +902,16 @@ func save(
 		interaction.Status,
 		nullIfEmpty(interaction.Summary),
 		nullIfEmptyJSON(interaction.Transcript),
+		nullIfEmpty(string(interaction.AppointmentAction)),
 		interaction.AppointmentOutcome,
 		interaction.AppointmentOccurredAt,
 		nullIfEmpty(interaction.OldAppointmentID),
 		nullIfEmpty(interaction.NewAppointmentID),
 		nullIfEmptyJSON(interaction.BookingResult),
 		nullIfEmptyJSON(interaction.CancellationResult),
-		interaction.OutcomeCompleteness,
 		nullIfEmptyJSON(interaction.SummaryPayload),
 		nullIfEmptyJSON(interaction.CloseoutPayload),
-		interaction.Completeness,
+		interaction.LifecycleStage,
 		interaction.UpdatedAt,
 	)
 	if err != nil {
@@ -895,16 +935,16 @@ func interactionValues(interaction Interaction) []any {
 		interaction.Status,
 		nullIfEmpty(interaction.Summary),
 		nullIfEmptyJSON(interaction.Transcript),
+		nullIfEmpty(string(interaction.AppointmentAction)),
 		interaction.AppointmentOutcome,
 		interaction.AppointmentOccurredAt,
 		nullIfEmpty(interaction.OldAppointmentID),
 		nullIfEmpty(interaction.NewAppointmentID),
 		nullIfEmptyJSON(interaction.BookingResult),
 		nullIfEmptyJSON(interaction.CancellationResult),
-		interaction.OutcomeCompleteness,
 		nullIfEmptyJSON(interaction.SummaryPayload),
 		nullIfEmptyJSON(interaction.CloseoutPayload),
-		interaction.Completeness,
+		interaction.LifecycleStage,
 		interaction.CreatedAt,
 		interaction.UpdatedAt,
 	}

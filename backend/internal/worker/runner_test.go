@@ -93,6 +93,46 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 	}
 }
 
+func TestRunnerRecoversAIInteractionReceiptsInIndependentLane(t *testing.T) {
+	calling := newControlledWork()
+	messages := &controlledMessagingWork{
+		receiptProcessed:    make(chan struct{}, 1),
+		commandProcessed:    make(chan struct{}, 1),
+		attachmentProcessed: make(chan struct{}, 1),
+	}
+	interactions := &controlledInteractionWork{processed: make(chan struct{}, 1)}
+	runner, err := NewWithMessagingAndInteractions(Config{
+		WorkInterval:       time.Millisecond,
+		WorkTimeout:        time.Second,
+		CredentialInterval: time.Hour,
+		CredentialTimeout:  time.Second,
+		HealthInterval:     time.Hour,
+		HealthTimeout:      time.Second,
+		ReceiptBatchSize:   1,
+		CommandBatchSize:   1,
+		CommandWorkers:     1,
+	}, calling, messages, interactions, healthyDependency{})
+	if err != nil {
+		t.Fatalf("create AI Interaction worker runner: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runner.Run(ctx)
+	}()
+	waitForSignal(t, interactions.processed, "AI Interaction receipt")
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("run AI Interaction worker: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AI Interaction worker runner did not stop after cancellation")
+	}
+}
+
 func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 	work := newControlledWork()
 	work.maintenanceStarted = make(chan struct{}, 1)
@@ -443,6 +483,19 @@ type controlledMessagingWork struct {
 	receiptProcessed    chan struct{}
 	commandProcessed    chan struct{}
 	attachmentProcessed chan struct{}
+}
+
+type controlledInteractionWork struct {
+	processed chan struct{}
+}
+
+func (work *controlledInteractionWork) ProcessNextReceipt(context.Context) (bool, error) {
+	select {
+	case work.processed <- struct{}{}:
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func (work *controlledMessagingWork) ProcessNextReceipt(context.Context) (bool, error) {

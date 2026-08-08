@@ -30,6 +30,10 @@ type MessagingWork interface {
 	ExpirePendingAttachments(context.Context) error
 }
 
+type InteractionWork interface {
+	ProcessNextReceipt(context.Context) (bool, error)
+}
+
 type Dependency interface {
 	Ping(context.Context) error
 }
@@ -51,16 +55,17 @@ type Config struct {
 }
 
 type Runner struct {
-	config     Config
-	work       CallingWork
-	messages   MessagingWork
-	dependency Dependency
-	jitter     func(time.Duration) time.Duration
-	wait       func(context.Context, time.Duration) bool
+	config       Config
+	work         CallingWork
+	messages     MessagingWork
+	interactions InteractionWork
+	dependency   Dependency
+	jitter       func(time.Duration) time.Duration
+	wait         func(context.Context, time.Duration) bool
 }
 
 func New(config Config, work CallingWork, dependency Dependency) (*Runner, error) {
-	return newRunner(config, work, nil, dependency)
+	return newRunner(config, work, nil, nil, dependency)
 }
 
 func NewWithMessaging(
@@ -72,13 +77,27 @@ func NewWithMessaging(
 	if messages == nil {
 		return nil, fmt.Errorf("messaging worker dependency is required")
 	}
-	return newRunner(config, work, messages, dependency)
+	return newRunner(config, work, messages, nil, dependency)
+}
+
+func NewWithMessagingAndInteractions(
+	config Config,
+	work CallingWork,
+	messages MessagingWork,
+	interactions InteractionWork,
+	dependency Dependency,
+) (*Runner, error) {
+	if messages == nil || interactions == nil {
+		return nil, fmt.Errorf("messaging and interaction worker dependencies are required")
+	}
+	return newRunner(config, work, messages, interactions, dependency)
 }
 
 func newRunner(
 	config Config,
 	work CallingWork,
 	messages MessagingWork,
+	interactions InteractionWork,
 	dependency Dependency,
 ) (*Runner, error) {
 	if work == nil || dependency == nil {
@@ -118,12 +137,13 @@ func newRunner(
 		return nil, fmt.Errorf("positive worker metric limits are required")
 	}
 	return &Runner{
-		config:     config,
-		work:       work,
-		messages:   messages,
-		dependency: dependency,
-		jitter:     equalJitter,
-		wait:       wait,
+		config:       config,
+		work:         work,
+		messages:     messages,
+		interactions: interactions,
+		dependency:   dependency,
+		jitter:       equalJitter,
+		wait:         wait,
 	}, nil
 }
 
@@ -132,6 +152,9 @@ func (runner *Runner) Run(ctx context.Context) error {
 	laneCount := 2 + runner.config.CommandWorkers
 	if runner.messages != nil {
 		laneCount += 2
+	}
+	if runner.interactions != nil {
+		laneCount++
 	}
 	lanes.Add(laneCount)
 	go func() {
@@ -171,6 +194,17 @@ func (runner *Runner) Run(ctx context.Context) error {
 				runner.config.CommandBatchSize,
 				"messaging_command_processing_failed",
 				runner.messages.ProcessNextCommand,
+			)
+		}()
+	}
+	if runner.interactions != nil {
+		go func() {
+			defer lanes.Done()
+			runner.runQueueLane(
+				ctx,
+				runner.config.ReceiptBatchSize,
+				"ai_interaction_receipt_processing_failed",
+				runner.interactions.ProcessNextReceipt,
 			)
 		}()
 	}

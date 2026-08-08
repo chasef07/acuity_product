@@ -37,6 +37,7 @@ func TestForwardMigrationsAreRepeatableAndExposeOnlyCallLegTopology(t *testing.T
 	}
 
 	for _, relation := range []string{
+		"ai_interaction_receipts",
 		"ai_interactions",
 		"human_calling_handoffs",
 		"human_calling_calls",

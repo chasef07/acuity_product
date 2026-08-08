@@ -323,7 +323,8 @@ func runWorker(
 	if err := calling.ReconcileCredentials(ctx); err != nil {
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
-	runner, err := worker.NewWithMessaging(worker.Config{
+	interactions := interaction.New(pool, accessModule, nil)
+	runner, err := worker.NewWithMessagingAndInteractions(worker.Config{
 		WorkInterval:       250 * time.Millisecond,
 		WorkTimeout:        10 * time.Second,
 		CredentialInterval: 30 * time.Second,
@@ -337,7 +338,7 @@ func runWorker(
 		CommandWorkers:     2,
 		ErrorBackoffMin:    250 * time.Millisecond,
 		ErrorBackoffMax:    10 * time.Second,
-	}, calling, messages, pool)
+	}, calling, messages, interactions, pool)
 	if err != nil {
 		return err
 	}

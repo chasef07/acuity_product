@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -2142,8 +2143,9 @@ func (server *Server) decodeJSONLimit(
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "A JSON request body is required.", false)
 		return false
 	}
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maximumBytes))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maximumBytes))
 	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
 	if err := decoder.Decode(target); err != nil {
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The JSON request body is invalid.", false)
 		return false
@@ -3384,7 +3386,9 @@ func jsonMap(value json.RawMessage) *map[string]interface{} {
 		return nil
 	}
 	decoded := map[string]interface{}{}
-	if json.Unmarshal(value, &decoded) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	decoder.UseNumber()
+	if decoder.Decode(&decoded) != nil {
 		return nil
 	}
 	return &decoded
