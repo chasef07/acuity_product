@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react"
-import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
@@ -24,6 +23,7 @@ import {
   SunIcon,
 } from "lucide-react"
 
+import { AcuityMark } from "@/components/acuity-mark"
 import { Badge } from "@/components/ui/badge"
 import {
   InputGroup,
@@ -189,14 +189,7 @@ export function TaskRail({
       <Sidebar collapsible="offcanvas">
         <SidebarHeader className="gap-3 p-3 pb-2">
           <div className="flex items-center gap-2 px-1">
-            <Image
-              src="/acuity-health-mark.png"
-              alt=""
-              width={28}
-              height={28}
-              className="size-7 shrink-0 rounded-sm object-contain"
-              priority
-            />
+            <AcuityMark className="size-7 shrink-0" />
             <div className="min-w-0 flex-1">{workspaceControl}</div>
             <ConnectionMark state={connection} />
           </div>
