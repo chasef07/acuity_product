@@ -8,10 +8,21 @@ export type AppointmentFolder =
   | "cancellations"
   | "reschedules"
 
-export type TranscriptTurn = {
-  id: string
-  speaker: "Caller" | "AI"
-  text: string
+export type AppointmentFacts = {
+  appointmentDate?: string
+  appointmentId?: string
+  appointmentTime?: string
+  appointmentTypeName?: string
+  careLane?: string
+  locationName?: string
+  patientName?: string
+  providerName?: string
+  startDatetime?: string
+}
+
+export type AIAppointmentDetails = {
+  primary: AppointmentFacts
+  previous?: AppointmentFacts
 }
 
 const appointmentPresentations: Record<
@@ -74,40 +85,137 @@ export function appointmentOutcomeTitle(outcome: AiAppointmentOutcome) {
   return appointmentPresentations[outcome].title
 }
 
-export function transcriptTurns(
-  transcript: Record<string, unknown> | undefined,
-): TranscriptTurn[] {
-  const history = recordValue(transcript?.chat_history ?? transcript?.chatHistory)
-  const items = Array.isArray(history?.items) ? history.items : []
-  return items.flatMap((item, index) => {
-    const entry = recordValue(item)
-    const role = stringValue(entry?.role)?.toLowerCase()
-    if (role !== "user" && role !== "assistant") return []
-    const text = contentText(entry?.content)
-    if (!text) return []
-    return [
-      {
-        id: stringValue(entry?.id) ?? `${role}-${index}`,
-        speaker: role === "user" ? "Caller" : "AI",
-        text,
-      } satisfies TranscriptTurn,
-    ]
+export function aiAppointmentDetails(input: {
+  appointmentOutcome: AiAppointmentOutcome
+  bookingResult?: Record<string, unknown>
+  cancellationResult?: Record<string, unknown>
+  closeoutPayload?: Record<string, unknown>
+  newAppointmentId?: string
+  oldAppointmentId?: string
+}): AIAppointmentDetails {
+  const action = latestAppointmentAction(
+    input.closeoutPayload,
+    input.appointmentOutcome,
+  )
+  const appointment = recordValue(action?.appointment)
+  const cancelledAppointment = recordValue(action?.cancelledAppointment)
+  const bookingAppointment = recordValue(input.bookingResult?.appointment)
+  const cancellationAppointment = recordValue(
+    input.cancellationResult?.appointment,
+  )
+
+  if (input.appointmentOutcome === "CANCELLATION") {
+    return {
+      primary: appointmentFacts(
+        [
+          cancelledAppointment,
+          appointment,
+          cancellationAppointment,
+          input.cancellationResult,
+        ],
+        input.oldAppointmentId,
+      ),
+    }
+  }
+
+  const primary = appointmentFacts(
+    [appointment, bookingAppointment, input.bookingResult],
+    input.newAppointmentId,
+  )
+  if (input.appointmentOutcome !== "RESCHEDULE") return { primary }
+
+  return {
+    primary,
+    previous: appointmentFacts(
+      [cancelledAppointment, cancellationAppointment, input.cancellationResult],
+      input.oldAppointmentId,
+    ),
+  }
+}
+
+function latestAppointmentAction(
+  closeoutPayload: Record<string, unknown> | undefined,
+  outcome: AiAppointmentOutcome,
+) {
+  const actions = Array.isArray(closeoutPayload?.appointmentActions)
+    ? closeoutPayload.appointmentActions
+    : []
+  const expectedAction = {
+    BOOKING: "booked",
+    CANCELLATION: "cancelled",
+    RESCHEDULE: "rescheduled",
+    PARTIAL: "",
+    INDETERMINATE: "",
+  }[outcome]
+  const records = actions
+    .map(recordValue)
+    .filter((action): action is Record<string, unknown> => Boolean(action))
+  if (!expectedAction) return records.at(-1)
+  return [...records]
+    .reverse()
+    .find((action) => stringValue(action.action)?.toLowerCase() === expectedAction)
+}
+
+function appointmentFacts(
+  sources: Array<Record<string, unknown> | undefined>,
+  appointmentId: string | undefined,
+): AppointmentFacts {
+  const values = sources.filter(
+    (source): source is Record<string, unknown> => Boolean(source),
+  )
+  return compactRecord({
+    appointmentDate: firstValue(values, ["appointmentDate", "date"]),
+    appointmentId:
+      appointmentId ??
+      firstValue(values, [
+        "appointmentId",
+        "cancelledAppointmentId",
+        "id",
+      ]),
+    appointmentTime: firstValue(values, ["appointmentTime", "time"]),
+    appointmentTypeName: firstValue(values, [
+      "appointmentTypeName",
+      "appointmentType",
+      "visitType",
+      "type",
+    ]),
+    careLane: firstValue(values, ["careLane"]),
+    locationName: firstValue(values, [
+      "locationName",
+      "facilityName",
+      "facility",
+    ]),
+    patientName: firstValue(values, ["patientName", "name"]),
+    providerName: firstValue(values, [
+      "providerName",
+      "doctorName",
+      "provider",
+    ]),
+    startDatetime: firstValue(values, [
+      "startDatetime",
+      "startDateTime",
+      "datetime",
+    ]),
   })
 }
 
-function contentText(value: unknown): string {
-  if (typeof value === "string") return value.trim()
-  if (!Array.isArray(value)) {
-    const item = recordValue(value)
-    return stringValue(item?.text)?.trim() ?? ""
+function firstValue(
+  records: Record<string, unknown>[],
+  keys: string[],
+): string | undefined {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = stringValue(record[key])
+      if (value) return value
+    }
   }
-  return value
-    .map((part) => {
-      if (typeof part === "string") return part.trim()
-      return stringValue(recordValue(part)?.text)?.trim() ?? ""
-    })
-    .filter(Boolean)
-    .join("\n")
+  return undefined
+}
+
+function compactRecord<T extends Record<string, string | undefined>>(value: T) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => Boolean(item)),
+  ) as T
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -118,5 +226,6 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 }
 
 function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined
+  if (typeof value === "number" && Number.isFinite(value)) return String(value)
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
 }

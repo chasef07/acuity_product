@@ -5,7 +5,6 @@ import {
   BotIcon,
   CalendarCheck2Icon,
   PhoneForwardedIcon,
-  UserRoundIcon,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -22,11 +21,12 @@ import { portalClient } from "@/lib/api/client"
 import { getAiInteraction } from "@/lib/api/generated/sdk.gen"
 import type { AiInteractionDetail } from "@/lib/api/generated/types.gen"
 import {
+  aiAppointmentDetails,
   aiCallCompletionLabel,
   appointmentOutcomeLabel,
   appointmentOutcomeTitle,
-  transcriptTurns,
 } from "@/lib/ai-interactions"
+import type { AppointmentFacts } from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
 
 export function AIInteractionDetailDialog({
@@ -85,7 +85,7 @@ export function AIInteractionDetailDialog({
       <DialogContent className="max-h-[calc(100vh-2rem)] gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="border-b px-5 py-4 pr-12">
           <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle className="text-base">AI call evidence</DialogTitle>
+            <DialogTitle className="text-base">AI call details</DialogTitle>
             {detail && (
               <>
                 <Badge
@@ -108,7 +108,7 @@ export function AIInteractionDetailDialog({
             )}
           </div>
           <DialogDescription>
-            Transcript and receipt-backed appointment evidence for one call.
+            Appointment and call details recorded by the AI receptionist.
           </DialogDescription>
         </DialogHeader>
 
@@ -133,62 +133,88 @@ export function AIInteractionDetailDialog({
 }
 
 function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
-  const turns = transcriptTurns(detail.transcript)
+  const appointment = aiAppointmentDetails(detail)
   return (
     <div className="min-h-0 overflow-y-auto">
-      <section className="grid gap-3 border-b bg-muted/20 px-5 py-4 sm:grid-cols-[1fr_auto]">
-        <div>
-          <p className="text-sm font-medium">
-            {appointmentOutcomeTitle(detail.appointmentOutcome)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatPhone(detail.phone)} · {detail.locationName}
-          </p>
-        </div>
-        <time
-          className="text-xs tabular-nums text-muted-foreground sm:text-right"
-          dateTime={detail.startedAt}
-        >
-          {formatDateTime(detail.startedAt)}
-        </time>
-        {(detail.externalPatientId ||
-          detail.oldAppointmentId ||
-          detail.newAppointmentId) && (
-          <dl className="grid gap-2 text-xs sm:col-span-2 sm:grid-cols-2">
-            {detail.externalPatientId && (
-              <EvidenceValue
-                label="External patient"
-                value={detail.externalPatientId}
-              />
-            )}
-            {detail.oldAppointmentId && (
-              <EvidenceValue
-                label="Previous appointment"
-                value={detail.oldAppointmentId}
-              />
-            )}
-            {detail.newAppointmentId && (
-              <EvidenceValue
-                label="New appointment"
-                value={detail.newAppointmentId}
-              />
-            )}
-          </dl>
+      <section className="border-b px-5 py-5">
+        <AppointmentSummary
+          facts={appointment.primary}
+          label={primaryAppointmentLabel(detail.appointmentOutcome)}
+          title={appointmentOutcomeTitle(detail.appointmentOutcome)}
+        />
+        {appointment.previous && hasAppointmentFacts(appointment.previous) && (
+          <div className="mt-3 rounded-lg border border-dashed px-4 py-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Previous appointment
+            </p>
+            <p className="mt-1 text-sm font-medium">
+              {formatAppointmentDateTime(appointment.previous) ??
+                "Appointment details unavailable"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {[
+                appointment.previous.providerName,
+                appointment.previous.locationName,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
         )}
       </section>
 
-      {(detail.bookingResult || detail.cancellationResult) && (
-        <section
-          aria-labelledby="ai-appointment-evidence-title"
-          className="border-b px-5 py-4"
-        >
-          <h2
-            id="ai-appointment-evidence-title"
-            className="mb-3 text-sm font-semibold"
-          >
-            Appointment evidence
+      {detail.summary && (
+        <section className="border-b px-5 py-4">
+          <h2 className="text-xs font-medium text-muted-foreground">
+            Call summary
           </h2>
-          <div className="space-y-2">
+          <p className="mt-2 text-sm leading-6">{detail.summary}</p>
+        </section>
+      )}
+
+      <section className="border-b px-5 py-4">
+        <h2 className="mb-3 text-sm font-semibold">Call details</h2>
+        <dl className="grid grid-cols-2 gap-x-5 gap-y-4 text-sm">
+          <DetailValue label="Caller" value={formatPhone(detail.phone)} />
+          <DetailValue label="Office" value={detail.locationName} />
+          <DetailValue
+            label="Call started"
+            value={formatDateTime(detail.startedAt)}
+          />
+          <DetailValue
+            label="Call length"
+            value={formatDuration(detail.startedAt, detail.endedAt)}
+          />
+        </dl>
+      </section>
+
+      <section className="px-5 py-4">
+        <details className="group rounded-lg border px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            Technical evidence
+          </summary>
+          <div className="mt-4 space-y-3">
+            <dl className="grid gap-2 text-xs sm:grid-cols-2">
+              <EvidenceValue label="Source call" value={detail.sourceCallId} />
+              {detail.externalPatientId && (
+                <EvidenceValue
+                  label="External patient"
+                  value={detail.externalPatientId}
+                />
+              )}
+              {detail.oldAppointmentId && (
+                <EvidenceValue
+                  label="Previous appointment"
+                  value={detail.oldAppointmentId}
+                />
+              )}
+              {detail.newAppointmentId && (
+                <EvidenceValue
+                  label="New appointment"
+                  value={detail.newAppointmentId}
+                />
+              )}
+            </dl>
             {detail.bookingResult && (
               <ReceiptEvidence
                 label="Booking receipt"
@@ -202,48 +228,115 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
               />
             )}
           </div>
-        </section>
-      )}
-
-      <section aria-labelledby="ai-transcript-title" className="px-5 py-4">
-        <div className="mb-4 flex items-center gap-2">
-          <h2 id="ai-transcript-title" className="text-sm font-semibold">
-            Transcript
-          </h2>
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {turns.length} {turns.length === 1 ? "turn" : "turns"}
-          </span>
-        </div>
-        {turns.length > 0 ? (
-          <ol className="space-y-4">
-            {turns.map((turn) => (
-              <li key={turn.id} className="grid grid-cols-[1.5rem_1fr] gap-3">
-                <span className="flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground">
-                  {turn.speaker === "AI" ? (
-                    <BotIcon className="size-3.5" aria-hidden="true" />
-                  ) : (
-                    <UserRoundIcon className="size-3.5" aria-hidden="true" />
-                  )}
-                </span>
-                <div className="min-w-0 border-l-2 border-border pl-3">
-                  <p className="text-[0.6875rem] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                    {turn.speaker}
-                  </p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6">
-                    {turn.text}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-            Transcript is not available for this call.
-          </p>
-        )}
+        </details>
       </section>
     </div>
   )
+}
+
+function AppointmentSummary({
+  facts,
+  label,
+  title,
+}: {
+  facts: AppointmentFacts
+  label: string
+  title: string
+}) {
+  const appointmentTime = formatAppointmentDateTime(facts)
+  return (
+    <div className="rounded-xl border bg-muted/30 p-4">
+      <div className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-success">
+          <CalendarCheck2Icon className="size-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {label}
+          </p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight">
+            {appointmentTime ?? title}
+          </h2>
+          {appointmentTime && (
+            <p className="mt-1 text-xs text-muted-foreground">{title}</p>
+          )}
+        </div>
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-4 border-t pt-4 text-sm">
+        <DetailValue label="Patient" value={facts.patientName ?? "—"} />
+        <DetailValue label="Visit" value={visitLabel(facts)} />
+        <DetailValue label="Doctor" value={facts.providerName ?? "—"} />
+        <DetailValue label="Office" value={facts.locationName ?? "—"} />
+      </dl>
+    </div>
+  )
+}
+
+function DetailValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1 truncate font-medium" title={value}>
+        {value}
+      </dd>
+    </div>
+  )
+}
+
+function primaryAppointmentLabel(
+  outcome: AiInteractionDetail["appointmentOutcome"],
+) {
+  if (outcome === "CANCELLATION") return "Cancelled appointment"
+  if (outcome === "RESCHEDULE") return "New appointment"
+  if (outcome === "BOOKING") return "Appointment"
+  return "Appointment review"
+}
+
+function hasAppointmentFacts(facts: AppointmentFacts) {
+  return Object.values(facts).some(Boolean)
+}
+
+function visitLabel(facts: AppointmentFacts) {
+  if (facts.appointmentTypeName) return facts.appointmentTypeName
+  if (facts.careLane === "medical_md") return "Medical"
+  if (facts.careLane === "routine_od") return "Routine vision"
+  return "—"
+}
+
+function formatAppointmentDateTime(facts: AppointmentFacts) {
+  if (facts.startDatetime) {
+    const value = new Date(facts.startDatetime)
+    if (!Number.isNaN(value.getTime())) {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: "long",
+        timeStyle: "short",
+      }).format(value)
+    }
+  }
+  if (!facts.appointmentDate) return facts.appointmentTime
+  const match = facts.appointmentDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(facts.appointmentDate)
+  const dateLabel = Number.isNaN(date.getTime())
+    ? facts.appointmentDate
+    : new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(date)
+  return facts.appointmentTime
+    ? `${dateLabel} · ${facts.appointmentTime}`
+    : dateLabel
+}
+
+function formatDuration(startedAt: string, endedAt?: string) {
+  if (!endedAt) return "In progress"
+  const seconds = Math.max(
+    0,
+    Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000),
+  )
+  if (!Number.isFinite(seconds)) return "—"
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  if (minutes === 0) return `${remainder}s`
+  return `${minutes}m ${remainder}s`
 }
 
 function ReceiptEvidence({

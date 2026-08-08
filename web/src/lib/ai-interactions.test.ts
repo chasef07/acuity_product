@@ -2,11 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  aiAppointmentDetails,
   aiCallCompletionLabel,
   appointmentFolder,
   appointmentOutcomeLabel,
   appointmentOutcomeTitle,
-  transcriptTurns,
 } from "./ai-interactions.ts"
 
 test("routes verified outcomes to their operator folders", () => {
@@ -43,29 +43,97 @@ test("uses receipt-backed appointment language", () => {
   )
 })
 
-test("projects caller and AI messages from a LiveKit session report", () => {
+test("projects Acuity-style booking details from structured closeout evidence", () => {
   assert.deepEqual(
-    transcriptTurns({
-      chat_history: {
-        items: [
-          { id: "system", role: "system", content: ["private prompt"] },
-          { id: "caller", role: "user", content: ["I need to reschedule."] },
+    aiAppointmentDetails({
+      appointmentOutcome: "BOOKING",
+      closeoutPayload: {
+        appointmentActions: [
           {
-            id: "assistant",
-            role: "assistant",
-            content: [{ type: "text", text: "I can help with that." }],
+            action: "booked",
+            appointment: {
+              patientName: "Jane Doe",
+              appointmentDate: "2026-08-12",
+              appointmentTime: "9:00 AM",
+              providerName: "Dr. Bach",
+              locationName: "Spring Hill",
+              appointmentTypeName: "New medical patient",
+              careLane: "medical_md",
+            },
           },
-          { id: "tool", role: "tool", content: ["provider receipt"] },
+        ],
+      },
+      newAppointmentId: "appointment-new",
+    }),
+    {
+      primary: {
+        appointmentDate: "2026-08-12",
+        appointmentId: "appointment-new",
+        appointmentTime: "9:00 AM",
+        appointmentTypeName: "New medical patient",
+        careLane: "medical_md",
+        locationName: "Spring Hill",
+        patientName: "Jane Doe",
+        providerName: "Dr. Bach",
+      },
+    },
+  )
+})
+
+test("shows both appointments for a reschedule", () => {
+  assert.deepEqual(
+    aiAppointmentDetails({
+      appointmentOutcome: "RESCHEDULE",
+      newAppointmentId: "appointment-new",
+      oldAppointmentId: "appointment-old",
+      closeoutPayload: {
+        appointmentActions: [
+          {
+            action: "rescheduled",
+            appointment: {
+              appointmentDate: "2026-08-20",
+              appointmentTime: "2:30 PM",
+            },
+            cancelledAppointment: {
+              appointmentDate: "2026-08-12",
+              appointmentTime: "9:00 AM",
+            },
+          },
         ],
       },
     }),
-    [
-      { id: "caller", speaker: "Caller", text: "I need to reschedule." },
-      {
-        id: "assistant",
-        speaker: "AI",
-        text: "I can help with that.",
+    {
+      primary: {
+        appointmentDate: "2026-08-20",
+        appointmentId: "appointment-new",
+        appointmentTime: "2:30 PM",
       },
-    ],
+      previous: {
+        appointmentDate: "2026-08-12",
+        appointmentId: "appointment-old",
+        appointmentTime: "9:00 AM",
+      },
+    },
+  )
+})
+
+test("falls back to receipt fields before rich closeout arrives", () => {
+  assert.deepEqual(
+    aiAppointmentDetails({
+      appointmentOutcome: "CANCELLATION",
+      oldAppointmentId: "appointment-old",
+      cancellationResult: {
+        status: "cancelled",
+        patientName: "Jane Doe",
+        providerName: "Dr. Bach",
+      },
+    }),
+    {
+      primary: {
+        appointmentId: "appointment-old",
+        patientName: "Jane Doe",
+        providerName: "Dr. Bach",
+      },
+    },
   )
 })
