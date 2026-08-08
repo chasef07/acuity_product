@@ -1,12 +1,16 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,13 +138,14 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
+	startedAt := now.Add(123_456_789 * time.Nanosecond)
 
 	body, _ := json.Marshal(map[string]any{
 		"kind":         "START",
 		"sourceCallId": "abita-call-63",
 		"callerPhone":  "+17275550199",
 		"officePhone":  "+17275919997",
-		"startedAt":    now.Format(time.RFC3339),
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"status":       "IN_PROGRESS",
 	})
 	unauthenticated := request(
@@ -187,13 +192,107 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("duplicate AI Interaction receipt = %#v, first = %#v", replay, first)
 	}
 
+	concurrentBody, _ := json.Marshal(map[string]any{
+		"kind":         "START",
+		"sourceCallId": "abita-concurrent-63",
+		"callerPhone":  "+17275550999",
+		"officePhone":  "+17275919997",
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
+		"status":       "IN_PROGRESS",
+	})
+	type concurrentResult struct {
+		statusCode int
+		body       []byte
+		err        error
+	}
+	const concurrentRequests = 2
+	startRequests := make(chan struct{})
+	results := make(chan concurrentResult, concurrentRequests)
+	var requests sync.WaitGroup
+	for requestIndex := 0; requestIndex < concurrentRequests; requestIndex++ {
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			<-startRequests
+			req, err := http.NewRequest(
+				http.MethodPost,
+				server.URL+"/v1/ai/interactions",
+				bytes.NewReader(concurrentBody),
+			)
+			if err != nil {
+				results <- concurrentResult{err: fmt.Errorf("create request: %w", err)}
+				return
+			}
+			req.Header.Set("Authorization", "Bearer abita-interaction-token")
+			req.Header.Set("Content-Type", "application/json")
+			response, err := server.Client().Do(req)
+			if err != nil {
+				results <- concurrentResult{err: fmt.Errorf("send request: %w", err)}
+				return
+			}
+			responseBody, readErr := io.ReadAll(response.Body)
+			closeErr := response.Body.Close()
+			if readErr != nil {
+				results <- concurrentResult{err: fmt.Errorf("read response: %w", readErr)}
+				return
+			}
+			if closeErr != nil {
+				results <- concurrentResult{err: fmt.Errorf("close response: %w", closeErr)}
+				return
+			}
+			results <- concurrentResult{
+				statusCode: response.StatusCode,
+				body:       responseBody,
+			}
+		}()
+	}
+	close(startRequests)
+	requests.Wait()
+	close(results)
+	createdCount := 0
+	concurrentInteractionID := ""
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent AI Interaction request: %v", result.err)
+		}
+		if result.statusCode == http.StatusCreated {
+			createdCount++
+		} else if result.statusCode != http.StatusOK {
+			t.Fatalf("concurrent AI Interaction status = %d, body = %s",
+				result.statusCode, result.body)
+		}
+		var receipt struct {
+			InteractionID string `json:"interactionId"`
+			Status        string `json:"status"`
+		}
+		if err := json.Unmarshal(result.body, &receipt); err != nil {
+			t.Fatalf("decode concurrent AI Interaction receipt: %v", err)
+		}
+		expectedStatus := "updated"
+		if result.statusCode == http.StatusCreated {
+			expectedStatus = "created"
+		}
+		if receipt.InteractionID == "" || receipt.Status != expectedStatus {
+			t.Fatalf("concurrent AI Interaction receipt = %#v", receipt)
+		}
+		if concurrentInteractionID == "" {
+			concurrentInteractionID = receipt.InteractionID
+		} else if receipt.InteractionID != concurrentInteractionID {
+			t.Fatalf("concurrent AI Interaction IDs = %q and %q",
+				concurrentInteractionID, receipt.InteractionID)
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("concurrent AI Interaction created count = %d", createdCount)
+	}
+
 	checkpointBody, _ := json.Marshal(map[string]any{
 		"kind":         "OUTCOME_CHECKPOINT",
 		"officeKey":    "spring-hill",
 		"sourceCallId": "abita-call-63",
 		"callerPhone":  "+17275550199",
 		"officePhone":  "+17275919997",
-		"startedAt":    now.Format(time.RFC3339),
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"status":       "IN_PROGRESS",
 		"appointmentOutcome": map[string]any{
 			"action":             "RESCHEDULED",
@@ -231,13 +330,20 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"sourceCallId": "abita-call-63",
 		"callerPhone":  "+17275550199",
 		"officePhone":  "+17275919997",
-		"startedAt":    now.Format(time.RFC3339),
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"endedAt":      endedAt.Format(time.RFC3339),
 		"status":       "COMPLETED",
 		"summary":      "Caller rescheduled an appointment.",
 		"summaryPayload": map[string]any{
 			"callId": "abita-call-63",
 			"phase":  "summary",
+		},
+		"transcript": map[string]any{
+			"items": []map[string]any{{
+				"id":   "turn-1",
+				"role": "user",
+				"text": "Please move my appointment.",
+			}},
 		},
 	})
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -257,7 +363,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"sourceCallId": "abita-call-63",
 		"callerPhone":  "+17275550199",
 		"officePhone":  "+17275919997",
-		"startedAt":    now.Format(time.RFC3339),
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"endedAt":      endedAt.Format(time.RFC3339),
 		"status":       "COMPLETED",
 		"transcript":   map[string]any{"items": []any{}},
@@ -280,12 +386,23 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"sourceCallId": "abita-call-63",
 		"callerPhone":  "+17275550199",
 		"officePhone":  "+17275919997",
-		"startedAt":    now.Format(time.RFC3339),
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"endedAt":      endedAt.Format(time.RFC3339),
 		"status":       "COMPLETED",
 		"summary":      "Caller rescheduled an appointment.",
 		"transcript": map[string]any{
-			"items": []map[string]any{{"role": "user", "text": "Please move my appointment."}},
+			"items": []map[string]any{
+				{
+					"id":   "turn-1",
+					"role": "user",
+					"text": "Please move my appointment.",
+				},
+				{
+					"id":   "turn-2",
+					"role": "assistant",
+					"text": "I can help with that.",
+				},
+			},
 		},
 		"appointmentOutcome": map[string]any{
 			"action":             "RESCHEDULED",
@@ -338,7 +455,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"sourceCallId": "abita-call-63",
 		"callerPhone":  "+17275550199",
 		"officePhone":  "+17275919997",
-		"startedAt":    now.Format(time.RFC3339),
+		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"endedAt":      endedAt.Add(time.Minute).Format(time.RFC3339),
 		"status":       "FAILED",
 		"transcript": map[string]any{
@@ -386,7 +503,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		stored.AppointmentOutcome != "RESCHEDULE" ||
 		stored.OldAppointmentID != "appointment-old" ||
 		stored.NewAppointmentID != "appointment-new" ||
-		string(storedTranscript) != `{"items":[{"role":"user","text":"Please move my appointment."}]}` ||
+		string(storedTranscript) != `{"items":[{"id":"turn-1","role":"user","text":"Please move my appointment."},{"id":"turn-2","role":"assistant","text":"I can help with that."}]}` ||
 		stored.CloseoutPayload["appointmentActions"] == nil {
 		t.Fatalf("monotonic AI Interaction detail = %#v", stored)
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -372,6 +373,11 @@ func (m *Module) Ingest(
 	if err != nil {
 		return Interaction{}, "", ErrDenied
 	}
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))
+	`, authorization.PracticeID, command.SourceCallID); err != nil {
+		return Interaction{}, "", fmt.Errorf("lock AI Interaction source: %w", err)
+	}
 
 	current, found, err := lockBySourceCall(
 		ctx,
@@ -423,9 +429,9 @@ func normalizeCommand(command *IngestCommand) {
 	command.CallerPhone = strings.TrimSpace(command.CallerPhone)
 	command.OfficePhone = strings.TrimSpace(command.OfficePhone)
 	command.Summary = strings.TrimSpace(command.Summary)
-	command.StartedAt = command.StartedAt.UTC()
+	command.StartedAt = command.StartedAt.UTC().Round(time.Microsecond)
 	if command.EndedAt != nil {
-		endedAt := command.EndedAt.UTC()
+		endedAt := command.EndedAt.UTC().Round(time.Microsecond)
 		command.EndedAt = &endedAt
 	}
 	if command.Appointment != nil {
@@ -438,7 +444,7 @@ func normalizeCommand(command *IngestCommand) {
 		command.Appointment.NewAppointmentID = strings.TrimSpace(
 			command.Appointment.NewAppointmentID,
 		)
-		command.Appointment.OccurredAt = command.Appointment.OccurredAt.UTC()
+		command.Appointment.OccurredAt = command.Appointment.OccurredAt.UTC().Round(time.Microsecond)
 	}
 }
 
@@ -531,6 +537,7 @@ func applyMessage(
 	stage int,
 	now time.Time,
 ) {
+	advancesLifecycle := stage > interaction.Completeness
 	if stage > interaction.Completeness {
 		interaction.Status = command.Status
 		interaction.EndedAt = command.EndedAt
@@ -542,14 +549,17 @@ func applyMessage(
 	interaction.Transcript = mergeEvidenceJSON(
 		interaction.Transcript,
 		command.Transcript,
+		advancesLifecycle,
 	)
 	interaction.SummaryPayload = mergeEvidenceJSON(
 		interaction.SummaryPayload,
 		command.SummaryPayload,
+		advancesLifecycle,
 	)
 	interaction.CloseoutPayload = mergeEvidenceJSON(
 		interaction.CloseoutPayload,
 		command.CloseoutPayload,
+		advancesLifecycle,
 	)
 	if command.Appointment != nil {
 		applyAppointmentEvidence(interaction, *command.Appointment)
@@ -557,7 +567,11 @@ func applyMessage(
 	interaction.UpdatedAt = now
 }
 
-func mergeEvidenceJSON(current json.RawMessage, candidate json.RawMessage) json.RawMessage {
+func mergeEvidenceJSON(
+	current json.RawMessage,
+	candidate json.RawMessage,
+	replaceArrays bool,
+) json.RawMessage {
 	if len(candidate) == 0 {
 		return current
 	}
@@ -573,14 +587,18 @@ func mergeEvidenceJSON(current json.RawMessage, candidate json.RawMessage) json.
 		candidateDecoder.Decode(&candidateValue) != nil {
 		return current
 	}
-	merged, err := json.Marshal(mergeEvidenceValue(currentValue, candidateValue))
+	merged, err := json.Marshal(mergeEvidenceValue(
+		currentValue,
+		candidateValue,
+		replaceArrays,
+	))
 	if err != nil {
 		return current
 	}
 	return merged
 }
 
-func mergeEvidenceValue(current any, candidate any) any {
+func mergeEvidenceValue(current any, candidate any, replaceArrays bool) any {
 	switch currentValue := current.(type) {
 	case map[string]any:
 		candidateValue, ok := candidate.(map[string]any)
@@ -589,7 +607,7 @@ func mergeEvidenceValue(current any, candidate any) any {
 		}
 		for key, value := range candidateValue {
 			if existing, found := currentValue[key]; found {
-				currentValue[key] = mergeEvidenceValue(existing, value)
+				currentValue[key] = mergeEvidenceValue(existing, value, replaceArrays)
 			} else {
 				currentValue[key] = value
 			}
@@ -597,13 +615,22 @@ func mergeEvidenceValue(current any, candidate any) any {
 		return currentValue
 	case []any:
 		candidateValue, ok := candidate.([]any)
-		if !ok || len(currentValue) > 0 || len(candidateValue) == 0 {
+		if !ok || len(candidateValue) == 0 {
 			return current
 		}
-		return candidateValue
+		if replaceArrays || len(currentValue) == 0 ||
+			evidenceArrayExtends(currentValue, candidateValue) {
+			return candidateValue
+		}
+		return current
 	default:
 		return current
 	}
+}
+
+func evidenceArrayExtends(current []any, candidate []any) bool {
+	return len(candidate) >= len(current) &&
+		reflect.DeepEqual(current, candidate[:len(current)])
 }
 
 func applyAppointmentEvidence(
