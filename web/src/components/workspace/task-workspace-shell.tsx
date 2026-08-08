@@ -104,7 +104,6 @@ export function TaskWorkspaceShell() {
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
   const [ordering, setOrdering] = useState<TaskOrdering>("priority")
-  const [taskState, setTaskState] = useState<"OPEN" | "COMPLETED">("OPEN")
   const [engagementError, setEngagementError] = useState("")
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
   const [recentInboxes, setRecentInboxes] = useState<EngagementSummary[]>([])
@@ -140,7 +139,6 @@ export function TaskWorkspaceShell() {
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
   const orderingRef = useRef<TaskOrdering>("priority")
-  const taskStateRef = useRef<"OPEN" | "COMPLETED">("OPEN")
   const locationScopeRef = useRef("")
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
@@ -157,9 +155,6 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     orderingRef.current = ordering
   }, [ordering])
-  useEffect(() => {
-    taskStateRef.current = taskState
-  }, [taskState])
   useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
@@ -226,7 +221,6 @@ export function TaskWorkspaceShell() {
       const queryKey = workspaceTaskQueryKey(
         practiceID,
         locationScopeID,
-        taskState,
         ordering,
       )
       const requestGeneration = ++taskQueryGenerationRef.current
@@ -242,7 +236,7 @@ export function TaskWorkspaceShell() {
         body: {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
-          state: taskState,
+          state: "OPEN",
           ordering,
           ...(cursor ? { cursor } : {}),
           limit: 50,
@@ -290,7 +284,7 @@ export function TaskWorkspaceShell() {
         setView("none")
       }
     },
-    [locationScopeID, ordering, practiceID, taskState],
+    [locationScopeID, ordering, practiceID],
   )
   const loadMessageThreads = useCallback(
     async (cursor = "", append = false) => {
@@ -356,12 +350,10 @@ export function TaskWorkspaceShell() {
       const messageGeneration = ++messageQueryGenerationRef.current
       const taskLocationID = locationScopeRef.current
       const taskOrdering = orderingRef.current
-      const currentTaskState = taskStateRef.current
       const selectedTaskID = selectedTaskRef.current?.id
       const taskQueryKey = workspaceTaskQueryKey(
         scope.practiceID,
         taskLocationID,
-        currentTaskState,
         taskOrdering,
       )
       const messageQueryKey = workspaceMessageQueryKey(
@@ -384,7 +376,7 @@ export function TaskWorkspaceShell() {
             body: {
               practiceId: scope.practiceID,
               ...(taskLocationID ? { locationId: taskLocationID } : {}),
-              state: currentTaskState,
+              state: "OPEN",
               ordering: taskOrdering,
               limit: 50,
             },
@@ -577,7 +569,6 @@ export function TaskWorkspaceShell() {
     const queryKey = workspaceTaskQueryKey(
       practiceID,
       locationScopeID,
-      taskState,
       ordering,
     )
     if (taskQueryKeyRef.current === queryKey) return
@@ -589,7 +580,6 @@ export function TaskWorkspaceShell() {
     locationScopeID,
     ordering,
     practiceID,
-    taskState,
   ])
 
   useEffect(() => {
@@ -988,7 +978,6 @@ export function TaskWorkspaceShell() {
           selectedTaskID={selectedTask?.id ?? ""}
           selectedPhone={selectedEngagement?.phone ?? ""}
           search={search}
-          taskState={taskState}
           engagementError={engagementError}
           loading={tasksLoading}
           messageLoading={messagesLoading}
@@ -1001,14 +990,6 @@ export function TaskWorkspaceShell() {
           }}
           onSearchSubmit={submitPhoneSearch}
           onEngagementSelect={selectEngagement}
-          onTaskStateChange={(state) => {
-            if (state === taskState) return
-            taskQueryGenerationRef.current += 1
-            taskQueryKeyRef.current = ""
-            hasLoadedTasksRef.current = false
-            taskStateRef.current = state
-            setTaskState(state)
-          }}
           onTaskSelect={selectTask}
           onLoadMore={() => void loadTasks(nextCursor, true)}
           onMessageLoadMore={() =>
@@ -1204,10 +1185,9 @@ function taskOrderingKey(userSubject: string, practiceID: string) {
 function workspaceTaskQueryKey(
   practiceID: string,
   locationID: string,
-  state: "OPEN" | "COMPLETED",
   ordering: TaskOrdering,
 ) {
-  return `${practiceID}:${locationID}:${state}:${ordering}`
+  return `${practiceID}:${locationID}:OPEN:${ordering}`
 }
 
 function workspaceMessageQueryKey(

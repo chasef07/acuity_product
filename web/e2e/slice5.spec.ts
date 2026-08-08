@@ -33,16 +33,16 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
   ).toContainText("Abita Eye Group · Fixture Location 1")
-  await expect(
-    page.getByRole("tab", { name: "Open", exact: true }),
-  ).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
     "aria-expanded",
     "true",
   )
-  await expect(
-    page.getByRole("button", { name: /^Missed Calls & Voicemails/ }),
-  ).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Missed Calls/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Voicemails/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Bookings/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Cancellations/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Reschedules/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Texts/ })).toBeVisible()
   await expect(page.getByRole("button", { name: "Recent" })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
@@ -143,6 +143,10 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
 
   const inboundText = "Please call me about the pickup time."
   await sendInbound(page, "slice-5-inbound", inboundText)
+  const textsSection = page.getByRole("button", { name: /^Texts/ })
+  if ((await textsSection.getAttribute("aria-expanded")) === "false") {
+    await textsSection.click()
+  }
   const firstThread = page
     .getByRole("button", { name: /\(727\) 555-0199/ })
     .first()
@@ -217,9 +221,10 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       .getByRole("article")
       .filter({ hasText: messageAfterCompletion }),
   ).toBeVisible()
-  await page.getByRole("tab", { name: "Completed", exact: true }).click()
   await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .getByRole("button", {
+      name: /Fixture Location 1 · Task · Completed.*Follow up on text/,
+    })
     .click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),

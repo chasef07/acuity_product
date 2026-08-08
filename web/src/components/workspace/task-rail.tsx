@@ -17,7 +17,6 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   InputGroup,
   InputGroupAddon,
@@ -47,7 +46,15 @@ import { cn } from "@/lib/utils"
 
 export type ConnectionState = "connecting" | "connected" | "degraded"
 
-type AttentionSection = "tasks" | "calls" | "texts" | "recent"
+type AttentionSection =
+  | "tasks"
+  | "missedCalls"
+  | "voicemails"
+  | "bookings"
+  | "cancellations"
+  | "reschedules"
+  | "texts"
+  | "recent"
 
 type TaskRailProps = {
   discovery: AccessDiscovery
@@ -59,7 +66,6 @@ type TaskRailProps = {
   selectedTaskID: string
   selectedPhone: string
   search: string
-  taskState: "OPEN" | "COMPLETED"
   engagementError: string
   loading: boolean
   messageLoading: boolean
@@ -67,7 +73,6 @@ type TaskRailProps = {
   messageNextCursor: string
   connection: ConnectionState
   onSearchChange: (search: string) => void
-  onTaskStateChange: (state: "OPEN" | "COMPLETED") => void
   onSearchSubmit: () => void
   onEngagementSelect: (engagement: EngagementSummary) => void
   onTaskSelect: (task: Task) => void
@@ -85,7 +90,6 @@ export function TaskRail({
   selectedTaskID,
   selectedPhone,
   search,
-  taskState,
   engagementError,
   loading,
   messageLoading,
@@ -93,7 +97,6 @@ export function TaskRail({
   messageNextCursor,
   connection,
   onSearchChange,
-  onTaskStateChange,
   onSearchSubmit,
   onEngagementSelect,
   onTaskSelect,
@@ -102,31 +105,32 @@ export function TaskRail({
 }: TaskRailProps) {
   const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
   const [expanded, setExpanded] = useState<Record<AttentionSection, boolean>>(
-    () =>
-      readSidebarState(stateKey)?.expanded ?? {
-        tasks: true,
-        calls: true,
-        texts: true,
-        recent: false,
-      },
+    () => ({
+      tasks: true,
+      missedCalls: false,
+      voicemails: false,
+      bookings: false,
+      cancellations: false,
+      reschedules: false,
+      texts: false,
+      recent: false,
+      ...readSidebarState(stateKey)?.expanded,
+    }),
   )
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
   const showOffice = practice.locations.length > 1 && !locationScopeID
-  const generalTasks = useMemo(
-    () =>
-      taskState === "COMPLETED"
-        ? tasks
-        : tasks.filter(
-            (task) =>
-              task.origin !== "MISSED_CALL_RECOVERY" &&
-              task.origin !== "VOICEMAIL_RECOVERY",
-          ),
-    [taskState, tasks],
+  const categorizedTasks = useMemo(() => categorizeTasks(tasks), [tasks])
+  const missedCallRows = useMemo(
+    () => aggregateRecovery(tasks, "MISSED_CALL_RECOVERY"),
+    [tasks],
   )
-  const recoveryRows = useMemo(() => aggregateRecovery(tasks), [tasks])
+  const voicemailRows = useMemo(
+    () => aggregateRecovery(tasks, "VOICEMAIL_RECOVERY"),
+    [tasks],
+  )
   const textRows = useMemo(() => aggregateTexts(messages), [messages])
 
   useEffect(() => {
@@ -215,36 +219,18 @@ export function TaskRail({
             )}
           </form>
         </SidebarHeader>
-        <div className="mx-3 grid grid-cols-2 rounded-lg bg-sidebar-accent/35 p-0.5" role="tablist" aria-label="Work state">
-          {(["OPEN", "COMPLETED"] as const).map((state) => (
-            <Button
-              key={state}
-              role="tab"
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "h-7 rounded-md text-xs font-medium",
-                taskState === state && "bg-background shadow-xs hover:bg-background",
-              )}
-              aria-selected={taskState === state}
-              onClick={() => onTaskStateChange(state)}
-            >
-              {state === "OPEN" ? "Open" : "Completed"}
-            </Button>
-          ))}
-        </div>
         <SidebarContent
           ref={scrollContainer}
           className="gap-1 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
           <AttentionGroup
-            title={taskState === "OPEN" ? "Tasks" : "Completed Tasks"}
-            count={generalTasks.length}
+            title="Tasks"
+            count={categorizedTasks.general.length}
             expanded={expanded.tasks}
             onToggle={() => toggle("tasks")}
           >
-            {generalTasks.map((task) => (
+            {categorizedTasks.general.map((task) => (
               <TaskRow
                 key={task.id}
                 task={task}
@@ -253,13 +239,11 @@ export function TaskRail({
                 onSelect={() => onTaskSelect(task)}
               />
             ))}
-            {loading && generalTasks.length === 0 && (
+            {loading && categorizedTasks.general.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
-            {!loading && generalTasks.length === 0 && (
-              <RailEmpty inMenu>
-                {taskState === "OPEN" ? "No open Tasks" : "No completed Tasks"}
-              </RailEmpty>
+            {!loading && categorizedTasks.general.length === 0 && (
+              <RailEmpty inMenu>No open Tasks</RailEmpty>
             )}
             {expanded.tasks && (
               <RailLoadSentinel
@@ -271,74 +255,97 @@ export function TaskRail({
             )}
           </AttentionGroup>
 
-          {taskState === "OPEN" && (
-            <>
-              <AttentionGroup
-                title="Missed Calls & Voicemails"
-                count={recoveryRows.length}
-                expanded={expanded.calls}
-                onToggle={() => toggle("calls")}
-              >
-                {recoveryRows.map((row) => (
-                  <RecoveryRow
-                    key={row.phone}
-                    row={row}
-                    active={row.phone === selectedPhone}
-                    onSelect={() => onEngagementSelect(recoveryEngagement(row))}
-                  />
-                ))}
-                {!loading && recoveryRows.length === 0 && (
-                  <RailEmpty inMenu>No callbacks waiting</RailEmpty>
-                )}
-              </AttentionGroup>
-              <AttentionGroup
-                title="Texts"
-                count={textRows.length}
-                expanded={expanded.texts}
-                onToggle={() => toggle("texts")}
-              >
-                {textRows.map((row) => (
-                  <TextRow
-                    key={row.engagement.phone}
-                    row={row}
-                    active={row.engagement.phone === selectedPhone}
-                    onSelect={() => onEngagementSelect(row.engagement)}
-                  />
-                ))}
-                {messageLoading && textRows.length === 0 && (
-                  <RailLoading inMenu label="Loading Texts" />
-                )}
-                {!messageLoading && textRows.length === 0 && (
-                  <RailEmpty inMenu>No unread Texts</RailEmpty>
-                )}
-                {expanded.texts && (
-                  <RailLoadSentinel
-                    label="Loading more Texts"
-                    cursor={messageNextCursor}
-                    loading={messageLoading}
-                    onLoadMore={onMessageLoadMore}
-                  />
-                )}
-              </AttentionGroup>
-              <AttentionGroup
-                title="Recent"
-                expanded={expanded.recent}
-                onToggle={() => toggle("recent")}
-              >
-                {recent.map((engagement) => (
-                  <RecentRow
-                    key={engagement.phone}
-                    engagement={engagement}
-                    active={engagement.phone === selectedPhone}
-                    onSelect={() => onEngagementSelect(engagement)}
-                  />
-                ))}
-                {recent.length === 0 && (
-                  <RailEmpty inMenu>No recent number inboxes</RailEmpty>
-                )}
-              </AttentionGroup>
-            </>
-          )}
+          <RecoveryGroup
+            title="Missed Calls"
+            empty="No missed calls"
+            rows={missedCallRows}
+            expanded={expanded.missedCalls}
+            selectedPhone={selectedPhone}
+            onToggle={() => toggle("missedCalls")}
+            onSelect={onEngagementSelect}
+          />
+          <RecoveryGroup
+            title="Voicemails"
+            empty="No voicemails"
+            rows={voicemailRows}
+            expanded={expanded.voicemails}
+            selectedPhone={selectedPhone}
+            onToggle={() => toggle("voicemails")}
+            onSelect={onEngagementSelect}
+          />
+          <TaskGroup
+            title="Bookings"
+            tasks={categorizedTasks.bookings}
+            expanded={expanded.bookings}
+            selectedTaskID={selectedTaskID}
+            showOffice={showOffice}
+            onToggle={() => toggle("bookings")}
+            onSelect={onTaskSelect}
+          />
+          <TaskGroup
+            title="Cancellations"
+            tasks={categorizedTasks.cancellations}
+            expanded={expanded.cancellations}
+            selectedTaskID={selectedTaskID}
+            showOffice={showOffice}
+            onToggle={() => toggle("cancellations")}
+            onSelect={onTaskSelect}
+          />
+          <TaskGroup
+            title="Reschedules"
+            tasks={categorizedTasks.reschedules}
+            expanded={expanded.reschedules}
+            selectedTaskID={selectedTaskID}
+            showOffice={showOffice}
+            onToggle={() => toggle("reschedules")}
+            onSelect={onTaskSelect}
+          />
+          <AttentionGroup
+            title="Texts"
+            count={textRows.length}
+            expanded={expanded.texts}
+            onToggle={() => toggle("texts")}
+          >
+            {textRows.map((row) => (
+              <TextRow
+                key={row.engagement.phone}
+                row={row}
+                active={row.engagement.phone === selectedPhone}
+                onSelect={() => onEngagementSelect(row.engagement)}
+              />
+            ))}
+            {messageLoading && textRows.length === 0 && (
+              <RailLoading inMenu label="Loading Texts" />
+            )}
+            {!messageLoading && textRows.length === 0 && (
+              <RailEmpty inMenu>No unread Texts</RailEmpty>
+            )}
+            {expanded.texts && (
+              <RailLoadSentinel
+                label="Loading more Texts"
+                cursor={messageNextCursor}
+                loading={messageLoading}
+                onLoadMore={onMessageLoadMore}
+              />
+            )}
+          </AttentionGroup>
+          <AttentionGroup
+            title="Recent"
+            expanded={expanded.recent}
+            onToggle={() => toggle("recent")}
+          >
+            {recent.map((engagement) => (
+              <RecentRow
+                key={engagement.phone}
+                engagement={engagement}
+                active={engagement.phone === selectedPhone}
+                onSelect={() => onEngagementSelect(engagement)}
+              />
+            ))}
+            {recent.length === 0 && (
+              <RailEmpty inMenu>No recent number inboxes</RailEmpty>
+            )}
+          </AttentionGroup>
         </SidebarContent>
         <SidebarFooter className="p-2">
           <SidebarMenu>
@@ -416,6 +423,83 @@ function AttentionGroup({
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  )
+}
+
+function TaskGroup({
+  title,
+  tasks,
+  expanded,
+  selectedTaskID,
+  showOffice,
+  onToggle,
+  onSelect,
+}: {
+  title: string
+  tasks: Task[]
+  expanded: boolean
+  selectedTaskID: string
+  showOffice: boolean
+  onToggle: () => void
+  onSelect: (task: Task) => void
+}) {
+  return (
+    <AttentionGroup
+      title={title}
+      count={tasks.length}
+      expanded={expanded}
+      onToggle={onToggle}
+    >
+      {tasks.map((task) => (
+        <TaskRow
+          key={task.id}
+          task={task}
+          active={task.id === selectedTaskID}
+          showOffice={showOffice}
+          onSelect={() => onSelect(task)}
+        />
+      ))}
+      {tasks.length === 0 && (
+        <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
+      )}
+    </AttentionGroup>
+  )
+}
+
+function RecoveryGroup({
+  title,
+  empty,
+  rows,
+  expanded,
+  selectedPhone,
+  onToggle,
+  onSelect,
+}: {
+  title: string
+  empty: string
+  rows: RecoveryRowValue[]
+  expanded: boolean
+  selectedPhone: string
+  onToggle: () => void
+  onSelect: (engagement: EngagementSummary) => void
+}) {
+  return (
+    <AttentionGroup
+      title={title}
+      count={rows.length}
+      expanded={expanded}
+      onToggle={onToggle}
+    >
+      {rows.map((row) => (
+        <RecoveryRow
+          key={row.phone}
+          row={row}
+          active={row.phone === selectedPhone}
+          onSelect={() => onSelect(recoveryEngagement(row))}
+        />
+      ))}
+      {rows.length === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
+    </AttentionGroup>
   )
 }
 
@@ -587,12 +671,49 @@ function RecentRow({
   )
 }
 
-function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
-  const rows = new Map<string, RecoveryRowValue>()
+function categorizeTasks(tasks: Task[]) {
+  const categorized = {
+    general: [] as Task[],
+    bookings: [] as Task[],
+    cancellations: [] as Task[],
+    reschedules: [] as Task[],
+  }
   for (const task of tasks) {
-    if (task.origin !== "MISSED_CALL_RECOVERY" && task.origin !== "VOICEMAIL_RECOVERY") {
+    if (
+      task.origin === "MISSED_CALL_RECOVERY" ||
+      task.origin === "VOICEMAIL_RECOVERY"
+    ) {
       continue
     }
+    const intent = appointmentIntent(task)
+    if (intent) categorized[intent].push(task)
+    else categorized.general.push(task)
+  }
+  return categorized
+}
+
+function appointmentIntent(
+  task: Task,
+): "bookings" | "cancellations" | "reschedules" | undefined {
+  if (task.category !== "appointments") return undefined
+  const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
+  if (/\b(cancel|cancellation)\b/.test(text)) return "cancellations"
+  if (/\b(reschedule|rescheduling|move appointment|change appointment)\b/.test(text)) {
+    return "reschedules"
+  }
+  if (/\b(book|booking|schedule|new appointment|appointment request)\b/.test(text)) {
+    return "bookings"
+  }
+  return undefined
+}
+
+function aggregateRecovery(
+  tasks: Task[],
+  origin: "MISSED_CALL_RECOVERY" | "VOICEMAIL_RECOVERY",
+): RecoveryRowValue[] {
+  const rows = new Map<string, RecoveryRowValue>()
+  for (const task of tasks) {
+    if (task.origin !== origin) continue
     const existing = rows.get(task.phone) ?? {
       phone: task.phone,
       tasks: [],
@@ -730,7 +851,7 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
 }
 
 type SidebarState = {
-  expanded: Record<AttentionSection, boolean>
+  expanded: Partial<Record<AttentionSection, boolean>>
   scrollTop: number
 }
 

@@ -73,9 +73,9 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await page.getByLabel("Password").fill("fixture-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
     await expect(page).toHaveURL(/\/workspace$/)
-    await expect(page.getByText("No follow-up tasks")).toBeVisible()
+    await expect(page.getByText("No open Tasks")).toBeVisible()
     await expect(page.getByText("Abita Eye Group · All offices")).toBeVisible()
-    await expect(page.getByText("Live")).toBeVisible()
+    await expect(page.getByLabel("Live updates connected")).toBeVisible()
   })
 
   await test.step("cross-Location expansion is denied without protected data", async () => {
@@ -107,8 +107,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
   const secondCustomerPage = await secondCustomerContext.newPage()
   await abortFirstRealtimeRequest(secondCustomerPage)
   await secondCustomerPage.goto("/workspace")
-  await expect(secondCustomerPage.getByText("No follow-up tasks")).toBeVisible()
-  await expect(secondCustomerPage.getByText("Live")).toBeVisible()
+  await expect(secondCustomerPage.getByText("No open Tasks")).toBeVisible()
+  await expect(
+    secondCustomerPage.getByLabel("Live updates connected"),
+  ).toBeVisible()
   const initialVersion = Number(
     await page.getByTestId("mounted-workspace").getAttribute(
       "data-workspace-version",
@@ -134,8 +136,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     })
 
     process.kill(realtimePID, "SIGKILL")
-    await expect(page.getByText("Updates delayed")).toBeVisible()
-    await expect(secondCustomerPage.getByText("Updates delayed")).toBeVisible()
+    await expect(page.getByLabel("Live updates delayed")).toBeVisible()
+    await expect(
+      secondCustomerPage.getByLabel("Live updates delayed"),
+    ).toBeVisible()
 
     const replacementRealtime = spawn(runtimeBinary!, [], {
       env: {
@@ -167,8 +171,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     )
     replacementRealtime.unref()
 
-    await expect(page.getByText("Live")).toBeVisible()
-    await expect(secondCustomerPage.getByText("Live")).toBeVisible()
+    await expect(page.getByLabel("Live updates connected")).toBeVisible()
+    await expect(
+      secondCustomerPage.getByLabel("Live updates connected"),
+    ).toBeVisible()
     expect(firstBrowserRefetches).toBeGreaterThan(0)
     expect(secondBrowserRefetches).toBeGreaterThan(0)
   })
@@ -197,7 +203,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await operatorPage.getByLabel("Email").fill("founder@acuity.test")
     await operatorPage.getByLabel("Password").fill("operator-password-1234")
     await operatorPage.getByRole("button", { name: "Sign in" }).click()
-    await expect(operatorPage.getByText("No follow-up tasks")).toBeVisible()
+    await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
 
     await operatorPage
       .getByRole("button", { name: "Enter Support Mode" })
@@ -322,7 +328,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await page.getByLabel("Email").fill("admin@abita.test")
     await page.getByLabel("Password").fill("updated-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
-    await expect(page.getByText("No follow-up tasks")).toBeVisible()
+    await expect(page.getByText("No open Tasks")).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
       fullPage: true,
@@ -344,7 +350,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     })
     const coarsePage = await coarseContext.newPage()
     await coarsePage.goto("/workspace")
-    await expect(coarsePage.getByText("No follow-up tasks")).toBeVisible()
+    await expect(coarsePage.getByText("No open Tasks")).toBeVisible()
     await expect(
       coarsePage.getByRole("button", { name: "Workspace selector" }),
     ).toContainText("Abita Eye Group")
