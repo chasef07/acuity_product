@@ -996,6 +996,14 @@ export function TaskWorkspaceShell() {
         <TaskRail
           discovery={discovery}
           practice={practice}
+          workspaceControl={
+            <WorkspaceSelector
+              discovery={discovery}
+              practiceID={practiceID}
+              locationScopeID={locationScopeID}
+              onSelect={selectWorkspaceScope}
+            />
+          }
           locationScopeID={locationScopeID}
           tasks={tasks}
           messages={messageThreads}
@@ -1032,24 +1040,21 @@ export function TaskWorkspaceShell() {
               onChanged={() => void loadSnapshot(practiceID, locationID, false)}
             />
           )}
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-card/40 px-3">
-            <SidebarTrigger />
-            <WorkspaceSelector
-              discovery={discovery}
-              practiceID={practiceID}
-              locationScopeID={locationScopeID}
-              onSelect={selectWorkspaceScope}
-            />
-            <CallingAvailabilityControl />
-            {workspace.platformOperator && !workspace.supportMode && (
-              <SupportDialog
-                practiceID={practiceID}
-                onEntered={() =>
-                  void loadSnapshot(practiceID, locationID, false)
-                }
-              />
-            )}
-          </header>
+          {view !== "engagement" && (
+            <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
+              <SidebarTrigger />
+              <div className="flex-1" />
+              <CallingAvailabilityControl />
+              {workspace.platformOperator && !workspace.supportMode && (
+                <SupportDialog
+                  practiceID={practiceID}
+                  onEntered={() =>
+                    void loadSnapshot(practiceID, locationID, false)
+                  }
+                />
+              )}
+            </header>
+          )}
           {view === "engagement" && selectedEngagement ? (
             <div className="relative flex min-h-0 flex-1 bg-muted/20">
               <div className="flex min-h-0 min-w-0 flex-1 bg-background">
@@ -1062,6 +1067,20 @@ export function TaskWorkspaceShell() {
                     !workspace.platformOperator || Boolean(workspace.supportMode)
                   }
                   revision={workspaceRevision}
+                  headerLeading={<SidebarTrigger />}
+                  headerTrailing={
+                    <>
+                      <CallingAvailabilityControl />
+                      {workspace.platformOperator && !workspace.supportMode && (
+                        <SupportDialog
+                          practiceID={practiceID}
+                          onEntered={() =>
+                            void loadSnapshot(practiceID, locationID, false)
+                          }
+                        />
+                      )}
+                    </>
+                  }
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}
@@ -1197,12 +1216,17 @@ function WorkspaceSelector({
             aria-label="Workspace selector"
             variant="ghost"
             size="sm"
-            className="min-w-0 max-w-80"
+            className="h-auto w-full min-w-0 justify-start gap-2 px-1 py-1 text-left"
           />
         }
       >
-        <span className="truncate">
-          {practice.name} · {locationLabel}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold tracking-[-0.01em]">
+            {practice.name}
+          </span>{" "}
+          <span className="block truncate text-[0.6875rem] font-normal text-muted-foreground">
+            {locationLabel}
+          </span>
         </span>
         <ChevronsUpDownIcon data-icon="inline-end" />
       </PopoverTrigger>

@@ -3,6 +3,7 @@
 import {
   type ChangeEvent,
   type FormEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -10,6 +11,7 @@ import {
 } from "react"
 import {
   AlertTriangleIcon,
+  ArrowUpIcon,
   CalendarCheck2Icon,
   CalendarClockIcon,
   CalendarX2Icon,
@@ -24,7 +26,6 @@ import {
   PhoneMissedIcon,
   PhoneOutgoingIcon,
   RefreshCwIcon,
-  SendIcon,
   VoicemailIcon,
   XIcon,
 } from "lucide-react"
@@ -95,6 +96,8 @@ export function EngagementWorkspace({
   supportSessionID,
   canMutate,
   revision,
+  headerLeading,
+  headerTrailing,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
@@ -104,6 +107,8 @@ export function EngagementWorkspace({
   supportSessionID: string
   canMutate: boolean
   revision: number
+  headerLeading?: ReactNode
+  headerTrailing?: ReactNode
   onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
@@ -127,9 +132,10 @@ export function EngagementWorkspace({
     "Choose office"
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="flex min-h-14 flex-wrap items-center gap-3 border-b px-4 py-2">
+      <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">
+        {headerLeading}
         <div className="flex min-w-0 flex-1 items-center gap-1">
-          <h1 className="truncate text-lg font-semibold tracking-[-0.015em] tabular-nums">
+          <h1 className="truncate text-base font-semibold tracking-[-0.015em] tabular-nums sm:text-lg">
             {formatPhone(engagement.phone)}
           </h1>
           <Tooltip>
@@ -161,7 +167,7 @@ export function EngagementWorkspace({
                   : "Copy number"}
             </TooltipContent>
           </Tooltip>
-          <span className="ml-2 min-w-0 truncate text-sm text-muted-foreground">
+          <span className="ml-2 hidden min-w-0 truncate text-sm text-muted-foreground sm:block">
             {routeName}
           </span>
           <span className="sr-only" role="status">
@@ -173,6 +179,7 @@ export function EngagementWorkspace({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {headerTrailing}
           {engagement.locations.length > 1 && (
             <NativeSelect
               aria-label="Sender office"
@@ -212,7 +219,9 @@ export function EngagementWorkspace({
           </Button>
         </div>
         {callError && (
-          <p className="w-full text-xs text-destructive">{callError}</p>
+          <p className="absolute right-3 top-[calc(100%+0.5rem)] z-10 rounded-lg border bg-popover px-3 py-2 text-xs text-destructive shadow-sm">
+            {callError}
+          </p>
         )}
       </header>
       <MessageConversation
@@ -533,7 +542,7 @@ function MessageConversation({
       <div
         ref={scroller}
         data-testid="message-timeline"
-        className="relative min-h-0 flex-1 overflow-y-auto bg-muted/10 px-4 py-5"
+        className="relative min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5"
         onScroll={(event) => {
           const element = event.currentTarget
           atLatest.current =
@@ -1238,17 +1247,17 @@ function MessageComposer({
   return (
     <form
       aria-label="Message composer"
-      className="border-t bg-background p-3"
+      className="bg-background px-4 pb-4 pt-2"
       onSubmit={(event) => void submit(event)}
     >
-      <div className="mx-auto max-w-3xl">
-        <InputGroup className="h-auto min-h-12 rounded-xl bg-background shadow-xs">
+      <div className="mx-auto max-w-4xl">
+        <InputGroup className="h-auto min-h-20 rounded-3xl bg-card p-2 shadow-sm">
           <InputGroupTextarea
             aria-label="Message"
             rows={1}
             maxLength={maximumMessageLength}
-            placeholder="Message"
-            className="max-h-32 min-h-12 py-3"
+            placeholder="Message this number"
+            className="max-h-40 min-h-12 px-3 py-2 text-base"
             value={body}
             disabled={disabled || pending}
             onChange={(event) => setBody(event.target.value)}
@@ -1259,7 +1268,7 @@ function MessageComposer({
               }
             }}
           />
-          <InputGroupAddon align="inline-end" className="self-end">
+          <InputGroupAddon align="block-end" className="px-2 pb-1">
             <InputGroupButton
               type="button"
               size="icon-sm"
@@ -1269,10 +1278,10 @@ function MessageComposer({
             >
               <PaperclipIcon />
             </InputGroupButton>
-            <InputGroupButton
+            <Button
               type="submit"
-              variant="default"
-              size="icon-sm"
+              size="icon-lg"
+              className="ml-auto rounded-full"
               aria-label="Send message"
               disabled={
                 disabled ||
@@ -1281,8 +1290,8 @@ function MessageComposer({
                 (!threadID && !destination.trim())
               }
             >
-              {pending ? <Spinner /> : <SendIcon />}
-            </InputGroupButton>
+              {pending ? <Spinner /> : <ArrowUpIcon />}
+            </Button>
           </InputGroupAddon>
         </InputGroup>
         <input

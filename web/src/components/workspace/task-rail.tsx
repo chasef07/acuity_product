@@ -1,6 +1,13 @@
 "use client"
 
-import { useEffect, useId, useMemo, useRef, useState } from "react"
+import {
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import Image from "next/image"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
@@ -59,6 +66,7 @@ type AttentionSection =
 type TaskRailProps = {
   discovery: AccessDiscovery
   practice: PracticeAccess
+  workspaceControl: ReactNode
   locationScopeID: string
   tasks: Task[]
   messages: MessageThreadSummary[]
@@ -83,6 +91,7 @@ type TaskRailProps = {
 export function TaskRail({
   discovery,
   practice,
+  workspaceControl,
   locationScopeID,
   tasks,
   messages,
@@ -183,9 +192,7 @@ export function TaskRail({
               className="size-7 shrink-0 rounded-sm object-contain"
               priority
             />
-            <p className="min-w-0 flex-1 truncate text-sm font-semibold tracking-[-0.01em]">
-              Acuity Health
-            </p>
+            <div className="min-w-0 flex-1">{workspaceControl}</div>
             <ConnectionMark state={connection} />
           </div>
           <form

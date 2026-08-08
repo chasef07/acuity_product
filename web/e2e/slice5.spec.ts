@@ -33,7 +33,10 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
 
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Abita Eye Group · Fixture Location 1")
+  ).toContainText("Abita Eye Group")
+  await expect(
+    page.getByRole("button", { name: "Workspace selector" }),
+  ).toContainText("Fixture Location 1")
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
     "aria-expanded",
