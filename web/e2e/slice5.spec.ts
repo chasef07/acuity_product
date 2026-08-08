@@ -170,11 +170,23 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
   await inbound.getByRole("button", { name: "Create Task" }).click()
+  const taskTouchpoint = page.getByRole("button", {
+    name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+  })
+  await expect(taskTouchpoint).toBeVisible()
+  await taskTouchpoint.click()
+  const contextPanel = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(contextPanel).toBeVisible()
   await expect(
-    page.getByRole("button", {
-      name: /Fixture Location 1 · Task · Created.*Follow up on text/,
-    }),
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
+  await expect(
+    contextPanel.getByRole("heading", { name: "Follow up on text" }),
+  ).toBeVisible()
+  await contextPanel.getByRole("button", { name: "Close context panel" }).click()
+  await expect(contextPanel).not.toBeVisible()
 
   await page
     .getByRole("button", { name: /^Follow up on text \(727\)/ })
@@ -233,13 +245,17 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       name: /Fixture Location 1 · Task · Completed.*Follow up on text/,
     })
     .click()
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled()
-  await page.getByRole("button", { name: "Reopen" }).click()
+  const completedTaskContext = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(completedTaskContext).toBeVisible()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled()
+  await completedTaskContext.getByRole("button", { name: "Reopen" }).click()
+  await expect(
+    completedTaskContext.getByRole("button", { name: "Complete" }),
+  ).toBeVisible()
 
   await sendInbound(page, "slice-5-stop", "STOP")
   await expect(

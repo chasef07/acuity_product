@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import {
   CheckIcon,
   ChevronsUpDownIcon,
+  PanelRightCloseIcon,
   ShieldCheckIcon,
   WifiOffIcon,
 } from "lucide-react"
@@ -85,6 +86,7 @@ import {
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type View = "none" | "task" | "call" | "engagement"
+type ContextView = "none" | "task" | "call"
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
@@ -118,6 +120,7 @@ export function TaskWorkspaceShell() {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task>()
   const [view, setView] = useState<View>("none")
+  const [contextView, setContextView] = useState<ContextView>("none")
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
@@ -656,6 +659,7 @@ export function TaskWorkspaceShell() {
     setMessageThreads([])
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
+    setContextView("none")
     if (viewRef.current !== "call") setView("none")
     locationScopeRef.current = nextLocationID
     setLocationScopeID(nextLocationID)
@@ -706,6 +710,7 @@ export function TaskWorkspaceShell() {
     setMessageThreads([])
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
+    setContextView("none")
     if (viewRef.current !== "call") setView("none")
 
     const nextOrdering = readTaskOrdering(
@@ -742,6 +747,7 @@ export function TaskWorkspaceShell() {
   function selectTask(task: Task) {
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
+    setContextView("none")
     updateSelectedTask(task)
     setSelectedEngagement(taskEngagement(task))
     if (activeCall) returnTaskIDRef.current = task.id
@@ -751,6 +757,7 @@ export function TaskWorkspaceShell() {
   function selectEngagement(engagement: EngagementSummary, focusedTask?: Task) {
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
+    setContextView("none")
     updateSelectedTask(focusedTask)
     setSelectedEngagement(engagement)
     if (discovery && practiceID) {
@@ -847,7 +854,16 @@ export function TaskWorkspaceShell() {
     }
   }
 
-  async function openCallDetail(callID: string) {
+  function openTaskContext(task: Task) {
+    callDetailGenerationRef.current += 1
+    setSearch("")
+    setHistoricalCall(undefined)
+    updateTaskProjection(task, false)
+    updateSelectedTask(task)
+    setContextView("task")
+  }
+
+  async function openCallContext(callID: string) {
     const requestGeneration = ++callDetailGenerationRef.current
     const requestScope = snapshotScopeRef.current
     const token = await getAccessToken()
@@ -864,8 +880,15 @@ export function TaskWorkspaceShell() {
       return
     }
     focusedCallIDRef.current = callID
+    updateSelectedTask(undefined)
     setHistoricalCall(result.data)
-    setView("call")
+    setContextView("call")
+  }
+
+  function closeContextPanel() {
+    callDetailGenerationRef.current += 1
+    setContextView("none")
+    setHistoricalCall(undefined)
   }
 
   const handleCallChanged = useCallback((call: CallingCall | undefined) => {
@@ -884,6 +907,7 @@ export function TaskWorkspaceShell() {
       setHistoricalCall(undefined)
     }
     focusedCallIDRef.current = call.id
+    setContextView("none")
     returnTaskIDRef.current =
       viewRef.current === "task" ? (selectedTaskRef.current?.id ?? "") : ""
     setView("call")
@@ -1027,22 +1051,81 @@ export function TaskWorkspaceShell() {
             )}
           </header>
           {view === "engagement" && selectedEngagement ? (
-            <EngagementWorkspace
-              key={selectedEngagement.phone}
-              engagement={selectedEngagement}
-              practiceID={practiceID}
-              supportSessionID={workspace.supportMode?.id ?? ""}
-              canMutate={
-                !workspace.platformOperator || Boolean(workspace.supportMode)
-              }
-              revision={workspaceRevision}
-              onTaskCreated={(task) => updateTaskProjection(task, false)}
-              onTaskOpen={(task) => {
-                setSearch("")
-                updateTaskProjection(task)
-              }}
-              onCallOpen={(callID) => void openCallDetail(callID)}
-            />
+            <div className="relative flex min-h-0 flex-1 bg-muted/20">
+              <div className="flex min-h-0 min-w-0 flex-1 bg-background">
+                <EngagementWorkspace
+                  key={selectedEngagement.phone}
+                  engagement={selectedEngagement}
+                  practiceID={practiceID}
+                  supportSessionID={workspace.supportMode?.id ?? ""}
+                  canMutate={
+                    !workspace.platformOperator || Boolean(workspace.supportMode)
+                  }
+                  revision={workspaceRevision}
+                  onTaskCreated={(task) => updateTaskProjection(task, false)}
+                  onTaskOpen={openTaskContext}
+                  onCallOpen={(callID) => void openCallContext(callID)}
+                />
+              </div>
+              {contextView !== "none" &&
+                ((contextView === "task" && selectedTask) ||
+                  (contextView === "call" && historicalCall)) && (
+                  <aside
+                    aria-label={`${contextView === "task" ? "Task" : "Call"} context`}
+                    className="absolute inset-y-3 right-3 flex w-[calc(100%-1.5rem)] max-w-sm flex-col overflow-hidden rounded-xl border bg-popover shadow-lg lg:relative lg:inset-auto lg:my-3 lg:mr-3 lg:w-96 lg:max-w-none lg:shrink-0"
+                  >
+                    <div className="flex h-12 shrink-0 items-center border-b px-4">
+                      <p className="text-sm font-medium">
+                        {contextView === "task" ? "Task context" : "Call context"}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="ml-auto"
+                        aria-label="Close context panel"
+                        onClick={closeContextPanel}
+                      >
+                        <PanelRightCloseIcon />
+                      </Button>
+                    </div>
+                    <div className="flex min-h-0 flex-1">
+                      <InteractionWorkspace
+                        task={selectedTask}
+                        activeCall={historicalCall ?? activeCall}
+                        view={contextView}
+                        contextOnly
+                        supportSessionID={workspace.supportMode?.id ?? ""}
+                        canMutate={
+                          !workspace.platformOperator ||
+                          Boolean(workspace.supportMode)
+                        }
+                        historyHint={workspaceRevision}
+                        taskCallPending={Boolean(taskCallRequest)}
+                        taskCallError={taskCallError}
+                        onTaskUpdated={(task) => {
+                          updateTaskProjection(task, false)
+                          updateSelectedTask(task)
+                          setContextView("task")
+                          void loadTasks("", false, true)
+                        }}
+                        onStartTaskCall={(task) => {
+                          setTaskCallError("")
+                          setTaskCallRequest({
+                            id: window.crypto.randomUUID(),
+                            taskID: task.id,
+                          })
+                        }}
+                        onReturnToCall={() => {
+                          if (!activeCall) return
+                          setContextView("none")
+                          setView("call")
+                        }}
+                      />
+                    </div>
+                  </aside>
+                )}
+            </div>
           ) : (
             <InteractionWorkspace
               task={selectedTask}

@@ -60,6 +60,7 @@ type InteractionWorkspaceProps = {
   onTaskUpdated: (task: Task) => void
   onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
+  contextOnly?: boolean
 }
 
 export function InteractionWorkspace({
@@ -74,6 +75,7 @@ export function InteractionWorkspace({
   onTaskUpdated,
   onStartTaskCall,
   onReturnToCall,
+  contextOnly = false,
 }: InteractionWorkspaceProps) {
 	const openRecoveryTask = useCallback(
 		async (taskID: string) => {
@@ -97,6 +99,7 @@ export function InteractionWorkspace({
 		onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
         supportSessionID={supportSessionID}
         canMutate={canMutate}
+        contextOnly={contextOnly}
       />
     )
   }
@@ -114,6 +117,7 @@ export function InteractionWorkspace({
         onTaskUpdated={onTaskUpdated}
         onStartTaskCall={onStartTaskCall}
         onReturnToCall={onReturnToCall}
+        contextOnly={contextOnly}
       />
     )
   }
@@ -131,6 +135,7 @@ function TaskWorkspace({
   onTaskUpdated,
   onStartTaskCall,
   onReturnToCall,
+  contextOnly,
 }: {
   task: Task
   activeCall: CallingCall | undefined
@@ -142,6 +147,7 @@ function TaskWorkspace({
   onTaskUpdated: (task: Task) => void
   onStartTaskCall: (task: Task) => void
   onReturnToCall: () => void
+  contextOnly: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task.title)
@@ -261,39 +267,50 @@ function TaskWorkspace({
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col xl:flex-row">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="border-b px-5 py-4">
-          <p className="text-xs font-medium text-muted-foreground">
-            Engagement History · exact phone
-          </p>
-          <h1 className="mt-1 text-xl font-semibold tabular-nums">
-            {formatPhone(task.phone)}
-          </h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {task.locationName} · Task-linked context across authorized offices
-          </p>
-        </header>
-        <TaskMessageConversation
-          key={task.id}
-          task={task}
-          supportSessionID={supportSessionID}
-          canMutate={canMutate}
-          revision={historyHint}
-          onTaskCreated={onTaskUpdated}
-          onMessageSent={() => void refreshTask()}
-        />
-        {!task.messageThreadId && !task.conversationThreadId && (
-          <CallHistory
-            key={`task:${task.id}`}
-            source={{ kind: "task", id: task.id }}
+    <section
+      className={cn(
+        "flex min-h-0 flex-1 flex-col xl:flex-row",
+        contextOnly && "h-full",
+      )}
+    >
+      {!contextOnly && (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <header className="border-b px-5 py-4">
+            <p className="text-xs font-medium text-muted-foreground">
+              Engagement History · exact phone
+            </p>
+            <h1 className="mt-1 text-xl font-semibold tabular-nums">
+              {formatPhone(task.phone)}
+            </h1>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {task.locationName} · Task-linked context across authorized offices
+            </p>
+          </header>
+          <TaskMessageConversation
+            key={task.id}
+            task={task}
+            supportSessionID={supportSessionID}
+            canMutate={canMutate}
             revision={historyHint}
+            onTaskCreated={onTaskUpdated}
+            onMessageSent={() => void refreshTask()}
           />
-        )}
-      </div>
+          {!task.messageThreadId && !task.conversationThreadId && (
+            <CallHistory
+              key={`task:${task.id}`}
+              source={{ kind: "task", id: task.id }}
+              revision={historyHint}
+            />
+          )}
+        </div>
+      )}
       <aside
         aria-label="Focused Task"
-        className="w-full shrink-0 overflow-y-auto border-t bg-card px-4 py-4 xl:w-80 xl:border-t-0 xl:border-l"
+        className={cn(
+          "w-full shrink-0 overflow-y-auto border-t bg-card px-4 py-4 xl:w-80 xl:border-t-0 xl:border-l",
+          contextOnly &&
+            "h-full border-0 bg-transparent xl:w-full xl:border-l-0",
+        )}
       >
         <div className="flex items-center gap-2">
           <Badge
@@ -669,17 +686,19 @@ function CallWorkspace({
   historyHint,
   returnTask,
   onReturnToTask,
-	onOpenRecoveryTask,
+  onOpenRecoveryTask,
   supportSessionID,
   canMutate,
+  contextOnly,
 }: {
   call: CallingCall
   historyHint: number
   returnTask: Task | undefined
   onReturnToTask: (() => void) | undefined
-	onOpenRecoveryTask: (taskID: string) => void
+  onOpenRecoveryTask: (taskID: string) => void
   supportSessionID: string
   canMutate: boolean
+  contextOnly: boolean
 }) {
   const [localRevision, setLocalRevision] = useState(0)
   return (
@@ -750,17 +769,21 @@ function CallWorkspace({
         </div>
       </header>
       {call.voicemail && <VoicemailSource call={call} />}
-      <LockedCallMessageComposer
-        call={call}
-        canMutate={canMutate}
-        supportSessionID={supportSessionID}
-        onSent={() => setLocalRevision((current) => current + 1)}
-      />
-      <EngagementHistory
-        key={`engagement:${call.id}`}
-        call={call}
-        revision={historyHint + call.version + localRevision}
-      />
+      {!contextOnly && (
+        <>
+          <LockedCallMessageComposer
+            call={call}
+            canMutate={canMutate}
+            supportSessionID={supportSessionID}
+            onSent={() => setLocalRevision((current) => current + 1)}
+          />
+          <EngagementHistory
+            key={`engagement:${call.id}`}
+            call={call}
+            revision={historyHint + call.version + localRevision}
+          />
+        </>
+      )}
     </section>
   )
 }
