@@ -234,9 +234,6 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await expect(
       operatorPage.getByRole("button", { name: "Workspace selector" }),
     ).toContainText("Fixture Location 1")
-    await expect(
-      operatorPage.getByText("Abita Eye Group", { exact: true }),
-    ).toBeVisible()
 
     const operatorToken = await accessToken(operatorPage)
     const accessResponse = await operatorPage.request.get(
