@@ -3,6 +3,11 @@ import { betterAuth } from "better-auth"
 import { jwt } from "better-auth/plugins"
 import { Pool } from "pg"
 
+import {
+  createUserEligibilityGate,
+  isSignUpEligible,
+} from "@/lib/auth-eligibility"
+import { googleProviderConfiguration } from "@/lib/auth-providers"
 import { getAuthEmailSender, type AuthEmailKind } from "@/lib/email"
 import {
   PASSWORD_MAX_LENGTH,
@@ -48,6 +53,14 @@ export function createAuth() {
     secret: authSecret(),
     trustedOrigins: commaSeparated("BETTER_AUTH_TRUSTED_ORIGINS"),
     database: pool,
+    socialProviders: googleProviderConfiguration(),
+    databaseHooks: {
+      user: {
+        create: {
+          before: createUserEligibilityGate({ portalAPIURL }),
+        },
+      },
+    },
     rateLimit: {
       enabled:
         process.env.AUTH_EMAIL_MODE !== "test" ||
@@ -79,16 +92,13 @@ export function createAuth() {
           typeof context.body?.email === "string" ? context.body.email : ""
         const invitationToken =
           context.headers?.get("x-acuity-invitation-token") ?? undefined
-        const response = await fetch(
-          `${portalAPIURL}/v1/access/sign-up-eligibility`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ email, invitationToken }),
-            signal: AbortSignal.timeout(2_000),
-          },
-        ).catch(() => undefined)
-        if (!response?.ok) {
+        if (
+          !(await isSignUpEligible({
+            email,
+            invitationToken,
+            portalAPIURL,
+          }))
+        ) {
           throw new APIError("FORBIDDEN", {
             message: "A current Acuity invitation is required.",
           })

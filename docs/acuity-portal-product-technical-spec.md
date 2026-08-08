@@ -426,8 +426,8 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 ### 14. Authentication and authorization
 
 - Human access is invite-only. Public sign-up is disabled.
-- The first release uses verified email and password with account recovery. Users create their own passwords from the invitation flow; no operator creates or knows another user's credentials.
-- MFA, magic-link authentication, and SSO are out of scope for the first release.
+- The first release supports Google sign-in and verified email/password with account recovery. Google proves identity but does not grant access: Better Auth user creation fails closed unless `Access` confirms eligibility. Provisioned Platform Operators may activate directly with Google; Practice users activate through their email-bound invitation before using Google on the same verified email. Users create their own passwords from the invitation flow; no operator creates or knows another user's credentials.
+- MFA, magic-link authentication, and customer-managed SSO are out of scope for the first release.
 - Better Auth in Next.js owns human sign-in, email verification, account recovery, and browser-session lifecycle.
 - The browser obtains a short-lived Better Auth JWT for direct `portal-api` calls.
 - The Go `Access` module verifies signature, issuer, audience, and expiration locally against cached Better Auth JWKS. It does not call Next.js on every request or read Better Auth session tables as an authorization mechanism.

@@ -16,11 +16,29 @@ import {
 import { Input } from "@/components/ui/input"
 import { authClient } from "@/lib/auth-client"
 
-export function SignInForm() {
+export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState(
+    searchParams.get("error") === "google"
+      ? "Google sign-in was not accepted."
+      : "",
+  )
+
+  async function signInWithGoogle() {
+    setPending(true)
+    setError("")
+    const result = await authClient.signIn.social({
+      provider: "google",
+      callbackURL: "/workspace",
+      errorCallbackURL: "/sign-in?error=google",
+    })
+    if (result?.error) {
+      setPending(false)
+      setError("Google sign-in was not accepted.")
+    }
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -51,6 +69,24 @@ export function SignInForm() {
               Sign in to activate your Acuity invitation.
             </AlertDescription>
           </Alert>
+        )}
+        {googleEnabled && (
+          <>
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              disabled={pending}
+              onClick={signInWithGoogle}
+            >
+              Continue with Google
+            </Button>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              <span>or use email</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          </>
         )}
         <Field data-invalid={Boolean(error)}>
           <FieldLabel htmlFor="email">Email</FieldLabel>

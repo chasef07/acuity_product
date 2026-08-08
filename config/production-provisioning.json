@@ -2,7 +2,7 @@
   "Environment": "production",
   "RequestedBy": "acuity-production-launch",
   "RequireEmptyAccessState": true,
-  "PlatformOperators": [],
+  "PlatformOperators": ["chase@acuityhealth.io"],
   "Practices": [
     {
       "Key": "abita-eye-group",

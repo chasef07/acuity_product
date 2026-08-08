@@ -204,6 +204,8 @@ fi
 require_service_environment \
   acuity-portal-api \
   HUMAN_CALLING_PLAYBACK_SIGNING_KEY
+require_service_environment acuity-web GOOGLE_CLIENT_ID
+require_service_environment acuity-web GOOGLE_CLIENT_SECRET
 
 touched_services=()
 worker_promoted=false

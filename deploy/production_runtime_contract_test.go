@@ -641,6 +641,8 @@ func productionRuntimeEnvironment() []string {
 		"MIGRATE_DATABASE_URL_SECRET=migrate-database",
 		"WEB_AUTH_DATABASE_URL_SECRET=auth-database",
 		"BETTER_AUTH_SECRET_SECRET=better-auth-secret",
+		"GOOGLE_CLIENT_ID_SECRET=google-client-id",
+		"GOOGLE_CLIENT_SECRET_SECRET=google-client-secret",
 		"SMTP_PASSWORD_SECRET=smtp-password",
 		"TELNYX_API_KEY_SECRET=telnyx-api-key",
 		"MESSAGING_MEDIA_SIGNING_KEY_SECRET=messaging-media-signing-key",

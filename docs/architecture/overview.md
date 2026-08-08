@@ -78,7 +78,7 @@ flowchart LR
 - Platform Operator is a distinct Acuity-internal role rather than a replicated Practice membership.
 - Platform Operators keep global visibility but operate within an explicit active practice/location. Customer-data mutations additionally require unexpired, practice-scoped Support Mode with a reason and persistent UI indication.
 - Authorization records the real human or service actor. Support Mode never impersonates a customer user.
-- Human accounts are fresh and invite-only. Better Auth owns verified email/password credentials and recovery; `Access` owns invitations, roles, scopes, and authorization.
+- Human accounts are fresh and invite-only. Better Auth owns Google identity, verified email/password credentials, and recovery; `Access` gates account creation and owns invitations, roles, scopes, and authorization.
 
 ## Browser shell
 
