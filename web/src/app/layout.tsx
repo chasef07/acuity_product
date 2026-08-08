@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { Inter, JetBrains_Mono } from "next/font/google"
+import { Geist, Inter, JetBrains_Mono, Newsreader } from "next/font/google"
 
 import { Providers } from "@/components/providers"
 import { cn } from "@/lib/utils"
@@ -14,6 +14,14 @@ const mono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains-mono",
 })
+const marketingSans = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+})
+const marketingDisplay = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-newsreader",
+})
 
 export const metadata: Metadata = {
   title: "Acuity Portal",
@@ -27,7 +35,13 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("h-full", sans.variable, mono.variable)}
+      className={cn(
+        "h-full",
+        sans.variable,
+        mono.variable,
+        marketingSans.variable,
+        marketingDisplay.variable,
+      )}
     >
       <body className="flex min-h-full flex-col">
         <Providers>{children}</Providers>

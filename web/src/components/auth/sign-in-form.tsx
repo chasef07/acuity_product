@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
-import { LoaderCircleIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -15,6 +14,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
 
 export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
@@ -102,10 +102,7 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
               onClick={signInWithGoogle}
             >
               {pending === "google" ? (
-                <LoaderCircleIcon
-                  data-icon="inline-start"
-                  className="motion-safe:animate-spin"
-                />
+                <Spinner data-icon="inline-start" />
               ) : (
                 <GoogleMark data-icon="inline-start" />
               )}
@@ -164,12 +161,7 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
               )}
             </Field>
             <Button type="submit" size="lg" disabled={pending !== null}>
-              {pending === "email" && (
-                <LoaderCircleIcon
-                  data-icon="inline-start"
-                  className="motion-safe:animate-spin"
-                />
-              )}
+              {pending === "email" && <Spinner data-icon="inline-start" />}
               Sign in
             </Button>
           </FieldGroup>

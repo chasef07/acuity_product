@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-test("Portal opens a Google-first sign-in dialog with in-card email", async ({
+test("homepage opens a Google-first sign-in dialog with in-card email", async ({
   page,
 }) => {
   await page.goto("/")
@@ -25,19 +25,23 @@ test("Portal opens a Google-first sign-in dialog with in-card email", async ({
   await expect(emailAction).toHaveAttribute("aria-expanded", "true")
   await expect(card.getByLabel("Email")).toBeVisible()
   await expect(card.getByLabel("Password")).toBeVisible()
-  await expect(card.getByRole("link", { name: "Forgot password?" })).toBeVisible()
+  await expect(
+    card.getByRole("link", { name: "Forgot password?" }),
+  ).toBeVisible()
   await expect(card.getByRole("button", { name: "Sign in" })).toBeVisible()
 })
 
 test("Google sign-in opens in a popup and leaves the portal in place", async ({
   page,
 }) => {
-  await page.context().route("**/api/auth/oauth-popup/start**", async (route) => {
-    await route.fulfill({
-      contentType: "text/html",
-      body: "<!doctype html><title>Google sign-in</title>",
+  await page
+    .context()
+    .route("**/api/auth/oauth-popup/start**", async (route) => {
+      await route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>Google sign-in</title>",
+      })
     })
-  })
   await page.goto("/")
   await page.getByRole("button", { name: "Portal" }).click()
 
