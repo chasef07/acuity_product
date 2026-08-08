@@ -68,7 +68,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     )
     expect(verificationURL).toContain("/verify-email#")
     await page.goto(verificationURL)
-    await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible()
+    await expect(
+      page.getByRole("heading", { name: "Sign in to Acuity" }),
+    ).toBeVisible()
+    await page.getByRole("button", { name: "Use email instead" }).click()
     await page.getByLabel("Email").fill("admin@abita.test")
     await page.getByLabel("Password").fill("fixture-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
@@ -194,6 +197,9 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
       "verification",
     )
     await operatorPage.goto(verificationURL)
+    await operatorPage
+      .getByRole("button", { name: "Use email instead" })
+      .click()
     await operatorPage.getByLabel("Email").fill("founder@acuity.test")
     await operatorPage.getByLabel("Password").fill("operator-password-1234")
     await operatorPage.getByRole("button", { name: "Sign in" }).click()
@@ -319,6 +325,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await expect(page.getByText("Password updated")).toBeVisible()
 
     await page.goto("/sign-in")
+    await page.getByRole("button", { name: "Use email instead" }).click()
     await page.getByLabel("Email").fill("admin@abita.test")
     await page.getByLabel("Password").fill("updated-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()

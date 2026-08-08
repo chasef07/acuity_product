@@ -445,6 +445,7 @@ async function signUp(page: Page, email: string, token: string, name: string) {
   await page.getByRole("button", { name: "Create private account" }).click()
   const verificationURL = await latestEmail(page, email, "verification")
   await page.goto(verificationURL)
+  await page.getByRole("button", { name: "Use email instead" }).click()
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Password").fill("fixture-password-1234")
   await page.getByRole("button", { name: "Sign in" }).click()
