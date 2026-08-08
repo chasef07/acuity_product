@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
@@ -25,7 +26,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
 import {
   CallingAvailabilityControl,
   CallingDock,
@@ -1243,17 +1243,25 @@ function writeRecentInboxes(
 
 function WorkspaceLoading() {
   return (
-    <div className="flex min-h-svh w-full">
+    <div className="flex min-h-svh w-full" aria-busy="true">
       <aside className="hidden w-64 border-r p-4 md:block">
         <Skeleton className="h-9 w-40" />
         <Skeleton className="mt-5 h-8 w-full" />
         <Skeleton className="mt-3 h-64 w-full" />
       </aside>
       <main className="flex flex-1 items-center justify-center">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Spinner />
-          Reconstructing authorized workspace
-        </div>
+        <Skeleton className="p-3" role="status">
+          <Image
+            src="/acuity-health-mark.png"
+            alt=""
+            aria-hidden="true"
+            width={48}
+            height={48}
+            className="size-12"
+            priority
+          />
+          <span className="sr-only">Loading Acuity workspace</span>
+        </Skeleton>
       </main>
     </div>
   )
