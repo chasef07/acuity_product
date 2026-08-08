@@ -78,7 +78,27 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }, { timeout: 40_000 })
       .toBe(2)
 
-    await Promise.all([enableCalling(selectedPage), enableCalling(secondaryPage)])
+    await Promise.all([
+      expect(
+        selectedPage.getByRole("switch", { name: "Availability" }),
+      ).toBeChecked({ timeout: 40_000 }),
+      expect(
+        secondaryPage.getByRole("switch", { name: "Availability" }),
+      ).toBeChecked({ timeout: 40_000 }),
+    ])
+
+    const selectedAvailability = selectedPage.getByRole("switch", {
+      name: "Availability",
+    })
+    await selectedAvailability.click()
+    await expect(selectedAvailability).not.toBeChecked()
+    await selectedPage.reload()
+    const restoredAvailability = selectedPage.getByRole("switch", {
+      name: "Availability",
+    })
+    await expect(restoredAvailability).not.toBeChecked()
+    await restoredAvailability.click()
+    await expect(restoredAvailability).toBeChecked()
     const scope = await database.query<{ practice_id: string; location_id: string }>(
       `SELECT practice.id::text AS practice_id, location.id::text AS location_id
          FROM access_practices practice
@@ -465,12 +485,6 @@ async function signUp(page: Page, email: string, token: string, name: string) {
   await page.getByLabel("Password").fill("fixture-password-1234")
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page.getByRole("switch", { name: "Availability" })).toBeVisible()
-}
-
-async function enableCalling(page: Page) {
-  const availability = page.getByRole("switch", { name: "Availability" })
-  await availability.click()
-  await expect(availability).toBeChecked()
 }
 
 function callCenter(page: Page) {

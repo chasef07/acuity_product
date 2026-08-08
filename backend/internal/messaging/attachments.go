@@ -44,19 +44,17 @@ type Attachment struct {
 }
 
 type UploadAttachmentCommand struct {
-	Identity         access.Identity
-	PracticeID       string
-	LocationID       string
-	FileName         string
-	DeclaredType     string
-	Content          []byte
-	SupportSessionID string
+	Identity     access.Identity
+	PracticeID   string
+	LocationID   string
+	FileName     string
+	DeclaredType string
+	Content      []byte
 }
 
 type RetryAttachmentCommand struct {
-	Identity         access.Identity
-	AttachmentID     string
-	SupportSessionID string
+	Identity     access.Identity
+	AttachmentID string
 }
 
 type AttachmentContent struct {
@@ -82,7 +80,6 @@ func (m *Module) uploadAttachment(
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.FileName = strings.TrimSpace(filepath.Base(command.FileName))
 	command.DeclaredType = strings.ToLower(strings.TrimSpace(command.DeclaredType))
-	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
 	contentType, err := detectAttachmentType(command.Content)
 	if m.pool == nil ||
 		m.access == nil ||
@@ -121,12 +118,8 @@ func (m *Module) uploadAttachment(
 		command.Identity,
 		command.PracticeID,
 		command.LocationID,
-		command.SupportSessionID,
 	)
 	if err != nil {
-		if isSupportAuthorizationError(err) {
-			return Attachment{}, err
-		}
 		return Attachment{}, ErrDenied
 	}
 	if idempotencyKey != "" {
@@ -304,11 +297,11 @@ func (m *Module) uploadAttachment(
 		}
 		return existing, nil
 	}
-	if err := m.access.AuditSupportedMutation(
+	if err := m.access.AuditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
-		access.SupportedMutationAudit{
+		access.OperatorMutationAudit{
 			Action:          "attachment.uploaded",
 			ResourceType:    "attachment",
 			ResourceID:      result.ID,
@@ -593,7 +586,6 @@ func (m *Module) RetryAttachment(
 	command RetryAttachmentCommand,
 ) (Attachment, error) {
 	command.AttachmentID = strings.TrimSpace(command.AttachmentID)
-	command.SupportSessionID = strings.TrimSpace(command.SupportSessionID)
 	if m.pool == nil ||
 		m.access == nil ||
 		command.AttachmentID == "" {
@@ -625,12 +617,8 @@ func (m *Module) RetryAttachment(
 		command.Identity,
 		practiceID,
 		locationID,
-		command.SupportSessionID,
 	)
 	if err != nil {
-		if isSupportAuthorizationError(err) {
-			return Attachment{}, err
-		}
 		return Attachment{}, ErrDenied
 	}
 	now := m.now()
@@ -641,11 +629,11 @@ func (m *Module) RetryAttachment(
 	`, attachment.ID, now); err != nil {
 		return Attachment{}, fmt.Errorf("retry inbound attachment copy: %w", err)
 	}
-	if err := m.access.AuditSupportedMutation(
+	if err := m.access.AuditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
-		access.SupportedMutationAudit{
+		access.OperatorMutationAudit{
 			Action:          "attachment.copy_retried",
 			ResourceType:    "attachment",
 			ResourceID:      attachment.ID,
@@ -850,11 +838,4 @@ func signMediaURL(key []byte, attachmentID string, expires int64) string {
 	_, _ = mac.Write([]byte("|"))
 	_, _ = mac.Write([]byte(strconv.FormatInt(expires, 10)))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-func isSupportAuthorizationError(err error) bool {
-	return errors.Is(err, access.ErrSupportRequired) ||
-		errors.Is(err, access.ErrSupportExpired) ||
-		errors.Is(err, access.ErrSupportRevoked) ||
-		errors.Is(err, access.ErrSupportPracticeMismatch)
 }

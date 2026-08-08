@@ -1857,7 +1857,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	}
 }
 
-func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomically(
+func TestPlatformOperatorMessagingWritesDirectlyAndAuditsAtomically(
 	t *testing.T,
 ) {
 	pool := testdb.Open(t)
@@ -1870,7 +1870,7 @@ func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomicall
 	}
 	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
-		RequestedBy:       "slice-5-support-test",
+		RequestedBy:       "operator-messaging-test",
 		PlatformOperators: []string{operator.Email},
 		Practices: []access.PracticeProvision{{
 			Key:       "support-message-a",
@@ -1882,7 +1882,7 @@ func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomicall
 			Locations: []access.LocationProvision{{Key: "office-b", Name: "Office B"}},
 		}},
 	}); err != nil {
-		t.Fatalf("provision Messaging Support Mode fixture: %v", err)
+		t.Fatalf("provision operator Messaging fixture: %v", err)
 	}
 	discovery, err := accessModule.DiscoverActor(context.Background(), operator)
 	if err != nil || !discovery.PlatformOperator {
@@ -1895,7 +1895,7 @@ func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomicall
 	practiceA := practices["Support Message A"]
 	practiceB := practices["Support Message B"]
 	if practiceA.Practice.ID == "" || practiceB.Practice.ID == "" {
-		t.Fatalf("Messaging Support Mode practices = %#v", discovery.Practices)
+		t.Fatalf("operator Messaging practices = %#v", discovery.Practices)
 	}
 	module := messaging.New(
 		pool,
@@ -1916,89 +1916,18 @@ func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomicall
 		Sender:             "+17275550121",
 		MessagingProfileID: "support-profile-b",
 	}}); err != nil {
-		t.Fatalf("provision Messaging Support Mode senders: %v", err)
+		t.Fatalf("provision operator Messaging senders: %v", err)
 	}
-	send := func(key, supportSessionID string) error {
+	send := func(key string) error {
 		_, _, err := module.Send(context.Background(), messaging.SendCommand{
-			Identity:         operator,
-			PracticeID:       practiceA.Practice.ID,
-			LocationID:       practiceA.Locations[0].ID,
-			Destination:      "+17275550199",
-			Body:             "Supported office message.",
-			IdempotencyKey:   key,
-			SupportSessionID: supportSessionID,
+			Identity:       operator,
+			PracticeID:     practiceA.Practice.ID,
+			LocationID:     practiceA.Locations[0].ID,
+			Destination:    "+17275550199",
+			Body:           "Operator office message.",
+			IdempotencyKey: key,
 		})
 		return err
-	}
-	if err := send("support-message-missing", ""); !errors.Is(
-		err,
-		access.ErrSupportRequired,
-	) {
-		t.Fatalf("Message without Support Mode error = %v", err)
-	}
-	otherSupport, err := accessModule.EnterSupportMode(
-		context.Background(),
-		access.EnterSupportModeCommand{
-			Identity:   operator,
-			PracticeID: practiceB.Practice.ID,
-			Reason:     "Investigate another Practice",
-			Duration:   time.Hour,
-		},
-	)
-	if err != nil {
-		t.Fatalf("enter other Messaging Support Mode: %v", err)
-	}
-	if err := send("support-message-mismatch", otherSupport.ID); !errors.Is(
-		err,
-		access.ErrSupportPracticeMismatch,
-	) {
-		t.Fatalf("Message with cross-Practice Support Mode error = %v", err)
-	}
-	expiringSupport, err := accessModule.EnterSupportMode(
-		context.Background(),
-		access.EnterSupportModeCommand{
-			Identity:   operator,
-			PracticeID: practiceA.Practice.ID,
-			Reason:     "Investigate Messaging delivery",
-			Duration:   time.Minute,
-		},
-	)
-	if err != nil {
-		t.Fatalf("enter expiring Messaging Support Mode: %v", err)
-	}
-	now = now.Add(2 * time.Minute)
-	if err := send("support-message-expired", expiringSupport.ID); !errors.Is(
-		err,
-		access.ErrSupportExpired,
-	) {
-		t.Fatalf("Message with expired Support Mode error = %v", err)
-	}
-	var rejectedMessages, rejectedCommands int
-	if err := pool.QueryRow(context.Background(), `
-		SELECT
-			(SELECT count(*) FROM messaging_messages),
-			(SELECT count(*) FROM messaging_provider_commands)
-	`).Scan(&rejectedMessages, &rejectedCommands); err != nil {
-		t.Fatalf("inspect rejected supported Messages: %v", err)
-	}
-	if rejectedMessages != 0 || rejectedCommands != 0 {
-		t.Fatalf(
-			"rejected supported Messages changed state: %d Messages, %d commands",
-			rejectedMessages,
-			rejectedCommands,
-		)
-	}
-	support, err := accessModule.EnterSupportMode(
-		context.Background(),
-		access.EnterSupportModeCommand{
-			Identity:   operator,
-			PracticeID: practiceA.Practice.ID,
-			Reason:     "Repair verified Messaging delivery",
-			Duration:   time.Hour,
-		},
-	)
-	if err != nil {
-		t.Fatalf("enter current Messaging Support Mode: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		ALTER TABLE access_audit_events
@@ -2007,8 +1936,8 @@ func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomicall
 	`); err != nil {
 		t.Fatalf("install Message audit failure fixture: %v", err)
 	}
-	if err := send("support-message-audit-failure", support.ID); err == nil {
-		t.Fatal("Message succeeded while its required Support audit failed")
+	if err := send("operator-message-audit-failure"); err == nil {
+		t.Fatal("Message succeeded while its required operator audit failed")
 	}
 	var rolledBackThreads, rolledBackMessages, rolledBackCommands, messageAudits int
 	if err := pool.QueryRow(context.Background(), `
@@ -2047,37 +1976,29 @@ func TestPlatformOperatorMessagingRequiresCurrentScopedSupportAndAuditsAtomicall
 	`); err != nil {
 		t.Fatalf("remove Message audit failure fixture: %v", err)
 	}
-	if err := send("support-message-success", support.ID); err != nil {
-		t.Fatalf("send supported Message: %v", err)
+	if err := send("operator-message-success"); err != nil {
+		t.Fatalf("send operator Message: %v", err)
 	}
-	var auditSubject, auditSupportID, auditReason string
+	var auditSubject string
 	if err := pool.QueryRow(context.Background(), `
-		SELECT actor_subject, support_session_id::text, reason
+		SELECT actor_subject
 		FROM access_audit_events
 		WHERE action = 'message.sent'
-	`).Scan(&auditSubject, &auditSupportID, &auditReason); err != nil {
-		t.Fatalf("read supported Message audit: %v", err)
+	`).Scan(&auditSubject); err != nil {
+		t.Fatalf("read operator Message audit: %v", err)
 	}
-	if auditSubject != operator.Subject ||
-		auditSupportID != support.ID ||
-		auditReason != support.Reason {
-		t.Fatalf(
-			"supported Message audit = subject %q support %q reason %q",
-			auditSubject,
-			auditSupportID,
-			auditReason,
-		)
+	if auditSubject != operator.Subject {
+		t.Fatalf("operator Message audit subject = %q", auditSubject)
 	}
 	if _, status, err := module.Send(
 		context.Background(),
 		messaging.SendCommand{
-			Identity:         operator,
-			PracticeID:       practiceB.Practice.ID,
-			LocationID:       practiceB.Locations[0].ID,
-			Destination:      "+17275550199",
-			Body:             "Same actor and key in a different Practice.",
-			IdempotencyKey:   "support-message-success",
-			SupportSessionID: otherSupport.ID,
+			Identity:       operator,
+			PracticeID:     practiceB.Practice.ID,
+			LocationID:     practiceB.Locations[0].ID,
+			Destination:    "+17275550199",
+			Body:           "Same actor and key in a different Practice.",
+			IdempotencyKey: "operator-message-success",
 		},
 	); err != nil || status != messaging.MessageCreated {
 		t.Fatalf(

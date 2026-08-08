@@ -353,59 +353,6 @@ func (server *Server) GetWorkspace(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
-func (server *Server) EnterSupportMode(w http.ResponseWriter, r *http.Request) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	var body api.EnterSupportModeRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.databaseContext(r)
-	defer cancel()
-	support, err := server.access.EnterSupportMode(ctx, access.EnterSupportModeCommand{
-		Identity:   identity,
-		PracticeID: body.PracticeId.String(),
-		Reason:     body.Reason,
-		Duration:   time.Duration(body.DurationMinutes) * time.Minute,
-	})
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	response, err := supportResponse(support)
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusCreated, response)
-}
-
-func (server *Server) RevokeSupportMode(
-	w http.ResponseWriter,
-	r *http.Request,
-	supportSessionID uuid.UUID,
-) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := server.databaseContext(r)
-	defer cancel()
-	if err := server.access.RevokeSupportMode(ctx, identity, supportSessionID.String()); err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (server *Server) AddLocation(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -425,11 +372,10 @@ func (server *Server) AddLocation(
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	mutation, err := server.access.AddLocation(ctx, access.AddLocationCommand{
-		Identity:         identity,
-		PracticeID:       practiceID.String(),
-		SupportSessionID: body.SupportSessionId.String(),
-		Key:              body.Key,
-		Name:             body.Name,
+		Identity:   identity,
+		PracticeID: practiceID.String(),
+		Key:        body.Key,
+		Name:       body.Name,
 	})
 	if err != nil {
 		server.writeAccessError(w, r, err)
@@ -1430,11 +1376,10 @@ func (server *Server) RenameTask(
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	task, err := server.work.RenameTask(ctx, work.RenameTaskCommand{
-		Identity:         identity,
-		TaskID:           taskID.String(),
-		ExpectedVersion:  body.ExpectedVersion,
-		Title:            body.Title,
-		SupportSessionID: uuidString(body.SupportSessionId),
+		Identity:        identity,
+		TaskID:          taskID.String(),
+		ExpectedVersion: body.ExpectedVersion,
+		Title:           body.Title,
 	})
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -1464,10 +1409,9 @@ func (server *Server) CompleteTask(
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	task, err := server.work.CompleteTask(ctx, work.CompleteTaskCommand{
-		Identity:         identity,
-		TaskID:           taskID.String(),
-		ExpectedVersion:  body.ExpectedVersion,
-		SupportSessionID: uuidString(body.SupportSessionId),
+		Identity:        identity,
+		TaskID:          taskID.String(),
+		ExpectedVersion: body.ExpectedVersion,
 	})
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -1497,10 +1441,9 @@ func (server *Server) ReopenTask(
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	task, err := server.work.ReopenTask(ctx, work.ReopenTaskCommand{
-		Identity:         identity,
-		TaskID:           taskID.String(),
-		ExpectedVersion:  body.ExpectedVersion,
-		SupportSessionID: uuidString(body.SupportSessionId),
+		Identity:        identity,
+		TaskID:          taskID.String(),
+		ExpectedVersion: body.ExpectedVersion,
 	})
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -1675,9 +1618,8 @@ func (server *Server) MarkMessageThreadRead(
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	if err := server.messaging.MarkRead(ctx, messaging.MarkReadCommand{
-		Identity:         identity,
-		ThreadID:         threadID.String(),
-		SupportSessionID: uuidString(body.SupportSessionId),
+		Identity: identity,
+		ThreadID: threadID.String(),
 	}); err != nil {
 		server.writeMessagingError(w, r, err)
 		return
@@ -1697,16 +1639,15 @@ func (server *Server) SendMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
 	message, status, err := server.messaging.Send(ctx, messaging.SendCommand{
-		Identity:         identity,
-		PracticeID:       body.PracticeId.String(),
-		LocationID:       body.LocationId.String(),
-		ThreadID:         uuidString(body.ThreadId),
-		Destination:      stringValue(body.Destination),
-		Body:             body.Body,
-		TaskID:           uuidString(body.TaskId),
-		AttachmentID:     uuidString(body.AttachmentId),
-		IdempotencyKey:   body.IdempotencyKey,
-		SupportSessionID: uuidString(body.SupportSessionId),
+		Identity:       identity,
+		PracticeID:     body.PracticeId.String(),
+		LocationID:     body.LocationId.String(),
+		ThreadID:       uuidString(body.ThreadId),
+		Destination:    stringValue(body.Destination),
+		Body:           body.Body,
+		TaskID:         uuidString(body.TaskId),
+		AttachmentID:   uuidString(body.AttachmentId),
+		IdempotencyKey: body.IdempotencyKey,
 	})
 	if err != nil {
 		server.writeMessagingError(w, r, err)
@@ -1749,13 +1690,12 @@ func (server *Server) UploadMessageAttachment(
 	attachment, err := server.messaging.UploadAttachment(
 		ctx,
 		messaging.UploadAttachmentCommand{
-			Identity:         identity,
-			PracticeID:       body.PracticeId.String(),
-			LocationID:       body.LocationId.String(),
-			FileName:         body.FileName,
-			DeclaredType:     string(body.ContentType),
-			Content:          content,
-			SupportSessionID: uuidString(body.SupportSessionId),
+			Identity:     identity,
+			PracticeID:   body.PracticeId.String(),
+			LocationID:   body.LocationId.String(),
+			FileName:     body.FileName,
+			DeclaredType: string(body.ContentType),
+			Content:      content,
 		},
 	)
 	if err != nil {
@@ -1811,9 +1751,8 @@ func (server *Server) RetryInboundMessageAttachment(
 	attachment, err := server.messaging.RetryAttachment(
 		ctx,
 		messaging.RetryAttachmentCommand{
-			Identity:         identity,
-			AttachmentID:     attachmentID.String(),
-			SupportSessionID: uuidString(body.SupportSessionId),
+			Identity:     identity,
+			AttachmentID: attachmentID.String(),
 		},
 	)
 	if err != nil {
@@ -1850,7 +1789,6 @@ func (server *Server) SendMessageAgain(
 			MessageID:                 messageID.String(),
 			IdempotencyKey:            body.IdempotencyKey,
 			DuplicateRiskAcknowledged: body.DuplicateRiskAcknowledged,
-			SupportSessionID:          uuidString(body.SupportSessionId),
 		},
 	)
 	if err != nil {
@@ -1890,10 +1828,9 @@ func (server *Server) CreateMessageFollowUpTask(
 	task, status, err := server.messaging.CreateFollowUpTask(
 		ctx,
 		messaging.CreateFollowUpTaskCommand{
-			Identity:         identity,
-			MessageID:        messageID.String(),
-			Title:            stringValue(body.Title),
-			SupportSessionID: uuidString(body.SupportSessionId),
+			Identity:  identity,
+			MessageID: messageID.String(),
+			Title:     stringValue(body.Title),
 		},
 	)
 	if err != nil {
@@ -2037,7 +1974,6 @@ func (server *Server) RequeueOperatorProviderReceipt(
 		humancalling.RequeueQuarantinedReceiptCommand{
 			Identity:         identity,
 			PracticeID:       practiceID.String(),
-			SupportSessionID: body.SupportSessionId.String(),
 			ReceiptReference: receiptReference,
 		},
 	)
@@ -2202,11 +2138,7 @@ func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, e
 	case errors.Is(err, access.ErrDenied),
 		errors.Is(err, access.ErrEmailNotVerified),
 		errors.Is(err, access.ErrInvitationExpired),
-		errors.Is(err, access.ErrInvitationRevoked),
-		errors.Is(err, access.ErrSupportRequired),
-		errors.Is(err, access.ErrSupportExpired),
-		errors.Is(err, access.ErrSupportRevoked),
-		errors.Is(err, access.ErrSupportPracticeMismatch):
+		errors.Is(err, access.ErrInvitationRevoked):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
@@ -2220,11 +2152,7 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 	case errors.Is(err, humancalling.ErrDenied),
 		errors.Is(err, humancalling.ErrInvalidHandoff),
-		errors.Is(err, humancalling.ErrIneligible),
-		errors.Is(err, access.ErrSupportRequired),
-		errors.Is(err, access.ErrSupportExpired),
-		errors.Is(err, access.ErrSupportRevoked),
-		errors.Is(err, access.ErrSupportPracticeMismatch):
+		errors.Is(err, humancalling.ErrIneligible):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, humancalling.ErrConflict),
 		errors.Is(err, humancalling.ErrExpired):
@@ -2278,11 +2206,7 @@ func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err
 	switch {
 	case errors.Is(err, work.ErrInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, work.ErrDenied),
-		errors.Is(err, access.ErrSupportRequired),
-		errors.Is(err, access.ErrSupportExpired),
-		errors.Is(err, access.ErrSupportRevoked),
-		errors.Is(err, access.ErrSupportPracticeMismatch):
+	case errors.Is(err, work.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, work.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.", false)
@@ -2316,11 +2240,7 @@ func (server *Server) writeMessagingError(
 	switch {
 	case errors.Is(err, messaging.ErrInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, messaging.ErrDenied),
-		errors.Is(err, access.ErrSupportRequired),
-		errors.Is(err, access.ErrSupportExpired),
-		errors.Is(err, access.ErrSupportRevoked),
-		errors.Is(err, access.ErrSupportPracticeMismatch):
+	case errors.Is(err, messaging.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, messaging.ErrBlocked):
 		server.writeError(w, r, http.StatusConflict, "MESSAGE_BLOCKED", "This conversation has opted out of outbound Messages.", false)
@@ -2504,13 +2424,6 @@ func authorizationResponse(authorization access.Authorization) (api.Authorizatio
 		}
 		response.ActiveLocation = &location
 	}
-	if authorization.SupportMode != nil {
-		support, err := supportResponse(*authorization.SupportMode)
-		if err != nil {
-			return api.Authorization{}, err
-		}
-		response.SupportMode = &support
-	}
 	return response, nil
 }
 
@@ -2531,7 +2444,6 @@ func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapsho
 		Location:         *converted.ActiveLocation,
 		Membership:       converted.Membership,
 		PlatformOperator: authorization.PlatformOperator,
-		SupportMode:      converted.SupportMode,
 		Navigation: []api.NavigationItem{
 			{Id: api.Tasks, Label: "Tasks", Enabled: true},
 			{Id: api.Messages, Label: "Messages", Enabled: true},
@@ -2541,24 +2453,6 @@ func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapsho
 		},
 	}
 	return response, nil
-}
-
-func supportResponse(support access.SupportMode) (api.SupportMode, error) {
-	id, err := uuid.Parse(support.ID)
-	if err != nil {
-		return api.SupportMode{}, err
-	}
-	practiceID, err := uuid.Parse(support.PracticeID)
-	if err != nil {
-		return api.SupportMode{}, err
-	}
-	return api.SupportMode{
-		Id:         id,
-		PracticeId: practiceID,
-		Reason:     support.Reason,
-		StartsAt:   support.StartsAt,
-		ExpiresAt:  support.ExpiresAt,
-	}, nil
 }
 
 func locationMutationResponse(mutation access.LocationMutation) (api.LocationMutation, error) {
@@ -2574,21 +2468,15 @@ func locationMutationResponse(mutation access.LocationMutation) (api.LocationMut
 	if err != nil {
 		return api.LocationMutation{}, err
 	}
-	supportID, err := uuid.Parse(mutation.Audit.SupportSessionID)
-	if err != nil {
-		return api.LocationMutation{}, err
-	}
 	return api.LocationMutation{
 		Location:        location,
 		PracticeVersion: mutation.PracticeVersion,
 		Audit: api.AuditEvent{
-			Id:               auditID,
-			ActorSubject:     mutation.Audit.ActorSubject,
-			PracticeId:       practiceID,
-			SupportSessionId: supportID,
-			Action:           mutation.Audit.Action,
-			Reason:           mutation.Audit.Reason,
-			CreatedAt:        mutation.Audit.CreatedAt,
+			Id:           auditID,
+			ActorSubject: mutation.Audit.ActorSubject,
+			PracticeId:   practiceID,
+			Action:       mutation.Audit.Action,
+			CreatedAt:    mutation.Audit.CreatedAt,
 		},
 	}, nil
 }

@@ -61,14 +61,6 @@ export type Membership = {
     locationScope: 'ALL' | 'SELECTED';
 };
 
-export type SupportMode = {
-    id: string;
-    practiceId: string;
-    reason: string;
-    startsAt: string;
-    expiresAt: string;
-};
-
 export type Authorization = {
     actor: Actor;
     practice: Practice;
@@ -76,7 +68,6 @@ export type Authorization = {
     locations: Array<Location>;
     activeLocation?: Location;
     platformOperator: boolean;
-    supportMode?: SupportMode;
 };
 
 export type PracticeAccess = Practice & {
@@ -99,7 +90,6 @@ export type WorkspaceSnapshot = {
     location: Location;
     membership?: Membership;
     platformOperator: boolean;
-    supportMode?: SupportMode;
     navigation: Array<NavigationItem>;
 };
 
@@ -109,14 +99,8 @@ export type NavigationItem = {
     enabled: boolean;
 };
 
-export type EnterSupportModeRequest = {
-    practiceId: string;
-    reason: string;
-    durationMinutes: number;
-};
-
 export type ProviderReceiptRecoveryRequest = {
-    supportSessionId: string;
+    [key: string]: never;
 };
 
 export type ProviderReceiptRecovery = {
@@ -125,7 +109,6 @@ export type ProviderReceiptRecovery = {
 };
 
 export type AddLocationRequest = {
-    supportSessionId: string;
     key: string;
     name: string;
 };
@@ -134,9 +117,8 @@ export type AuditEvent = {
     id: string;
     actorSubject: string;
     practiceId: string;
-    supportSessionId: string;
     action: string;
-    reason: string;
+    reason?: string;
     createdAt: string;
 };
 
@@ -563,12 +545,10 @@ export type TaskQueryRequest = {
 export type RenameTaskRequest = {
     expectedVersion: number;
     title: string;
-    supportSessionId?: string;
 };
 
 export type TaskTransitionRequest = {
     expectedVersion: number;
-    supportSessionId?: string;
 };
 
 export type MessageDirection = 'INBOUND' | 'OUTBOUND';
@@ -642,7 +622,6 @@ export type SendMessageRequest = {
     attachmentId?: string;
     taskId?: string;
     idempotencyKey: string;
-    supportSessionId?: string;
 };
 
 export type MessageAttachment = {
@@ -663,26 +642,23 @@ export type UploadMessageAttachmentRequest = {
     fileName: string;
     contentType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' | 'application/pdf';
     contentBase64: string;
-    supportSessionId?: string;
 };
 
 export type RetryMessageAttachmentRequest = {
-    supportSessionId?: string;
+    [key: string]: never;
 };
 
 export type SendMessageAgainRequest = {
     idempotencyKey: string;
     duplicateRiskAcknowledged: boolean;
-    supportSessionId?: string;
 };
 
 export type MarkMessageThreadReadRequest = {
-    supportSessionId?: string;
+    [key: string]: never;
 };
 
 export type CreateMessageFollowUpTaskRequest = {
     title?: string;
-    supportSessionId?: string;
 };
 
 export type ConversationTimelineItem = {
@@ -947,78 +923,6 @@ export type GetWorkspaceResponses = {
 };
 
 export type GetWorkspaceResponse = GetWorkspaceResponses[keyof GetWorkspaceResponses];
-
-export type EnterSupportModeData = {
-    body: EnterSupportModeRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/support-mode';
-};
-
-export type EnterSupportModeErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type EnterSupportModeError = EnterSupportModeErrors[keyof EnterSupportModeErrors];
-
-export type EnterSupportModeResponses = {
-    /**
-     * Active Support Mode.
-     */
-    201: SupportMode;
-};
-
-export type EnterSupportModeResponse = EnterSupportModeResponses[keyof EnterSupportModeResponses];
-
-export type RevokeSupportModeData = {
-    body?: never;
-    path: {
-        supportSessionId: string;
-    };
-    query?: never;
-    url: '/v1/support-mode/{supportSessionId}';
-};
-
-export type RevokeSupportModeErrors = {
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type RevokeSupportModeError = RevokeSupportModeErrors[keyof RevokeSupportModeErrors];
-
-export type RevokeSupportModeResponses = {
-    /**
-     * Support Mode revoked.
-     */
-    204: void;
-};
-
-export type RevokeSupportModeResponse = RevokeSupportModeResponses[keyof RevokeSupportModeResponses];
 
 export type AddLocationData = {
     body: AddLocationRequest;

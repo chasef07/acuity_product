@@ -32,16 +32,12 @@ const (
 )
 
 var (
-	ErrDenied                  = errors.New("access denied")
-	ErrEmailNotVerified        = errors.New("verified email required")
-	ErrInvitationExpired       = errors.New("invitation expired")
-	ErrInvitationRevoked       = errors.New("invitation revoked")
-	ErrInvitationUsed          = errors.New("invitation already accepted")
-	ErrInvalidInput            = errors.New("invalid access input")
-	ErrSupportRequired         = errors.New("active Support Mode required")
-	ErrSupportExpired          = errors.New("support mode expired")
-	ErrSupportRevoked          = errors.New("support mode revoked")
-	ErrSupportPracticeMismatch = errors.New("support mode belongs to another practice")
+	ErrDenied            = errors.New("access denied")
+	ErrEmailNotVerified  = errors.New("verified email required")
+	ErrInvitationExpired = errors.New("invitation expired")
+	ErrInvitationRevoked = errors.New("invitation revoked")
+	ErrInvitationUsed    = errors.New("invitation already accepted")
+	ErrInvalidInput      = errors.New("invalid access input")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
@@ -154,13 +150,12 @@ type Membership struct {
 }
 
 type Authorization struct {
-	Actor            Actor        `json:"actor"`
-	Practice         Practice     `json:"practice"`
-	Membership       Membership   `json:"membership"`
-	Locations        []Location   `json:"locations"`
-	ActiveLocation   *Location    `json:"activeLocation,omitempty"`
-	PlatformOperator bool         `json:"platformOperator"`
-	SupportMode      *SupportMode `json:"supportMode,omitempty"`
+	Actor            Actor      `json:"actor"`
+	Practice         Practice   `json:"practice"`
+	Membership       Membership `json:"membership"`
+	Locations        []Location `json:"locations"`
+	ActiveLocation   *Location  `json:"activeLocation,omitempty"`
+	PlatformOperator bool       `json:"platformOperator"`
 }
 
 type PracticeAccess struct {
@@ -175,54 +170,35 @@ type Discovery struct {
 	Practices        []PracticeAccess `json:"practices"`
 }
 
-type SupportMode struct {
-	ID         string    `json:"id"`
-	PracticeID string    `json:"practiceId"`
-	Reason     string    `json:"reason"`
-	StartsAt   time.Time `json:"startsAt"`
-	ExpiresAt  time.Time `json:"expiresAt"`
-}
-
-type EnterSupportModeCommand struct {
+type AddLocationCommand struct {
 	Identity   Identity
 	PracticeID string
-	Reason     string
-	Duration   time.Duration
-}
-
-type AddLocationCommand struct {
-	Identity         Identity
-	PracticeID       string
-	SupportSessionID string
-	Key              string
-	Name             string
+	Key        string
+	Name       string
 }
 
 type RevokeInvitationCommand struct {
-	Identity         Identity
-	PracticeID       string
-	SupportSessionID string
-	InvitationID     string
+	Identity     Identity
+	PracticeID   string
+	InvitationID string
 }
 
 type RevokeMembershipCommand struct {
-	Identity         Identity
-	PracticeID       string
-	SupportSessionID string
-	MembershipID     string
+	Identity     Identity
+	PracticeID   string
+	MembershipID string
 }
 
 type AuditEvent struct {
-	ID               string    `json:"id"`
-	ActorSubject     string    `json:"actorSubject"`
-	PracticeID       string    `json:"practiceId"`
-	SupportSessionID string    `json:"supportSessionId,omitempty"`
-	Action           string    `json:"action"`
-	Reason           string    `json:"reason,omitempty"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID           string    `json:"id"`
+	ActorSubject string    `json:"actorSubject"`
+	PracticeID   string    `json:"practiceId"`
+	Action       string    `json:"action"`
+	Reason       string    `json:"reason,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
-type SupportedMutationAudit struct {
+type OperatorMutationAudit struct {
 	Action          string
 	ResourceType    string
 	ResourceID      string
@@ -736,12 +712,12 @@ func (m *Module) ResolveActor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return Authorization{}, err
 	}
 	if isOperator {
-		authorized, err := loadOperatorAuthorization(ctx, tx, identity, operatorID, practiceID, m.now())
+		authorized, err := loadOperatorAuthorization(ctx, tx, identity, practiceID)
 		if err != nil {
 			return Authorization{}, err
 		}
@@ -818,14 +794,13 @@ func (m *Module) LockMembershipAuthorization(
 
 // LockMutationAuthorization resolves current customer-data mutation authority
 // inside a caller-owned transaction. Practice Users use their current
-// Membership; Platform Operators additionally require active Support Mode.
+// Membership; Platform Operators write directly under their own identity.
 func (m *Module) LockMutationAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
 	identity Identity,
 	practiceID string,
 	locationID string,
-	supportSessionID string,
 ) (Authorization, error) {
 	if tx == nil ||
 		!identity.EmailVerified ||
@@ -834,7 +809,7 @@ func (m *Module) LockMutationAuthorization(
 		strings.TrimSpace(locationID) == "" {
 		return Authorization{}, ErrDenied
 	}
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -847,26 +822,11 @@ func (m *Module) LockMutationAuthorization(
 			locationID,
 		)
 	}
-	if supportSessionID == "" {
-		return Authorization{}, ErrSupportRequired
-	}
-	support, err := m.authorizeSupportMutation(
-		ctx,
-		tx,
-		identity,
-		practiceID,
-		supportSessionID,
-	)
-	if err != nil {
-		return Authorization{}, err
-	}
 	authorization, err := loadOperatorAuthorization(
 		ctx,
 		tx,
 		identity,
-		operatorID,
 		practiceID,
-		m.now(),
 	)
 	if err != nil {
 		return Authorization{}, err
@@ -874,7 +834,6 @@ func (m *Module) LockMutationAuthorization(
 	if err := selectRequestedLocation(&authorization, locationID); err != nil {
 		return Authorization{}, err
 	}
-	authorization.SupportMode = &support
 	return authorization, nil
 }
 
@@ -893,7 +852,7 @@ func (m *Module) LockReadAuthorization(
 		strings.TrimSpace(practiceID) == "" {
 		return Authorization{}, ErrDenied
 	}
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -902,9 +861,7 @@ func (m *Module) LockReadAuthorization(
 			ctx,
 			tx,
 			identity,
-			operatorID,
 			practiceID,
-			m.now(),
 		)
 		if err != nil {
 			return Authorization{}, err
@@ -1209,157 +1166,12 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	return result, nil
 }
 
-func (m *Module) EnterSupportMode(
-	ctx context.Context,
-	command EnterSupportModeCommand,
-) (SupportMode, error) {
-	reason := strings.TrimSpace(command.Reason)
-	if reason == "" || command.Duration <= 0 || command.Duration > 4*time.Hour {
-		return SupportMode{}, fmt.Errorf("%w: Support Mode needs a reason and duration no longer than four hours", ErrInvalidInput)
-	}
-	if !command.Identity.EmailVerified || command.Identity.Subject == "" || command.PracticeID == "" {
-		return SupportMode{}, ErrDenied
-	}
-
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return SupportMode{}, fmt.Errorf("begin Support Mode: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity)
-	if err != nil {
-		return SupportMode{}, err
-	}
-	if !isOperator {
-		return SupportMode{}, ErrDenied
-	}
-	var practiceExists bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM access_practices WHERE id = $1)`,
-		command.PracticeID,
-	).Scan(&practiceExists); err != nil {
-		return SupportMode{}, fmt.Errorf("check Support Mode Practice: %w", err)
-	}
-	if !practiceExists {
-		return SupportMode{}, ErrDenied
-	}
-
-	startsAt := m.now()
-	result := SupportMode{
-		PracticeID: command.PracticeID,
-		Reason:     reason,
-		StartsAt:   startsAt,
-		ExpiresAt:  startsAt.Add(command.Duration),
-	}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO access_support_sessions (
-			platform_operator_id, practice_id, reason, starts_at, expires_at
-		)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id::text
-	`, operatorID, command.PracticeID, reason, result.StartsAt, result.ExpiresAt).Scan(&result.ID); err != nil {
-		return SupportMode{}, fmt.Errorf("create Support Mode: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, support_session_id,
-			action, reason
-		)
-		VALUES ('PLATFORM_OPERATOR', $1, $2, $3, 'support.entered', $4)
-	`, command.Identity.Subject, command.PracticeID, result.ID, reason); err != nil {
-		return SupportMode{}, fmt.Errorf("audit Support Mode: %w", err)
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
-		return SupportMode{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return SupportMode{}, fmt.Errorf("commit Support Mode: %w", err)
-	}
-	return result, nil
-}
-
-func (m *Module) RevokeSupportMode(
-	ctx context.Context,
-	identity Identity,
-	supportSessionID string,
-) error {
-	if !identity.EmailVerified || identity.Subject == "" || supportSessionID == "" {
-		return ErrDenied
-	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin Support Mode revocation: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
-	if err != nil {
-		return err
-	}
-	if !isOperator {
-		return ErrDenied
-	}
-
-	var sessionOperatorID, practiceID, reason string
-	var revokedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT
-			platform_operator_id::text,
-			practice_id::text,
-			reason,
-			revoked_at
-		FROM access_support_sessions
-		WHERE id = $1
-		FOR UPDATE
-	`, supportSessionID).Scan(
-		&sessionOperatorID,
-		&practiceID,
-		&reason,
-		&revokedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDenied
-		}
-		return fmt.Errorf("load Support Mode for revocation: %w", err)
-	}
-	if sessionOperatorID != operatorID {
-		return ErrDenied
-	}
-	if revokedAt != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit repeated Support Mode revocation: %w", err)
-		}
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE access_support_sessions
-		SET revoked_at = $2
-		WHERE id = $1
-	`, supportSessionID, m.now()); err != nil {
-		return fmt.Errorf("revoke Support Mode: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, support_session_id,
-			action, reason
-		)
-		VALUES ('PLATFORM_OPERATOR', $1, $2, $3, 'support.revoked', $4)
-	`, identity.Subject, practiceID, supportSessionID, reason); err != nil {
-		return fmt.Errorf("audit Support Mode revocation: %w", err)
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Support Mode revocation: %w", err)
-	}
-	return nil
-}
-
 func (m *Module) RevokeInvitation(
 	ctx context.Context,
 	command RevokeInvitationCommand,
 ) error {
-	if command.InvitationID == "" {
+	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
+		command.PracticeID == "" || command.InvitationID == "" {
 		return ErrDenied
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -1367,15 +1179,10 @@ func (m *Module) RevokeInvitation(
 		return fmt.Errorf("begin invitation revocation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	support, err := m.authorizeSupportMutation(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.SupportSessionID,
-	)
-	if err != nil {
+	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
 		return err
+	} else if !isOperator {
+		return ErrDenied
 	}
 
 	var acceptedAt, revokedAt *time.Time
@@ -1411,9 +1218,7 @@ func (m *Module) RevokeInvitation(
 		tx,
 		command.Identity.Subject,
 		command.PracticeID,
-		command.SupportSessionID,
 		"invitation.revoked",
-		support.Reason,
 		"invitationId",
 		command.InvitationID,
 	); err != nil {
@@ -1432,7 +1237,8 @@ func (m *Module) RevokeMembership(
 	ctx context.Context,
 	command RevokeMembershipCommand,
 ) error {
-	if command.MembershipID == "" {
+	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
+		command.PracticeID == "" || command.MembershipID == "" {
 		return ErrDenied
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -1440,15 +1246,10 @@ func (m *Module) RevokeMembership(
 		return fmt.Errorf("begin Membership revocation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	support, err := m.authorizeSupportMutation(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.SupportSessionID,
-	)
-	if err != nil {
+	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
 		return err
+	} else if !isOperator {
+		return ErrDenied
 	}
 
 	var revokedAt *time.Time
@@ -1481,9 +1282,7 @@ func (m *Module) RevokeMembership(
 		tx,
 		command.Identity.Subject,
 		command.PracticeID,
-		command.SupportSessionID,
 		"membership.revoked",
-		support.Reason,
 		"membershipId",
 		command.MembershipID,
 	); err != nil {
@@ -1525,7 +1324,6 @@ func (m *Module) AuditTrail(
 			id::text,
 			actor_subject,
 			practice_id::text,
-			COALESCE(support_session_id::text, ''),
 			action,
 			COALESCE(reason, ''),
 			created_at
@@ -1544,7 +1342,6 @@ func (m *Module) AuditTrail(
 			&event.ID,
 			&event.ActorSubject,
 			&event.PracticeID,
-			&event.SupportSessionID,
 			&event.Action,
 			&event.Reason,
 			&event.CreatedAt,
@@ -1571,24 +1368,15 @@ func (m *Module) AddLocation(
 		strings.TrimSpace(command.Name) == "" {
 		return LocationMutation{}, ErrDenied
 	}
-	if command.SupportSessionID == "" {
-		return LocationMutation{}, ErrSupportRequired
-	}
-
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return LocationMutation{}, fmt.Errorf("begin Location mutation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	support, err := m.authorizeSupportMutation(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.SupportSessionID,
-	)
-	if err != nil {
+	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
 		return LocationMutation{}, err
+	} else if !isOperator {
+		return LocationMutation{}, ErrDenied
 	}
 
 	var result LocationMutation
@@ -1605,29 +1393,24 @@ func (m *Module) AddLocation(
 		return LocationMutation{}, fmt.Errorf("add Location: %w", err)
 	}
 	result.Audit = AuditEvent{
-		ActorSubject:     command.Identity.Subject,
-		PracticeID:       command.PracticeID,
-		SupportSessionID: command.SupportSessionID,
-		Action:           "location.added",
-		Reason:           support.Reason,
-		CreatedAt:        m.now(),
+		ActorSubject: command.Identity.Subject,
+		PracticeID:   command.PracticeID,
+		Action:       "location.added",
+		CreatedAt:    m.now(),
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, support_session_id,
-			action, reason, details, created_at
+			actor_type, actor_subject, practice_id, action, details, created_at
 		)
 		VALUES (
-			'PLATFORM_OPERATOR', $1, $2, $3, $4, $5,
-			jsonb_build_object('locationId', $6::text), $7
+			'PLATFORM_OPERATOR', $1, $2, $3,
+			jsonb_build_object('locationId', $4::text), $5
 		)
 		RETURNING id::text
 	`,
 		result.Audit.ActorSubject,
 		result.Audit.PracticeID,
-		result.Audit.SupportSessionID,
 		result.Audit.Action,
-		result.Audit.Reason,
 		result.Location.ID,
 		result.Audit.CreatedAt,
 	).Scan(&result.Audit.ID); err != nil {
@@ -1643,89 +1426,24 @@ func (m *Module) AddLocation(
 	return result, nil
 }
 
-func (m *Module) authorizeSupportMutation(
-	ctx context.Context,
-	tx pgx.Tx,
-	identity Identity,
-	practiceID string,
-	supportSessionID string,
-) (SupportMode, error) {
-	if !identity.EmailVerified || identity.Subject == "" || practiceID == "" {
-		return SupportMode{}, ErrDenied
-	}
-	if supportSessionID == "" {
-		return SupportMode{}, ErrSupportRequired
-	}
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
-	if err != nil {
-		return SupportMode{}, err
-	}
-	if !isOperator {
-		return SupportMode{}, ErrDenied
-	}
-	support := SupportMode{ID: supportSessionID}
-	var supportOperatorID string
-	var revokedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT
-			platform_operator_id::text,
-			practice_id::text,
-			reason,
-			starts_at,
-			expires_at,
-			revoked_at
-		FROM access_support_sessions
-		WHERE id = $1
-		FOR UPDATE
-	`, supportSessionID).Scan(
-		&supportOperatorID,
-		&support.PracticeID,
-		&support.Reason,
-		&support.StartsAt,
-		&support.ExpiresAt,
-		&revokedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return SupportMode{}, ErrSupportRequired
-		}
-		return SupportMode{}, fmt.Errorf("load Support Mode: %w", err)
-	}
-	if supportOperatorID != operatorID {
-		return SupportMode{}, ErrDenied
-	}
-	if support.PracticeID != practiceID {
-		return SupportMode{}, ErrSupportPracticeMismatch
-	}
-	if revokedAt != nil {
-		return SupportMode{}, ErrSupportRevoked
-	}
-	if !m.now().Before(support.ExpiresAt) {
-		return SupportMode{}, ErrSupportExpired
-	}
-	return support, nil
-}
-
 func auditRevocation(
 	ctx context.Context,
 	tx pgx.Tx,
 	actorSubject string,
 	practiceID string,
-	supportSessionID string,
 	action string,
-	reason string,
 	targetKey string,
 	targetID string,
 ) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, support_session_id,
-			action, reason, details
+			actor_type, actor_subject, practice_id, action, details
 		)
 		VALUES (
-			'PLATFORM_OPERATOR', $1, $2, $3, $4, $5,
-			jsonb_build_object($6::text, $7::text)
+			'PLATFORM_OPERATOR', $1, $2, $3,
+			jsonb_build_object($4::text, $5::text)
 		)
-	`, actorSubject, practiceID, supportSessionID, action, reason, targetKey, targetID); err != nil {
+	`, actorSubject, practiceID, action, targetKey, targetID); err != nil {
 		return fmt.Errorf("audit %s: %w", action, err)
 	}
 	return nil
@@ -1817,9 +1535,7 @@ func loadOperatorAuthorization(
 	ctx context.Context,
 	tx pgx.Tx,
 	identity Identity,
-	operatorID string,
 	practiceID string,
-	now time.Time,
 ) (Authorization, error) {
 	result := Authorization{
 		Actor: Actor{
@@ -1848,30 +1564,6 @@ func loadOperatorAuthorization(
 		return Authorization{}, err
 	}
 	result.Locations = locations
-
-	var support SupportMode
-	err = tx.QueryRow(ctx, `
-		SELECT id::text, practice_id::text, reason, starts_at, expires_at
-		FROM access_support_sessions
-		WHERE
-			platform_operator_id = $1
-			AND practice_id = $2
-			AND revoked_at IS NULL
-			AND expires_at > $3
-		ORDER BY expires_at DESC
-		LIMIT 1
-	`, operatorID, practiceID, now).Scan(
-		&support.ID,
-		&support.PracticeID,
-		&support.Reason,
-		&support.StartsAt,
-		&support.ExpiresAt,
-	)
-	if err == nil {
-		result.SupportMode = &support
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return Authorization{}, fmt.Errorf("resolve active Support Mode: %w", err)
-	}
 	return result, nil
 }
 
@@ -1900,27 +1592,21 @@ func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Locatio
 	return locations, nil
 }
 
-// AuditSupportedMutation records the Support Mode authorization used for a
-// customer-data mutation in the caller's transaction. Practice User
-// mutations do not need a Support Mode audit row.
-func (m *Module) AuditSupportedMutation(
+// AuditOperatorMutation records a Platform Operator mutation in the caller's
+// transaction. Practice User mutations do not need an operator audit row.
+func (m *Module) AuditOperatorMutation(
 	ctx context.Context,
 	tx pgx.Tx,
 	authorization Authorization,
-	audit SupportedMutationAudit,
+	audit OperatorMutationAudit,
 ) error {
 	if !authorization.PlatformOperator {
 		return nil
 	}
-	support := authorization.SupportMode
 	if tx == nil ||
-		support == nil ||
 		authorization.Actor.Type != "PLATFORM_OPERATOR" ||
 		strings.TrimSpace(authorization.Actor.Subject) == "" ||
 		strings.TrimSpace(authorization.Practice.ID) == "" ||
-		support.PracticeID != authorization.Practice.ID ||
-		strings.TrimSpace(support.ID) == "" ||
-		strings.TrimSpace(support.Reason) == "" ||
 		strings.TrimSpace(audit.Action) == "" ||
 		strings.TrimSpace(audit.ResourceType) == "" ||
 		strings.TrimSpace(audit.ResourceID) == "" ||
@@ -1933,9 +1619,7 @@ func (m *Module) AuditSupportedMutation(
 			actor_type,
 			actor_subject,
 			practice_id,
-			support_session_id,
 			action,
-			reason,
 			details,
 			created_at
 		)
@@ -1944,27 +1628,23 @@ func (m *Module) AuditSupportedMutation(
 			$1,
 			$2,
 			$3,
-			$4,
-			$5,
 			jsonb_build_object(
-				'resourceType', $6::text,
-				'resourceId', $7::text,
-				'resourceVersion', $8::bigint
+				'resourceType', $4::text,
+				'resourceId', $5::text,
+				'resourceVersion', $6::bigint
 			),
-			$9
+			$7
 		)
 	`,
 		authorization.Actor.Subject,
 		authorization.Practice.ID,
-		support.ID,
 		strings.TrimSpace(audit.Action),
-		support.Reason,
 		strings.TrimSpace(audit.ResourceType),
 		strings.TrimSpace(audit.ResourceID),
 		audit.ResourceVersion,
 		audit.OccurredAt,
 	); err != nil {
-		return fmt.Errorf("audit supported %s mutation: %w", audit.ResourceType, err)
+		return fmt.Errorf("audit operator %s mutation: %w", audit.ResourceType, err)
 	}
 	return nil
 }

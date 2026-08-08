@@ -42,7 +42,6 @@ type WebhookReceipt struct {
 type RequeueQuarantinedReceiptCommand struct {
 	Identity         access.Identity
 	PracticeID       string
-	SupportSessionID string
 	EventID          string
 	ReceiptReference string
 }
@@ -163,7 +162,7 @@ func (m *Module) ReceiveWebhook(
 }
 
 // RequeueQuarantinedReceipt schedules persisted, previously verified evidence
-// for replay under Practice-scoped Platform Operator Support Mode.
+// for replay by a Platform Operator under their own identity.
 func (m *Module) RequeueQuarantinedReceipt(
 	ctx context.Context,
 	command RequeueQuarantinedReceiptCommand,
@@ -206,18 +205,11 @@ func (m *Module) RequeueQuarantinedReceipt(
 		command.Identity,
 		command.PracticeID,
 		locationID,
-		command.SupportSessionID,
 	)
 	if err != nil {
-		if errors.Is(err, access.ErrSupportRequired) ||
-			errors.Is(err, access.ErrSupportExpired) ||
-			errors.Is(err, access.ErrSupportRevoked) ||
-			errors.Is(err, access.ErrSupportPracticeMismatch) {
-			return WebhookReceipt{}, err
-		}
 		return WebhookReceipt{}, ErrDenied
 	}
-	if !authorization.PlatformOperator || authorization.SupportMode == nil {
+	if !authorization.PlatformOperator {
 		return WebhookReceipt{}, ErrDenied
 	}
 	if receiptReference != "" {
@@ -299,11 +291,11 @@ func (m *Module) RequeueQuarantinedReceipt(
 			err,
 		)
 	}
-	if err := m.access.AuditSupportedMutation(
+	if err := m.access.AuditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
-		access.SupportedMutationAudit{
+		access.OperatorMutationAudit{
 			Action:          "provider_receipt.requeued",
 			ResourceType:    "provider_receipt",
 			ResourceID:      eventID,
