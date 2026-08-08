@@ -209,15 +209,28 @@ at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
 | --- | --- | --- | --- | --- |
 | Abita Eye Group | Spring Hill | `spring-hill` | `+17275919997` | `+17275919997` |
 | Abita Eye Group | Crystal River | `crystal-river` | `+13523202007` | Not activated |
-| Abita Eye Group | South Florida Medical | `hollywood`, `sweetwater` | `+17864654836` | `+17864654836` |
-| Abita Eye Group | South Florida Optical | `north-miami-beach-optical` | `+13055095333` | Not activated |
+| Abita Eye Group | Hollywood | `hollywood` | Not activated | Not activated |
+| Abita Eye Group | Sweetwater | `sweetwater` | `+17864654836` | `+17864654836` |
+| Abita Eye Group | Sweetwater Optical | `sweetwater-optical` | Not activated | Not activated |
+| Abita Eye Group | North Miami Beach Optical | `north-miami-beach-optical` | `+13055095333` | Not activated |
 | Acuity Demo | Demo — 484 | `dev` | `+14843989071` | `+14843989071` |
 
-The Abita Locations share the reviewed “Abeeta Eye Group” voicemail greeting.
-The Demo Practice is a separate tenant and uses its own greeting and Telnyx
-Messaging profile. Hollywood and Sweetwater deliberately share the Sweetwater
-sender; there is no second queue or duplicate physical Location. No invitation
-or human credential is provisioned by this file.
+The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
+voicemail greeting. The Demo Practice is a separate tenant and uses its own
+greeting and Telnyx Messaging profile. Hollywood and Sweetwater Optical have no
+voice or Messaging configuration yet; no number or sender is inferred by this
+topology change. No invitation or human credential is provisioned by this file.
+
+Migration `0023_split_abita_locations.sql` upgrades the already-provisioned
+four-Location production topology before account provisioning. It preserves the
+existing South Florida Medical row and its `+17864654836` voice/Messaging
+configuration as Sweetwater, preserves South Florida Optical and its
+`+13055095333` voice configuration as North Miami Beach Optical, and creates
+Hollywood and Sweetwater Optical with their own office routes. It fails closed
+if Abita invitations or Memberships exist, or if the combined
+Hollywood/Sweetwater Location contains a Call, handoff, voicemail, Message
+thread, or Task. Those conditions require an explicit data migration instead
+of relabeling records.
 
 This production input fails inside the atomic provisioning transaction unless
 `access_practices` and `access_platform_operators` are empty. That prevents the

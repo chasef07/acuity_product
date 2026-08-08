@@ -19,6 +19,7 @@ import {
   CheckSquareIcon,
   CopyIcon,
   DownloadIcon,
+  EllipsisIcon,
   FileTextIcon,
   PaperclipIcon,
   PhoneCallIcon,
@@ -32,6 +33,13 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Empty,
   EmptyDescription,
@@ -638,7 +646,7 @@ function MessageEntry({
   return (
     <article
       className={cn(
-        "flex w-full",
+        "group/message flex w-full items-start",
         outbound ? "justify-end pl-8" : "justify-start pr-8",
       )}
     >
@@ -687,44 +695,26 @@ function MessageEntry({
             </>
           )}
         </div>
-        {canMutate && (
-          <div
-            className={cn(
-              "mt-1.5 flex flex-wrap items-center gap-1",
-              outbound && "text-primary-foreground",
-            )}
-          >
-            {!message.taskId && (
+        {canMutate &&
+          outbound &&
+          (message.delivery === "Failed" ||
+            message.delivery === "Status unknown") && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1 text-primary-foreground">
               <Button
                 size="sm"
-                variant={outbound ? "secondary" : "ghost"}
+                variant="secondary"
                 className="h-6 px-2 text-xs"
                 disabled={pending}
-                onClick={() => void createTask()}
+                onClick={() => void sendAgain()}
               >
-                <CheckSquareIcon data-icon="inline-start" />
-                Create Task
+                {message.delivery === "Status unknown" && (
+                  <AlertTriangleIcon data-icon="inline-start" />
+                )}
+                Send again
               </Button>
-            )}
-            {outbound &&
-              (message.delivery === "Failed" ||
-                message.delivery === "Status unknown") && (
-                <Button
-                  size="sm"
-                  variant={outbound ? "secondary" : "ghost"}
-                  className="h-6 px-2 text-xs"
-                  disabled={pending}
-                  onClick={() => void sendAgain()}
-                >
-                  {message.delivery === "Status unknown" && (
-                    <AlertTriangleIcon data-icon="inline-start" />
-                  )}
-                  Send again
-                </Button>
-              )}
-            {pending && <Spinner />}
-          </div>
-        )}
+              {pending && <Spinner />}
+            </div>
+          )}
         {error && (
           <p
             role="alert"
@@ -737,6 +727,37 @@ function MessageEntry({
           </p>
         )}
       </div>
+      {canMutate && !message.taskId && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Message actions"
+                className={cn(
+                  "mt-1 sm:opacity-0 sm:group-focus-within/message:opacity-100 sm:group-hover/message:opacity-100",
+                  outbound ? "order-first mr-1" : "ml-1",
+                )}
+              />
+            }
+          >
+            <EllipsisIcon />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align={outbound ? "end" : "start"}>
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                disabled={pending}
+                onClick={() => void createTask()}
+              >
+                <CheckSquareIcon />
+                Create task
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </article>
   )
 }

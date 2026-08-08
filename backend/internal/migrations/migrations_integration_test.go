@@ -111,6 +111,292 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 }
 
+func TestAbitaLocationSplitPreservesConfiguredRowsAndSeparatesRoutes(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0022_drop_support_mode.sql")
+	ctx := context.Background()
+	const (
+		abitaPracticeID       = "00000000-0000-0000-0000-000000000201"
+		southFloridaMedicalID = "00000000-0000-0000-0000-000000000202"
+		southFloridaOpticalID = "00000000-0000-0000-0000-000000000203"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name, workspace_version)
+		VALUES ($1, 'abita-eye-group', 'Abita Eye Group', 7)
+	`, abitaPracticeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name) VALUES
+			($2, $1, 'south-florida-medical', 'South Florida Medical'),
+			($3, $1, 'south-florida-optical', 'South Florida Optical')
+	`, abitaPracticeID, southFloridaMedicalID, southFloridaOpticalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_abita_office_locations (practice_id, office_key, location_id) VALUES
+			($1, 'hollywood', $2),
+			($1, 'sweetwater', $2),
+			($1, 'north-miami-beach-optical', $3)
+	`, abitaPracticeID, southFloridaMedicalID, southFloridaOpticalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id, location_id, phone, voicemail_greeting
+		) VALUES
+			($1, $2, '+17864654836', 'Shared Abita greeting.'),
+			($1, $3, '+13055095333', 'Shared Abita greeting.')
+	`, abitaPracticeID, southFloridaMedicalID, southFloridaOpticalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO messaging_location_configurations (
+			practice_id, location_id, sender, messaging_profile_id
+		) VALUES ($1, $2, '+17864654836', 'abita-messaging-profile');
+	`, abitaPracticeID, southFloridaMedicalID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Abita Location split: %v", err)
+	}
+
+	type location struct {
+		Key, Name, ID string
+	}
+	locations := []location{}
+	rows, err := pool.Query(ctx, `
+		SELECT provisioning_key, name, id::text
+		FROM access_locations
+		WHERE practice_id = $1
+		ORDER BY provisioning_key
+	`, abitaPracticeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var candidate location
+		if err := rows.Scan(&candidate.Key, &candidate.Name, &candidate.ID); err != nil {
+			t.Fatal(err)
+		}
+		locations = append(locations, candidate)
+	}
+	wantLocations := []location{
+		{Key: "hollywood", Name: "Hollywood"},
+		{Key: "north-miami-beach-optical", Name: "North Miami Beach Optical", ID: southFloridaOpticalID},
+		{Key: "sweetwater", Name: "Sweetwater", ID: southFloridaMedicalID},
+		{Key: "sweetwater-optical", Name: "Sweetwater Optical"},
+	}
+	if len(locations) != len(wantLocations) {
+		t.Fatalf("Locations = %#v, want %#v", locations, wantLocations)
+	}
+	for index, want := range wantLocations {
+		if locations[index].Key != want.Key || locations[index].Name != want.Name ||
+			(want.ID != "" && locations[index].ID != want.ID) {
+			t.Fatalf("Locations = %#v, want %#v", locations, wantLocations)
+		}
+	}
+
+	type route struct{ Office, Location string }
+	routes := []route{}
+	rows, err = pool.Query(ctx, `
+		SELECT route.office_key, location.provisioning_key
+		FROM access_abita_office_locations route
+		JOIN access_locations location
+			ON location.practice_id = route.practice_id
+			AND location.id = route.location_id
+		WHERE route.practice_id = $1
+		ORDER BY route.office_key
+	`, abitaPracticeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var candidate route
+		if err := rows.Scan(&candidate.Office, &candidate.Location); err != nil {
+			t.Fatal(err)
+		}
+		routes = append(routes, candidate)
+	}
+	wantRoutes := []route{
+		{Office: "hollywood", Location: "hollywood"},
+		{Office: "north-miami-beach-optical", Location: "north-miami-beach-optical"},
+		{Office: "sweetwater", Location: "sweetwater"},
+		{Office: "sweetwater-optical", Location: "sweetwater-optical"},
+	}
+	if len(routes) != len(wantRoutes) {
+		t.Fatalf("routes = %#v, want %#v", routes, wantRoutes)
+	}
+	for index := range wantRoutes {
+		if routes[index] != wantRoutes[index] {
+			t.Fatalf("routes = %#v, want %#v", routes, wantRoutes)
+		}
+	}
+
+	var voiceLocation, messagingLocation string
+	if err := pool.QueryRow(ctx, `
+		SELECT location.provisioning_key
+		FROM human_calling_location_voice_numbers voice
+		JOIN access_locations location
+			ON location.practice_id = voice.practice_id
+			AND location.id = voice.location_id
+		WHERE voice.phone = '+17864654836'
+	`).Scan(&voiceLocation); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT location.provisioning_key
+		FROM messaging_location_configurations messaging
+		JOIN access_locations location
+			ON location.practice_id = messaging.practice_id
+			AND location.id = messaging.location_id
+		WHERE messaging.sender = '+17864654836'
+	`).Scan(&messagingLocation); err != nil {
+		t.Fatal(err)
+	}
+	if voiceLocation != "sweetwater" || messagingLocation != "sweetwater" {
+		t.Fatalf("configured Locations = voice:%q messaging:%q", voiceLocation, messagingLocation)
+	}
+
+	var workspaceVersion int64
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT workspace_version FROM access_practices WHERE id = $1
+	`, abitaPracticeID).Scan(&workspaceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM access_audit_events
+		WHERE practice_id = $1 AND action = 'access.locations_split'
+	`, abitaPracticeID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceVersion != 8 || auditCount != 1 {
+		t.Fatalf("workspace version = %d, split audits = %d", workspaceVersion, auditCount)
+	}
+}
+
+func TestAbitaLocationSplitSkipsUnrelatedDevelopmentTopology(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0022_drop_support_mode.sql")
+	ctx := context.Background()
+	const (
+		abitaPracticeID   = "00000000-0000-0000-0000-000000000221"
+		fixtureLocationID = "00000000-0000-0000-0000-000000000222"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'abita-eye-group', 'Abita Eye Group')
+	`, abitaPracticeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES ($2, $1, 'fixture-location-1', 'Fixture Location 1')
+	`, abitaPracticeID, fixtureLocationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_invitations (
+			provisioning_key, practice_id, token_hash, email, role,
+			location_scope, expires_at
+		) VALUES (
+			'fixture-admin', $1, decode(repeat('02', 32), 'hex'),
+			'admin@abita.test', 'ADMIN', 'ALL', now() + interval '1 day'
+		)
+	`, abitaPracticeID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Location split to development topology: %v", err)
+	}
+
+	var locationKey string
+	var invitationCount int
+	var splitApplied bool
+	if err := pool.QueryRow(ctx, `
+		SELECT provisioning_key FROM access_locations WHERE id = $1
+	`, fixtureLocationID).Scan(&locationKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM access_invitations WHERE practice_id = $1
+	`, abitaPracticeID).Scan(&invitationCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM schema_migrations
+			WHERE name = '0023_split_abita_locations.sql'
+		)
+	`).Scan(&splitApplied); err != nil {
+		t.Fatal(err)
+	}
+	if locationKey != "fixture-location-1" || invitationCount != 1 || !splitApplied {
+		t.Fatalf(
+			"development topology = location:%q invitations:%d applied:%t",
+			locationKey,
+			invitationCount,
+			splitApplied,
+		)
+	}
+}
+
+func TestAbitaLocationSplitRejectsProvisionedAccounts(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0022_drop_support_mode.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'abita-eye-group', 'Abita Eye Group')
+	`, "00000000-0000-0000-0000-000000000211"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name) VALUES
+			($2, $1, 'south-florida-medical', 'South Florida Medical'),
+			($3, $1, 'south-florida-optical', 'South Florida Optical')
+	`,
+		"00000000-0000-0000-0000-000000000211",
+		"00000000-0000-0000-0000-000000000212",
+		"00000000-0000-0000-0000-000000000213",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_invitations (
+			provisioning_key, practice_id, token_hash, email, role,
+			location_scope, expires_at
+		) VALUES (
+			'pending-account', $1, decode(repeat('01', 32), 'hex'),
+			'pending@abita.test', 'STAFF', 'ALL', now() + interval '1 day'
+		);
+	`,
+		"00000000-0000-0000-0000-000000000211",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	err := migrations.Apply(ctx, pool)
+	if err == nil || !strings.Contains(err.Error(), "before account provisioning") {
+		t.Fatalf("Location split error = %v", err)
+	}
+
+	var splitApplied bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM schema_migrations
+			WHERE name = '0023_split_abita_locations.sql'
+		)
+	`).Scan(&splitApplied); err != nil {
+		t.Fatal(err)
+	}
+	if splitApplied {
+		t.Fatal("failed Location split was recorded")
+	}
+}
+
 func TestCallLegCutoverBackfillsExactLegsAndProviderCommands(t *testing.T) {
 	pool := testdb.OpenThrough(t, "0019_calling_recovery_continuity.sql")
 	ctx := context.Background()

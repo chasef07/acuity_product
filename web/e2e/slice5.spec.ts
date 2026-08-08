@@ -8,7 +8,7 @@ const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 
-test("Slice 5 sends, receives, and turns exact-phone correspondence into explicit work", async ({
+test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
   context,
   page,
 }) => {
@@ -172,7 +172,45 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
-  await inbound.getByRole("button", { name: "Create Task" }).click()
+  await expect(
+    inbound.getByRole("button", { name: "Create Task" }),
+  ).toHaveCount(0)
+
+  await page.setViewportSize({ width: 1280, height: 320 })
+  const timeline = page.getByTestId("message-timeline")
+  await expect
+    .poll(() =>
+      timeline.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    )
+    .toBe(true)
+  const inboxHeading = page.getByRole("heading", {
+    name: "(727) 555-0199",
+    exact: true,
+  })
+  const headerTop = await inboxHeading.evaluate(
+    (element) => element.closest("header")?.getBoundingClientRect().top,
+  )
+  await timeline.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect
+    .poll(() => timeline.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0)
+  await expect
+    .poll(() =>
+      inboxHeading.evaluate(
+        (element) => element.closest("header")?.getBoundingClientRect().top,
+      ),
+    )
+    .toBe(headerTop)
+  expect(await page.evaluate(() => window.scrollY)).toBe(0)
+  await page.setViewportSize({ width: 1280, height: 720 })
+
+  await inbound.hover()
+  await inbound.getByRole("button", { name: "Message actions" }).click()
+  await page.getByRole("menuitem", { name: "Create task" }).click()
   const taskTouchpoint = page.getByRole("button", {
     name: /Fixture Location 1 · Task · Created.*Follow up on text/,
   })
@@ -209,6 +247,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(
     page.getByRole("region", { name: "Task conversation" }),
   ).toHaveCount(0)
+
   await page.reload()
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
