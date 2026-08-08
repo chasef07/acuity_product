@@ -59,8 +59,9 @@ const (
 type ServiceCapability string
 
 const (
-	ServiceCapabilityHumanHandoff ServiceCapability = "HUMAN_HANDOFF"
-	ServiceCapabilityCreateTask   ServiceCapability = "CREATE_TASK"
+	ServiceCapabilityHumanHandoff        ServiceCapability = "HUMAN_HANDOFF"
+	ServiceCapabilityCreateTask          ServiceCapability = "CREATE_TASK"
+	ServiceCapabilityIngestAIInteraction ServiceCapability = "INGEST_AI_INTERACTION"
 )
 
 type ServiceIdentity struct {
@@ -1074,6 +1075,62 @@ func (m *Module) LockServiceAuthorization(
 		}
 		return ServiceAuthorization{}, fmt.Errorf(
 			"lock service Location authorization: %w",
+			err,
+		)
+	}
+	return ServiceAuthorization{
+		Actor: Actor{
+			Subject: identity.Subject,
+			Type:    string(ActorService),
+		},
+		PracticeID: identity.PracticeID,
+		LocationID: locationID,
+	}, nil
+}
+
+// LockServiceVoiceAuthorization binds an authenticated service capability and
+// one enabled Product voice number to its current Location.
+func (m *Module) LockServiceVoiceAuthorization(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity ServiceIdentity,
+	phone string,
+	capability ServiceCapability,
+) (ServiceAuthorization, error) {
+	phone = strings.TrimSpace(phone)
+	if tx == nil ||
+		strings.TrimSpace(identity.Subject) == "" ||
+		strings.TrimSpace(identity.PracticeID) == "" ||
+		identity.LocationScope != LocationScopeAll ||
+		phone == "" ||
+		!identity.Allows(capability) {
+		return ServiceAuthorization{}, ErrDenied
+	}
+	var locationID string
+	if err := tx.QueryRow(ctx, `
+		SELECT voice.location_id::text
+		FROM human_calling_location_voice_numbers voice
+		JOIN access_locations location
+			ON location.practice_id = voice.practice_id
+			AND location.id = voice.location_id
+		WHERE voice.practice_id = $1
+			AND voice.phone = $2
+			AND voice.enabled
+			AND NOT EXISTS (
+				SELECT 1
+				FROM human_calling_location_voice_numbers duplicate
+				WHERE duplicate.practice_id = voice.practice_id
+					AND duplicate.phone = voice.phone
+					AND duplicate.enabled
+					AND duplicate.location_id <> voice.location_id
+			)
+		FOR SHARE OF voice, location
+	`, identity.PracticeID, phone).Scan(&locationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ServiceAuthorization{}, ErrDenied
+		}
+		return ServiceAuthorization{}, fmt.Errorf(
+			"lock service voice Location authorization: %w",
 			err,
 		)
 	}

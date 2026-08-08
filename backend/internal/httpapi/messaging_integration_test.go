@@ -18,6 +18,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -120,6 +121,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			Access:               accessModule,
 			Authenticator:        staticAuthenticator{"message-token": identity},
 			Calling:              callingModule,
+			Interactions:         interaction.New(pool, accessModule, nil),
 			Messaging:            messageModule,
 			Work:                 workModule,
 			ServiceAuthenticator: serviceAuthenticator,

@@ -783,6 +783,118 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions:
+    post:
+      operationId: ingestAIInteraction
+      summary: Persist one authenticated Abita AI call lifecycle message.
+      security:
+        - serviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIInteractionIngestRequest"
+      responses:
+        "200":
+          description: Existing Interaction advanced without losing richer evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIInteractionReceipt"
+        "201":
+          description: New Interaction persisted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIInteractionReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/{interactionId}:
+    get:
+      operationId: getAIInteraction
+      summary: Read one authorized AI Interaction appointment and call detail.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Authorized transcript-free AI Interaction detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIInteractionDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/{interactionId}/evidence:
+    get:
+      operationId: getAIInteractionEvidence
+      summary: Read one admin-authorized AI Interaction transcript and closeout payload.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Admin-authorized AI Interaction evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIInteractionEvidence"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/outcomes/query:
+    post:
+      operationId: queryAIInteractionOutcomes
+      summary: Read authorized AI appointment outcomes for one UTC interaction date.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIOutcomeQueryRequest"
+      responses:
+        "200":
+          description: Authorized date-scoped AI outcome projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIOutcomePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -2529,6 +2641,323 @@ components:
           type: string
           minLength: 1
           maxLength: 32
+    AIInteractionMessageKind:
+      type: string
+      enum: [START, SUMMARY, CLOSEOUT, OUTCOME_CHECKPOINT]
+    AIInteractionCallStatus:
+      type: string
+      enum: [IN_PROGRESS, COMPLETED, ESCALATED, FAILED]
+    AIAppointmentAction:
+      type: string
+      enum: [BOOKED, CANCELLED, RESCHEDULED]
+    AIAppointmentEvidence:
+      type: object
+      additionalProperties: false
+      required: [action, occurredAt]
+      properties:
+        action:
+          $ref: "#/components/schemas/AIAppointmentAction"
+        occurredAt:
+          type: string
+          format: date-time
+        externalPatientId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        oldAppointmentId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        newAppointmentId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        bookingResult:
+          type: object
+          additionalProperties: true
+        cancellationResult:
+          type: object
+          additionalProperties: true
+    AIInteractionIngestRequest:
+      type: object
+      description: >-
+        One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence;
+        OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; SUMMARY uses a
+        terminal status with endedAt and summaryPayload; CLOSEOUT uses a terminal
+        status with endedAt and closeoutPayload. The service validates these
+        kind-specific requirements.
+      additionalProperties: false
+      required:
+        - kind
+        - sourceCallId
+        - callerPhone
+        - officePhone
+        - startedAt
+        - status
+      properties:
+        kind:
+          $ref: "#/components/schemas/AIInteractionMessageKind"
+        officeKey:
+          type: string
+          minLength: 1
+          maxLength: 100
+        sourceCallId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        callerPhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        officePhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/AIInteractionCallStatus"
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        transcript:
+          type: object
+          additionalProperties: true
+        appointmentOutcome:
+          $ref: "#/components/schemas/AIAppointmentEvidence"
+        summaryPayload:
+          type: object
+          additionalProperties: true
+        closeoutPayload:
+          type: object
+          additionalProperties: true
+    AIInteractionReceipt:
+      type: object
+      additionalProperties: false
+      required: [interactionId, status]
+      properties:
+        interactionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [created, updated]
+    AIAppointmentOutcome:
+      type: string
+      enum: [BOOKING, CANCELLATION, RESCHEDULE, PARTIAL, INDETERMINATE]
+    AIAppointmentFacts:
+      type: object
+      additionalProperties: false
+      properties:
+        appointmentDate:
+          type: string
+        appointmentId:
+          type: string
+        appointmentTime:
+          type: string
+        appointmentTypeName:
+          type: string
+        careLane:
+          type: string
+        locationName:
+          type: string
+        patientName:
+          type: string
+        providerName:
+          type: string
+        startDatetime:
+          type: string
+    AIInteractionDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - sourceCallId
+        - phone
+        - officePhone
+        - startedAt
+        - status
+        - appointmentOutcome
+        - appointment
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        sourceCallId:
+          type: string
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        officePhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        externalPatientId:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/AIInteractionCallStatus"
+        summary:
+          type: string
+        appointmentOutcome:
+          $ref: "#/components/schemas/AIAppointmentOutcome"
+        appointment:
+          $ref: "#/components/schemas/AIAppointmentFacts"
+        previousAppointment:
+          $ref: "#/components/schemas/AIAppointmentFacts"
+        appointmentOccurredAt:
+          type: string
+          format: date-time
+        oldAppointmentId:
+          type: string
+        newAppointmentId:
+          type: string
+        bookingResult:
+          type: object
+          additionalProperties: true
+        cancellationResult:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AIInteractionEvidence:
+      type: object
+      additionalProperties: false
+      required: [id, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        transcript:
+          type: object
+          additionalProperties: true
+        closeoutPayload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AIOutcomeQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, date]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+    AIOutcomeCounts:
+      type: object
+      additionalProperties: false
+      required: [bookings, cancellations, reschedules, partial, indeterminate]
+      properties:
+        bookings:
+          type: integer
+          minimum: 0
+        cancellations:
+          type: integer
+          minimum: 0
+        reschedules:
+          type: integer
+          minimum: 0
+        partial:
+          type: integer
+          minimum: 0
+        indeterminate:
+          type: integer
+          minimum: 0
+    AIOutcomeItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - locationId
+        - locationName
+        - sourceCallId
+        - phone
+        - startedAt
+        - status
+        - appointmentOutcome
+      properties:
+        id:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        sourceCallId:
+          type: string
+        phone:
+          type: string
+        externalPatientId:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/AIInteractionCallStatus"
+        summary:
+          type: string
+        appointmentOutcome:
+          $ref: "#/components/schemas/AIAppointmentOutcome"
+        appointmentOccurredAt:
+          type: string
+          format: date-time
+        oldAppointmentId:
+          type: string
+        newAppointmentId:
+          type: string
+    AIOutcomePage:
+      type: object
+      additionalProperties: false
+      required: [date, counts, items]
+      properties:
+        date:
+          type: string
+          format: date
+        counts:
+          $ref: "#/components/schemas/AIOutcomeCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIOutcomeItem"
     TaskQueryRequest:
       type: object
       additionalProperties: false
@@ -2882,7 +3311,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MESSAGE, CALL, TASK]
+          enum: [MESSAGE, CALL, AI_INTERACTION, TASK]
         id:
           type: string
           format: uuid
@@ -2903,6 +3332,8 @@ components:
           $ref: "#/components/schemas/Task"
         call:
           $ref: "#/components/schemas/CallHistoryItem"
+        aiInteraction:
+          $ref: "#/components/schemas/AIOutcomeItem"
     ConversationTimelinePage:
       type: object
       additionalProperties: false

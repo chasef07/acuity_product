@@ -25,6 +25,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -1083,6 +1084,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 				humancalling.Config{},
 				nil,
 			),
+			Interactions:         interaction.New(pool, accessModule, func() time.Time { return now }),
 			Work:                 work.New(pool, accessModule, func() time.Time { return now }),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
@@ -1413,6 +1415,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			Access:               accessModule,
 			Authenticator:        staticAuthenticator{"calling-token": identity},
 			Calling:              calling,
+			Interactions:         interaction.New(pool, accessModule, nil),
 			Work:                 work.New(pool, accessModule, nil),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
@@ -1837,6 +1840,7 @@ func newPortalHandlerWithCalling(
 		Access:               accessModule,
 		Authenticator:        authenticator,
 		Calling:              calling,
+		Interactions:         interaction.New(pool, accessModule, nil),
 		Work:                 work.New(pool, accessModule, nil),
 		ServiceAuthenticator: serviceAuthenticator,
 	})

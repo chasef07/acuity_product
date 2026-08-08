@@ -27,6 +27,7 @@ GRANT SELECT ON TABLE
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
+    public.ai_interactions,
     public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -60,6 +61,22 @@ GRANT SELECT (
 ON TABLE public.human_calling_provider_receipts
 TO acuity_portal;
 
+GRANT SELECT (
+    id,
+    service_subject,
+    practice_id,
+    location_id,
+    source_call_id,
+    kind,
+    state,
+    interaction_id,
+    payload_fingerprint,
+    projection_error_code,
+    duplicate_count
+)
+ON TABLE public.ai_interaction_receipts
+TO acuity_portal;
+
 GRANT UPDATE (
     state,
     projection_attempts,
@@ -78,6 +95,8 @@ GRANT INSERT ON TABLE
     public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
+    public.ai_interactions,
+    public.ai_interaction_receipts,
     public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -121,6 +140,37 @@ TO acuity_portal;
 
 GRANT UPDATE (updated_at)
 ON TABLE public.messaging_location_configurations
+TO acuity_portal;
+
+GRANT UPDATE (
+    external_patient_id,
+    ended_at,
+    status,
+    summary,
+    transcript,
+    appointment_action,
+    appointment_outcome,
+    appointment_occurred_at,
+    old_appointment_id,
+    new_appointment_id,
+    booking_result,
+    cancellation_result,
+    summary_payload,
+    closeout_payload,
+    lifecycle_stage,
+    updated_at
+)
+ON TABLE public.ai_interactions
+TO acuity_portal;
+
+GRANT UPDATE (
+    state,
+    interaction_id,
+    projection_error_code,
+    projected_at,
+    duplicate_count
+)
+ON TABLE public.ai_interaction_receipts
 TO acuity_portal;
 
 GRANT UPDATE (updated_at)
@@ -236,6 +286,7 @@ GRANT SELECT ON TABLE
     public.access_memberships,
     public.access_operational_users,
     public.access_practices,
+	public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -258,7 +309,23 @@ GRANT SELECT ON TABLE
     public.work_tasks
 TO acuity_worker;
 
+GRANT SELECT (
+    id,
+    service_subject,
+    practice_id,
+    location_id,
+    source_call_id,
+    state,
+    interaction_id,
+    payload,
+    received_at,
+    projection_error_code
+)
+ON TABLE public.ai_interaction_receipts
+TO acuity_worker;
+
 GRANT INSERT ON TABLE
+	public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -273,6 +340,36 @@ GRANT INSERT ON TABLE
     public.work_task_activities,
     public.work_task_interactions,
     public.work_tasks
+TO acuity_worker;
+
+GRANT UPDATE (
+    external_patient_id,
+    ended_at,
+    status,
+    summary,
+    transcript,
+    appointment_action,
+    appointment_outcome,
+    appointment_occurred_at,
+    old_appointment_id,
+    new_appointment_id,
+    booking_result,
+    cancellation_result,
+    summary_payload,
+    closeout_payload,
+    lifecycle_stage,
+    updated_at
+)
+ON TABLE public.ai_interactions
+TO acuity_worker;
+
+GRANT UPDATE (
+    state,
+    interaction_id,
+    projection_error_code,
+    projected_at
+)
+ON TABLE public.ai_interaction_receipts
 TO acuity_worker;
 
 GRANT SELECT (event_id)

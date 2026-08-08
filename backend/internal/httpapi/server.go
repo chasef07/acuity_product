@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -19,6 +20,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
@@ -56,6 +58,7 @@ type PortalDependencies struct {
 	Access               *access.Module
 	Authenticator        IdentityAuthenticator
 	Calling              *humancalling.Module
+	Interactions         *interaction.Module
 	Messaging            *messaging.Module
 	Work                 *work.Module
 	ServiceAuthenticator ServiceAuthenticator
@@ -75,6 +78,7 @@ type Server struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	interactions  *interaction.Module
 	messaging     *messaging.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
@@ -86,6 +90,7 @@ type serverDependencies struct {
 	authenticator IdentityAuthenticator
 	events        EventStreamer
 	calling       *humancalling.Module
+	interactions  *interaction.Module
 	messaging     *messaging.Module
 	work          *work.Module
 	serviceAuth   ServiceAuthenticator
@@ -99,6 +104,7 @@ func NewPortal(
 	if dependencies.Access == nil ||
 		dependencies.Authenticator == nil ||
 		dependencies.Calling == nil ||
+		dependencies.Interactions == nil ||
 		dependencies.Work == nil ||
 		dependencies.ServiceAuthenticator == nil {
 		return nil, fmt.Errorf("portal dependencies are required")
@@ -107,6 +113,7 @@ func NewPortal(
 		access:        dependencies.Access,
 		authenticator: dependencies.Authenticator,
 		calling:       dependencies.Calling,
+		interactions:  dependencies.Interactions,
 		messaging:     dependencies.Messaging,
 		work:          dependencies.Work,
 		serviceAuth:   dependencies.ServiceAuthenticator,
@@ -174,6 +181,7 @@ func newServer(
 		authenticator: dependencies.authenticator,
 		events:        dependencies.events,
 		calling:       dependencies.calling,
+		interactions:  dependencies.interactions,
 		messaging:     dependencies.messaging,
 		work:          dependencies.work,
 		serviceAuth:   dependencies.serviceAuth,
@@ -505,6 +513,158 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 		TaskId:   taskID,
 		Urgency:  api.StaffTaskUrgency(task.Urgency),
 	})
+}
+
+func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	service, ok := server.authenticateService(w, r)
+	if !ok {
+		return
+	}
+	var body api.AIInteractionIngestRequest
+	if !server.decodeJSONLimit(w, r, &body, 8*1024*1024) {
+		return
+	}
+	command := interaction.IngestCommand{
+		Service:         service,
+		Kind:            interaction.MessageKind(body.Kind),
+		OfficeKey:       stringValue(body.OfficeKey),
+		SourceCallID:    body.SourceCallId,
+		CallerPhone:     body.CallerPhone,
+		OfficePhone:     body.OfficePhone,
+		StartedAt:       body.StartedAt,
+		EndedAt:         body.EndedAt,
+		Status:          interaction.CallStatus(body.Status),
+		Summary:         stringValue(body.Summary),
+		Transcript:      rawJSON(body.Transcript),
+		SummaryPayload:  rawJSON(body.SummaryPayload),
+		CloseoutPayload: rawJSON(body.CloseoutPayload),
+	}
+	if body.AppointmentOutcome != nil {
+		command.Appointment = &interaction.AppointmentEvidence{
+			Action:             interaction.AppointmentAction(body.AppointmentOutcome.Action),
+			OccurredAt:         body.AppointmentOutcome.OccurredAt,
+			ExternalPatientID:  stringValue(body.AppointmentOutcome.ExternalPatientId),
+			OldAppointmentID:   stringValue(body.AppointmentOutcome.OldAppointmentId),
+			NewAppointmentID:   stringValue(body.AppointmentOutcome.NewAppointmentId),
+			BookingResult:      rawJSON(body.AppointmentOutcome.BookingResult),
+			CancellationResult: rawJSON(body.AppointmentOutcome.CancellationResult),
+		}
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	stored, status, err := server.interactions.Ingest(ctx, command)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	interactionID, err := uuid.Parse(stored.ID)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	httpStatus := http.StatusOK
+	if status == interaction.StatusCreated {
+		httpStatus = http.StatusCreated
+	}
+	server.writeJSON(w, httpStatus, api.AIInteractionReceipt{
+		InteractionId: interactionID,
+		Status:        api.AIInteractionReceiptStatus(status),
+	})
+}
+
+func (server *Server) GetAIInteraction(
+	w http.ResponseWriter,
+	r *http.Request,
+	interactionID openapi_types.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	stored, err := server.interactions.Read(ctx, identity, interactionID.String())
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	response, err := aiInteractionDetailResponse(stored)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetAIInteractionEvidence(
+	w http.ResponseWriter,
+	r *http.Request,
+	interactionID openapi_types.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	stored, err := server.interactions.ReadEvidence(ctx, identity, interactionID.String())
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	response, err := aiInteractionEvidenceResponse(stored)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) QueryAIInteractionOutcomes(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.AIOutcomeQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	page, err := server.interactions.QueryDailyOutcomes(
+		ctx,
+		interaction.QueryDailyOutcomesCommand{
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			LocationID: uuidString(body.LocationId),
+			Date:       body.Date.Time,
+		},
+	)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	response, err := aiOutcomePageResponse(page)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
 }
 
 func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request) {
@@ -1938,8 +2098,9 @@ func (server *Server) decodeJSONLimit(
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "A JSON request body is required.", false)
 		return false
 	}
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maximumBytes))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maximumBytes))
 	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
 	if err := decoder.Decode(target); err != nil {
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The JSON request body is invalid.", false)
 		return false
@@ -2068,6 +2229,23 @@ func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, work.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
+func (server *Server) writeInteractionError(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+) {
+	switch {
+	case errors.Is(err, interaction.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, interaction.ErrDenied):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
+	case errors.Is(err, interaction.ErrConflict):
+		server.writeError(w, r, http.StatusConflict, "INTERACTION_CONFLICT", "The source call conflicts with the stored Interaction.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}
@@ -2867,6 +3045,12 @@ func conversationTimelineResponse(
 				return api.ConversationTimelinePage{}, err
 			}
 			converted.Call = &call
+		case "AI_INTERACTION":
+			aiInteraction, err := aiOutcomeItemResponse(item.AIInteraction)
+			if err != nil {
+				return api.ConversationTimelinePage{}, err
+			}
+			converted.AiInteraction = &aiInteraction
 		}
 		response.Items = append(response.Items, converted)
 	}
@@ -2991,6 +3175,168 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func stringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func rawJSON(value *map[string]interface{}) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(*value)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+func aiInteractionDetailResponse(
+	stored interaction.Interaction,
+) (api.AIInteractionDetail, error) {
+	id, err := uuid.Parse(stored.ID)
+	if err != nil {
+		return api.AIInteractionDetail{}, err
+	}
+	practiceID, err := uuid.Parse(stored.PracticeID)
+	if err != nil {
+		return api.AIInteractionDetail{}, err
+	}
+	locationID, err := uuid.Parse(stored.LocationID)
+	if err != nil {
+		return api.AIInteractionDetail{}, err
+	}
+	appointment := interaction.ProjectAppointmentDetails(stored)
+	response := api.AIInteractionDetail{
+		Id:                    id,
+		PracticeId:            practiceID,
+		LocationId:            locationID,
+		LocationName:          stored.LocationName,
+		SourceCallId:          stored.SourceCallID,
+		Phone:                 stored.Phone,
+		OfficePhone:           stored.OfficePhone,
+		ExternalPatientId:     stringPointer(stored.ExternalPatientID),
+		StartedAt:             stored.StartedAt,
+		EndedAt:               stored.EndedAt,
+		Status:                api.AIInteractionCallStatus(stored.Status),
+		Summary:               stringPointer(stored.Summary),
+		AppointmentOutcome:    api.AIAppointmentOutcome(stored.AppointmentOutcome),
+		Appointment:           aiAppointmentFactsResponse(appointment.Appointment),
+		AppointmentOccurredAt: stored.AppointmentOccurredAt,
+		OldAppointmentId:      stringPointer(stored.OldAppointmentID),
+		NewAppointmentId:      stringPointer(stored.NewAppointmentID),
+		BookingResult:         jsonMap(stored.BookingResult),
+		CancellationResult:    jsonMap(stored.CancellationResult),
+		CreatedAt:             stored.CreatedAt,
+		UpdatedAt:             stored.UpdatedAt,
+	}
+	if appointment.PreviousAppointment != nil {
+		previous := aiAppointmentFactsResponse(*appointment.PreviousAppointment)
+		response.PreviousAppointment = &previous
+	}
+	return response, nil
+}
+
+func aiInteractionEvidenceResponse(
+	stored interaction.Interaction,
+) (api.AIInteractionEvidence, error) {
+	id, err := uuid.Parse(stored.ID)
+	if err != nil {
+		return api.AIInteractionEvidence{}, err
+	}
+	return api.AIInteractionEvidence{
+		Id:              id,
+		Transcript:      jsonMap(stored.Transcript),
+		CloseoutPayload: jsonMap(stored.CloseoutPayload),
+		CreatedAt:       stored.CreatedAt,
+		UpdatedAt:       stored.UpdatedAt,
+	}, nil
+}
+
+func aiAppointmentFactsResponse(
+	facts interaction.AppointmentFacts,
+) api.AIAppointmentFacts {
+	return api.AIAppointmentFacts{
+		AppointmentDate:     stringPointer(facts.AppointmentDate),
+		AppointmentId:       stringPointer(facts.AppointmentID),
+		AppointmentTime:     stringPointer(facts.AppointmentTime),
+		AppointmentTypeName: stringPointer(facts.AppointmentTypeName),
+		CareLane:            stringPointer(facts.CareLane),
+		LocationName:        stringPointer(facts.LocationName),
+		PatientName:         stringPointer(facts.PatientName),
+		ProviderName:        stringPointer(facts.ProviderName),
+		StartDatetime:       stringPointer(facts.StartDatetime),
+	}
+}
+
+func aiOutcomePageResponse(
+	page interaction.DailyOutcomes,
+) (api.AIOutcomePage, error) {
+	response := api.AIOutcomePage{
+		Date: openapi_types.Date{Time: page.Date},
+		Counts: api.AIOutcomeCounts{
+			Bookings:      page.Counts.Bookings,
+			Cancellations: page.Counts.Cancellations,
+			Reschedules:   page.Counts.Reschedules,
+			Partial:       page.Counts.Partial,
+			Indeterminate: page.Counts.Indeterminate,
+		},
+		Items: make([]api.AIOutcomeItem, 0, len(page.Items)),
+	}
+	for _, item := range page.Items {
+		converted, err := aiOutcomeItemResponse(item)
+		if err != nil {
+			return api.AIOutcomePage{}, err
+		}
+		response.Items = append(response.Items, converted)
+	}
+	return response, nil
+}
+
+func aiOutcomeItemResponse(
+	item interaction.OutcomeItem,
+) (api.AIOutcomeItem, error) {
+	id, err := uuid.Parse(item.ID)
+	if err != nil {
+		return api.AIOutcomeItem{}, err
+	}
+	locationID, err := uuid.Parse(item.LocationID)
+	if err != nil {
+		return api.AIOutcomeItem{}, err
+	}
+	return api.AIOutcomeItem{
+		Id:                    id,
+		LocationId:            locationID,
+		LocationName:          item.LocationName,
+		SourceCallId:          item.SourceCallID,
+		Phone:                 item.Phone,
+		ExternalPatientId:     stringPointer(item.ExternalPatientID),
+		StartedAt:             item.StartedAt,
+		EndedAt:               item.EndedAt,
+		Status:                api.AIInteractionCallStatus(item.Status),
+		Summary:               stringPointer(item.Summary),
+		AppointmentOutcome:    api.AIAppointmentOutcome(item.AppointmentOutcome),
+		AppointmentOccurredAt: item.AppointmentOccurredAt,
+		OldAppointmentId:      stringPointer(item.OldAppointmentID),
+		NewAppointmentId:      stringPointer(item.NewAppointmentID),
+	}, nil
+}
+
+func jsonMap(value json.RawMessage) *map[string]interface{} {
+	if len(value) == 0 {
+		return nil
+	}
+	decoded := map[string]interface{}{}
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	decoder.UseNumber()
+	if decoder.Decode(&decoded) != nil {
+		return nil
+	}
+	return &decoded
 }
 
 func uuidString(value *openapi_types.UUID) string {

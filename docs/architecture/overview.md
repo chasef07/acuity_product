@@ -24,7 +24,7 @@ flowchart LR
     Browser -->|"HTTPS + JWT"| API
     Realtime -->|"version hints"| Browser
     Browser <-->|"WSS signaling + WebRTC media"| Telnyx
-    AI -->|"task and handoff commands"| API
+    AI -->|"task, handoff, and AI Interaction records"| API
     Telnyx -->|"signed webhooks"| Ingress
     API --> DB
     Ingress --> DB
@@ -38,17 +38,24 @@ flowchart LR
 
 ## Modules
 
-The Go runtime contains five deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, and durable jobs are adapters around those interfaces.
+The Go runtime contains six deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, and durable jobs are adapters around those interfaces.
 
 | Module | Owns | Does not own |
 |---|---|---|
 | `Access` | Human and service principals, Access Grants, Memberships, Platform Operators, roles, location scope, authorization decisions, operator audit | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
 | `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, post-call disposition, voicemail recording identity, and authorized playback | Browser-selected winners, connected-call recording, task lifecycle, SMS correlation, provider-owned audio bytes |
-| `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts | Task lifecycle, contact identity, call state |
-| `EvidenceArchive` | Canonical recording/transcript metadata, protected grants, access audit, retention, deletion | Call control, task completion, provider-owned audio bytes |
+| `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts, cross-channel exact-phone Engagement History read model | Task and AI Interaction source truth, contact identity, call state |
+| `AIInteraction` | Abita AI call lifecycle records, full AI transcripts, receipt-backed appointment outcomes, daily outcome and call-detail views | Task workflows, human-call control, Engagement History composition, canonical patient identity |
+| `EvidenceArchive` | Human-call recording and transcript metadata, protected grants, access audit, retention, deletion | AI Interaction records, call control, task completion, provider-owned audio bytes |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
+
+AI transcripts remain durable, authorized Interaction evidence. The routine
+operator workspace keeps them out of the opened call view and instead projects
+receipt-backed appointment and call details through a typed, transcript-free
+response. Transcript and raw closeout access use a separate endpoint restricted
+to Practice Admins and Platform Operators.
 
 When an email-provisioned User first signs in with Google, Access activates the
 Membership and the HumanCalling worker creates one unique Telnyx on-demand

@@ -19,6 +19,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
@@ -246,6 +247,7 @@ func runAuthorizedHTTP(
 				Capabilities: []access.ServiceCapability{
 					access.ServiceCapabilityHumanHandoff,
 					access.ServiceCapabilityCreateTask,
+					access.ServiceCapabilityIngestAIInteraction,
 				},
 			},
 		)
@@ -260,6 +262,7 @@ func runAuthorizedHTTP(
 			Access:               accessModule,
 			Authenticator:        authenticator,
 			Calling:              calling,
+			Interactions:         interaction.New(pool, accessModule, nil),
 			Messaging:            messages,
 			Work:                 workModule,
 			ServiceAuthenticator: serviceAuth,
@@ -320,7 +323,8 @@ func runWorker(
 	if err := calling.ReconcileCredentials(ctx); err != nil {
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
-	runner, err := worker.NewWithMessaging(worker.Config{
+	interactions := interaction.New(pool, accessModule, nil)
+	runner, err := worker.NewWithMessagingAndInteractions(worker.Config{
 		WorkInterval:       250 * time.Millisecond,
 		WorkTimeout:        10 * time.Second,
 		CredentialInterval: 30 * time.Second,
@@ -334,7 +338,7 @@ func runWorker(
 		CommandWorkers:     2,
 		ErrorBackoffMin:    250 * time.Millisecond,
 		ErrorBackoffMax:    10 * time.Second,
-	}, calling, messages, pool)
+	}, calling, messages, interactions, pool)
 	if err != nil {
 		return err
 	}
