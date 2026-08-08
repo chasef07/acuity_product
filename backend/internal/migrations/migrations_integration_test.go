@@ -32,8 +32,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 24 {
-		t.Fatalf("migration count = %d, want 24", migrationCount)
+	if migrationCount != 25 {
+		t.Fatalf("migration count = %d, want 25", migrationCount)
 	}
 
 	for _, relation := range []string{
