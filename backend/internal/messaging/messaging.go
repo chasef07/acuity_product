@@ -2895,7 +2895,7 @@ func (m *Module) ApplyTaskUnread(
 		taskIndex--
 		if taskIndex < 0 || taskIndex >= len(tasks) {
 			rows.Close()
-			return fmt.Errorf("Task conversation projection index is invalid")
+			return errors.New("task conversation projection index is invalid")
 		}
 		tasks[taskIndex].ConversationThreadID = threadID
 		tasks[taskIndex].Unread = unread

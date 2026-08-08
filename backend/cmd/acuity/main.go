@@ -475,7 +475,7 @@ func runMigrate(
 			if location.VoiceNumber == "" {
 				if location.VoicemailGreeting != "" {
 					return fmt.Errorf(
-						"Location %q has a voicemail greeting without a voice number",
+						"location %q has a voicemail greeting without a voice number",
 						location.Key,
 					)
 				}

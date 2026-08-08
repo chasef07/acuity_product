@@ -39,9 +39,9 @@ var (
 	ErrInvitationUsed          = errors.New("invitation already accepted")
 	ErrInvalidInput            = errors.New("invalid access input")
 	ErrSupportRequired         = errors.New("active Support Mode required")
-	ErrSupportExpired          = errors.New("Support Mode expired")
-	ErrSupportRevoked          = errors.New("Support Mode revoked")
-	ErrSupportPracticeMismatch = errors.New("Support Mode belongs to another Practice")
+	ErrSupportExpired          = errors.New("support mode expired")
+	ErrSupportRevoked          = errors.New("support mode revoked")
+	ErrSupportPracticeMismatch = errors.New("support mode belongs to another practice")
 )
 
 var abitaOfficeKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)

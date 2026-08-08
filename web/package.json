@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.34.3",
   "engines": {
     "node": ">=24"
@@ -45,6 +46,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
+    "postcss": "^8.5.23",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
