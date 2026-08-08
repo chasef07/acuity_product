@@ -57,6 +57,33 @@ Push the reviewed commit to `main`, then follow the GitHub Actions run and its
 linked Cloud Build. The web URL is
 `https://acuity-web-cbuqwpsdsq-ue.a.run.app`.
 
+## Custom domain cutover
+
+The production front door reserves global IP `136.68.242.183` and routes to
+`acuity-web` through the `acuity-web-neg` serverless NEG. The HTTPS URL map
+serves `acuityhealth.io` and permanently redirects `www.acuityhealth.io` to the
+apex. The HTTP URL map redirects both hosts to HTTPS. The Google-managed
+certificate `acuity-web-managed-cert` covers both hosts and remains
+`PROVISIONING` until their public A records point only to the reserved IP.
+
+Prepare without moving traffic:
+
+1. Keep `BETTER_AUTH_URL`, `BETTER_AUTH_JWKS_URL`, and `BETTER_AUTH_ISSUER` on
+   the current `run.app` origin.
+2. Add `https://acuityhealth.io` beside the current origin in the comma-separated
+   `BETTER_AUTH_TRUSTED_ORIGINS` and backend `BROWSER_ORIGIN` values.
+3. Add `https://acuityhealth.io` and
+   `https://acuityhealth.io/api/auth/callback/google` to the Google OAuth web
+   client without removing the existing origin and callback.
+4. Keep the Vercel DNS records unchanged until the explicit cutover window.
+
+At cutover, point the apex and `www` A records to `136.68.242.183`, wait for
+both certificate domains to become `ACTIVE`, and only then make
+`https://acuityhealth.io` the Better Auth base URL, JWKS URL, and issuer. A
+failed certificate, sign-in, session, API, or realtime check returns the A
+records to their captured Vercel values; do not delete the Vercel deployment
+before acceptance.
+
 ## Owners and stop conditions
 
 - `provider-ingress` owns signature verification and durable receipt before
@@ -358,8 +385,8 @@ provenance and belongs with the cutover record.
    acknowledgement, command latency, receipt/command age, the 300-second
    realtime request timeout, 240–270-second application stream rotation, and
    SSE reconnect.
-8. Deploy web last. It may scale to zero; verify its first-request cold path
-   separately from the warm call-control path.
+8. Deploy web last with one warm instance; verify the public page, sign-in, and
+   session paths separately from the call-control path.
 9. Enable provider routing only after every live acceptance gate below passes.
 
 ## Live acceptance gates

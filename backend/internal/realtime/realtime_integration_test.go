@@ -94,7 +94,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	go streams.Run(ctx)
 
 	handler, err := httpapi.NewRealtime(httpapi.Config{
-		AllowedOrigin:  "http://localhost:3000",
+		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
 	}, pool, httpapi.RealtimeDependencies{
 		Access: accessModule,

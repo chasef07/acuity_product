@@ -112,7 +112,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	)
 	portalHandler, err := httpapi.NewPortal(
 		httpapi.Config{
-			AllowedOrigin:  "http://localhost:3000",
+			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: time.Second,
 		},
 		pool,

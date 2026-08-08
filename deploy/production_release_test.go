@@ -103,7 +103,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--cpu\t1",
 		"--memory\t512Mi",
 		"--concurrency\t40",
-		"--min\t0",
+		"--min\t1",
 		"--max\t2",
 		"--update-env-vars\tAUTH_DB_POOL_MAX=1,AUTH_DB_ACQUIRE_TIMEOUT_MS=1500",
 	)
