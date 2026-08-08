@@ -51,6 +51,11 @@ The Go runtime contains six deep modules. Each module has one behavior-oriented 
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
 
+AI transcripts remain durable, authorized Interaction evidence. The routine
+operator workspace keeps them out of the opened call view and instead projects
+receipt-backed appointment and call details; transcript access remains a
+separate administrative/audit concern.
+
 ## Access model
 
 ```mermaid

@@ -137,3 +137,18 @@ test("falls back to receipt fields before rich closeout arrives", () => {
     },
   )
 })
+
+test("does not promote generic receipt keys into appointment facts", () => {
+  assert.deepEqual(
+    aiAppointmentDetails({
+      appointmentOutcome: "BOOKING",
+      bookingResult: {
+        id: "unrelated-id",
+        name: "Unrelated name",
+        type: "unrelated-type",
+        appointmentId: 63,
+      },
+    }),
+    { primary: { appointmentId: "63" } },
+  )
+})

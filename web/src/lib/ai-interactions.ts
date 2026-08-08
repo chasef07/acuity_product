@@ -164,38 +164,20 @@ function appointmentFacts(
     (source): source is Record<string, unknown> => Boolean(source),
   )
   return compactRecord({
-    appointmentDate: firstValue(values, ["appointmentDate", "date"]),
+    appointmentDate: firstValue(values, ["appointmentDate"]),
     appointmentId:
       appointmentId ??
       firstValue(values, [
         "appointmentId",
         "cancelledAppointmentId",
-        "id",
       ]),
-    appointmentTime: firstValue(values, ["appointmentTime", "time"]),
-    appointmentTypeName: firstValue(values, [
-      "appointmentTypeName",
-      "appointmentType",
-      "visitType",
-      "type",
-    ]),
+    appointmentTime: firstValue(values, ["appointmentTime"]),
+    appointmentTypeName: firstValue(values, ["appointmentTypeName"]),
     careLane: firstValue(values, ["careLane"]),
-    locationName: firstValue(values, [
-      "locationName",
-      "facilityName",
-      "facility",
-    ]),
-    patientName: firstValue(values, ["patientName", "name"]),
-    providerName: firstValue(values, [
-      "providerName",
-      "doctorName",
-      "provider",
-    ]),
-    startDatetime: firstValue(values, [
-      "startDatetime",
-      "startDateTime",
-      "datetime",
-    ]),
+    locationName: firstValue(values, ["locationName"]),
+    patientName: firstValue(values, ["patientName"]),
+    providerName: firstValue(values, ["providerName"]),
+    startDatetime: firstValue(values, ["startDatetime"]),
   })
 }
 
