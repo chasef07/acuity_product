@@ -221,7 +221,7 @@ Rules:
 4. Transactions are short. Shared rows are locked in deterministic order, and serialization failures or deadlocks retry the complete bounded transaction.
 5. No provider request runs while a PostgreSQL transaction is open.
 6. The initial production database is Cloud SQL Enterprise, single-zone, 2 vCPU / 8 GiB, and 50 GiB SSD with storage auto-increase in `us-east1`; backups are also pinned to `us-east1`. A database or zone outage has no automatic failover and remains visible until recovery or restore; only safe idempotent operations retry.
-7. `portal-api`, `provider-ingress`, and `realtime` keep one instance warm; web may scale to zero; worker remains one fixed instance. Maximum service bounds remain 3, 2, 2, and 2 respectively for portal, ingress, realtime, and web.
+7. `web`, `portal-api`, `provider-ingress`, and `realtime` keep one instance warm; worker remains one fixed instance. Maximum service bounds remain 2, 3, 2, and 2 respectively for web, portal, ingress, and realtime.
 8. Every request role and the worker starts at 1 vCPU / 512 MiB. Request services use request-based billing; worker and migration use instance-based billing.
 
 Before sizing these limits, record the 12-month capacity envelope: peak

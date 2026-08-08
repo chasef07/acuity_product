@@ -228,6 +228,9 @@ Visual system:
 
 - Staff explicitly toggle Available before receiving transfers.
 - Only staff authorized for the call's practice and location are eligible.
+- Platform Operator visibility alone never grants calling access. An operator
+  receives Staff calling controls only where the same identity has an explicit
+  active Staff Membership.
 - An AI-to-human transfer answers the caller, starts one 20-second ringback window, and asks Telnyx to dial one independent CallLeg for every available, authorized staff member for the Location.
 - The transfer creates no task.
 - The first eligible provider-confirmed Staff answer moves directly to `BRIDGE_PENDING` and commits one explicit Bridge command in the same PostgreSQL transaction.
@@ -447,7 +450,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Default the web, all Go runtime roles, Cloud SQL, recording storage, and dependent regional resources to `us-east1` (South Carolina) for current Florida users. Geography is only the starting assumption; measured Florida-to-`us-east1` latency remains a live acceptance gate.
 - Use Cloud SQL PostgreSQL 16 Enterprise edition, single-zone, at 2 vCPU / 8 GiB with 50 GiB SSD initially. Enable storage auto-increase, automated backups in `us-east1`, seven days of point-in-time recovery, deletion protection, and a rehearsed restore procedure. Do not use Enterprise Plus or data cache.
 - Accept the single-zone tradeoff explicitly: a database or zone outage does not automatically fail over. Telnyx retries and durable receipt/command recovery protect correctness, but portal and call control may remain unavailable until database recovery or restore.
-- Keep one `portal-api`, one `provider-ingress`, and one `realtime` instance warm, and one worker fixed. Web may scale to zero because it does not own provider acknowledgment, call control, realtime freshness, or durable recovery.
+- Keep one web, `portal-api`, `provider-ingress`, and `realtime` instance warm, and one worker fixed. The web is the public website and authentication entrypoint.
 - Pin every request role and worker initially to 1 vCPU / 512 MiB. Request roles use request-based billing; the worker and migration job use instance-based billing.
 - Give every runtime role its own explicit Cloud Run concurrency, minimum-instance, maximum-instance, and `pgxpool` limits.
 - Give every runtime role a distinct Google service identity and least-privilege database role. Only `migrate` receives DDL authority.

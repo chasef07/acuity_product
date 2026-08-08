@@ -39,7 +39,7 @@
       "vCPUs": 1,
       "memoryMiB": 512,
       "concurrency": 40,
-      "minimumInstances": 0,
+      "minimumInstances": 1,
       "maximumInstances": 2,
       "poolMaximum": 1,
       "dedicatedConnections": 0,

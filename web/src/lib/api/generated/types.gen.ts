@@ -73,6 +73,7 @@ export type Authorization = {
 export type PracticeAccess = Practice & {
     membership?: Membership;
     locations: Array<Location>;
+    callingEnabled: boolean;
 };
 
 export type AccessDiscovery = {

@@ -43,7 +43,7 @@ capacity while the warm floor and local pools reflect the measured pilot load.
 
 | Runtime | Kind | Billing | Concurrency | Min | Max | Pool max | Direct |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| web / Better Auth | service | request | 40 | 0 | 2 | 1 | 0 |
+| web / Better Auth | service | request | 40 | 1 | 2 | 1 | 0 |
 | `portal-api` | service | request | 20 | 1 | 3 | 1 | 0 |
 | `provider-ingress` | service | request | 20 | 1 | 2 | 1 | 0 |
 | `realtime` | service | request | 50 | 1 | 2 | 1 | 1 `LISTEN` |
@@ -55,12 +55,12 @@ seconds. The application rotates each SSE stream between 240 and 270 seconds
 30-second shutdown margin below the platform deadline and spreading planned
 reconnections across instances.
 
-The web can scale to zero because a cold web render does not own provider
-acknowledgement, call control, realtime freshness, or durable recovery.
-`portal-api`, `provider-ingress`, and `realtime` each keep one instance warm.
-The worker keeps one fixed instance. The runtime roles remain separate because
-their failure owners remain separate; saving a few dollars is not a reason to
-couple ingress acknowledgement or durable recovery to portal traffic.
+The web keeps one instance warm because it is the public website and owns the
+authentication entrypoint. `portal-api`, `provider-ingress`, and `realtime`
+also keep one instance warm. The worker keeps one fixed instance. The runtime
+roles remain separate because their failure owners remain separate; saving a
+few dollars is not a reason to couple ingress acknowledgement or durable
+recovery to portal traffic.
 
 ## Exact PostgreSQL reservation
 

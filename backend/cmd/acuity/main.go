@@ -102,7 +102,7 @@ func run() error {
 			nil,
 		)
 		handler, err := httpapi.NewProviderIngressWithMessaging(httpapi.Config{
-			AllowedOrigin:  config.BrowserOrigin,
+			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
 			Observer:       observer,
 		}, pool, calling, messages)
@@ -200,7 +200,7 @@ func runAuthorizedHTTP(
 		}
 		go hub.Run(ctx)
 		handler, err = httpapi.NewRealtime(httpapi.Config{
-			AllowedOrigin:  config.BrowserOrigin,
+			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
 			Observer:       observer,
 		}, pool, httpapi.RealtimeDependencies{
@@ -255,7 +255,7 @@ func runAuthorizedHTTP(
 			return err
 		}
 		handler, err = httpapi.NewPortal(httpapi.Config{
-			AllowedOrigin:  config.BrowserOrigin,
+			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
 			Observer:       observer,
 		}, pool, httpapi.PortalDependencies{

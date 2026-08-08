@@ -106,7 +106,7 @@ service_runtime() {
       runtime_environment+=",REALTIME_STREAM_SECONDS=270,REALTIME_STREAM_JITTER_SECONDS=30"
       runtime_timeout=300
       ;;
-    acuity-web) read -r concurrency minimum maximum <<<"40 0 2" ;;
+    acuity-web) read -r concurrency minimum maximum <<<"40 1 2" ;;
     *)
       echo "Unknown production service $1." >&2
       return 1

@@ -134,9 +134,9 @@ export function EngagementWorkspace({
   )
   const {
     activeCall,
+    callingEnabled,
     outboundPending,
     ownsSoftphone,
-    platformOperator,
     startOutbound,
   } = useCallingNavigation()
   const routeName =
@@ -213,7 +213,7 @@ export function EngagementWorkspace({
             size="sm"
             disabled={
               !canMutate ||
-              platformOperator ||
+              !callingEnabled ||
               !route ||
               !ownsSoftphone ||
               Boolean(activeCall) ||

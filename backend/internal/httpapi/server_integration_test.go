@@ -68,7 +68,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		EmailVerified: true,
 	}
 	handler, err := newPortalHandler(t, httpapi.Config{
-		AllowedOrigin:  "http://localhost:3000",
+		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
 	}, pool, accessModule, staticAuthenticator{
 		"selected-token": identity,
@@ -349,7 +349,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	)
 	handler, err := newPortalHandlerWithCalling(
 		t,
-		httpapi.Config{AllowedOrigin: "http://localhost:3000", AcquireTimeout: time.Second},
+		httpapi.Config{AllowedOrigins: []string{"http://localhost:3000"}, AcquireTimeout: time.Second},
 		pool,
 		accessModule,
 		staticAuthenticator{
@@ -662,7 +662,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	handler, err := newPortalHandler(
 		t,
 		httpapi.Config{
-			AllowedOrigin:  "http://localhost:3000",
+			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 		},
 		pool,
@@ -825,7 +825,7 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 		t.Fatalf("accept pool fixture: %v", err)
 	}
 	handler, err := newPortalHandler(t, httpapi.Config{
-		AllowedOrigin:  "http://localhost:3000",
+		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 75 * time.Millisecond,
 	}, pool, accessModule, staticAuthenticator{"member-token": identity})
 	if err != nil {
@@ -1088,7 +1088,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 	}
 	handler, err := httpapi.NewPortal(
 		httpapi.Config{
-			AllowedOrigin:  "http://localhost:3000",
+			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 		},
 		pool,
@@ -1424,7 +1424,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 	handler, err := httpapi.NewPortal(
 		httpapi.Config{
-			AllowedOrigin:  "http://localhost:3000",
+			AllowedOrigins: []string{"http://localhost:3000"},
 			AcquireTimeout: 500 * time.Millisecond,
 			Observer:       observer,
 		},
@@ -1658,7 +1658,7 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	}
 
 	handler, err := newPortalHandler(t, httpapi.Config{
-		AllowedOrigin:  "http://localhost:3000",
+		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
 	}, pool, accessModule, staticAuthenticator{"operator-token": operator})
 	if err != nil {
