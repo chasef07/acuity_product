@@ -13,7 +13,6 @@ import {
   CheckSquareIcon,
   DownloadIcon,
   FileTextIcon,
-  MessageSquareIcon,
   PaperclipIcon,
   PhoneCallIcon,
   RefreshCwIcon,
@@ -28,6 +27,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
+import { useCallingNavigation } from "@/components/workspace/calling-dock"
 import { portalClient } from "@/lib/api/client"
 import {
   createMessageFollowUpTask,
@@ -62,24 +62,6 @@ const acceptedAttachmentTypes = new Set([
   "application/pdf",
 ])
 
-type MessageWorkspaceProps = {
-  thread: MessageThreadSummary | undefined
-  composingNew: boolean
-  practiceID: string
-  locationID: string
-  locationName: string
-  locations: Array<{ id: string; name: string }>
-  supportSessionID: string
-  canMutate: boolean
-  revision: number
-  initialMessage?: Message
-  onMessageSent: (message: Message) => void
-  onThreadRead: (threadID: string) => void
-  onTaskCreated: (task: Task) => void
-  onTaskOpen: (task: Task) => void
-  onCallOpen: (callID: string) => void
-}
-
 type TimelineSource =
   | { kind: "task"; taskID: string }
   | { kind: "engagement"; practiceID: string; phone: string }
@@ -106,6 +88,14 @@ export function EngagementWorkspace({
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [route, setRoute] = useState(defaultRoute)
+  const [callError, setCallError] = useState("")
+  const {
+    activeCall,
+    outboundPending,
+    ownsSoftphone,
+    platformOperator,
+    startOutbound,
+  } = useCallingNavigation()
   const routeName =
     engagement.locations.find((location) => location.id === route)?.name ??
     "Choose sender route"
@@ -147,8 +137,31 @@ export function EngagementWorkspace({
                 </NativeSelectOption>
               ))}
             </NativeSelect>
+            <Button
+              variant="outline"
+              disabled={
+                !canMutate ||
+                platformOperator ||
+                !route ||
+                !ownsSoftphone ||
+                Boolean(activeCall) ||
+                outboundPending
+              }
+              onClick={() => {
+                setCallError("")
+                void startOutbound(route, engagement.phone).then(
+                  (requestError) => setCallError(requestError ?? ""),
+                )
+              }}
+            >
+              {outboundPending ? <Spinner /> : <PhoneCallIcon />}
+              Call
+            </Button>
           </div>
         </div>
+        {callError && (
+          <p className="mt-2 text-xs text-destructive">{callError}</p>
+        )}
       </header>
       <MessageConversation
         timelineSource={{
@@ -156,7 +169,6 @@ export function EngagementWorkspace({
           practiceID,
           phone: engagement.phone,
         }}
-        composingNew={false}
         practiceID={practiceID}
         locationID={route}
         routeLabel={routeName}
@@ -166,123 +178,6 @@ export function EngagementWorkspace({
         revision={revision}
         onMessageSent={() => undefined}
         onThreadRead={() => undefined}
-        onTaskCreated={onTaskCreated}
-        onTaskOpen={onTaskOpen}
-        onCallOpen={onCallOpen}
-      />
-    </section>
-  )
-}
-
-export function MessageWorkspace({
-  thread,
-  composingNew,
-  practiceID,
-  locationID,
-  locationName,
-  locations,
-  supportSessionID,
-  canMutate,
-  revision,
-  initialMessage,
-  onMessageSent,
-  onThreadRead,
-  onTaskCreated,
-  onTaskOpen,
-  onCallOpen,
-}: MessageWorkspaceProps) {
-  const [route, setRoute] = useState(thread?.locationId ?? locationID)
-
-  const routeName =
-    locations.find((location) => location.id === route)?.name ?? locationName
-
-  if (!thread && !composingNew) {
-    return (
-      <section
-        aria-label="No conversation selected"
-        className="flex min-h-0 flex-1 items-center justify-center p-8"
-      >
-        <div className="max-w-sm text-center">
-          <MessageSquareIcon
-            className="mx-auto size-8 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <h1 className="mt-4 text-lg font-semibold">Select a conversation</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            The timeline combines texts, calls, and follow-up Tasks for one
-            exact phone number across authorized offices.
-          </p>
-        </div>
-      </section>
-    )
-  }
-
-  return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">
-                {composingNew ? "New text" : "Engagement History"}
-              </Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                {composingNew ? locationName : "Unverified phone context"}
-              </span>
-            </div>
-            <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
-              {thread ? formatPhone(thread.externalPhone) : "Choose a number"}
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {thread?.displayName ? `${thread.displayName} · ` : ""}
-              {thread
-                ? "Messages, calls, and Tasks across authorized offices"
-                : "Choose an exact destination number"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {thread && (
-              <NativeSelect
-                aria-label="Sender route"
-                value={route}
-                onChange={(event) => setRoute(event.target.value)}
-              >
-                {locations.map((location) => (
-                  <NativeSelectOption key={location.id} value={location.id}>
-                    Send from {location.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
-            {thread?.outboundBlocked && (
-              <Badge variant="destructive">Patient opted out</Badge>
-            )}
-          </div>
-        </div>
-      </header>
-      <MessageConversation
-        key={thread?.id ?? `new:${locationID}`}
-        thread={thread}
-        timelineSource={
-          thread
-            ? {
-                kind: "engagement",
-                practiceID,
-                phone: thread.externalPhone,
-              }
-            : undefined
-        }
-        composingNew={composingNew}
-        practiceID={practiceID}
-        locationID={thread ? route : locationID}
-        routeLabel={thread ? routeName : locationName}
-        initialDestination={thread?.externalPhone}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        initialMessage={initialMessage}
-        onMessageSent={onMessageSent}
-        onThreadRead={onThreadRead}
         onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
@@ -325,7 +220,6 @@ export function TaskMessageConversation({
       <MessageConversation
         threadID={threadID}
         timelineSource={{ kind: "task", taskID: task.id }}
-        composingNew={false}
         practiceID={task.practiceId}
         locationID={task.locationId}
         routeLabel={task.locationName}
@@ -351,7 +245,6 @@ function MessageConversation({
   thread,
   threadID = thread?.id ?? "",
   timelineSource,
-  composingNew,
   practiceID,
   locationID,
   routeLabel,
@@ -371,7 +264,6 @@ function MessageConversation({
   thread?: MessageThreadSummary
   threadID?: string
   timelineSource?: TimelineSource
-  composingNew: boolean
   practiceID: string
   locationID: string
   routeLabel?: string
@@ -649,7 +541,7 @@ function MessageConversation({
                 onCallOpen={onCallOpen}
               />
             ))}
-          {!loading && items.length === 0 && !composingNew && (
+          {!loading && items.length === 0 && (
             <div className="mx-auto my-10 max-w-sm border bg-background p-5 text-center">
               <p className="text-sm font-medium">No activity yet</p>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -686,14 +578,12 @@ function MessageConversation({
         </Alert>
       )}
       <MessageComposer
-        thread={conversationThread}
         threadID={composerThreadID}
         practiceID={practiceID}
         locationID={locationID}
         routeLabel={routeLabel}
         taskID={taskID}
-        initialDestination={initialDestination}
-        destinationLocked={Boolean(initialDestination)}
+        destination={initialDestination ?? ""}
         supportSessionID={supportSessionID}
         disabled={
           !canMutate ||
@@ -1180,35 +1070,28 @@ function AttachmentCard({
 }
 
 function MessageComposer({
-  thread,
   threadID,
   practiceID,
   locationID,
   routeLabel,
   taskID,
-  initialDestination,
-  destinationLocked = false,
+  destination,
   supportSessionID,
   disabled,
   disabledReason,
   onSent,
 }: {
-  thread?: Pick<MessageThreadSummary, "externalPhone" | "outboundBlocked">
   threadID: string
   practiceID: string
   locationID: string
   routeLabel?: string
   taskID?: string
-  initialDestination?: string
-  destinationLocked?: boolean
+  destination: string
   supportSessionID: string
   disabled: boolean
   disabledReason: string
   onSent: (message: Message) => void
 }) {
-  const [destination, setDestination] = useState(
-    thread?.externalPhone ?? initialDestination ?? "",
-  )
   const [body, setBody] = useState("")
   const [file, setFile] = useState<File>()
   const [pending, setPending] = useState(false)
@@ -1333,22 +1216,10 @@ function MessageComposer({
       <div className="mx-auto max-w-3xl">
         <p className="mb-2 text-xs text-muted-foreground">
           Sender route: <strong className="font-medium text-foreground">{routeLabel || "Selected office"}</strong>
-          {initialDestination
-            ? ` · destination locked to ${formatPhone(initialDestination)}`
+          {destination
+            ? ` · destination locked to ${formatPhone(destination)}`
             : ""}
         </p>
-        {!threadID && (
-          <Input
-            aria-label="Destination phone number"
-            inputMode="tel"
-            autoComplete="tel"
-            placeholder="+1 727 555 0100"
-            className="mb-2 tabular-nums"
-            value={destination}
-            disabled={disabled || pending || destinationLocked}
-            onChange={(event) => setDestination(event.target.value)}
-          />
-        )}
         <div className="flex items-end gap-2">
           <textarea
             aria-label="Message"

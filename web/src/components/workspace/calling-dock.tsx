@@ -16,7 +16,6 @@ import {
   MicOffIcon,
   PhoneCallIcon,
   PhoneOffIcon,
-  PhoneOutgoingIcon,
   RotateCcwIcon,
   ShieldAlertIcon,
 } from "lucide-react"
@@ -33,28 +32,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -73,7 +51,6 @@ import {
 import type {
   CallingCall,
   CallingDispositionResult,
-  Location,
   OperatorCallingTimeline,
   RingingCallLeg,
   SoftphoneState,
@@ -99,7 +76,6 @@ type CallingDockProps = {
   children: ReactNode
   platformOperator: boolean
   practiceID: string
-  locations: Location[]
   workspaceRevision: number
   taskCallRequest?: { id: string; taskID: string }
   onTaskCallHandled: (requestID: string, error?: string) => void
@@ -116,18 +92,18 @@ type CallingNavigationContext = {
   availabilityError: string
   availabilityPending: boolean
   available: boolean
-  dialerOpen: boolean
   ownsSoftphone: boolean
+  outboundPending: boolean
   platformOperator: boolean
   setAvailability: (available: boolean) => void
-  setDialerOpen: (open: boolean) => void
+  startOutbound: (locationID: string, destination: string) => Promise<string | undefined>
 }
 
 const CallingNavigationContext = createContext<CallingNavigationContext | null>(
   null,
 )
 
-function useCallingNavigation() {
+export function useCallingNavigation() {
   const context = useContext(CallingNavigationContext)
   if (!context) {
     throw new Error("Calling navigation must be rendered inside CallingDock.")
@@ -170,29 +146,10 @@ export function CallingAvailabilityControl() {
   )
 }
 
-export function CallingOutboundNavigation() {
-  const { activeCall, dialerOpen, platformOperator, setDialerOpen } =
-    useCallingNavigation()
-  if (platformOperator) return null
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        isActive={dialerOpen}
-        disabled={Boolean(activeCall)}
-        onClick={() => setDialerOpen(true)}
-      >
-        <PhoneOutgoingIcon />
-        <span>Outbound calls</span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  )
-}
-
 export function CallingDock({
   children,
   platformOperator,
   practiceID,
-  locations,
   workspaceRevision,
   taskCallRequest,
   onTaskCallHandled,
@@ -210,9 +167,6 @@ export function CallingDock({
   const [mediaAttached, setMediaAttached] = useState(false)
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState("")
-  const [showDialer, setShowDialer] = useState(false)
-  const [dialLocationID, setDialLocationID] = useState("")
-  const [dialDestination, setDialDestination] = useState("")
   const [outboundPending, setOutboundPending] = useState(false)
   const [endingCallID, setEndingCallID] = useState("")
   const [availabilityPending, setAvailabilityPending] = useState(false)
@@ -250,12 +204,6 @@ export function CallingDock({
     )
     return true
   }, [])
-  const resolvedDialLocationID = locations.some(
-    (location) => location.id === dialLocationID,
-  )
-    ? dialLocationID
-    : (locations[0]?.id ?? "")
-
   useEffect(() => {
     expectedCallRef.current = expectedCallID
   }, [expectedCallID])
@@ -370,8 +318,6 @@ export function CallingDock({
       applyActiveCall(result.data)
       setAvailable(false)
       availabilityRef.current = false
-      setShowDialer(false)
-      setDialDestination("")
       return undefined
     },
     [activeCall, applyActiveCall, lease?.owner, mediaState, sessionID],
@@ -389,6 +335,19 @@ export function CallingDock({
       if (requestError) setError(requestError)
     })
   }, [commitOutbound, onTaskCallHandled, taskCallRequest])
+
+  const startNumberCall = useCallback(
+    async (locationID: string, destination: string) => {
+      const requestError = await commitOutbound(window.crypto.randomUUID(), {
+        practiceId: practiceID,
+        locationId: locationID,
+        destination,
+      })
+      if (requestError) setError(requestError)
+      return requestError
+    },
+    [commitOutbound, practiceID],
+  )
 
   const handleIncoming = useCallback(
     async (leg: IncomingMediaLeg) => {
@@ -1116,110 +1075,16 @@ export function CallingDock({
         availabilityError: error,
         availabilityPending,
         available,
-        dialerOpen: showDialer,
         ownsSoftphone: Boolean(lease?.owner),
+        outboundPending,
         platformOperator,
         setAvailability: (nextAvailable) =>
           void setAvailabilityIntent(nextAvailable),
-        setDialerOpen: setShowDialer,
+        startOutbound: startNumberCall,
       }}
     >
       {children}
       <audio id="acuity-calling-remote-audio" autoPlay className="hidden" />
-      {!platformOperator && (
-        <Dialog
-          open={showDialer}
-          onOpenChange={(open) => {
-            setShowDialer(open)
-            if (open) setError("")
-          }}
-        >
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle>Outbound call</DialogTitle>
-              <DialogDescription>
-                Choose the office and enter a US phone number.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              aria-label="Standalone outbound call"
-              className="flex flex-col gap-4"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void commitOutbound(window.crypto.randomUUID(), {
-                  practiceId: practiceID,
-                  locationId: resolvedDialLocationID,
-                  destination: dialDestination.trim(),
-                }).then((requestError) => {
-                  if (requestError) setError(requestError)
-                })
-              }}
-            >
-              <FieldGroup>
-                <Field>
-                  <FieldLabel>Location</FieldLabel>
-                  <Select
-                    items={locations.map((location) => ({
-                      label: location.name,
-                      value: location.id,
-                    }))}
-                    value={resolvedDialLocationID}
-                    onValueChange={(value) => setDialLocationID(value ?? "")}
-                  >
-                    <SelectTrigger aria-label="Call location" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {locations.map((location) => (
-                          <SelectItem key={location.id} value={location.id}>
-                            {location.name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="outbound-destination">
-                    Phone number
-                  </FieldLabel>
-                  <Input
-                    id="outbound-destination"
-                    aria-label="Outbound destination"
-                    placeholder="+15555550100"
-                    value={dialDestination}
-                    onChange={(event) => setDialDestination(event.target.value)}
-                  />
-                </Field>
-              </FieldGroup>
-              {(!lease?.owner || mediaState !== "ready") && (
-                <p className="text-xs text-muted-foreground">
-                  Turn on Availability to prepare browser audio before calling.
-                </p>
-              )}
-              {error && <p className="text-xs text-destructive">{error}</p>}
-              <DialogFooter>
-                <Button
-                  type="submit"
-                  disabled={
-                    outboundPending ||
-                    !lease?.owner ||
-                    mediaState !== "ready" ||
-                    !resolvedDialLocationID ||
-                    !/^\+1[2-9][0-9]{2}[2-9][0-9]{6}$/.test(
-                      dialDestination.trim(),
-                    )
-                  }
-                >
-                  {outboundPending && <Spinner data-icon="inline-start" />}
-                  Call
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      )}
       {!platformOperator && earliest && !activeCall && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls

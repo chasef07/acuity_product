@@ -482,7 +482,7 @@ export type MessageThreadPage = {
 
 export type MessageThreadQueryRequest = {
     practiceId: string;
-    locationId: string;
+    locationId?: string;
     search?: string;
     cursor?: string;
     limit?: number;

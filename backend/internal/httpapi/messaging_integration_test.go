@@ -220,7 +220,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 
 	queryBody, _ := json.Marshal(api.MessageThreadQueryRequest{
 		PracticeId: parsedUUID(t, authorization.Practice.ID),
-		LocationId: parsedUUID(t, authorization.Locations[0].ID),
+		LocationId: parsedUUIDPointer(t, authorization.Locations[0].ID),
 	})
 	threadsResponse := request(
 		t,
@@ -608,6 +608,11 @@ func parsedUUID(t *testing.T, value string) uuid.UUID {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+func parsedUUIDPointer(t *testing.T, value string) *uuid.UUID {
+	parsed := parsedUUID(t, value)
+	return &parsed
 }
 
 func stringPointer(value string) *string {
