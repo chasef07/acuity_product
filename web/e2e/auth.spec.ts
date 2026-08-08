@@ -32,7 +32,7 @@ test("Portal opens a Google-first sign-in dialog with in-card email", async ({
 test("Google sign-in opens in a popup and leaves the portal in place", async ({
   page,
 }) => {
-  await page.route("**/api/auth/oauth-popup/start**", async (route) => {
+  await page.context().route("**/api/auth/oauth-popup/start**", async (route) => {
     await route.fulfill({
       contentType: "text/html",
       body: "<!doctype html><title>Google sign-in</title>",
