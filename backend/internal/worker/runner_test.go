@@ -322,10 +322,8 @@ type controlledWork struct {
 	receiptProjected           chan struct{}
 	maintenanceStarted         chan struct{}
 	staleReconciliationStarted chan struct{}
-	reconciliationStarted      chan struct{}
 	receiptQueueReported       chan struct{}
 	blockStaleReconciliation   bool
-	blockReconciliation        bool
 }
 
 type credentialReconciliationFailureWork struct {
