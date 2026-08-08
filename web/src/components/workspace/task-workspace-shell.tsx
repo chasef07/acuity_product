@@ -883,12 +883,7 @@ export function TaskWorkspaceShell() {
     const previousCallID = activeCallIDRef.current
     activeCallIDRef.current = call?.id ?? ""
     if (!call) return
-    const canFocus =
-      call.state === "PREPARING" ||
-      call.state === "RINGING" ||
-      call.state === "CONNECTING" ||
-      call.state === "CONNECTED"
-    if (!canFocus || call.id === focusedCallIDRef.current) return
+    if (call.state !== "CONNECTED" || call.id === focusedCallIDRef.current) return
     if (call.id !== previousCallID) {
       callDetailGenerationRef.current += 1
       setHistoricalCall(undefined)
