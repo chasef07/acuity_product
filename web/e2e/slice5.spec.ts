@@ -194,37 +194,44 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await page
     .getByRole("button", { name: /^Follow up on text \(727\)/ })
     .click()
-  await expect(
-    page.getByRole("heading", { name: "Follow up on text", exact: true }),
-  ).toBeVisible()
-  const taskConversation = page.getByRole("region", {
-    name: "Task conversation",
+  const sidebarTaskContext = page.getByRole("complementary", {
+    name: "Task context",
   })
-  await page.reload()
-  await expect(taskConversation).toBeVisible()
-  await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
-    .click()
   await expect(
-    page.getByRole("heading", { name: "Follow up on text", exact: true }),
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
-  await expect(taskConversation).toContainText(inboundText)
+  await expect(
+    sidebarTaskContext.getByRole("heading", {
+      name: "Follow up on text",
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("region", { name: "Task conversation" }),
+  ).toHaveCount(0)
+  await page.reload()
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(sidebarTaskContext).toBeVisible()
+  await expect(
+    page.getByRole("article").filter({ hasText: inboundText }),
+  ).toBeVisible()
   const taskReply = "I will call you with the pickup time."
-  await taskConversation
+  await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(taskReply)
-  await taskConversation.getByRole("button", { name: "Send message" }).click()
+  await page.getByRole("button", { name: "Send message" }).click()
   await expect(
-    taskConversation.getByRole("article").filter({ hasText: taskReply }),
+    page.getByRole("article").filter({ hasText: taskReply }),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: "Complete", exact: true }).click()
+  await sidebarTaskContext
+    .getByRole("button", { name: "Complete", exact: true })
+    .click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled()
-  await expect(
-    page.getByText("Reopen this Task to send a message"),
-  ).toBeVisible()
+  ).toBeEnabled()
   const recentSection = page.getByRole("button", { name: "Recent", exact: true })
   if ((await recentSection.getAttribute("aria-expanded")) === "false") {
     await recentSection.click()

@@ -85,7 +85,7 @@ import {
 } from "@/lib/workspace-sync/workspace-sync"
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
-type View = "none" | "task" | "call" | "engagement"
+type View = "none" | "engagement"
 type ContextView = "none" | "task" | "call"
 
 const practiceStorageKey = "acuity.selectedPractice"
@@ -220,7 +220,7 @@ export function TaskWorkspaceShell() {
   )
 
   const loadTasks = useCallback(
-    async (cursor = "", append = false, preserveSelection = false) => {
+    async (cursor = "", append = false) => {
       if (!practiceID) return
       const queryKey = workspaceTaskQueryKey(
         practiceID,
@@ -275,17 +275,12 @@ export function TaskWorkspaceShell() {
       if (selected) {
         const current = next.find((task) => task.id === selected.id)
         if (current) updateSelectedTask(current)
-        else if (!preserveSelection && viewRef.current === "task") {
-          updateSelectedTask(next[0])
-          setView(next[0] ? "task" : "none")
-        }
       } else if (firstLoad && next[0] && viewRef.current === "none") {
         const engagement = taskEngagement(next[0])
         updateSelectedTask(next[0])
         setSelectedEngagement(engagement)
-        setView("task")
-      } else if (!next[0] && viewRef.current === "task") {
-        setView("none")
+        setContextView("task")
+        setView("engagement")
       }
     },
     [locationScopeID, ordering, practiceID],
@@ -465,7 +460,7 @@ export function TaskWorkspaceShell() {
                   selectedResult?.response?.status === 403)
               ) {
                 updateSelectedTask(undefined)
-                if (viewRef.current === "task") setView("none")
+                setContextView("none")
               }
             } else if (
               firstLoad &&
@@ -475,9 +470,8 @@ export function TaskWorkspaceShell() {
               const engagement = taskEngagement(tasksWithSelection[0])
               updateSelectedTask(tasksWithSelection[0])
               setSelectedEngagement(engagement)
-              setView("task")
-            } else if (!tasksWithSelection[0] && viewRef.current === "task") {
-              setView("none")
+              setContextView("task")
+              setView("engagement")
             }
           }
 
@@ -660,7 +654,7 @@ export function TaskWorkspaceShell() {
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
     setContextView("none")
-    if (viewRef.current !== "call") setView("none")
+    setView("none")
     locationScopeRef.current = nextLocationID
     setLocationScopeID(nextLocationID)
     window.localStorage.setItem(
@@ -711,7 +705,7 @@ export function TaskWorkspaceShell() {
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
     setContextView("none")
-    if (viewRef.current !== "call") setView("none")
+    setView("none")
 
     const nextOrdering = readTaskOrdering(
       discovery.actor.subject,
@@ -745,13 +739,9 @@ export function TaskWorkspaceShell() {
   }
 
   function selectTask(task: Task) {
-    callDetailGenerationRef.current += 1
-    setHistoricalCall(undefined)
-    setContextView("none")
-    updateSelectedTask(task)
-    setSelectedEngagement(taskEngagement(task))
     if (activeCall) returnTaskIDRef.current = task.id
-    setView("task")
+    selectEngagement(taskEngagement(task), task)
+    setContextView("task")
   }
 
   function selectEngagement(engagement: EngagementSummary, focusedTask?: Task) {
@@ -847,10 +837,7 @@ export function TaskWorkspaceShell() {
     tasksRef.current = next
     setTasks(next)
     if (select) {
-      updateSelectedTask(task)
-      if (activeCall) returnTaskIDRef.current = task.id
-      setSelectedEngagement(taskEngagement(task))
-      setView("task")
+      selectTask(task)
     }
   }
 
@@ -907,10 +894,11 @@ export function TaskWorkspaceShell() {
       setHistoricalCall(undefined)
     }
     focusedCallIDRef.current = call.id
-    setContextView("none")
-    returnTaskIDRef.current =
-      viewRef.current === "task" ? (selectedTaskRef.current?.id ?? "") : ""
-    setView("call")
+    const returnTask = selectedTaskRef.current
+    if (returnTask?.phone !== call.phone) updateSelectedTask(undefined)
+    setSelectedEngagement(callEngagement(call))
+    setContextView("call")
+    setView("engagement")
   }, [])
 
   async function handleDisposition(result: CallingDispositionResult) {
@@ -937,7 +925,7 @@ export function TaskWorkspaceShell() {
     } else {
       const nextTask = tasksRef.current[0]
       if (nextTask) selectTask(nextTask)
-      else setView("none")
+      else setContextView("none")
     }
   }
 
@@ -1088,7 +1076,7 @@ export function TaskWorkspaceShell() {
               </div>
               {contextView !== "none" &&
                 ((contextView === "task" && selectedTask) ||
-                  (contextView === "call" && historicalCall)) && (
+                  (contextView === "call" && (historicalCall || activeCall))) && (
                   <aside
                     aria-label={`${contextView === "task" ? "Task" : "Call"} context`}
                     className="absolute inset-y-3 right-3 flex w-[calc(100%-1.5rem)] max-w-sm flex-col overflow-hidden rounded-xl border bg-popover shadow-lg lg:relative lg:inset-auto lg:my-3 lg:mr-3 lg:w-96 lg:max-w-none lg:shrink-0"
@@ -1113,7 +1101,6 @@ export function TaskWorkspaceShell() {
                         task={selectedTask}
                         activeCall={historicalCall ?? activeCall}
                         view={contextView}
-                        contextOnly
                         supportSessionID={workspace.supportMode?.id ?? ""}
                         canMutate={
                           !workspace.platformOperator ||
@@ -1126,10 +1113,11 @@ export function TaskWorkspaceShell() {
                           updateTaskProjection(task, false)
                           updateSelectedTask(task)
                           setContextView("task")
-                          void loadTasks("", false, true)
+                          void loadTasks()
                         }}
                         onStartTaskCall={(task) => {
                           setTaskCallError("")
+                          returnTaskIDRef.current = task.id
                           setTaskCallRequest({
                             id: window.crypto.randomUUID(),
                             taskID: task.id,
@@ -1137,8 +1125,7 @@ export function TaskWorkspaceShell() {
                         }}
                         onReturnToCall={() => {
                           if (!activeCall) return
-                          setContextView("none")
-                          setView("call")
+                          setContextView("call")
                         }}
                       />
                     </div>
@@ -1146,34 +1133,7 @@ export function TaskWorkspaceShell() {
                 )}
             </div>
           ) : (
-            <InteractionWorkspace
-              task={selectedTask}
-              activeCall={historicalCall ?? activeCall}
-              view={
-                view === "task" || view === "call" ? view : "none"
-              }
-              supportSessionID={workspace.supportMode?.id ?? ""}
-              canMutate={
-                !workspace.platformOperator || Boolean(workspace.supportMode)
-              }
-              historyHint={workspaceRevision}
-              taskCallPending={Boolean(taskCallRequest)}
-              taskCallError={taskCallError}
-              onTaskUpdated={(task) => {
-                updateTaskProjection(task)
-                void loadTasks("", false, true)
-              }}
-              onStartTaskCall={(task) => {
-                setTaskCallError("")
-                setTaskCallRequest({
-                  id: window.crypto.randomUUID(),
-                  taskID: task.id,
-                })
-              }}
-              onReturnToCall={() => {
-                if (activeCall) setView("call")
-              }}
-            />
+            <section aria-label="No number selected" className="min-h-0 flex-1" />
           )}
         </SidebarInset>
       </CallingDock>
@@ -1323,6 +1283,17 @@ function taskEngagement(task: Task): EngagementSummary {
     latestActivity: task.updatedAt,
     openTaskCount: task.state === "OPEN" ? 1 : 0,
     unread: task.unread,
+  }
+}
+
+function callEngagement(call: CallingCall): EngagementSummary {
+  return {
+    phone: call.phone,
+    ...(call.displayName ? { displayName: call.displayName } : {}),
+    locations: [{ id: call.locationId, name: call.locationName }],
+    latestActivity: call.connectedAt ?? new Date().toISOString(),
+    openTaskCount: call.recoveryTask?.state === "OPEN" ? 1 : 0,
+    unread: false,
   }
 }
 

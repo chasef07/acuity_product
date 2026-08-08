@@ -57,9 +57,6 @@ import {
   createMessageFollowUpTask,
   getEngagementTimeline,
   getMessageAttachment,
-  getMessageThreadTimeline,
-  getTaskEngagementHistory,
-  markMessageThreadRead,
   retryInboundMessageAttachment,
   sendMessage,
   sendMessageAgain,
@@ -70,7 +67,6 @@ import type {
   EngagementSummary,
   Message,
   MessageAttachment,
-  MessageThreadSummary,
   Task,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
@@ -86,9 +82,11 @@ const acceptedAttachmentTypes = new Set([
   "application/pdf",
 ])
 
-type TimelineSource =
-  | { kind: "task"; taskID: string }
-  | { kind: "engagement"; practiceID: string; phone: string }
+type TimelineSource = {
+  kind: "engagement"
+  practiceID: string
+  phone: string
+}
 
 export function EngagementWorkspace({
   engagement,
@@ -236,8 +234,6 @@ export function EngagementWorkspace({
         supportSessionID={supportSessionID}
         canMutate={canMutate}
         revision={revision}
-        onMessageSent={() => undefined}
-        onThreadRead={() => undefined}
         onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
@@ -246,180 +242,56 @@ export function EngagementWorkspace({
   )
 }
 
-export function TaskMessageConversation({
-  task,
-  supportSessionID,
-  canMutate,
-  revision,
-  onTaskCreated,
-  onMessageSent,
-}: {
-  task: Task
-  supportSessionID: string
-  canMutate: boolean
-  revision: number
-  onTaskCreated: (task: Task) => void
-  onMessageSent: () => void
-}) {
-  const [createdMessage, setCreatedMessage] = useState<Message>()
-  const threadID =
-    task.messageThreadId ||
-    task.conversationThreadId ||
-    createdMessage?.thread.id ||
-    ""
-  return (
-    <section
-      aria-label="Task conversation"
-      className="flex min-h-[22rem] flex-1 flex-col border-b"
-    >
-      <div className="border-b bg-muted/20 px-5 py-2.5">
-        <p className="text-xs font-medium tabular-nums text-muted-foreground">
-          Conversation · {formatPhone(task.phone)}
-        </p>
-      </div>
-      <MessageConversation
-        threadID={threadID}
-        timelineSource={{ kind: "task", taskID: task.id }}
-        practiceID={task.practiceId}
-        locationID={task.locationId}
-        taskID={task.id}
-        taskOpen={task.state === "OPEN"}
-        initialDestination={task.phone}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        initialMessage={createdMessage}
-        onMessageSent={(message) => {
-          setCreatedMessage(message)
-          onMessageSent()
-        }}
-        onThreadRead={() => undefined}
-        onTaskCreated={onTaskCreated}
-      />
-    </section>
-  )
-}
-
 function MessageConversation({
-  thread,
-  threadID = thread?.id ?? "",
   timelineSource,
   practiceID,
   locationID,
-  taskID,
-  taskOpen = true,
   initialDestination,
   supportSessionID,
   canMutate,
   revision,
-  initialMessage,
-  onMessageSent,
-  onThreadRead,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
-  thread?: MessageThreadSummary
-  threadID?: string
-  timelineSource?: TimelineSource
+  timelineSource: TimelineSource
   practiceID: string
   locationID: string
-  taskID?: string
-  taskOpen?: boolean
   initialDestination?: string
   supportSessionID: string
   canMutate: boolean
   revision: number
-  initialMessage?: Message
-  onMessageSent: (message: Message) => void
-  onThreadRead: (threadID: string) => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
-  const timelineKind = timelineSource?.kind
-  const timelineTaskID =
-    timelineSource?.kind === "task" ? timelineSource.taskID : ""
-  const timelinePracticeID =
-    timelineSource?.kind === "engagement" ? timelineSource.practiceID : ""
-  const timelinePhone =
-    timelineSource?.kind === "engagement" ? timelineSource.phone : ""
-  const timelineKey = timelineKind
-    ? timelineKind === "task"
-      ? `task:${timelineTaskID}`
-      : `engagement:${timelinePracticeID}:${timelinePhone}`
-    : threadID
-  const committedItem = initialMessage
-    ? messageTimelineItem(initialMessage)
-    : undefined
-  const [items, setItems] = useState<ConversationTimelineItem[]>(
-    committedItem ? [committedItem] : [],
-  )
+  const timelineKey = `${timelineSource.practiceID}:${timelineSource.phone}`
+  const [items, setItems] = useState<ConversationTimelineItem[]>([])
   const [cursor, setCursor] = useState("")
-  const [loading, setLoading] = useState(Boolean(timelineKey && !committedItem))
+  const [loading, setLoading] = useState(true)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [newActivity, setNewActivity] = useState(false)
   const [error, setError] = useState("")
   const generation = useRef(0)
   const committedMessage = useRef<
     { id: string; visibleUntil: number } | undefined
-  >(
-    initialMessage
-      ? { id: initialMessage.id, visibleUntil: Number.POSITIVE_INFINITY }
-      : undefined,
-  )
+  >(undefined)
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
   const initialized = useRef(false)
-  const onThreadReadRef = useRef(onThreadRead)
-
-  useEffect(() => {
-    onThreadReadRef.current = onThreadRead
-  }, [onThreadRead])
-
-  useEffect(() => {
-    if (initialMessage) {
-      committedMessage.current = {
-        id: initialMessage.id,
-        visibleUntil: Date.now() + 750,
-      }
-    }
-  }, [initialMessage, threadID])
 
   const loadPage = useCallback(
-    async (token: string, cursor = "") => {
-      if (timelineKind === "task") {
-        return getTaskEngagementHistory({
-          client: portalClient(token),
-          path: { taskId: timelineTaskID },
-          query: { ...(cursor ? { cursor } : {}), limit: 50 },
-        }).catch(() => undefined)
-      }
-      if (timelineKind === "engagement") {
-        return getEngagementTimeline({
-          client: portalClient(token),
-          path: { phone: timelinePhone },
-          query: {
-            practiceId: timelinePracticeID,
-            ...(cursor ? { cursor } : {}),
-            limit: 50,
-          },
-        }).catch(() => undefined)
-      }
-      if (!threadID) return undefined
-      return getMessageThreadTimeline({
+    (token: string, cursor = "") =>
+      getEngagementTimeline({
         client: portalClient(token),
-        path: { threadId: threadID },
-        query: { ...(cursor ? { cursor } : {}), limit: 50 },
-      }).catch(() => undefined)
-    },
-    [
-      threadID,
-      timelineKind,
-      timelinePhone,
-      timelinePracticeID,
-      timelineTaskID,
-    ],
+        path: { phone: timelineSource.phone },
+        query: {
+          practiceId: timelineSource.practiceID,
+          ...(cursor ? { cursor } : {}),
+          limit: 50,
+        },
+      }).catch(() => undefined),
+    [timelineSource.phone, timelineSource.practiceID],
   )
 
   const loadLatest = useCallback(
@@ -473,40 +345,24 @@ function MessageConversation({
       Math.max(0, committed.visibleUntil - Date.now()),
     )
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, threadID])
-
-  const markRead = useCallback(async () => {
-    if (!threadID) return
-    const token = await getAccessToken()
-    if (!token) return
-    const result = await markMessageThreadRead({
-      client: portalClient(token),
-      path: { threadId: threadID },
-      body: {
-        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
-      },
-    }).catch(() => undefined)
-    if (result?.response?.ok) onThreadReadRef.current(threadID)
-  }, [supportSessionID, threadID])
+  }, [loadLatest])
 
   useEffect(() => {
     if (!timelineKey) return
     const timeout = window.setTimeout(() => {
       void loadLatest(true)
-      if (threadID) void markRead()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, markRead, threadID, timelineKey])
+  }, [loadLatest, timelineKey])
 
   useEffect(() => {
     if (!initialized.current || !timelineKey) return
     if (atLatest.current) {
       void loadLatest(true)
-      if (threadID) void markRead()
     } else {
       setNewActivity(true)
     }
-  }, [loadLatest, markRead, revision, threadID, timelineKey])
+  }, [loadLatest, revision, timelineKey])
 
   async function loadOlder() {
     if (!cursor || loadingOlder) return
@@ -529,14 +385,10 @@ function MessageConversation({
     })
   }
 
-  const conversationThread =
-    (thread?.locationId === locationID ? thread : undefined) ??
-    items.find(
-      (item) => item.message?.thread.locationId === locationID,
-    )?.message?.thread
-  const composerThreadID =
-    conversationThread?.id ??
-    (timelineSource?.kind === "engagement" ? "" : threadID)
+  const conversationThread = items.find(
+    (item) => item.message?.thread.locationId === locationID,
+  )?.message?.thread
+  const composerThreadID = conversationThread?.id ?? ""
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -600,7 +452,6 @@ function MessageConversation({
               onClick={() => {
                 atLatest.current = true
                 void loadLatest(true)
-                void markRead()
               }}
             >
               New activity
@@ -618,13 +469,11 @@ function MessageConversation({
         threadID={composerThreadID}
         practiceID={practiceID}
         locationID={locationID}
-        taskID={taskID}
         destination={initialDestination ?? ""}
         supportSessionID={supportSessionID}
         disabled={
           !canMutate ||
           !locationID ||
-          !taskOpen ||
           Boolean(conversationThread?.outboundBlocked)
         }
         disabledReason={
@@ -632,8 +481,6 @@ function MessageConversation({
             ? "Read only"
             : !locationID
               ? "Choose an authorized sender route"
-            : !taskOpen
-              ? "Reopen this Task to send a message"
               : conversationThread?.outboundBlocked
                 ? "Outbound messaging is blocked after STOP"
                 : ""
@@ -652,7 +499,6 @@ function MessageConversation({
             ...current.filter((item) => item.id !== message.id),
             messageTimelineItem(message),
           ])
-          onMessageSent(message)
         }}
       />
     </div>
@@ -1111,7 +957,6 @@ function MessageComposer({
   threadID,
   practiceID,
   locationID,
-  taskID,
   destination,
   supportSessionID,
   disabled,
@@ -1121,7 +966,6 @@ function MessageComposer({
   threadID: string
   practiceID: string
   locationID: string
-  taskID?: string
   destination: string
   supportSessionID: string
   disabled: boolean
@@ -1170,7 +1014,6 @@ function MessageComposer({
       threadID,
       destination: destination.trim(),
       body: body.trim(),
-      taskID,
       file: file
         ? [file.name, file.type, file.size, file.lastModified]
         : undefined,
@@ -1223,7 +1066,6 @@ function MessageComposer({
         ...(!threadID ? { destination: destination.trim() } : {}),
         body: body.trim(),
         ...(attachmentID ? { attachmentId: attachmentID } : {}),
-        ...(taskID ? { taskId: taskID } : {}),
         idempotencyKey: attempt.idempotencyKey,
         ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
       },

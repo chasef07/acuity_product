@@ -74,7 +74,11 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await page.getByRole("button", { name: "Sign in" }).click()
     await expect(page).toHaveURL(/\/workspace$/)
     await expect(page.getByText("No open Tasks")).toBeVisible()
-    await expect(page.getByText("Abita Eye Group · All offices")).toBeVisible()
+    const workspaceSelector = page.getByRole("button", {
+      name: "Workspace selector",
+    })
+    await expect(workspaceSelector).toContainText("Abita Eye Group")
+    await expect(workspaceSelector).toContainText("All offices")
     await expect(page.getByLabel("Live updates connected")).toBeVisible()
   })
 
@@ -226,7 +230,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
       .click()
     await expect(
       operatorPage.getByRole("button", { name: "Workspace selector" }),
-    ).toContainText("Abita Eye Group · Fixture Location 1")
+    ).toContainText("Abita Eye Group")
+    await expect(
+      operatorPage.getByRole("button", { name: "Workspace selector" }),
+    ).toContainText("Fixture Location 1")
     await expect(
       operatorPage.getByText("Abita Eye Group", { exact: true }),
     ).toBeVisible()
