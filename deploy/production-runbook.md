@@ -158,6 +158,41 @@ Data cache is off. Alert at 70% disk use and investigate growth before the
 automatic increase changes the cost baseline; never trade database availability
 for an unreviewed fixed-disk ceiling.
 
+## Google sign-in
+
+Create one Google OAuth Web application for the production portal. Its exact
+authorized redirect URI is:
+
+```text
+https://acuity-web-cbuqwpsdsq-ue.a.run.app/api/auth/callback/google
+```
+
+Store the client ID and client secret as separate Secret Manager values named
+`acuity-product-google-client-id` and `acuity-product-google-client-secret`.
+Grant the web runtime identity access to only those secrets, then add only the
+two new mappings to `acuity-web`:
+
+```sh
+gcloud run services update acuity-web \
+  --project acuity-health-prod \
+  --region us-east1 \
+  --update-secrets \
+  GOOGLE_CLIENT_ID=acuity-product-google-client-id:latest,GOOGLE_CLIENT_SECRET=acuity-product-google-client-secret:latest \
+  --quiet
+```
+
+Do not use `--set-secrets` for this live update because it replaces the
+service's complete secret mapping. The checked deployment renderer uses the
+complete `--set-secrets` contract only when creating the whole service.
+
+Google identity is authentication, not authorization. Better Auth creates a
+Google-backed user only when `Access` confirms the email is eligible. A
+provisioned Platform Operator may activate directly with Google. Practice users
+first activate through the current email-bound invitation flow, then may use
+Google with the same verified email. Acceptance requires one eligible Google
+login, one ineligible Google login rejection, and proof that the eligible user
+receives only the scope authorized by `Access`.
+
 ## Clean-stack bootstrap
 
 A schema-only database is intentionally unusable for provider traffic. Before
