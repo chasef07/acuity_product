@@ -84,7 +84,6 @@ type CallingDockProps = {
 }
 
 const sessionStorageKey = "acuity.callingSession"
-const mediaEnabledStorageKey = "acuity.callingMediaEnabled"
 const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
 
 type CallingNavigationContext = {
@@ -561,7 +560,6 @@ export function CallingDock({
           return refreshed?.data?.token
         },
       })
-      window.sessionStorage.setItem(mediaEnabledStorageKey, "true")
     } catch {
       setAvailable(false)
       availabilityRef.current = false
@@ -688,10 +686,6 @@ export function CallingDock({
   }, [applyActiveCall, mediaState, updateReadiness])
 
   const refreshOwnership = useCallback(async () => {
-    const restoreMedia =
-      ownerRef.current ||
-      window.sessionStorage.getItem(mediaEnabledStorageKey) === "true"
-    if (!restoreMedia) return
     const token = await getAccessToken()
     if (!token) return
     const result = await acquireSoftphone({
