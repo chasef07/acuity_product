@@ -26,7 +26,7 @@ type Config struct {
 	PoolMax                int32
 	AcquireTimeout         time.Duration
 	HTTPPort               int
-	BrowserOrigin          string
+	BrowserOrigins         []string
 	JWKSURL                string
 	AuthIssuer             string
 	APIAudience            string
@@ -125,7 +125,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		}
 	}
 	if role == RolePortalAPI || role == RoleRealtime {
-		if config.BrowserOrigin, err = required(getenv, "BROWSER_ORIGIN"); err != nil {
+		if config.BrowserOrigins, err = requiredList(getenv, "BROWSER_ORIGIN"); err != nil {
 			return Config{}, err
 		}
 		if config.JWKSURL, err = required(getenv, "BETTER_AUTH_JWKS_URL"); err != nil {
@@ -398,6 +398,23 @@ func required(getenv func(string) string, name string) (string, error) {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	return value, nil
+}
+
+func requiredList(getenv func(string) string, name string) ([]string, error) {
+	value, err := required(getenv, name)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, 1)
+	for item := range strings.SplitSeq(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			result = append(result, item)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("%s is required", name)
+	}
+	return result, nil
 }
 
 func positiveInt(getenv func(string) string, name string) (int, error) {

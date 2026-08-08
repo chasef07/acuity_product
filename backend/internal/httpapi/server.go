@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +47,7 @@ type ServiceAuthenticator interface {
 }
 
 type Config struct {
-	AllowedOrigin  string
+	AllowedOrigins []string
 	AcquireTimeout time.Duration
 	Observer       observability.Observer
 }
@@ -2133,7 +2134,7 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 
-		if origin := r.Header.Get("Origin"); origin != "" && origin == server.config.AllowedOrigin {
+		if origin := r.Header.Get("Origin"); slices.Contains(server.config.AllowedOrigins, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Correlation-ID")
