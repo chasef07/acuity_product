@@ -22,6 +22,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -210,6 +211,15 @@ func (m *Module) QueryEngagements(
 			WHERE task.practice_id = $1
 				AND task.location_id::text = ANY($2::text[])
 				AND task.phone = $3
+			UNION ALL
+			SELECT
+				interaction.location_id,
+				interaction.started_at,
+				''
+			FROM ai_interactions interaction
+			WHERE interaction.practice_id = $1
+				AND interaction.location_id::text = ANY($2::text[])
+				AND interaction.phone = $3
 		)
 		SELECT
 			$3,
@@ -274,6 +284,10 @@ func (m *Module) QueryEngagements(
 			SELECT location_id
 			FROM work_tasks
 			WHERE practice_id = $1 AND phone = $3
+			UNION
+			SELECT location_id
+			FROM ai_interactions
+			WHERE practice_id = $1 AND phone = $3
 		) evidence ON evidence.location_id = location.id
 		WHERE location.practice_id = $1
 			AND location.id::text = ANY($2::text[])
@@ -322,13 +336,14 @@ type QueryPhoneTimelineCommand struct {
 }
 
 type TimelineItem struct {
-	Type         string
-	ID           string
-	OccurredAt   time.Time
-	TaskActivity string
-	Message      Message
-	Call         humancalling.CallHistoryItem
-	Task         work.Task
+	Type          string
+	ID            string
+	OccurredAt    time.Time
+	TaskActivity  string
+	Message       Message
+	Call          humancalling.CallHistoryItem
+	AIInteraction interaction.OutcomeItem
+	Task          work.Task
 }
 
 type TimelinePage struct {
@@ -382,7 +397,7 @@ func (m *Module) QueryPhoneTimeline(
 		return TimelinePage{}, ErrDenied
 	}
 
-	items := make([]TimelineItem, 0, (limit+1)*3)
+	items := make([]TimelineItem, 0, (limit+1)*4)
 	messageRows, err := tx.Query(ctx, `
 		SELECT
 			thread.id::text,
@@ -596,6 +611,79 @@ func (m *Module) QueryPhoneTimeline(
 		return TimelinePage{}, fmt.Errorf("iterate phone Calls: %w", err)
 	}
 	callRows.Close()
+
+	interactionRows, err := tx.Query(ctx, `
+		SELECT
+			interaction.id::text,
+			interaction.location_id::text,
+			location.name,
+			interaction.source_call_id,
+			interaction.phone,
+			COALESCE(interaction.external_patient_id, ''),
+			interaction.started_at,
+			interaction.ended_at,
+			interaction.status,
+			COALESCE(interaction.summary, ''),
+			interaction.appointment_outcome,
+			interaction.appointment_occurred_at,
+			COALESCE(interaction.old_appointment_id, ''),
+			COALESCE(interaction.new_appointment_id, '')
+		FROM ai_interactions interaction
+		JOIN access_locations location
+			ON location.practice_id = interaction.practice_id
+			AND location.id = interaction.location_id
+		WHERE interaction.practice_id = $1
+			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.phone = $3
+			AND (
+				$4::timestamptz IS NULL
+				OR interaction.started_at < $4
+				OR (
+					interaction.started_at = $4
+					AND 'AI_INTERACTION:' || interaction.id::text < $5
+				)
+			)
+		ORDER BY interaction.started_at DESC, interaction.id DESC
+		LIMIT $6
+	`, command.PracticeID, locationIDs, command.Phone,
+		nullableCursorTime(cursor), nullableCursorID(cursor), limit+1,
+	)
+	if err != nil {
+		return TimelinePage{}, fmt.Errorf("query phone AI Interactions: %w", err)
+	}
+	for interactionRows.Next() {
+		var aiInteraction interaction.OutcomeItem
+		if err := interactionRows.Scan(
+			&aiInteraction.ID,
+			&aiInteraction.LocationID,
+			&aiInteraction.LocationName,
+			&aiInteraction.SourceCallID,
+			&aiInteraction.Phone,
+			&aiInteraction.ExternalPatientID,
+			&aiInteraction.StartedAt,
+			&aiInteraction.EndedAt,
+			&aiInteraction.Status,
+			&aiInteraction.Summary,
+			&aiInteraction.AppointmentOutcome,
+			&aiInteraction.AppointmentOccurredAt,
+			&aiInteraction.OldAppointmentID,
+			&aiInteraction.NewAppointmentID,
+		); err != nil {
+			interactionRows.Close()
+			return TimelinePage{}, fmt.Errorf("scan phone AI Interaction: %w", err)
+		}
+		items = append(items, TimelineItem{
+			Type:          "AI_INTERACTION",
+			ID:            aiInteraction.ID,
+			OccurredAt:    aiInteraction.StartedAt,
+			AIInteraction: aiInteraction,
+		})
+	}
+	if err := interactionRows.Err(); err != nil {
+		interactionRows.Close()
+		return TimelinePage{}, fmt.Errorf("iterate phone AI Interactions: %w", err)
+	}
+	interactionRows.Close()
 
 	taskRows, err := tx.Query(ctx, `
 		SELECT

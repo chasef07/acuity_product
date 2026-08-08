@@ -446,6 +446,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_platform_operators",
 		"access_practices",
 		"access_support_sessions",
+		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
@@ -471,6 +472,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_membership_locations",
 		"access_memberships",
 		"access_support_sessions",
+		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
@@ -582,6 +584,27 @@ func expectedColumnPrivileges() map[string]bool {
 			result[columnPrivilegeKey(role, relation, column, privilege)] = true
 		}
 	}
+	grant(
+		"acuity_portal",
+		"public.ai_interactions",
+		"UPDATE",
+		"external_patient_id",
+		"ended_at",
+		"status",
+		"summary",
+		"transcript",
+		"appointment_outcome",
+		"appointment_occurred_at",
+		"old_appointment_id",
+		"new_appointment_id",
+		"booking_result",
+		"cancellation_result",
+		"outcome_completeness",
+		"summary_payload",
+		"closeout_payload",
+		"completeness",
+		"updated_at",
+	)
 	grant(
 		"acuity_portal",
 		"public.human_calling_provider_commands",

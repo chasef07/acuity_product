@@ -32,11 +32,12 @@ func TestForwardMigrationsAreRepeatableAndExposeOnlyCallLegTopology(t *testing.T
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 21 {
-		t.Fatalf("migration count = %d, want 21", migrationCount)
+	if migrationCount != 22 {
+		t.Fatalf("migration count = %d, want 22", migrationCount)
 	}
 
 	for _, relation := range []string{
+		"ai_interactions",
 		"human_calling_handoffs",
 		"human_calling_calls",
 		"human_calling_call_legs",

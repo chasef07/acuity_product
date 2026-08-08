@@ -428,6 +428,125 @@ export type EngagementQueryRequest = {
     phone: string;
 };
 
+export type AiInteractionMessageKind = 'START' | 'SUMMARY' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
+
+export type AiInteractionCallStatus = 'IN_PROGRESS' | 'COMPLETED' | 'ESCALATED' | 'FAILED';
+
+export type AiAppointmentAction = 'BOOKED' | 'CANCELLED' | 'RESCHEDULED';
+
+export type AiAppointmentEvidence = {
+    action: AiAppointmentAction;
+    occurredAt: string;
+    externalPatientId?: string;
+    oldAppointmentId?: string;
+    newAppointmentId?: string;
+    bookingResult?: {
+        [key: string]: unknown;
+    };
+    cancellationResult?: {
+        [key: string]: unknown;
+    };
+};
+
+export type AiInteractionIngestRequest = {
+    kind: AiInteractionMessageKind;
+    officeKey?: string;
+    sourceCallId: string;
+    callerPhone: string;
+    officePhone: string;
+    startedAt: string;
+    endedAt?: string;
+    status: AiInteractionCallStatus;
+    summary?: string;
+    transcript?: {
+        [key: string]: unknown;
+    };
+    appointmentOutcome?: AiAppointmentEvidence;
+    summaryPayload?: {
+        [key: string]: unknown;
+    };
+    closeoutPayload?: {
+        [key: string]: unknown;
+    };
+};
+
+export type AiInteractionReceipt = {
+    interactionId: string;
+    status: 'created' | 'updated';
+};
+
+export type AiAppointmentOutcome = 'BOOKING' | 'CANCELLATION' | 'RESCHEDULE' | 'PARTIAL' | 'INDETERMINATE';
+
+export type AiInteractionDetail = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    sourceCallId: string;
+    phone: string;
+    officePhone: string;
+    externalPatientId?: string;
+    startedAt: string;
+    endedAt?: string;
+    status: AiInteractionCallStatus;
+    summary?: string;
+    transcript?: {
+        [key: string]: unknown;
+    };
+    appointmentOutcome: AiAppointmentOutcome;
+    appointmentOccurredAt?: string;
+    oldAppointmentId?: string;
+    newAppointmentId?: string;
+    bookingResult?: {
+        [key: string]: unknown;
+    };
+    cancellationResult?: {
+        [key: string]: unknown;
+    };
+    closeoutPayload?: {
+        [key: string]: unknown;
+    };
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type AiOutcomeQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    date: string;
+};
+
+export type AiOutcomeCounts = {
+    bookings: number;
+    cancellations: number;
+    reschedules: number;
+    partial: number;
+    indeterminate: number;
+};
+
+export type AiOutcomeItem = {
+    id: string;
+    locationId: string;
+    locationName: string;
+    sourceCallId: string;
+    phone: string;
+    externalPatientId?: string;
+    startedAt: string;
+    endedAt?: string;
+    status: AiInteractionCallStatus;
+    summary?: string;
+    appointmentOutcome: AiAppointmentOutcome;
+    appointmentOccurredAt?: string;
+    oldAppointmentId?: string;
+    newAppointmentId?: string;
+};
+
+export type AiOutcomePage = {
+    date: string;
+    counts: AiOutcomeCounts;
+    items: Array<AiOutcomeItem>;
+};
+
 export type TaskQueryRequest = {
     practiceId: string;
     locationId?: string;
@@ -564,13 +683,14 @@ export type CreateMessageFollowUpTaskRequest = {
 };
 
 export type ConversationTimelineItem = {
-    type: 'MESSAGE' | 'CALL' | 'TASK';
+    type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK';
     id: string;
     occurredAt: string;
     taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
+    aiInteraction?: AiOutcomeItem;
 };
 
 export type ConversationTimelinePage = {
@@ -1726,6 +1846,127 @@ export type GetEngagementTimelineResponses = {
 };
 
 export type GetEngagementTimelineResponse = GetEngagementTimelineResponses[keyof GetEngagementTimelineResponses];
+
+export type IngestAiInteractionData = {
+    body: AiInteractionIngestRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/ai/interactions';
+};
+
+export type IngestAiInteractionErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type IngestAiInteractionError = IngestAiInteractionErrors[keyof IngestAiInteractionErrors];
+
+export type IngestAiInteractionResponses = {
+    /**
+     * Existing Interaction advanced without losing richer evidence.
+     */
+    200: AiInteractionReceipt;
+    /**
+     * New Interaction persisted.
+     */
+    201: AiInteractionReceipt;
+};
+
+export type IngestAiInteractionResponse = IngestAiInteractionResponses[keyof IngestAiInteractionResponses];
+
+export type GetAiInteractionData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/ai/interactions/{interactionId}';
+};
+
+export type GetAiInteractionErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetAiInteractionError = GetAiInteractionErrors[keyof GetAiInteractionErrors];
+
+export type GetAiInteractionResponses = {
+    /**
+     * Authorized AI Interaction detail.
+     */
+    200: AiInteractionDetail;
+};
+
+export type GetAiInteractionResponse = GetAiInteractionResponses[keyof GetAiInteractionResponses];
+
+export type QueryAiInteractionOutcomesData = {
+    body: AiOutcomeQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/ai/interactions/outcomes/query';
+};
+
+export type QueryAiInteractionOutcomesErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryAiInteractionOutcomesError = QueryAiInteractionOutcomesErrors[keyof QueryAiInteractionOutcomesErrors];
+
+export type QueryAiInteractionOutcomesResponses = {
+    /**
+     * Authorized date-scoped AI outcome projection.
+     */
+    200: AiOutcomePage;
+};
+
+export type QueryAiInteractionOutcomesResponse = QueryAiInteractionOutcomesResponses[keyof QueryAiInteractionOutcomesResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;

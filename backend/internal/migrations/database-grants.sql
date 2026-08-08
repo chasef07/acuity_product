@@ -26,6 +26,7 @@ GRANT SELECT ON TABLE
     public.access_platform_operators,
     public.access_practices,
     public.access_support_sessions,
+    public.ai_interactions,
     public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -78,6 +79,7 @@ GRANT INSERT ON TABLE
     public.access_membership_locations,
     public.access_memberships,
     public.access_support_sessions,
+    public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_calls,
     public.human_calling_credentials,
@@ -121,6 +123,27 @@ TO acuity_portal;
 
 GRANT UPDATE (updated_at)
 ON TABLE public.messaging_location_configurations
+TO acuity_portal;
+
+GRANT UPDATE (
+    external_patient_id,
+    ended_at,
+    status,
+    summary,
+    transcript,
+    appointment_outcome,
+    appointment_occurred_at,
+    old_appointment_id,
+    new_appointment_id,
+    booking_result,
+    cancellation_result,
+    outcome_completeness,
+    summary_payload,
+    closeout_payload,
+    completeness,
+    updated_at
+)
+ON TABLE public.ai_interactions
 TO acuity_portal;
 
 GRANT UPDATE (updated_at)
