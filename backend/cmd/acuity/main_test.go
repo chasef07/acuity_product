@@ -60,10 +60,11 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	wantRoutes := []route{
 		{Practice: "abita-eye-group", Office: "crystal-river", Location: "crystal-river"},
 		{Practice: "acuity-demo", Office: "dev", Location: "demo-484"},
-		{Practice: "abita-eye-group", Office: "hollywood", Location: "south-florida-medical"},
-		{Practice: "abita-eye-group", Office: "north-miami-beach-optical", Location: "south-florida-optical"},
+		{Practice: "abita-eye-group", Office: "hollywood", Location: "hollywood"},
+		{Practice: "abita-eye-group", Office: "north-miami-beach-optical", Location: "north-miami-beach-optical"},
 		{Practice: "abita-eye-group", Office: "spring-hill", Location: "spring-hill"},
-		{Practice: "abita-eye-group", Office: "sweetwater", Location: "south-florida-medical"},
+		{Practice: "abita-eye-group", Office: "sweetwater", Location: "sweetwater"},
+		{Practice: "abita-eye-group", Office: "sweetwater-optical", Location: "sweetwater-optical"},
 	}
 	if !reflect.DeepEqual(routes, wantRoutes) {
 		t.Fatalf("office routes = %#v, want %#v", routes, wantRoutes)
@@ -92,9 +93,11 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	wantLocations := []string{
 		"abita-eye-group/crystal-river",
-		"abita-eye-group/south-florida-medical",
-		"abita-eye-group/south-florida-optical",
+		"abita-eye-group/hollywood",
+		"abita-eye-group/north-miami-beach-optical",
 		"abita-eye-group/spring-hill",
+		"abita-eye-group/sweetwater",
+		"abita-eye-group/sweetwater-optical",
 		"acuity-demo/demo-484",
 	}
 	if !reflect.DeepEqual(locations, wantLocations) {
@@ -138,9 +141,9 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`)
 	wantVoiceNumbers := []number{
 		{Practice: "abita-eye-group", Location: "crystal-river", Phone: "+13523202007"},
-		{Practice: "abita-eye-group", Location: "south-florida-medical", Phone: "+17864654836"},
-		{Practice: "abita-eye-group", Location: "south-florida-optical", Phone: "+13055095333"},
+		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Phone: "+13055095333"},
 		{Practice: "abita-eye-group", Location: "spring-hill", Phone: "+17275919997"},
+		{Practice: "abita-eye-group", Location: "sweetwater", Phone: "+17864654836"},
 		{Practice: "acuity-demo", Location: "demo-484", Phone: "+14843989071"},
 	}
 	if !reflect.DeepEqual(voiceNumbers, wantVoiceNumbers) {
@@ -187,14 +190,14 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	wantMessagingConfigurations := []messagingConfiguration{
 		{
 			Practice: "abita-eye-group",
-			Location: "south-florida-medical",
-			Sender:   "+17864654836",
+			Location: "spring-hill",
+			Sender:   "+17275919997",
 			Profile:  "40019e5f-3772-4c25-a9df-b0990499d947",
 		},
 		{
 			Practice: "abita-eye-group",
-			Location: "spring-hill",
-			Sender:   "+17275919997",
+			Location: "sweetwater",
+			Sender:   "+17864654836",
 			Profile:  "40019e5f-3772-4c25-a9df-b0990499d947",
 		},
 		{
@@ -251,9 +254,9 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	wantGreetings := []greetingConfiguration{
 		{Practice: "abita-eye-group", Location: "crystal-river", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "south-florida-medical", Greeting: sharedGreeting},
-		{Practice: "abita-eye-group", Location: "south-florida-optical", Greeting: sharedGreeting},
+		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
+		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: sharedGreeting},
 		{Practice: "acuity-demo", Location: "demo-484", Greeting: demoGreeting},
 	}
 	if !reflect.DeepEqual(greetings, wantGreetings) {
