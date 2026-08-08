@@ -11,8 +11,8 @@ Slice 3 Task lifecycle.
    attachment upload, read marker, explicit send-again attempt, or explicit
    Message-to-Task action.
 2. `Access` resolves the actor's Practice and Location authority. Platform
-   Operators need a live, Practice-scoped Support Mode for every mutation; the
-   mutation and audit entry share one PostgreSQL transaction.
+   Operators mutate directly under their real identity; the mutation and audit
+   entry share one PostgreSQL transaction.
 3. `Messaging` owns the exact conversation key: Practice, Location, configured
    office sender, and normalized external phone. The browser never chooses the
    sender or messaging profile.
@@ -86,7 +86,7 @@ without partial state, durable idempotent send, provider acceptance and
 delivery evidence, unknown outcomes without blind retry, read-only
 reconciliation, text and MMS attempts, interrupted receipt recovery, signed
 inbound receipt, STOP/START races, unread projection, explicit Task creation,
-Support Mode audit atomicity, exact-phone Call/Task chronology, cursor
+operator audit atomicity, exact-phone Call/Task chronology, cursor
 pagination, and attachment lifecycle.
 
 The generated authenticated HTTP test exercises send, worker projection,

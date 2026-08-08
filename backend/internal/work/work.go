@@ -181,25 +181,22 @@ type EnsureRecoveryTaskCommand struct {
 }
 
 type RenameTaskCommand struct {
-	Identity         access.Identity
-	TaskID           string
-	ExpectedVersion  int64
-	Title            string
-	SupportSessionID string
+	Identity        access.Identity
+	TaskID          string
+	ExpectedVersion int64
+	Title           string
 }
 
 type CompleteTaskCommand struct {
-	Identity         access.Identity
-	TaskID           string
-	ExpectedVersion  int64
-	SupportSessionID string
+	Identity        access.Identity
+	TaskID          string
+	ExpectedVersion int64
 }
 
 type ReopenTaskCommand struct {
-	Identity         access.Identity
-	TaskID           string
-	ExpectedVersion  int64
-	SupportSessionID string
+	Identity        access.Identity
+	TaskID          string
+	ExpectedVersion int64
 }
 
 type QueryTasksCommand struct {
@@ -293,8 +290,8 @@ func (m *Module) EnsureCallFollowUp(
 }
 
 // EnsureMessageFollowUp creates at most one Task from one source Message. The
-// caller owns the transaction so Messaging authorization, Work creation, and a
-// required Support Mode audit can commit or roll back together.
+// caller owns the transaction so Messaging authorization, Work creation, and
+// any required operator audit can commit or roll back together.
 func (m *Module) EnsureMessageFollowUp(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -848,7 +845,6 @@ func (m *Module) RenameTask(
 		tx,
 		command.Identity,
 		task,
-		command.SupportSessionID,
 	)
 	if err != nil {
 		return Task{}, err
@@ -885,7 +881,7 @@ func (m *Module) RenameTask(
 	); err != nil {
 		return Task{}, err
 	}
-	if err := m.auditSupportedMutation(
+	if err := m.auditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
@@ -927,7 +923,6 @@ func (m *Module) CompleteTask(
 		tx,
 		command.Identity,
 		task,
-		command.SupportSessionID,
 	)
 	if err != nil {
 		return Task{}, err
@@ -973,7 +968,7 @@ func (m *Module) CompleteTask(
 	); err != nil {
 		return Task{}, err
 	}
-	if err := m.auditSupportedMutation(
+	if err := m.auditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
@@ -1015,7 +1010,6 @@ func (m *Module) ReopenTask(
 		tx,
 		command.Identity,
 		task,
-		command.SupportSessionID,
 	)
 	if err != nil {
 		return Task{}, err
@@ -1060,7 +1054,7 @@ func (m *Module) ReopenTask(
 	); err != nil {
 		return Task{}, err
 	}
-	if err := m.auditSupportedMutation(
+	if err := m.auditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
@@ -1466,7 +1460,6 @@ func (m *Module) authorizeMutation(
 	tx pgx.Tx,
 	identity access.Identity,
 	task Task,
-	supportSessionID string,
 ) (access.Authorization, error) {
 	authorization, err := m.access.LockMutationAuthorization(
 		ctx,
@@ -1474,21 +1467,14 @@ func (m *Module) authorizeMutation(
 		identity,
 		task.PracticeID,
 		task.LocationID,
-		supportSessionID,
 	)
 	if err != nil {
-		if errors.Is(err, access.ErrSupportRequired) ||
-			errors.Is(err, access.ErrSupportExpired) ||
-			errors.Is(err, access.ErrSupportRevoked) ||
-			errors.Is(err, access.ErrSupportPracticeMismatch) {
-			return access.Authorization{}, err
-		}
 		return access.Authorization{}, ErrDenied
 	}
 	return authorization, nil
 }
 
-func (m *Module) auditSupportedMutation(
+func (m *Module) auditOperatorMutation(
 	ctx context.Context,
 	tx pgx.Tx,
 	authorization access.Authorization,
@@ -1496,11 +1482,11 @@ func (m *Module) auditSupportedMutation(
 	action string,
 	occurredAt time.Time,
 ) error {
-	return m.access.AuditSupportedMutation(
+	return m.access.AuditOperatorMutation(
 		ctx,
 		tx,
 		authorization,
-		access.SupportedMutationAudit{
+		access.OperatorMutationAudit{
 			Action:          action,
 			ResourceType:    "task",
 			ResourceID:      task.ID,

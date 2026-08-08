@@ -445,7 +445,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_operational_users",
 		"access_platform_operators",
 		"access_practices",
-		"access_support_sessions",
 		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
@@ -470,7 +469,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_locations",
 		"access_membership_locations",
 		"access_memberships",
-		"access_support_sessions",
 		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
@@ -491,7 +489,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_locations",
 		"access_memberships",
 		"access_practices",
-		"access_support_sessions",
 		"human_calling_call_legs",
 		"human_calling_calls",
 		"human_calling_credentials",
@@ -509,7 +506,6 @@ func expectedTablePrivileges() map[string]bool {
 		"access_memberships",
 		"access_platform_operators",
 		"access_practices",
-		"access_support_sessions",
 	)
 
 	grant("acuity_worker", "SELECT",

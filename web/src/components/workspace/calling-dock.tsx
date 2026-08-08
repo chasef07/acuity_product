@@ -11,7 +11,6 @@ import {
 } from "react"
 import {
   CheckIcon,
-  HeadphonesIcon,
   MicIcon,
   MicOffIcon,
   PhoneCallIcon,
@@ -32,7 +31,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -40,7 +38,6 @@ import {
   confirmCallingMediaReady,
   getCallingCall,
   getCallingState,
-  getOperatorCallingTimeline,
   issueCallingMediaToken,
   recordCallingDisposition,
   requestCallingHangup,
@@ -51,7 +48,6 @@ import {
 import type {
   CallingCall,
   CallingDispositionResult,
-  OperatorCallingTimeline,
   RingingCallLeg,
   SoftphoneState,
 } from "@/lib/api/generated/types.gen"
@@ -1198,11 +1194,6 @@ export function CallingDock({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {platformOperator && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[32rem]">
-          <OperatorCallInspector />
-        </div>
-      )}
     </CallingNavigationContext.Provider>
   )
 }
@@ -1269,89 +1260,6 @@ function IncomingCallControls({
         </Button>
       </CardFooter>
     </Card>
-  )
-}
-
-function OperatorCallInspector() {
-  const [callID, setCallID] = useState("")
-  const [timeline, setTimeline] = useState<OperatorCallingTimeline>()
-  const [error, setError] = useState("")
-
-  async function inspect() {
-    const token = await getAccessToken()
-    if (!token || !callID.trim()) return
-    setError("")
-    const result = await getOperatorCallingTimeline({
-      client: portalClient(token),
-      path: { callId: callID.trim() },
-    }).catch(() => undefined)
-    if (!result?.data) {
-      setTimeline(undefined)
-      setError("That Call timeline is unavailable to this operator.")
-      return
-    }
-    setTimeline(result.data)
-  }
-
-  return (
-    <section
-      aria-label="Call diagnostics"
-      className="border-b bg-muted/30 px-4 py-3"
-    >
-      <form
-        className="flex flex-wrap items-center gap-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void inspect()
-        }}
-      >
-        <HeadphonesIcon className="size-4" />
-        <span className="text-[13px] font-medium">
-          Call diagnostics
-        </span>
-        <Input
-          aria-label="Call ID"
-          className="h-8 min-w-72 flex-1 font-mono text-xs"
-          placeholder="Call UUID"
-          value={callID}
-          onChange={(event) => setCallID(event.target.value)}
-        />
-        <Button size="sm" type="submit">
-          Inspect
-        </Button>
-      </form>
-      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
-      {timeline && (
-        <div className="mt-3 rounded-md border bg-background p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{timeline.state}</Badge>
-            <span className="font-mono text-xs">{timeline.callId}</span>
-            <span className="text-xs text-muted-foreground">
-              version {timeline.version}
-            </span>
-          </div>
-          <ol className="mt-2 max-h-64 space-y-2 overflow-y-auto">
-            {timeline.entries.map((entry, index) => (
-              <li
-                key={`${entry.occurredAt}:${entry.kind}:${index}`}
-                className="grid gap-1 border-t pt-2 text-xs sm:grid-cols-[minmax(12rem,1fr)_2fr]"
-              >
-                <span className="font-mono">{entry.kind}</span>
-                <span className="text-muted-foreground">
-                  {entry.commandAction &&
-                    `${entry.commandAction} ${entry.commandState} · ${entry.commandAttempts} attempts`}
-                  {entry.receiptState && `receipt ${entry.receiptState}`}
-                  {entry.errorCode && ` · ${entry.errorCode}`}
-                  {` · age ${entry.ageSeconds}s`}
-                  {entry.opaqueReference && ` · ref ${entry.opaqueReference}`}
-                  {` · ${new Date(entry.occurredAt).toLocaleString()}`}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-    </section>
   )
 }
 

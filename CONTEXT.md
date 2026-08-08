@@ -47,13 +47,9 @@ _Avoid_: Agent, member
 
 **Platform Operator**:
 An internal Acuity Health role with visibility across every current and future
-Practice and Location.
+Practice and Location and direct audited write authority under their own
+identity.
 _Avoid_: Super admin, Practice Admin
-
-**Support Mode**:
-A time-limited, Practice-scoped, audited state that permits a Platform Operator
-to change customer data without impersonating a customer User.
-_Avoid_: Impersonation, admin mode
 
 **Invitation**:
 An email-bound, expiring, revocable offer of a Practice role and Location Scope

@@ -150,55 +150,10 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/support-mode:
-    post:
-      operationId: enterSupportMode
-      summary: Enter time-limited Support Mode for one Practice.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EnterSupportModeRequest"
-      responses:
-        "201":
-          description: Active Support Mode.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SupportMode"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/support-mode/{supportSessionId}:
-    delete:
-      operationId: revokeSupportMode
-      summary: Revoke the real operator's active Support Mode.
-      parameters:
-        - name: supportSessionId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "204":
-          description: Support Mode revoked.
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/practices/{practiceId}/locations:
     post:
       operationId: addLocation
-      summary: Add a Location as a Platform Operator in Support Mode.
+      summary: Add a Location as a Platform Operator.
       parameters:
         - name: practiceId
           in: path
@@ -1471,7 +1426,7 @@ paths:
   /v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/requeue:
     post:
       operationId: requeueOperatorProviderReceipt
-      summary: Requeue one quarantined provider receipt in Platform Operator Support Mode.
+      summary: Requeue one quarantined provider receipt as a Platform Operator.
       parameters:
         - name: practiceId
           in: path
@@ -1681,25 +1636,6 @@ components:
         locationScope:
           type: string
           enum: [ALL, SELECTED]
-    SupportMode:
-      type: object
-      additionalProperties: false
-      required: [id, practiceId, reason, startsAt, expiresAt]
-      properties:
-        id:
-          type: string
-          format: uuid
-        practiceId:
-          type: string
-          format: uuid
-        reason:
-          type: string
-        startsAt:
-          type: string
-          format: date-time
-        expiresAt:
-          type: string
-          format: date-time
     Authorization:
       type: object
       additionalProperties: false
@@ -1719,8 +1655,6 @@ components:
           $ref: "#/components/schemas/Location"
         platformOperator:
           type: boolean
-        supportMode:
-          $ref: "#/components/schemas/SupportMode"
     PracticeAccess:
       allOf:
         - $ref: "#/components/schemas/Practice"
@@ -1780,8 +1714,6 @@ components:
           $ref: "#/components/schemas/Membership"
         platformOperator:
           type: boolean
-        supportMode:
-          $ref: "#/components/schemas/SupportMode"
         navigation:
           type: array
           items:
@@ -1798,30 +1730,9 @@ components:
           type: string
         enabled:
           type: boolean
-    EnterSupportModeRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId, reason, durationMinutes]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 500
-        durationMinutes:
-          type: integer
-          minimum: 1
-          maximum: 240
     ProviderReceiptRecoveryRequest:
       type: object
       additionalProperties: false
-      required: [supportSessionId]
-      properties:
-        supportSessionId:
-          type: string
-          format: uuid
     ProviderReceiptRecovery:
       type: object
       additionalProperties: false
@@ -1836,11 +1747,8 @@ components:
     AddLocationRequest:
       type: object
       additionalProperties: false
-      required: [supportSessionId, key, name]
+      required: [key, name]
       properties:
-        supportSessionId:
-          type: string
-          format: uuid
         key:
           type: string
           minLength: 1
@@ -1852,7 +1760,7 @@ components:
     AuditEvent:
       type: object
       additionalProperties: false
-      required: [id, actorSubject, practiceId, supportSessionId, action, reason, createdAt]
+      required: [id, actorSubject, practiceId, action, createdAt]
       properties:
         id:
           type: string
@@ -1860,9 +1768,6 @@ components:
         actorSubject:
           type: string
         practiceId:
-          type: string
-          format: uuid
-        supportSessionId:
           type: string
           format: uuid
         action:
@@ -2654,9 +2559,6 @@ components:
           type: string
           minLength: 1
           maxLength: 500
-        supportSessionId:
-          type: string
-          format: uuid
     TaskTransitionRequest:
       type: object
       additionalProperties: false
@@ -2666,9 +2568,6 @@ components:
           type: integer
           format: int64
           minimum: 1
-        supportSessionId:
-          type: string
-          format: uuid
     MessageDirection:
       type: string
       enum: [INBOUND, OUTBOUND]
@@ -2866,9 +2765,6 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-        supportSessionId:
-          type: string
-          format: uuid
     MessageAttachment:
       type: object
       additionalProperties: false
@@ -2945,16 +2841,9 @@ components:
           type: string
           minLength: 1
           maxLength: 819200
-        supportSessionId:
-          type: string
-          format: uuid
     RetryMessageAttachmentRequest:
       type: object
       additionalProperties: false
-      properties:
-        supportSessionId:
-          type: string
-          format: uuid
     SendMessageAgainRequest:
       type: object
       additionalProperties: false
@@ -2966,16 +2855,9 @@ components:
           maxLength: 200
         duplicateRiskAcknowledged:
           type: boolean
-        supportSessionId:
-          type: string
-          format: uuid
     MarkMessageThreadReadRequest:
       type: object
       additionalProperties: false
-      properties:
-        supportSessionId:
-          type: string
-          format: uuid
     CreateMessageFollowUpTaskRequest:
       type: object
       additionalProperties: false
@@ -2984,9 +2866,6 @@ components:
           type: string
           minLength: 1
           maxLength: 500
-        supportSessionId:
-          type: string
-          format: uuid
     ConversationTimelineItem:
       type: object
       additionalProperties: false
