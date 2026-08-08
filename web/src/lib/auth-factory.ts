@@ -1,6 +1,6 @@
 import { APIError, createAuthMiddleware } from "better-auth/api"
 import { betterAuth } from "better-auth"
-import { jwt } from "better-auth/plugins"
+import { bearer, jwt, oauthPopup } from "better-auth/plugins"
 import { Pool } from "pg"
 
 import {
@@ -106,6 +106,8 @@ export function createAuth() {
       }),
     },
     plugins: [
+      oauthPopup(),
+      bearer({ requireSignature: true }),
       jwt({
         jwt: {
           issuer: baseURL,

@@ -43,7 +43,7 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
     const destination = nextDestination()
     setPending("google")
     setError(null)
-    const result = await authClient.signIn.social({
+    const result = await authClient.signIn.popup({
       provider: "google",
       callbackURL: destination,
       errorCallbackURL: `/sign-in?error=google&next=${encodeURIComponent(destination)}`,
@@ -52,9 +52,12 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
       setPending(null)
       setError({
         source: "google",
-        message: "Google sign-in didn’t finish. Try again or use email.",
+        message: googleErrorMessage(result.error.code),
       })
+      return
     }
+    setPending(null)
+    router.replace(destination)
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -174,6 +177,16 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
       </FieldGroup>
     </form>
   )
+}
+
+function googleErrorMessage(code: string): string {
+  if (code === "POPUP_BLOCKED") {
+    return "Allow pop-ups for Acuity, then try again."
+  }
+  if (code === "POPUP_CLOSED") {
+    return "Google sign-in was closed. Try again or use email."
+  }
+  return "Google sign-in didn’t finish. Try again or use email."
 }
 
 function GoogleMark(props: React.ComponentProps<"svg">) {

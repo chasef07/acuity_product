@@ -29,6 +29,33 @@ test("Portal opens a Google-first sign-in dialog with in-card email", async ({
   await expect(card.getByRole("button", { name: "Sign in" })).toBeVisible()
 })
 
+test("Google sign-in opens in a popup and leaves the portal in place", async ({
+  page,
+}) => {
+  await page.context().route("**/api/auth/oauth-popup/start**", async (route) => {
+    await route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Google sign-in</title>",
+    })
+  })
+  await page.goto("/")
+  await page.getByRole("button", { name: "Portal" }).click()
+
+  const popupPromise = page.waitForEvent("popup")
+  await page.getByRole("button", { name: "Continue with Google" }).click()
+  const popup = await popupPromise
+  const popupURL = new URL(popup.url())
+
+  expect(popupURL.pathname).toBe("/api/auth/oauth-popup/start")
+  expect(popupURL.searchParams.get("provider")).toBe("google")
+  expect(popupURL.searchParams.get("callbackURL")).toBe("/workspace")
+  await expect(page).toHaveURL("/")
+  await expect(
+    page.getByRole("dialog", { name: "Sign in to Acuity" }),
+  ).toBeVisible()
+  await popup.close()
+})
+
 test("sign-in deep links open the dialog with verified invitation state", async ({
   page,
 }) => {
