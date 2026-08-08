@@ -963,6 +963,7 @@ export function TaskWorkspaceShell() {
                   revision={workspaceRevision}
                   headerLeading={<SidebarTrigger />}
                   headerTrailing={<CallingAvailabilityControl />}
+                  onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}
                 />

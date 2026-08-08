@@ -1187,7 +1187,7 @@ export function CallingDock({
         <Alert
           aria-label="Calling status"
           variant="destructive"
-          className="fixed right-4 bottom-4 z-40 max-w-sm"
+          className="pointer-events-none fixed right-4 bottom-4 z-40 max-w-sm"
         >
           <ShieldAlertIcon />
           <AlertTitle>Calling needs attention</AlertTitle>

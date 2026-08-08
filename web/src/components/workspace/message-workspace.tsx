@@ -19,6 +19,7 @@ import {
   CheckSquareIcon,
   CopyIcon,
   DownloadIcon,
+  EllipsisIcon,
   FileTextIcon,
   PaperclipIcon,
   PhoneCallIcon,
@@ -32,6 +33,13 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Empty,
   EmptyDescription,
@@ -54,6 +62,7 @@ import {
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
 import { portalClient } from "@/lib/api/client"
 import {
+  createMessageFollowUpTask,
   getEngagementTimeline,
   getMessageAttachment,
   retryInboundMessageAttachment,
@@ -94,6 +103,7 @@ export function EngagementWorkspace({
   revision,
   headerLeading,
   headerTrailing,
+  onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
@@ -103,6 +113,7 @@ export function EngagementWorkspace({
   revision: number
   headerLeading?: ReactNode
   headerTrailing?: ReactNode
+  onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
 }) {
@@ -228,6 +239,7 @@ export function EngagementWorkspace({
         initialDestination={engagement.phone}
         canMutate={canMutate}
         revision={revision}
+        onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
       />
@@ -242,6 +254,7 @@ function MessageConversation({
   initialDestination,
   canMutate,
   revision,
+  onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
@@ -251,6 +264,7 @@ function MessageConversation({
   initialDestination?: string
   canMutate: boolean
   revision: number
+  onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
@@ -416,6 +430,7 @@ function MessageConversation({
                 item={item}
                 canMutate={canMutate}
                 onChanged={() => void loadLatest(true)}
+                onTaskCreated={onTaskCreated}
                 onTaskOpen={onTaskOpen}
                 onCallOpen={onCallOpen}
               />
@@ -495,12 +510,14 @@ function TimelineEntry({
   item,
   canMutate,
   onChanged,
+  onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
   item: ConversationTimelineItem
   canMutate: boolean
   onChanged: () => void
+  onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
@@ -510,6 +527,7 @@ function TimelineEntry({
         message={item.message}
         canMutate={canMutate}
         onChanged={onChanged}
+        onTaskCreated={onTaskCreated}
       />
     )
   }
@@ -556,15 +574,39 @@ function MessageEntry({
   message,
   canMutate,
   onChanged,
+  onTaskCreated,
 }: {
   message: Message
   canMutate: boolean
   onChanged: () => void
+  onTaskCreated: (task: Task) => void
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
+
+  async function createTask() {
+    setPending(true)
+    setError("")
+    const token = await getAccessToken()
+    if (!token) {
+      setPending(false)
+      return
+    }
+    const result = await createMessageFollowUpTask({
+      client: portalClient(token),
+      path: { messageId: message.id },
+      body: {},
+    }).catch(() => undefined)
+    setPending(false)
+    if (!result?.data) {
+      setError("A follow-up Task could not be created.")
+      return
+    }
+    onTaskCreated(result.data)
+    onChanged()
+  }
 
   async function sendAgain() {
     const duplicateRisk =
@@ -604,7 +646,7 @@ function MessageEntry({
   return (
     <article
       className={cn(
-        "flex w-full",
+        "group/message flex w-full items-start",
         outbound ? "justify-end pl-8" : "justify-start pr-8",
       )}
     >
@@ -685,6 +727,37 @@ function MessageEntry({
           </p>
         )}
       </div>
+      {canMutate && !message.taskId && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Message actions"
+                className={cn(
+                  "mt-1 sm:opacity-0 sm:group-focus-within/message:opacity-100 sm:group-hover/message:opacity-100",
+                  outbound ? "order-first mr-1" : "ml-1",
+                )}
+              />
+            }
+          >
+            <EllipsisIcon />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align={outbound ? "end" : "start"}>
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                disabled={pending}
+                onClick={() => void createTask()}
+              >
+                <CheckSquareIcon />
+                Create task
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </article>
   )
 }

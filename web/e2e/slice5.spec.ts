@@ -208,10 +208,51 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
   await page.setViewportSize({ width: 1280, height: 720 })
 
+  await inbound.hover()
+  await inbound.getByRole("button", { name: "Message actions" }).click()
+  await page.getByRole("menuitem", { name: "Create task" }).click()
+  const taskTouchpoint = page.getByRole("button", {
+    name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+  })
+  await expect(taskTouchpoint).toBeVisible()
+  await taskTouchpoint.click()
+  const contextPanel = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(contextPanel).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(
+    contextPanel.getByRole("heading", { name: "Follow up on text" }),
+  ).toBeVisible()
+  await contextPanel.getByRole("button", { name: "Close context panel" }).click()
+  await expect(contextPanel).not.toBeVisible()
+
+  await page
+    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .click()
+  const sidebarTaskContext = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(
+    sidebarTaskContext.getByRole("heading", {
+      name: "Follow up on text",
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("region", { name: "Task conversation" }),
+  ).toHaveCount(0)
+
   await page.reload()
   await expect(
     page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
+  await expect(sidebarTaskContext).toBeVisible()
   await expect(
     page.getByRole("article").filter({ hasText: inboundText }),
   ).toBeVisible()
@@ -222,6 +263,47 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await page.getByRole("button", { name: "Send message" }).click()
   await expect(
     page.getByRole("article").filter({ hasText: taskReply }),
+  ).toBeVisible()
+
+  await sidebarTaskContext
+    .getByRole("button", { name: "Complete", exact: true })
+    .click()
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled()
+  const recentSection = page.getByRole("button", { name: "Recent", exact: true })
+  if ((await recentSection.getAttribute("aria-expanded")) === "false") {
+    await recentSection.click()
+  }
+  await page
+    .getByRole("button", { name: /\(727\) 555-0199/ })
+    .last()
+    .click()
+  const messageAfterCompletion = "The Task is complete; texting remains available."
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill(messageAfterCompletion)
+  await page.getByRole("button", { name: "Send message" }).click()
+  await expect(
+    page
+      .getByRole("article")
+      .filter({ hasText: messageAfterCompletion }),
+  ).toBeVisible()
+  await page
+    .getByRole("button", {
+      name: /Fixture Location 1 · Task · Completed.*Follow up on text/,
+    })
+    .click()
+  const completedTaskContext = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(completedTaskContext).toBeVisible()
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled()
+  await completedTaskContext.getByRole("button", { name: "Reopen" }).click()
+  await expect(
+    completedTaskContext.getByRole("button", { name: "Complete" }),
   ).toBeVisible()
 
   await sendInbound(page, "slice-5-stop", "STOP")
