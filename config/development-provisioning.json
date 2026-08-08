@@ -58,13 +58,12 @@
           "MessagingProfileID": "fixture-messaging-profile-6"
         }
       ],
-      "Invitations": [
+      "AccessGrants": [
         {
           "Key": "fixture-admin",
           "Email": "admin@abita.test",
           "Role": "ADMIN",
-          "LocationScope": "ALL",
-          "ExpiresAt": "2027-07-24T00:00:00Z"
+          "LocationScope": "ALL"
         },
         {
           "Key": "fixture-selected-staff",
@@ -73,8 +72,7 @@
           "LocationScope": "SELECTED",
           "SelectedLocationKeys": [
             "fixture-location-1"
-          ],
-          "ExpiresAt": "2027-07-24T00:00:00Z"
+          ]
         },
         {
           "Key": "fixture-secondary-staff",
@@ -83,8 +81,7 @@
           "LocationScope": "SELECTED",
           "SelectedLocationKeys": [
             "fixture-location-1"
-          ],
-          "ExpiresAt": "2027-07-24T00:00:00Z"
+          ]
         },
         {
           "Key": "fixture-messaging-staff",
@@ -93,8 +90,7 @@
           "LocationScope": "SELECTED",
           "SelectedLocationKeys": [
             "fixture-location-1"
-          ],
-          "ExpiresAt": "2027-07-24T00:00:00Z"
+          ]
         }
       ]
     }

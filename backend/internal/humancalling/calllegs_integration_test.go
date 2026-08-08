@@ -18,29 +18,183 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestProvisionedGoogleUserReceivesManagedCallingCredential(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "google-calling-readiness-test",
+		Practices: []access.PracticeProvision{{
+			Key:       "google-calling-practice",
+			Name:      "Google Calling Practice",
+			Locations: []access.LocationProvision{{Key: "google-calling-location", Name: "Google Calling Location"}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           "google-calling-staff",
+				Email:         "staff@google-calling.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision Google Staff access: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "google-calling-staff-subject",
+		Email:         "staff@google-calling.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.DiscoverActor(context.Background(), identity); err != nil {
+		t.Fatalf("activate provisioned Google Staff access: %v", err)
+	}
+
+	provider := &recordingProvider{}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatalf("discover managed Staff credential: %v", err)
+	}
+	processed, err := calling.ProcessNextCommand(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("create managed Staff credential: processed=%t err=%v", processed, err)
+	}
+
+	var state, credentialID, sipUsername string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, provider_credential_id, provider_sip_username
+		FROM human_calling_credentials WHERE user_subject = $1
+	`, identity.Subject).Scan(&state, &credentialID, &sipUsername); err != nil {
+		t.Fatalf("read managed Staff credential: %v", err)
+	}
+	if state != "ACTIVE" || credentialID == "" || sipUsername == "" ||
+		provider.count(humancalling.CommandCreateCredential) != 1 {
+		t.Fatalf("managed Staff credential = state=%q id=%q sip=%q commands=%d",
+			state, credentialID, sipUsername,
+			provider.count(humancalling.CommandCreateCredential))
+	}
+	created := provider.last(humancalling.CommandCreateCredential)
+	if created.Payload["connection_id"] != "staff-credential-connection" ||
+		created.Payload["tag"] != "acuity-portal" {
+		t.Fatalf("managed Staff credential command = %#v", created.Payload)
+	}
+}
+
+func TestInboundTransferRingsOnlyAvailableStaffForItsLocation(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "location-ring-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "location-ring-practice",
+			Name: "Location Ring Practice",
+			Locations: []access.LocationProvision{
+				{Key: "sweetwater", Name: "Sweetwater"},
+				{Key: "north-miami-beach-optical", Name: "North Miami Beach Optical"},
+			},
+			AccessGrants: []access.AccessGrantProvision{
+				{Key: "sweetwater-staff", Email: "sweetwater@ring.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"sweetwater"}},
+				{Key: "north-miami-beach-staff", Email: "north-miami-beach@ring.test", Role: access.RoleStaff, LocationScope: access.LocationScopeSelected, SelectedLocationKeys: []string{"north-miami-beach-optical"}},
+				{Key: "practice-admin", Email: "admin@ring.test", Role: access.RoleAdmin, LocationScope: access.LocationScopeAll},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("provision Location-scoped Staff: %v", err)
+	}
+	staff := []access.Identity{
+		{Subject: "sweetwater-staff-subject", Email: "sweetwater@ring.test", EmailVerified: true},
+		{Subject: "north-miami-beach-staff-subject", Email: "north-miami-beach@ring.test", EmailVerified: true},
+		{Subject: "practice-admin-subject", Email: "admin@ring.test", EmailVerified: true},
+	}
+	var sweetwater access.Location
+	var practiceID string
+	for index, identity := range staff {
+		discovery, err := accessModule.DiscoverActor(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("activate Location-scoped user %d: %v", index+1, err)
+		}
+		if index == 0 {
+			practiceID = discovery.Practices[0].ID
+			sweetwater = discovery.Practices[0].Locations[0]
+		}
+	}
+
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "sweetwater-staff-control",
+		CallLegID:     "sweetwater-staff-leg",
+	}}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.wav",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "location-ring-browser")
+
+	if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: "abita-location-ring", PracticeID: practiceID,
+		},
+		LocationID: sweetwater.ID, SourceCallID: "location-ring-source",
+		IdempotencyKey: "location-ring-handoff",
+		Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+	}); err != nil {
+		t.Fatalf("create Sweetwater handoff: %v", err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: "location-ring-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "location-ring-caller-control", CallLegID: "location-ring-caller-leg",
+		CallSessionID: "location-ring-caller-session", From: "+15555550100",
+		To: "+14843989071",
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("admit Sweetwater caller: %v", err)
+	}
+	processAllCommands(t, calling)
+	caller.EventID = "location-ring-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("fan out Sweetwater caller: %v", err)
+	}
+	processAllCommands(t, calling)
+
+	var subjects []string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(array_agg(staff_subject ORDER BY staff_subject), '{}')
+		FROM human_calling_call_legs WHERE role = 'STAFF'
+	`).Scan(&subjects); err != nil {
+		t.Fatalf("read Location-scoped Staff fanout: %v", err)
+	}
+	if len(subjects) != 1 || subjects[0] != "sweetwater-staff-subject" {
+		t.Fatalf("Sweetwater fanout subjects = %#v", subjects)
+	}
+}
+
 func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
 	operator := access.Identity{
-		Subject:       "demo-operator-subject",
-		Email:         "operator@acuity.test",
-		EmailVerified: true,
+		Subject: "demo-operator-subject", Email: "operator@acuity.test", EmailVerified: true,
 	}
 	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment:       "test",
-		RequestedBy:       "demo-operator-calling-test",
+		Environment: "test", RequestedBy: "demo-operator-calling-test",
 		PlatformOperators: []string{operator.Email},
 		Practices: []access.PracticeProvision{{
-			Key:       "acuity-demo",
-			Name:      "Acuity Demo",
+			Key: "acuity-demo", Name: "Acuity Demo",
 			Locations: []access.LocationProvision{{Key: "demo", Name: "Demo"}},
-			Invitations: []access.InvitationProvision{{
-				Key:           "demo-operator-staff",
-				Email:         operator.Email,
-				Role:          access.RoleStaff,
-				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: "demo-operator-staff", Email: operator.Email,
+				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
 			}},
 		}},
 	}); err != nil {
@@ -56,40 +210,28 @@ func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) 
 	demo := discovery.Practices[0]
 
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
-		CallControlID: "demo-operator-control",
-		CallLegID:     "demo-operator-provider-leg",
+		CallControlID: "demo-operator-control", CallLegID: "demo-operator-provider-leg",
 	}}}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
-		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
-		StaffSIPDomain:         "sip.telnyx.com",
+		HandoffSIPDomain: "synthetic.sip.telnyx.com", StaffSIPDomain: "sip.telnyx.com",
 		RingWindowDuration:     20 * time.Second,
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-		FromNumber:             "+14843336938",
-		RingbackURL:            "https://media.synthetic.test/ringback.mp3",
+		FromNumber:             "+14843336938", RingbackURL: "https://media.synthetic.test/ringback.mp3",
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, []access.Identity{operator}, "demo-operator-browser")
 
-	handoff, err := calling.CreateHandoff(context.Background(),
-		humancalling.CreateHandoffCommand{
-			Service: humancalling.ServiceIdentity{
-				Subject:    "demo-agent",
-				PracticeID: demo.ID,
-			},
-			LocationID:     demo.Locations[0].ID,
-			SourceCallID:   "demo-operator-source-call",
-			IdempotencyKey: "demo-operator-handoff",
-			Contact: humancalling.ContactContext{
-				Phone:          "+15555550100",
-				PhoneSource:    "Demo",
-				DisplayName:    "Demo Caller",
-				NameSource:     "Demo",
-				TransferReason: "Demo test",
-				ReasonSource:   "Demo",
-			},
-		})
+	handoff, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service:    humancalling.ServiceIdentity{Subject: "demo-agent", PracticeID: demo.ID},
+		LocationID: demo.Locations[0].ID, SourceCallID: "demo-operator-source-call",
+		IdempotencyKey: "demo-operator-handoff",
+		Contact: humancalling.ContactContext{
+			Phone: "+15555550100", PhoneSource: "Demo", DisplayName: "Demo Caller",
+			NameSource: "Demo", TransferReason: "Demo test", ReasonSource: "Demo",
+		},
+	})
 	if err != nil {
 		t.Fatalf("create demo handoff: %v", err)
 	}
@@ -97,15 +239,10 @@ func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) 
 		t.Fatal("demo handoff is missing its SIP destination")
 	}
 	fact := humancalling.ProviderFact{
-		EventID:       "demo-operator-caller-initiated",
-		Type:          humancalling.FactCallInitiated,
-		OccurredAt:    now,
-		ConnectionID:  "staff-call-control-connection",
-		CallControlID: "demo-caller-control",
-		CallLegID:     "demo-caller-provider-leg",
-		CallSessionID: "demo-caller-session",
-		From:          "+15555550100",
-		To:            "+14843989071",
+		EventID: "demo-operator-caller-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "demo-caller-control", CallLegID: "demo-caller-provider-leg",
+		CallSessionID: "demo-caller-session", From: "+15555550100", To: "+14843989071",
 	}
 	if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
 		t.Fatalf("admit demo caller: %v", err)

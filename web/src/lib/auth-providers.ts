@@ -1,5 +1,9 @@
 type AuthEnvironment = Record<string, string | undefined>
 
+type PortalAuthenticationConfiguration = {
+  socialProviders: NonNullable<ReturnType<typeof googleProviderConfiguration>>
+}
+
 export function googleProviderConfiguration(
   environment: AuthEnvironment = process.env
 ) {
@@ -22,8 +26,12 @@ export function googleProviderConfiguration(
   }
 }
 
-export function googleAuthEnabled(
+export function portalAuthenticationConfiguration(
   environment: AuthEnvironment = process.env
-): boolean {
-  return googleProviderConfiguration(environment) !== undefined
+): PortalAuthenticationConfiguration {
+  const socialProviders = googleProviderConfiguration(environment)
+  if (!socialProviders) {
+    throw new Error("Google authentication is required")
+  }
+  return { socialProviders }
 }

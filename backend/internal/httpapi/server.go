@@ -250,26 +250,17 @@ func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Re
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	token := ""
-	if body.InvitationToken != nil {
-		token = *body.InvitationToken
-	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	preview, err := server.access.InspectInvitation(ctx, access.InvitationInspection{
-		Token: token,
-		Email: string(body.Email),
+	eligibility, err := server.access.InspectSignUpEligibility(ctx, string(body.Email))
+	if err != nil {
+		server.writeAccessError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.SignUpEligibility{
+		Kind:  api.SignUpEligibilityKind(eligibility.Kind),
+		Email: apiEmail(eligibility.Email),
 	})
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	response, err := invitationPreviewResponse(preview)
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
 }
 
 func (server *Server) InspectInvitation(w http.ResponseWriter, r *http.Request) {

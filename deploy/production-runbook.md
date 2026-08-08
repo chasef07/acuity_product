@@ -213,20 +213,20 @@ service's complete secret mapping. The checked deployment renderer uses the
 complete `--set-secrets` contract only when creating the whole service.
 
 Google identity is authentication, not authorization. Better Auth creates a
-Google-backed user only when `Access` confirms the email is eligible. A
-provisioned Platform Operator may activate directly with Google. Practice users
-first activate through the current email-bound invitation flow, then may use
-Google with the same verified email. Acceptance requires one eligible Google
-login, one ineligible Google login rejection, and proof that the eligible user
-receives only the scope authorized by `Access`.
+Google-backed User only when `Access` confirms the verified email has an
+unrevoked Access Grant or Platform Operator record. The first Access discovery
+claims a Practice Access Grant and creates its exact Membership atomically.
+Acceptance requires one eligible Google login, one ineligible Google login
+rejection, and proof that the eligible User receives only the scope authorized
+by `Access`. Production has no password or verification-email authentication.
 
 ## Clean-stack bootstrap
 
 A schema-only database is intentionally unusable for provider traffic. Before
-provider routing, provision only the required Practice, Location, voice number,
-and Messaging profile configuration through the reviewed provisioning path.
-Invitations may remain empty until a real operator is invited. Do not copy
-calls, messages, users, or patient history merely to create this configuration.
+provider routing, provision the required Practice, Location, voice number,
+Messaging profile, and reviewed Access Grant configuration through the audited
+provisioning path. Do not copy calls, messages, Users, or patient history merely
+to create this configuration.
 
 The reviewed bootstrap input is
 `config/production-provisioning.json`; the backend image carries the same file
@@ -246,7 +246,9 @@ The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
 voicemail greeting. The Demo Practice is a separate tenant and uses its own
 greeting and Telnyx Messaging profile. Hollywood and Sweetwater Optical have no
 voice or Messaging configuration yet; no number or sender is inferred by this
-topology change. No invitation or human credential is provisioned by this file.
+topology change. The same file contains 31 Abita Access Grants: Jason is the
+sole Admin and the other 30 entries are Staff with reviewed Location Scopes.
+Access Grants emit no invitation credential or human password.
 
 Migration `0023_split_abita_locations.sql` upgrades the already-provisioned
 four-Location production topology before account provisioning. It preserves the
@@ -254,33 +256,33 @@ existing South Florida Medical row and its `+17864654836` voice/Messaging
 configuration as Sweetwater, preserves South Florida Optical and its
 `+13055095333` voice configuration as North Miami Beach Optical, and creates
 Hollywood and Sweetwater Optical with their own office routes. It fails closed
-if Abita invitations or Memberships exist, or if the combined
+if Abita Access Grants or Memberships exist, or if the combined
 Hollywood/Sweetwater Location contains a Call, handoff, voicemail, Message
 thread, or Task. Those conditions require an explicit data migration instead
 of relabeling records.
 
-This production input fails inside the atomic provisioning transaction unless
-`access_practices` and `access_platform_operators` are empty. That prevents the
-known legacy test Location from surviving as hidden configuration. Better Auth
-owns `auth.user`, so the operator must verify it separately before execution.
-The current pre-launch database must therefore be reset to the reviewed schema
-as a separate approved destructive action before this command is run; this
-pull request neither resets that database nor preserves test data. Verify all
-three preconditions directly:
+The production input now reconciles the established reviewed topology by stable
+provisioning keys and adds the approved Access Grants idempotently. Before the
+first account run, verify that no earlier Abita grant or Membership exists. A
+nonzero result is a stop-and-inspect condition, not permission to delete data:
 
 ```sql
 SELECT
-  (SELECT count(*) FROM access_practices) AS practices,
-  (SELECT count(*) FROM access_platform_operators) AS platform_operators,
-  (SELECT count(*) FROM auth."user") AS users;
+  (SELECT count(*)
+   FROM access_grants access_grant
+   JOIN access_practices practice ON practice.id = access_grant.practice_id
+   WHERE practice.provisioning_key = 'abita-eye-group') AS access_grants,
+  (SELECT count(*)
+   FROM access_memberships membership
+   JOIN access_practices practice ON practice.id = membership.practice_id
+   WHERE practice.provisioning_key = 'abita-eye-group') AS memberships;
 ```
 
-All three values must be zero. A nonzero Access value is also rejected by the
-checked input. Any nonzero value is a stop condition, not a reason to delete
-data ad hoc.
+Both values must be zero for the first run. A later reviewed rerun may find the
+same 31 provisioning keys and creates no duplicates.
 
 After reviewing the exact image digest and JSON, an operator may run the
-one-time bootstrap against the existing `acuity-migrate` job:
+reconciliation against the existing `acuity-migrate` job:
 
 ```sh
 gcloud run jobs update acuity-migrate \
@@ -305,11 +307,12 @@ gcloud run jobs update acuity-migrate \
 
 Access, Messaging, and voice configuration commit in one PostgreSQL
 transaction; any validation failure rolls the entire customer topology back.
-The restricted provisioning output is synced before that commit. Stop after
-any failed command and inspect the migration execution before doing anything
-else. Do not rerun merely because environment cleanup failed. Ordinary releases
-also remove these one-time variables before migration, so they preserve the
-provisioned rows without silently replaying this bootstrap.
+The restricted provisioning output is synced before that commit and contains no
+credentials for Access Grants. Stop after any failed command and inspect the
+migration execution before doing anything else. Do not rerun merely because
+environment cleanup failed. Ordinary releases remove these variables before
+migration, so they preserve the provisioned rows without silently replaying the
+reconciliation.
 
 The checked JSON and deterministic PostgreSQL test prove only the intended
 database topology. Before provider traffic, separately prove the production
@@ -318,8 +321,30 @@ signed webhook receipt, staff call fanout, shared voicemail playback, outbound
 caller ID, and real SMS send/receive plus STOP/HELP behavior. Crystal River's
 AI transfer to the external cell remains owned by `abita_agent` and needs a
 live transfer test. The Demo path still needs a signed-in portal-to-database-to-
-worker-to-provider/handset test. Add real staff invitations only after their
-email addresses and exact Location scopes are approved.
+worker-to-provider/handset test. Activate one reviewed Staff Access Grant with
+Google and verify its exact Location scope before broad staff sign-in.
+The worker should discover the new operational User within 30 seconds and create
+one unique Telnyx on-demand telephony credential on the shared Product WebRTC
+Connection. Do not create a per-user Telnyx connection manually. Verify the
+credential reached `ACTIVE` before marking the User calling-ready:
+
+```sql
+SELECT credential.state,
+       credential.provider_credential_id IS NOT NULL AS has_provider_credential,
+       credential.provider_sip_username IS NOT NULL AS has_sip_username
+FROM human_calling_credentials credential
+JOIN access_memberships membership
+  ON membership.user_subject = credential.user_subject
+WHERE membership.email = '<reviewed Google email>'
+  AND membership.revoked_at IS NULL;
+```
+
+Calling-ready also requires the Staff browser softphone to be registered,
+microphone/audio healthy, and explicitly available. Inbound transfers fan out
+only to available Staff whose Location Scope includes the Call's Location;
+Practice Admins do not join inbound fan-out. Task access follows the Membership
+immediately. Messaging follows the same Location Scope, but outbound messages
+require an activated sender in the topology table above.
 
 ## Restore rehearsal
 

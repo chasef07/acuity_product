@@ -1,36 +1,20 @@
 "use client"
 
-import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Field,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
+import { FieldError, FieldGroup } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
 
-export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
+export function SignInForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [emailExpanded, setEmailExpanded] = useState(!googleEnabled)
-  const [pending, setPending] = useState<"google" | "email" | null>(null)
-  const [error, setError] = useState<{
-    source: "google" | "email"
-    message: string
-  } | null>(
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(
     searchParams.get("error") === "google"
-      ? {
-          source: "google",
-          message: "Google sign-in didn’t finish. Try again or use email.",
-        }
+      ? "Google sign-in didn’t finish. Try again."
       : null,
   )
 
@@ -41,7 +25,7 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
 
   async function signInWithGoogle() {
     const destination = nextDestination()
-    setPending("google")
+    setPending(true)
     setError(null)
     const result = await authClient.signIn.popup({
       provider: "google",
@@ -49,125 +33,32 @@ export function SignInForm({ googleEnabled }: { googleEnabled: boolean }) {
       errorCallbackURL: `/sign-in?error=google&next=${encodeURIComponent(destination)}`,
     })
     if (result?.error) {
-      setPending(null)
-      setError({
-        source: "google",
-        message: googleErrorMessage(result.error.code),
-      })
+      setPending(false)
+      setError(googleErrorMessage(result.error.code))
       return
     }
-    setPending(null)
+    setPending(false)
     router.replace(destination)
   }
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setPending("email")
-    setError(null)
-    const data = new FormData(event.currentTarget)
-    const result = await authClient.signIn.email({
-      email: String(data.get("email") ?? ""),
-      password: String(data.get("password") ?? ""),
-      rememberMe: true,
-    })
-    setPending(null)
-    if (result.error) {
-      setError({
-        source: "email",
-        message: "Email or password didn’t match. Try again or reset it.",
-      })
-      return
-    }
-    router.replace(nextDestination())
-  }
-
   return (
-    <form onSubmit={submit}>
-      <FieldGroup>
-        {searchParams.get("verified") === "1" && (
-          <Alert>
-            <AlertTitle>Email verified</AlertTitle>
-            <AlertDescription>
-              Sign in to activate your Acuity invitation.
-            </AlertDescription>
-          </Alert>
+    <FieldGroup>
+      <Button
+        type="button"
+        size="lg"
+        className="w-full rounded-full"
+        disabled={pending}
+        onClick={signInWithGoogle}
+      >
+        {pending ? (
+          <Spinner data-icon="inline-start" />
+        ) : (
+          <GoogleMark data-icon="inline-start" />
         )}
-        {googleEnabled && (
-          <>
-            <Button
-              type="button"
-              size="lg"
-              className="w-full rounded-full"
-              disabled={pending !== null}
-              onClick={signInWithGoogle}
-            >
-              {pending === "google" ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <GoogleMark data-icon="inline-start" />
-              )}
-              Continue with Google
-            </Button>
-            <Separator />
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full text-muted-foreground"
-              aria-controls="email-sign-in-fields"
-              aria-expanded={emailExpanded}
-              disabled={pending !== null}
-              onClick={() => setEmailExpanded(true)}
-            >
-              Use email instead
-            </Button>
-            {error?.source === "google" && (
-              <FieldError>{error.message}</FieldError>
-            )}
-          </>
-        )}
-        {emailExpanded && (
-          <FieldGroup id="email-sign-in-fields">
-            <Field data-invalid={error?.source === "email"}>
-              <FieldLabel htmlFor="email">Email</FieldLabel>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                aria-invalid={error?.source === "email"}
-                required
-              />
-            </Field>
-            <Field data-invalid={error?.source === "email"}>
-              <div className="flex items-center justify-between">
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Link
-                  href="/forgot-password"
-                  className="rounded-sm text-xs text-muted-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/30"
-                >
-                  Forgot password?
-                </Link>
-              </div>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                aria-invalid={error?.source === "email"}
-                required
-              />
-              {error?.source === "email" && (
-                <FieldError>{error.message}</FieldError>
-              )}
-            </Field>
-            <Button type="submit" size="lg" disabled={pending !== null}>
-              {pending === "email" && <Spinner data-icon="inline-start" />}
-              Sign in
-            </Button>
-          </FieldGroup>
-        )}
-      </FieldGroup>
-    </form>
+        Continue with Google
+      </Button>
+      {error && <FieldError>{error}</FieldError>}
+    </FieldGroup>
   )
 }
 
@@ -176,9 +67,9 @@ function googleErrorMessage(code: string): string {
     return "Allow pop-ups for Acuity, then try again."
   }
   if (code === "POPUP_CLOSED") {
-    return "Google sign-in was closed. Try again or use email."
+    return "Google sign-in was closed. Try again."
   }
-  return "Google sign-in didn’t finish. Try again or use email."
+  return "Google sign-in didn’t finish. Try again."
 }
 
 function GoogleMark(props: React.ComponentProps<"svg">) {

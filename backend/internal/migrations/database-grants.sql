@@ -16,6 +16,8 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA auth FROM acuity_auth;
 -- portal-api: Access, HumanCalling command/read paths, and Work.
 GRANT SELECT ON TABLE
     public.access_abita_office_locations,
+    public.access_grant_locations,
+    public.access_grants,
     public.access_audit_events,
     public.access_invitation_locations,
     public.access_invitations,
@@ -123,6 +125,7 @@ ON TABLE public.human_calling_provider_commands
 TO acuity_portal;
 
 GRANT UPDATE ON TABLE
+    public.access_grants,
     public.access_invitations,
     public.access_locations,
     public.access_memberships,

@@ -1,9 +1,9 @@
-import { readFile, writeFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
 import { spawn } from "node:child_process"
 
 import { expect, test, type Page } from "@playwright/test"
 
-import { latestEmail } from "./support"
+import { signInAs } from "./support"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL =
@@ -14,68 +14,16 @@ const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 const replacementRealtimePIDFile =
   process.env.E2E_REALTIME_REPLACEMENT_PID_FILE
 
-test("Slice 1 invite, authority, operator analytics, recovery, and reconnect", async ({
+test("Slice 1 authority, operator analytics, browser state, and reconnect", async ({
   browser,
   page,
 }, testInfo) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
-  const provisioned = JSON.parse(
-    await readFile(provisioningOutput!, "utf8"),
-  ) as {
-    invitations: Array<{ email: string; token: string }>
-  }
-  const adminInvite = provisioned.invitations.find(
-    (invitation) => invitation.email === "admin@abita.test",
-  )
-  expect(adminInvite?.token).toBeTruthy()
-
-  await test.step("public sign-up is visibly and behaviorally rejected", async () => {
-    await page.goto("/sign-up")
-    await expect(
-      page.getByRole("heading", { name: "Public sign-up is unavailable" }),
-    ).toBeVisible()
-    const response = await page.request.post(`${webURL}/api/auth/sign-up/email`, {
-      headers: { origin: webURL },
-      data: {
-        name: "Uninvited User",
-        email: "uninvited@example.test",
-        password: "not-a-real-password-123",
-      },
-    })
-    expect(response.status()).toBe(403)
-  })
 
   const customerContext = page.context()
   await abortFirstRealtimeRequest(page)
-  await test.step("invited Admin creates and verifies a private account", async () => {
-    await page.goto(`/invite#${adminInvite!.token}`)
-    await expect(page).toHaveURL(`${webURL}/invite`)
-    await expect(
-      page.getByRole("heading", { name: "Create your account" }),
-    ).toBeVisible()
-    await expect(page.getByText("Abita Eye Group")).toBeVisible()
-    await expect(page.getByText("All current and future Locations")).toBeVisible()
-    await page.getByLabel("Your name").fill("Fixture Admin")
-    await page.getByLabel("Create password").fill("fixture-password-1234")
-    await page.getByLabel("Confirm password").fill("fixture-password-1234")
-    await page.getByRole("button", { name: "Create private account" }).click()
-    await expect(page.getByText("Check your email")).toBeVisible()
-
-    const verificationURL = await latestEmail(
-      page,
-      "admin@abita.test",
-      "verification",
-    )
-    expect(verificationURL).toContain("/verify-email#")
-    await page.goto(verificationURL)
-    await expect(
-      page.getByRole("heading", { name: "Sign in to Acuity" }),
-    ).toBeVisible()
-    await page.getByRole("button", { name: "Use email instead" }).click()
-    await page.getByLabel("Email").fill("admin@abita.test")
-    await page.getByLabel("Password").fill("fixture-password-1234")
-    await page.getByRole("button", { name: "Sign in" }).click()
-    await expect(page).toHaveURL(/\/workspace$/)
+  await test.step("provisioned Admin receives an authenticated session", async () => {
+    await signInAs(page, "admin@abita.test", "Fixture Admin")
     await expect(page.getByText("No open Tasks")).toBeVisible()
     const workspaceSelector = page.getByRole("button", {
       name: "Workspace selector",
@@ -183,30 +131,7 @@ test("Slice 1 invite, authority, operator analytics, recovery, and reconnect", a
   const operatorContext = await browser.newContext()
   const operatorPage = await operatorContext.newPage()
   await test.step("Platform Operator writes directly and gets workspace analytics", async () => {
-    await operatorPage.goto("/operator-access")
-    await operatorPage.getByLabel("Your name").fill("Fixture Founder")
-    await operatorPage
-      .getByLabel("Provisioned operator email")
-      .fill("founder@acuity.test")
-    await operatorPage.getByLabel("Create password").fill("operator-password-1234")
-    await operatorPage
-      .getByLabel("Confirm password")
-      .fill("operator-password-1234")
-    await operatorPage
-      .getByRole("button", { name: "Create operator account" })
-      .click()
-    const verificationURL = await latestEmail(
-      operatorPage,
-      "founder@acuity.test",
-      "verification",
-    )
-    await operatorPage.goto(verificationURL)
-    await operatorPage
-      .getByRole("button", { name: "Use email instead" })
-      .click()
-    await operatorPage.getByLabel("Email").fill("founder@acuity.test")
-    await operatorPage.getByLabel("Password").fill("operator-password-1234")
-    await operatorPage.getByRole("button", { name: "Sign in" }).click()
+    await signInAs(operatorPage, "founder@acuity.test", "Fixture Founder")
     await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
     await expect(
       operatorPage.getByRole("region", { name: "Call diagnostics" }),
@@ -262,30 +187,8 @@ test("Slice 1 invite, authority, operator analytics, recovery, and reconnect", a
     ).toContainText("Transcripts, latency, and call performance")
   })
 
-  await test.step("recovery, persisted theme, and explicit browser states", async () => {
-    await page.goto("/forgot-password")
-    await page.getByLabel("Verified email").fill("admin@abita.test")
-    await page.getByRole("button", { name: "Send recovery link" }).click()
-    const recoveryURL = await latestEmail(
-      page,
-      "admin@abita.test",
-      "password-reset",
-    )
-    expect(recoveryURL).toContain("/reset-password#")
-    await page.goto(recoveryURL)
-    await expect(page).toHaveURL(`${webURL}/reset-password`)
-    await page
-      .getByLabel("New password", { exact: true })
-      .fill("updated-password-1234")
-    await page.getByLabel("Confirm new password").fill("updated-password-1234")
-    await page.getByRole("button", { name: "Update password" }).click()
-    await expect(page.getByText("Password updated")).toBeVisible()
-
-    await page.goto("/sign-in")
-    await page.getByRole("button", { name: "Use email instead" }).click()
-    await page.getByLabel("Email").fill("admin@abita.test")
-    await page.getByLabel("Password").fill("updated-password-1234")
-    await page.getByRole("button", { name: "Sign in" }).click()
+  await test.step("persisted theme and explicit browser states", async () => {
+    await page.goto("/workspace")
     await expect(page.getByText("No open Tasks")).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),

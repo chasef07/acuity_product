@@ -19,7 +19,6 @@ set -eu
 : "${BETTER_AUTH_SECRET_SECRET:?required Secret Manager secret name}"
 : "${GOOGLE_CLIENT_ID_SECRET:?required Secret Manager secret name}"
 : "${GOOGLE_CLIENT_SECRET_SECRET:?required Secret Manager secret name}"
-: "${SMTP_PASSWORD_SECRET:?required Secret Manager secret name}"
 : "${TELNYX_API_KEY_SECRET:?required Secret Manager secret name}"
 : "${MESSAGING_MEDIA_SIGNING_KEY_SECRET:?required Secret Manager secret name}"
 : "${HANDOFF_TOKEN_KEY_SECRET:?required Secret Manager secret name}"
@@ -33,10 +32,6 @@ set -eu
 : "${BETTER_AUTH_ISSUER:?required}"
 : "${PORTAL_API_AUDIENCE:?required}"
 : "${PORTAL_API_INTERNAL_URL:?required}"
-: "${SMTP_HOST:?required}"
-: "${SMTP_PORT:?required}"
-: "${SMTP_USER:?required}"
-: "${AUTH_EMAIL_FROM:?required}"
 : "${HUMAN_CALLING_SIP_DOMAIN:?required}"
 : "${HUMAN_CALLING_STAFF_SIP_DOMAIN:?required}"
 : "${HANDOFF_SERVICE_SUBJECT:?required}"
@@ -236,8 +231,8 @@ gcloud run deploy acuity-web \
   --concurrency "$runtime_concurrency" \
   --min "$runtime_minimum" \
   --max "$runtime_maximum" \
-  --set-secrets "AUTH_DATABASE_URL=${WEB_AUTH_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET_SECRET}:latest,GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID_SECRET}:latest,GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET_SECRET}:latest,SMTP_PASSWORD=${SMTP_PASSWORD_SECRET}:latest" \
-  --set-env-vars "AUTH_DB_POOL_MAX=${runtime_pool},AUTH_DB_ACQUIRE_TIMEOUT_MS=${runtime_timeout},BETTER_AUTH_URL=${BROWSER_ORIGIN},BETTER_AUTH_TRUSTED_ORIGINS=${BROWSER_ALLOWED_ORIGINS},PORTAL_API_INTERNAL_URL=${PORTAL_API_INTERNAL_URL},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},AUTH_EMAIL_MODE=smtp,SMTP_HOST=${SMTP_HOST},SMTP_PORT=${SMTP_PORT},SMTP_USER=${SMTP_USER},AUTH_EMAIL_FROM=${AUTH_EMAIL_FROM}" \
+  --set-secrets "AUTH_DATABASE_URL=${WEB_AUTH_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET_SECRET}:latest,GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID_SECRET}:latest,GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET_SECRET}:latest" \
+  --set-env-vars "AUTH_DB_POOL_MAX=${runtime_pool},AUTH_DB_ACQUIRE_TIMEOUT_MS=${runtime_timeout},BETTER_AUTH_URL=${BROWSER_ORIGIN},BETTER_AUTH_TRUSTED_ORIGINS=${BROWSER_ALLOWED_ORIGINS},PORTAL_API_INTERNAL_URL=${PORTAL_API_INTERNAL_URL},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE}" \
   --no-invoker-iam-check
 
 load_contract_row worker

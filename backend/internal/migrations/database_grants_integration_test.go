@@ -436,6 +436,8 @@ func expectedTablePrivileges() map[string]bool {
 
 	portalReads := []string{
 		"access_abita_office_locations",
+		"access_grant_locations",
+		"access_grants",
 		"access_audit_events",
 		"access_invitation_locations",
 		"access_invitations",
@@ -488,6 +490,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_tasks",
 	)
 	grant("acuity_portal", "UPDATE",
+		"access_grants",
 		"access_invitations",
 		"access_locations",
 		"access_memberships",

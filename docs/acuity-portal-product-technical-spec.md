@@ -87,7 +87,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 46. As a staff member, I want to create at most one follow-up Task explicitly from a Message, so that accountability is a human decision with a durable source.
 47. As a staff member, I want to send SMS/MMS from a conversation or linked Task and see provider-backed delivery state, so that patient communication is visible to the team.
 48. As a staff member, I want AI to draft a patient response while requiring my confirmation before send, so that writing is faster without silently sending consequential content.
-49. As an administrator, I want to invite staff and assign authorized locations, so that access matches operational responsibility.
+49. As an administrator, I want to provision staff emails and assign authorized locations, so that access matches operational responsibility.
 50. As an administrator, I want to see all tasks across the practice's locations, so that I can supervise the complete workload.
 51. As a staff member, I want to see only data for authorized practices and locations, so that patient information does not cross tenant boundaries.
 52. As an operator, I want failed provider actions and unavailable recordings to be visible and retryable, so that failure cannot masquerade as success.
@@ -97,7 +97,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 56. As an operator, I want searchable human call history and a protected voicemail archive, so that communication evidence remains accessible without recording connected calls.
 57. As an operator, I want short-lived protected access to recordings rather than public URLs, so that sensitive audio is not exposed.
 58. As a product owner, I want every critical journey exercised against production-like Telnyx, SMS, Better Auth, and database dependencies before launch, so that August 6 is a production release rather than a demo.
-59. As an invited user, I want to verify my email and create my own password, so that no administrator creates or knows my credentials.
+59. As a provisioned user, I want my verified Google identity to activate my assigned access automatically, so that no separate Acuity password or verification email is required.
 60. As an administrator, I want every current and future location in my practice to be available automatically, so that adding a location does not silently exclude practice leadership.
 61. As a Platform Operator, I want to discover every practice and location while working inside an explicit active scope, so that I can support customers without mixing their work.
 62. As a Platform Operator, I want to change customer data directly under my real identity, so that operational work stays simple and every elevated action remains auditable.
@@ -303,7 +303,7 @@ PostgreSQL
     └── Sole durable product source of truth
 ```
 
-- `Access` owns human and service principals, invitations, memberships, roles, location scope, and authorization decisions.
+- `Access` owns human and service principals, Access Grants, Memberships, roles, location scope, and authorization decisions.
 - `Work` owns task creation, assignment, priority, status, completion, reopening, task activity, and queue projections.
 - `HumanCalling` owns availability, Call and CallLeg state, provider-confirmed answer arbitration, explicit Bridge commands, disposition, canonical voicemail lifecycle, recording identity, authorization metadata, and playback audit. Telnyx decides voice outcomes; PostgreSQL records requested commands and observed facts.
 - `Messaging` owns Location-scoped conversations, inbound correlation, durable
@@ -381,7 +381,7 @@ all Go roles ── bounded connections ──> PostgreSQL
 - **PlatformOperator** for the small set of internal Acuity users with global visibility
 - **Membership** with Admin or Staff role and `ALL` or `SELECTED` location scope
 - **MembershipLocation** entries for each explicitly selected location
-- **Invitation** with email, practice, role, location scope, expiration, revocation, and acceptance state
+- **AccessGrant** with email, practice, role, location scope, revocation, and claim state
 - **ServiceIdentity** with minimum practice/location scope
 - **Task** with tenant, location, contact-context snapshot, source, title, status, priority, optional assignee, version, optional due time, and completion metadata
 - **Activity** with task, actor, type, timestamp, and normalized display payload
@@ -426,10 +426,10 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 
 ### 14. Authentication and authorization
 
-- Human access is invite-only. Public sign-up is disabled.
-- The first release supports Google sign-in and verified email/password with account recovery. Google proves identity but does not grant access: Better Auth user creation fails closed unless `Access` confirms eligibility. Provisioned Platform Operators may activate directly with Google; Practice users activate through their email-bound invitation before using Google on the same verified email. Users create their own passwords from the invitation flow; no operator creates or knows another user's credentials.
-- MFA, magic-link authentication, and customer-managed SSO are out of scope for the first release.
-- Better Auth in Next.js owns human sign-in, email verification, account recovery, and browser-session lifecycle.
+- Human access is Google-only and preauthorized by email. Public sign-up is disabled.
+- Google proves identity but does not grant access: Better Auth User creation fails closed unless `Access` confirms an unrevoked Access Grant or Platform Operator record for the same verified email. The first authorized Access discovery atomically claims a pending Access Grant and creates its exact Membership.
+- Password authentication, verification email, recovery email, MFA, magic-link authentication, and customer-managed SSO are out of scope for the first release.
+- Better Auth in Next.js owns Google sign-in and browser-session lifecycle.
 - The browser obtains a short-lived Better Auth JWT for direct `portal-api` calls.
 - The Go `Access` module verifies signature, issuer, audience, and expiration locally against cached Better Auth JWKS. It does not call Next.js on every request or read Better Auth session tables as an authorization mechanism.
 - Better Auth proves who the human is. PostgreSQL membership data and the Go `Access` module are the sole authority for what that human may do.
@@ -438,8 +438,8 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - `ALL` includes every current and future location in the practice. `SELECTED` includes only explicit membership-location grants.
 - Platform Operators are not duplicated as Admin memberships in every practice. They can discover and read every current and future practice/location but still select an explicit active practice and location.
 - A Platform Operator mutates customer data directly under their real identity. Every operator mutation records the real Platform Operator in the same transaction and never impersonates a customer user.
-- Each invitation is email-bound, expiring, and revocable and specifies practice, role, and location scope before send.
-- Practice, Location, Abita Office Route, Platform Operator, and initial invitation records are created through an auditable provisioning path that accepts business facts, not human passwords. Provisioning may map several Abita office keys to one operational Location, but each office key has exactly one Location owner within its Practice. A clean-launch contract may require empty Access-owned state and must fail inside the provisioning transaction before customer-data mutation when that precondition is false. Better Auth User emptiness remains a separate migration preflight because Better Auth owns that table.
+- Each Access Grant is email-bound and revocable and specifies Practice, role, and Location Scope before first sign-in.
+- Practice, Location, Abita Office Route, Platform Operator, and initial Access Grant records are created through an auditable provisioning path that accepts business facts, not human credentials. Provisioning may map several Abita office keys to one operational Location, but each office key has exactly one Location owner within its Practice. Established topology reconciliation is idempotent by provisioning key.
 - Integration credentials are separate service identities with the minimum required practice/location scope. Mutations record `actor_type=service` and the stable service actor ID.
 - Do not duplicate practice/location authorization in Better Auth organization permissions.
 - Better Auth may use the same PostgreSQL instance, but its tables remain private to Better Auth and the Go runtime never mutates them.
@@ -542,7 +542,7 @@ This is the highest useful seam because it proves the product promise while allo
 26. Killing a worker mid-job releases or expires its lease and safely resumes without double-applying the effect.
 27. Adding a location immediately grants access to Admin and `ALL`-scope Staff memberships but not `SELECTED`-scope Staff memberships.
 28. A Platform Operator can read every practice but cannot mutate customer data without an active Support Session for that practice; mutations retain the real actor, reason, and audit trail.
-29. Public sign-up is rejected, and an invitation can activate an account without any operator creating or learning the user's password.
+29. Public sign-up is rejected, and a provisioned verified Google email activates only its assigned Membership without an Acuity password or verification email.
 30. Sidebar navigation, context opening, and realtime reconnect do not unmount or lose an active call or the selected engagement workspace.
 
 ### Performance targets
@@ -578,12 +578,12 @@ The August 6 release does not ship until all conditions are proven:
 12. Provider events and AI task requests are authenticated, idempotent, and cannot create duplicates when retried.
 13. Concurrent task actions cannot overwrite ownership or issue duplicate patient contact.
 14. Cross-practice/location data access is denied and ordinary logs contain no protected content.
-15. Scoped staff invitations, short-lived evidence access, deployment, backups, rollback, monitoring, and the complete production journey are tested before launch.
+15. Scoped staff Access Grants, short-lived evidence access, deployment, backups, rollback, monitoring, and the complete production journey are tested before launch.
 16. API commands, provider ingress, realtime streams, durable workers, and migrations run in their specified isolated runtime roles from one tested backend image.
 17. The maximum connection budget holds under peak traffic, webhook bursts, worker backlog, SSE load, and an overlapping rollout.
 18. Cloud SQL outage/restore, runtime termination, webhook retry, worker recovery, SSE reconnect, and traffic rollback are rehearsed without data loss or false success.
 19. The approved capacity envelope and burst factor are exercised successfully with measurable database, pool, runtime, and provider headroom.
-20. Invite-only access, dynamic location scope, direct audited Platform Operator writes, and the persistent sidebar workspace pass their authorization and browser acceptance journeys.
+20. Provisioned Google access, dynamic location scope, direct audited Platform Operator writes, and the persistent sidebar workspace pass their authorization and browser acceptance journeys.
 
 ## Rollout Plan
 
@@ -611,7 +611,7 @@ The August 6 release does not ship until all conditions are proven:
 | Thu Jul 30 | No-answer and call-disposition recovery work | 20-second fallback, voicemail, missed call, durable `NEEDS_DISPOSITION` | Recovery UI, post-call outcomes, prefilled follow-up task | Timeout falls back; browser loss preserves disposition; both outcome paths pass |
 | Fri Jul 31 | Outbound calling and call controls work | Task-originated and standalone outbound commands and linkage | Dialer, mute, keypad, hold, transfer, end, persistent active-call workspace | Task call links to task; standalone resolved call creates no task |
 | Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Call history, voicemail playback, transcript, failure states | Human-call facts and voicemail evidence appear and unauthorized access fails |
-| Sun Aug 2 | Administration and complete access boundaries work | Invitations, memberships, service scope, authorization audit | Staff/location settings and access-denied states | Email-bound invite activates exact scope; cross-location reads/writes/streams fail |
+| Sun Aug 2 | Administration and complete access boundaries work | Access Grants, Memberships, service scope, authorization audit | Staff/location settings and access-denied states | Verified Google email activates exact scope; cross-location reads/writes/streams fail |
 | Mon Aug 3 | Feature complete; scope closes | Failure recovery, durable jobs, audit, tenant authorization | Empty/error/reconnect states, accessibility, full journey cleanup | All release-bar journeys pass in simulation |
 | Tue Aug 4 | Production hardening complete | Load/concurrency, connection ceiling, Cloud SQL outage/restore, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, SSE/runtime termination, performance, operator runbook | Peak load, role isolation, restore, replay, backup, rollback, and observability gates pass |
 | Wed Aug 5 | Release candidate frozen and rehearsed | Production deployment rehearsal and provider configuration audit | Full staff rehearsal and UI blocker fixes only | Live Telnyx, SMS, recording, transcription, and AI-tool acceptance pass twice |

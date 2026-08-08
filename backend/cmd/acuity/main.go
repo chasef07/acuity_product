@@ -535,6 +535,7 @@ func runMigrate(
 	keepOutput = true
 	slog.Info("migrations_applied",
 		"provisioning", true,
+		"access_grant_count", provisioned.AccessGrantCount,
 		"invitation_count", len(provisioned.Invitations),
 	)
 	return nil

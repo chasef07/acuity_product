@@ -51,10 +51,10 @@ Practice and Location and direct audited write authority under their own
 identity.
 _Avoid_: Super admin, Practice Admin
 
-**Invitation**:
-An email-bound, expiring, revocable offer of a Practice role and Location Scope
-that becomes a Membership only after acceptance.
-_Avoid_: User creation, credential
+**Access Grant**:
+An email-bound, revocable authorization for a Practice role and Location Scope
+that becomes a Membership when a matching verified User first signs in.
+_Avoid_: Invitation, user creation, credential
 
 ## Work and communication
 

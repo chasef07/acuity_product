@@ -1,8 +1,8 @@
 # Slice 1 through 6 non-production runtime contract
 
 This is a deployable contract, not a claim that an external environment exists.
-Project, image, domain, service accounts, database capacity, and email sender
-remain deployment inputs.
+Project, image, domain, service accounts, and database capacity remain
+deployment inputs.
 
 All backend services and the migration job run the same immutable image digest.
 Only `ACUITY_RUNTIME_ROLE` changes.
@@ -56,8 +56,8 @@ credential. It does not read Call or attempt state; the worker attaches
 Telnyx API credential needed to execute
 durable commands. `portal-api` receives that credential only for lease-bound
 short-lived media JWT issuance; no provider credential reaches the browser. The
-web service gets Better Auth schema access, its auth secret, and its SMTP sender,
-but no product-schema mutation authority.
+web service gets Better Auth schema access, its auth secret, and Google OAuth
+configuration, but no product-schema mutation authority.
 Each database authority is delivered through a distinct Secret Manager secret;
 runtime roles never share a database credential.
 
@@ -88,17 +88,14 @@ Required service configuration:
   greeting text as `portal-api`, plus the Messaging attachment mount. The
   worker owns durable receipt projection, so these values must be identical.
   Voicemail audio has no copy worker or object-store configuration.
-- `migrate`: database settings and, only for initial provisioning, paired
-  input/output paths. The output contains one-time invitation credentials and
-  must be captured as a `0600` secret artifact. An invitation link uses
-  `https://<portal-domain>/invite#<credential>` so the credential fragment is
-  never sent in an HTTP request URL.
+- `migrate`: database settings and, only for reviewed provisioning, paired
+  input/output paths. Production Access Grants emit no human credential.
 - web: bounded Better Auth pool settings, Better Auth URL/secret/trusted origin,
-  internal portal API URL, API audience, SMTP configuration, and the two
-  browser-visible HTTPS API origins. The browser origins are immutable web-image
-  build arguments; the remaining values are runtime configuration. Web,
+  internal portal API URL, API audience, Google OAuth configuration, and the
+  two browser-visible HTTPS API origins. The browser origins are immutable
+  web-image build arguments; the remaining values are runtime configuration. Web,
   `portal-api`, and `realtime` permit unauthenticated Cloud Run invocation
-  because sign-in/invitation/health interfaces and browser JWT requests reach
+  because sign-in/Access/health interfaces and browser JWT requests reach
   them directly; their application interfaces still enforce the OpenAPI and
   Better Auth authorization contract.
 

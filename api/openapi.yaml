@@ -37,7 +37,7 @@ paths:
   /v1/access/sign-up-eligibility:
     post:
       operationId: inspectSignUpEligibility
-      summary: Validate an invitation or provisioned Platform Operator email.
+      summary: Validate an Access Grant or provisioned Platform Operator email.
       security: []
       requestBody:
         required: true
@@ -51,7 +51,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InvitationPreview"
+                $ref: "#/components/schemas/SignUpEligibility"
         "403":
           $ref: "#/components/responses/Denied"
         "503":
@@ -1655,10 +1655,17 @@ components:
           type: string
           format: email
           maxLength: 320
-        invitationToken:
+    SignUpEligibility:
+      type: object
+      additionalProperties: false
+      required: [kind, email]
+      properties:
+        kind:
           type: string
-          minLength: 32
-          maxLength: 256
+          enum: [ACCESS_GRANT, PLATFORM_OPERATOR]
+        email:
+          type: string
+          format: email
     InvitationCredentialRequest:
       type: object
       additionalProperties: false

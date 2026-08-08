@@ -291,24 +291,73 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		t.Fatalf("voicemail greetings = %#v, want %#v", greetings, wantGreetings)
 	}
 
-	var invitationCount, demoInvitationCount int
+	var grantCount, abitaGrantCount, demoGrantCount int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*), count(*) FILTER (
-			WHERE practice.provisioning_key = 'acuity-demo'
-				AND invitation.email IN (
-					'chase@acuityhealth.io',
-					'kyle@acuityhealth.io'
-				)
-				AND invitation.role = 'STAFF'
-		)
-		FROM access_invitations invitation
-		JOIN access_practices practice ON practice.id = invitation.practice_id
-	`).Scan(&invitationCount, &demoInvitationCount); err != nil {
-		t.Fatalf("count provisioned invitations: %v", err)
+		SELECT count(*),
+			count(*) FILTER (WHERE practice.provisioning_key = 'abita-eye-group'),
+			count(*) FILTER (
+				WHERE practice.provisioning_key = 'acuity-demo'
+					AND access_grant.email IN (
+						'chase@acuityhealth.io',
+						'kyle@acuityhealth.io'
+					)
+					AND access_grant.role = 'STAFF'
+			)
+		FROM access_grants access_grant
+		JOIN access_practices practice ON practice.id = access_grant.practice_id
+	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
+		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if invitationCount != 2 || demoInvitationCount != 2 {
-		t.Fatalf("provisioned invitations = total:%d demo:%d, want 2 each",
-			invitationCount, demoInvitationCount)
+	if grantCount != 33 || abitaGrantCount != 31 || demoGrantCount != 2 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 33, 31, 2",
+			grantCount, abitaGrantCount, demoGrantCount)
+	}
+	type grant struct {
+		Email string
+		Role  string
+		Scope string
+	}
+	grants := []grant{}
+	rows, err = pool.Query(context.Background(), `
+		SELECT email, role::text, location_scope::text
+		FROM access_grants
+		WHERE email IN ('aileen@abitaeye.com', 'telemed@abitaeye.com')
+		ORDER BY email
+	`)
+	if err != nil {
+		t.Fatalf("read representative Access Grants: %v", err)
+	}
+	for rows.Next() {
+		var candidate grant
+		if err := rows.Scan(&candidate.Email, &candidate.Role, &candidate.Scope); err != nil {
+			rows.Close()
+			t.Fatalf("scan representative Access Grant: %v", err)
+		}
+		grants = append(grants, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("iterate representative Access Grants: %v", err)
+	}
+	rows.Close()
+	wantGrants := []grant{
+		{Email: "aileen@abitaeye.com", Role: "STAFF", Scope: "SELECTED"},
+		{Email: "telemed@abitaeye.com", Role: "ADMIN", Scope: "ALL"},
+	}
+	if !reflect.DeepEqual(grants, wantGrants) {
+		t.Fatalf("representative Access Grants = %#v, want %#v", grants, wantGrants)
+	}
+	var aileenLocationCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM access_grant_locations grant_location
+		JOIN access_grants access_grant ON access_grant.id = grant_location.access_grant_id
+		WHERE access_grant.email = 'aileen@abitaeye.com'
+	`).Scan(&aileenLocationCount); err != nil {
+		t.Fatalf("count Aileen Locations: %v", err)
+	}
+	if aileenLocationCount != 4 {
+		t.Fatalf("Aileen Locations = %d, want 4", aileenLocationCount)
 	}
 	var provisioned access.Provisioned
 	outputFile, err := os.Open(output)
@@ -319,10 +368,11 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if len(provisioned.Invitations) != 2 ||
-		provisioned.Invitations[0].Email != "chase@acuityhealth.io" ||
-		provisioned.Invitations[1].Email != "kyle@acuityhealth.io" {
-		t.Fatalf("provisioning output invitations = %#v", provisioned.Invitations)
+	if len(provisioned.Invitations) != 0 {
+		t.Fatalf("Access Grants emitted invitation credentials: %#v", provisioned.Invitations)
+	}
+	if provisioned.AccessGrantCount != 33 {
+		t.Fatalf("provisioning output Access Grant count = %d, want 33", provisioned.AccessGrantCount)
 	}
 }
 
@@ -356,34 +406,42 @@ func ensureRuntimeRoles(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-func TestProductionProvisioningReconcilesExistingConfiguration(t *testing.T) {
+func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) {
 	pool := testdb.Open(t)
 	ensureRuntimeRoles(t, pool)
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO access_practices (provisioning_key, name)
 		VALUES ('abita-eye-group', 'Abita Eye Group')
 	`); err != nil {
-		t.Fatalf("seed legacy Practice: %v", err)
+		t.Fatalf("seed established Practice: %v", err)
 	}
 
-	err := runMigrate(context.Background(), app.Config{
+	if err := runMigrate(context.Background(), app.Config{
 		ProvisioningInput: filepath.Join(
 			"..", "..", "..", "config", "production-provisioning.json",
 		),
 		ProvisioningOutput: filepath.Join(t.TempDir(), "provisioning-output.json"),
-	}, pool)
-	if err != nil {
-		t.Fatalf("reconcile production provisioning: %v", err)
+	}, pool); err != nil {
+		t.Fatalf("reconcile established production provisioning: %v", err)
 	}
 
 	var practiceCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM access_practices
 	`).Scan(&practiceCount); err != nil {
-		t.Fatalf("count Practices after rejected provisioning: %v", err)
+		t.Fatalf("count reconciled Practices: %v", err)
 	}
 	if practiceCount != 2 {
-		t.Fatalf("Practices after reconciled provisioning = %d, want 2", practiceCount)
+		t.Fatalf("reconciled Practices = %d, want 2", practiceCount)
+	}
+	var grantCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM access_grants
+	`).Scan(&grantCount); err != nil {
+		t.Fatalf("count reconciled Access Grants: %v", err)
+	}
+	if grantCount != 33 {
+		t.Fatalf("reconciled Access Grants = %d, want 33", grantCount)
 	}
 }
 

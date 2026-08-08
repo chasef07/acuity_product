@@ -231,10 +231,8 @@ const caseMetrics = [
 ] as const
 
 export function LandingPage({
-  googleEnabled,
   initiallyOpen = false,
 }: {
-  googleEnabled: boolean
   initiallyOpen?: boolean
 }) {
   const [workflowRef, activeWorkflowStep] = useScrollStep(
@@ -254,7 +252,7 @@ export function LandingPage({
       : ((activeWorkflowStep + 1) / journeyEvents.length) * 100
 
   return (
-    <SignInDialog googleEnabled={googleEnabled} initiallyOpen={initiallyOpen}>
+    <SignInDialog initiallyOpen={initiallyOpen}>
       <main className={styles.page}>
         <header className={styles.header}>
           <Link
