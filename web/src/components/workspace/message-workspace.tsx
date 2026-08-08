@@ -12,6 +12,7 @@ import {
 import {
   AlertTriangleIcon,
   ArrowUpIcon,
+  BotIcon,
   CalendarCheck2Icon,
   CalendarClockIcon,
   CalendarX2Icon,
@@ -77,6 +78,11 @@ import type {
   MessageAttachment,
   Task,
 } from "@/lib/api/generated/types.gen"
+import {
+  aiCallCompletionLabel,
+  appointmentOutcomeLabel,
+  appointmentOutcomeTitle,
+} from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
@@ -106,6 +112,7 @@ export function EngagementWorkspace({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
+  onAIInteractionOpen,
 }: {
   engagement: EngagementSummary
   practiceID: string
@@ -116,6 +123,7 @@ export function EngagementWorkspace({
   onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
+  onAIInteractionOpen: (interactionID: string) => void
 }) {
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
@@ -242,6 +250,7 @@ export function EngagementWorkspace({
         onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
+        onAIInteractionOpen={onAIInteractionOpen}
       />
     </section>
   )
@@ -257,6 +266,7 @@ function MessageConversation({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
+  onAIInteractionOpen,
 }: {
   timelineSource: TimelineSource
   practiceID: string
@@ -267,6 +277,7 @@ function MessageConversation({
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
+  onAIInteractionOpen?: (interactionID: string) => void
 }) {
   const timelineKey = `${timelineSource.practiceID}:${timelineSource.phone}`
   const [items, setItems] = useState<ConversationTimelineItem[]>([])
@@ -433,14 +444,15 @@ function MessageConversation({
                 onTaskCreated={onTaskCreated}
                 onTaskOpen={onTaskOpen}
                 onCallOpen={onCallOpen}
+                onAIInteractionOpen={onAIInteractionOpen}
               />
             ))}
           {!loading && items.length === 0 && (
             <Empty className="my-10 border-0">
               <EmptyHeader>
-                <EmptyTitle>No messages yet</EmptyTitle>
+                <EmptyTitle>No activity yet</EmptyTitle>
                 <EmptyDescription>
-                  Send a text or call this number to start.
+                  Calls, texts, and Tasks for this number will appear here.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -513,6 +525,7 @@ function TimelineEntry({
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
+  onAIInteractionOpen,
 }: {
   item: ConversationTimelineItem
   canMutate: boolean
@@ -520,6 +533,7 @@ function TimelineEntry({
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
+  onAIInteractionOpen?: (interactionID: string) => void
 }) {
   if (item.type === "MESSAGE" && item.message) {
     return (
@@ -541,6 +555,23 @@ function TimelineEntry({
         title={item.call.transferReason || touchpoint.label}
         detail={touchpoint.detail}
         onOpen={onCallOpen ? () => onCallOpen(item.call!.id) : undefined}
+      />
+    )
+  }
+  if (item.type === "AI_INTERACTION" && item.aiInteraction) {
+    const interaction = item.aiInteraction
+    return (
+      <ActivityBubble
+        icon={<BotIcon className="size-4" aria-hidden="true" />}
+        label={`${interaction.locationName} · AI call · ${appointmentOutcomeLabel(interaction.appointmentOutcome)}`}
+        occurredAt={item.occurredAt}
+        title={appointmentOutcomeTitle(interaction.appointmentOutcome)}
+        detail={aiCallCompletionLabel(interaction.status)}
+        onOpen={
+          onAIInteractionOpen
+            ? () => onAIInteractionOpen(interaction.id)
+            : undefined
+        }
       />
     )
   }

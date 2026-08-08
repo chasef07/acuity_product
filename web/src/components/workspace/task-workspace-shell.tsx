@@ -30,6 +30,7 @@ import {
   CallingAvailabilityControl,
   CallingDock,
 } from "@/components/workspace/calling-dock"
+import { AIInteractionDetailDialog } from "@/components/workspace/ai-interaction-detail"
 import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
 import { EngagementWorkspace } from "@/components/workspace/message-workspace"
 import { OperatorAnalytics } from "@/components/workspace/operator-analytics"
@@ -43,12 +44,14 @@ import {
   getCallingCall,
   getWorkspace,
   markMessageThreadRead,
+  queryAiInteractionOutcomes,
   queryMessageThreads,
   queryTasks,
   readTask,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
+  AiOutcomeItem,
   CallingCall,
   CallingDispositionResult,
   EngagementSummary,
@@ -98,6 +101,10 @@ export function TaskWorkspaceShell() {
   )
   const [messageNextCursor, setMessageNextCursor] = useState("")
   const [messagesLoading, setMessagesLoading] = useState(false)
+  const [aiOutcomes, setAIOutcomes] = useState<AiOutcomeItem[]>([])
+  const [aiOutcomesLoading, setAIOutcomesLoading] = useState(false)
+  const [aiOutcomesError, setAIOutcomesError] = useState("")
+  const [selectedAIInteractionID, setSelectedAIInteractionID] = useState("")
   const [selectedTask, setSelectedTask] = useState<Task>()
   const [view, setView] = useState<View>("none")
   const [contextView, setContextView] = useState<ContextView>("none")
@@ -117,6 +124,7 @@ export function TaskWorkspaceShell() {
   const hasLoadedThreadsRef = useRef(false)
   const taskQueryGenerationRef = useRef(0)
   const messageQueryGenerationRef = useRef(0)
+  const aiOutcomeQueryGenerationRef = useRef(0)
   const taskQueryKeyRef = useRef("")
   const messageQueryKeyRef = useRef("")
   const snapshotGenerationRef = useRef(0)
@@ -256,6 +264,42 @@ export function TaskWorkspaceShell() {
     },
     [locationScopeID, practiceID],
   )
+  const loadAIOutcomes = useCallback(async () => {
+    if (!practiceID) return
+    const requestGeneration = ++aiOutcomeQueryGenerationRef.current
+    setAIOutcomesLoading(true)
+    setAIOutcomesError("")
+    const token = await getAccessToken()
+    if (!token) {
+      setAIOutcomesLoading(false)
+      setLoadState("unauthorized")
+      return
+    }
+    const result = await queryAiInteractionOutcomes({
+      client: portalClient(token),
+      body: {
+        practiceId: practiceID,
+        ...(locationScopeID ? { locationId: locationScopeID } : {}),
+        date: currentUTCDate(),
+      },
+    }).catch(() => undefined)
+    if (requestGeneration !== aiOutcomeQueryGenerationRef.current) return
+    setAIOutcomesLoading(false)
+    if (!result?.data) {
+      if (
+        result?.response?.status === 401 ||
+        result?.response?.status === 403
+      ) {
+        setAIOutcomes([])
+        setSelectedAIInteractionID("")
+        setLoadState("unauthorized")
+        return
+      }
+      setAIOutcomesError("AI appointment updates are unavailable.")
+      return
+    }
+    setAIOutcomes(result.data.items)
+  }, [locationScopeID, practiceID])
   const reconcileWorkspace = useCallback(
     async ({
       scope,
@@ -527,6 +571,16 @@ export function TaskWorkspaceShell() {
   ])
 
   useEffect(() => {
+    if (!practiceID || loadState !== "ready") return
+    const timeout = window.setTimeout(() => void loadAIOutcomes(), 0)
+    const interval = window.setInterval(() => void loadAIOutcomes(), 30_000)
+    return () => {
+      window.clearTimeout(timeout)
+      window.clearInterval(interval)
+    }
+  }, [loadAIOutcomes, loadState, practiceID, workspaceRevision])
+
+  useEffect(() => {
     const sync = createWorkspaceSync({
       realtimeURL: realtimeURL(),
       getToken: getAccessToken,
@@ -566,6 +620,7 @@ export function TaskWorkspaceShell() {
     callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
     messageQueryGenerationRef.current += 1
+    aiOutcomeQueryGenerationRef.current += 1
     hasLoadedTasksRef.current = false
     hasLoadedThreadsRef.current = false
     taskQueryKeyRef.current = ""
@@ -574,6 +629,9 @@ export function TaskWorkspaceShell() {
     messageThreadsRef.current = []
     setTasks([])
     setMessageThreads([])
+    setAIOutcomes([])
+    setAIOutcomesError("")
+    setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
     setContextView("none")
@@ -616,6 +674,7 @@ export function TaskWorkspaceShell() {
     callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
     messageQueryGenerationRef.current += 1
+    aiOutcomeQueryGenerationRef.current += 1
     snapshotGenerationRef.current += 1
     hasLoadedTasksRef.current = false
     hasLoadedThreadsRef.current = false
@@ -625,6 +684,9 @@ export function TaskWorkspaceShell() {
     messageThreadsRef.current = []
     setTasks([])
     setMessageThreads([])
+    setAIOutcomes([])
+    setAIOutcomesError("")
+    setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
     setContextView("none")
@@ -670,6 +732,7 @@ export function TaskWorkspaceShell() {
   function selectEngagement(engagement: EngagementSummary, focusedTask?: Task) {
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
+    setSelectedAIInteractionID("")
     setContextView("none")
     updateSelectedTask(focusedTask)
     setSelectedEngagement(engagement)
@@ -680,6 +743,22 @@ export function TaskWorkspaceShell() {
     }
     setView("engagement")
     void markEngagementRead(engagement.phone)
+  }
+
+  function selectAIInteraction(interaction: AiOutcomeItem) {
+    selectEngagement({
+      phone: interaction.phone,
+      locations: [
+        { id: interaction.locationId, name: interaction.locationName },
+      ],
+      latestActivity:
+        interaction.appointmentOccurredAt ??
+        interaction.endedAt ??
+        interaction.startedAt,
+      openTaskCount: 0,
+      unread: false,
+    })
+    setSelectedAIInteractionID(interaction.id)
   }
 
   async function markEngagementRead(phone: string) {
@@ -911,13 +990,17 @@ export function TaskWorkspaceShell() {
           locationScopeID={locationScopeID}
           tasks={tasks}
           messages={messageThreads}
+          aiOutcomes={aiOutcomes}
           recent={recentInboxes}
           selectedTaskID={selectedTask?.id ?? ""}
+          selectedAIInteractionID={selectedAIInteractionID}
           selectedPhone={selectedEngagement?.phone ?? ""}
           search={search}
           engagementError={engagementError}
           loading={tasksLoading}
           messageLoading={messagesLoading}
+          outcomesLoading={aiOutcomesLoading}
+          outcomesError={aiOutcomesError}
           nextCursor={nextCursor}
           messageNextCursor={messageNextCursor}
           connection={connection}
@@ -933,6 +1016,7 @@ export function TaskWorkspaceShell() {
           }}
           onEngagementSelect={selectEngagement}
           onTaskSelect={selectTask}
+          onAIInteractionSelect={selectAIInteraction}
           onLoadMore={() => void loadTasks(nextCursor, true)}
           onMessageLoadMore={() =>
             void loadMessageThreads(messageNextCursor, true)
@@ -966,6 +1050,7 @@ export function TaskWorkspaceShell() {
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}
+                  onAIInteractionOpen={setSelectedAIInteractionID}
                 />
               </div>
               {contextView !== "none" &&
@@ -1027,8 +1112,16 @@ export function TaskWorkspaceShell() {
           )}
         </SidebarInset>
       </CallingDock>
+      <AIInteractionDetailDialog
+        interactionID={selectedAIInteractionID}
+        onClose={() => setSelectedAIInteractionID("")}
+      />
     </SidebarProvider>
   )
+}
+
+function currentUTCDate() {
+  return new Date().toISOString().slice(0, 10)
 }
 
 function WorkspaceSelector({
