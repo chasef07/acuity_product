@@ -42,13 +42,24 @@ The Go runtime contains five deep modules. Each module has one behavior-oriented
 
 | Module | Owns | Does not own |
 |---|---|---|
-| `Access` | Human and service principals, invitations, memberships, Platform Operators, roles, location scope, authorization decisions, operator audit | Better Auth session implementation, task state, provider credentials |
+| `Access` | Human and service principals, Access Grants, Memberships, Platform Operators, roles, location scope, authorization decisions, operator audit | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
 | `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, post-call disposition, voicemail recording identity, and authorized playback | Browser-selected winners, connected-call recording, task lifecycle, SMS correlation, provider-owned audio bytes |
 | `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts | Task lifecycle, contact identity, call state |
 | `EvidenceArchive` | Canonical recording/transcript metadata, protected grants, access audit, retention, deletion | Call control, task completion, provider-owned audio bytes |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
+
+When an email-provisioned User first signs in with Google, Access activates the
+Membership and the HumanCalling worker creates one unique Telnyx on-demand
+telephony credential for that User on the shared WebRTC connection. No per-user
+Telnyx connection is created manually. Tasks and Messaging use the same
+Membership and Location Scope. Channel availability still depends on the
+selected Location having voice or Messaging configured.
+
+Inbound transfer fan-out is narrower than portal access: it rings only healthy,
+available `Staff` whose Membership includes the Call's Location. `Admin`
+Memberships can manage every Location but do not receive inbound fan-out.
 
 ## Access model
 
@@ -76,7 +87,7 @@ flowchart LR
 - Platform Operator is a distinct Acuity-internal role rather than a replicated Practice membership.
 - Platform Operators keep global visibility and direct write authority while operating within an explicit active practice/location.
 - Authorization records the real human or service actor. Platform Operators never impersonate customer users, and their mutations are audited atomically.
-- Human accounts are fresh and invite-only. Better Auth owns Google identity, verified email/password credentials, and recovery; `Access` gates account creation and owns invitations, roles, scopes, and authorization.
+- Human access is Google-only and preauthorized by email. Better Auth owns Google identity and sessions; `Access` gates User creation and owns Access Grants, Memberships, roles, scopes, and authorization.
 
 ## Browser shell
 
@@ -435,7 +446,7 @@ The highest test seam is:
 - `Access` resolves practice and location scope before every protected module invocation; caller-supplied IDs never grant authority.
 - Admin and `ALL`-scope Staff automatically receive current and future Practice locations; `SELECTED`-scope Staff receive only explicit grants.
 - Platform Operators mutate directly under their real identity, and the mutation and operator audit commit atomically without impersonation.
-- Public sign-up is disabled; accepting an invitation never requires an operator to create or know another user's password.
+- Public sign-up is disabled; a verified Google email claims only its matching Access Grant and no Acuity password exists.
 - Realtime transport loss cannot lose durable work.
 - A provider webhook receives `2xx` only after its unique durable receipt commits.
 - A provider request never runs while a PostgreSQL transaction is open.

@@ -1,9 +1,7 @@
-import { readFile } from "node:fs/promises"
-
 import { expect, test, type BrowserContext, type Page } from "@playwright/test"
 import { Pool } from "pg"
 
-import { latestEmail } from "./support"
+import { signInAs } from "./support"
 
 const webURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:13000"
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
@@ -33,15 +31,6 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     !provisioningOutput || !databaseURL,
     "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
   )
-  const provisioned = JSON.parse(await readFile(provisioningOutput!, "utf8")) as {
-    invitations: Array<{ email: string; token: string }>
-  }
-  const invitation = (email: string) => {
-    const found = provisioned.invitations.find((item) => item.email === email)
-    expect(found?.token).toBeTruthy()
-    return found!.token
-  }
-
   const secondaryContext = await browser.newContext()
   await Promise.all([
     prepareBrowser(selectedPage.context()),
@@ -52,16 +41,14 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
 
   try {
     await Promise.all([
-      signUp(
+      signInAs(
         selectedPage,
         "selected@abita.test",
-        invitation("selected@abita.test"),
         "Fixture Selected Staff",
       ),
-      signUp(
+      signInAs(
         secondaryPage,
         "secondary@abita.test",
-        invitation("secondary@abita.test"),
         "Fixture Secondary Staff",
       ),
     ])
@@ -470,21 +457,6 @@ async function prepareBrowser(context: BrowserContext) {
       }),
     })
   })
-}
-
-async function signUp(page: Page, email: string, token: string, name: string) {
-  await page.goto(`/invite#${token}`)
-  await page.getByLabel("Your name").fill(name)
-  await page.getByLabel("Create password").fill("fixture-password-1234")
-  await page.getByLabel("Confirm password").fill("fixture-password-1234")
-  await page.getByRole("button", { name: "Create private account" }).click()
-  const verificationURL = await latestEmail(page, email, "verification")
-  await page.goto(verificationURL)
-  await page.getByRole("button", { name: "Use email instead" }).click()
-  await page.getByLabel("Email").fill(email)
-  await page.getByLabel("Password").fill("fixture-password-1234")
-  await page.getByRole("button", { name: "Sign in" }).click()
-  await expect(page.getByRole("switch", { name: "Availability" })).toBeVisible()
 }
 
 function callCenter(page: Page) {

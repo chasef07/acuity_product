@@ -1,8 +1,6 @@
-import { readFile } from "node:fs/promises"
-
 import { expect, test, type Page } from "@playwright/test"
 
-import { latestEmail } from "./support"
+import { signInAs } from "./support"
 
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
@@ -14,22 +12,8 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
 }) => {
   test.setTimeout(180_000)
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
-  const provisioned = JSON.parse(
-    await readFile(provisioningOutput!, "utf8"),
-  ) as {
-    invitations: Array<{ email: string; token: string }>
-  }
-  const invitation = provisioned.invitations.find(
-    (item) => item.email === "messaging@abita.test",
-  )
-  expect(invitation?.token).toBeTruthy()
-
-  await signUp(
-    page,
-    "messaging@abita.test",
-    invitation!.token,
-    "Fixture Messaging Staff",
-  )
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
@@ -330,26 +314,6 @@ async function openNumberInbox(
   await page.getByLabel("Search phone number").fill(phone)
   await page.getByLabel("Search phone number").press("Enter")
   await expect(page.getByRole("heading", { name: /\(727\) 555-01\d\d/ })).toBeVisible()
-}
-
-async function signUp(
-  page: Page,
-  email: string,
-  invitationToken: string,
-  name: string,
-) {
-  await page.goto(`/invite#${invitationToken}`)
-  await page.getByLabel("Your name").fill(name)
-  await page.getByLabel("Create password").fill("fixture-password-1234")
-  await page.getByLabel("Confirm password").fill("fixture-password-1234")
-  await page.getByRole("button", { name: "Create private account" }).click()
-  const verificationURL = await latestEmail(page, email, "verification")
-  await page.goto(verificationURL)
-  await page.getByRole("button", { name: "Use email instead" }).click()
-  await page.getByLabel("Email").fill(email)
-  await page.getByLabel("Password").fill("fixture-password-1234")
-  await page.getByRole("button", { name: "Sign in" }).click()
-  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 }
 
 async function sendInbound(page: Page, eventID: string, text: string) {

@@ -33,11 +33,9 @@ export function PortalSignInTrigger() {
 
 export function SignInDialog({
   children,
-  googleEnabled,
   initiallyOpen = false,
 }: {
   children: React.ReactNode
-  googleEnabled: boolean
   initiallyOpen?: boolean
 }) {
   const router = useRouter()
@@ -74,7 +72,7 @@ export function SignInDialog({
           </CardHeader>
           <CardContent className="relative px-6 pb-6 sm:px-8">
             <Suspense fallback={<Skeleton className="h-32 w-full" />}>
-              <SignInForm googleEnabled={googleEnabled} />
+              <SignInForm />
             </Suspense>
           </CardContent>
           <Separator />

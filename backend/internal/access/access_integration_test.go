@@ -88,6 +88,163 @@ func TestInvitationAcceptanceCreatesAuthorizedMembershipWithoutCredentials(t *te
 	}
 }
 
+func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testing.T) {
+	pool := testdb.Open(t)
+	current := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	module := access.New(pool, func() time.Time { return current })
+
+	provisioning := access.Provisioning{
+		Environment: "test",
+		RequestedBy: "google-access-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "abita-eye-group",
+			Name: "Abita Eye Group",
+			Locations: []access.LocationProvision{
+				{Key: "hollywood", Name: "Hollywood"},
+				{Key: "sweetwater", Name: "Sweetwater"},
+			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:                  "staff-google-access",
+				Email:                "staff@abita.test",
+				Role:                 access.RoleStaff,
+				LocationScope:        access.LocationScopeSelected,
+				SelectedLocationKeys: []string{"sweetwater"},
+			}},
+		}},
+	}
+	provisioned, err := module.Provision(context.Background(), provisioning)
+	if err != nil {
+		t.Fatalf("provision email access: %v", err)
+	}
+	if len(provisioned.Invitations) != 0 {
+		t.Fatalf("Access Grant emitted invitation credentials: %#v", provisioned.Invitations)
+	}
+	current = current.AddDate(10, 0, 0)
+
+	preview, err := module.InspectSignUpEligibility(context.Background(), "STAFF@ABITA.TEST")
+	if err != nil {
+		t.Fatalf("inspect provisioned email: %v", err)
+	}
+	if preview.Kind != access.SignUpEligibilityAccessGrant || preview.Email != "staff@abita.test" {
+		t.Fatalf("provisioned email preview = %#v", preview)
+	}
+
+	identity := access.Identity{
+		Subject:       "google-subject-1",
+		Email:         "STAFF@ABITA.TEST",
+		EmailVerified: true,
+	}
+	discovery, err := module.DiscoverActor(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("activate provisioned email: %v", err)
+	}
+	if len(discovery.Practices) != 1 || discovery.Practices[0].Membership == nil {
+		t.Fatalf("discovery = %#v", discovery)
+	}
+	membership := discovery.Practices[0].Membership
+	if membership.Role != access.RoleStaff || membership.LocationScope != access.LocationScopeSelected {
+		t.Fatalf("membership = %#v", membership)
+	}
+	if locations := discovery.Practices[0].Locations; len(locations) != 1 || locations[0].Name != "Sweetwater" {
+		t.Fatalf("locations = %#v", locations)
+	}
+	var claimedBy string
+	var invitationID *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT access_grant.claimed_by_subject, membership.invitation_id::text
+		FROM access_grants access_grant
+		JOIN access_memberships membership ON membership.access_grant_id = access_grant.id
+		WHERE access_grant.email = 'staff@abita.test'
+	`).Scan(&claimedBy, &invitationID); err != nil {
+		t.Fatalf("read claimed Access Grant origin: %v", err)
+	}
+	if claimedBy != identity.Subject || invitationID != nil {
+		t.Fatalf("claimed Access Grant origin = subject:%q invitation:%v", claimedBy, invitationID)
+	}
+
+	replayed, err := module.DiscoverActor(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("rediscover provisioned email: %v", err)
+	}
+	if replayed.Practices[0].Membership.ID != membership.ID {
+		t.Fatalf("rediscovery changed Membership: %s != %s", replayed.Practices[0].Membership.ID, membership.ID)
+	}
+	reconciled, err := module.Provision(context.Background(), provisioning)
+	if err != nil {
+		t.Fatalf("reconcile unchanged Access Grant: %v", err)
+	}
+	if reconciled.AccessGrantCount != 0 {
+		t.Fatalf("unchanged reconciliation created %d Access Grants", reconciled.AccessGrantCount)
+	}
+	changed := provisioning
+	changed.Practices = append([]access.PracticeProvision(nil), provisioning.Practices...)
+	changed.Practices[0].AccessGrants = []access.AccessGrantProvision{{
+		Key:                  "staff-google-access",
+		Email:                "staff@abita.test",
+		Role:                 access.RoleStaff,
+		LocationScope:        access.LocationScopeSelected,
+		SelectedLocationKeys: []string{"hollywood"},
+	}}
+	if _, err := module.Provision(context.Background(), changed); !errors.Is(err, access.ErrInvalidInput) {
+		t.Fatalf("changed Access Grant reconciliation error = %v", err)
+	}
+}
+
+func TestAccessGrantRevocationDeniesSignUpAndIsAudited(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	module := access.New(pool, func() time.Time { return now })
+	operator := access.Identity{
+		Subject: "operator-subject", Email: "operator@acuity.test", EmailVerified: true,
+	}
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: "access-grant-revocation-test",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{{
+			Key: "abita-eye-group", Name: "Abita Eye Group",
+			Locations: []access.LocationProvision{{Key: "sweetwater", Name: "Sweetwater"}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: "pending-staff", Email: "pending@abita.test",
+				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision revocable Access Grant: %v", err)
+	}
+	discovery, err := module.DiscoverActor(context.Background(), operator)
+	if err != nil {
+		t.Fatalf("discover Platform Operator: %v", err)
+	}
+	var grantID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM access_grants WHERE email = 'pending@abita.test'
+	`).Scan(&grantID); err != nil {
+		t.Fatalf("read pending Access Grant: %v", err)
+	}
+	command := access.RevokeAccessGrantCommand{
+		Identity: operator, PracticeID: discovery.Practices[0].ID, AccessGrantID: grantID,
+	}
+	if err := module.RevokeAccessGrant(context.Background(), command); err != nil {
+		t.Fatalf("revoke Access Grant: %v", err)
+	}
+	if err := module.RevokeAccessGrant(context.Background(), command); err != nil {
+		t.Fatalf("repeat Access Grant revocation: %v", err)
+	}
+	if _, err := module.InspectSignUpEligibility(context.Background(), "pending@abita.test"); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("revoked Access Grant eligibility error = %v", err)
+	}
+	var auditCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM access_audit_events
+		WHERE action = 'access_grant.revoked' AND details->>'accessGrantId' = $1
+	`, grantID).Scan(&auditCount); err != nil {
+		t.Fatalf("count Access Grant revocation audit: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("Access Grant revocation audit count = %d, want 1", auditCount)
+	}
+}
+
 func TestProvisionRejectsInvitationThatIsAlreadyExpired(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
@@ -562,6 +719,19 @@ func TestInvitationEligibilityDiscoveryAndRequestedLocationStayInsideAccess(t *t
 	if err != nil {
 		t.Fatalf("provision invitation discovery: %v", err)
 	}
+	if _, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
+		Email: "selected@abita.test",
+	}); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("legacy invitation was eligible without its token: %v", err)
+	}
+	_, err = module.DiscoverActor(context.Background(), access.Identity{
+		Subject:       "selected-subject",
+		Email:         "selected@abita.test",
+		EmailVerified: true,
+	})
+	if !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("legacy invitation activated through Google discovery: %v", err)
+	}
 
 	preview, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
 		Token: provisioned.Invitations[0].Token,
@@ -583,13 +753,11 @@ func TestInvitationEligibilityDiscoveryAndRequestedLocationStayInsideAccess(t *t
 		t.Fatalf("wrong-email invitation inspection error = %v", err)
 	}
 
-	operatorEligibility, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
-		Email: "FOUNDER@ACUITY.TEST",
-	})
+	operatorEligibility, err := module.InspectSignUpEligibility(context.Background(), "FOUNDER@ACUITY.TEST")
 	if err != nil {
 		t.Fatalf("inspect Platform Operator eligibility: %v", err)
 	}
-	if operatorEligibility.Kind != access.InvitationKindPlatformOperator {
+	if operatorEligibility.Kind != access.SignUpEligibilityPlatformOperator {
 		t.Fatalf("operator eligibility = %#v", operatorEligibility)
 	}
 
@@ -704,34 +872,30 @@ func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *test
 				Key:       "customer-practice",
 				Name:      "Customer Practice",
 				Locations: []access.LocationProvision{{Key: "customer", Name: "Customer"}},
-				Invitations: []access.InvitationProvision{{
+				AccessGrants: []access.AccessGrantProvision{{
 					Key:           "founder-customer-admin",
 					Email:         operator.Email,
 					Role:          access.RoleAdmin,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
 				}},
 			},
 			{
 				Key:       "acuity-demo",
 				Name:      "Acuity Demo",
 				Locations: []access.LocationProvision{{Key: "demo", Name: "Demo"}},
-				Invitations: []access.InvitationProvision{{
+				AccessGrants: []access.AccessGrantProvision{{
 					Key:           "founder-demo-staff",
 					Email:         operator.Email,
 					Role:          access.RoleStaff,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
 				}},
 			},
 		},
 	}); err != nil {
 		t.Fatalf("provision operator Staff access: %v", err)
 	}
-	eligibility, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
-		Email: operator.Email,
-	})
-	if err != nil || eligibility.Kind != access.InvitationKindPlatformOperator {
+	eligibility, err := module.InspectSignUpEligibility(context.Background(), operator.Email)
+	if err != nil || eligibility.Kind != access.SignUpEligibilityAccessGrant {
 		t.Fatalf("operator sign-up eligibility = %#v, err = %v", eligibility, err)
 	}
 

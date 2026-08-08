@@ -40,8 +40,8 @@ trap cleanup EXIT
   BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:13000 \
   PORTAL_API_INTERNAL_URL=http://127.0.0.1:18080 \
   PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
-  AUTH_EMAIL_MODE=test \
-  AUTH_ALLOW_TEST_EMAIL=true \
+  GOOGLE_CLIENT_ID=auth-schema-google-client \
+  GOOGLE_CLIENT_SECRET=auth-schema-google-secret \
   npx --yes auth@1.6.25 generate \
     --config src/lib/auth-cli.ts \
     --output "$generated" \

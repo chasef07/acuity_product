@@ -21,15 +21,16 @@ Required server configuration:
 - `BETTER_AUTH_TRUSTED_ORIGINS`
 - `PORTAL_API_INTERNAL_URL`
 - `PORTAL_API_AUDIENCE`
-- `AUTH_EMAIL_MODE=smtp`
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `AUTH_EMAIL_FROM`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
 
 Required build-time browser origins:
 
 - `NEXT_PUBLIC_PORTAL_API_URL`
 - `NEXT_PUBLIC_REALTIME_URL`
 
-The captured email adapter is test-only and requires both
-`AUTH_EMAIL_MODE=test` and `AUTH_ALLOW_TEST_EMAIL=true`.
+Human authentication is Google-only. End-to-end tests use Better Auth's direct
+test-session utility behind `AUTH_ALLOW_TEST_SESSION=true`; it creates no
+password, verification email, recovery flow, or production HTTP capability.
 
 Run `pnpm lint`, `pnpm typecheck`, and `pnpm build` before committing.
