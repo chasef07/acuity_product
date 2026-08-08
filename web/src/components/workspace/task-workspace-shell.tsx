@@ -941,7 +941,7 @@ export function TaskWorkspaceShell() {
         <SidebarInset
           data-testid="mounted-workspace"
           data-workspace-version={workspace.version}
-          className="min-w-0"
+          className="h-svh min-h-0 min-w-0 overflow-hidden"
         >
           {view !== "engagement" && (
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
@@ -963,7 +963,6 @@ export function TaskWorkspaceShell() {
                   revision={workspaceRevision}
                   headerLeading={<SidebarTrigger />}
                   headerTrailing={<CallingAvailabilityControl />}
-                  onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}
                 />

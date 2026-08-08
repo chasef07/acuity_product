@@ -54,7 +54,6 @@ import {
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
 import { portalClient } from "@/lib/api/client"
 import {
-  createMessageFollowUpTask,
   getEngagementTimeline,
   getMessageAttachment,
   retryInboundMessageAttachment,
@@ -95,7 +94,6 @@ export function EngagementWorkspace({
   revision,
   headerLeading,
   headerTrailing,
-  onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
@@ -105,7 +103,6 @@ export function EngagementWorkspace({
   revision: number
   headerLeading?: ReactNode
   headerTrailing?: ReactNode
-  onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
 }) {
@@ -231,7 +228,6 @@ export function EngagementWorkspace({
         initialDestination={engagement.phone}
         canMutate={canMutate}
         revision={revision}
-        onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
       />
@@ -246,7 +242,6 @@ function MessageConversation({
   initialDestination,
   canMutate,
   revision,
-  onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
@@ -256,7 +251,6 @@ function MessageConversation({
   initialDestination?: string
   canMutate: boolean
   revision: number
-  onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
@@ -422,7 +416,6 @@ function MessageConversation({
                 item={item}
                 canMutate={canMutate}
                 onChanged={() => void loadLatest(true)}
-                onTaskCreated={onTaskCreated}
                 onTaskOpen={onTaskOpen}
                 onCallOpen={onCallOpen}
               />
@@ -502,14 +495,12 @@ function TimelineEntry({
   item,
   canMutate,
   onChanged,
-  onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
   item: ConversationTimelineItem
   canMutate: boolean
   onChanged: () => void
-  onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
@@ -519,7 +510,6 @@ function TimelineEntry({
         message={item.message}
         canMutate={canMutate}
         onChanged={onChanged}
-        onTaskCreated={onTaskCreated}
       />
     )
   }
@@ -566,39 +556,15 @@ function MessageEntry({
   message,
   canMutate,
   onChanged,
-  onTaskCreated,
 }: {
   message: Message
   canMutate: boolean
   onChanged: () => void
-  onTaskCreated: (task: Task) => void
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
-
-  async function createTask() {
-    setPending(true)
-    setError("")
-    const token = await getAccessToken()
-    if (!token) {
-      setPending(false)
-      return
-    }
-    const result = await createMessageFollowUpTask({
-      client: portalClient(token),
-      path: { messageId: message.id },
-      body: {},
-    }).catch(() => undefined)
-    setPending(false)
-    if (!result?.data) {
-      setError("A follow-up Task could not be created.")
-      return
-    }
-    onTaskCreated(result.data)
-    onChanged()
-  }
 
   async function sendAgain() {
     const duplicateRisk =
@@ -687,44 +653,26 @@ function MessageEntry({
             </>
           )}
         </div>
-        {canMutate && (
-          <div
-            className={cn(
-              "mt-1.5 flex flex-wrap items-center gap-1",
-              outbound && "text-primary-foreground",
-            )}
-          >
-            {!message.taskId && (
+        {canMutate &&
+          outbound &&
+          (message.delivery === "Failed" ||
+            message.delivery === "Status unknown") && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1 text-primary-foreground">
               <Button
                 size="sm"
-                variant={outbound ? "secondary" : "ghost"}
+                variant="secondary"
                 className="h-6 px-2 text-xs"
                 disabled={pending}
-                onClick={() => void createTask()}
+                onClick={() => void sendAgain()}
               >
-                <CheckSquareIcon data-icon="inline-start" />
-                Create Task
+                {message.delivery === "Status unknown" && (
+                  <AlertTriangleIcon data-icon="inline-start" />
+                )}
+                Send again
               </Button>
-            )}
-            {outbound &&
-              (message.delivery === "Failed" ||
-                message.delivery === "Status unknown") && (
-                <Button
-                  size="sm"
-                  variant={outbound ? "secondary" : "ghost"}
-                  className="h-6 px-2 text-xs"
-                  disabled={pending}
-                  onClick={() => void sendAgain()}
-                >
-                  {message.delivery === "Status unknown" && (
-                    <AlertTriangleIcon data-icon="inline-start" />
-                  )}
-                  Send again
-                </Button>
-              )}
-            {pending && <Spinner />}
-          </div>
-        )}
+              {pending && <Spinner />}
+            </div>
+          )}
         {error && (
           <p
             role="alert"
