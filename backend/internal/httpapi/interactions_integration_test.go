@@ -100,7 +100,9 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create AI Interaction service authenticator: %v", err)
 	}
-	workModule := work.New(pool, accessModule, nil)
+	workModule := work.New(pool, accessModule, func() time.Time {
+		return now.Add(10 * time.Minute)
+	})
 	callingModule := humancalling.New(pool, accessModule, httpCallingProvider{}, humancalling.Config{}, nil)
 	if err := callingModule.ProvisionLocationVoices(context.Background(),
 		[]humancalling.LocationVoiceProvision{{
@@ -532,11 +534,11 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	decode(t, timeline, &history)
 	if len(history.Items) != 2 ||
-		history.Items[0].Type != "TASK" ||
-		history.Items[1].Type != "AI_INTERACTION" ||
-		history.Items[1].AIInteraction == nil ||
-		history.Items[1].AIInteraction.ID != first.InteractionID ||
-		history.Items[1].AIInteraction.AppointmentOutcome != "RESCHEDULE" {
+		history.Items[0].Type != "AI_INTERACTION" ||
+		history.Items[0].AIInteraction == nil ||
+		history.Items[0].AIInteraction.ID != first.InteractionID ||
+		history.Items[0].AIInteraction.AppointmentOutcome != "RESCHEDULE" ||
+		history.Items[1].Type != "TASK" {
 		t.Fatalf("AI Interaction Engagement History = %#v", history)
 	}
 }
