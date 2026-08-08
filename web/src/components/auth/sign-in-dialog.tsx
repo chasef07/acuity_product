@@ -1,7 +1,7 @@
 "use client"
 
+import { ArrowRight } from "lucide-react"
 import Image from "next/image"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Suspense, useState } from "react"
 
@@ -23,10 +23,20 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 
-export function PortalHome({
+export function PortalSignInTrigger() {
+  return (
+    <DialogTrigger render={<Button className="rounded-full" size="sm" />}>
+      Portal <ArrowRight data-icon="inline-end" />
+    </DialogTrigger>
+  )
+}
+
+export function SignInDialog({
+  children,
   googleEnabled,
   initiallyOpen = false,
 }: {
+  children: React.ReactNode
   googleEnabled: boolean
   initiallyOpen?: boolean
 }) {
@@ -42,26 +52,7 @@ export function PortalHome({
 
   return (
     <Dialog open={open} onOpenChange={updateOpen}>
-      <main className="min-h-svh bg-card text-card-foreground">
-        <header className="flex h-16 items-center justify-between px-5 sm:px-8">
-          <Link href="/" className="flex items-center gap-2 font-medium">
-            <Image
-              src="/acuity-health-mark.png"
-              alt=""
-              aria-hidden="true"
-              width={28}
-              height={28}
-              className="size-7"
-              priority
-            />
-            Acuity Health
-          </Link>
-          <DialogTrigger render={<Button variant="outline" size="sm" />}>
-            Portal
-          </DialogTrigger>
-        </header>
-      </main>
-
+      {children}
       <DialogContent
         data-testid="sign-in-dialog"
         className="gap-0 overflow-hidden p-0 motion-reduce:animate-none motion-reduce:duration-0 sm:max-w-[24.5rem]"

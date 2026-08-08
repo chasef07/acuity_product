@@ -1,9 +1,9 @@
 import { connection } from "next/server"
 
-import { PortalHome } from "@/components/auth/portal-home"
+import { MarketingPage } from "@/components/marketing/marketing-page"
 import { googleAuthEnabled } from "@/lib/auth-providers"
 
 export default async function SignInPage() {
   await connection()
-  return <PortalHome googleEnabled={googleAuthEnabled()} initiallyOpen />
+  return <MarketingPage googleEnabled={googleAuthEnabled()} initiallyOpen />
 }
