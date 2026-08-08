@@ -5,9 +5,11 @@ import Image from "next/image"
 import Link from "next/link"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
 
-import { SignInDialog } from "@/components/auth/sign-in-dialog"
-import { Button } from "@/components/ui/button"
-import { DialogTrigger } from "@/components/ui/dialog"
+import {
+  PortalSignInTrigger,
+  SignInDialog,
+} from "@/components/auth/sign-in-dialog"
+import { cn } from "@/lib/utils"
 
 import styles from "./landing-page.module.css"
 
@@ -165,7 +167,7 @@ function AcuityMark() {
 function JourneyObject({ kind }: { kind: JourneyKind }) {
   if (kind === "voice") {
     return (
-      <div className={`${styles.journeyObject} ${styles.voiceObject}`}>
+      <div className={cn(styles.journeyObject, styles.voiceObject)}>
         <span className={styles.liveDot} />
         <span className={styles.journeyWave} aria-hidden="true">
           {Array.from({ length: 15 }).map((_, index) => (
@@ -179,7 +181,7 @@ function JourneyObject({ kind }: { kind: JourneyKind }) {
 
   if (kind === "insurance") {
     return (
-      <div className={`${styles.journeyObject} ${styles.insurancePage}`}>
+      <div className={cn(styles.journeyObject, styles.insurancePage)}>
         <small>Eligibility</small>
         <i />
         <i />
@@ -192,7 +194,7 @@ function JourneyObject({ kind }: { kind: JourneyKind }) {
 
   if (kind === "reminder") {
     return (
-      <div className={`${styles.journeyObject} ${styles.reminderMessage}`}>
+      <div className={cn(styles.journeyObject, styles.reminderMessage)}>
         <MessageSquareText size={14} aria-hidden="true" />
         <p>Your visit is tomorrow at 10:30 AM.</p>
       </div>
@@ -201,7 +203,7 @@ function JourneyObject({ kind }: { kind: JourneyKind }) {
 
   if (kind === "recovery") {
     return (
-      <div className={`${styles.journeyObject} ${styles.recoveryCalendar}`}>
+      <div className={cn(styles.journeyObject, styles.recoveryCalendar)}>
         <small>EMR · Schedule</small>
         <span className={styles.recoveryAppointment}>
           <b>10:30</b>
@@ -216,7 +218,7 @@ function JourneyObject({ kind }: { kind: JourneyKind }) {
   }
 
   return (
-    <div className={`${styles.journeyObject} ${styles.preparedTask}`}>
+    <div className={cn(styles.journeyObject, styles.preparedTask)}>
       <strong>Send medical records</strong>
       <span>
         <b>M</b> Maya · Ready
@@ -244,15 +246,11 @@ export function LandingPage({
     journeyEvents.length,
     0.045,
   )
-  const [workStackRef, activeStackStep] = useScrollStep(
+  const [workStackRef, visibleStackStep] = useScrollStep(
     workStackSteps.length,
     0.04,
   )
 
-  const visibleStackStep =
-    activeStackStep < 0
-      ? -1
-      : Math.min(activeStackStep, workStackSteps.length - 1)
   const workflowStep =
     activeWorkflowStep >= 0 ? journeyEvents[activeWorkflowStep] : null
   const routeProgress =
@@ -275,11 +273,7 @@ export function LandingPage({
           <nav className={styles.nav} aria-label="Main navigation">
             <a href="#patient-work">Patient journey</a>
             <a href="#results">Results</a>
-            <DialogTrigger
-              render={<Button className="rounded-full" size="sm" />}
-            >
-              Portal <ArrowRight data-icon="inline-end" />
-            </DialogTrigger>
+            <PortalSignInTrigger />
           </nav>
         </header>
 
@@ -362,7 +356,10 @@ export function LandingPage({
               </h2>
             </div>
             <div
-              className={`${styles.journeyCanvas} ${activeWorkflowStep >= 0 ? styles.journeyCanvasConnected : ""}`}
+              className={cn(
+                styles.journeyCanvas,
+                activeWorkflowStep >= 0 && styles.journeyCanvasConnected,
+              )}
               aria-label={
                 workflowStep
                   ? `${workflowStep.source}. ${workflowStep.detail}.`
@@ -430,7 +427,11 @@ export function LandingPage({
 
                   return (
                     <article
-                      className={`${styles.journeyPiece} ${styles[`journey${kind}`]} ${workflowState}`}
+                      className={cn(
+                        styles.journeyPiece,
+                        styles[`journey${kind}`],
+                        workflowState,
+                      )}
                       key={`${source}-${detail}`}
                       style={
                         {
@@ -474,7 +475,10 @@ export function LandingPage({
             </header>
 
             <div
-              className={`${styles.workStackStage} ${visibleStackStep >= 0 ? styles.stackIsFocused : ""}`}
+              className={cn(
+                styles.workStackStage,
+                visibleStackStep >= 0 && styles.stackIsFocused,
+              )}
               aria-label="Acuity patient work model"
             >
               <span className={styles.stackSpine} aria-hidden="true">
@@ -491,7 +495,11 @@ export function LandingPage({
               </span>
 
               <article
-                className={`${styles.stackPlane} ${styles.stackChannels} ${visibleStackStep === 0 ? styles.stackPlaneActive : ""}`}
+                className={cn(
+                  styles.stackPlane,
+                  styles.stackChannels,
+                  visibleStackStep === 0 && styles.stackPlaneActive,
+                )}
               >
                 <div className={styles.stackPlanePreview}>
                   <small>Channels</small>
@@ -519,7 +527,7 @@ export function LandingPage({
                       <path d="M165 210 C300 150 420 226 555 184 S745 132 880 205" />
                     </svg>
                     <div
-                      className={`${styles.channelArtifact} ${styles.channelCall}`}
+                      className={cn(styles.channelArtifact, styles.channelCall)}
                     >
                       <span className={styles.channelVisual} aria-hidden="true">
                         <span className={styles.stackWave}>
@@ -531,7 +539,10 @@ export function LandingPage({
                       <strong>Calls</strong>
                     </div>
                     <div
-                      className={`${styles.channelArtifact} ${styles.channelVoicemail}`}
+                      className={cn(
+                        styles.channelArtifact,
+                        styles.channelVoicemail,
+                      )}
                     >
                       <span className={styles.channelVisual} aria-hidden="true">
                         <span className={styles.voicemailMark}>0:18</span>
@@ -539,7 +550,7 @@ export function LandingPage({
                       <strong>Voicemails</strong>
                     </div>
                     <div
-                      className={`${styles.channelArtifact} ${styles.channelText}`}
+                      className={cn(styles.channelArtifact, styles.channelText)}
                     >
                       <span className={styles.channelVisual} aria-hidden="true">
                         <MessageSquareText />
@@ -547,7 +558,10 @@ export function LandingPage({
                       <strong>Texts</strong>
                     </div>
                     <div
-                      className={`${styles.channelArtifact} ${styles.channelEmail}`}
+                      className={cn(
+                        styles.channelArtifact,
+                        styles.channelEmail,
+                      )}
                     >
                       <span className={styles.channelVisual} aria-hidden="true">
                         <Mail />
@@ -555,7 +569,10 @@ export function LandingPage({
                       <strong>Emails</strong>
                     </div>
                     <div
-                      className={`${styles.channelArtifact} ${styles.channelReferral}`}
+                      className={cn(
+                        styles.channelArtifact,
+                        styles.channelReferral,
+                      )}
                     >
                       <span className={styles.channelVisual} aria-hidden="true">
                         <span className={styles.referralMini}>
@@ -568,7 +585,7 @@ export function LandingPage({
                       <strong>Referrals</strong>
                     </div>
                     <div
-                      className={`${styles.channelArtifact} ${styles.channelEmr}`}
+                      className={cn(styles.channelArtifact, styles.channelEmr)}
                     >
                       <span className={styles.channelVisual} aria-hidden="true">
                         <span className={styles.emrMini}>
@@ -586,7 +603,11 @@ export function LandingPage({
               </article>
 
               <article
-                className={`${styles.stackPlane} ${styles.stackSignals} ${visibleStackStep === 1 ? styles.stackPlaneActive : ""}`}
+                className={cn(
+                  styles.stackPlane,
+                  styles.stackSignals,
+                  visibleStackStep === 1 && styles.stackPlaneActive,
+                )}
               >
                 <div className={styles.stackPlanePreview}>
                   <small>Signals</small>
@@ -650,7 +671,11 @@ export function LandingPage({
               </article>
 
               <article
-                className={`${styles.stackPlane} ${styles.stackExecution} ${visibleStackStep === 2 ? styles.stackPlaneActive : ""}`}
+                className={cn(
+                  styles.stackPlane,
+                  styles.stackExecution,
+                  visibleStackStep === 2 && styles.stackPlaneActive,
+                )}
               >
                 <div className={styles.stackPlanePreview}>
                   <small>Work gets done</small>
@@ -672,7 +697,10 @@ export function LandingPage({
                   <div className={styles.completionExamples}>
                     <article>
                       <div
-                        className={`${styles.completionArtifact} ${styles.completionBooking}`}
+                        className={cn(
+                          styles.completionArtifact,
+                          styles.completionBooking,
+                        )}
                         aria-hidden="true"
                       >
                         <span>
@@ -686,7 +714,10 @@ export function LandingPage({
                     </article>
                     <article>
                       <div
-                        className={`${styles.completionArtifact} ${styles.completionCall}`}
+                        className={cn(
+                          styles.completionArtifact,
+                          styles.completionCall,
+                        )}
                         aria-hidden="true"
                       >
                         <span>
@@ -700,7 +731,10 @@ export function LandingPage({
                     </article>
                     <article>
                       <div
-                        className={`${styles.completionArtifact} ${styles.completionInsurance}`}
+                        className={cn(
+                          styles.completionArtifact,
+                          styles.completionInsurance,
+                        )}
                         aria-hidden="true"
                       >
                         <small>Eligibility</small>
@@ -714,7 +748,10 @@ export function LandingPage({
                     </article>
                     <article>
                       <div
-                        className={`${styles.completionArtifact} ${styles.completionTask}`}
+                        className={cn(
+                          styles.completionArtifact,
+                          styles.completionTask,
+                        )}
                         aria-hidden="true"
                       >
                         <small>Created by Acuity</small>
@@ -730,7 +767,11 @@ export function LandingPage({
               </article>
 
               <article
-                className={`${styles.stackPlane} ${styles.stackResolution} ${visibleStackStep === 3 ? styles.stackPlaneActive : ""}`}
+                className={cn(
+                  styles.stackPlane,
+                  styles.stackResolution,
+                  visibleStackStep === 3 && styles.stackPlaneActive,
+                )}
               >
                 <div className={styles.stackPlanePreview}>
                   <small>Finished work</small>

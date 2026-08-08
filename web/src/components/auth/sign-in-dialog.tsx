@@ -1,14 +1,35 @@
 "use client"
 
+import { ArrowRight } from "lucide-react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { Suspense, useState } from "react"
 
 import { SignInForm } from "@/components/auth/sign-in-form"
-import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+
+export function PortalSignInTrigger() {
+  return (
+    <DialogTrigger render={<Button className="rounded-full" size="sm" />}>
+      Portal <ArrowRight data-icon="inline-end" />
+    </DialogTrigger>
+  )
+}
 
 export function SignInDialog({
   children,
@@ -61,9 +82,11 @@ export function SignInDialog({
               className="size-10"
               priority
             />
-            <DialogTitle className="text-xl font-semibold tracking-tight">
-              Sign in to Acuity
-            </DialogTitle>
+            <CardTitle>
+              <DialogTitle className="text-xl font-semibold tracking-tight">
+                Sign in to Acuity
+              </DialogTitle>
+            </CardTitle>
           </CardHeader>
           <CardContent className="relative px-6 pb-6 sm:px-8">
             <Suspense fallback={<Skeleton className="h-32 w-full" />}>

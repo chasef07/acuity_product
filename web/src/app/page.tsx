@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import { connection } from "next/server"
 
-import { LandingPage } from "@/components/marketing/landing-page"
+import { MarketingPage } from "@/components/marketing/marketing-page"
 import { googleAuthEnabled } from "@/lib/auth-providers"
 
 export const metadata: Metadata = {
@@ -12,5 +12,5 @@ export const metadata: Metadata = {
 
 export default async function Home() {
   await connection()
-  return <LandingPage googleEnabled={googleAuthEnabled()} />
+  return <MarketingPage googleEnabled={googleAuthEnabled()} />
 }
