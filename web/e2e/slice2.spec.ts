@@ -178,6 +178,12 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       selectedLeg.provider_leg_id,
       selectedLeg.media_token,
     )
+    await expect(
+      secondaryPage.getByRole("heading", {
+        name: "(555) 555-0100",
+        exact: true,
+      }),
+    ).toHaveCount(0)
     await selectedPage.getByRole("button", { name: "Take", exact: true }).click()
     await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
 
@@ -240,6 +246,15 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     await expect(
       callCenter(selectedPage).getByText("Connected", { exact: true }),
     ).toBeVisible({ timeout: 20_000 })
+    await expect(
+      selectedPage.getByRole("heading", {
+        name: "(555) 555-0100",
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      selectedPage.getByRole("complementary", { name: "Call context" }),
+    ).toBeVisible()
     await expect(callCenter(secondaryPage)).toHaveCount(0)
   } finally {
     await database.end()

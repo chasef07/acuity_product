@@ -2755,7 +2755,7 @@ components:
     MessageThreadQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, locationId]
+      required: [practiceId]
       properties:
         practiceId:
           type: string

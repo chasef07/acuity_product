@@ -1230,6 +1230,32 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			err,
 		)
 	}
+	allLocationThreads, err := module.QueryThreads(
+		context.Background(),
+		messaging.QueryThreadsCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Search:     "+17275550199",
+		},
+	)
+	if err != nil || len(allLocationThreads.Items) != 2 {
+		t.Fatalf(
+			"all-Location Thread scope = %#v, %v",
+			allLocationThreads,
+			err,
+		)
+	}
+	allLocationIDs := map[string]bool{}
+	for _, thread := range allLocationThreads.Items {
+		allLocationIDs[thread.LocationID] = true
+	}
+	if !allLocationIDs[authorization.Locations[0].ID] ||
+		!allLocationIDs[secondLocationID] {
+		t.Fatalf(
+			"all-Location Thread provenance = %#v",
+			allLocationIDs,
+		)
+	}
 
 	aiTask, status, err := workModule.CreateAITask(
 		context.Background(),

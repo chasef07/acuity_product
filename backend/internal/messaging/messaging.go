@@ -2209,8 +2209,7 @@ func (m *Module) QueryThreads(
 	command.Search = strings.TrimSpace(command.Search)
 	if m.pool == nil ||
 		m.access == nil ||
-		command.PracticeID == "" ||
-		command.LocationID == "" {
+		command.PracticeID == "" {
 		return ThreadPage{}, ErrInvalidInput
 	}
 	cursor, err := decodePageCursor(command.Cursor)
@@ -2237,14 +2236,23 @@ func (m *Module) QueryThreads(
 		return ThreadPage{}, fmt.Errorf("begin Message Thread query: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := m.access.LockReadAuthorization(
+	authorization, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
 		command.Identity,
 		command.PracticeID,
 		command.LocationID,
-	); err != nil {
+	)
+	if err != nil {
 		return ThreadPage{}, ErrDenied
+	}
+	locationIDs := make([]string, 0, len(authorization.Locations))
+	if authorization.ActiveLocation != nil {
+		locationIDs = append(locationIDs, authorization.ActiveLocation.ID)
+	} else {
+		for _, location := range authorization.Locations {
+			locationIDs = append(locationIDs, location.ID)
+		}
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -2320,7 +2328,7 @@ func (m *Module) QueryThreads(
 			) event
 		) activity ON true
 		WHERE thread.practice_id = $1
-			AND thread.location_id = $2
+			AND thread.location_id::text = ANY($2::text[])
 			AND ($3 = '' OR thread.external_phone = $3)
 			AND (
 				$6::timestamptz IS NULL
@@ -2334,7 +2342,7 @@ func (m *Module) QueryThreads(
 			COALESCE(activity.occurred_at, thread.updated_at) DESC,
 			thread.id DESC
 		LIMIT $5
-	`, command.PracticeID, command.LocationID, searchPhone,
+	`, command.PracticeID, locationIDs, searchPhone,
 		command.Identity.Subject, limit+1, nullableCursorTime(cursor),
 		nullableCursorID(cursor),
 	)
