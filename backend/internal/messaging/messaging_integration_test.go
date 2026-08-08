@@ -37,9 +37,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			Key:  "message-practice",
 			Name: "Message Practice",
 			Locations: []access.LocationProvision{{
-				Key:            "message-office",
-				Name:           "Message Office",
-				AbitaOfficeKey: "message-office",
+				Key:             "message-office",
+				Name:            "Message Office",
+				AbitaOfficeKeys: []string{"message-office"},
 			}, {
 				Key:  "message-office-two",
 				Name: "Message Office Two",

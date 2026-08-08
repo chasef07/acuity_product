@@ -99,6 +99,23 @@ func (m *Module) ProvisionLocationVoices(
 		return fmt.Errorf("begin Location voice provisioning: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := m.ProvisionLocationVoicesInTx(ctx, tx, provisions); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Location voice provisioning: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) ProvisionLocationVoicesInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	provisions []LocationVoiceProvision,
+) error {
+	if tx == nil {
+		return ErrInvalidInput
+	}
 	for _, provision := range provisions {
 		provision.PracticeKey = strings.TrimSpace(provision.PracticeKey)
 		provision.LocationKey = strings.TrimSpace(provision.LocationKey)
@@ -142,9 +159,6 @@ func (m *Module) ProvisionLocationVoices(
 			provision.VoicemailGreeting); err != nil {
 			return fmt.Errorf("provision Location voice number: %w", err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Location voice provisioning: %w", err)
 	}
 	return nil
 }

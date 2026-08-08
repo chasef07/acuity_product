@@ -445,7 +445,7 @@ run_migration() {
     --tasks 1 \
     --max-retries 0 \
     --update-env-vars "DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=5000" \
-    --remove-env-vars "MIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER" \
+    --remove-env-vars "MIGRATE_VOICE_PRACTICE_KEY,MIGRATE_VOICE_LOCATION_KEY,MIGRATE_VOICE_NUMBER,PROVISIONING_INPUT,PROVISIONING_OUTPUT" \
     --quiet
   migration_started=true
   gcloud run jobs execute acuity-migrate \

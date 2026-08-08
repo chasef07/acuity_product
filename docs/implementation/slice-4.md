@@ -49,9 +49,11 @@ AI Tasks have a quiet `AI` marker, and opening one shows its immutable source
 card. Refetches preserve the current selection; creation adds no modal, sound,
 notification, or automatic focus change.
 
-The development provisioning fixture maps the current Abita office keys to six
-controlled fixture Locations. Production provisioning intentionally contains no
-Abita Task route, so this change alone cannot redirect production caller work.
+Provisioning maps each Abita source office key to one controlled operational
+Location. Several source offices may converge on one Location; Hollywood and
+Sweetwater intentionally converge on South Florida Medical. Production routes
+remain inert until an operator runs the reviewed one-time provisioning command
+and separately completes the provider and service-credential gates.
 
 ## Deterministic proof
 
@@ -59,7 +61,9 @@ PostgreSQL integration tests cover authenticated HTTP acceptance of the current
 tool payload, source projection, invalid fields, authorization, safe and
 concurrent replay, changed-payload conflict, multiple outcomes from one source
 call, immutable source detail, Activity/workspace atomicity, protected search,
-and time/priority cursor ordering.
+and time/priority cursor ordering. The production provisioning contract is also
+executed through the real migrate command against PostgreSQL and asserted at
+the resulting Abita Office Route, voice-number, Messaging-sender, and voicemail rows.
 
 The generated Go and TypeScript clients, backend tests, frontend lint,
 typecheck, unit tests, production build, and existing Playwright journeys are

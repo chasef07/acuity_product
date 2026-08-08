@@ -1409,9 +1409,9 @@ func provisionStaff(
 			Name: "Synthetic Practice",
 			Locations: []access.LocationProvision{
 				{
-					Key:            "synthetic-location-1",
-					Name:           "Synthetic Location 1",
-					AbitaOfficeKey: "spring-hill",
+					Key:             "synthetic-location-1",
+					Name:            "Synthetic Location 1",
+					AbitaOfficeKeys: []string{"spring-hill"},
 				},
 				{Key: "synthetic-location-2", Name: "Synthetic Location 2"},
 			},

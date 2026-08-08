@@ -119,6 +119,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 - The canonical domain glossary is [CONTEXT.md](../CONTEXT.md).
 - **Practice:** one customer tenant and security boundary containing one or more locations.
 - **Location:** one physical or operational office within a practice.
+- **Abita office route:** one Abita Agent office key mapped to the operational Location that owns its calls and Tasks. Multiple Abita office routes may converge on one Location.
 - **Membership:** one user's Admin or Staff role in one practice plus an `ALL` or `SELECTED` location scope.
 - **Platform Operator:** an internal Acuity Health user with global visibility and explicit audited Support Mode for customer-data changes.
 - **Support Mode:** a time-limited, practice-scoped mutation grant for a Platform Operator; it never impersonates a customer user.
@@ -127,7 +128,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 - **Contact context:** a snapshot of the phone number, optional name, and handoff details known for one task or interaction. It is not a global person or verified patient identity.
 - **Engagement history:** calls and messages found by practice, location, and normalized phone number for display as context. Display does not attach those interactions to the current task.
 - **Activity:** a chronological task entry such as an interaction, assignment, status change, or priority change.
-- **Queue:** a query over tasks; it is not a second source of state.
+- **Queue:** a query over tasks; it is not call-routing configuration or a second source of state.
 - **Call:** the logical human-call session projected from provider legs and events.
 - **Provider event:** signed evidence received from Telnyx or another external system.
 
@@ -437,7 +438,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Platform Operators are not duplicated as Admin memberships in every practice. They can discover and read every current and future practice/location but still select an explicit active practice and location.
 - A Platform Operator must enter time-limited, practice-scoped Support Mode with a reason before mutating customer data. The UI shows a persistent banner, every action records the real Platform Operator, and expiration or revocation ends mutation access. Support Mode never impersonates a customer user.
 - Each invitation is email-bound, expiring, and revocable and specifies practice, role, and location scope before send.
-- Practice, Location, Platform Operator, and initial invitation records are created through an auditable provisioning path that accepts business facts, not human passwords.
+- Practice, Location, Abita Office Route, Platform Operator, and initial invitation records are created through an auditable provisioning path that accepts business facts, not human passwords. Provisioning may map several Abita office keys to one operational Location, but each office key has exactly one Location owner within its Practice. A clean-launch contract may require empty Access-owned state and must fail inside the provisioning transaction before customer-data mutation when that precondition is false. Better Auth User emptiness remains a separate migration preflight because Better Auth owns that table.
 - Integration credentials are separate service identities with the minimum required practice/location scope. Mutations record `actor_type=service` and the stable service actor ID.
 - Do not duplicate practice/location authorization in Better Auth organization permissions.
 - Better Auth may use the same PostgreSQL instance, but its tables remain private to Better Auth and the Go runtime never mutates them.

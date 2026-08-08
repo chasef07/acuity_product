@@ -14,6 +14,12 @@ _Avoid_: Account, organization, clinic
 A physical or operational office within one Practice.
 _Avoid_: Site, branch
 
+**Abita Office Route**:
+The mapping from an Abita Agent office key to the operational Location that
+owns its calls and Tasks. Multiple Abita Office Routes may resolve to one
+Location.
+_Avoid_: Queue, duplicate Location
+
 **User**:
 A human identity that may hold Practice Memberships or the Acuity-wide Platform
 Operator role.
@@ -82,5 +88,6 @@ or priority change.
 _Avoid_: Audit event
 
 **Queue**:
-A query over Tasks, never a second source of workflow state.
+A query over Tasks, never a call-routing object or second source of workflow
+state.
 _Avoid_: Inbox state

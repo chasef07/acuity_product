@@ -819,9 +819,27 @@ func (m *Module) Provision(
 		return fmt.Errorf("begin Messaging provisioning: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := m.ProvisionInTx(ctx, tx, input); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Messaging provisioning: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) ProvisionInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	input []LocationProvision,
+) error {
+	if tx == nil {
+		return ErrInvalidInput
+	}
 	for _, configured := range input {
 		configured.PracticeKey = strings.TrimSpace(configured.PracticeKey)
 		configured.LocationKey = strings.TrimSpace(configured.LocationKey)
+		var err error
 		configured.Sender, err = normalizePhone(configured.Sender)
 		configured.MessagingProfileID = strings.TrimSpace(
 			configured.MessagingProfileID,
@@ -875,9 +893,6 @@ func (m *Module) Provision(
 				ErrInvalidInput,
 			)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Messaging provisioning: %w", err)
 	}
 	return nil
 }

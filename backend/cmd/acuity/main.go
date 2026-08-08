@@ -25,6 +25,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/worker"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -407,17 +408,20 @@ func runMigrate(
 	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
 		return err
 	}
-	if err := provisionConfiguredLocationVoice(ctx, config, pool); err != nil {
-		return err
-	}
 	voiceProvision := config.LocationVoiceProvision
 	if config.ProvisioningInput == "" {
+		if err := provisionConfiguredLocationVoice(ctx, config, pool); err != nil {
+			return err
+		}
 		slog.Info(
 			"migrations_applied",
 			"provisioning", false,
 			"location_voice_provisioned", voiceProvision.Number != "",
 		)
 		return nil
+	}
+	if voiceProvision.Number != "" {
+		return fmt.Errorf("one-time provisioning cannot use legacy Location voice configuration")
 	}
 
 	inputFile, err := os.Open(config.ProvisioningInput)
@@ -446,10 +450,6 @@ func runMigrate(
 			_ = os.Remove(config.ProvisioningOutput)
 		}
 	}()
-	provisioned, err := access.New(pool, nil).Provision(ctx, input)
-	if err != nil {
-		return err
-	}
 	messageLocations := make([]messaging.LocationProvision, 0)
 	for _, practice := range input.Practices {
 		for _, location := range practice.Locations {
@@ -468,10 +468,6 @@ func runMigrate(
 				},
 			)
 		}
-	}
-	if err := messaging.New(pool, nil, nil, nil, messaging.Config{}, nil).
-		Provision(ctx, messageLocations); err != nil {
-		return err
 	}
 	voiceLocations := make([]humancalling.LocationVoiceProvision, 0)
 	for _, practice := range input.Practices {
@@ -501,8 +497,21 @@ func runMigrate(
 			)
 		}
 	}
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin atomic provisioning: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	provisioned, err := access.New(pool, nil).ProvisionInTx(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	if err := messaging.New(pool, nil, nil, nil, messaging.Config{}, nil).
+		ProvisionInTx(ctx, tx, messageLocations); err != nil {
+		return err
+	}
 	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
-		ProvisionLocationVoices(ctx, voiceLocations); err != nil {
+		ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)
@@ -510,8 +519,14 @@ func runMigrate(
 	if err := encoder.Encode(provisioned); err != nil {
 		return fmt.Errorf("write provisioning output: %w", err)
 	}
+	if err := output.Sync(); err != nil {
+		return fmt.Errorf("sync provisioning output: %w", err)
+	}
 	if err := output.Close(); err != nil {
 		return fmt.Errorf("close provisioning output: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit atomic provisioning: %w", err)
 	}
 	keepOutput = true
 	slog.Info("migrations_applied",
