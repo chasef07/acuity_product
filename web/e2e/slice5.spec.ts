@@ -9,6 +9,7 @@ const telnyxFixtureURL =
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 
 test("Slice 5 sends, receives, and turns exact-phone correspondence into explicit work", async ({
+  context,
   page,
 }) => {
   test.setTimeout(180_000)
@@ -30,23 +31,36 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
     "Fixture Messaging Staff",
   )
 
-  await page.getByRole("button", { name: "Messages", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Abita Eye Group · Fixture Location 1")
-  const messages = page.getByRole("button", { name: "Messages", exact: true })
-  const newMessage = page.getByRole("button", { name: "New message" })
-  await page.mouse.move(500, 500)
-  await page.getByLabel("Search messages").focus()
-  await expect(newMessage).toHaveCSS("opacity", "0")
-  await messages.hover()
-  await expect(newMessage).toHaveCSS("opacity", "1")
-  await newMessage.hover()
-  await expect(page.getByRole("tooltip")).toHaveText("New message")
-  await newMessage.click()
+  ).toContainText("Abita Eye Group")
+  await expect(
+    page.getByRole("button", { name: "Workspace selector" }),
+  ).toContainText("Fixture Location 1")
+  await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  )
+  await expect(page.getByRole("button", { name: /^Missed Calls/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Voicemails/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Bookings/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Cancellations/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Reschedules/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Texts/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Recent" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
+  await openNumberInbox(page, "7275550199")
+  await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
+  await context.grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.getByRole("button", { name: "Copy phone number" }).click()
+  await expect(page.getByRole("button", { name: "Number copied" })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("+17275550199")
 
   const outgoingText = "Your records are ready for pickup."
-  await page.getByLabel("Destination phone number").fill("+1 (727) 555-0199")
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(outgoingText)
@@ -125,8 +139,7 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   expect(delivery.ok()).toBeTruthy()
   await expect(outgoing.getByText("Delivered", { exact: true })).toBeVisible()
 
-  await page.getByRole("button", { name: "New message" }).click()
-  await page.getByLabel("Destination phone number").fill("+1 (727) 555-0198")
+  await openNumberInbox(page, "(727) 555-0198")
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Keep this second conversation selected.")
@@ -140,6 +153,10 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
 
   const inboundText = "Please call me about the pickup time."
   await sendInbound(page, "slice-5-inbound", inboundText)
+  const textsSection = page.getByRole("button", { name: /^Texts/ })
+  if ((await textsSection.getAttribute("aria-expanded")) === "false") {
+    await textsSection.click()
+  }
   const firstThread = page
     .getByRole("button", { name: /\(727\) 555-0199/ })
     .first()
@@ -152,63 +169,76 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   await expect(inbound).toBeVisible()
   await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
 
-  await page.getByRole("button", { name: "Tasks", exact: true }).click()
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
-  await page.getByRole("button", { name: "Messages", exact: true }).click()
   await inbound.getByRole("button", { name: "Create Task" }).click()
+  const taskTouchpoint = page.getByRole("button", {
+    name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+  })
+  await expect(taskTouchpoint).toBeVisible()
+  await taskTouchpoint.click()
+  const contextPanel = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(contextPanel).toBeVisible()
   await expect(
-    page.getByRole("button", {
-      name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(
+    contextPanel.getByRole("heading", { name: "Follow up on text" }),
+  ).toBeVisible()
+  await contextPanel.getByRole("button", { name: "Close context panel" }).click()
+  await expect(contextPanel).not.toBeVisible()
+
+  await page
+    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .click()
+  const sidebarTaskContext = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
+  ).toBeVisible()
+  await expect(
+    sidebarTaskContext.getByRole("heading", {
+      name: "Follow up on text",
+      exact: true,
     }),
   ).toBeVisible()
-
-  await page.getByRole("button", { name: "Tasks", exact: true }).click()
-  const openSection = page.getByRole("button", { name: "Open", exact: true })
-  await expect(openSection).toHaveAttribute("aria-expanded", "false")
-  await expect(openSection).toHaveText("Open")
-  await openSection.click()
-  await expect(openSection).toHaveAttribute("aria-expanded", "true")
-  await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
-    .click()
   await expect(
-    page.getByRole("heading", { name: "Follow up on text", exact: true }),
-  ).toBeVisible()
-  const taskConversation = page.getByRole("region", {
-    name: "Task conversation",
-  })
+    page.getByRole("region", { name: "Task conversation" }),
+  ).toHaveCount(0)
   await page.reload()
-  await expect(taskConversation).toBeVisible()
-  await page.getByRole("button", { name: "Open", exact: true }).click()
-  await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
-    .click()
   await expect(
-    page.getByRole("heading", { name: "Follow up on text", exact: true }),
+    page.getByRole("heading", { name: "(727) 555-0199", exact: true }),
   ).toBeVisible()
-  await expect(taskConversation).toContainText(inboundText)
+  await expect(sidebarTaskContext).toBeVisible()
+  await expect(
+    page.getByRole("article").filter({ hasText: inboundText }),
+  ).toBeVisible()
   const taskReply = "I will call you with the pickup time."
-  await taskConversation
+  await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(taskReply)
-  await taskConversation.getByRole("button", { name: "Send message" }).click()
+  await page.getByRole("button", { name: "Send message" }).click()
   await expect(
-    taskConversation.getByRole("article").filter({ hasText: taskReply }),
+    page.getByRole("article").filter({ hasText: taskReply }),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: "Complete", exact: true }).click()
+  await sidebarTaskContext
+    .getByRole("button", { name: "Complete", exact: true })
+    .click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled()
-  await expect(
-    page.getByText("Reopen this Task to send a message"),
-  ).toBeVisible()
-  await page.getByRole("button", { name: "Messages", exact: true }).click()
+  ).toBeEnabled()
+  const recentSection = page.getByRole("button", { name: "Recent", exact: true })
+  if ((await recentSection.getAttribute("aria-expanded")) === "false") {
+    await recentSection.click()
+  }
   await page
     .getByRole("button", { name: /\(727\) 555-0199/ })
-    .first()
+    .last()
     .click()
   const messageAfterCompletion = "The Task is complete; texting remains available."
   await page
@@ -220,18 +250,22 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
       .getByRole("article")
       .filter({ hasText: messageAfterCompletion }),
   ).toBeVisible()
-  await page.getByRole("button", { name: "Tasks", exact: true }).click()
-  await page.getByRole("button", { name: "Completed", exact: true }).click()
   await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
+    .getByRole("button", {
+      name: /Fixture Location 1 · Task · Completed.*Follow up on text/,
+    })
     .click()
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled()
-  await page.getByRole("button", { name: "Reopen" }).click()
+  const completedTaskContext = page.getByRole("complementary", {
+    name: "Task context",
+  })
+  await expect(completedTaskContext).toBeVisible()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled()
+  await completedTaskContext.getByRole("button", { name: "Reopen" }).click()
+  await expect(
+    completedTaskContext.getByRole("button", { name: "Complete" }),
+  ).toBeVisible()
 
   await sendInbound(page, "slice-5-stop", "STOP")
   await expect(
@@ -250,6 +284,15 @@ test("Slice 5 sends, receives, and turns exact-phone correspondence into explici
   ).not.toBeVisible()
 })
 
+async function openNumberInbox(
+  page: Page,
+  phone: string,
+) {
+  await page.getByLabel("Search phone number").fill(phone)
+  await page.getByLabel("Search phone number").press("Enter")
+  await expect(page.getByRole("heading", { name: /\(727\) 555-01\d\d/ })).toBeVisible()
+}
+
 async function signUp(
   page: Page,
   email: string,
@@ -263,6 +306,7 @@ async function signUp(
   await page.getByRole("button", { name: "Create private account" }).click()
   const verificationURL = await latestEmail(page, email, "verification")
   await page.goto(verificationURL)
+  await page.getByRole("button", { name: "Use email instead" }).click()
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Password").fill("fixture-password-1234")
   await page.getByRole("button", { name: "Sign in" }).click()

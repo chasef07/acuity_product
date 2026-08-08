@@ -17,6 +17,8 @@ set -eu
 : "${MIGRATE_DATABASE_URL_SECRET:?required Secret Manager secret name}"
 : "${WEB_AUTH_DATABASE_URL_SECRET:?required Secret Manager secret name}"
 : "${BETTER_AUTH_SECRET_SECRET:?required Secret Manager secret name}"
+: "${GOOGLE_CLIENT_ID_SECRET:?required Secret Manager secret name}"
+: "${GOOGLE_CLIENT_SECRET_SECRET:?required Secret Manager secret name}"
 : "${SMTP_PASSWORD_SECRET:?required Secret Manager secret name}"
 : "${TELNYX_API_KEY_SECRET:?required Secret Manager secret name}"
 : "${MESSAGING_MEDIA_SIGNING_KEY_SECRET:?required Secret Manager secret name}"
@@ -233,7 +235,7 @@ gcloud run deploy acuity-web \
   --concurrency "$runtime_concurrency" \
   --min "$runtime_minimum" \
   --max "$runtime_maximum" \
-  --set-secrets "AUTH_DATABASE_URL=${WEB_AUTH_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET_SECRET}:latest,SMTP_PASSWORD=${SMTP_PASSWORD_SECRET}:latest" \
+  --set-secrets "AUTH_DATABASE_URL=${WEB_AUTH_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET_SECRET}:latest,GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID_SECRET}:latest,GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET_SECRET}:latest,SMTP_PASSWORD=${SMTP_PASSWORD_SECRET}:latest" \
   --set-env-vars "AUTH_DB_POOL_MAX=${runtime_pool},AUTH_DB_ACQUIRE_TIMEOUT_MS=${runtime_timeout},BETTER_AUTH_URL=${BROWSER_ORIGIN},BETTER_AUTH_TRUSTED_ORIGINS=${BROWSER_ORIGIN},PORTAL_API_INTERNAL_URL=${PORTAL_API_INTERNAL_URL},PORTAL_API_AUDIENCE=${PORTAL_API_AUDIENCE},AUTH_EMAIL_MODE=smtp,SMTP_HOST=${SMTP_HOST},SMTP_PORT=${SMTP_PORT},SMTP_USER=${SMTP_USER},AUTH_EMAIL_FROM=${AUTH_EMAIL_FROM}" \
   --no-invoker-iam-check
 

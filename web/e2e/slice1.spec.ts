@@ -68,14 +68,21 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     )
     expect(verificationURL).toContain("/verify-email#")
     await page.goto(verificationURL)
-    await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible()
+    await expect(
+      page.getByRole("heading", { name: "Sign in to Acuity" }),
+    ).toBeVisible()
+    await page.getByRole("button", { name: "Use email instead" }).click()
     await page.getByLabel("Email").fill("admin@abita.test")
     await page.getByLabel("Password").fill("fixture-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
     await expect(page).toHaveURL(/\/workspace$/)
-    await expect(page.getByText("No follow-up tasks")).toBeVisible()
-    await expect(page.getByText("Abita Eye Group · All offices")).toBeVisible()
-    await expect(page.getByText("Live")).toBeVisible()
+    await expect(page.getByText("No open Tasks")).toBeVisible()
+    const workspaceSelector = page.getByRole("button", {
+      name: "Workspace selector",
+    })
+    await expect(workspaceSelector).toContainText("Abita Eye Group")
+    await expect(workspaceSelector).toContainText("All offices")
+    await expect(page.getByLabel("Live updates connected")).toBeVisible()
   })
 
   await test.step("cross-Location expansion is denied without protected data", async () => {
@@ -107,8 +114,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
   const secondCustomerPage = await secondCustomerContext.newPage()
   await abortFirstRealtimeRequest(secondCustomerPage)
   await secondCustomerPage.goto("/workspace")
-  await expect(secondCustomerPage.getByText("No follow-up tasks")).toBeVisible()
-  await expect(secondCustomerPage.getByText("Live")).toBeVisible()
+  await expect(secondCustomerPage.getByText("No open Tasks")).toBeVisible()
+  await expect(
+    secondCustomerPage.getByLabel("Live updates connected"),
+  ).toBeVisible()
   const initialVersion = Number(
     await page.getByTestId("mounted-workspace").getAttribute(
       "data-workspace-version",
@@ -134,8 +143,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     })
 
     process.kill(realtimePID, "SIGKILL")
-    await expect(page.getByText("Updates delayed")).toBeVisible()
-    await expect(secondCustomerPage.getByText("Updates delayed")).toBeVisible()
+    await expect(page.getByLabel("Live updates delayed")).toBeVisible()
+    await expect(
+      secondCustomerPage.getByLabel("Live updates delayed"),
+    ).toBeVisible()
 
     const replacementRealtime = spawn(runtimeBinary!, [], {
       env: {
@@ -167,8 +178,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     )
     replacementRealtime.unref()
 
-    await expect(page.getByText("Live")).toBeVisible()
-    await expect(secondCustomerPage.getByText("Live")).toBeVisible()
+    await expect(page.getByLabel("Live updates connected")).toBeVisible()
+    await expect(
+      secondCustomerPage.getByLabel("Live updates connected"),
+    ).toBeVisible()
     expect(firstBrowserRefetches).toBeGreaterThan(0)
     expect(secondBrowserRefetches).toBeGreaterThan(0)
   })
@@ -194,10 +207,13 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
       "verification",
     )
     await operatorPage.goto(verificationURL)
+    await operatorPage
+      .getByRole("button", { name: "Use email instead" })
+      .click()
     await operatorPage.getByLabel("Email").fill("founder@acuity.test")
     await operatorPage.getByLabel("Password").fill("operator-password-1234")
     await operatorPage.getByRole("button", { name: "Sign in" }).click()
-    await expect(operatorPage.getByText("No follow-up tasks")).toBeVisible()
+    await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
 
     await operatorPage
       .getByRole("button", { name: "Enter Support Mode" })
@@ -220,10 +236,10 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
       .click()
     await expect(
       operatorPage.getByRole("button", { name: "Workspace selector" }),
-    ).toContainText("Abita Eye Group · Fixture Location 1")
+    ).toContainText("Abita Eye Group")
     await expect(
-      operatorPage.getByText("Abita Eye Group", { exact: true }),
-    ).toBeVisible()
+      operatorPage.getByRole("button", { name: "Workspace selector" }),
+    ).toContainText("Fixture Location 1")
 
     const operatorToken = await accessToken(operatorPage)
     const accessResponse = await operatorPage.request.get(
@@ -319,10 +335,11 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     await expect(page.getByText("Password updated")).toBeVisible()
 
     await page.goto("/sign-in")
+    await page.getByRole("button", { name: "Use email instead" }).click()
     await page.getByLabel("Email").fill("admin@abita.test")
     await page.getByLabel("Password").fill("updated-password-1234")
     await page.getByRole("button", { name: "Sign in" }).click()
-    await expect(page.getByText("No follow-up tasks")).toBeVisible()
+    await expect(page.getByText("No open Tasks")).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
       fullPage: true,
@@ -344,7 +361,7 @@ test("Slice 1 invite, authority, Support Mode, recovery, and reconnect", async (
     })
     const coarsePage = await coarseContext.newPage()
     await coarsePage.goto("/workspace")
-    await expect(coarsePage.getByText("No follow-up tasks")).toBeVisible()
+    await expect(coarsePage.getByText("No open Tasks")).toBeVisible()
     await expect(
       coarsePage.getByRole("button", { name: "Workspace selector" }),
     ).toContainText("Abita Eye Group")

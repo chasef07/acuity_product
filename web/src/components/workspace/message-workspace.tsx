@@ -3,6 +3,7 @@
 import {
   type ChangeEvent,
   type FormEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -10,32 +11,52 @@ import {
 } from "react"
 import {
   AlertTriangleIcon,
+  ArrowUpIcon,
+  CalendarCheck2Icon,
+  CalendarClockIcon,
+  CalendarX2Icon,
+  CheckIcon,
   CheckSquareIcon,
+  CopyIcon,
   DownloadIcon,
   FileTextIcon,
-  MessageSquareIcon,
   PaperclipIcon,
   PhoneCallIcon,
+  PhoneIncomingIcon,
+  PhoneMissedIcon,
+  PhoneOutgoingIcon,
   RefreshCwIcon,
-  SearchIcon,
-  SendIcon,
+  VoicemailIcon,
   XIcon,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupTextarea,
+} from "@/components/ui/input-group"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { useCallingNavigation } from "@/components/workspace/calling-dock"
 import { portalClient } from "@/lib/api/client"
 import {
   createMessageFollowUpTask,
   getEngagementTimeline,
   getMessageAttachment,
-  getMessageThreadTimeline,
-  getTaskEngagementHistory,
-  markMessageThreadRead,
   retryInboundMessageAttachment,
   sendMessage,
   sendMessageAgain,
@@ -46,7 +67,6 @@ import type {
   EngagementSummary,
   Message,
   MessageAttachment,
-  MessageThreadSummary,
   Task,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
@@ -62,27 +82,11 @@ const acceptedAttachmentTypes = new Set([
   "application/pdf",
 ])
 
-type MessageWorkspaceProps = {
-  thread: MessageThreadSummary | undefined
-  composingNew: boolean
+type TimelineSource = {
+  kind: "engagement"
   practiceID: string
-  locationID: string
-  locationName: string
-  locations: Array<{ id: string; name: string }>
-  supportSessionID: string
-  canMutate: boolean
-  revision: number
-  initialMessage?: Message
-  onMessageSent: (message: Message) => void
-  onThreadRead: (threadID: string) => void
-  onTaskCreated: (task: Task) => void
-  onTaskOpen: (task: Task) => void
-  onCallOpen: (callID: string) => void
+  phone: string
 }
-
-type TimelineSource =
-  | { kind: "task"; taskID: string }
-  | { kind: "engagement"; practiceID: string; phone: string }
 
 export function EngagementWorkspace({
   engagement,
@@ -90,6 +94,8 @@ export function EngagementWorkspace({
   supportSessionID,
   canMutate,
   revision,
+  headerLeading,
+  headerTrailing,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
@@ -99,6 +105,8 @@ export function EngagementWorkspace({
   supportSessionID: string
   canMutate: boolean
   revision: number
+  headerLeading?: ReactNode
+  headerTrailing?: ReactNode
   onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
@@ -106,49 +114,113 @@ export function EngagementWorkspace({
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [route, setRoute] = useState(defaultRoute)
+  const [callError, setCallError] = useState("")
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  )
+  const {
+    activeCall,
+    outboundPending,
+    ownsSoftphone,
+    platformOperator,
+    startOutbound,
+  } = useCallingNavigation()
   const routeName =
     engagement.locations.find((location) => location.id === route)?.name ??
-    "Choose sender route"
+    "Choose office"
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">Engagement History</Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                Unverified phone context
-              </span>
-            </div>
-            <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
-              {formatPhone(engagement.phone)}
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {engagement.displayName ? `${engagement.displayName} · ` : ""}
-              {engagement.locations.map((location) => location.name).join(" · ")}
-              {engagement.openTaskCount > 0
-                ? ` · ${engagement.openTaskCount} open ${engagement.openTaskCount === 1 ? "Task" : "Tasks"}`
+      <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">
+        {headerLeading}
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <h1 className="truncate text-base font-semibold tracking-[-0.015em] tabular-nums sm:text-lg">
+            {formatPhone(engagement.phone)}
+          </h1>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={
+                    copyState === "copied" ? "Number copied" : "Copy phone number"
+                  }
+                  onClick={() => {
+                    void navigator.clipboard.writeText(engagement.phone).then(
+                      () => setCopyState("copied"),
+                      () => setCopyState("failed"),
+                    )
+                  }}
+                />
+              }
+            >
+              {copyState === "copied" ? <CheckIcon /> : <CopyIcon />}
+            </TooltipTrigger>
+            <TooltipContent>
+              {copyState === "copied"
+                ? "Copied"
+                : copyState === "failed"
+                  ? "Copy failed"
+                  : "Copy number"}
+            </TooltipContent>
+          </Tooltip>
+          <span className="ml-2 hidden min-w-0 truncate text-sm text-muted-foreground sm:block">
+            {routeName}
+          </span>
+          <span className="sr-only" role="status">
+            {copyState === "copied"
+              ? "Phone number copied"
+              : copyState === "failed"
+                ? "Phone number could not be copied"
                 : ""}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {engagement.unread && <Badge variant="secondary">Unread</Badge>}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {headerTrailing}
+          {engagement.locations.length > 1 && (
             <NativeSelect
-              aria-label="Sender route"
+              aria-label="Sender office"
+              size="sm"
               value={route}
               onChange={(event) => setRoute(event.target.value)}
             >
               <NativeSelectOption value="" disabled>
-                Choose sender route
+                Choose office
               </NativeSelectOption>
               {engagement.locations.map((location) => (
                 <NativeSelectOption key={location.id} value={location.id}>
-                  Send from {location.name}
+                  {location.name}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-          </div>
+          )}
+          <Button
+            size="sm"
+            disabled={
+              !canMutate ||
+              platformOperator ||
+              !route ||
+              !ownsSoftphone ||
+              Boolean(activeCall) ||
+              outboundPending
+            }
+            onClick={() => {
+              setCallError("")
+              void startOutbound(route, engagement.phone).then(
+                (requestError) => setCallError(requestError ?? ""),
+              )
+            }}
+          >
+            {outboundPending ? <Spinner /> : <PhoneCallIcon data-icon="inline-start" />}
+            Call
+          </Button>
         </div>
+        {callError && (
+          <p className="absolute right-3 top-[calc(100%+0.5rem)] z-10 rounded-lg border bg-popover px-3 py-2 text-xs text-destructive shadow-sm">
+            {callError}
+          </p>
+        )}
       </header>
       <MessageConversation
         timelineSource={{
@@ -156,322 +228,70 @@ export function EngagementWorkspace({
           practiceID,
           phone: engagement.phone,
         }}
-        composingNew={false}
         practiceID={practiceID}
         locationID={route}
-        routeLabel={routeName}
         initialDestination={engagement.phone}
         supportSessionID={supportSessionID}
         canMutate={canMutate}
         revision={revision}
-        onMessageSent={() => undefined}
-        onThreadRead={() => undefined}
         onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
-      />
-    </section>
-  )
-}
-
-export function MessageWorkspace({
-  thread,
-  composingNew,
-  practiceID,
-  locationID,
-  locationName,
-  locations,
-  supportSessionID,
-  canMutate,
-  revision,
-  initialMessage,
-  onMessageSent,
-  onThreadRead,
-  onTaskCreated,
-  onTaskOpen,
-  onCallOpen,
-}: MessageWorkspaceProps) {
-  const [route, setRoute] = useState(thread?.locationId ?? locationID)
-
-  const routeName =
-    locations.find((location) => location.id === route)?.name ?? locationName
-
-  if (!thread && !composingNew) {
-    return (
-      <section
-        aria-label="No conversation selected"
-        className="flex min-h-0 flex-1 items-center justify-center p-8"
-      >
-        <div className="max-w-sm text-center">
-          <MessageSquareIcon
-            className="mx-auto size-8 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <h1 className="mt-4 text-lg font-semibold">Select a conversation</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            The timeline combines texts, calls, and follow-up Tasks for one
-            exact phone number across authorized offices.
-          </p>
-        </div>
-      </section>
-    )
-  }
-
-  return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">
-                {composingNew ? "New text" : "Engagement History"}
-              </Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                {composingNew ? locationName : "Unverified phone context"}
-              </span>
-            </div>
-            <h1 className="mt-2 truncate text-xl font-semibold tracking-[-0.015em] tabular-nums">
-              {thread ? formatPhone(thread.externalPhone) : "Choose a number"}
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {thread?.displayName ? `${thread.displayName} · ` : ""}
-              {thread
-                ? "Messages, calls, and Tasks across authorized offices"
-                : "Choose an exact destination number"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {thread && (
-              <NativeSelect
-                aria-label="Sender route"
-                value={route}
-                onChange={(event) => setRoute(event.target.value)}
-              >
-                {locations.map((location) => (
-                  <NativeSelectOption key={location.id} value={location.id}>
-                    Send from {location.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
-            {thread?.outboundBlocked && (
-              <Badge variant="destructive">Patient opted out</Badge>
-            )}
-          </div>
-        </div>
-      </header>
-      <MessageConversation
-        key={thread?.id ?? `new:${locationID}`}
-        thread={thread}
-        timelineSource={
-          thread
-            ? {
-                kind: "engagement",
-                practiceID,
-                phone: thread.externalPhone,
-              }
-            : undefined
-        }
-        composingNew={composingNew}
-        practiceID={practiceID}
-        locationID={thread ? route : locationID}
-        routeLabel={thread ? routeName : locationName}
-        initialDestination={thread?.externalPhone}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        initialMessage={initialMessage}
-        onMessageSent={onMessageSent}
-        onThreadRead={onThreadRead}
-        onTaskCreated={onTaskCreated}
-        onTaskOpen={onTaskOpen}
-        onCallOpen={onCallOpen}
-      />
-    </section>
-  )
-}
-
-export function TaskMessageConversation({
-  task,
-  supportSessionID,
-  canMutate,
-  revision,
-  onTaskCreated,
-  onMessageSent,
-}: {
-  task: Task
-  supportSessionID: string
-  canMutate: boolean
-  revision: number
-  onTaskCreated: (task: Task) => void
-  onMessageSent: () => void
-}) {
-  const [createdMessage, setCreatedMessage] = useState<Message>()
-  const threadID =
-    task.messageThreadId ||
-    task.conversationThreadId ||
-    createdMessage?.thread.id ||
-    ""
-  return (
-    <section
-      aria-label="Task conversation"
-      className="flex min-h-[22rem] flex-1 flex-col border-b"
-    >
-      <div className="border-b bg-muted/20 px-5 py-2.5">
-        <p className="text-xs font-medium tabular-nums text-muted-foreground">
-          Conversation · {formatPhone(task.phone)}
-        </p>
-      </div>
-      <MessageConversation
-        threadID={threadID}
-        timelineSource={{ kind: "task", taskID: task.id }}
-        composingNew={false}
-        practiceID={task.practiceId}
-        locationID={task.locationId}
-        routeLabel={task.locationName}
-        taskID={task.id}
-        taskOpen={task.state === "OPEN"}
-        initialDestination={task.phone}
-        supportSessionID={supportSessionID}
-        canMutate={canMutate}
-        revision={revision}
-        initialMessage={createdMessage}
-        onMessageSent={(message) => {
-          setCreatedMessage(message)
-          onMessageSent()
-        }}
-        onThreadRead={() => undefined}
-        onTaskCreated={onTaskCreated}
       />
     </section>
   )
 }
 
 function MessageConversation({
-  thread,
-  threadID = thread?.id ?? "",
   timelineSource,
-  composingNew,
   practiceID,
   locationID,
-  routeLabel,
-  taskID,
-  taskOpen = true,
   initialDestination,
   supportSessionID,
   canMutate,
   revision,
-  initialMessage,
-  onMessageSent,
-  onThreadRead,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
 }: {
-  thread?: MessageThreadSummary
-  threadID?: string
-  timelineSource?: TimelineSource
-  composingNew: boolean
+  timelineSource: TimelineSource
   practiceID: string
   locationID: string
-  routeLabel?: string
-  taskID?: string
-  taskOpen?: boolean
   initialDestination?: string
   supportSessionID: string
   canMutate: boolean
   revision: number
-  initialMessage?: Message
-  onMessageSent: (message: Message) => void
-  onThreadRead: (threadID: string) => void
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
 }) {
-  const timelineKind = timelineSource?.kind
-  const timelineTaskID =
-    timelineSource?.kind === "task" ? timelineSource.taskID : ""
-  const timelinePracticeID =
-    timelineSource?.kind === "engagement" ? timelineSource.practiceID : ""
-  const timelinePhone =
-    timelineSource?.kind === "engagement" ? timelineSource.phone : ""
-  const timelineKey = timelineKind
-    ? timelineKind === "task"
-      ? `task:${timelineTaskID}`
-      : `engagement:${timelinePracticeID}:${timelinePhone}`
-    : threadID
-  const committedItem = initialMessage
-    ? messageTimelineItem(initialMessage)
-    : undefined
-  const [items, setItems] = useState<ConversationTimelineItem[]>(
-    committedItem ? [committedItem] : [],
-  )
+  const timelineKey = `${timelineSource.practiceID}:${timelineSource.phone}`
+  const [items, setItems] = useState<ConversationTimelineItem[]>([])
   const [cursor, setCursor] = useState("")
-  const [loading, setLoading] = useState(Boolean(timelineKey && !committedItem))
+  const [loading, setLoading] = useState(true)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [newActivity, setNewActivity] = useState(false)
-  const [findQuery, setFindQuery] = useState("")
   const [error, setError] = useState("")
   const generation = useRef(0)
   const committedMessage = useRef<
     { id: string; visibleUntil: number } | undefined
-  >(
-    initialMessage
-      ? { id: initialMessage.id, visibleUntil: Number.POSITIVE_INFINITY }
-      : undefined,
-  )
+  >(undefined)
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
   const initialized = useRef(false)
-  const onThreadReadRef = useRef(onThreadRead)
-
-  useEffect(() => {
-    onThreadReadRef.current = onThreadRead
-  }, [onThreadRead])
-
-  useEffect(() => {
-    if (initialMessage) {
-      committedMessage.current = {
-        id: initialMessage.id,
-        visibleUntil: Date.now() + 750,
-      }
-    }
-  }, [initialMessage, threadID])
 
   const loadPage = useCallback(
-    async (token: string, cursor = "") => {
-      if (timelineKind === "task") {
-        return getTaskEngagementHistory({
-          client: portalClient(token),
-          path: { taskId: timelineTaskID },
-          query: { ...(cursor ? { cursor } : {}), limit: 50 },
-        }).catch(() => undefined)
-      }
-      if (timelineKind === "engagement") {
-        return getEngagementTimeline({
-          client: portalClient(token),
-          path: { phone: timelinePhone },
-          query: {
-            practiceId: timelinePracticeID,
-            ...(cursor ? { cursor } : {}),
-            limit: 50,
-          },
-        }).catch(() => undefined)
-      }
-      if (!threadID) return undefined
-      return getMessageThreadTimeline({
+    (token: string, cursor = "") =>
+      getEngagementTimeline({
         client: portalClient(token),
-        path: { threadId: threadID },
-        query: { ...(cursor ? { cursor } : {}), limit: 50 },
-      }).catch(() => undefined)
-    },
-    [
-      threadID,
-      timelineKind,
-      timelinePhone,
-      timelinePracticeID,
-      timelineTaskID,
-    ],
+        path: { phone: timelineSource.phone },
+        query: {
+          practiceId: timelineSource.practiceID,
+          ...(cursor ? { cursor } : {}),
+          limit: 50,
+        },
+      }).catch(() => undefined),
+    [timelineSource.phone, timelineSource.practiceID],
   )
 
   const loadLatest = useCallback(
@@ -525,40 +345,24 @@ function MessageConversation({
       Math.max(0, committed.visibleUntil - Date.now()),
     )
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, threadID])
-
-  const markRead = useCallback(async () => {
-    if (!threadID) return
-    const token = await getAccessToken()
-    if (!token) return
-    const result = await markMessageThreadRead({
-      client: portalClient(token),
-      path: { threadId: threadID },
-      body: {
-        ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
-      },
-    }).catch(() => undefined)
-    if (result?.response?.ok) onThreadReadRef.current(threadID)
-  }, [supportSessionID, threadID])
+  }, [loadLatest])
 
   useEffect(() => {
     if (!timelineKey) return
     const timeout = window.setTimeout(() => {
       void loadLatest(true)
-      if (threadID) void markRead()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [loadLatest, markRead, threadID, timelineKey])
+  }, [loadLatest, timelineKey])
 
   useEffect(() => {
     if (!initialized.current || !timelineKey) return
     if (atLatest.current) {
       void loadLatest(true)
-      if (threadID) void markRead()
     } else {
       setNewActivity(true)
     }
-  }, [loadLatest, markRead, revision, threadID, timelineKey])
+  }, [loadLatest, revision, timelineKey])
 
   async function loadOlder() {
     if (!cursor || loadingOlder) return
@@ -581,43 +385,23 @@ function MessageConversation({
     })
   }
 
-  const conversationThread =
-    (thread?.locationId === locationID ? thread : undefined) ??
-    items.find(
-      (item) => item.message?.thread.locationId === locationID,
-    )?.message?.thread
-  const composerThreadID =
-    conversationThread?.id ??
-    (timelineSource?.kind === "engagement" ? "" : threadID)
-  const visibleItems = findQuery.trim()
-    ? items.filter((item) => timelineItemText(item).includes(findQuery.trim().toLowerCase()))
-    : items
-
+  const conversationThread = items.find(
+    (item) => item.message?.thread.locationId === locationID,
+  )?.message?.thread
+  const composerThreadID = conversationThread?.id ?? ""
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b bg-muted/20 px-4 py-2">
-        <div className="relative mx-auto max-w-3xl">
-          <SearchIcon className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            aria-label="Find in history"
-            className="h-9 bg-background pl-8"
-            placeholder="Find in loaded history"
-            value={findQuery}
-            onChange={(event) => setFindQuery(event.target.value)}
-          />
-        </div>
-      </div>
       <div
         ref={scroller}
         data-testid="message-timeline"
-        className="relative min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(to_right,transparent_calc(50%-0.5px),color-mix(in_oklab,var(--border)_55%,transparent)_50%,transparent_calc(50%+0.5px))] px-4 py-5"
+        className="relative min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5"
         onScroll={(event) => {
           const element = event.currentTarget
           atLatest.current =
             element.scrollHeight - element.scrollTop - element.clientHeight < 72
         }}
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        <div className="mx-auto flex max-w-3xl flex-col gap-2">
           {cursor && (
             <Button
               size="sm"
@@ -637,7 +421,7 @@ function MessageConversation({
             </div>
           )}
           {!loading &&
-            visibleItems.map((item) => (
+            items.map((item) => (
               <TimelineEntry
                 key={`${item.type}:${item.id}`}
                 item={item}
@@ -649,18 +433,15 @@ function MessageConversation({
                 onCallOpen={onCallOpen}
               />
             ))}
-          {!loading && items.length === 0 && !composingNew && (
-            <div className="mx-auto my-10 max-w-sm border bg-background p-5 text-center">
-              <p className="text-sm font-medium">No activity yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Messages, calls, and Tasks for this exact number appear here.
-              </p>
-            </div>
-          )}
-          {!loading && items.length > 0 && visibleItems.length === 0 && (
-            <div className="mx-auto my-10 border bg-background p-5 text-center text-sm">
-              No activity on this page matches “{findQuery.trim()}”.
-            </div>
+          {!loading && items.length === 0 && (
+            <Empty className="my-10 border-0">
+              <EmptyHeader>
+                <EmptyTitle>No messages yet</EmptyTitle>
+                <EmptyDescription>
+                  Send a text or call this number to start.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
         </div>
         {newActivity && (
@@ -671,7 +452,6 @@ function MessageConversation({
               onClick={() => {
                 atLatest.current = true
                 void loadLatest(true)
-                void markRead()
               }}
             >
               New activity
@@ -686,19 +466,14 @@ function MessageConversation({
         </Alert>
       )}
       <MessageComposer
-        thread={conversationThread}
         threadID={composerThreadID}
         practiceID={practiceID}
         locationID={locationID}
-        routeLabel={routeLabel}
-        taskID={taskID}
-        initialDestination={initialDestination}
-        destinationLocked={Boolean(initialDestination)}
+        destination={initialDestination ?? ""}
         supportSessionID={supportSessionID}
         disabled={
           !canMutate ||
           !locationID ||
-          !taskOpen ||
           Boolean(conversationThread?.outboundBlocked)
         }
         disabledReason={
@@ -706,8 +481,6 @@ function MessageConversation({
             ? "Read only"
             : !locationID
               ? "Choose an authorized sender route"
-            : !taskOpen
-              ? "Reopen this Task to send a message"
               : conversationThread?.outboundBlocked
                 ? "Outbound messaging is blocked after STOP"
                 : ""
@@ -726,7 +499,6 @@ function MessageConversation({
             ...current.filter((item) => item.id !== message.id),
             messageTimelineItem(message),
           ])
-          onMessageSent(message)
         }}
       />
     </div>
@@ -762,48 +534,30 @@ function TimelineEntry({
     )
   }
   if (item.type === "CALL" && item.call) {
+    const touchpoint = callTouchpoint(item.call)
     return (
-      <button
-        type="button"
-        className={cn(
-          "w-full text-left",
-          onCallOpen &&
-            "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-        )}
-        disabled={!onCallOpen}
-        onClick={() => onCallOpen?.(item.call!.id)}
-      >
-        <TimelineRule
-          icon={<PhoneCallIcon />}
-          label={`${item.call.locationName} · Call · Open detail`}
-          occurredAt={item.occurredAt}
-          title={item.call.transferReason || "Inbound call"}
-          detail={`${item.call.outcome.replaceAll("_", " ")} · ${formatDuration(item.call.durationSeconds)}`}
-        />
-      </button>
+      <ActivityBubble
+        icon={touchpoint.icon}
+        label={`${item.call.locationName} · ${touchpoint.label}`}
+        occurredAt={item.occurredAt}
+        title={item.call.transferReason || touchpoint.label}
+        detail={touchpoint.detail}
+        onOpen={onCallOpen ? () => onCallOpen(item.call!.id) : undefined}
+      />
     )
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
+    const touchpoint = taskTouchpoint(task)
     return (
-      <button
-        type="button"
-        className={cn(
-          "w-full text-left",
-          onTaskOpen &&
-            "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-        )}
-        disabled={!onTaskOpen}
-        onClick={() => onTaskOpen?.(task)}
-      >
-        <TimelineRule
-          icon={<CheckSquareIcon />}
-          label={`${task.locationName} · Task · ${taskActivityLabel(item.taskActivity, task.state)}`}
-          occurredAt={item.occurredAt}
-          title={task.title}
-          detail={`Created by ${task.createdBy.email || task.createdBy.subject}`}
-        />
-      </button>
+      <ActivityBubble
+        icon={touchpoint.icon}
+        label={`${task.locationName} · ${touchpoint.label} · ${taskActivityLabel(item.taskActivity, task.state)}`}
+        occurredAt={item.occurredAt}
+        title={task.title}
+        detail={`Created by ${task.createdBy.email || task.createdBy.subject}`}
+        onOpen={onTaskOpen ? () => onTaskOpen(task) : undefined}
+      />
     )
   }
   return null
@@ -900,15 +654,15 @@ function MessageEntry({
     <article
       className={cn(
         "flex w-full",
-        outbound ? "justify-end pl-10" : "justify-start pr-10",
+        outbound ? "justify-end pl-8" : "justify-start pr-8",
       )}
     >
       <div
         className={cn(
-          "max-w-[34rem] border px-3 py-2.5 shadow-xs",
+          "max-w-[82%] rounded-2xl px-3 py-2 sm:max-w-[32rem]",
           outbound
-            ? "rounded-l-md rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-r-md rounded-bl-md bg-background",
+            ? "rounded-br-md bg-primary text-primary-foreground"
+            : "rounded-bl-md bg-muted",
         )}
       >
         {message.body && (
@@ -952,19 +706,19 @@ function MessageEntry({
         {canMutate && (
           <div
             className={cn(
-              "mt-2 flex flex-wrap gap-1 border-t pt-2",
-              outbound ? "border-primary-foreground/20" : "border-border",
+              "mt-1.5 flex flex-wrap items-center gap-1",
+              outbound && "text-primary-foreground",
             )}
           >
             {!message.taskId && (
               <Button
                 size="sm"
                 variant={outbound ? "secondary" : "ghost"}
-                className="h-7"
+                className="h-6 px-2 text-xs"
                 disabled={pending}
                 onClick={() => void createTask()}
               >
-                <CheckSquareIcon />
+                <CheckSquareIcon data-icon="inline-start" />
                 Create Task
               </Button>
             )}
@@ -974,12 +728,12 @@ function MessageEntry({
                 <Button
                   size="sm"
                   variant={outbound ? "secondary" : "ghost"}
-                  className="h-7"
+                  className="h-6 px-2 text-xs"
                   disabled={pending}
                   onClick={() => void sendAgain()}
                 >
                   {message.delivery === "Status unknown" && (
-                    <AlertTriangleIcon />
+                    <AlertTriangleIcon data-icon="inline-start" />
                   )}
                   Send again
                 </Button>
@@ -1003,35 +757,55 @@ function MessageEntry({
   )
 }
 
-function TimelineRule({
+function ActivityBubble({
   icon,
   label,
   occurredAt,
   title,
   detail,
+  onOpen,
 }: {
   icon: React.ReactNode
   label: string
   occurredAt: string
   title: string
   detail: string
+  onOpen?: () => void
 }) {
-  return (
-    <div className="mx-auto w-full max-w-xl border bg-muted/80 px-3 py-2 text-xs shadow-xs backdrop-blur-sm">
-      <div className="flex items-center gap-2">
-        <span className="[&_svg]:size-3.5 text-muted-foreground">{icon}</span>
-        <span className="text-xs font-medium text-muted-foreground">
-          {label}
+  const content = (
+    <>
+      <span className="mt-0.5 text-muted-foreground">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{label}</span>
+          <time className="ml-auto shrink-0 tabular-nums" dateTime={occurredAt}>
+            {formatDateTime(occurredAt)}
+          </time>
         </span>
-        <time
-          dateTime={occurredAt}
-          className="ml-auto text-xs tabular-nums text-muted-foreground"
-        >
-          {formatDateTime(occurredAt)}
-        </time>
-      </div>
-      <p className="mt-1.5 font-medium">{title}</p>
-      <p className="mt-0.5 text-muted-foreground">{detail}</p>
+        <span className="mt-1 block truncate text-sm font-medium text-foreground">
+          {title}
+        </span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          {detail}
+        </span>
+      </span>
+    </>
+  )
+  if (onOpen) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        className="mx-auto h-auto w-full max-w-md items-start justify-start gap-2 rounded-xl px-3 py-2 text-left whitespace-normal"
+        onClick={onOpen}
+      >
+        {content}
+      </Button>
+    )
+  }
+  return (
+    <div className="mx-auto flex w-full max-w-md items-start gap-2 rounded-xl border bg-background px-3 py-2">
+      {content}
     </div>
   )
 }
@@ -1124,7 +898,7 @@ function AttachmentCard({
   return (
     <div
       className={cn(
-        "mt-2 overflow-hidden border",
+        "mt-2 overflow-hidden rounded-lg border",
         inverse ? "border-primary-foreground/25" : "border-border",
       )}
     >
@@ -1133,7 +907,7 @@ function AttachmentCard({
         <img
           src={objectURL}
           alt={attachment.fileName}
-          className="max-h-72 w-full bg-background object-contain"
+          className="max-h-44 w-full bg-background object-contain"
         />
       ) : (
         <div
@@ -1180,39 +954,29 @@ function AttachmentCard({
 }
 
 function MessageComposer({
-  thread,
   threadID,
   practiceID,
   locationID,
-  routeLabel,
-  taskID,
-  initialDestination,
-  destinationLocked = false,
+  destination,
   supportSessionID,
   disabled,
   disabledReason,
   onSent,
 }: {
-  thread?: Pick<MessageThreadSummary, "externalPhone" | "outboundBlocked">
   threadID: string
   practiceID: string
   locationID: string
-  routeLabel?: string
-  taskID?: string
-  initialDestination?: string
-  destinationLocked?: boolean
+  destination: string
   supportSessionID: string
   disabled: boolean
   disabledReason: string
   onSent: (message: Message) => void
 }) {
-  const [destination, setDestination] = useState(
-    thread?.externalPhone ?? initialDestination ?? "",
-  )
   const [body, setBody] = useState("")
   const [file, setFile] = useState<File>()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const fileInput = useRef<HTMLInputElement>(null)
   const draftAttempt = useRef<
     | {
         signature: string
@@ -1250,7 +1014,6 @@ function MessageComposer({
       threadID,
       destination: destination.trim(),
       body: body.trim(),
-      taskID,
       file: file
         ? [file.name, file.type, file.size, file.lastModified]
         : undefined,
@@ -1303,7 +1066,6 @@ function MessageComposer({
         ...(!threadID ? { destination: destination.trim() } : {}),
         body: body.trim(),
         ...(attachmentID ? { attachmentId: attachmentID } : {}),
-        ...(taskID ? { taskId: taskID } : {}),
         idempotencyKey: attempt.idempotencyKey,
         ...(supportSessionID ? { supportSessionId: supportSessionID } : {}),
       },
@@ -1327,35 +1089,17 @@ function MessageComposer({
   return (
     <form
       aria-label="Message composer"
-      className="border-t bg-background px-4 py-3"
+      className="bg-background px-4 pb-4 pt-2"
       onSubmit={(event) => void submit(event)}
     >
-      <div className="mx-auto max-w-3xl">
-        <p className="mb-2 text-xs text-muted-foreground">
-          Sender route: <strong className="font-medium text-foreground">{routeLabel || "Selected office"}</strong>
-          {initialDestination
-            ? ` · destination locked to ${formatPhone(initialDestination)}`
-            : ""}
-        </p>
-        {!threadID && (
-          <Input
-            aria-label="Destination phone number"
-            inputMode="tel"
-            autoComplete="tel"
-            placeholder="+1 727 555 0100"
-            className="mb-2 tabular-nums"
-            value={destination}
-            disabled={disabled || pending || destinationLocked}
-            onChange={(event) => setDestination(event.target.value)}
-          />
-        )}
-        <div className="flex items-end gap-2">
-          <textarea
+      <div className="mx-auto max-w-4xl">
+        <InputGroup className="h-auto min-h-20 rounded-3xl bg-card p-2 shadow-sm">
+          <InputGroupTextarea
             aria-label="Message"
-            rows={2}
+            rows={1}
             maxLength={maximumMessageLength}
-            placeholder="Write a message"
-            className="flex min-h-16 min-w-0 flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+            placeholder="Message this number"
+            className="max-h-40 min-h-12 px-3 py-2 text-base"
             value={body}
             disabled={disabled || pending}
             onChange={(event) => setBody(event.target.value)}
@@ -1366,45 +1110,49 @@ function MessageComposer({
               }
             }}
           />
-          <label
-            htmlFor={`attachment-${threadID || locationID}`}
-            className={cn(
-              "inline-flex size-9 shrink-0 items-center justify-center rounded-md border bg-background text-sm shadow-xs",
-              "hover:bg-accent hover:text-accent-foreground",
-              (disabled || pending) && "pointer-events-none opacity-50",
-            )}
-          >
-            <PaperclipIcon className="size-4" />
-            <span className="sr-only">Attach one file</span>
-          </label>
-          <input
-            id={`attachment-${threadID || locationID}`}
-            type="file"
-            className="sr-only"
-            accept={[...acceptedAttachmentTypes].join(",")}
-            disabled={disabled || pending}
-            onChange={chooseFile}
-          />
-          <Button
-            type="submit"
-            size="icon"
-            aria-label="Send message"
-            disabled={
-              disabled ||
-              pending ||
-              (!body.trim() && !file) ||
-              (!threadID && !destination.trim())
-            }
-          >
-            {pending ? <Spinner /> : <SendIcon />}
-          </Button>
-        </div>
-        <div className="mt-1.5 flex min-h-5 items-center gap-2 text-xs text-muted-foreground">
+          <InputGroupAddon align="block-end" className="px-2 pb-1">
+            <InputGroupButton
+              type="button"
+              size="icon-sm"
+              aria-label="Attach one file"
+              disabled={disabled || pending}
+              onClick={() => fileInput.current?.click()}
+            >
+              <PaperclipIcon />
+            </InputGroupButton>
+            <Button
+              type="submit"
+              size="icon-lg"
+              className="ml-auto rounded-full"
+              aria-label="Send message"
+              disabled={
+                disabled ||
+                pending ||
+                (!body.trim() && !file) ||
+                (!threadID && !destination.trim())
+              }
+            >
+              {pending ? <Spinner /> : <ArrowUpIcon />}
+            </Button>
+          </InputGroupAddon>
+        </InputGroup>
+        <input
+          ref={fileInput}
+          type="file"
+          className="sr-only"
+          accept={[...acceptedAttachmentTypes].join(",")}
+          disabled={disabled || pending}
+          onChange={chooseFile}
+        />
+        {(file || body.length >= 1_400) && (
+          <div className="mt-1.5 flex min-h-5 items-center gap-2 text-xs text-muted-foreground">
           {file && (
             <span className="flex min-w-0 items-center gap-1 rounded-sm border px-1.5 py-0.5">
               <span className="max-w-52 truncate">{file.name}</span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 aria-label="Remove attachment"
                 disabled={pending}
                 onClick={() => {
@@ -1412,8 +1160,8 @@ function MessageComposer({
                   setFile(undefined)
                 }}
               >
-                <XIcon className="size-3" />
-              </button>
+                <XIcon />
+              </Button>
             </span>
           )}
           {body.length >= 1_400 && (
@@ -1421,10 +1169,8 @@ function MessageComposer({
               {body.length}/{maximumMessageLength}
             </span>
           )}
-          {!file && body.length < 1_400 && (
-            <span>⌘↵ to send · one attachment up to 600 KB</span>
-          )}
-        </div>
+          </div>
+        )}
         {(disabledReason || error) && (
           <p
             role={error ? "alert" : "status"}
@@ -1439,20 +1185,6 @@ function MessageComposer({
       </div>
     </form>
   )
-}
-
-function timelineItemText(item: ConversationTimelineItem) {
-  return [
-    item.message?.body,
-    item.message?.attachment?.fileName,
-    item.call?.transferReason,
-    item.call?.outcome,
-    item.task?.title,
-    item.task?.state,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
 }
 
 function fileToBase64(file: File) {
@@ -1487,6 +1219,59 @@ function taskActivityLabel(
   }
 }
 
+function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
+  const duration = formatDuration(call.durationSeconds)
+  if (call.outcome === "VOICEMAIL") {
+    return {
+      icon: <VoicemailIcon />,
+      label: "Voicemail",
+      detail: `Recorded · ${duration}`,
+    }
+  }
+  if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
+    return {
+      icon: <PhoneMissedIcon />,
+      label: call.direction === "INBOUND" ? "Missed call" : "Unanswered call",
+      detail: `${sentenceCase(call.direction)} · ${duration}`,
+    }
+  }
+  if (call.direction === "INBOUND") {
+    return {
+      icon: <PhoneIncomingIcon />,
+      label: "Inbound call",
+      detail: `${sentenceCase(call.outcome)} · ${duration}`,
+    }
+  }
+  return {
+    icon: <PhoneOutgoingIcon />,
+    label: "Outbound call",
+    detail: `${sentenceCase(call.outcome)} · ${duration}`,
+  }
+}
+
+function taskTouchpoint(task: Task) {
+  if (task.category === "appointments") {
+    const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
+    if (/\b(cancel|cancellation)\b/.test(text)) {
+      return { icon: <CalendarX2Icon />, label: "Cancellation" }
+    }
+    if (/\b(reschedule|rescheduling|move appointment|change appointment)\b/.test(text)) {
+      return { icon: <CalendarClockIcon />, label: "Reschedule" }
+    }
+    if (/\b(book|booking|schedule|new appointment|appointment request)\b/.test(text)) {
+      return { icon: <CalendarCheck2Icon />, label: "Booking" }
+    }
+    return { icon: <CalendarClockIcon />, label: "Appointment" }
+  }
+  if (task.origin === "VOICEMAIL_RECOVERY") {
+    return { icon: <VoicemailIcon />, label: "Voicemail follow-up" }
+  }
+  if (task.origin === "MISSED_CALL_RECOVERY") {
+    return { icon: <PhoneMissedIcon />, label: "Missed call follow-up" }
+  }
+  return { icon: <CheckSquareIcon />, label: "Task" }
+}
+
 function formatPhone(phone: string) {
   const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
   if (!match) return phone
@@ -1505,6 +1290,11 @@ function formatDateTime(value: string) {
 function formatDuration(seconds: number) {
   if (seconds < 60) return `${seconds}s`
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+function sentenceCase(value: string) {
+  const normalized = value.replaceAll("_", " ").toLowerCase()
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
 
 function formatBytes(bytes: number) {

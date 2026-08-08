@@ -55,7 +55,7 @@ const telnyxRecordingRequestTimeout = 5 * time.Second
 
 func NewTelnyxAdapter(config TelnyxConfig) (*TelnyxAdapter, error) {
 	if strings.TrimSpace(config.APIKey) == "" {
-		return nil, fmt.Errorf("Telnyx API key is required")
+		return nil, fmt.Errorf("telnyx API key is required")
 	}
 	if config.BaseURL == "" {
 		config.BaseURL = "https://api.telnyx.com/v2"
@@ -510,7 +510,6 @@ func (adapter *TelnyxAdapter) ObserveCall(
 				ErrDefinitiveProviderFailure,
 			)
 		}
-		callControlID = observation.CallControlID
 		callLegID = observation.CallLegID
 	}
 	if callLegID == "" {

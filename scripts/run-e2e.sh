@@ -12,6 +12,25 @@ case "$database_name" in
     ;;
 esac
 
+require_available_port() {
+  port="$1"
+  if ! node -e '
+    const net = require("node:net")
+    const server = net.createServer()
+    server.once("error", () => process.exit(1))
+    server.listen(Number(process.argv[1]), "127.0.0.1", () => {
+      server.close(() => process.exit(0))
+    })
+  ' "$port"; then
+    echo "E2E port $port is already in use" >&2
+    exit 1
+  fi
+}
+
+for port in 13000 18080 18081 18082 19000; do
+  require_available_port "$port"
+done
+
 root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 runtime_dir="$(mktemp -d)"
 replacement_realtime_pid_file="$runtime_dir/realtime-replacement.pid"
@@ -114,6 +133,8 @@ PORTAL_API_INTERNAL_URL=http://127.0.0.1:18080 \
 PORTAL_API_AUDIENCE=http://127.0.0.1:18080 \
 AUTH_EMAIL_MODE=test \
 AUTH_ALLOW_TEST_EMAIL=true \
+GOOGLE_CLIENT_ID=e2e-google-client \
+GOOGLE_CLIENT_SECRET=e2e-google-secret \
 NEXT_PUBLIC_PORTAL_API_URL=http://127.0.0.1:18080 \
 NEXT_PUBLIC_REALTIME_URL=http://127.0.0.1:18081 \
 pnpm start >"$runtime_dir/web.log" 2>&1 &
@@ -216,12 +237,26 @@ wait_for() {
   done
 }
 
+require_running() {
+  name="$1"
+  pid="$2"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "$name runtime exited during startup" >&2
+    return 1
+  fi
+}
+
 wait_for http://127.0.0.1:13000/sign-in
 wait_for http://127.0.0.1:19000/health
 wait_for http://127.0.0.1:18080/health/ready
 wait_for http://127.0.0.1:18081/health/ready
 wait_for http://127.0.0.1:18082/health/ready
-kill -0 "$worker_pid"
+require_running web "$web_pid"
+require_running portal-api "$portal_pid"
+require_running realtime "$realtime_pid"
+require_running provider-ingress "$provider_pid"
+require_running worker "$worker_pid"
+require_running telnyx-fixture "$telnyx_pid"
 
 cd "$root/web"
 E2E_PROVISIONING_OUTPUT="$runtime_dir/provisioned.json" \

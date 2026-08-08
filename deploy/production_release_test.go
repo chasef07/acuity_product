@@ -499,6 +499,9 @@ case "$*" in
       printf '%s\n' "DATABASE_URL;HUMAN_CALLING_PLAYBACK_SIGNING_KEY"
     fi
     ;;
+  "run services describe acuity-web "*"spec.template.spec.containers[0].env[].name"*)
+    printf '%s\n' "GOOGLE_CLIENT_ID;GOOGLE_CLIENT_SECRET"
+    ;;
 	"run services describe "*"spec.scaling.scalingMode"*)
 		printf '%s\n' "MANUAL"
 		;;

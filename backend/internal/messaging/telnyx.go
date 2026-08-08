@@ -25,7 +25,7 @@ type TelnyxAdapter struct {
 
 func NewTelnyxAdapter(config TelnyxConfig) (*TelnyxAdapter, error) {
 	if strings.TrimSpace(config.APIKey) == "" {
-		return nil, fmt.Errorf("Telnyx API key is required")
+		return nil, fmt.Errorf("telnyx API key is required")
 	}
 	if config.BaseURL == "" {
 		config.BaseURL = "https://api.telnyx.com/v2"

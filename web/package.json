@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.34.3",
   "engines": {
     "node": ">=24"
@@ -12,7 +13,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --experimental-strip-types --test src/lib/calling/*.test.ts src/lib/workspace-sync/*.test.ts",
+    "test:unit": "node --experimental-strip-types --test src/lib/*.test.ts src/lib/calling/*.test.ts src/lib/workspace-sync/*.test.ts",
     "api:generate": "openapi-ts -i ../api/openapi.yaml -o src/lib/api/generated -c @hey-api/client-fetch",
     "api:check": "pnpm api:generate && git diff --exit-code -- src/lib/api/generated",
     "playwright": "node ./node_modules/@playwright/test/cli.js",
@@ -45,6 +46,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
+    "postcss": "^8.5.23",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

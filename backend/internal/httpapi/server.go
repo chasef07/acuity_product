@@ -1607,7 +1607,7 @@ func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request
 		messaging.QueryThreadsCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
-			LocationID: body.LocationId.String(),
+			LocationID: uuidString(body.LocationId),
 			Search:     stringValue(body.Search),
 			Cursor:     stringValue(body.Cursor),
 			Limit:      intValue(body.Limit),
