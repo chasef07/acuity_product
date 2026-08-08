@@ -610,6 +610,33 @@ func (server *Server) GetAIInteraction(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) GetAIInteractionEvidence(
+	w http.ResponseWriter,
+	r *http.Request,
+	interactionID openapi_types.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	stored, err := server.interactions.ReadEvidence(ctx, identity, interactionID.String())
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	response, err := aiInteractionEvidenceResponse(stored)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) QueryAIInteractionOutcomes(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -3190,7 +3217,8 @@ func aiInteractionDetailResponse(
 	if err != nil {
 		return api.AIInteractionDetail{}, err
 	}
-	return api.AIInteractionDetail{
+	appointment := interaction.ProjectAppointmentDetails(stored)
+	response := api.AIInteractionDetail{
 		Id:                    id,
 		PracticeId:            practiceID,
 		LocationId:            locationID,
@@ -3203,17 +3231,53 @@ func aiInteractionDetailResponse(
 		EndedAt:               stored.EndedAt,
 		Status:                api.AIInteractionCallStatus(stored.Status),
 		Summary:               stringPointer(stored.Summary),
-		Transcript:            jsonMap(stored.Transcript),
 		AppointmentOutcome:    api.AIAppointmentOutcome(stored.AppointmentOutcome),
+		Appointment:           aiAppointmentFactsResponse(appointment.Appointment),
 		AppointmentOccurredAt: stored.AppointmentOccurredAt,
 		OldAppointmentId:      stringPointer(stored.OldAppointmentID),
 		NewAppointmentId:      stringPointer(stored.NewAppointmentID),
 		BookingResult:         jsonMap(stored.BookingResult),
 		CancellationResult:    jsonMap(stored.CancellationResult),
-		CloseoutPayload:       jsonMap(stored.CloseoutPayload),
 		CreatedAt:             stored.CreatedAt,
 		UpdatedAt:             stored.UpdatedAt,
+	}
+	if appointment.PreviousAppointment != nil {
+		previous := aiAppointmentFactsResponse(*appointment.PreviousAppointment)
+		response.PreviousAppointment = &previous
+	}
+	return response, nil
+}
+
+func aiInteractionEvidenceResponse(
+	stored interaction.Interaction,
+) (api.AIInteractionEvidence, error) {
+	id, err := uuid.Parse(stored.ID)
+	if err != nil {
+		return api.AIInteractionEvidence{}, err
+	}
+	return api.AIInteractionEvidence{
+		Id:              id,
+		Transcript:      jsonMap(stored.Transcript),
+		CloseoutPayload: jsonMap(stored.CloseoutPayload),
+		CreatedAt:       stored.CreatedAt,
+		UpdatedAt:       stored.UpdatedAt,
 	}, nil
+}
+
+func aiAppointmentFactsResponse(
+	facts interaction.AppointmentFacts,
+) api.AIAppointmentFacts {
+	return api.AIAppointmentFacts{
+		AppointmentDate:     stringPointer(facts.AppointmentDate),
+		AppointmentId:       stringPointer(facts.AppointmentID),
+		AppointmentTime:     stringPointer(facts.AppointmentTime),
+		AppointmentTypeName: stringPointer(facts.AppointmentTypeName),
+		CareLane:            stringPointer(facts.CareLane),
+		LocationName:        stringPointer(facts.LocationName),
+		PatientName:         stringPointer(facts.PatientName),
+		ProviderName:        stringPointer(facts.ProviderName),
+		StartDatetime:       stringPointer(facts.StartDatetime),
+	}
 }
 
 func aiOutcomePageResponse(

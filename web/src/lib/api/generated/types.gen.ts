@@ -462,6 +462,18 @@ export type AiInteractionReceipt = {
 
 export type AiAppointmentOutcome = 'BOOKING' | 'CANCELLATION' | 'RESCHEDULE' | 'PARTIAL' | 'INDETERMINATE';
 
+export type AiAppointmentFacts = {
+    appointmentDate?: string;
+    appointmentId?: string;
+    appointmentTime?: string;
+    appointmentTypeName?: string;
+    careLane?: string;
+    locationName?: string;
+    patientName?: string;
+    providerName?: string;
+    startDatetime?: string;
+};
+
 export type AiInteractionDetail = {
     id: string;
     practiceId: string;
@@ -475,10 +487,9 @@ export type AiInteractionDetail = {
     endedAt?: string;
     status: AiInteractionCallStatus;
     summary?: string;
-    transcript?: {
-        [key: string]: unknown;
-    };
     appointmentOutcome: AiAppointmentOutcome;
+    appointment: AiAppointmentFacts;
+    previousAppointment?: AiAppointmentFacts;
     appointmentOccurredAt?: string;
     oldAppointmentId?: string;
     newAppointmentId?: string;
@@ -486,6 +497,15 @@ export type AiInteractionDetail = {
         [key: string]: unknown;
     };
     cancellationResult?: {
+        [key: string]: unknown;
+    };
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type AiInteractionEvidence = {
+    id: string;
+    transcript?: {
         [key: string]: unknown;
     };
     closeoutPayload?: {
@@ -1831,12 +1851,51 @@ export type GetAiInteractionError = GetAiInteractionErrors[keyof GetAiInteractio
 
 export type GetAiInteractionResponses = {
     /**
-     * Authorized AI Interaction detail.
+     * Authorized transcript-free AI Interaction detail.
      */
     200: AiInteractionDetail;
 };
 
 export type GetAiInteractionResponse = GetAiInteractionResponses[keyof GetAiInteractionResponses];
+
+export type GetAiInteractionEvidenceData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/ai/interactions/{interactionId}/evidence';
+};
+
+export type GetAiInteractionEvidenceErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetAiInteractionEvidenceError = GetAiInteractionEvidenceErrors[keyof GetAiInteractionEvidenceErrors];
+
+export type GetAiInteractionEvidenceResponses = {
+    /**
+     * Admin-authorized AI Interaction evidence.
+     */
+    200: AiInteractionEvidence;
+};
+
+export type GetAiInteractionEvidenceResponse = GetAiInteractionEvidenceResponses[keyof GetAiInteractionEvidenceResponses];
 
 export type QueryAiInteractionOutcomesData = {
     body: AiOutcomeQueryRequest;

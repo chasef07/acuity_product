@@ -175,6 +175,23 @@ func (m *Module) Read(
 	identity access.Identity,
 	interactionID string,
 ) (Interaction, error) {
+	return m.read(ctx, identity, interactionID, false)
+}
+
+func (m *Module) ReadEvidence(
+	ctx context.Context,
+	identity access.Identity,
+	interactionID string,
+) (Interaction, error) {
+	return m.read(ctx, identity, interactionID, true)
+}
+
+func (m *Module) read(
+	ctx context.Context,
+	identity access.Identity,
+	interactionID string,
+	requireAdmin bool,
+) (Interaction, error) {
 	if m.pool == nil || m.access == nil {
 		return Interaction{}, ErrInvalidInput
 	}
@@ -195,13 +212,19 @@ func (m *Module) Read(
 	if err != nil {
 		return Interaction{}, fmt.Errorf("read AI Interaction: %w", err)
 	}
-	if _, err := m.access.LockReadAuthorization(
+	authorization, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
 		identity,
 		stored.PracticeID,
 		stored.LocationID,
-	); err != nil {
+	)
+	if err != nil {
+		return Interaction{}, ErrDenied
+	}
+	if requireAdmin &&
+		!authorization.PlatformOperator &&
+		authorization.Membership.Role != access.RoleAdmin {
 		return Interaction{}, ErrDenied
 	}
 	if err := tx.Commit(ctx); err != nil {

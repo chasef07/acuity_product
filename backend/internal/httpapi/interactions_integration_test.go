@@ -50,6 +50,14 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 					ExpiresAt:     now.Add(time.Hour),
 				},
 				{
+					Key:                  "spring-hill-staff",
+					Email:                "staff@abita.test",
+					Role:                 access.RoleStaff,
+					LocationScope:        access.LocationScopeSelected,
+					SelectedLocationKeys: []string{"spring-hill"},
+					ExpiresAt:            now.Add(time.Hour),
+				},
+				{
 					Key:                  "hidden-staff",
 					Email:                "hidden@abita.test",
 					Role:                 access.RoleStaff,
@@ -73,13 +81,23 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	); err != nil {
 		t.Fatalf("accept AI Interaction admin invitation: %v", err)
 	}
+	staff := access.Identity{
+		Subject:       "staff-subject",
+		Email:         "staff@abita.test",
+		EmailVerified: true,
+	}
+	if _, err := accessModule.AcceptInvitation(
+		context.Background(), staff, provisioned.Invitations[1].Token,
+	); err != nil {
+		t.Fatalf("accept AI Interaction staff invitation: %v", err)
+	}
 	hiddenStaff := access.Identity{
 		Subject:       "hidden-subject",
 		Email:         "hidden@abita.test",
 		EmailVerified: true,
 	}
 	if _, err := accessModule.AcceptInvitation(
-		context.Background(), hiddenStaff, provisioned.Invitations[1].Token,
+		context.Background(), hiddenStaff, provisioned.Invitations[2].Token,
 	); err != nil {
 		t.Fatalf("accept hidden AI Interaction invitation: %v", err)
 	}
@@ -133,6 +151,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			Access: accessModule,
 			Authenticator: staticAuthenticator{
 				"admin-token":  admin,
+				"staff-token":  staff,
 				"hidden-token": hiddenStaff,
 			},
 			Calling:              callingModule,
@@ -462,6 +481,22 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			"appointmentActions": []map[string]any{{
 				"action": "rescheduled",
 				"status": "success",
+				"appointment": map[string]any{
+					"patientName":         "Jane Doe",
+					"appointmentDate":     "2026-08-20",
+					"appointmentTime":     "2:30 PM",
+					"providerName":        "Dr. Bach",
+					"locationName":        "Spring Hill",
+					"appointmentTypeName": "Medical follow-up",
+					"careLane":            "medical_md",
+				},
+				"cancelledAppointment": map[string]any{
+					"patientName":     "Jane Doe",
+					"appointmentDate": "2026-08-12",
+					"appointmentTime": "9:00 AM",
+					"providerName":    "Dr. Bach",
+					"locationName":    "Spring Hill",
+				},
 			}},
 		},
 	})
@@ -532,27 +567,73 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			detail.StatusCode, readBody(t, detail))
 	}
 	var stored struct {
-		Status             string          `json:"status"`
-		Summary            string          `json:"summary"`
-		AppointmentOutcome string          `json:"appointmentOutcome"`
-		OldAppointmentID   string          `json:"oldAppointmentId"`
-		NewAppointmentID   string          `json:"newAppointmentId"`
-		BookingResult      json.RawMessage `json:"bookingResult"`
-		Transcript         map[string]any  `json:"transcript"`
-		CloseoutPayload    map[string]any  `json:"closeoutPayload"`
+		Status              string          `json:"status"`
+		Summary             string          `json:"summary"`
+		AppointmentOutcome  string          `json:"appointmentOutcome"`
+		Appointment         map[string]any  `json:"appointment"`
+		PreviousAppointment map[string]any  `json:"previousAppointment"`
+		OldAppointmentID    string          `json:"oldAppointmentId"`
+		NewAppointmentID    string          `json:"newAppointmentId"`
+		BookingResult       json.RawMessage `json:"bookingResult"`
 	}
 	decode(t, detail, &stored)
-	storedTranscript, _ := json.Marshal(stored.Transcript)
 	if stored.Status != "COMPLETED" ||
 		stored.Summary != "Caller successfully rescheduled an appointment." ||
 		stored.AppointmentOutcome != "RESCHEDULE" ||
+		stored.Appointment["patientName"] != "Jane Doe" ||
+		stored.Appointment["appointmentDate"] != "2026-08-20" ||
+		stored.Appointment["appointmentId"] != "appointment-new" ||
+		stored.PreviousAppointment["appointmentDate"] != "2026-08-12" ||
+		stored.PreviousAppointment["appointmentId"] != "appointment-old" ||
 		stored.OldAppointmentID != "appointment-old" ||
 		stored.NewAppointmentID != "appointment-new" ||
-		!bytes.Contains(stored.BookingResult, []byte(`"receiptSequence":9007199254740993`)) ||
-		string(storedTranscript) != `{"items":[{"id":"turn-1","role":"user","text":"Please move my appointment."},{"id":"turn-2","role":"assistant","text":"I can help with that."}],"phase":"closeout"}` ||
-		stored.CloseoutPayload["appointmentActions"] == nil {
+		!bytes.Contains(stored.BookingResult, []byte(`"receiptSequence":9007199254740993`)) {
 		t.Fatalf("monotonic AI Interaction detail = %#v", stored)
 	}
+	staffDetail := request(
+		t, server.Client(), http.MethodGet,
+		server.URL+"/v1/ai/interactions/"+first.InteractionID,
+		"staff-token", nil,
+	)
+	if staffDetail.StatusCode != http.StatusOK {
+		t.Fatalf("staff AI Interaction detail status = %d, body = %s",
+			staffDetail.StatusCode, readBody(t, staffDetail))
+	}
+	staffDetailBody := readBody(t, staffDetail)
+	if bytes.Contains([]byte(staffDetailBody), []byte(`"transcript"`)) ||
+		bytes.Contains([]byte(staffDetailBody), []byte(`"closeoutPayload"`)) ||
+		bytes.Contains([]byte(staffDetailBody), []byte("Please move my appointment.")) {
+		t.Fatalf("routine AI Interaction detail leaked evidence: %s", staffDetailBody)
+	}
+	evidence := request(
+		t, server.Client(), http.MethodGet,
+		server.URL+"/v1/ai/interactions/"+first.InteractionID+"/evidence",
+		"admin-token", nil,
+	)
+	if evidence.StatusCode != http.StatusOK {
+		t.Fatalf("read AI Interaction evidence status = %d, body = %s",
+			evidence.StatusCode, readBody(t, evidence))
+	}
+	var storedEvidence struct {
+		Transcript      map[string]any `json:"transcript"`
+		CloseoutPayload map[string]any `json:"closeoutPayload"`
+	}
+	decode(t, evidence, &storedEvidence)
+	storedTranscript, _ := json.Marshal(storedEvidence.Transcript)
+	if string(storedTranscript) != `{"items":[{"id":"turn-1","role":"user","text":"Please move my appointment."},{"id":"turn-2","role":"assistant","text":"I can help with that."}],"phase":"closeout"}` ||
+		storedEvidence.CloseoutPayload["appointmentActions"] == nil {
+		t.Fatalf("admin AI Interaction evidence = %#v", storedEvidence)
+	}
+	staffEvidence := request(
+		t, server.Client(), http.MethodGet,
+		server.URL+"/v1/ai/interactions/"+first.InteractionID+"/evidence",
+		"staff-token", nil,
+	)
+	if staffEvidence.StatusCode != http.StatusForbidden {
+		t.Fatalf("staff AI Interaction evidence status = %d, body = %s",
+			staffEvidence.StatusCode, readBody(t, staffEvidence))
+	}
+	_ = staffEvidence.Body.Close()
 	var receiptCount, duplicateCount, quarantinedCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT
@@ -871,17 +952,27 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	_ = lateSummary.Body.Close()
 	lateEvidenceDetail := request(
 		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/ai/interactions/"+closeoutFirstReceipt.InteractionID,
+		server.URL+"/v1/ai/interactions/"+closeoutFirstReceipt.InteractionID+"/evidence",
 		"admin-token", nil,
 	)
 	var lateEvidenceStored struct {
-		Summary    string         `json:"summary"`
 		Transcript map[string]any `json:"transcript"`
 	}
 	decode(t, lateEvidenceDetail, &lateEvidenceStored)
-	if lateEvidenceStored.Summary != "Late durable summary." ||
-		lateEvidenceStored.Transcript["items"] == nil {
+	if lateEvidenceStored.Transcript["items"] == nil {
 		t.Fatalf("late summary evidence = %#v", lateEvidenceStored)
+	}
+	lateOperationalDetail := request(
+		t, server.Client(), http.MethodGet,
+		server.URL+"/v1/ai/interactions/"+closeoutFirstReceipt.InteractionID,
+		"admin-token", nil,
+	)
+	var lateOperationalStored struct {
+		Summary string `json:"summary"`
+	}
+	decode(t, lateOperationalDetail, &lateOperationalStored)
+	if lateOperationalStored.Summary != "Late durable summary." {
+		t.Fatalf("late summary operational detail = %#v", lateOperationalStored)
 	}
 
 	conflictEndedAt := lateEvidenceEndedAt.Add(time.Minute)

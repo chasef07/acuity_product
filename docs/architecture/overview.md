@@ -53,8 +53,9 @@ The Go runtime contains six deep modules. Each module has one behavior-oriented 
 
 AI transcripts remain durable, authorized Interaction evidence. The routine
 operator workspace keeps them out of the opened call view and instead projects
-receipt-backed appointment and call details; transcript access remains a
-separate administrative/audit concern.
+receipt-backed appointment and call details through a typed, transcript-free
+response. Transcript and raw closeout access use a separate endpoint restricted
+to Practice Admins and Platform Operators.
 
 ## Access model
 

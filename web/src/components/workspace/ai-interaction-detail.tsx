@@ -19,14 +19,15 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { portalClient } from "@/lib/api/client"
 import { getAiInteraction } from "@/lib/api/generated/sdk.gen"
-import type { AiInteractionDetail } from "@/lib/api/generated/types.gen"
+import type {
+  AiAppointmentFacts,
+  AiInteractionDetail,
+} from "@/lib/api/generated/types.gen"
 import {
-  aiAppointmentDetails,
   aiCallCompletionLabel,
   appointmentOutcomeLabel,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
-import type { AppointmentFacts } from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
 
 export function AIInteractionDetailDialog({
@@ -133,34 +134,34 @@ export function AIInteractionDetailDialog({
 }
 
 function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
-  const appointment = aiAppointmentDetails(detail)
   return (
     <div className="min-h-0 overflow-y-auto">
       <section className="border-b px-5 py-5">
         <AppointmentSummary
-          facts={appointment.primary}
+          facts={detail.appointment}
           label={primaryAppointmentLabel(detail.appointmentOutcome)}
           title={appointmentOutcomeTitle(detail.appointmentOutcome)}
         />
-        {appointment.previous && hasAppointmentFacts(appointment.previous) && (
-          <div className="mt-3 rounded-lg border border-dashed px-4 py-3">
-            <p className="text-xs font-medium text-muted-foreground">
-              Previous appointment
-            </p>
-            <p className="mt-1 text-sm font-medium">
-              {formatAppointmentDateTime(appointment.previous) ??
-                "Appointment details unavailable"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {[
-                appointment.previous.providerName,
-                appointment.previous.locationName,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
-        )}
+        {detail.previousAppointment &&
+          hasAppointmentFacts(detail.previousAppointment) && (
+            <div className="mt-3 rounded-lg border border-dashed px-4 py-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                Previous appointment
+              </p>
+              <p className="mt-1 text-sm font-medium">
+                {formatAppointmentDateTime(detail.previousAppointment) ??
+                  "Appointment details unavailable"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {[
+                  detail.previousAppointment.providerName,
+                  detail.previousAppointment.locationName,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
+          )}
       </section>
 
       {detail.summary && (
@@ -239,7 +240,7 @@ function AppointmentSummary({
   label,
   title,
 }: {
-  facts: AppointmentFacts
+  facts: AiAppointmentFacts
   label: string
   title: string
 }) {
@@ -292,18 +293,18 @@ function primaryAppointmentLabel(
   return "Appointment review"
 }
 
-function hasAppointmentFacts(facts: AppointmentFacts) {
+function hasAppointmentFacts(facts: AiAppointmentFacts) {
   return Object.values(facts).some(Boolean)
 }
 
-function visitLabel(facts: AppointmentFacts) {
+function visitLabel(facts: AiAppointmentFacts) {
   if (facts.appointmentTypeName) return facts.appointmentTypeName
   if (facts.careLane === "medical_md") return "Medical"
   if (facts.careLane === "routine_od") return "Routine vision"
   return "—"
 }
 
-function formatAppointmentDateTime(facts: AppointmentFacts) {
+function formatAppointmentDateTime(facts: AiAppointmentFacts) {
   if (facts.startDatetime) {
     const value = new Date(facts.startDatetime)
     if (!Number.isNaN(value.getTime())) {

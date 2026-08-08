@@ -821,7 +821,7 @@ paths:
   /v1/ai/interactions/{interactionId}:
     get:
       operationId: getAIInteraction
-      summary: Read one authorized AI Interaction transcript and outcome detail.
+      summary: Read one authorized AI Interaction appointment and call detail.
       parameters:
         - name: interactionId
           in: path
@@ -831,11 +831,37 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Authorized AI Interaction detail.
+          description: Authorized transcript-free AI Interaction detail.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AIInteractionDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/{interactionId}/evidence:
+    get:
+      operationId: getAIInteractionEvidence
+      summary: Read one admin-authorized AI Interaction transcript and closeout payload.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Admin-authorized AI Interaction evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIInteractionEvidence"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2713,6 +2739,28 @@ components:
     AIAppointmentOutcome:
       type: string
       enum: [BOOKING, CANCELLATION, RESCHEDULE, PARTIAL, INDETERMINATE]
+    AIAppointmentFacts:
+      type: object
+      additionalProperties: false
+      properties:
+        appointmentDate:
+          type: string
+        appointmentId:
+          type: string
+        appointmentTime:
+          type: string
+        appointmentTypeName:
+          type: string
+        careLane:
+          type: string
+        locationName:
+          type: string
+        patientName:
+          type: string
+        providerName:
+          type: string
+        startDatetime:
+          type: string
     AIInteractionDetail:
       type: object
       additionalProperties: false
@@ -2727,6 +2775,7 @@ components:
         - startedAt
         - status
         - appointmentOutcome
+        - appointment
         - createdAt
         - updatedAt
       properties:
@@ -2761,11 +2810,12 @@ components:
           $ref: "#/components/schemas/AIInteractionCallStatus"
         summary:
           type: string
-        transcript:
-          type: object
-          additionalProperties: true
         appointmentOutcome:
           $ref: "#/components/schemas/AIAppointmentOutcome"
+        appointment:
+          $ref: "#/components/schemas/AIAppointmentFacts"
+        previousAppointment:
+          $ref: "#/components/schemas/AIAppointmentFacts"
         appointmentOccurredAt:
           type: string
           format: date-time
@@ -2777,6 +2827,23 @@ components:
           type: object
           additionalProperties: true
         cancellationResult:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AIInteractionEvidence:
+      type: object
+      additionalProperties: false
+      required: [id, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        transcript:
           type: object
           additionalProperties: true
         closeoutPayload:
