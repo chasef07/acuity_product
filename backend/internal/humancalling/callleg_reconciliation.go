@@ -40,6 +40,13 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 }
 
 func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
+	expired, err := m.expireUnconfirmedOutboundMedia(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if expired {
+		return 1, nil
+	}
 	provider, ok := m.provider.(CallStateProvider)
 	if !ok {
 		return 0, nil
@@ -265,6 +272,75 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		return 1, err
 	}
 	return 1, nil
+}
+
+func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, error) {
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin outbound media expiry: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var callID, practiceID, staffLegID, subject string
+	err = tx.QueryRow(ctx, `
+		SELECT call.id::text, call.practice_id::text, staff.id::text,
+			COALESCE(staff.staff_subject, '')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs staff
+			ON staff.call_id = call.id AND staff.role = 'STAFF'
+		WHERE call.direction = 'OUTBOUND'
+			AND call.terminal_outcome IS NULL
+			AND staff.state = 'BRIDGE_PENDING'
+			AND staff.bridge_pending_at <= $1::timestamptz - $2::interval
+			AND NOT EXISTS (
+				SELECT 1 FROM human_calling_call_legs destination
+				WHERE destination.call_id = call.id
+					AND destination.role = 'DESTINATION'
+			)
+		ORDER BY staff.bridge_pending_at, staff.id
+		FOR UPDATE OF call, staff SKIP LOCKED
+		LIMIT 1
+	`, m.now(), m.config.RingWindowDuration.String()).Scan(
+		&callID, &practiceID, &staffLegID, &subject,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim expired outbound media: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'UNANSWERED',
+			provider_termination = 'MEDIA_READINESS_FAILED',
+			ended_at = COALESCE(ended_at, $2),
+			version = version + 1, updated_at = $2
+		WHERE id = $1 AND terminal_outcome IS NULL
+	`, callID, m.now()); err != nil {
+		return false, fmt.Errorf("end expired outbound media Call: %w", err)
+	}
+	if err := m.endRemainingCallLegs(ctx, tx, callID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'FAILED', ended_at = COALESCE(ended_at, $2),
+			error_code = 'MEDIA_READINESS_FAILED', updated_at = $2
+		WHERE id = $1
+	`, staffLegID, m.now()); err != nil {
+		return false, fmt.Errorf("fail expired outbound media CallLeg: %w", err)
+	}
+	if err := appendTimeline(ctx, tx, callID, practiceID,
+		"outbound.media_readiness_timeout", subject, "", "",
+		opaqueReference(staffLegID), "MEDIA_READINESS_FAILED", m.now()); err != nil {
+		return false, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit outbound media expiry: %w", err)
+	}
+	return true, nil
 }
 
 func (m *Module) markUnobservedCommandAmbiguous(
