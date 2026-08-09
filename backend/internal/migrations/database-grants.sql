@@ -310,6 +310,10 @@ GRANT SELECT ON TABLE
     public.work_tasks
 TO acuity_worker;
 
+GRANT SELECT (email, user_subject)
+ON TABLE public.access_platform_operators
+TO acuity_worker;
+
 GRANT SELECT (
     id,
     service_subject,

@@ -9,7 +9,7 @@ import {
   routeIncomingMedia,
 } from "./dock-media-state.ts"
 
-test("calling state adopts live voicemail without reopening saved voicemail", () => {
+test("calling state adopts only live softphone calls", () => {
   assert.equal(currentCallingStateCallID({}), undefined)
   assert.equal(
     currentCallingStateCallID({
@@ -31,10 +31,9 @@ test("calling state adopts live voicemail without reopening saved voicemail", ()
   )
   assert.equal(
     currentCallingStateCallID({
-      voicemail: { callId: "call-1", state: "VOICEMAIL" },
       disposition: { callId: "call-2", state: "NEEDS_DISPOSITION" },
     }),
-    "call-2",
+    undefined,
   )
 })
 

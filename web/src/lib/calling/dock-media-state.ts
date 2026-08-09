@@ -25,11 +25,7 @@ export function currentCallingStateCallID(state: CurrentCallingState) {
     state.voicemail?.state === "VOICEMAIL_RECORDING"
       ? state.voicemail.callId
       : undefined
-  return (
-    state.bridged?.callId ??
-    voicemailCallID ??
-    state.disposition?.callId
-  )
+  return state.bridged?.callId ?? voicemailCallID
 }
 
 export async function confirmOutboundMediaWithRetry<T>(

@@ -256,6 +256,26 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		},
 		"acuity_worker": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
+			`SELECT call.id::text, call.practice_id::text,
+					COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
+					winner.staff_subject,
+					COALESCE(membership.email, platform_operator.email, '')
+				 FROM human_calling_calls call
+				 JOIN LATERAL (
+					SELECT leg.staff_subject
+					FROM human_calling_call_legs leg
+					WHERE leg.call_id = call.id AND leg.role = 'STAFF'
+						AND leg.bridged_at IS NOT NULL
+					ORDER BY leg.bridged_at, leg.id
+					LIMIT 1
+				 ) winner ON true
+				 LEFT JOIN access_memberships membership
+					ON membership.practice_id = call.practice_id
+					AND membership.user_subject = winner.staff_subject
+				 LEFT JOIN access_platform_operators platform_operator
+					ON platform_operator.user_subject = winner.staff_subject
+				 WHERE false
+				 FOR UPDATE OF call SKIP LOCKED`,
 			`SELECT EXISTS (
 				SELECT 1 FROM human_calling_timeline
 				WHERE call_id = gen_random_uuid()
@@ -587,6 +607,13 @@ func expectedColumnPrivileges() map[string]bool {
 			result[columnPrivilegeKey(role, relation, column, privilege)] = true
 		}
 	}
+	grant(
+		"acuity_worker",
+		"public.access_platform_operators",
+		"SELECT",
+		"email",
+		"user_subject",
+	)
 	grant(
 		"acuity_portal",
 		"public.ai_interaction_receipts",
