@@ -952,6 +952,69 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 	}
 }
 
+func TestCommandWorkerPreservesGlobalOrderAcrossCallAndCredentialWork(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 16, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	pool, calling, _, staff := prepareInboundFanout(
+		t, now, "command-global-order", provider, 1,
+	)
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_calls LIMIT 1
+	`).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			user_subject, action, payload, created_at, next_attempt_at
+		) VALUES (
+			$1, 'CREATE_CREDENTIAL',
+			jsonb_build_object(
+				'connection_id', 'staff-credential-connection',
+				'name', 'global-order-credential',
+				'tag', 'acuity-portal'
+			),
+			$2::timestamptz - interval '2 seconds', $2
+		)
+	`, staff[0].Subject, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, action, target_id, payload, created_at, next_attempt_at
+		) VALUES (
+			$1, 'STOP_RING_WINDOW', 'global-order-call', '{}',
+			$2::timestamptz - interval '1 second', $2
+		)
+	`, callID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := calling.ProcessNextCommand(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process globally oldest provider command = %t, %v", processed, err)
+	}
+	var credentialState, callState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT state FROM human_calling_provider_commands
+				WHERE call_id IS NULL AND action = 'CREATE_CREDENTIAL'),
+			(SELECT state FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'STOP_RING_WINDOW')
+	`, callID).Scan(&credentialState, &callState); err != nil {
+		t.Fatal(err)
+	}
+	if credentialState != "SENT" || callState != "PENDING" {
+		t.Fatalf("global command order = credential %s, Call %s; want SENT/PENDING",
+			credentialState, callState)
+	}
+}
+
 func prepareTerminalStaffHangup(
 	t *testing.T,
 	providerActive bool,

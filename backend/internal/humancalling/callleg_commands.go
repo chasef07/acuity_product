@@ -28,38 +28,38 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 	defer func() { _ = tx.Rollback(ctx) }()
 	var commandID string
 	err = tx.QueryRow(ctx, `
-		SELECT command.id::text
-		FROM human_calling_calls call
-		JOIN LATERAL (
-			SELECT pending.id, pending.created_at
-			FROM human_calling_provider_commands pending
-			WHERE pending.call_id = call.id
-				AND pending.state = 'PENDING'
-				AND pending.next_attempt_at <= $1
-				AND pending.action <> 'CREATE_JWT'
-				AND (
-					pending.depends_on_command_id IS NULL
-					OR EXISTS (
-						SELECT 1 FROM human_calling_provider_commands dependency
-						WHERE dependency.id = pending.depends_on_command_id
-							AND dependency.state IN ('SENT', 'RECONCILED')
+		WITH call_candidate AS MATERIALIZED (
+			SELECT command.id, command.created_at
+			FROM human_calling_calls call
+			JOIN LATERAL (
+				SELECT pending.id, pending.created_at
+				FROM human_calling_provider_commands pending
+				WHERE pending.call_id = call.id
+					AND pending.state = 'PENDING'
+					AND pending.next_attempt_at <= $1
+					AND pending.action <> 'CREATE_JWT'
+					AND (
+						pending.depends_on_command_id IS NULL
+						OR EXISTS (
+							SELECT 1 FROM human_calling_provider_commands dependency
+							WHERE dependency.id = pending.depends_on_command_id
+								AND dependency.state IN ('SENT', 'RECONCILED')
+						)
 					)
-				)
-			ORDER BY pending.created_at, pending.id
+				ORDER BY pending.created_at, pending.id
+				LIMIT 1
+			) command ON true
+			WHERE NOT EXISTS (
+				SELECT 1 FROM human_calling_provider_commands active
+				WHERE active.call_id = call.id
+					AND active.state IN ('SENDING', 'AMBIGUOUS')
+			)
+			ORDER BY command.created_at, command.id
+			FOR UPDATE OF call SKIP LOCKED
 			LIMIT 1
-		) command ON true
-		WHERE NOT EXISTS (
-			SELECT 1 FROM human_calling_provider_commands active
-			WHERE active.call_id = call.id
-				AND active.state IN ('SENDING', 'AMBIGUOUS')
-		)
-		ORDER BY command.created_at, command.id
-		FOR UPDATE OF call SKIP LOCKED
-		LIMIT 1
-	`, m.now()).Scan(&commandID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = tx.QueryRow(ctx, `
-			SELECT command.id::text
+		),
+		global_candidate AS MATERIALIZED (
+			SELECT command.id, command.created_at
 			FROM human_calling_provider_commands command
 			WHERE command.call_id IS NULL
 				AND command.state = 'PENDING'
@@ -76,13 +76,21 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 			ORDER BY command.created_at, command.id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
-		`, m.now()).Scan(&commandID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			if err := tx.Commit(ctx); err != nil {
-				return "", false, err
-			}
-			return "", false, nil
+		)
+		SELECT candidate.id::text
+		FROM (
+			SELECT id, created_at FROM call_candidate
+			UNION ALL
+			SELECT id, created_at FROM global_candidate
+		) candidate
+		ORDER BY candidate.created_at, candidate.id
+		LIMIT 1
+	`, m.now()).Scan(&commandID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return "", false, err
 		}
+		return "", false, nil
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("select provider command: %w", err)
