@@ -1141,7 +1141,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 
 	handoffBody, _ := json.Marshal(map[string]any{
 		"practiceId":     practiceID,
-		"locationId":     uuid.NewString(),
+		"officeKey":      "spring-hill",
 		"sourceCallId":   "capability-check",
 		"idempotencyKey": "capability-check",
 		"contact": map[string]any{
@@ -1308,9 +1308,13 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		Environment: "test",
 		RequestedBy: "slice-2-http-test",
 		Practices: []access.PracticeProvision{{
-			Key:       "calling-practice",
-			Name:      "Calling Practice",
-			Locations: []access.LocationProvision{{Key: "calling-location", Name: "Calling Location"}},
+			Key:  "calling-practice",
+			Name: "Calling Practice",
+			Locations: []access.LocationProvision{{
+				Key:             "calling-location",
+				Name:            "Calling Location",
+				AbitaOfficeKeys: []string{"calling-office"},
+			}},
 			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "calling-staff",
 				Email:         "staff@calling.test",
@@ -1384,7 +1388,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 
 	handoffBody, _ := json.Marshal(map[string]any{
 		"practiceId":     authorization.Practice.ID,
-		"locationId":     authorization.Locations[0].ID,
+		"officeKey":      "calling-office",
 		"sourceCallId":   "http-source-call",
 		"idempotencyKey": "http-idempotency",
 		"contact": map[string]any{
@@ -1427,6 +1431,49 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	if handoff.SIPDestination != "sip:acuity-handoff@synthetic.sip.telnyx.com" {
 		t.Fatalf("handoff response = %#v", handoff)
 	}
+	legacyBody, _ := json.Marshal(map[string]any{
+		"practiceId":     authorization.Practice.ID,
+		"locationId":     authorization.Locations[0].ID,
+		"sourceCallId":   "legacy-http-source-call",
+		"idempotencyKey": "legacy-http-idempotency",
+		"contact": map[string]any{
+			"phone": "+15555550101",
+		},
+	})
+	legacy := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"abita-token",
+		legacyBody,
+	)
+	if legacy.StatusCode != http.StatusCreated {
+		t.Fatalf("legacy handoff status = %d, body = %s", legacy.StatusCode, readBody(t, legacy))
+	}
+	_ = legacy.Body.Close()
+	bothRoutesBody, _ := json.Marshal(map[string]any{
+		"practiceId":     authorization.Practice.ID,
+		"officeKey":      "calling-office",
+		"locationId":     authorization.Locations[0].ID,
+		"sourceCallId":   "ambiguous-http-source-call",
+		"idempotencyKey": "ambiguous-http-idempotency",
+		"contact": map[string]any{
+			"phone": "+15555550102",
+		},
+	})
+	bothRoutes := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"abita-token",
+		bothRoutesBody,
+	)
+	if bothRoutes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("ambiguous handoff route status = %d, body = %s", bothRoutes.StatusCode, readBody(t, bothRoutes))
+	}
+	_ = bothRoutes.Body.Close()
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:       "http-inbound-event",
 		Type:          humancalling.FactCallInitiated,

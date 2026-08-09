@@ -149,6 +149,7 @@ type ContactContext struct {
 
 type CreateHandoffCommand struct {
 	Service        ServiceIdentity
+	OfficeKey      string
 	LocationID     string
 	SourceCallID   string
 	IdempotencyKey string

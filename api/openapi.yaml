@@ -1832,14 +1832,19 @@ components:
     CreateHandoffRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, locationId, sourceCallId, idempotencyKey, contact]
+      required: [practiceId, sourceCallId, idempotencyKey, contact]
       properties:
         practiceId:
           type: string
           format: uuid
+        officeKey:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,99}$"
+          description: Preferred Abita Office Route identity. Send exactly one of officeKey or locationId.
         locationId:
           type: string
           format: uuid
+          description: Migration-only compatibility input. Send exactly one of officeKey or locationId.
         sourceCallId:
           type: string
           minLength: 1

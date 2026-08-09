@@ -374,9 +374,17 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
+	var officeKey, locationID string
+	if body.OfficeKey != nil {
+		officeKey = *body.OfficeKey
+	}
+	if body.LocationId != nil {
+		locationID = body.LocationId.String()
+	}
 	handoff, err := server.calling.CreateHandoff(ctx, humancalling.CreateHandoffCommand{
 		Service:        service,
-		LocationID:     body.LocationId.String(),
+		OfficeKey:      officeKey,
+		LocationID:     locationID,
 		SourceCallID:   body.SourceCallId,
 		IdempotencyKey: body.IdempotencyKey,
 		Contact: humancalling.ContactContext{

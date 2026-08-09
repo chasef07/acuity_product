@@ -120,7 +120,14 @@ export type ContactContextInput = {
 
 export type CreateHandoffRequest = {
     practiceId: string;
-    locationId: string;
+    /**
+     * Preferred Abita Office Route identity. Send exactly one of officeKey or locationId.
+     */
+    officeKey?: string;
+    /**
+     * Migration-only compatibility input. Send exactly one of officeKey or locationId.
+     */
+    locationId?: string;
     sourceCallId: string;
     idempotencyKey: string;
     contact: ContactContextInput;
