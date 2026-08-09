@@ -1097,7 +1097,7 @@ export function TaskWorkspaceShell() {
                 data-testid="context-panel"
                 inert={!contextPanelOpen}
                 className={cn(
-                  "absolute inset-y-3 right-3 flex w-[calc(100%-1.5rem)] max-w-[20rem] flex-col overflow-hidden rounded-xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
+                  "absolute top-3 right-3 flex h-fit max-h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
                   contextPanelOpen
                     ? "translate-x-0 opacity-100 lg:mr-3 lg:w-72"
                     : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:mr-0 lg:w-0",

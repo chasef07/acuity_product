@@ -272,8 +272,8 @@ export function TaskRail({
           </AttentionGroup>
 
           <RecoveryGroup
-            title="Missed Calls & Voicemails"
-            empty="No missed calls or voicemails"
+            title="Missed Calls"
+            empty="No missed calls"
             rows={recoveryRows}
             expanded={expanded.calls}
             selectedPhone={selectedPhone}

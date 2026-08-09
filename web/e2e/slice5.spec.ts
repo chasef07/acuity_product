@@ -27,7 +27,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     "true",
   )
   await expect(
-    page.getByRole("button", { name: /^Missed Calls & Voicemails/ }),
+    page.getByRole("button", { name: /^Missed Calls \d+$/ }),
   ).toBeVisible()
   await expect(page.getByRole("button", { name: /^Bookings/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Cancellations/ })).toBeVisible()

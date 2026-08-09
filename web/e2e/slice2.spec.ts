@@ -277,9 +277,22 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         exact: true,
       }),
     ).toBeVisible()
-    await expect(
-      selectedPage.getByRole("complementary", { name: "Call context" }),
-    ).toBeVisible()
+    const contextPanel = selectedPage.getByRole("complementary", {
+      name: "Call context",
+    })
+    await expect(contextPanel).toBeVisible()
+    const contextPanelBox = await contextPanel.boundingBox()
+    const viewport = selectedPage.viewportSize()
+    expect(contextPanelBox).not.toBeNull()
+    expect(viewport).not.toBeNull()
+    expect(contextPanelBox!.height).toBeLessThan(viewport!.height * 0.75)
+    await selectedPage.setViewportSize({ width: 800, height: 1200 })
+    await expect
+      .poll(async () => {
+        const compactPanelBox = await contextPanel.boundingBox()
+        return compactPanelBox?.height ?? 1200
+      })
+      .toBeLessThan(900)
     await expect(callCenter(secondaryPage)).toHaveCount(0)
   } finally {
     await database.end()
@@ -398,7 +411,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       ).toBeVisible({ timeout: 30_000 })
 
       const recoveryFolder = page.getByRole("button", {
-        name: /^Missed Calls & Voicemails/,
+        name: /^Missed Calls \d+$/,
       })
       if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
         await recoveryFolder.click()
@@ -501,7 +514,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     await deliverProviderEvent(page, missedHangup)
     await deliverProviderEvent(page, missedHangup)
     const recoveryFolder = page.getByRole("button", {
-      name: /^Missed Calls & Voicemails/,
+      name: /^Missed Calls \d+$/,
     })
     if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
       await recoveryFolder.click()
