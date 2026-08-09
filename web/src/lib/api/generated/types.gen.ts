@@ -186,10 +186,12 @@ export type RingingCallLeg = {
     locationId: string;
     locationName: string;
     displayName: string;
+    phone: string;
     transferReason: string;
     state: 'PENDING' | 'DIALING' | 'RINGING' | 'BRIDGE_PENDING';
     version: number;
     createdAt: string;
+    deadline: string;
 };
 
 export type CallingStateCall = {

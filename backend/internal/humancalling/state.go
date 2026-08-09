@@ -29,10 +29,12 @@ type RingingCallLeg struct {
 	LocationID     string
 	LocationName   string
 	DisplayName    string
+	Phone          string
 	TransferReason string
 	State          string
 	Version        int64
 	CreatedAt      time.Time
+	Deadline       time.Time
 }
 
 type CallingStateCall struct {
@@ -89,8 +91,9 @@ func (m *Module) ReadCallingState(
 		SELECT call.id::text, leg.id::text, call.practice_id::text,
 			call.location_id::text, location.name,
 			COALESCE(handoff.display_name, ''),
+			COALESCE(call.caller_phone, call.destination_phone, ''),
 			COALESCE(handoff.transfer_reason, ''), leg.state,
-			call.version, leg.created_at
+			call.version, leg.created_at, ring.sent_at + $2::interval
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
 		JOIN access_locations location
@@ -101,6 +104,23 @@ func (m *Module) ReadCallingState(
 			AND calling_scope.user_subject = leg.staff_subject
 		LEFT JOIN human_calling_handoffs handoff
 			ON handoff.id = call.source_handoff_id
+		JOIN LATERAL (
+			SELECT command.sent_at
+			FROM human_calling_provider_commands command
+			WHERE command.call_id = call.id
+				AND (
+					(call.direction = 'INBOUND' AND command.action = 'START_RING_WINDOW')
+					OR (
+						call.direction = 'OUTBOUND'
+						AND command.action = 'DIAL_OUTBOUND_STAFF'
+						AND command.call_leg_id = leg.id
+					)
+				)
+				AND command.state IN ('SENT', 'RECONCILED')
+				AND command.sent_at IS NOT NULL
+			ORDER BY command.created_at, command.id
+			LIMIT 1
+		) ring ON true
 		WHERE leg.role = 'STAFF'
 			AND leg.staff_subject = $1
 			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING')
@@ -113,7 +133,7 @@ func (m *Module) ReadCallingState(
 				)
 			)
 		ORDER BY leg.created_at, leg.id
-	`, identity.Subject)
+	`, identity.Subject, m.config.RingWindowDuration.String())
 	if err != nil {
 		return CallingState{}, fmt.Errorf("read ringing CallLegs: %w", err)
 	}
@@ -121,8 +141,8 @@ func (m *Module) ReadCallingState(
 		var leg RingingCallLeg
 		if err := rows.Scan(
 			&leg.CallID, &leg.CallLegID, &leg.PracticeID, &leg.LocationID,
-			&leg.LocationName, &leg.DisplayName, &leg.TransferReason,
-			&leg.State, &leg.Version, &leg.CreatedAt,
+			&leg.LocationName, &leg.DisplayName, &leg.Phone, &leg.TransferReason,
+			&leg.State, &leg.Version, &leg.CreatedAt, &leg.Deadline,
 		); err != nil {
 			rows.Close()
 			return CallingState{}, fmt.Errorf("scan ringing CallLeg: %w", err)
@@ -256,7 +276,8 @@ func callingStateETag(state CallingState, leaseVersion int64) string {
 	value := fmt.Sprintf("lease:%d:%s:%t:%t", leaseVersion,
 		state.Softphone.SessionID, state.Softphone.Owner, state.Softphone.Available)
 	for _, leg := range state.Ringing {
-		value += fmt.Sprintf("|ring:%s:%s:%s:%d", leg.CallID, leg.CallLegID, leg.State, leg.Version)
+		value += fmt.Sprintf("|ring:%s:%s:%s:%s:%s:%d", leg.CallID, leg.CallLegID,
+			leg.Phone, leg.Deadline.UTC().Format(time.RFC3339Nano), leg.State, leg.Version)
 	}
 	orderedCalls := []struct {
 		name string

@@ -2467,9 +2467,10 @@ func callingStateResponse(state humancalling.CallingState) (api.CallingState, er
 			CallId: callID, CallLegId: callLegID, PracticeId: practiceID,
 			MediaToken: leg.MediaToken,
 			LocationId: locationID, LocationName: leg.LocationName,
-			DisplayName: leg.DisplayName, TransferReason: leg.TransferReason,
-			State: api.RingingCallLegState(leg.State), Version: leg.Version,
-			CreatedAt: leg.CreatedAt,
+			DisplayName: leg.DisplayName, Phone: leg.Phone,
+			TransferReason: leg.TransferReason,
+			State:          api.RingingCallLegState(leg.State), Version: leg.Version,
+			CreatedAt: leg.CreatedAt, Deadline: leg.Deadline,
 		})
 	}
 	convert := func(call *humancalling.CallingStateCall) (*api.CallingStateCall, error) {
