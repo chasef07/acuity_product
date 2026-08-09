@@ -1,28 +1,87 @@
-package access
+package access_test
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
 
-func TestServiceIdentityScopesHandoffPractice(t *testing.T) {
-	const (
-		primaryPracticeID   = "00000000-0000-0000-0000-000000000001"
-		secondaryPracticeID = "00000000-0000-0000-0000-000000000002"
+	"github.com/chasef07/acuity_product/backend/internal/access"
+)
+
+func TestServiceAuthenticatorReturnsTheTenantBoundToEachCredential(t *testing.T) {
+	demo := access.ServiceIdentity{
+		Subject:       "abita-demo",
+		PracticeID:    "00000000-0000-0000-0000-000000000001",
+		LocationScope: access.LocationScopeAll,
+		Capabilities: []access.ServiceCapability{
+			access.ServiceCapabilityCreateTask,
+			access.ServiceCapabilityHumanHandoff,
+			access.ServiceCapabilityIngestAIInteraction,
+		},
+	}
+	production := access.ServiceIdentity{
+		Subject:       "abita-eye-group",
+		PracticeID:    "00000000-0000-0000-0000-000000000002",
+		LocationScope: access.LocationScopeAll,
+		Capabilities: []access.ServiceCapability{
+			access.ServiceCapabilityHumanHandoff,
+			access.ServiceCapabilityIngestAIInteraction,
+		},
+	}
+	authenticator, err := access.NewServiceAuthenticator(
+		access.ServiceCredential{Token: "demo-token", Identity: demo},
+		access.ServiceCredential{Token: "production-token", Identity: production},
 	)
-	identity := ServiceIdentity{
-		PracticeID:                   primaryPracticeID,
-		AdditionalHandoffPracticeIDs: []string{secondaryPracticeID},
+	if err != nil {
+		t.Fatalf("new service authenticator: %v", err)
 	}
 
-	primary, allowed := identity.ForHandoffPractice(primaryPracticeID)
-	if !allowed || primary.PracticeID != primaryPracticeID || len(primary.AdditionalHandoffPracticeIDs) != 0 {
-		t.Fatalf("primary handoff identity = %#v, allowed = %t", primary, allowed)
+	for token, want := range map[string]access.ServiceIdentity{
+		"demo-token":       demo,
+		"production-token": production,
+	} {
+		got, err := authenticator.AuthenticateService(context.Background(), token)
+		if err != nil {
+			t.Fatalf("authenticate %s: %v", want.Subject, err)
+		}
+		if got.Subject != want.Subject || got.PracticeID != want.PracticeID {
+			t.Fatalf("identity = %#v, want %#v", got, want)
+		}
 	}
 
-	secondary, allowed := identity.ForHandoffPractice(secondaryPracticeID)
-	if !allowed || secondary.PracticeID != secondaryPracticeID || len(secondary.AdditionalHandoffPracticeIDs) != 0 {
-		t.Fatalf("secondary handoff identity = %#v, allowed = %t", secondary, allowed)
+	if _, err := authenticator.AuthenticateService(context.Background(), "wrong-token"); !errors.Is(err, access.ErrDenied) {
+		t.Fatalf("wrong credential error = %v, want denied", err)
 	}
+	if !demo.Allows(access.ServiceCapabilityCreateTask) ||
+		!demo.Allows(access.ServiceCapabilityHumanHandoff) {
+		t.Fatalf("demo capabilities = %#v", demo.Capabilities)
+	}
+	if !production.Allows(access.ServiceCapabilityHumanHandoff) ||
+		production.Allows(access.ServiceCapabilityCreateTask) {
+		t.Fatalf("production capabilities = %#v", production.Capabilities)
+	}
+}
 
-	if unlisted, allowed := identity.ForHandoffPractice("00000000-0000-0000-0000-000000000003"); allowed || unlisted.PracticeID != "" {
-		t.Fatalf("unlisted handoff identity = %#v, allowed = %t", unlisted, allowed)
+func TestServiceAuthenticatorRejectsInvalidCredentialSets(t *testing.T) {
+	identity := access.ServiceIdentity{
+		Subject:       "abita-demo",
+		PracticeID:    "00000000-0000-0000-0000-000000000001",
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	valid := access.ServiceCredential{Token: "valid-token", Identity: identity}
+	for name, credentials := range map[string][2]access.ServiceCredential{
+		"empty first token":  {{Identity: identity}, valid},
+		"empty second token": {valid, {Identity: identity}},
+		"duplicate token": {
+			{Token: "same-token", Identity: identity},
+			{Token: "same-token", Identity: identity},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := access.NewServiceAuthenticator(credentials[0], credentials[1]); err == nil {
+				t.Fatal("expected invalid credential set to fail closed")
+			}
+		})
 	}
 }

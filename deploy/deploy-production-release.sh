@@ -204,9 +204,6 @@ fi
 require_service_environment \
   acuity-portal-api \
   HUMAN_CALLING_PLAYBACK_SIGNING_KEY
-require_service_environment \
-  acuity-portal-api \
-  HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS
 require_service_environment acuity-web GOOGLE_CLIENT_ID
 require_service_environment acuity-web GOOGLE_CLIENT_SECRET
 

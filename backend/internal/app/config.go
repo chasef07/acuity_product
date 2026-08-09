@@ -46,10 +46,14 @@ type LocationVoiceProvisionConfig struct {
 }
 
 type ServiceConfig struct {
-	Token                        string
-	Subject                      string
-	PracticeID                   string
-	AdditionalHandoffPracticeIDs []string
+	AcuityDemo    ServiceCredentialConfig
+	AbitaEyeGroup ServiceCredentialConfig
+}
+
+type ServiceCredentialConfig struct {
+	Token      string
+	Subject    string
+	PracticeID string
 }
 
 type HumanCallingConfig struct {
@@ -290,47 +294,34 @@ func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 }
 
 func loadServiceConfig(getenv func(string) string) (ServiceConfig, error) {
-	var result ServiceConfig
+	demo, err := loadServiceCredential(getenv, "ACUITY_DEMO_SERVICE")
+	if err != nil {
+		return ServiceConfig{}, err
+	}
+	production, err := loadServiceCredential(getenv, "ABITA_EYE_GROUP_SERVICE")
+	if err != nil {
+		return ServiceConfig{}, err
+	}
+	return ServiceConfig{AcuityDemo: demo, AbitaEyeGroup: production}, nil
+}
+
+func loadServiceCredential(
+	getenv func(string) string,
+	prefix string,
+) (ServiceCredentialConfig, error) {
+	var result ServiceCredentialConfig
 	var err error
-	if result.Token, err = required(getenv, "HANDOFF_SERVICE_TOKEN"); err != nil {
-		return ServiceConfig{}, err
+	if result.Token, err = required(getenv, prefix+"_TOKEN"); err != nil {
+		return ServiceCredentialConfig{}, err
 	}
-	if result.Subject, err = required(getenv, "HANDOFF_SERVICE_SUBJECT"); err != nil {
-		return ServiceConfig{}, err
+	if result.Subject, err = required(getenv, prefix+"_SUBJECT"); err != nil {
+		return ServiceCredentialConfig{}, err
 	}
-	if result.PracticeID, err = required(
-		getenv,
-		"HANDOFF_SERVICE_PRACTICE_ID",
-	); err != nil {
-		return ServiceConfig{}, err
+	if result.PracticeID, err = required(getenv, prefix+"_PRACTICE_ID"); err != nil {
+		return ServiceCredentialConfig{}, err
 	}
 	if _, err := uuid.Parse(result.PracticeID); err != nil {
-		return ServiceConfig{}, fmt.Errorf("HANDOFF_SERVICE_PRACTICE_ID must be a UUID")
-	}
-	practiceIDs := map[string]struct{}{result.PracticeID: {}}
-	for _, value := range strings.Split(
-		strings.TrimSpace(getenv("HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS")),
-		",",
-	) {
-		practiceID := strings.TrimSpace(value)
-		if practiceID == "" {
-			continue
-		}
-		if _, err := uuid.Parse(practiceID); err != nil {
-			return ServiceConfig{}, fmt.Errorf(
-				"HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS must contain UUIDs",
-			)
-		}
-		if _, duplicate := practiceIDs[practiceID]; duplicate {
-			return ServiceConfig{}, fmt.Errorf(
-				"HANDOFF_SERVICE_PRACTICE_ID values must be unique",
-			)
-		}
-		practiceIDs[practiceID] = struct{}{}
-		result.AdditionalHandoffPracticeIDs = append(
-			result.AdditionalHandoffPracticeIDs,
-			practiceID,
-		)
+		return ServiceCredentialConfig{}, fmt.Errorf("%s_PRACTICE_ID must be a UUID", prefix)
 	}
 	return result, nil
 }

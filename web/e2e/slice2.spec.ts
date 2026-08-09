@@ -96,7 +96,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     expect(scope.rows[0]).toBeTruthy()
 
     const handoffResponse = await selectedPage.request.post(`${portalURL}/v1/handoffs`, {
-      headers: { authorization: "Bearer synthetic-service-token" },
+      headers: { authorization: "Bearer synthetic-production-token" },
       data: {
         practiceId: scope.rows[0].practice_id,
         locationId: scope.rows[0].location_id,
@@ -577,7 +577,7 @@ async function startAnsweredInboundCall(
   prefix: string,
 ): Promise<InboundCaller> {
   const handoffResponse = await page.request.post(`${portalURL}/v1/handoffs`, {
-    headers: { authorization: "Bearer synthetic-service-token" },
+    headers: { authorization: "Bearer synthetic-production-token" },
     data: {
       practiceId: practiceID,
       locationId: locationID,

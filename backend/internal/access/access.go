@@ -58,34 +58,14 @@ const (
 )
 
 type ServiceIdentity struct {
-	Subject                      string
-	PracticeID                   string
-	AdditionalHandoffPracticeIDs []string
-	LocationScope                LocationScope
-	Capabilities                 []ServiceCapability
+	Subject       string
+	PracticeID    string
+	LocationScope LocationScope
+	Capabilities  []ServiceCapability
 }
 
 func (identity ServiceIdentity) Allows(capability ServiceCapability) bool {
 	return serviceHasCapability(identity, capability)
-}
-
-func (identity ServiceIdentity) ForHandoffPractice(practiceID string) (ServiceIdentity, bool) {
-	practiceID = strings.TrimSpace(practiceID)
-	if practiceID != identity.PracticeID {
-		allowed := false
-		for _, allowedPracticeID := range identity.AdditionalHandoffPracticeIDs {
-			if practiceID == allowedPracticeID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return ServiceIdentity{}, false
-		}
-		identity.PracticeID = practiceID
-	}
-	identity.AdditionalHandoffPracticeIDs = nil
-	return identity, true
 }
 
 type ServiceAuthorization struct {

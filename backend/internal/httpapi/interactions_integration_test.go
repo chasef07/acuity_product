@@ -94,14 +94,28 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("read AI Interaction Practice: %v", err)
 	}
 	serviceAuth, err := access.NewServiceAuthenticator(
-		"abita-interaction-token",
-		access.ServiceIdentity{
-			Subject:       "abita-agent",
-			PracticeID:    practiceID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapability("INGEST_AI_INTERACTION"),
-				access.ServiceCapabilityCreateTask,
+		access.ServiceCredential{
+			Token: "demo-interaction-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "abita-demo",
+				PracticeID:    "00000000-0000-0000-0000-000000000001",
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
+					access.ServiceCapabilityIngestAIInteraction,
+				},
+			},
+		},
+		access.ServiceCredential{
+			Token: "production-interaction-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "abita-agent",
+				PracticeID:    practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+					access.ServiceCapabilityIngestAIInteraction,
+				},
 			},
 		},
 	)
@@ -176,17 +190,26 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	oversizedBody = append(oversizedBody, 'x')
 	oversized := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", oversizedBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", oversizedBody,
 	)
 	if oversized.StatusCode != http.StatusBadRequest {
 		t.Fatalf("oversized AI Interaction status = %d, body = %s",
 			oversized.StatusCode, readBody(t, oversized))
 	}
 	_ = oversized.Body.Close()
+	wrongTenant := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions", "demo-interaction-token", body,
+	)
+	if wrongTenant.StatusCode != http.StatusForbidden {
+		t.Fatalf("wrong-tenant AI Interaction status = %d, body = %s",
+			wrongTenant.StatusCode, readBody(t, wrongTenant))
+	}
+	_ = wrongTenant.Body.Close()
 
 	created := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", body,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", body,
 	)
 	if created.StatusCode != http.StatusCreated {
 		t.Fatalf("create AI Interaction status = %d, body = %s",
@@ -203,7 +226,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 
 	duplicate := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", body,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", body,
 	)
 	if duplicate.StatusCode != http.StatusOK {
 		t.Fatalf("duplicate AI Interaction status = %d, body = %s",
@@ -228,7 +251,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	poisonedStart := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", poisonedStartBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", poisonedStartBody,
 	)
 	if poisonedStart.StatusCode != http.StatusBadRequest {
 		t.Fatalf("poisoned start AI Interaction status = %d, body = %s",
@@ -246,7 +269,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	mismatchedLocation := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", mismatchedLocationBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", mismatchedLocationBody,
 	)
 	if mismatchedLocation.StatusCode != http.StatusForbidden {
 		t.Fatalf("mismatched Location AI Interaction status = %d, body = %s",
@@ -285,7 +308,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 				results <- concurrentResult{err: fmt.Errorf("create request: %w", err)}
 				return
 			}
-			req.Header.Set("Authorization", "Bearer abita-interaction-token")
+			req.Header.Set("Authorization", "Bearer production-interaction-token")
 			req.Header.Set("Content-Type", "application/json")
 			response, err := server.Client().Do(req)
 			if err != nil {
@@ -372,7 +395,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	checkpoint := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", checkpointBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", checkpointBody,
 	)
 	if checkpoint.StatusCode != http.StatusOK {
 		t.Fatalf("checkpoint AI Interaction status = %d, body = %s",
@@ -381,7 +404,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	_ = checkpoint.Body.Close()
 	checkpointReplay := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", checkpointBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", checkpointBody,
 	)
 	if checkpointReplay.StatusCode != http.StatusOK {
 		t.Fatalf("checkpoint replay AI Interaction status = %d, body = %s",
@@ -416,7 +439,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	for attempt := 1; attempt <= 2; attempt++ {
 		summary := request(
 			t, server.Client(), http.MethodPost,
-			server.URL+"/v1/ai/interactions", "abita-interaction-token", summaryBody,
+			server.URL+"/v1/ai/interactions", "production-interaction-token", summaryBody,
 		)
 		if summary.StatusCode != http.StatusOK {
 			t.Fatalf("summary attempt %d AI Interaction status = %d, body = %s",
@@ -488,7 +511,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	closeout := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", closeoutBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", closeoutBody,
 	)
 	if closeout.StatusCode != http.StatusOK {
 		t.Fatalf("closeout AI Interaction status = %d, body = %s",
@@ -497,7 +520,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	_ = closeout.Body.Close()
 	closeoutReplay := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", closeoutBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", closeoutBody,
 	)
 	if closeoutReplay.StatusCode != http.StatusOK {
 		t.Fatalf("closeout replay AI Interaction status = %d, body = %s",
@@ -507,7 +530,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 
 	lateStart := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", body,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", body,
 	)
 	if lateStart.StatusCode != http.StatusOK {
 		t.Fatalf("late start AI Interaction status = %d, body = %s",
@@ -535,7 +558,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	poorerCloseout := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", poorerCloseoutBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", poorerCloseoutBody,
 	)
 	if poorerCloseout.StatusCode != http.StatusConflict {
 		t.Fatalf("poorer replay AI Interaction status = %d, body = %s",
@@ -669,7 +692,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		encoded, _ := json.Marshal(payload)
 		response := request(
 			t, server.Client(), http.MethodPost,
-			server.URL+"/v1/ai/interactions", "abita-interaction-token", encoded,
+			server.URL+"/v1/ai/interactions", "production-interaction-token", encoded,
 		)
 		if response.StatusCode != http.StatusCreated {
 			t.Fatalf("create %s AI Interaction status = %d, body = %s",
@@ -737,27 +760,26 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		daily.Items[0].AppointmentOutcome != "RESCHEDULE" {
 		t.Fatalf("daily AI Interaction outcomes = %#v", daily)
 	}
-	taskBody, _ := json.Marshal(map[string]any{
-		"callId":         "abita-call-63",
-		"callerPhone":    "+17275550199",
-		"category":       "appointments",
-		"idempotencyKey": "issue-63-history-task",
-		"message":        "Caller also asked office staff to verify paperwork.",
-		"officeKey":      "spring-hill",
-		"officePhone":    "+17275919997",
-		"source":         "agent",
-		"summary":        "Verify paperwork.",
-		"urgency":        "normal",
+	_, _, err = workModule.CreateAITask(context.Background(), work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{
+			Subject:       "history-fixture",
+			PracticeID:    practiceID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+		},
+		OfficeKey:      "spring-hill",
+		OfficePhone:    "+17275919997",
+		SourceCallID:   "abita-call-63",
+		IdempotencyKey: "issue-63-history-task",
+		Phone:          "+17275550199",
+		Summary:        "Verify paperwork.",
+		Message:        "Caller also asked office staff to verify paperwork.",
+		Category:       work.TaskCategoryAppointments,
+		Urgency:        work.TaskUrgencyNormal,
 	})
-	taskReceipt := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/tasks", "abita-interaction-token", taskBody,
-	)
-	if taskReceipt.StatusCode != http.StatusCreated {
-		t.Fatalf("create unified history Task status = %d, body = %s",
-			taskReceipt.StatusCode, readBody(t, taskReceipt))
+	if err != nil {
+		t.Fatalf("create unified history Task fixture: %v", err)
 	}
-	_ = taskReceipt.Body.Close()
 
 	timeline := request(
 		t, server.Client(), http.MethodGet,
@@ -798,7 +820,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	sequenceStart := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", sequenceStartBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", sequenceStartBody,
 	)
 	if sequenceStart.StatusCode != http.StatusCreated {
 		t.Fatalf("sequence start status = %d, body = %s",
@@ -823,7 +845,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		})
 		response := request(
 			t, server.Client(), http.MethodPost,
-			server.URL+"/v1/ai/interactions", "abita-interaction-token", payload,
+			server.URL+"/v1/ai/interactions", "production-interaction-token", payload,
 		)
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("sequence checkpoint status = %d, body = %s",
@@ -902,7 +924,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	closeoutFirst := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", closeoutFirstBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", closeoutFirstBody,
 	)
 	if closeoutFirst.StatusCode != http.StatusCreated {
 		t.Fatalf("closeout-first AI Interaction status = %d, body = %s",
@@ -929,7 +951,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	lateSummary := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", lateSummaryBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", lateSummaryBody,
 	)
 	if lateSummary.StatusCode != http.StatusOK {
 		t.Fatalf("late summary AI Interaction status = %d, body = %s",
@@ -977,7 +999,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	firstSummary := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", firstSummaryBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", firstSummaryBody,
 	)
 	if firstSummary.StatusCode != http.StatusCreated {
 		t.Fatalf("first incomparable summary status = %d, body = %s",
@@ -999,7 +1021,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	secondSummary := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", secondSummaryBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", secondSummaryBody,
 	)
 	if secondSummary.StatusCode != http.StatusConflict {
 		t.Fatalf("incomparable summary status = %d, body = %s",
@@ -1037,7 +1059,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	})
 	recoverable := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "abita-interaction-token", recoverableBody,
+		server.URL+"/v1/ai/interactions", "production-interaction-token", recoverableBody,
 	)
 	if recoverable.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("recoverable projection failure status = %d, body = %s",

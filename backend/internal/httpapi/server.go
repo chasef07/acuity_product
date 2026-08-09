@@ -372,11 +372,8 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
 		return
 	}
-	var authorized bool
-	if service.Allows(access.ServiceCapabilityHumanHandoff) {
-		service, authorized = service.ForHandoffPractice(input.practiceID.String())
-	}
-	if !authorized {
+	if !service.Allows(access.ServiceCapabilityHumanHandoff) ||
+		service.PracticeID != input.practiceID.String() {
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 		return
 	}
