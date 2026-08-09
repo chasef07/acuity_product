@@ -430,7 +430,11 @@ export function TaskRail({
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Sign out"
-                onClick={() => void authClient.signOut().then(() => router.push("/sign-in"))}
+                onClick={() =>
+                  void authClient.signOut().then((result) => {
+                    if (!result.error) router.push("/sign-in")
+                  })
+                }
               >
                 <LogOutIcon />
                 <span className="truncate">{discovery.actor.email}</span>

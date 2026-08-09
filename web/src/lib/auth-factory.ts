@@ -4,6 +4,7 @@ import { Pool } from "pg"
 
 import { createUserEligibilityGate } from "@/lib/auth-eligibility"
 import { portalAuthenticationConfiguration } from "@/lib/auth-providers"
+import { authRateLimitOptions } from "@/lib/auth-rate-limit"
 import { positiveInteger, required } from "@/lib/server-env"
 
 export function createAuth() {
@@ -34,9 +35,9 @@ export function createAuth() {
         },
       },
     },
-    rateLimit: {
-      enabled: process.env.AUTH_ALLOW_TEST_SESSION !== "true",
-    },
+    rateLimit: authRateLimitOptions(
+      process.env.AUTH_ALLOW_TEST_SESSION === "true",
+    ),
     plugins: [
       oauthPopup(),
       bearer({ requireSignature: true }),
