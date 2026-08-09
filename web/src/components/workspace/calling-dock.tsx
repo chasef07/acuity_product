@@ -65,6 +65,7 @@ import {
   microphoneFailureMessage,
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
+import { LatestWrite } from "@/lib/calling/latest-write"
 import {
   dispositionWindowIsOpen,
   providerOutcomeLabel,
@@ -89,6 +90,7 @@ type CallingDockProps = {
 
 const sessionStorageKey = "acuity.callingSession"
 const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
+const readinessWriteTimeoutMilliseconds = 5_000
 
 type CallingNavigationContext = {
   activeCall: CallingCall | undefined
@@ -100,6 +102,16 @@ type CallingNavigationContext = {
   callingEnabled: boolean
   setAvailability: (available: boolean) => void
   startOutbound: (locationID: string, destination: string) => Promise<string | undefined>
+}
+
+type ReadinessUpdate = {
+  available: boolean
+  mediaState: MediaState
+}
+
+type ReadinessCommit = {
+  failure?: "authentication" | "request"
+  state?: SoftphoneState
 }
 
 const CallingNavigationContext = createContext<CallingNavigationContext | null>(
@@ -174,6 +186,12 @@ export function CallingDock({
   const [endingCallID, setEndingCallID] = useState("")
   const [availabilityPending, setAvailabilityPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [readinessWriter] = useState(
+    () =>
+      new LatestWrite<ReadinessUpdate, ReadinessCommit>(
+        readinessWriteTimeoutMilliseconds,
+      ),
+  )
   const adapterRef = useRef<CallingMediaAdapter | null>(null)
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
   const probeStreamRef = useRef<MediaStream | null>(null)
@@ -225,45 +243,64 @@ export function CallingDock({
 
   const updateReadiness = useCallback(
     async (nextAvailable: boolean, nextMediaState = mediaState) => {
-      const token = await getAccessToken()
-      if (!token) {
-        setAvailable(false)
-        availabilityRef.current = false
-        setAvailabilityPending(false)
-        setError("Your authentication needs to be refreshed.")
-        return undefined
-      }
-      const probeTrack = probeStreamRef.current?.getAudioTracks()[0]
-      const technicallyReady =
-        nextMediaState === "ready" && probeTrack?.readyState === "live"
-      const result = await setCallingReadiness({
-        client: portalClient(token),
-        body: {
-          sessionId: sessionID,
-          registered: technicallyReady,
-          microphoneReady: technicallyReady,
-          audioReady: technicallyReady,
-          sessionHealthy: technicallyReady,
-          available: nextAvailable,
+      const write = readinessWriter.write(
+        { available: nextAvailable, mediaState: nextMediaState },
+        async (update, signal) => {
+          const token = await getAccessToken()
+          if (!token) return { failure: "authentication" }
+          if (signal.aborted) return { failure: "request" }
+          const probeTrack = probeStreamRef.current?.getAudioTracks()[0]
+          const technicallyReady =
+            update.mediaState === "ready" && probeTrack?.readyState === "live"
+          const result = await setCallingReadiness({
+            client: portalClient(token),
+            signal,
+            body: {
+              sessionId: sessionID,
+              registered: technicallyReady,
+              microphoneReady: technicallyReady,
+              audioReady: technicallyReady,
+              sessionHealthy: technicallyReady,
+              available: update.available,
+            },
+          }).catch(() => undefined)
+          return result?.data
+            ? { state: result.data }
+            : { failure: "request" }
         },
-      }).catch(() => undefined)
-      if (result?.data) {
-        setLease(result.data)
-        setAvailable(result.data.available)
-        availabilityRef.current = result.data.available
-      } else {
-        setAvailable(false)
-        availabilityRef.current = false
+      )
+      const writeGeneration = readinessWriter.generation
+      const settled = await write.catch(() => undefined)
+      if (!settled) {
+        if (writeGeneration !== readinessWriter.generation) return undefined
         setError(
           nextAvailable
             ? "Availability could not be confirmed."
             : "Pausing calls could not be confirmed.",
         )
+        setAvailabilityPending(false)
+        return undefined
+      }
+      if (settled.generation !== readinessWriter.generation) {
+        return settled.output.state
+      }
+      if (settled.output.state) {
+        setLease(settled.output.state)
+        setAvailable(settled.output.state.available)
+        availabilityRef.current = settled.output.state.available
+      } else {
+        setError(
+          settled.output.failure === "authentication"
+            ? "Your authentication needs to be refreshed."
+            : settled.input.available
+              ? "Availability could not be confirmed."
+              : "Pausing calls could not be confirmed.",
+        )
       }
       setAvailabilityPending(false)
-      return result?.data
+      return settled.output.state
     },
-    [mediaState, sessionID],
+    [mediaState, readinessWriter, sessionID],
   )
 
   const rememberAvailabilityIntent = useCallback((nextAvailable: boolean) => {
@@ -530,8 +567,6 @@ export function CallingDock({
             const mayReceiveCalls =
               availabilityIntentRef.current &&
               expectedCallRef.current === ""
-            setAvailable(false)
-            availabilityRef.current = false
             void updateReadiness(mayReceiveCalls, state)
           } else if (state === "unavailable" || state === "reconnecting") {
             setAvailable(false)
@@ -588,6 +623,8 @@ export function CallingDock({
     }
     if (statePollRef.current) return statePollRef.current
     const poll = (async () => {
+      const availabilityGeneration = readinessWriter.generation
+      const availabilityWriteWasPending = readinessWriter.pending
       const token = await getAccessToken()
       if (!token) return
       const result = await getCallingState({
@@ -597,10 +634,18 @@ export function CallingDock({
           : undefined,
       }).catch(() => undefined)
       if (!result?.data) return
-      const etag = result.response?.headers.get("ETag")
-      if (etag) callingStateETagRef.current = etag
       setLease(result.data.softphone)
-      setAvailable(result.data.softphone.available)
+      const availabilitySnapshotIsCurrent =
+        readinessWriter.snapshotIsCurrent(
+          availabilityGeneration,
+          availabilityWriteWasPending,
+        )
+      if (availabilitySnapshotIsCurrent) {
+        const etag = result.response?.headers.get("ETag")
+        if (etag) callingStateETagRef.current = etag
+        setAvailable(result.data.softphone.available)
+        availabilityRef.current = result.data.softphone.available
+      }
       setRingingLegs(result.data.ringing)
       if (!result.data.disposition) {
         setPendingOutcome(undefined)
@@ -615,7 +660,7 @@ export function CallingDock({
     })
     statePollRef.current = poll
     return poll
-  }, [])
+  }, [readinessWriter])
 
   const refreshCall = useCallback(async () => {
     const callID = expectedCallRef.current
