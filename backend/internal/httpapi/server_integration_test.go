@@ -1019,13 +1019,15 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		t.Fatalf("load staff Task HTTP Practice: %v", err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"abita-token",
-		access.ServiceIdentity{
-			Subject:       "abita-synthetic",
-			PracticeID:    practiceID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapabilityCreateTask,
+		access.ServiceCredential{
+			Token: "abita-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "abita-synthetic",
+				PracticeID:    practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
+				},
 			},
 		},
 	)
@@ -1351,13 +1353,15 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"abita-token",
-		access.ServiceIdentity{
-			Subject:       "abita-synthetic",
-			PracticeID:    authorization.Practice.ID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapabilityHumanHandoff,
+		access.ServiceCredential{
+			Token: "abita-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "abita-synthetic",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+				},
 			},
 		},
 	)
@@ -1848,14 +1852,16 @@ func newPortalHandlerWithCalling(
 ) (http.Handler, error) {
 	t.Helper()
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"unused-service-token",
-		access.ServiceIdentity{
-			Subject:       "unused-service",
-			PracticeID:    "00000000-0000-0000-0000-000000000001",
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapabilityHumanHandoff,
-				access.ServiceCapabilityCreateTask,
+		access.ServiceCredential{
+			Token: "unused-service-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "unused-service",
+				PracticeID:    "00000000-0000-0000-0000-000000000001",
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+					access.ServiceCapabilityCreateTask,
+				},
 			},
 		},
 	)

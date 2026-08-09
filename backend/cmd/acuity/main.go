@@ -239,15 +239,28 @@ func runAuthorizedHTTP(
 			nil,
 		)
 		serviceAuth, err := access.NewServiceAuthenticator(
-			config.Service.Token,
-			access.ServiceIdentity{
-				Subject:       config.Service.Subject,
-				PracticeID:    config.Service.PracticeID,
-				LocationScope: access.LocationScopeAll,
-				Capabilities: []access.ServiceCapability{
-					access.ServiceCapabilityHumanHandoff,
-					access.ServiceCapabilityCreateTask,
-					access.ServiceCapabilityIngestAIInteraction,
+			access.ServiceCredential{
+				Token: config.Service.Demo.Token,
+				Identity: access.ServiceIdentity{
+					Subject:       config.Service.Demo.Subject,
+					PracticeID:    config.Service.Demo.PracticeID,
+					LocationScope: access.LocationScopeAll,
+					Capabilities: []access.ServiceCapability{
+						access.ServiceCapabilityCreateTask,
+						access.ServiceCapabilityIngestAIInteraction,
+					},
+				},
+			},
+			access.ServiceCredential{
+				Token: config.Service.Production.Token,
+				Identity: access.ServiceIdentity{
+					Subject:       config.Service.Production.Subject,
+					PracticeID:    config.Service.Production.PracticeID,
+					LocationScope: access.LocationScopeAll,
+					Capabilities: []access.ServiceCapability{
+						access.ServiceCapabilityHumanHandoff,
+						access.ServiceCapabilityIngestAIInteraction,
+					},
 				},
 			},
 		)

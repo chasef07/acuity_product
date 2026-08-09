@@ -86,12 +86,14 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t.Fatalf("provision Messaging HTTP sender: %v", err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"message-http-service-token",
-		access.ServiceIdentity{
-			Subject:       "message-http-service",
-			PracticeID:    authorization.Practice.ID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities:  []access.ServiceCapability{access.ServiceCapabilityHumanHandoff},
+		access.ServiceCredential{
+			Token: "message-http-service-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "message-http-service",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityHumanHandoff},
+			},
 		},
 	)
 	if err != nil {

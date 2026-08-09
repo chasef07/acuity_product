@@ -23,9 +23,12 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"HUMAN_CALLING_RING_WINDOW_SECONDS":     "20",
 		"HUMAN_CALLING_LEASE_SECONDS":           "30",
 		"HUMAN_CALLING_READINESS_GRACE_SECONDS": "15",
-		"HANDOFF_SERVICE_TOKEN":                 "synthetic-service-token",
-		"HANDOFF_SERVICE_SUBJECT":               "abita-synthetic",
-		"HANDOFF_SERVICE_PRACTICE_ID":           "00000000-0000-0000-0000-000000000001",
+		"ACUITY_DEMO_SERVICE_TOKEN":             "synthetic-demo-token",
+		"ACUITY_DEMO_SERVICE_SUBJECT":           "abita-demo",
+		"ACUITY_DEMO_SERVICE_PRACTICE_ID":       "00000000-0000-0000-0000-000000000001",
+		"ABITA_EYE_GROUP_SERVICE_TOKEN":         "synthetic-production-token",
+		"ABITA_EYE_GROUP_SERVICE_SUBJECT":       "abita-eye-group",
+		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID":   "00000000-0000-0000-0000-000000000002",
 		"TELNYX_API_KEY":                        "KEY_synthetic",
 		"TELNYX_CALL_CONTROL_ID":                "call-control-synthetic",
 		"TELNYX_CREDENTIAL_CONNECTION_ID":       "credential-connection-synthetic",
@@ -68,9 +71,12 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		config.HumanCalling.StaffSIPDomain != "sip.telnyx.com" {
 		t.Fatalf("calling SIP domains = %#v", config.HumanCalling)
 	}
-	if config.Service.Token != "synthetic-service-token" ||
-		config.Service.Subject != "abita-synthetic" ||
-		config.Service.PracticeID != "00000000-0000-0000-0000-000000000001" {
+	if config.Service.Demo.Token != "synthetic-demo-token" ||
+		config.Service.Demo.Subject != "abita-demo" ||
+		config.Service.Demo.PracticeID != "00000000-0000-0000-0000-000000000001" ||
+		config.Service.Production.Token != "synthetic-production-token" ||
+		config.Service.Production.Subject != "abita-eye-group" ||
+		config.Service.Production.PracticeID != "00000000-0000-0000-0000-000000000002" {
 		t.Fatalf("service config = %#v", config.Service)
 	}
 	for _, role := range []Role{
@@ -104,9 +110,12 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 			delete(values, "HUMAN_CALLING_PLAYBACK_SIGNING_KEY")
 		}
 		if role == RoleProviderIngress || role == RoleWorker || role == RoleRealtime || role == RoleMigrate {
-			delete(values, "HANDOFF_SERVICE_TOKEN")
-			delete(values, "HANDOFF_SERVICE_SUBJECT")
-			delete(values, "HANDOFF_SERVICE_PRACTICE_ID")
+			delete(values, "ACUITY_DEMO_SERVICE_TOKEN")
+			delete(values, "ACUITY_DEMO_SERVICE_SUBJECT")
+			delete(values, "ACUITY_DEMO_SERVICE_PRACTICE_ID")
+			delete(values, "ABITA_EYE_GROUP_SERVICE_TOKEN")
+			delete(values, "ABITA_EYE_GROUP_SERVICE_SUBJECT")
+			delete(values, "ABITA_EYE_GROUP_SERVICE_PRACTICE_ID")
 		}
 		if role != RoleProviderIngress {
 			delete(values, "TELNYX_WEBHOOK_PUBLIC_KEY")
@@ -141,26 +150,29 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 
 func TestLoadConfigRejectsMalformedHumanCallingKeys(t *testing.T) {
 	base := map[string]string{
-		"ACUITY_RUNTIME_ROLE":             "portal-api",
-		"DATABASE_URL":                    "postgres://database.example/acuity",
-		"DATABASE_POOL_MAX":               "4",
-		"DATABASE_ACQUIRE_TIMEOUT_MS":     "1500",
-		"HTTP_PORT":                       "8080",
-		"BROWSER_ORIGIN":                  "https://portal.example",
-		"BETTER_AUTH_JWKS_URL":            "https://portal.example/api/auth/jwks",
-		"BETTER_AUTH_ISSUER":              "https://portal.example",
-		"PORTAL_API_AUDIENCE":             "https://api.example",
-		"HUMAN_CALLING_SIP_DOMAIN":        "synthetic.sip.telnyx.com",
-		"HUMAN_CALLING_STAFF_SIP_DOMAIN":  "sip.telnyx.com",
-		"HUMAN_CALLING_HANDOFF_TOKEN_KEY": "too-short",
-		"HANDOFF_SERVICE_TOKEN":           "synthetic-service-token",
-		"HANDOFF_SERVICE_SUBJECT":         "abita-synthetic",
-		"HANDOFF_SERVICE_PRACTICE_ID":     "00000000-0000-0000-0000-000000000001",
-		"TELNYX_API_KEY":                  "KEY_synthetic",
-		"TELNYX_CALL_CONTROL_ID":          "call-control-synthetic",
-		"TELNYX_CREDENTIAL_CONNECTION_ID": "credential-connection-synthetic",
-		"TELNYX_FROM_NUMBER":              "+15555550100",
-		"TELNYX_RINGBACK_URL":             "https://assets.example/ringback.wav",
+		"ACUITY_RUNTIME_ROLE":                 "portal-api",
+		"DATABASE_URL":                        "postgres://database.example/acuity",
+		"DATABASE_POOL_MAX":                   "4",
+		"DATABASE_ACQUIRE_TIMEOUT_MS":         "1500",
+		"HTTP_PORT":                           "8080",
+		"BROWSER_ORIGIN":                      "https://portal.example",
+		"BETTER_AUTH_JWKS_URL":                "https://portal.example/api/auth/jwks",
+		"BETTER_AUTH_ISSUER":                  "https://portal.example",
+		"PORTAL_API_AUDIENCE":                 "https://api.example",
+		"HUMAN_CALLING_SIP_DOMAIN":            "synthetic.sip.telnyx.com",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN":      "sip.telnyx.com",
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":     "too-short",
+		"ACUITY_DEMO_SERVICE_TOKEN":           "synthetic-demo-token",
+		"ACUITY_DEMO_SERVICE_SUBJECT":         "abita-demo",
+		"ACUITY_DEMO_SERVICE_PRACTICE_ID":     "00000000-0000-0000-0000-000000000001",
+		"ABITA_EYE_GROUP_SERVICE_TOKEN":       "synthetic-production-token",
+		"ABITA_EYE_GROUP_SERVICE_SUBJECT":     "abita-eye-group",
+		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID": "00000000-0000-0000-0000-000000000002",
+		"TELNYX_API_KEY":                      "KEY_synthetic",
+		"TELNYX_CALL_CONTROL_ID":              "call-control-synthetic",
+		"TELNYX_CREDENTIAL_CONNECTION_ID":     "credential-connection-synthetic",
+		"TELNYX_FROM_NUMBER":                  "+15555550100",
+		"TELNYX_RINGBACK_URL":                 "https://assets.example/ringback.wav",
 	}
 	if _, err := LoadConfig(func(name string) string { return base[name] }); err == nil {
 		t.Fatal("expected malformed handoff token key to fail closed")
@@ -210,6 +222,32 @@ func TestLoadConfigRequiresCompleteMigrateVoiceProvision(t *testing.T) {
 	delete(base, "MIGRATE_VOICE_LOCATION_KEY")
 	if _, err := LoadConfig(func(name string) string { return base[name] }); err == nil {
 		t.Fatal("migrate accepted a partial Location voice provision")
+	}
+}
+
+func TestLoadServiceConfigRequiresDemoAndProductionTenantCredentials(t *testing.T) {
+	values := map[string]string{
+		"ACUITY_DEMO_SERVICE_TOKEN":           "demo-token",
+		"ACUITY_DEMO_SERVICE_SUBJECT":         "abita-demo",
+		"ACUITY_DEMO_SERVICE_PRACTICE_ID":     "00000000-0000-0000-0000-000000000001",
+		"ABITA_EYE_GROUP_SERVICE_TOKEN":       "production-token",
+		"ABITA_EYE_GROUP_SERVICE_SUBJECT":     "abita-eye-group",
+		"ABITA_EYE_GROUP_SERVICE_PRACTICE_ID": "00000000-0000-0000-0000-000000000002",
+	}
+	config, err := loadServiceConfig(func(name string) string { return values[name] })
+	if err != nil {
+		t.Fatalf("load service config: %v", err)
+	}
+	if config.Demo.Token != "demo-token" ||
+		config.Demo.PracticeID != "00000000-0000-0000-0000-000000000001" ||
+		config.Production.Token != "production-token" ||
+		config.Production.PracticeID != "00000000-0000-0000-0000-000000000002" {
+		t.Fatalf("service config = %#v", config)
+	}
+
+	delete(values, "ABITA_EYE_GROUP_SERVICE_TOKEN")
+	if _, err := loadServiceConfig(func(name string) string { return values[name] }); err == nil {
+		t.Fatal("expected an incomplete production credential to fail closed")
 	}
 }
 
