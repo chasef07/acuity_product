@@ -32,8 +32,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 27 {
-		t.Fatalf("migration count = %d, want 27", migrationCount)
+	if migrationCount != 28 {
+		t.Fatalf("migration count = %d, want 28", migrationCount)
 	}
 
 	for _, relation := range []string{
@@ -316,6 +316,90 @@ func TestGoogleOnlyAccessMigrationRemovesOperatorSpecificAccess(t *testing.T) {
 			grants,
 			operationalScopes,
 			callingScopes,
+		)
+	}
+}
+
+func TestHollywoodAccessExpansionUpdatesGrantsAndClaimedMemberships(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0027_google_only_access.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name, workspace_version)
+		VALUES ('abita-eye-group', 'Abita Eye Group', 7);
+
+		INSERT INTO access_locations (practice_id, provisioning_key, name)
+		SELECT id, location.key, location.name
+		FROM access_practices
+		CROSS JOIN (VALUES
+			('hollywood', 'Hollywood'),
+			('sweetwater', 'Sweetwater'),
+			('north-miami-beach-optical', 'North Miami Beach Optical')
+		) location(key, name)
+		WHERE provisioning_key = 'abita-eye-group';
+
+		INSERT INTO access_grants (
+			provisioning_key, practice_id, email, role, location_scope,
+			claimed_at, claimed_by_subject
+		)
+		SELECT
+			reviewed.key,
+			practice.id,
+			reviewed.email,
+			'STAFF',
+			'SELECTED',
+			CASE WHEN reviewed.key = 'abel-alvarez' THEN now() END,
+			CASE WHEN reviewed.key = 'abel-alvarez' THEN 'abel-subject' END
+		FROM access_practices practice
+		CROSS JOIN (VALUES
+			('abel-alvarez', 'abel@abitaeye.com'),
+			('ari-nussbaum', 'anussbaum@abitaeye.com'),
+			('denise-rivera', 'denise@abitaeye.com'),
+			('katie-einsohn', 'mobileoptical@abitaeye.com'),
+			('sasha-ojinaga', 'sashao@abitaeye.com')
+		) reviewed(key, email)
+		WHERE practice.provisioning_key = 'abita-eye-group';
+
+		INSERT INTO access_memberships (
+			user_subject, email, practice_id, role, location_scope, access_grant_id
+		)
+		SELECT
+			'abel-subject', access_grant.email, access_grant.practice_id,
+			access_grant.role, access_grant.location_scope, access_grant.id
+		FROM access_grants access_grant
+		WHERE access_grant.provisioning_key = 'abel-alvarez';
+	`); err != nil {
+		t.Fatalf("seed Hollywood Access expansion: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Hollywood Access expansion: %v", err)
+	}
+
+	var grantLocations, membershipLocations, auditEvents int
+	var workspaceVersion int64
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*)
+			 FROM access_grant_locations allowed
+			 JOIN access_locations location ON location.id = allowed.location_id
+			 WHERE location.provisioning_key = 'hollywood'),
+			(SELECT count(*)
+			 FROM access_membership_locations allowed
+			 JOIN access_locations location ON location.id = allowed.location_id
+			 WHERE location.provisioning_key = 'hollywood'),
+			(SELECT count(*)
+			 FROM access_audit_events
+			 WHERE action = 'access.grants_scope_expanded'),
+			(SELECT workspace_version
+			 FROM access_practices
+			 WHERE provisioning_key = 'abita-eye-group')
+	`).Scan(&grantLocations, &membershipLocations, &auditEvents, &workspaceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if grantLocations != 5 || membershipLocations != 1 || auditEvents != 1 || workspaceVersion != 8 {
+		t.Fatalf(
+			"Hollywood Access expansion = grants:%d memberships:%d audits:%d workspace:%d",
+			grantLocations, membershipLocations, auditEvents, workspaceVersion,
 		)
 	}
 }
