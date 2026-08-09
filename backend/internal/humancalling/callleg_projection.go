@@ -1245,13 +1245,15 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	if direction == string(CallOutbound) {
 		providerTermination = outboundTermination(fact.HangupCause)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_calls
-		SET provider_termination = COALESCE(NULLIF($2, ''), provider_termination),
-			updated_at = $3
-		WHERE id = $1
-	`, callID, providerTermination, m.now()); err != nil {
-		return fmt.Errorf("record provider Call termination: %w", err)
+	if direction != string(CallOutbound) || role == "DESTINATION" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET provider_termination = COALESCE(NULLIF($2, ''), provider_termination),
+				updated_at = $3
+			WHERE id = $1
+		`, callID, providerTermination, m.now()); err != nil {
+			return fmt.Errorf("record provider Call termination: %w", err)
+		}
 	}
 	if terminalOutcome != "" {
 		// Recovery/disposition already owns the terminal outcome.

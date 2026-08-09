@@ -111,7 +111,13 @@ func (m *Module) endRemainingCallLegs(
 	tx pgx.Tx,
 	callID string,
 ) error {
-	return m.endCallLegs(ctx, tx, callID, false)
+	var includeCaller bool
+	if err := tx.QueryRow(ctx, `
+		SELECT direction = 'OUTBOUND' FROM human_calling_calls WHERE id = $1
+	`, callID).Scan(&includeCaller); err != nil {
+		return fmt.Errorf("read Call direction for cleanup: %w", err)
+	}
+	return m.endCallLegs(ctx, tx, callID, includeCaller)
 }
 
 func (m *Module) endConnectedCallLegs(
