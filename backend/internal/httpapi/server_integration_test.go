@@ -1434,10 +1434,14 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	legacyBody, _ := json.Marshal(map[string]any{
 		"practiceId":     authorization.Practice.ID,
 		"locationId":     authorization.Locations[0].ID,
-		"sourceCallId":   "legacy-http-source-call",
-		"idempotencyKey": "legacy-http-idempotency",
+		"sourceCallId":   "http-source-call",
+		"idempotencyKey": "http-idempotency",
 		"contact": map[string]any{
-			"phone": "+15555550101",
+			"phone":          "+15555550100",
+			"displayName":    "HTTP Caller",
+			"nameSource":     "Abita",
+			"transferReason": "HTTP interface proof",
+			"reasonSource":   "Abita AI",
 		},
 	})
 	legacy := request(
@@ -1451,7 +1455,13 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	if legacy.StatusCode != http.StatusCreated {
 		t.Fatalf("legacy handoff status = %d, body = %s", legacy.StatusCode, readBody(t, legacy))
 	}
-	_ = legacy.Body.Close()
+	var legacyHandoff struct {
+		ID string `json:"id"`
+	}
+	decode(t, legacy, &legacyHandoff)
+	if legacyHandoff.ID != handoff.ID {
+		t.Fatalf("cross-format replay handoff = %q, want %q", legacyHandoff.ID, handoff.ID)
+	}
 	bothRoutesBody, _ := json.Marshal(map[string]any{
 		"practiceId":     authorization.Practice.ID,
 		"officeKey":      "calling-office",

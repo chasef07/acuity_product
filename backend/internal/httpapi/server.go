@@ -367,33 +367,31 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
+	input, valid := normalizeCreateHandoffRequest(body)
+	if !valid {
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
+	}
 	if !service.Allows(access.ServiceCapabilityHumanHandoff) ||
-		service.PracticeID != body.PracticeId.String() {
+		service.PracticeID != input.practiceID.String() {
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 		return
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	var officeKey, locationID string
-	if body.OfficeKey != nil {
-		officeKey = *body.OfficeKey
-	}
-	if body.LocationId != nil {
-		locationID = body.LocationId.String()
-	}
 	handoff, err := server.calling.CreateHandoff(ctx, humancalling.CreateHandoffCommand{
 		Service:        service,
-		OfficeKey:      officeKey,
-		LocationID:     locationID,
-		SourceCallID:   body.SourceCallId,
-		IdempotencyKey: body.IdempotencyKey,
+		OfficeKey:      input.officeKey,
+		LocationID:     input.locationID,
+		SourceCallID:   input.sourceCallID,
+		IdempotencyKey: input.idempotencyKey,
 		Contact: humancalling.ContactContext{
-			Phone:          body.Contact.Phone,
-			PhoneSource:    stringValue(body.Contact.PhoneSource),
-			DisplayName:    stringValue(body.Contact.DisplayName),
-			NameSource:     stringValue(body.Contact.NameSource),
-			TransferReason: stringValue(body.Contact.TransferReason),
-			ReasonSource:   stringValue(body.Contact.ReasonSource),
+			Phone:          input.contact.Phone,
+			PhoneSource:    stringValue(input.contact.PhoneSource),
+			DisplayName:    stringValue(input.contact.DisplayName),
+			NameSource:     stringValue(input.contact.NameSource),
+			TransferReason: stringValue(input.contact.TransferReason),
+			ReasonSource:   stringValue(input.contact.ReasonSource),
 		},
 	})
 	if err != nil {
@@ -410,6 +408,46 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		SipDestination: handoff.SIPDestination,
 		ExpiresAt:      handoff.ExpiresAt,
 	})
+}
+
+type createHandoffRequest struct {
+	contact        api.ContactContextInput
+	idempotencyKey string
+	locationID     string
+	officeKey      string
+	practiceID     openapi_types.UUID
+	sourceCallID   string
+}
+
+func normalizeCreateHandoffRequest(body api.CreateHandoffRequest) (createHandoffRequest, bool) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return createHandoffRequest{}, false
+	}
+	var input struct {
+		Contact        api.ContactContextInput `json:"contact"`
+		IdempotencyKey string                  `json:"idempotencyKey"`
+		LocationID     *openapi_types.UUID     `json:"locationId"`
+		OfficeKey      *string                 `json:"officeKey"`
+		PracticeID     openapi_types.UUID      `json:"practiceId"`
+		SourceCallID   string                  `json:"sourceCallId"`
+	}
+	if err := json.Unmarshal(encoded, &input); err != nil ||
+		(input.LocationID == nil) == (input.OfficeKey == nil) {
+		return createHandoffRequest{}, false
+	}
+	result := createHandoffRequest{
+		contact:        input.Contact,
+		idempotencyKey: input.IdempotencyKey,
+		practiceID:     input.PracticeID,
+		sourceCallID:   input.SourceCallID,
+	}
+	if input.OfficeKey != nil {
+		result.officeKey = *input.OfficeKey
+	} else {
+		result.locationID = input.LocationID.String()
+	}
+	return result, true
 }
 
 func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {

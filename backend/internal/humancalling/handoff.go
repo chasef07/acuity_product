@@ -237,14 +237,13 @@ func handoffFingerprint(command CreateHandoffCommand) ([32]byte, error) {
 	}
 	encoded, err := json.Marshal(struct {
 		Service        service
-		OfficeKey      string
 		LocationID     string
 		SourceCallID   string
 		IdempotencyKey string
 		Contact        ContactContext
 	}{
-		Service:   service{Subject: command.Service.Subject, PracticeID: command.Service.PracticeID},
-		OfficeKey: command.OfficeKey, LocationID: command.LocationID, SourceCallID: command.SourceCallID,
+		Service:    service{Subject: command.Service.Subject, PracticeID: command.Service.PracticeID},
+		LocationID: command.LocationID, SourceCallID: command.SourceCallID,
 		IdempotencyKey: command.IdempotencyKey, Contact: command.Contact,
 	})
 	if err != nil {
