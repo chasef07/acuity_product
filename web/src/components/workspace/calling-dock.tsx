@@ -60,6 +60,7 @@ import {
 } from "@/lib/calling/media-adapter"
 import {
   confirmOutboundMediaWithRetry,
+  currentCallingStateCallID,
   mediaAttachmentAfterState,
   microphoneFailureMessage,
   routeIncomingMedia,
@@ -598,8 +599,7 @@ export function CallingDock({
       setLease(result.data.softphone)
       setAvailable(result.data.softphone.available)
       setRingingLegs(result.data.ringing)
-      const currentCallID =
-        result.data.bridged?.callId ?? result.data.disposition?.callId
+      const currentCallID = currentCallingStateCallID(result.data)
       if (currentCallID && currentCallID !== expectedCallRef.current) {
         expectedCallRef.current = currentCallID
         setExpectedCallID(currentCallID)
@@ -1533,9 +1533,11 @@ function callTimerLabel(call: CallingCall, now: number) {
   if (
     call.state === "PREPARING" ||
     call.state === "RINGING" ||
-	call.state === "CONNECTING"
+    call.state === "CONNECTING" ||
+    call.state === "VOICEMAIL_GREETING" ||
+    call.state === "VOICEMAIL_RECORDING"
   ) {
-	return callStateLabel(call.state)
+    return callStateLabel(call.state)
   }
   return "Ended"
 }
@@ -1550,6 +1552,10 @@ function callStateLabel(state: CallingCall["state"]) {
       return "Connecting"
     case "CONNECTED":
       return "Connected"
+    case "VOICEMAIL_GREETING":
+      return "Voicemail greeting"
+    case "VOICEMAIL_RECORDING":
+      return "Recording voicemail"
     case "NEEDS_DISPOSITION":
       return "Call ended"
     case "UNANSWERED":

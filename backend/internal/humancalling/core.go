@@ -23,16 +23,18 @@ import (
 type CallState string
 
 const (
-	CallPreparing        CallState = "PREPARING"
-	CallRinging          CallState = "RINGING"
-	CallConnecting       CallState = "CONNECTING"
-	CallConnected        CallState = "CONNECTED"
-	CallUnanswered       CallState = "UNANSWERED"
-	CallVoicemail        CallState = "VOICEMAIL"
-	CallMissed           CallState = "MISSED"
-	CallNeedsDisposition CallState = "NEEDS_DISPOSITION"
-	CallResolved         CallState = "RESOLVED"
-	CallFollowUpRequired CallState = "FOLLOW_UP_REQUIRED"
+	CallPreparing          CallState = "PREPARING"
+	CallRinging            CallState = "RINGING"
+	CallConnecting         CallState = "CONNECTING"
+	CallConnected          CallState = "CONNECTED"
+	CallVoicemailGreeting  CallState = "VOICEMAIL_GREETING"
+	CallVoicemailRecording CallState = "VOICEMAIL_RECORDING"
+	CallUnanswered         CallState = "UNANSWERED"
+	CallVoicemail          CallState = "VOICEMAIL"
+	CallMissed             CallState = "MISSED"
+	CallNeedsDisposition   CallState = "NEEDS_DISPOSITION"
+	CallResolved           CallState = "RESOLVED"
+	CallFollowUpRequired   CallState = "FOLLOW_UP_REQUIRED"
 )
 
 type FactType string

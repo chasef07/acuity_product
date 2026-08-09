@@ -161,6 +161,100 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 }
 
+func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	locationID := authorization.Locations[0].ID
+	phone := "+15555550100"
+	firstCallID := insertCallAt(
+		t, pool, authorization, locationID, phone, "First caller", now,
+	)
+	secondCallID := insertCallAt(
+		t, pool, authorization, locationID, phone, "Second caller", now.Add(time.Minute),
+	)
+
+	ensureRecovery := func(callID string, occurredAt time.Time) work.Task {
+		t.Helper()
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin recovery Task transaction: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		task, err := module.EnsureRecoveryTask(
+			context.Background(),
+			tx,
+			work.EnsureRecoveryTaskCommand{
+				CallID: callID, PracticeID: authorization.Practice.ID,
+				LocationID: locationID, Phone: phone,
+				Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: occurredAt,
+			},
+		)
+		if err != nil {
+			t.Fatalf("ensure recovery Task: %v", err)
+		}
+		if err := tx.Commit(context.Background()); err != nil {
+			t.Fatalf("commit recovery Task: %v", err)
+		}
+		return task
+	}
+
+	first := ensureRecovery(firstCallID, now)
+	second := ensureRecovery(secondCallID, now.Add(time.Minute))
+	replayed := ensureRecovery(secondCallID, now.Add(time.Minute))
+	if second.ID != first.ID || replayed.ID != first.ID {
+		t.Fatalf("same-phone recovery Tasks = first:%q second:%q replay:%q",
+			first.ID, second.ID, replayed.ID)
+	}
+	task, err := module.ReadTask(context.Background(), identity, first.ID)
+	if err != nil {
+		t.Fatalf("read same-phone voicemail Task: %v", err)
+	}
+	if task.Version != 2 || task.RelatedInteractionCount != 2 ||
+		len(task.Interactions) != 2 ||
+		task.Interactions[0].CallID != firstCallID ||
+		task.Interactions[1].CallID != secondCallID {
+		t.Fatalf("same-phone voicemail Task = %#v", task)
+	}
+
+	rows, err := pool.Query(context.Background(), `
+		SELECT task_version, kind
+		FROM work_task_activities
+		WHERE task_id = $1
+		ORDER BY task_version
+	`, task.ID)
+	if err != nil {
+		t.Fatalf("read same-phone voicemail Activities: %v", err)
+	}
+	defer rows.Close()
+	type activity struct {
+		version int64
+		kind    string
+	}
+	activities := []activity{}
+	for rows.Next() {
+		var item activity
+		if err := rows.Scan(&item.version, &item.kind); err != nil {
+			t.Fatalf("scan same-phone voicemail Activity: %v", err)
+		}
+		activities = append(activities, item)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate same-phone voicemail Activities: %v", err)
+	}
+	want := []activity{{version: 1, kind: "TASK_CREATED"}, {version: 2, kind: "INTERACTION_ATTACHED"}}
+	if len(activities) != len(want) {
+		t.Fatalf("same-phone voicemail Activities = %#v, want %#v", activities, want)
+	}
+	for index := range want {
+		if activities[index] != want[index] {
+			t.Fatalf("same-phone voicemail Activities = %#v, want %#v", activities, want)
+		}
+	}
+}
+
 func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)

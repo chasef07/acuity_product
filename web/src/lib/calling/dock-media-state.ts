@@ -13,6 +13,25 @@ type ConfirmationAttempt<T> = {
   status?: number
 }
 
+type CurrentCallingState = {
+  bridged?: { callId: string; state?: string }
+  voicemail?: { callId: string; state?: string }
+  disposition?: { callId: string; state?: string }
+}
+
+export function currentCallingStateCallID(state: CurrentCallingState) {
+  const voicemailCallID =
+    state.voicemail?.state === "VOICEMAIL_GREETING" ||
+    state.voicemail?.state === "VOICEMAIL_RECORDING"
+      ? state.voicemail.callId
+      : undefined
+  return (
+    state.bridged?.callId ??
+    voicemailCallID ??
+    state.disposition?.callId
+  )
+}
+
 export async function confirmOutboundMediaWithRetry<T>(
   confirm: () => Promise<ConfirmationAttempt<T>>,
   wait: () => Promise<void> = () =>
