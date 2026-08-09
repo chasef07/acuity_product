@@ -62,9 +62,29 @@ linked Cloud Build. The web URL is
 The production front door reserves global IP `136.68.242.183` and routes to
 `acuity-web` through the `acuity-web-neg` serverless NEG. The HTTPS URL map
 serves `acuityhealth.io` and permanently redirects `www.acuityhealth.io` to the
-apex. The HTTP URL map redirects both hosts to HTTPS. The Google-managed
-certificate `acuity-web-managed-cert` covers both hosts and remains
-`PROVISIONING` until their public A records point only to the reserved IP.
+apex. The HTTP URL map redirects both hosts to HTTPS.
+
+Certificate Manager pre-provisions TLS without moving traffic:
+
+- DNS authorizations `acuityhealth-apex-dns-auth` and
+  `acuityhealth-www-dns-auth` use per-project CNAME records in Vercel DNS.
+- Google-managed certificate `acuity-web-dns-cert` covers the apex and `www`.
+- Certificate map `acuity-web-cert-map` has one active entry per hostname and
+  is attached to `acuity-web-https-proxy`.
+- The original Compute certificate `acuity-web-managed-cert` remains available,
+  but the target proxy uses the attached certificate map.
+
+The Certificate Manager certificate must be `ACTIVE` before cutover. Test the
+Google path without changing public DNS:
+
+```sh
+curl --noproxy '*' \
+  --resolve acuityhealth.io:443:136.68.242.183 \
+  https://acuityhealth.io/
+curl --noproxy '*' \
+  --resolve www.acuityhealth.io:443:136.68.242.183 \
+  --head https://www.acuityhealth.io/
+```
 
 Prepare without moving traffic:
 
@@ -75,14 +95,17 @@ Prepare without moving traffic:
 3. Add `https://acuityhealth.io` and
    `https://acuityhealth.io/api/auth/callback/google` to the Google OAuth web
    client without removing the existing origin and callback.
-4. Keep the Vercel DNS records unchanged until the explicit cutover window.
+4. Keep the Vercel apex and `www` traffic records unchanged until the explicit
+   cutover window. Preserve both Certificate Manager validation CNAMEs for
+   automatic certificate renewal.
 
-At cutover, point the apex and `www` A records to `136.68.242.183`, wait for
-both certificate domains to become `ACTIVE`, and only then make
-`https://acuityhealth.io` the Better Auth base URL, JWKS URL, and issuer. A
-failed certificate, sign-in, session, API, or realtime check returns the A
-records to their captured Vercel values; do not delete the Vercel deployment
-before acceptance.
+At cutover, confirm the certificate and both map entries are still `ACTIVE`,
+then point the apex and `www` traffic records to `136.68.242.183`. After the
+Google path is reachable through public DNS, make `https://acuityhealth.io` the
+Better Auth base URL, JWKS URL, and issuer while retaining the current
+`run.app` origin as a trusted rollback path. A failed sign-in, session, API, or
+realtime check returns the traffic records to their captured Vercel values; do
+not delete the Vercel deployment or the validation CNAMEs before acceptance.
 
 ## Owners and stop conditions
 
