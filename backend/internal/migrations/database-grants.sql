@@ -16,14 +16,14 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA auth FROM acuity_auth;
 -- portal-api: Access, HumanCalling command/read paths, and Work.
 GRANT SELECT ON TABLE
     public.access_abita_office_locations,
+    public.access_calling_scopes,
     public.access_grant_locations,
     public.access_grants,
     public.access_audit_events,
-    public.access_invitation_locations,
-    public.access_invitations,
     public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
+    public.access_operational_scopes,
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
@@ -126,7 +126,6 @@ TO acuity_portal;
 
 GRANT UPDATE ON TABLE
     public.access_grants,
-    public.access_invitations,
     public.access_locations,
     public.access_memberships,
     public.access_practices,
@@ -281,9 +280,11 @@ TO acuity_realtime;
 
 -- worker: durable receipt projection, command execution, and reconciliation.
 GRANT SELECT ON TABLE
+    public.access_calling_scopes,
     public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
+    public.access_operational_scopes,
     public.access_operational_users,
     public.access_practices,
 	public.ai_interactions,

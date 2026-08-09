@@ -96,20 +96,19 @@ func (m *Module) ReadCallingState(
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
-		JOIN access_memberships membership
-			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = leg.staff_subject
-			AND membership.revoked_at IS NULL
+		JOIN access_calling_scopes calling_scope
+			ON calling_scope.practice_id = call.practice_id
+			AND calling_scope.user_subject = leg.staff_subject
 		LEFT JOIN human_calling_handoffs handoff
 			ON handoff.id = call.source_handoff_id
 		WHERE leg.role = 'STAFF'
 			AND leg.staff_subject = $1
 			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING')
 			AND (
-				membership.location_scope = 'ALL'
+				calling_scope.location_scope = 'ALL'
 				OR EXISTS (
 					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = membership.id
+					WHERE allowed.membership_id = calling_scope.membership_id
 						AND allowed.location_id = call.location_id
 				)
 			)
@@ -181,16 +180,15 @@ func (m *Module) readStaffStateCall(
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
-		JOIN access_memberships membership
-			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = leg.staff_subject
-			AND membership.revoked_at IS NULL
+		JOIN access_calling_scopes calling_scope
+			ON calling_scope.practice_id = call.practice_id
+			AND calling_scope.user_subject = leg.staff_subject
 		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
 			AND (
-				membership.location_scope = 'ALL'
+				calling_scope.location_scope = 'ALL'
 				OR EXISTS (
 					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = membership.id
+					WHERE allowed.membership_id = calling_scope.membership_id
 						AND allowed.location_id = call.location_id
 				)
 			)
@@ -226,17 +224,16 @@ func (m *Module) readScopedVoicemailState(
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
-		JOIN access_memberships membership
-			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = $1
-			AND membership.revoked_at IS NULL
+		JOIN access_calling_scopes calling_scope
+			ON calling_scope.practice_id = call.practice_id
+			AND calling_scope.user_subject = $1
 		WHERE call.terminal_outcome = 'VOICEMAIL'
 			AND call.disposition_at IS NULL
 			AND (
-				membership.location_scope = 'ALL'
+				calling_scope.location_scope = 'ALL'
 				OR EXISTS (
 					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = membership.id
+					WHERE allowed.membership_id = calling_scope.membership_id
 						AND allowed.location_id = call.location_id
 				)
 			)

@@ -531,7 +531,7 @@ func (m *Module) QueryPhoneTimeline(
 			END,
 			call.location_id::text,
 			location.name,
-			COALESCE(membership.email, ''),
+			COALESCE(membership.email, platform_operator.email, ''),
 			COALESCE(handoff.transfer_reason, ''),
 			CASE
 				WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
@@ -562,6 +562,8 @@ func (m *Module) QueryPhoneTimeline(
 		LEFT JOIN access_memberships membership
 			ON membership.practice_id = call.practice_id
 			AND membership.user_subject = bridged_staff.staff_subject
+		LEFT JOIN access_platform_operators platform_operator
+			ON platform_operator.user_subject = bridged_staff.staff_subject
 		WHERE call.practice_id = $1
 			AND call.location_id::text = ANY($2::text[])
 			AND COALESCE(handoff.phone, call.destination_phone) = $3
@@ -2606,7 +2608,7 @@ func (m *Module) QueryTimeline(
 			END,
 			call.location_id::text,
 			location.name,
-			COALESCE(membership.email, ''),
+			COALESCE(membership.email, platform_operator.email, ''),
 			COALESCE(handoff.transfer_reason, ''),
 			CASE
 				WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
@@ -2637,6 +2639,8 @@ func (m *Module) QueryTimeline(
 		LEFT JOIN access_memberships membership
 			ON membership.practice_id = call.practice_id
 			AND membership.user_subject = bridged_staff.staff_subject
+		LEFT JOIN access_platform_operators platform_operator
+			ON platform_operator.user_subject = bridged_staff.staff_subject
 		WHERE call.practice_id = $1
 			AND call.location_id = $2
 			AND COALESCE(handoff.phone, call.destination_phone) = $3
@@ -3487,19 +3491,18 @@ func (m *Module) projectInboundReceipt(
 			)
 			SELECT
 				$1,
-				membership.user_subject,
+				operational_scope.user_subject,
 				$2,
 				$3
-			FROM access_memberships membership
-			WHERE membership.practice_id = $4
-				AND membership.revoked_at IS NULL
+			FROM access_operational_scopes operational_scope
+			WHERE operational_scope.practice_id = $4
 				AND (
-					membership.location_scope = 'ALL'
+					operational_scope.location_scope = 'ALL'
 					OR EXISTS (
 						SELECT 1
 						FROM access_membership_locations location_grant
-						WHERE location_grant.membership_id = membership.id
-							AND location_grant.practice_id = membership.practice_id
+						WHERE location_grant.membership_id = operational_scope.membership_id
+							AND location_grant.practice_id = operational_scope.practice_id
 							AND location_grant.location_id = $5
 					)
 				)

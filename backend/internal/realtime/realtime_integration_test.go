@@ -23,6 +23,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
@@ -38,7 +39,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		Email:         "founder@acuity.test",
 		EmailVerified: true,
 	}
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "slice-1-realtime-test",
 		PlatformOperators: []string{operator.Email},
@@ -46,12 +47,11 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 			Key:       "abita-eye-group",
 			Name:      "Abita Eye Group",
 			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "fixture-member",
 				Email:         "member@abita.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -69,14 +69,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		Email:         "member@abita.test",
 		EmailVerified: true,
 	}
-	memberAuthorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		member,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept realtime member invitation: %v", err)
-	}
+	memberAuthorization := testaccess.Activate(t, accessModule, member)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	streams, err := realtime.New(realtime.Config{
@@ -334,19 +327,18 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "realtime-burst-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "realtime-burst-practice",
 			Name:      "Realtime Burst Practice",
 			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "realtime-burst-member",
 				Email:         "member@realtime-burst.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -358,14 +350,7 @@ func TestRealtimeBurstPreservesNewestWorkspaceVersion(t *testing.T) {
 		Email:         "member@realtime-burst.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		member,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept realtime burst invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, member)
 
 	hubContext, stopHub := context.WithCancel(context.Background())
 	t.Cleanup(stopHub)
@@ -478,19 +463,18 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "realtime-listener-recovery-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "realtime-listener-recovery",
 			Name:      "Realtime Listener Recovery",
 			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "realtime-listener-member",
 				Email:         "member@realtime-listener.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -502,14 +486,7 @@ func TestRealtimeListenerDeathClosesStreamsAndRecoveryAcceptsFreshStreams(t *tes
 		Email:         "member@realtime-listener.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept realtime listener invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 
 	hubContext, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
@@ -688,19 +665,18 @@ func provisionRealtimeMember(
 	t.Helper()
 	accessModule := access.New(pool, func() time.Time { return now })
 	email := key + "@realtime.test"
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: key,
 		Practices: []access.PracticeProvision{{
 			Key:       key,
 			Name:      "Realtime Test Practice",
 			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           key + "-member",
 				Email:         email,
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -712,14 +688,7 @@ func provisionRealtimeMember(
 		Email:         email,
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept %s invitation: %v", key, err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	return accessModule, identity, authorization
 }
 

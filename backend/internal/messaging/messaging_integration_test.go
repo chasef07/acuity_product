@@ -20,6 +20,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
@@ -30,7 +31,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-5-send-test",
 		Practices: []access.PracticeProvision{{
@@ -44,18 +45,16 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 				Key:  "message-office-two",
 				Name: "Message Office Two",
 			}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "message-staff",
 				Email:         "staff@message.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}, {
 				Key:           "message-staff-two",
 				Email:         "staff-two@message.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -67,26 +66,13 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		Email:         "staff@message.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	secondIdentity := access.Identity{
 		Subject:       "message-staff-two-subject",
 		Email:         "staff-two@message.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(),
-		secondIdentity,
-		provisioned.Invitations[1].Token,
-	); err != nil {
-		t.Fatalf("accept second invitation: %v", err)
-	}
+	testaccess.Activate(t, accessModule, secondIdentity)
 	provider := &providerFixture{}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -1378,7 +1364,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 15, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-5-attachment-test",
 		Practices: []access.PracticeProvision{{
@@ -1388,12 +1374,11 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 				Key:  "attachment-office",
 				Name: "Attachment Office",
 			}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "attachment-user",
 				Email:         "attachment@message.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -1405,14 +1390,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		Email:         "attachment@message.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept attachment fixture invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	var mediaAvailable bool
 	pdf := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("safe-pdf"), 16)...)
 	mediaServer := httptest.NewTLSServer(http.HandlerFunc(func(

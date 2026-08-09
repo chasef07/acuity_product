@@ -12,7 +12,7 @@ remaining gates are recorded separately below.
   path passed.
 - The database contains the current schema plus one required Practice,
   Location, voice-number mapping, and Messaging-profile mapping. It contains no
-  migrated users, invitations, calls, messages, or patient history.
+  migrated user accounts, calls, messages, or patient history.
 - Telnyx Call Control and Messaging profile webhook URLs target the
   `us-east1` provider ingress. No live Call, SMS/MMS, retry, or signed burst was
   generated as part of the migration.
@@ -271,7 +271,7 @@ greeting and Telnyx Messaging profile. Hollywood and Sweetwater Optical have no
 voice or Messaging configuration yet; no number or sender is inferred by this
 topology change. The same file contains 31 Abita Access Grants: Jason is the
 sole Admin and the other 30 entries are Staff with reviewed Location Scopes.
-Access Grants emit no invitation credential or human password.
+Access Grants create no separate credential or human password.
 
 Migration `0023_split_abita_locations.sql` upgrades the already-provisioned
 four-Location production topology before account provisioning. It preserves the

@@ -77,7 +77,7 @@ export function SignInDialog({
           </CardContent>
           <Separator />
           <CardFooter className="relative justify-center py-3 text-[0.6875rem] text-muted-foreground">
-            Invite-only access
+            Secure Google sign-in
           </CardFooter>
         </Card>
       </DialogContent>

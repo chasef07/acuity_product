@@ -20,6 +20,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -29,19 +30,18 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 14, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-5-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "message-http-practice",
 			Name:      "Message HTTP Practice",
 			Locations: []access.LocationProvision{{Key: "message-http-office", Name: "Message HTTP Office"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "message-http-staff",
 				Email:         "staff@message-http.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -53,14 +53,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		Email:         "staff@message-http.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept Messaging HTTP invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("create Messaging HTTP webhook key: %v", err)

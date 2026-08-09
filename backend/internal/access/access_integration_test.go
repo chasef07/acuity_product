@@ -11,83 +11,6 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
 
-func TestInvitationAcceptanceCreatesAuthorizedMembershipWithoutCredentials(t *testing.T) {
-	pool := testdb.Open(t)
-	module := access.New(pool, func() time.Time {
-		return time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	})
-
-	provisioned, err := module.Provision(context.Background(), access.Provisioning{
-		Environment: "test",
-		RequestedBy: "slice-1-integration-test",
-		Practices: []access.PracticeProvision{{
-			Key:  "abita-eye-group",
-			Name: "Abita Eye Group",
-			Locations: []access.LocationProvision{{
-				Key:  "fixture-location-1",
-				Name: "Fixture Location 1",
-			}},
-			Invitations: []access.InvitationProvision{{
-				Key:           "first-admin",
-				Email:         "admin@abita.test",
-				Role:          access.RoleAdmin,
-				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC),
-			}},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("provision: %v", err)
-	}
-	if len(provisioned.Invitations) != 1 || provisioned.Invitations[0].Token == "" {
-		t.Fatalf("expected one new invitation credential, got %#v", provisioned.Invitations)
-	}
-
-	authorized, err := module.AcceptInvitation(
-		context.Background(),
-		access.Identity{
-			Subject:       "better-auth-user-1",
-			Email:         "ADMIN@ABITA.TEST",
-			EmailVerified: true,
-		},
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept invitation: %v", err)
-	}
-	if authorized.Actor.Subject != "better-auth-user-1" {
-		t.Fatalf("actor subject = %q", authorized.Actor.Subject)
-	}
-	if authorized.Practice.Name != "Abita Eye Group" {
-		t.Fatalf("practice = %q", authorized.Practice.Name)
-	}
-	if authorized.Membership.Role != access.RoleAdmin {
-		t.Fatalf("role = %q", authorized.Membership.Role)
-	}
-	if authorized.Membership.LocationScope != access.LocationScopeAll {
-		t.Fatalf("location scope = %q", authorized.Membership.LocationScope)
-	}
-	if len(authorized.Locations) != 1 || authorized.Locations[0].Name != "Fixture Location 1" {
-		t.Fatalf("locations = %#v", authorized.Locations)
-	}
-
-	replayed, err := module.AcceptInvitation(
-		context.Background(),
-		access.Identity{
-			Subject:       "better-auth-user-1",
-			Email:         "admin@abita.test",
-			EmailVerified: true,
-		},
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("replay invitation: %v", err)
-	}
-	if replayed.Membership.ID != authorized.Membership.ID {
-		t.Fatalf("replay created a different membership: %s != %s", replayed.Membership.ID, authorized.Membership.ID)
-	}
-}
-
 func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testing.T) {
 	pool := testdb.Open(t)
 	current := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
@@ -112,12 +35,9 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 			}},
 		}},
 	}
-	provisioned, err := module.Provision(context.Background(), provisioning)
+	_, err := module.Provision(context.Background(), provisioning)
 	if err != nil {
 		t.Fatalf("provision email access: %v", err)
-	}
-	if len(provisioned.Invitations) != 0 {
-		t.Fatalf("Access Grant emitted invitation credentials: %#v", provisioned.Invitations)
 	}
 	current = current.AddDate(10, 0, 0)
 
@@ -149,17 +69,16 @@ func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testi
 		t.Fatalf("locations = %#v", locations)
 	}
 	var claimedBy string
-	var invitationID *string
 	if err := pool.QueryRow(context.Background(), `
-		SELECT access_grant.claimed_by_subject, membership.invitation_id::text
+		SELECT access_grant.claimed_by_subject
 		FROM access_grants access_grant
 		JOIN access_memberships membership ON membership.access_grant_id = access_grant.id
 		WHERE access_grant.email = 'staff@abita.test'
-	`).Scan(&claimedBy, &invitationID); err != nil {
+	`).Scan(&claimedBy); err != nil {
 		t.Fatalf("read claimed Access Grant origin: %v", err)
 	}
-	if claimedBy != identity.Subject || invitationID != nil {
-		t.Fatalf("claimed Access Grant origin = subject:%q invitation:%v", claimedBy, invitationID)
+	if claimedBy != identity.Subject {
+		t.Fatalf("claimed Access Grant subject = %q", claimedBy)
 	}
 
 	replayed, err := module.DiscoverActor(context.Background(), identity)
@@ -242,35 +161,6 @@ func TestAccessGrantRevocationDeniesSignUpAndIsAudited(t *testing.T) {
 	}
 	if auditCount != 1 {
 		t.Fatalf("Access Grant revocation audit count = %d, want 1", auditCount)
-	}
-}
-
-func TestProvisionRejectsInvitationThatIsAlreadyExpired(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	module := access.New(pool, func() time.Time { return now })
-
-	_, err := module.Provision(context.Background(), access.Provisioning{
-		Environment: "test",
-		RequestedBy: "slice-1-integration-test",
-		Practices: []access.PracticeProvision{{
-			Key:  "abita-eye-group",
-			Name: "Abita Eye Group",
-			Locations: []access.LocationProvision{{
-				Key:  "fixture-location-1",
-				Name: "Fixture Location 1",
-			}},
-			Invitations: []access.InvitationProvision{{
-				Key:           "expired-admin",
-				Email:         "expired@abita.test",
-				Role:          access.RoleAdmin,
-				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(-time.Minute),
-			}},
-		}},
-	})
-	if !errors.Is(err, access.ErrInvalidInput) {
-		t.Fatalf("expired provisioning error = %v", err)
 	}
 }
 
@@ -484,7 +374,7 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	module := access.New(pool, func() time.Time { return now })
 
-	initial, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-1-integration-test",
 		Practices: []access.PracticeProvision{{
@@ -494,20 +384,18 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 				{Key: "fixture-location-1", Name: "Fixture Location 1"},
 				{Key: "fixture-location-2", Name: "Fixture Location 2"},
 			},
-			Invitations: []access.InvitationProvision{
+			AccessGrants: []access.AccessGrantProvision{
 				{
 					Key:           "admin",
 					Email:         "admin@abita.test",
 					Role:          access.RoleAdmin,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(24 * time.Hour),
 				},
 				{
 					Key:           "all-staff",
 					Email:         "all@abita.test",
 					Role:          access.RoleStaff,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(24 * time.Hour),
 				},
 				{
 					Key:                  "selected-staff",
@@ -515,7 +403,6 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 					Role:                 access.RoleStaff,
 					LocationScope:        access.LocationScopeSelected,
 					SelectedLocationKeys: []string{"fixture-location-1"},
-					ExpiresAt:            now.Add(24 * time.Hour),
 				},
 			},
 		}},
@@ -530,12 +417,12 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 		{Subject: "selected-subject", Email: "selected@abita.test", EmailVerified: true},
 	}
 	var practiceID string
-	for index, identity := range identities {
-		authorized, err := module.AcceptInvitation(context.Background(), identity, initial.Invitations[index].Token)
+	for _, identity := range identities {
+		discovery, err := module.DiscoverActor(context.Background(), identity)
 		if err != nil {
-			t.Fatalf("accept invitation %d: %v", index, err)
+			t.Fatalf("activate Google identity %q: %v", identity.Email, err)
 		}
-		practiceID = authorized.Practice.ID
+		practiceID = discovery.Practices[0].ID
 	}
 
 	_, err = module.Provision(context.Background(), access.Provisioning{
@@ -549,20 +436,18 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 				{Key: "fixture-location-2", Name: "Fixture Location 2"},
 				{Key: "fixture-location-7", Name: "Fixture Location 7"},
 			},
-			Invitations: []access.InvitationProvision{
+			AccessGrants: []access.AccessGrantProvision{
 				{
 					Key:           "admin",
 					Email:         "admin@abita.test",
 					Role:          access.RoleAdmin,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(24 * time.Hour),
 				},
 				{
 					Key:           "all-staff",
 					Email:         "all@abita.test",
 					Role:          access.RoleStaff,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(24 * time.Hour),
 				},
 				{
 					Key:                  "selected-staff",
@@ -570,7 +455,6 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 					Role:                 access.RoleStaff,
 					LocationScope:        access.LocationScopeSelected,
 					SelectedLocationKeys: []string{"fixture-location-1"},
-					ExpiresAt:            now.Add(24 * time.Hour),
 				},
 			},
 		}},
@@ -690,12 +574,12 @@ func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 	}
 }
 
-func TestInvitationEligibilityDiscoveryAndRequestedLocationStayInsideAccess(t *testing.T) {
+func TestAccessGrantDiscoveryAndRequestedLocationStayInsideAccess(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	module := access.New(pool, func() time.Time { return now })
 
-	provisioned, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "slice-1-integration-test",
 		PlatformOperators: []string{"founder@acuity.test"},
@@ -706,51 +590,17 @@ func TestInvitationEligibilityDiscoveryAndRequestedLocationStayInsideAccess(t *t
 				{Key: "fixture-location-1", Name: "Fixture Location 1"},
 				{Key: "fixture-location-2", Name: "Fixture Location 2"},
 			},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:                  "selected-staff",
 				Email:                "selected@abita.test",
 				Role:                 access.RoleStaff,
 				LocationScope:        access.LocationScopeSelected,
 				SelectedLocationKeys: []string{"fixture-location-1"},
-				ExpiresAt:            now.Add(24 * time.Hour),
 			}},
 		}},
 	})
 	if err != nil {
-		t.Fatalf("provision invitation discovery: %v", err)
-	}
-	if _, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
-		Email: "selected@abita.test",
-	}); !errors.Is(err, access.ErrDenied) {
-		t.Fatalf("legacy invitation was eligible without its token: %v", err)
-	}
-	_, err = module.DiscoverActor(context.Background(), access.Identity{
-		Subject:       "selected-subject",
-		Email:         "selected@abita.test",
-		EmailVerified: true,
-	})
-	if !errors.Is(err, access.ErrDenied) {
-		t.Fatalf("legacy invitation activated through Google discovery: %v", err)
-	}
-
-	preview, err := module.InspectInvitation(context.Background(), access.InvitationInspection{
-		Token: provisioned.Invitations[0].Token,
-		Email: "SELECTED@ABITA.TEST",
-	})
-	if err != nil {
-		t.Fatalf("inspect customer invitation: %v", err)
-	}
-	if preview.Kind != access.InvitationKindPractice ||
-		preview.PracticeName != "Abita Eye Group" ||
-		len(preview.Locations) != 1 {
-		t.Fatalf("invitation preview = %#v", preview)
-	}
-	_, err = module.InspectInvitation(context.Background(), access.InvitationInspection{
-		Token: provisioned.Invitations[0].Token,
-		Email: "somebody-else@abita.test",
-	})
-	if !errors.Is(err, access.ErrDenied) {
-		t.Fatalf("wrong-email invitation inspection error = %v", err)
+		t.Fatalf("provision Access Grant discovery: %v", err)
 	}
 
 	operatorEligibility, err := module.InspectSignUpEligibility(context.Background(), "FOUNDER@ACUITY.TEST")
@@ -766,19 +616,20 @@ func TestInvitationEligibilityDiscoveryAndRequestedLocationStayInsideAccess(t *t
 		Email:         "selected@abita.test",
 		EmailVerified: true,
 	}
-	accepted, err := module.AcceptInvitation(context.Background(), identity, provisioned.Invitations[0].Token)
-	if err != nil {
-		t.Fatalf("accept selected invitation: %v", err)
-	}
 	discovery, err := module.DiscoverActor(context.Background(), identity)
 	if err != nil {
 		t.Fatalf("discover member access: %v", err)
 	}
 	if discovery.PlatformOperator ||
 		len(discovery.Practices) != 1 ||
-		discovery.Practices[0].Membership == nil ||
-		discovery.Practices[0].Membership.ID != accepted.Membership.ID {
+		discovery.Practices[0].Membership == nil {
 		t.Fatalf("member discovery = %#v", discovery)
+	}
+	accepted, err := module.ResolveActor(
+		context.Background(), identity, discovery.Practices[0].ID, "",
+	)
+	if err != nil {
+		t.Fatalf("resolve selected Google user: %v", err)
 	}
 
 	_, err = module.ResolveActor(
@@ -853,7 +704,7 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 	}
 }
 
-func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *testing.T) {
+func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 	module := access.New(pool, func() time.Time { return now })
@@ -872,30 +723,18 @@ func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *test
 				Key:       "customer-practice",
 				Name:      "Customer Practice",
 				Locations: []access.LocationProvision{{Key: "customer", Name: "Customer"}},
-				AccessGrants: []access.AccessGrantProvision{{
-					Key:           "founder-customer-admin",
-					Email:         operator.Email,
-					Role:          access.RoleAdmin,
-					LocationScope: access.LocationScopeAll,
-				}},
 			},
 			{
 				Key:       "acuity-demo",
 				Name:      "Acuity Demo",
 				Locations: []access.LocationProvision{{Key: "demo", Name: "Demo"}},
-				AccessGrants: []access.AccessGrantProvision{{
-					Key:           "founder-demo-staff",
-					Email:         operator.Email,
-					Role:          access.RoleStaff,
-					LocationScope: access.LocationScopeAll,
-				}},
 			},
 		},
 	}); err != nil {
-		t.Fatalf("provision operator Staff access: %v", err)
+		t.Fatalf("provision operator access: %v", err)
 	}
 	eligibility, err := module.InspectSignUpEligibility(context.Background(), operator.Email)
-	if err != nil || eligibility.Kind != access.SignUpEligibilityAccessGrant {
+	if err != nil || eligibility.Kind != access.SignUpEligibilityPlatformOperator {
 		t.Fatalf("operator sign-up eligibility = %#v, err = %v", eligibility, err)
 	}
 
@@ -915,17 +754,11 @@ func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *test
 			customer = practice
 		}
 	}
-	if demo.Membership == nil || demo.Membership.Role != access.RoleStaff {
-		t.Fatalf("demo Membership = %#v", demo.Membership)
+	if demo.Membership != nil || customer.Membership != nil {
+		t.Fatalf("operator Memberships = demo:%#v customer:%#v", demo.Membership, customer.Membership)
 	}
-	if !demo.CallingEnabled {
-		t.Fatal("demo Staff Membership did not enable calling")
-	}
-	if customer.Membership == nil || customer.Membership.Role != access.RoleAdmin {
-		t.Fatalf("customer Membership = %#v, want Admin", customer.Membership)
-	}
-	if customer.CallingEnabled {
-		t.Fatal("customer Admin Membership enabled operator calling")
+	if !demo.CallingEnabled || !customer.CallingEnabled {
+		t.Fatalf("operator calling = demo:%t customer:%t", demo.CallingEnabled, customer.CallingEnabled)
 	}
 
 	tx, err := pool.Begin(context.Background())
@@ -937,8 +770,8 @@ func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *test
 	if err != nil {
 		t.Fatalf("lock dual-role operator: %v", err)
 	}
-	if len(practiceIDs) != 1 || practiceIDs[0] != demo.ID {
-		t.Fatalf("operational Practices = %#v, want only %s", practiceIDs, demo.ID)
+	if len(practiceIDs) != 2 {
+		t.Fatalf("operational Practices = %#v, want both Practices", practiceIDs)
 	}
 	if _, err := module.LockMembershipAuthorization(
 		context.Background(), tx, operator, demo.ID, demo.Locations[0].ID,
@@ -947,8 +780,8 @@ func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *test
 	}
 	if _, err := module.LockMembershipAuthorization(
 		context.Background(), tx, operator, customer.ID, customer.Locations[0].ID,
-	); !errors.Is(err, access.ErrDenied) {
-		t.Fatalf("customer Staff authorization error = %v, want denied", err)
+	); err != nil {
+		t.Fatalf("authorize customer operation: %v", err)
 	}
 
 	var operational bool
@@ -964,7 +797,31 @@ func TestPlatformOperatorUsesExplicitStaffMembershipForOperationalAccess(t *test
 	}
 }
 
-func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudited(t *testing.T) {
+func TestProvisioningRejectsOperatorSpecificAccessGrant(t *testing.T) {
+	pool := testdb.Open(t)
+	module := access.New(pool, nil)
+	_, err := module.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "operator-invariant-test",
+		PlatformOperators: []string{"operator@acuity.test"},
+		Practices: []access.PracticeProvision{{
+			Key:  "operator-practice",
+			Name: "Operator Practice",
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           "operator-staff",
+				Email:         "operator@acuity.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	})
+	if !errors.Is(err, access.ErrInvalidInput) ||
+		!strings.Contains(err.Error(), "Platform Operators do not use Access Grants") {
+		t.Fatalf("operator-specific Access Grant error = %v", err)
+	}
+}
+
+func TestMembershipRevocationTakesEffectOnNextResolutionAndIsAudited(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	module := access.New(pool, func() time.Time { return now })
@@ -975,7 +832,7 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 		EmailVerified: true,
 	}
 
-	provisioned, err := module.Provision(ctx, access.Provisioning{
+	_, err := module.Provision(ctx, access.Provisioning{
 		Environment:       "test",
 		RequestedBy:       "slice-1-revocation-test",
 		PlatformOperators: []string{operator.Email},
@@ -983,22 +840,12 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 			Key:       "abita-eye-group",
 			Name:      "Abita Eye Group",
 			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture Location 1"}},
-			Invitations: []access.InvitationProvision{
-				{
-					Key:           "pending-staff",
-					Email:         "pending@abita.test",
-					Role:          access.RoleStaff,
-					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(24 * time.Hour),
-				},
-				{
-					Key:           "active-staff",
-					Email:         "active@abita.test",
-					Role:          access.RoleStaff,
-					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(24 * time.Hour),
-				},
-			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           "active-staff",
+				Email:         "active@abita.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
 		}},
 	})
 	if err != nil {
@@ -1009,30 +856,18 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 		t.Fatalf("discover operator: %v", err)
 	}
 	practiceID := discovery.Practices[0].ID
-	if err := module.RevokeInvitation(ctx, access.RevokeInvitationCommand{
-		Identity:     operator,
-		PracticeID:   practiceID,
-		InvitationID: provisioned.Invitations[0].ID,
-	}); err != nil {
-		t.Fatalf("revoke invitation: %v", err)
-	}
-	_, err = module.AcceptInvitation(ctx, access.Identity{
-		Subject:       "pending-subject",
-		Email:         "pending@abita.test",
-		EmailVerified: true,
-	}, provisioned.Invitations[0].Token)
-	if !errors.Is(err, access.ErrInvitationRevoked) {
-		t.Fatalf("accept revoked invitation error = %v", err)
-	}
-
 	memberIdentity := access.Identity{
 		Subject:       "active-subject",
 		Email:         "active@abita.test",
 		EmailVerified: true,
 	}
-	authorization, err := module.AcceptInvitation(ctx, memberIdentity, provisioned.Invitations[1].Token)
+	memberDiscovery, err := module.DiscoverActor(ctx, memberIdentity)
 	if err != nil {
-		t.Fatalf("accept active invitation: %v", err)
+		t.Fatalf("activate active Membership: %v", err)
+	}
+	authorization, err := module.ResolveActor(ctx, memberIdentity, memberDiscovery.Practices[0].ID, "")
+	if err != nil {
+		t.Fatalf("resolve active Membership: %v", err)
 	}
 	if err := module.RevokeMembership(ctx, access.RevokeMembershipCommand{
 		Identity:     operator,
@@ -1052,13 +887,13 @@ func TestInvitationAndMembershipRevocationTakeEffectOnNextResolutionAndAreAudite
 	actions := map[string]bool{}
 	for _, event := range events {
 		actions[event.Action] = true
-		if event.Action == "invitation.revoked" || event.Action == "membership.revoked" {
+		if event.Action == "membership.revoked" {
 			if event.ActorSubject != operator.Subject {
 				t.Fatalf("revocation audit = %#v", event)
 			}
 		}
 	}
-	if !actions["invitation.revoked"] || !actions["membership.revoked"] {
+	if !actions["membership.revoked"] {
 		t.Fatalf("audit actions = %#v", actions)
 	}
 }

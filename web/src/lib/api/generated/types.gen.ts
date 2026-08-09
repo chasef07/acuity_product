@@ -27,21 +27,6 @@ export type SignUpEligibility = {
     email: string;
 };
 
-export type InvitationCredentialRequest = {
-    token: string;
-};
-
-export type InvitationPreview = {
-    kind: 'PRACTICE_INVITATION' | 'PLATFORM_OPERATOR';
-    email: string;
-    practiceId?: string;
-    practiceName?: string;
-    role?: 'ADMIN' | 'STAFF';
-    locationScope?: 'ALL' | 'SELECTED';
-    locations: Array<Location>;
-    expiresAt?: string;
-};
-
 export type Actor = {
     subject: string;
     email: string;
@@ -63,15 +48,6 @@ export type Membership = {
     id: string;
     role: 'ADMIN' | 'STAFF';
     locationScope: 'ALL' | 'SELECTED';
-};
-
-export type Authorization = {
-    actor: Actor;
-    practice: Practice;
-    membership?: Membership;
-    locations: Array<Location>;
-    activeLocation?: Location;
-    platformOperator: boolean;
 };
 
 export type PracticeAccess = Practice & {
@@ -846,72 +822,6 @@ export type DiscoverAccessResponses = {
 };
 
 export type DiscoverAccessResponse = DiscoverAccessResponses[keyof DiscoverAccessResponses];
-
-export type InspectInvitationData = {
-    body: InvitationCredentialRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/invitations/inspect';
-};
-
-export type InspectInvitationErrors = {
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type InspectInvitationError = InspectInvitationErrors[keyof InspectInvitationErrors];
-
-export type InspectInvitationResponses = {
-    /**
-     * Pending invitation.
-     */
-    200: InvitationPreview;
-};
-
-export type InspectInvitationResponse = InspectInvitationResponses[keyof InspectInvitationResponses];
-
-export type AcceptInvitationData = {
-    body: InvitationCredentialRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/invitations/accept';
-};
-
-export type AcceptInvitationErrors = {
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * The requested transition is no longer available.
-     */
-    409: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type AcceptInvitationError = AcceptInvitationErrors[keyof AcceptInvitationErrors];
-
-export type AcceptInvitationResponses = {
-    /**
-     * Membership and authorized scope.
-     */
-    200: Authorization;
-};
-
-export type AcceptInvitationResponse = AcceptInvitationResponses[keyof AcceptInvitationResponses];
 
 export type GetWorkspaceData = {
     body?: never;

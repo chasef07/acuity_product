@@ -19,6 +19,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 )
@@ -27,7 +28,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 9, 30, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "ai-interaction-http-test",
 		Practices: []access.PracticeProvision{{
@@ -41,13 +42,12 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 				},
 				{Key: "hidden-office", Name: "Hidden Office"},
 			},
-			Invitations: []access.InvitationProvision{
+			AccessGrants: []access.AccessGrantProvision{
 				{
 					Key:           "admin",
 					Email:         "admin@abita.test",
 					Role:          access.RoleAdmin,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
 				},
 				{
 					Key:                  "spring-hill-staff",
@@ -55,7 +55,6 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 					Role:                 access.RoleStaff,
 					LocationScope:        access.LocationScopeSelected,
 					SelectedLocationKeys: []string{"spring-hill"},
-					ExpiresAt:            now.Add(time.Hour),
 				},
 				{
 					Key:                  "hidden-staff",
@@ -63,7 +62,6 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 					Role:                 access.RoleStaff,
 					LocationScope:        access.LocationScopeSelected,
 					SelectedLocationKeys: []string{"hidden-office"},
-					ExpiresAt:            now.Add(time.Hour),
 				},
 			},
 		}},
@@ -76,31 +74,19 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		Email:         "admin@abita.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(), admin, provisioned.Invitations[0].Token,
-	); err != nil {
-		t.Fatalf("accept AI Interaction admin invitation: %v", err)
-	}
+	testaccess.Activate(t, accessModule, admin)
 	staff := access.Identity{
 		Subject:       "staff-subject",
 		Email:         "staff@abita.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(), staff, provisioned.Invitations[1].Token,
-	); err != nil {
-		t.Fatalf("accept AI Interaction staff invitation: %v", err)
-	}
+	testaccess.Activate(t, accessModule, staff)
 	hiddenStaff := access.Identity{
 		Subject:       "hidden-subject",
 		Email:         "hidden@abita.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(), hiddenStaff, provisioned.Invitations[2].Token,
-	); err != nil {
-		t.Fatalf("accept hidden AI Interaction invitation: %v", err)
-	}
+	testaccess.Activate(t, accessModule, hiddenStaff)
 	var practiceID string
 	if err := pool.QueryRow(context.Background(), `
 		SELECT id::text FROM access_practices WHERE provisioning_key = 'abita-eye-group'

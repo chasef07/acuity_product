@@ -283,20 +283,6 @@
           "MessagingSender": "+14843989071",
           "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
         }
-      ],
-      "AccessGrants": [
-        {
-          "Key": "chase-demo-staff",
-          "Email": "chase@acuityhealth.io",
-          "Role": "STAFF",
-          "LocationScope": "ALL"
-        },
-        {
-          "Key": "kyle-demo-staff",
-          "Email": "kyle@acuityhealth.io",
-          "Role": "STAFF",
-          "LocationScope": "ALL"
-        }
       ]
     }
   ]

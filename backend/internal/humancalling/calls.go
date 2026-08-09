@@ -207,7 +207,8 @@ func (m *Module) QueryCallHistory(
 			GREATEST(0, EXTRACT(EPOCH FROM (
 				COALESCE(call.ended_at, $6) - call.created_at
 			))::bigint), call.location_id::text, location.name,
-			COALESCE(staff_membership.email, ''), COALESCE(handoff.transfer_reason, ''),
+			COALESCE(staff_membership.email, staff_operator.email, ''),
+			COALESCE(handoff.transfer_reason, ''),
 			COALESCE(call.terminal_outcome, ''),
 			COALESCE(call.disposition_outcome, ''),
 			COALESCE((
@@ -228,11 +229,12 @@ func (m *Module) QueryCallHistory(
 		FROM human_calling_calls call
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id AND location.id = call.location_id
-		JOIN access_memberships membership
-			ON membership.practice_id = call.practice_id
-			AND membership.user_subject = $1 AND membership.revoked_at IS NULL
+		JOIN access_calling_scopes calling_scope
+			ON calling_scope.practice_id = call.practice_id
+			AND calling_scope.user_subject = $1
 		LEFT JOIN access_membership_locations allowed
-			ON allowed.membership_id = membership.id AND allowed.location_id = call.location_id
+			ON allowed.membership_id = calling_scope.membership_id
+			AND allowed.location_id = call.location_id
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		LEFT JOIN human_calling_call_legs bridged_staff
 			ON bridged_staff.call_id = call.id AND bridged_staff.role = 'STAFF'
@@ -240,9 +242,11 @@ func (m *Module) QueryCallHistory(
 		LEFT JOIN access_memberships staff_membership
 			ON staff_membership.practice_id = call.practice_id
 			AND staff_membership.user_subject = bridged_staff.staff_subject
+		LEFT JOIN access_platform_operators staff_operator
+			ON staff_operator.user_subject = bridged_staff.staff_subject
 		WHERE call.practice_id = $2
 			AND COALESCE(call.caller_phone, call.destination_phone) = $3
-			AND (membership.location_scope = 'ALL' OR allowed.location_id IS NOT NULL)
+			AND (calling_scope.location_scope = 'ALL' OR allowed.location_id IS NOT NULL)
 			AND ($4::timestamptz IS NULL OR (call.created_at, call.id) < ($4, $5::uuid))
 		ORDER BY call.created_at DESC, call.id DESC
 		LIMIT $7
@@ -517,7 +521,7 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT call.id::text, call.practice_id::text,
 			COALESCE(call.task_id::text, call.surfaced_task_id::text, ''),
-			winner.staff_subject, COALESCE(membership.email, '')
+			winner.staff_subject, COALESCE(membership.email, platform_operator.email, '')
 		FROM human_calling_calls call
 		JOIN LATERAL (
 			SELECT leg.staff_subject
@@ -530,6 +534,8 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 		LEFT JOIN access_memberships membership
 			ON membership.practice_id = call.practice_id
 			AND membership.user_subject = winner.staff_subject
+		LEFT JOIN access_platform_operators platform_operator
+			ON platform_operator.user_subject = winner.staff_subject
 		WHERE call.terminal_outcome = 'ENDED'
 			AND call.disposition_outcome IS NULL
 			AND call.disposition_deadline <= $1

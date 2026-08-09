@@ -25,7 +25,7 @@ export function AuthFrame({
           Acuity Health
         </Link>
         <div className="max-w-md">
-          <Badge variant="outline">Invite-only workspace</Badge>
+          <Badge variant="outline">Secure Google workspace</Badge>
           <h2 className="mt-4 text-3xl font-semibold tracking-tight">
             One clear operating surface for every authorized interaction.
           </h2>

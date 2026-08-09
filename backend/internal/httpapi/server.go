@@ -263,56 +263,6 @@ func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Re
 	})
 }
 
-func (server *Server) InspectInvitation(w http.ResponseWriter, r *http.Request) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	var body api.InvitationCredentialRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.databaseContext(r)
-	defer cancel()
-	preview, err := server.access.InspectInvitation(ctx, access.InvitationInspection{Token: body.Token})
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	response, err := invitationPreviewResponse(preview)
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
-	if !server.portalOnly(w, r) {
-		return
-	}
-	identity, ok := server.authenticate(w, r)
-	if !ok {
-		return
-	}
-	var body api.InvitationCredentialRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.databaseContext(r)
-	defer cancel()
-	authorization, err := server.access.AcceptInvitation(ctx, identity, body.Token)
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	response, err := authorizationResponse(authorization)
-	if err != nil {
-		server.writeAccessError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
 func (server *Server) GetWorkspace(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2152,12 +2102,7 @@ func (server *Server) writeAccessError(w http.ResponseWriter, r *http.Request, e
 	switch {
 	case errors.Is(err, access.ErrInvalidInput):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
-	case errors.Is(err, access.ErrInvitationUsed):
-		server.writeError(w, r, http.StatusConflict, "INVITATION_USED", "The invitation has already been accepted.", false)
-	case errors.Is(err, access.ErrDenied),
-		errors.Is(err, access.ErrEmailNotVerified),
-		errors.Is(err, access.ErrInvitationExpired),
-		errors.Is(err, access.ErrInvitationRevoked):
+	case errors.Is(err, access.ErrDenied):
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
@@ -2346,35 +2291,6 @@ func healthRole(role string) api.HealthRole {
 	}
 }
 
-func invitationPreviewResponse(preview access.InvitationPreview) (api.InvitationPreview, error) {
-	response := api.InvitationPreview{
-		Email:     apiEmail(preview.Email),
-		Kind:      api.InvitationPreviewKind(preview.Kind),
-		Locations: make([]api.Location, 0, len(preview.Locations)),
-	}
-	if preview.PracticeID != "" {
-		practiceID, err := uuid.Parse(preview.PracticeID)
-		if err != nil {
-			return api.InvitationPreview{}, err
-		}
-		response.PracticeId = &practiceID
-		response.PracticeName = &preview.PracticeName
-		role := api.InvitationPreviewRole(preview.Role)
-		scope := api.InvitationPreviewLocationScope(preview.LocationScope)
-		response.Role = &role
-		response.LocationScope = &scope
-		response.ExpiresAt = &preview.ExpiresAt
-	}
-	for _, location := range preview.Locations {
-		converted, err := locationResponse(location)
-		if err != nil {
-			return api.InvitationPreview{}, err
-		}
-		response.Locations = append(response.Locations, converted)
-	}
-	return response, nil
-}
-
 func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) {
 	response := api.AccessDiscovery{
 		Actor:            actorResponse(discovery.Actor),
@@ -2412,57 +2328,34 @@ func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) 
 	return response, nil
 }
 
-func authorizationResponse(authorization access.Authorization) (api.Authorization, error) {
-	practice, err := practiceResponse(authorization.Practice)
-	if err != nil {
-		return api.Authorization{}, err
-	}
-	response := api.Authorization{
-		Actor:            actorResponse(authorization.Actor),
-		Practice:         practice,
-		Locations:        []api.Location{},
-		PlatformOperator: authorization.PlatformOperator,
-	}
-	if authorization.Membership.ID != "" {
-		membership, err := membershipResponse(authorization.Membership)
-		if err != nil {
-			return api.Authorization{}, err
-		}
-		response.Membership = &membership
-	}
-	for _, location := range authorization.Locations {
-		converted, err := locationResponse(location)
-		if err != nil {
-			return api.Authorization{}, err
-		}
-		response.Locations = append(response.Locations, converted)
-	}
-	if authorization.ActiveLocation != nil {
-		location, err := locationResponse(*authorization.ActiveLocation)
-		if err != nil {
-			return api.Authorization{}, err
-		}
-		response.ActiveLocation = &location
-	}
-	return response, nil
-}
-
 func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapshot, error) {
 	if authorization.ActiveLocation == nil {
 		return api.WorkspaceSnapshot{}, access.ErrDenied
 	}
-	converted, err := authorizationResponse(authorization)
+	practice, err := practiceResponse(authorization.Practice)
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
+	}
+	location, err := locationResponse(*authorization.ActiveLocation)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
+	}
+	var membership *api.Membership
+	if authorization.Membership.ID != "" {
+		converted, err := membershipResponse(authorization.Membership)
+		if err != nil {
+			return api.WorkspaceSnapshot{}, err
+		}
+		membership = &converted
 	}
 	response := api.WorkspaceSnapshot{
 		SchemaVersion:    api.N20260724,
 		Version:          authorization.Practice.Version,
 		State:            api.EMPTY,
-		Actor:            converted.Actor,
-		Practice:         converted.Practice,
-		Location:         *converted.ActiveLocation,
-		Membership:       converted.Membership,
+		Actor:            actorResponse(authorization.Actor),
+		Practice:         practice,
+		Location:         location,
+		Membership:       membership,
 		PlatformOperator: authorization.PlatformOperator,
 		Navigation: []api.NavigationItem{
 			{Id: api.Tasks, Label: "Tasks", Enabled: true},

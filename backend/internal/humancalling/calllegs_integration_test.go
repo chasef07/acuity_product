@@ -14,6 +14,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -179,7 +180,7 @@ func TestInboundTransferRingsOnlyAvailableStaffForItsLocation(t *testing.T) {
 	}
 }
 
-func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) {
+func TestPlatformOperatorReceivesCallsWithoutPracticeMembership(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -192,10 +193,6 @@ func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) 
 		Practices: []access.PracticeProvision{{
 			Key: "acuity-demo", Name: "Acuity Demo",
 			Locations: []access.LocationProvision{{Key: "demo", Name: "Demo"}},
-			AccessGrants: []access.AccessGrantProvision{{
-				Key: "demo-operator-staff", Email: operator.Email,
-				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
-			}},
 		}},
 	}); err != nil {
 		t.Fatalf("provision demo operator: %v", err)
@@ -204,7 +201,8 @@ func TestPlatformOperatorWithDemoStaffMembershipReceivesDemoCalls(t *testing.T) 
 	if err != nil {
 		t.Fatalf("discover demo operator: %v", err)
 	}
-	if len(discovery.Practices) != 1 || discovery.Practices[0].Membership == nil {
+	if len(discovery.Practices) != 1 || discovery.Practices[0].Membership != nil ||
+		!discovery.Practices[0].CallingEnabled {
 		t.Fatalf("demo operator discovery = %#v", discovery)
 	}
 	demo := discovery.Practices[0]
@@ -2317,41 +2315,35 @@ func provisionConcurrentStaff(
 	count int,
 ) (access.Authorization, []access.Identity) {
 	t.Helper()
-	invitations := make([]access.InvitationProvision, count)
+	accessGrants := make([]access.AccessGrantProvision, count)
 	identities := make([]access.Identity, count)
 	for index := range count {
 		email := fmt.Sprintf("%s-staff-%d@synthetic.test", prefix, index+1)
-		invitations[index] = access.InvitationProvision{
+		accessGrants[index] = access.AccessGrantProvision{
 			Key: fmt.Sprintf("%s-staff-%d", prefix, index+1), Email: email,
 			Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
-			ExpiresAt: now.Add(time.Hour),
 		}
 		identities[index] = access.Identity{
 			Subject: fmt.Sprintf("%s-staff-%d", prefix, index+1),
 			Email:   email, EmailVerified: true,
 		}
 	}
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test", RequestedBy: prefix + "-test",
 		Practices: []access.PracticeProvision{{
 			Key: prefix + "-practice", Name: prefix + " practice",
 			Locations: []access.LocationProvision{{
 				Key: prefix + "-location", Name: prefix + " location",
 			}},
-			Invitations: invitations,
+			AccessGrants: accessGrants,
 		}},
 	})
 	if err != nil {
 		t.Fatalf("provision %s staff: %v", prefix, err)
 	}
 	var authorization access.Authorization
-	for index, identity := range identities {
-		authorization, err = accessModule.AcceptInvitation(
-			context.Background(), identity, provisioned.Invitations[index].Token,
-		)
-		if err != nil {
-			t.Fatalf("accept %s invitation %d: %v", prefix, index+1, err)
-		}
+	for _, identity := range identities {
+		authorization = testaccess.Activate(t, accessModule, identity)
 	}
 	return authorization, identities
 }
