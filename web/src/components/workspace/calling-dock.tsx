@@ -634,15 +634,15 @@ export function CallingDock({
           : undefined,
       }).catch(() => undefined)
       if (!result?.data) return
-      const etag = result.response?.headers.get("ETag")
-      if (etag) callingStateETagRef.current = etag
       setLease(result.data.softphone)
-      if (
+      const availabilitySnapshotIsCurrent =
         readinessWriter.snapshotIsCurrent(
           availabilityGeneration,
           availabilityWriteWasPending,
         )
-      ) {
+      if (availabilitySnapshotIsCurrent) {
+        const etag = result.response?.headers.get("ETag")
+        if (etag) callingStateETagRef.current = etag
         setAvailable(result.data.softphone.available)
         availabilityRef.current = result.data.softphone.available
       }
