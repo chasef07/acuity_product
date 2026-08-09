@@ -286,6 +286,7 @@ GRANT SELECT ON TABLE
     public.access_memberships,
     public.access_operational_scopes,
     public.access_operational_users,
+    public.access_platform_operators,
     public.access_practices,
 	public.ai_interactions,
 	public.human_calling_call_legs,
