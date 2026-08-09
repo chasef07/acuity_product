@@ -90,6 +90,7 @@ type CallingDockProps = {
 
 const sessionStorageKey = "acuity.callingSession"
 const availabilityIntentStorageKey = "acuity.callingAvailabilityIntent"
+const readinessWriteTimeoutMilliseconds = 5_000
 
 type CallingNavigationContext = {
   activeCall: CallingCall | undefined
@@ -186,7 +187,10 @@ export function CallingDock({
   const [availabilityPending, setAvailabilityPending] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [readinessWriter] = useState(
-    () => new LatestWrite<ReadinessUpdate, ReadinessCommit>(),
+    () =>
+      new LatestWrite<ReadinessUpdate, ReadinessCommit>(
+        readinessWriteTimeoutMilliseconds,
+      ),
   )
   const adapterRef = useRef<CallingMediaAdapter | null>(null)
   const mediaLegRef = useRef<IncomingMediaLeg | null>(null)
@@ -239,16 +243,18 @@ export function CallingDock({
 
   const updateReadiness = useCallback(
     async (nextAvailable: boolean, nextMediaState = mediaState) => {
-      const settled = await readinessWriter.write(
+      const write = readinessWriter.write(
         { available: nextAvailable, mediaState: nextMediaState },
-        async (update) => {
+        async (update, signal) => {
           const token = await getAccessToken()
           if (!token) return { failure: "authentication" }
+          if (signal.aborted) return { failure: "request" }
           const probeTrack = probeStreamRef.current?.getAudioTracks()[0]
           const technicallyReady =
             update.mediaState === "ready" && probeTrack?.readyState === "live"
           const result = await setCallingReadiness({
             client: portalClient(token),
+            signal,
             body: {
               sessionId: sessionID,
               registered: technicallyReady,
@@ -263,6 +269,18 @@ export function CallingDock({
             : { failure: "request" }
         },
       )
+      const writeGeneration = readinessWriter.generation
+      const settled = await write.catch(() => undefined)
+      if (!settled) {
+        if (writeGeneration !== readinessWriter.generation) return undefined
+        setError(
+          nextAvailable
+            ? "Availability could not be confirmed."
+            : "Pausing calls could not be confirmed.",
+        )
+        setAvailabilityPending(false)
+        return undefined
+      }
       if (settled.generation !== readinessWriter.generation) {
         return settled.output.state
       }
