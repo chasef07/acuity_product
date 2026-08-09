@@ -259,7 +259,7 @@ at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
 | --- | --- | --- | --- | --- |
 | Abita Eye Group | Spring Hill | `spring-hill` | `+17275919997` | `+17275919997` |
 | Abita Eye Group | Crystal River | `crystal-river` | `+13523202007` | Not activated |
-| Abita Eye Group | Hollywood | `hollywood` | Not activated | Not activated |
+| Abita Eye Group | Hollywood | `hollywood` | `+19542872010` | `+19542872010` |
 | Abita Eye Group | Sweetwater | `sweetwater` | `+17864654836` | `+17864654836` |
 | Abita Eye Group | Sweetwater Optical | `sweetwater-optical` | Not activated | Not activated |
 | Abita Eye Group | North Miami Beach Optical | `north-miami-beach-optical` | `+13055095333` | Not activated |
@@ -267,9 +267,9 @@ at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
 
 The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
 voicemail greeting. The Demo Practice is a separate tenant and uses its own
-greeting and Telnyx Messaging profile. Hollywood and Sweetwater Optical have no
-voice or Messaging configuration yet; no number or sender is inferred by this
-topology change. The same file contains 31 Abita Access Grants: Jason is the
+greeting and Telnyx Messaging profile. Sweetwater Optical has no voice or
+Messaging configuration yet; no number or sender is inferred by this topology
+change. The same file contains 31 Abita Access Grants: Jason is the
 sole Admin and the other 30 entries are Staff with reviewed Location Scopes.
 Access Grants create no separate credential or human password.
 

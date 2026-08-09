@@ -169,6 +169,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`)
 	wantVoiceNumbers := []number{
 		{Practice: "abita-eye-group", Location: "crystal-river", Phone: "+13523202007"},
+		{Practice: "abita-eye-group", Location: "hollywood", Phone: "+19542872010"},
 		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Phone: "+13055095333"},
 		{Practice: "abita-eye-group", Location: "spring-hill", Phone: "+17275919997"},
 		{Practice: "abita-eye-group", Location: "sweetwater", Phone: "+17864654836"},
