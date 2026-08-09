@@ -1958,7 +1958,7 @@ components:
     RingingCallLeg:
       type: object
       additionalProperties: false
-      required: [callId, callLegId, mediaToken, practiceId, locationId, locationName, displayName, transferReason, state, version, createdAt]
+      required: [callId, callLegId, mediaToken, practiceId, locationId, locationName, displayName, phone, transferReason, state, version, createdAt, deadline]
       properties:
         callId:
           type: string
@@ -1979,6 +1979,9 @@ components:
           type: string
         displayName:
           type: string
+        phone:
+          type: string
+          minLength: 1
         transferReason:
           type: string
         state:
@@ -1989,6 +1992,9 @@ components:
           format: int64
           minimum: 1
         createdAt:
+          type: string
+          format: date-time
+        deadline:
           type: string
           format: date-time
     CallingStateCall:

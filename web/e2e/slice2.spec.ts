@@ -179,18 +179,34 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       expect(callCenter(selectedPage)).toBeVisible(),
       expect(callCenter(secondaryPage)).toBeVisible(),
     ])
+    for (const page of [selectedPage, secondaryPage]) {
+      const offer = callCenter(page)
+      await expect(
+        offer.getByText("(555) 555-0100", { exact: false }),
+      ).toBeVisible()
+      await expect(offer.getByLabel("Incoming offer countdown")).toHaveText(
+        /^\d+s$/,
+      )
+    }
+    const deadlineResult = await database.query<{ deadline: Date }>(
+      `SELECT ring.sent_at + interval '20 seconds' AS deadline
+         FROM human_calling_provider_commands ring
+        WHERE ring.call_id = $1 AND ring.action = 'START_RING_WINDOW'
+          AND ring.sent_at IS NOT NULL`,
+      [callID],
+    )
+    expect(deadlineResult.rows[0]?.deadline).toBeTruthy()
+    const browserNow = await selectedPage.evaluate(() => Date.now())
+    await selectedPage.clock.setFixedTime(deadlineResult.rows[0].deadline)
+    await expect(callCenter(selectedPage)).toHaveCount(0)
+    await selectedPage.clock.setFixedTime(browserNow)
+    await expect(callCenter(selectedPage)).toBeVisible()
     const selectedLeg = staffLegs.find((leg) => leg.email === "selected@abita.test")!
     await sendIncomingLeg(
       selectedPage,
       selectedLeg.provider_leg_id,
       selectedLeg.media_token,
     )
-    await expect(
-      secondaryPage.getByRole("heading", {
-        name: "(555) 555-0100",
-        exact: true,
-      }),
-    ).toHaveCount(0)
     await selectedPage.getByRole("button", { name: "Take", exact: true }).click()
     await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
 

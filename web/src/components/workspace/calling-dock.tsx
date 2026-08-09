@@ -65,6 +65,10 @@ import {
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
 import { providerOutcomeLabel } from "@/lib/calling/outcomes"
+import {
+  activeRingingOffers,
+  offerSecondsRemaining,
+} from "@/lib/calling/offers"
 import { portalClient } from "@/lib/api/client"
 import { cn } from "@/lib/utils"
 
@@ -797,20 +801,21 @@ export function CallingDock({
   }, [callingEnabled, rememberAvailabilityIntent, updateReadiness])
 
   useEffect(() => {
-    const activeLegIDs = new Set(ringingLegs.map((leg) => leg.callLegId))
+    const activeOffers = activeRingingOffers(ringingLegs, now)
+    const activeLegIDs = new Set(activeOffers.map((leg) => leg.callLegId))
     for (const [legID, notification] of notificationsRef.current) {
       if (activeLegIDs.has(legID)) continue
       notification.close()
       notificationsRef.current.delete(legID)
       announcedRingingLegsRef.current.delete(legID)
     }
-    if (ringingLegs.length === 0) {
+    if (activeOffers.length === 0) {
       ringtoneRef.current?.()
       ringtoneRef.current = null
       return
     }
     if (!ringtoneRef.current) ringtoneRef.current = startRingtone()
-    for (const leg of ringingLegs) {
+    for (const leg of activeOffers) {
       if (announcedRingingLegsRef.current.has(leg.callLegId)) continue
       announcedRingingLegsRef.current.add(leg.callLegId)
       if (
@@ -825,7 +830,7 @@ export function CallingDock({
         notificationsRef.current.set(leg.callLegId, notification)
       }
     }
-  }, [ringingLegs])
+  }, [now, ringingLegs])
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 250)
@@ -1065,7 +1070,8 @@ export function CallingDock({
     }
   }
 
-  const earliest = ringingLegs[0]
+  const activeOffers = activeRingingOffers(ringingLegs, now)
+  const earliest = activeOffers[0]
   return (
     <CallingNavigationContext.Provider
       value={{
@@ -1086,7 +1092,8 @@ export function CallingDock({
       {(callingEnabled || lease?.owner) && earliest && !activeCall && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
-            ringingLegs={ringingLegs}
+            ringingLegs={activeOffers}
+            now={now}
             error={error}
             onTake={(leg) => void takeRingingLeg(leg)}
           />
@@ -1208,10 +1215,12 @@ export function CallingDock({
 
 function IncomingCallControls({
   ringingLegs,
+  now,
   error,
   onTake,
 }: {
   ringingLegs: RingingCallLeg[]
+  now: number
   error: string
   onTake: (leg: RingingCallLeg) => void
 }) {
@@ -1225,7 +1234,8 @@ function IncomingCallControls({
           Incoming call
         </CardTitle>
         <CardDescription>
-          {earliest.displayName || "Incoming caller"} · {earliest.locationName}
+          {earliest.displayName || "Incoming caller"} ·{" "}
+          {formatPhone(earliest.phone)} · {earliest.locationName}
         </CardDescription>
         <CardAction>
           <Badge
@@ -1255,13 +1265,20 @@ function IncomingCallControls({
               {leg.displayName || "Incoming caller"} · {leg.locationName}
             </span>
             <span className="text-warning">Ringing</span>
+            <span className="tabular-nums">
+              {offerSecondsRemaining(leg.deadline, now)}s
+            </span>
           </Button>
         ))}
         {error && <p className="text-destructive">{error}</p>}
       </CardContent>
       <CardFooter className="justify-between">
-        <Badge variant="outline" className="tabular-nums text-warning">
-          Ringing
+        <Badge
+          aria-label="Incoming offer countdown"
+          variant="outline"
+          className="tabular-nums text-warning"
+        >
+          {offerSecondsRemaining(earliest.deadline, now)}s
         </Badge>
         <Button size="sm" onClick={() => onTake(earliest)}>
           Take
@@ -1492,6 +1509,12 @@ function browserSessionID() {
 
 function secondsRemaining(deadline: string, now: number) {
   return Math.max(0, Math.ceil((new Date(deadline).getTime() - now) / 1000))
+}
+
+function formatPhone(phone: string) {
+  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
+  if (!match) return phone
+  return `(${match[1]}) ${match[2]}-${match[3]}`
 }
 
 function callTimerLabel(call: CallingCall, now: number) {

@@ -1496,6 +1496,15 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}); err != nil {
 		t.Fatalf("fan out HTTP caller: %v", err)
 	}
+	for {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil {
+			t.Fatalf("process HTTP ring-window command: %v", err)
+		}
+		if !processed {
+			break
+		}
+	}
 	stateResponse := request(
 		t,
 		server.Client(),
@@ -1509,14 +1518,18 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 	var state struct {
 		Ringing []struct {
-			CallID    string `json:"callId"`
-			CallLegID string `json:"callLegId"`
+			CallID    string    `json:"callId"`
+			CallLegID string    `json:"callLegId"`
+			Phone     string    `json:"phone"`
+			Deadline  time.Time `json:"deadline"`
 		} `json:"ringing"`
 	}
 	etag := stateResponse.Header.Get("ETag")
 	decode(t, stateResponse, &state)
 	if len(state.Ringing) != 1 || state.Ringing[0].CallID == "" ||
-		state.Ringing[0].CallLegID == "" || etag == "" {
+		state.Ringing[0].CallLegID == "" ||
+		state.Ringing[0].Phone != "+15555550100" ||
+		!state.Ringing[0].Deadline.Equal(now.Add(20*time.Second)) || etag == "" {
 		t.Fatalf("HTTP Calling state = %#v, ETag = %q", state, etag)
 	}
 }
