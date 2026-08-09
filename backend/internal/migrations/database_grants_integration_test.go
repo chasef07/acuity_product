@@ -256,6 +256,7 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		},
 		"acuity_worker": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
+			`SELECT email FROM access_platform_operators WHERE false`,
 			`SELECT EXISTS (
 				SELECT 1 FROM human_calling_timeline
 				WHERE call_id = gen_random_uuid()
@@ -520,6 +521,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_memberships",
 		"access_operational_scopes",
 		"access_operational_users",
+		"access_platform_operators",
 		"access_practices",
 		"ai_interactions",
 		"human_calling_call_legs",
