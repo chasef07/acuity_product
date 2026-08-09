@@ -46,11 +46,6 @@ type LocationVoiceProvisionConfig struct {
 }
 
 type ServiceConfig struct {
-	Demo       ServiceCredentialConfig
-	Production ServiceCredentialConfig
-}
-
-type ServiceCredentialConfig struct {
 	Token      string
 	Subject    string
 	PracticeID string
@@ -294,34 +289,22 @@ func loadHandoffConfig(getenv func(string) string) (HumanCallingConfig, error) {
 }
 
 func loadServiceConfig(getenv func(string) string) (ServiceConfig, error) {
-	demo, err := loadServiceCredential(getenv, "ACUITY_DEMO_SERVICE")
-	if err != nil {
-		return ServiceConfig{}, err
-	}
-	production, err := loadServiceCredential(getenv, "ABITA_EYE_GROUP_SERVICE")
-	if err != nil {
-		return ServiceConfig{}, err
-	}
-	return ServiceConfig{Demo: demo, Production: production}, nil
-}
-
-func loadServiceCredential(
-	getenv func(string) string,
-	prefix string,
-) (ServiceCredentialConfig, error) {
-	var result ServiceCredentialConfig
+	var result ServiceConfig
 	var err error
-	if result.Token, err = required(getenv, prefix+"_TOKEN"); err != nil {
-		return ServiceCredentialConfig{}, err
+	if result.Token, err = required(getenv, "HANDOFF_SERVICE_TOKEN"); err != nil {
+		return ServiceConfig{}, err
 	}
-	if result.Subject, err = required(getenv, prefix+"_SUBJECT"); err != nil {
-		return ServiceCredentialConfig{}, err
+	if result.Subject, err = required(getenv, "HANDOFF_SERVICE_SUBJECT"); err != nil {
+		return ServiceConfig{}, err
 	}
-	if result.PracticeID, err = required(getenv, prefix+"_PRACTICE_ID"); err != nil {
-		return ServiceCredentialConfig{}, err
+	if result.PracticeID, err = required(
+		getenv,
+		"HANDOFF_SERVICE_PRACTICE_ID",
+	); err != nil {
+		return ServiceConfig{}, err
 	}
 	if _, err := uuid.Parse(result.PracticeID); err != nil {
-		return ServiceCredentialConfig{}, fmt.Errorf("%s_PRACTICE_ID must be a UUID", prefix)
+		return ServiceConfig{}, fmt.Errorf("HANDOFF_SERVICE_PRACTICE_ID must be a UUID")
 	}
 	return result, nil
 }
