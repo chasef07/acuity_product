@@ -1019,13 +1019,28 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		t.Fatalf("load staff Task HTTP Practice: %v", err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"abita-token",
-		access.ServiceIdentity{
-			Subject:       "abita-synthetic",
-			PracticeID:    practiceID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapabilityCreateTask,
+		access.ServiceCredential{
+			Token: "demo-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "acuity-demo",
+				PracticeID:    practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
+					access.ServiceCapabilityHumanHandoff,
+				},
+			},
+		},
+		access.ServiceCredential{
+			Token: "production-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "abita-eye-group",
+				PracticeID:    practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+					access.ServiceCapabilityIngestAIInteraction,
+				},
 			},
 		},
 	)
@@ -1104,7 +1119,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"abita-token",
+		"demo-token",
 		invalidBody,
 	)
 	if invalid.StatusCode != http.StatusBadRequest {
@@ -1127,7 +1142,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"abita-token",
+		"demo-token",
 		protectedBody,
 	)
 	if protected.StatusCode != http.StatusBadRequest {
@@ -1139,38 +1154,29 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 	}
 	_ = protected.Body.Close()
 
-	handoffBody, _ := json.Marshal(map[string]any{
-		"practiceId":     practiceID,
-		"officeKey":      "spring-hill",
-		"sourceCallId":   "capability-check",
-		"idempotencyKey": "capability-check",
-		"contact": map[string]any{
-			"phone": "+17275551212",
-		},
-	})
-	handoff := request(
+	forbidden := request(
 		t,
 		server.Client(),
 		http.MethodPost,
-		server.URL+"/v1/handoffs",
-		"abita-token",
-		handoffBody,
+		server.URL+"/v1/tasks",
+		"production-token",
+		body,
 	)
-	if handoff.StatusCode != http.StatusForbidden {
+	if forbidden.StatusCode != http.StatusForbidden {
 		t.Fatalf(
-			"Task-only service handoff status = %d, body = %s",
-			handoff.StatusCode,
-			readBody(t, handoff),
+			"production service Task status = %d, body = %s",
+			forbidden.StatusCode,
+			readBody(t, forbidden),
 		)
 	}
-	_ = handoff.Body.Close()
+	_ = forbidden.Body.Close()
 
 	created := request(
 		t,
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"abita-token",
+		"demo-token",
 		body,
 	)
 	if created.StatusCode != http.StatusCreated {
@@ -1199,7 +1205,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"abita-token",
+		"demo-token",
 		body,
 	)
 	if duplicate.StatusCode != http.StatusOK {
@@ -1268,7 +1274,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"abita-token",
+		"demo-token",
 		changedBody,
 	)
 	if conflict.StatusCode != http.StatusConflict {
@@ -1351,13 +1357,28 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("create HTTP calling credential: processed=%t err=%v", processed, err)
 	}
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"abita-token",
-		access.ServiceIdentity{
-			Subject:       "abita-synthetic",
-			PracticeID:    authorization.Practice.ID,
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapabilityHumanHandoff,
+		access.ServiceCredential{
+			Token: "production-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "abita-eye-group",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+				},
+			},
+		},
+		access.ServiceCredential{
+			Token: "demo-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "acuity-demo",
+				PracticeID:    authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
+					access.ServiceCapabilityHumanHandoff,
+					access.ServiceCapabilityIngestAIInteraction,
+				},
 			},
 		},
 	)
@@ -1411,12 +1432,37 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		t.Fatalf("unauthenticated handoff status = %d", unauthenticated.StatusCode)
 	}
 	_ = unauthenticated.Body.Close()
+	demoHandoffBody, _ := json.Marshal(map[string]any{
+		"practiceId":     authorization.Practice.ID,
+		"officeKey":      "calling-office",
+		"sourceCallId":   "demo-http-source-call",
+		"idempotencyKey": "demo-http-idempotency",
+		"contact": map[string]any{
+			"phone": "+15555550101",
+		},
+	})
+	demoHandoff := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"demo-token",
+		demoHandoffBody,
+	)
+	if demoHandoff.StatusCode != http.StatusCreated {
+		t.Fatalf(
+			"demo service handoff status = %d, body = %s",
+			demoHandoff.StatusCode,
+			readBody(t, demoHandoff),
+		)
+	}
+	_ = demoHandoff.Body.Close()
 	created := request(
 		t,
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/handoffs",
-		"abita-token",
+		"production-token",
 		handoffBody,
 	)
 	if created.StatusCode != http.StatusCreated {
@@ -1449,7 +1495,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/handoffs",
-		"abita-token",
+		"production-token",
 		legacyBody,
 	)
 	if legacy.StatusCode != http.StatusCreated {
@@ -1477,7 +1523,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/handoffs",
-		"abita-token",
+		"production-token",
 		bothRoutesBody,
 	)
 	if bothRoutes.StatusCode != http.StatusBadRequest {
@@ -1848,14 +1894,25 @@ func newPortalHandlerWithCalling(
 ) (http.Handler, error) {
 	t.Helper()
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
-		"unused-service-token",
-		access.ServiceIdentity{
-			Subject:       "unused-service",
-			PracticeID:    "00000000-0000-0000-0000-000000000001",
-			LocationScope: access.LocationScopeAll,
-			Capabilities: []access.ServiceCapability{
-				access.ServiceCapabilityHumanHandoff,
-				access.ServiceCapabilityCreateTask,
+		access.ServiceCredential{
+			Token: "unused-service-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "unused-service",
+				PracticeID:    "00000000-0000-0000-0000-000000000001",
+				LocationScope: access.LocationScopeAll,
+				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityHumanHandoff,
+					access.ServiceCapabilityCreateTask,
+				},
+			},
+		},
+		access.ServiceCredential{
+			Token: "unused-secondary-service-token",
+			Identity: access.ServiceIdentity{
+				Subject:       "unused-secondary-service",
+				PracticeID:    "00000000-0000-0000-0000-000000000002",
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityIngestAIInteraction},
 			},
 		},
 	)
