@@ -1830,26 +1830,49 @@ components:
           type: string
           maxLength: 100
     CreateHandoffRequest:
-      type: object
-      additionalProperties: false
-      required: [practiceId, locationId, sourceCallId, idempotencyKey, contact]
-      properties:
-        practiceId:
-          type: string
-          format: uuid
-        locationId:
-          type: string
-          format: uuid
-        sourceCallId:
-          type: string
-          minLength: 1
-          maxLength: 200
-        idempotencyKey:
-          type: string
-          minLength: 1
-          maxLength: 200
-        contact:
-          $ref: "#/components/schemas/ContactContextInput"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [practiceId, officeKey, sourceCallId, idempotencyKey, contact]
+          properties:
+            practiceId:
+              type: string
+              format: uuid
+            officeKey:
+              type: string
+              pattern: "^[a-z0-9][a-z0-9-]{0,99}$"
+              description: Preferred Abita Office Route identity.
+            sourceCallId:
+              type: string
+              minLength: 1
+              maxLength: 200
+            idempotencyKey:
+              type: string
+              minLength: 1
+              maxLength: 200
+            contact:
+              $ref: "#/components/schemas/ContactContextInput"
+        - type: object
+          additionalProperties: false
+          required: [practiceId, locationId, sourceCallId, idempotencyKey, contact]
+          properties:
+            practiceId:
+              type: string
+              format: uuid
+            locationId:
+              type: string
+              format: uuid
+              description: Migration-only compatibility input.
+            sourceCallId:
+              type: string
+              minLength: 1
+              maxLength: 200
+            idempotencyKey:
+              type: string
+              minLength: 1
+              maxLength: 200
+            contact:
+              $ref: "#/components/schemas/ContactContextInput"
     Handoff:
       type: object
       additionalProperties: false

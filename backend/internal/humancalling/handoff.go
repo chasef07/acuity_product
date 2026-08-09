@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -21,6 +22,34 @@ func (m *Module) CreateHandoff(
 	if m.config.HandoffAdmissionClosed {
 		return Handoff{}, ErrHandoffAdmissionClosed
 	}
+	if (strings.TrimSpace(command.OfficeKey) == "") ==
+		(strings.TrimSpace(command.LocationID) == "") {
+		return Handoff{}, ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Handoff{}, fmt.Errorf("begin handoff: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if command.OfficeKey != "" {
+		if m.access == nil {
+			return Handoff{}, ErrDenied
+		}
+		authorization, err := m.access.LockServiceAuthorization(
+			ctx,
+			tx,
+			command.Service,
+			command.OfficeKey,
+			access.ServiceCapabilityHumanHandoff,
+		)
+		if err != nil {
+			if errors.Is(err, access.ErrDenied) {
+				return Handoff{}, ErrDenied
+			}
+			return Handoff{}, fmt.Errorf("resolve Abita Office Route: %w", err)
+		}
+		command.LocationID = authorization.LocationID
+	}
 	if err := validateHandoff(command, m.config.HandoffSIPDomain); err != nil {
 		return Handoff{}, err
 	}
@@ -28,11 +57,6 @@ func (m *Module) CreateHandoff(
 	if err != nil {
 		return Handoff{}, err
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Handoff{}, fmt.Errorf("begin handoff: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	var existing Handoff
 	var existingFingerprint []byte

@@ -218,15 +218,21 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	wantMessagingConfigurations := []messagingConfiguration{
 		{
 			Practice: "abita-eye-group",
+			Location: "hollywood",
+			Sender:   "+19542872010",
+			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
+		},
+		{
+			Practice: "abita-eye-group",
 			Location: "spring-hill",
 			Sender:   "+17275919997",
-			Profile:  "40019e5f-3772-4c25-a9df-b0990499d947",
+			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
 		},
 		{
 			Practice: "abita-eye-group",
 			Location: "sweetwater",
 			Sender:   "+17864654836",
-			Profile:  "40019e5f-3772-4c25-a9df-b0990499d947",
+			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
 		},
 		{
 			Practice: "acuity-demo",

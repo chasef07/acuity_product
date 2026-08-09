@@ -16,26 +16,33 @@ write access.
 
 The vertical path is:
 
-1. Abita creates a handoff with a required canonical E.164 phone and optional
-   transfer reason.
-2. Provider-confirmed termination moves the winning Call to Needs Disposition.
+1. Abita creates a handoff with an Abita office key, required canonical E.164
+   phone, and optional transfer reason. `Access` resolves the current Abita
+   Office Route and `HumanCalling` stores the resulting Location in the same
+   transaction before returning the generic SIP destination. The former direct
+   `locationId` input remains migration-only compatibility during the agent
+   cutover; callers must send exactly one route input.
+2. The provider ingress does not depend on custom SIP headers or URI markers.
+   It admits exactly one unconsumed, unexpired handoff reservation for the
+   transferred caller; ambiguous admissions fail closed.
+3. Provider-confirmed termination moves the winning Call to Needs Disposition.
    The disposition dock remains mounted until the winner chooses `Resolved` or
    `Create task`.
-3. `Resolved` closes the Call without creating work. `Create task` changes the
+4. `Resolved` closes the Call without creating work. `Create task` changes the
    Call outcome and calls `Work.EnsureCallFollowUp` in the same PostgreSQL
    transaction.
-4. `Work` creates exactly one open Task linked to that Call, snapshots the
+5. `Work` creates exactly one open Task linked to that Call, snapshots the
    creating actor, appends `TASK_CREATED`, and records the existing
    Practice-scoped workspace hint. A replay returns the same Task ID.
-5. The winning browser selects the returned Task. Other browsers treat the SSE
+6. The winning browser selects the returned Task. Other browsers treat the SSE
    message only as a hint, refetch the protected Task query, and preserve their
    current selection. If realtime remains unavailable past its grace period,
    the shell marks updates as delayed and uses bounded jittered authoritative
    polling until the stream recovers.
-6. Rename, complete, and reopen commands lock current Access and Task state in
+7. Rename, complete, and reopen commands lock current Access and Task state in
    one transaction, compare the expected Task version, append one Activity, and
    then publish a refetch hint.
-7. Task and active-Call views query Engagement History through a trusted
+8. Task and active-Call views query Engagement History through a trusted
    Task/Call lookup. `HumanCalling` returns only exact-phone Calls in currently
    authorized Locations, newest 20 per page but presented chronologically.
 
