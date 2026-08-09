@@ -21,7 +21,11 @@ The vertical path is:
    Office Route and `HumanCalling` stores the resulting Location in the same
    transaction before returning the generic SIP destination. The former direct
    `locationId` input remains migration-only compatibility during the agent
-   cutover; callers must send exactly one route input.
+   cutover; callers must send exactly one route input. The authenticated service
+   credential has one primary Practice and may name explicit additional
+   Practices for this handoff seam. Product scopes the service identity to the
+   requested allowlisted Practice before resolving its Office Route; an
+   unlisted Practice fails before any reservation is written.
 2. The provider ingress does not depend on custom SIP headers or URI markers.
    It admits exactly one unconsumed, unexpired handoff reservation for the
    transferred caller; ambiguous admissions fail closed.

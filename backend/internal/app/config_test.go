@@ -7,41 +7,42 @@ import (
 
 func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 	base := map[string]string{
-		"ACUITY_RUNTIME_ROLE":                   "portal-api",
-		"DATABASE_URL":                          "postgres://database.example/acuity",
-		"DATABASE_POOL_MAX":                     "4",
-		"DATABASE_ACQUIRE_TIMEOUT_MS":           "1500",
-		"HTTP_PORT":                             "8080",
-		"BROWSER_ORIGIN":                        "https://portal.example, https://legacy.example",
-		"BETTER_AUTH_JWKS_URL":                  "https://portal.example/api/auth/jwks",
-		"BETTER_AUTH_ISSUER":                    "https://portal.example",
-		"PORTAL_API_AUDIENCE":                   "https://api.example",
-		"HUMAN_CALLING_SIP_DOMAIN":              "synthetic.sip.telnyx.com",
-		"HUMAN_CALLING_STAFF_SIP_DOMAIN":        "sip.telnyx.com",
-		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":       "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY":    "YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=",
-		"HUMAN_CALLING_RING_WINDOW_SECONDS":     "20",
-		"HUMAN_CALLING_LEASE_SECONDS":           "30",
-		"HUMAN_CALLING_READINESS_GRACE_SECONDS": "15",
-		"HANDOFF_SERVICE_TOKEN":                 "synthetic-service-token",
-		"HANDOFF_SERVICE_SUBJECT":               "abita-synthetic",
-		"HANDOFF_SERVICE_PRACTICE_ID":           "00000000-0000-0000-0000-000000000001",
-		"TELNYX_API_KEY":                        "KEY_synthetic",
-		"TELNYX_CALL_CONTROL_ID":                "call-control-synthetic",
-		"TELNYX_CREDENTIAL_CONNECTION_ID":       "credential-connection-synthetic",
-		"TELNYX_FROM_NUMBER":                    "+15555550100",
-		"TELNYX_RINGBACK_URL":                   "https://assets.example/ringback.wav",
-		"TELNYX_WEBHOOK_PUBLIC_KEY":             "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-		"MESSAGING_WEBHOOK_BASE_URL":            "https://ingress.example/v1/provider/telnyx/messaging-webhooks",
-		"MESSAGING_ATTACHMENT_DIRECTORY":        "/tmp/acuity-message-attachments",
-		"MESSAGING_MEDIA_PUBLIC_BASE_URL":       "https://ingress.example/v1/provider/messaging-media",
-		"MESSAGING_MEDIA_SIGNING_KEY":           "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-		"REALTIME_HEARTBEAT_SECONDS":            "15",
-		"REALTIME_STREAM_SECONDS":               "270",
-		"REALTIME_STREAM_JITTER_SECONDS":        "30",
-		"REALTIME_REVALIDATE_SECONDS":           "30",
-		"REALTIME_RECONNECT_MIN_MS":             "250",
-		"REALTIME_RECONNECT_MAX_SECONDS":        "5",
+		"ACUITY_RUNTIME_ROLE":                     "portal-api",
+		"DATABASE_URL":                            "postgres://database.example/acuity",
+		"DATABASE_POOL_MAX":                       "4",
+		"DATABASE_ACQUIRE_TIMEOUT_MS":             "1500",
+		"HTTP_PORT":                               "8080",
+		"BROWSER_ORIGIN":                          "https://portal.example, https://legacy.example",
+		"BETTER_AUTH_JWKS_URL":                    "https://portal.example/api/auth/jwks",
+		"BETTER_AUTH_ISSUER":                      "https://portal.example",
+		"PORTAL_API_AUDIENCE":                     "https://api.example",
+		"HUMAN_CALLING_SIP_DOMAIN":                "synthetic.sip.telnyx.com",
+		"HUMAN_CALLING_STAFF_SIP_DOMAIN":          "sip.telnyx.com",
+		"HUMAN_CALLING_HANDOFF_TOKEN_KEY":         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY":      "YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=",
+		"HUMAN_CALLING_RING_WINDOW_SECONDS":       "20",
+		"HUMAN_CALLING_LEASE_SECONDS":             "30",
+		"HUMAN_CALLING_READINESS_GRACE_SECONDS":   "15",
+		"HANDOFF_SERVICE_TOKEN":                   "synthetic-service-token",
+		"HANDOFF_SERVICE_SUBJECT":                 "abita-synthetic",
+		"HANDOFF_SERVICE_PRACTICE_ID":             "00000000-0000-0000-0000-000000000001",
+		"HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS": "00000000-0000-0000-0000-000000000002",
+		"TELNYX_API_KEY":                          "KEY_synthetic",
+		"TELNYX_CALL_CONTROL_ID":                  "call-control-synthetic",
+		"TELNYX_CREDENTIAL_CONNECTION_ID":         "credential-connection-synthetic",
+		"TELNYX_FROM_NUMBER":                      "+15555550100",
+		"TELNYX_RINGBACK_URL":                     "https://assets.example/ringback.wav",
+		"TELNYX_WEBHOOK_PUBLIC_KEY":               "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"MESSAGING_WEBHOOK_BASE_URL":              "https://ingress.example/v1/provider/telnyx/messaging-webhooks",
+		"MESSAGING_ATTACHMENT_DIRECTORY":          "/tmp/acuity-message-attachments",
+		"MESSAGING_MEDIA_PUBLIC_BASE_URL":         "https://ingress.example/v1/provider/messaging-media",
+		"MESSAGING_MEDIA_SIGNING_KEY":             "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"REALTIME_HEARTBEAT_SECONDS":              "15",
+		"REALTIME_STREAM_SECONDS":                 "270",
+		"REALTIME_STREAM_JITTER_SECONDS":          "30",
+		"REALTIME_REVALIDATE_SECONDS":             "30",
+		"REALTIME_RECONNECT_MIN_MS":               "250",
+		"REALTIME_RECONNECT_MAX_SECONDS":          "5",
 	}
 
 	config, err := LoadConfig(func(name string) string { return base[name] })
@@ -70,7 +71,9 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 	}
 	if config.Service.Token != "synthetic-service-token" ||
 		config.Service.Subject != "abita-synthetic" ||
-		config.Service.PracticeID != "00000000-0000-0000-0000-000000000001" {
+		config.Service.PracticeID != "00000000-0000-0000-0000-000000000001" ||
+		len(config.Service.AdditionalHandoffPracticeIDs) != 1 ||
+		config.Service.AdditionalHandoffPracticeIDs[0] != "00000000-0000-0000-0000-000000000002" {
 		t.Fatalf("service config = %#v", config.Service)
 	}
 	for _, role := range []Role{
@@ -164,6 +167,26 @@ func TestLoadConfigRejectsMalformedHumanCallingKeys(t *testing.T) {
 	}
 	if _, err := LoadConfig(func(name string) string { return base[name] }); err == nil {
 		t.Fatal("expected malformed handoff token key to fail closed")
+	}
+}
+
+func TestLoadServiceConfigRejectsInvalidAdditionalPractices(t *testing.T) {
+	base := map[string]string{
+		"HANDOFF_SERVICE_TOKEN":       "synthetic-service-token",
+		"HANDOFF_SERVICE_SUBJECT":     "abita-synthetic",
+		"HANDOFF_SERVICE_PRACTICE_ID": "00000000-0000-0000-0000-000000000001",
+	}
+	for name, value := range map[string]string{
+		"malformed": "not-a-uuid",
+		"duplicate": base["HANDOFF_SERVICE_PRACTICE_ID"],
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := clone(base)
+			values["HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS"] = value
+			if _, err := loadServiceConfig(func(key string) string { return values[key] }); err == nil {
+				t.Fatal("expected additional service Practice validation to fail")
+			}
+		})
 	}
 }
 

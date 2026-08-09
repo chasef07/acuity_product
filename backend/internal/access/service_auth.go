@@ -25,6 +25,16 @@ func NewServiceAuthenticator(
 	if _, err := uuid.Parse(identity.PracticeID); err != nil {
 		return nil, fmt.Errorf("service Practice ID must be a UUID")
 	}
+	practiceIDs := map[string]struct{}{identity.PracticeID: {}}
+	for _, practiceID := range identity.AdditionalHandoffPracticeIDs {
+		if _, err := uuid.Parse(practiceID); err != nil {
+			return nil, fmt.Errorf("additional service Practice ID must be a UUID")
+		}
+		if _, duplicate := practiceIDs[practiceID]; duplicate {
+			return nil, fmt.Errorf("service Practice IDs must be unique")
+		}
+		practiceIDs[practiceID] = struct{}{}
+	}
 	if identity.LocationScope != LocationScopeAll ||
 		len(identity.Capabilities) == 0 {
 		return nil, fmt.Errorf("service scope and capabilities are required")

@@ -346,6 +346,15 @@ AI transfer to the external cell remains owned by `abita_agent` and needs a
 live transfer test. The Demo path still needs a signed-in portal-to-database-to-
 worker-to-provider/handset test. Activate one reviewed Staff Access Grant with
 Google and verify its exact Location scope before broad staff sign-in.
+
+When one Abita worker serves both the isolated Demo Practice and customer
+Practices, keep the Demo Practice as `HANDOFF_SERVICE_PRACTICE_ID` and set only
+the reviewed customer Practice UUIDs in
+`HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS`. This allowlist applies only when
+`POST /v1/handoffs` scopes the authenticated service to the request Practice;
+Staff Tasks and AI interactions continue using the primary Practice identity.
+Verify an allowlisted Office Route returns `201` and an unlisted Practice
+returns `403` before enabling live transfer traffic.
 The worker should discover the new operational User within 30 seconds and create
 one unique Telnyx on-demand telephony credential on the shared Product WebRTC
 Connection. Do not create a per-user Telnyx connection manually. Verify the

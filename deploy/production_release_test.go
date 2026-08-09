@@ -325,6 +325,35 @@ func TestProductionReleaseRejectsMissingPlaybackSigningKeyBeforeCloudMutation(t 
 	}
 }
 
+func TestProductionReleaseRejectsMissingAdditionalHandoffPracticesBeforeCloudMutation(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command(
+		"bash",
+		filepath.Join(directory, "deploy-production-release.sh"),
+	)
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+		"GCLOUD_MISSING_HANDOFF_PRACTICES=true",
+	}, releaseEnvironment()...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("release accepted a portal service without its additional handoff Practices")
+	}
+	if !strings.Contains(
+		string(output),
+		"acuity-portal-api must configure HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS",
+	) {
+		t.Fatalf("missing handoff Practices error = %q", output)
+	}
+	commands := capturedGcloudCommands(t, gcloudCapture)
+	if commandIndex(commands, "run\tjobs\tupdate\tacuity-migrate") >= 0 {
+		t.Fatal("missing handoff Practices reached migration")
+	}
+}
+
 func TestProductionReleaseRestoresStagedServiceTrafficWhenDeployFails(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
@@ -496,7 +525,11 @@ case "$*" in
     ;;
   "run services describe acuity-portal-api "*"spec.template.spec.containers[0].env[].name"*)
     if [ "${GCLOUD_MISSING_PLAYBACK_SIGNING_KEY:-}" != true ]; then
-      printf '%s\n' "DATABASE_URL;HUMAN_CALLING_PLAYBACK_SIGNING_KEY"
+      configured_names="DATABASE_URL;HUMAN_CALLING_PLAYBACK_SIGNING_KEY"
+      if [ "${GCLOUD_MISSING_HANDOFF_PRACTICES:-}" != true ]; then
+        configured_names="${configured_names};HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS"
+      fi
+      printf '%s\n' "$configured_names"
     fi
     ;;
   "run services describe acuity-web "*"spec.template.spec.containers[0].env[].name"*)

@@ -1307,21 +1307,32 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-2-http-test",
-		Practices: []access.PracticeProvision{{
-			Key:  "calling-practice",
-			Name: "Calling Practice",
-			Locations: []access.LocationProvision{{
-				Key:             "calling-location",
-				Name:            "Calling Location",
-				AbitaOfficeKeys: []string{"calling-office"},
-			}},
-			AccessGrants: []access.AccessGrantProvision{{
-				Key:           "calling-staff",
-				Email:         "staff@calling.test",
-				Role:          access.RoleStaff,
-				LocationScope: access.LocationScopeAll,
-			}},
-		}},
+		Practices: []access.PracticeProvision{
+			{
+				Key:  "calling-practice",
+				Name: "Calling Practice",
+				Locations: []access.LocationProvision{{
+					Key:             "calling-location",
+					Name:            "Calling Location",
+					AbitaOfficeKeys: []string{"calling-office"},
+				}},
+				AccessGrants: []access.AccessGrantProvision{{
+					Key:           "calling-staff",
+					Email:         "staff@calling.test",
+					Role:          access.RoleStaff,
+					LocationScope: access.LocationScopeAll,
+				}},
+			},
+			{
+				Key:  "secondary-calling-practice",
+				Name: "Secondary Calling Practice",
+				Locations: []access.LocationProvision{{
+					Key:             "secondary-calling-location",
+					Name:            "Secondary Calling Location",
+					AbitaOfficeKeys: []string{"secondary-calling-office"},
+				}},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("provision calling HTTP fixture: %v", err)
@@ -1332,6 +1343,14 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		EmailVerified: true,
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
+	var secondaryPracticeID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_practices
+		WHERE provisioning_key = 'secondary-calling-practice'
+	`).Scan(&secondaryPracticeID); err != nil {
+		t.Fatalf("read secondary calling Practice: %v", err)
+	}
 	calling := humancalling.New(
 		pool,
 		accessModule,
@@ -1353,9 +1372,10 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	serviceAuthenticator, err := access.NewServiceAuthenticator(
 		"abita-token",
 		access.ServiceIdentity{
-			Subject:       "abita-synthetic",
-			PracticeID:    authorization.Practice.ID,
-			LocationScope: access.LocationScopeAll,
+			Subject:                      "abita-synthetic",
+			PracticeID:                   authorization.Practice.ID,
+			AdditionalHandoffPracticeIDs: []string{secondaryPracticeID},
+			LocationScope:                access.LocationScopeAll,
 			Capabilities: []access.ServiceCapability{
 				access.ServiceCapabilityHumanHandoff,
 			},
@@ -1431,6 +1451,56 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	if handoff.SIPDestination != "sip:acuity-handoff@synthetic.sip.telnyx.com" {
 		t.Fatalf("handoff response = %#v", handoff)
 	}
+	secondaryBody, _ := json.Marshal(map[string]any{
+		"practiceId":     secondaryPracticeID,
+		"officeKey":      "secondary-calling-office",
+		"sourceCallId":   "secondary-http-source-call",
+		"idempotencyKey": "secondary-http-idempotency",
+		"contact": map[string]any{
+			"phone": "+15555550101",
+		},
+	})
+	secondary := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"abita-token",
+		secondaryBody,
+	)
+	if secondary.StatusCode != http.StatusCreated {
+		t.Fatalf(
+			"secondary Practice handoff status = %d, body = %s",
+			secondary.StatusCode,
+			readBody(t, secondary),
+		)
+	}
+	_ = secondary.Body.Close()
+	unlistedBody, _ := json.Marshal(map[string]any{
+		"practiceId":     "00000000-0000-0000-0000-000000000099",
+		"officeKey":      "secondary-calling-office",
+		"sourceCallId":   "unlisted-http-source-call",
+		"idempotencyKey": "unlisted-http-idempotency",
+		"contact": map[string]any{
+			"phone": "+15555550102",
+		},
+	})
+	unlisted := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/handoffs",
+		"abita-token",
+		unlistedBody,
+	)
+	if unlisted.StatusCode != http.StatusForbidden {
+		t.Fatalf(
+			"unlisted Practice handoff status = %d, want %d",
+			unlisted.StatusCode,
+			http.StatusForbidden,
+		)
+	}
+	_ = unlisted.Body.Close()
 	legacyBody, _ := json.Marshal(map[string]any{
 		"practiceId":     authorization.Practice.ID,
 		"locationId":     authorization.Locations[0].ID,

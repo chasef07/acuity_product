@@ -46,9 +46,10 @@ type LocationVoiceProvisionConfig struct {
 }
 
 type ServiceConfig struct {
-	Token      string
-	Subject    string
-	PracticeID string
+	Token                        string
+	Subject                      string
+	PracticeID                   string
+	AdditionalHandoffPracticeIDs []string
 }
 
 type HumanCallingConfig struct {
@@ -305,6 +306,31 @@ func loadServiceConfig(getenv func(string) string) (ServiceConfig, error) {
 	}
 	if _, err := uuid.Parse(result.PracticeID); err != nil {
 		return ServiceConfig{}, fmt.Errorf("HANDOFF_SERVICE_PRACTICE_ID must be a UUID")
+	}
+	practiceIDs := map[string]struct{}{result.PracticeID: {}}
+	for _, value := range strings.Split(
+		strings.TrimSpace(getenv("HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS")),
+		",",
+	) {
+		practiceID := strings.TrimSpace(value)
+		if practiceID == "" {
+			continue
+		}
+		if _, err := uuid.Parse(practiceID); err != nil {
+			return ServiceConfig{}, fmt.Errorf(
+				"HANDOFF_SERVICE_ADDITIONAL_PRACTICE_IDS must contain UUIDs",
+			)
+		}
+		if _, duplicate := practiceIDs[practiceID]; duplicate {
+			return ServiceConfig{}, fmt.Errorf(
+				"HANDOFF_SERVICE_PRACTICE_ID values must be unique",
+			)
+		}
+		practiceIDs[practiceID] = struct{}{}
+		result.AdditionalHandoffPracticeIDs = append(
+			result.AdditionalHandoffPracticeIDs,
+			practiceID,
+		)
 	}
 	return result, nil
 }

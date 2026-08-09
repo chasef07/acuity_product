@@ -241,9 +241,10 @@ func runAuthorizedHTTP(
 		serviceAuth, err := access.NewServiceAuthenticator(
 			config.Service.Token,
 			access.ServiceIdentity{
-				Subject:       config.Service.Subject,
-				PracticeID:    config.Service.PracticeID,
-				LocationScope: access.LocationScopeAll,
+				Subject:                      config.Service.Subject,
+				PracticeID:                   config.Service.PracticeID,
+				AdditionalHandoffPracticeIDs: config.Service.AdditionalHandoffPracticeIDs,
+				LocationScope:                access.LocationScopeAll,
 				Capabilities: []access.ServiceCapability{
 					access.ServiceCapabilityHumanHandoff,
 					access.ServiceCapabilityCreateTask,
