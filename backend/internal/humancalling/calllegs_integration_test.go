@@ -848,19 +848,77 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	}
 	processAllCommands(t, calling)
 	var terminal string
-	var staffLegs int
+	var staffLegs, recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT terminal_outcome,
-			(SELECT count(*) FROM human_calling_call_legs WHERE role = 'STAFF')
+			(SELECT count(*) FROM human_calling_call_legs WHERE role = 'STAFF'),
+			(SELECT count(*) FROM work_tasks)
 		FROM human_calling_calls
-	`).Scan(&terminal, &staffLegs); err != nil {
+	`).Scan(&terminal, &staffLegs, &recoveryTasks); err != nil {
 		t.Fatal(err)
 	}
-	if terminal != "ABANDONED" || staffLegs != 0 ||
+	if terminal != "ABANDONED" || staffLegs != 0 || recoveryTasks != 0 ||
 		provider.count(humancalling.CommandStartRingWindow) != 0 ||
 		provider.count(humancalling.CommandDialStaff) != 0 {
-		t.Fatalf("late caller answer revived terminal Call: terminal=%s legs=%d commands=%#v",
-			terminal, staffLegs, provider.commands)
+		t.Fatalf("late caller answer revived terminal Call: terminal=%s legs=%d tasks=%d commands=%#v",
+			terminal, staffLegs, recoveryTasks, provider.commands)
+	}
+}
+
+func TestCallerHangupDuringVoicemailCreatesOneMissedCallRecovery(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 14, 10, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "answered-caller-hangup", provider, 1,
+	)
+	processAllCommands(t, calling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "answered-caller-hangup-ring-ended", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatalf("start voicemail before caller Hangup: %v", err)
+	}
+	processAllCommands(t, calling)
+	caller.EventID = "answered-caller-hangup-ended"
+	caller.Type = humancalling.FactCallHangup
+	caller.OccurredAt = now.Add(21 * time.Second)
+	caller.HangupCause = "NORMAL_CLEARING"
+	caller.TerminationSource = "CALLER"
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("project answered caller Hangup: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("replay answered caller Hangup: %v", err)
+	}
+
+	var terminal, voicemailOutcome, taskOrigin, taskTitle string
+	var taskCount, interactionCount, activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, voicemail.outcome, task.origin, task.title,
+			(SELECT count(*) FROM work_tasks),
+			(SELECT count(*) FROM work_task_interactions),
+			(SELECT count(*) FROM work_task_activities)
+		FROM human_calling_calls call
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		JOIN work_tasks task ON task.id = voicemail.task_id
+	`).Scan(
+		&terminal, &voicemailOutcome, &taskOrigin, &taskTitle,
+		&taskCount, &interactionCount, &activityCount,
+	); err != nil {
+		t.Fatalf("read answered caller recovery: %v", err)
+	}
+	if terminal != "MISSED" || voicemailOutcome != "MISSED_CALL" ||
+		taskOrigin != "MISSED_CALL_RECOVERY" || taskTitle != "Return missed call" ||
+		taskCount != 1 || interactionCount != 1 || activityCount != 1 {
+		t.Fatalf(
+			"answered caller recovery = terminal:%s outcome:%s origin:%s title:%s tasks:%d interactions:%d activities:%d",
+			terminal, voicemailOutcome, taskOrigin, taskTitle,
+			taskCount, interactionCount, activityCount,
+		)
 	}
 }
 
@@ -1974,7 +2032,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
 		CallControlID: "voicemail-staff-control", CallLegID: "voicemail-staff-leg",
 	}}}
-	pool, calling, caller, _ := prepareInboundFanout(
+	pool, calling, caller, staff := prepareInboundFanout(
 		t, now, "call-leg-voicemail-evidence", provider, 1,
 	)
 	processAllCommands(t, calling)
@@ -1989,6 +2047,21 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
+	greetingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil {
+		t.Fatalf("read live voicemail greeting state: %v", err)
+	}
+	if greetingState.Voicemail == nil ||
+		greetingState.Voicemail.State != "VOICEMAIL_GREETING" {
+		t.Fatalf("live voicemail greeting state = %#v", greetingState.Voicemail)
+	}
+	greetingCall, err := calling.ReadCall(
+		context.Background(), staff[0], greetingState.Voicemail.CallID,
+	)
+	if err != nil || string(greetingCall.State) != "VOICEMAIL_GREETING" ||
+		greetingCall.Voicemail.TaskID != "" {
+		t.Fatalf("live voicemail greeting Call = %#v, err = %v", greetingCall, err)
+	}
 	speak := provider.last(humancalling.CommandSpeakVoicemail)
 	speakState, _ := speak.Payload["client_state"].(string)
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -2008,6 +2081,14 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
+	recordingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil {
+		t.Fatalf("read live voicemail recording state: %v", err)
+	}
+	if recordingState.Voicemail == nil ||
+		recordingState.Voicemail.State != "VOICEMAIL_RECORDING" {
+		t.Fatalf("live voicemail recording state = %#v", recordingState.Voicemail)
+	}
 	record := provider.last(humancalling.CommandStartVoicemailRecording)
 	recordState, _ := record.Payload["client_state"].(string)
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -2059,6 +2140,13 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		taskOrigin != "VOICEMAIL_RECOVERY" || taskOutcome != "VOICEMAIL" {
 		t.Fatalf("upgraded voicemail recovery = %s %s %s %s %s %s",
 			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome)
+	}
+	savedState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil {
+		t.Fatalf("read saved voicemail state: %v", err)
+	}
+	if savedState.Voicemail == nil || savedState.Voicemail.State != "VOICEMAIL" {
+		t.Fatalf("saved voicemail state = %#v", savedState.Voicemail)
 	}
 }
 

@@ -514,24 +514,28 @@ func (m *Module) EnsureRecoveryTask(
 		}
 	}
 	taskChanged := inserted
-	if !inserted && command.Outcome == RecoveryOutcomeVoicemail {
-		origin = TaskOriginVoicemail
-		title = "Review voicemail"
+	if !inserted {
+		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail
 		updated, err := tx.Exec(ctx, `
 			UPDATE work_tasks
 			SET
-				title = $3,
-				origin = $2,
-				recovery_outcome = 'VOICEMAIL',
+				title = CASE WHEN $2 THEN 'Review voicemail' ELSE title END,
+				origin = CASE WHEN $2 THEN 'VOICEMAIL_RECOVERY' ELSE origin END,
+				recovery_outcome = CASE WHEN $2 THEN 'VOICEMAIL' ELSE recovery_outcome END,
 				version = version + 1,
 				updated_at = GREATEST(updated_at, $4)
 			WHERE id = $1
-				AND (title IS DISTINCT FROM $3
-					OR origin IS DISTINCT FROM $2
-					OR recovery_outcome IS DISTINCT FROM 'VOICEMAIL')
-		`, taskID, origin, title, command.OccurredAt)
+				AND (
+					$3
+					OR ($2 AND (
+						title IS DISTINCT FROM 'Review voicemail'
+						OR origin IS DISTINCT FROM 'VOICEMAIL_RECOVERY'
+						OR recovery_outcome IS DISTINCT FROM 'VOICEMAIL'
+					))
+				)
+		`, taskID, upgradeToVoicemail, interactionInserted, command.OccurredAt)
 		if err != nil {
-			return Task{}, fmt.Errorf("enrich recovery Task: %w", err)
+			return Task{}, fmt.Errorf("advance recovery Task: %w", err)
 		}
 		taskChanged = updated.RowsAffected() != 0
 	}

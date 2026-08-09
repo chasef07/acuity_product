@@ -2166,6 +2166,8 @@ components:
             - RINGING
             - CONNECTING
             - CONNECTED
+            - VOICEMAIL_GREETING
+            - VOICEMAIL_RECORDING
             - UNANSWERED
             - VOICEMAIL
             - MISSED

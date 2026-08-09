@@ -1164,7 +1164,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	var callID, legID, practiceID, role, direction, legState, terminalOutcome string
 	var storedControlID, storedProviderLegID, storedSessionID string
 	var bridgedAt *time.Time
-	var callBridged bool
+	var callBridged, voicemailStarted bool
 	query := `
 		SELECT call.id::text, leg.id::text, call.practice_id::text, leg.role,
 			leg.bridged_at, call.direction, leg.state,
@@ -1173,6 +1173,12 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			EXISTS (
 				SELECT 1 FROM human_calling_call_legs bridged
 				WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
+			),
+			EXISTS (
+				SELECT 1 FROM human_calling_provider_commands voicemail
+				WHERE voicemail.call_id = call.id
+					AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
+					AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
 			)
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
@@ -1189,6 +1195,12 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 				EXISTS (
 					SELECT 1 FROM human_calling_call_legs bridged
 					WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
+				),
+				EXISTS (
+					SELECT 1 FROM human_calling_provider_commands voicemail
+					WHERE voicemail.call_id = call.id
+						AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
+						AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
 				)
 			FROM human_calling_calls call
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
@@ -1200,7 +1212,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	if err := tx.QueryRow(ctx, query, args...).Scan(
 		&callID, &legID, &practiceID, &role, &bridgedAt, &direction, &legState,
 		&terminalOutcome, &storedControlID, &storedProviderLegID, &storedSessionID,
-		&callBridged,
+		&callBridged, &voicemailStarted,
 	); err != nil {
 		return fmt.Errorf("correlate hung-up CallLeg: %w", err)
 	}
@@ -1251,13 +1263,21 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	if terminalOutcome != "" {
 		// Recovery/disposition already owns the terminal outcome.
 	} else if role == "CALLER" && !callBridged {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
-				ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
-			WHERE id = $1
-		`, callID, fact.OccurredAt, m.now()); err != nil {
-			return fmt.Errorf("mark caller abandonment: %w", err)
+		if direction == string(CallInbound) && voicemailStarted {
+			if _, err := m.ensureRecoveryOutcome(
+				ctx, tx, callID, RecoveryMissedCall, "MISSED", fact,
+			); err != nil {
+				return fmt.Errorf("create voicemail caller recovery: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_calls
+				SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
+					ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
+				WHERE id = $1
+			`, callID, fact.OccurredAt, m.now()); err != nil {
+				return fmt.Errorf("mark caller abandonment: %w", err)
+			}
 		}
 		if err := m.endRemainingCallLegs(ctx, tx, callID); err != nil {
 			return err

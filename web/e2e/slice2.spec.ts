@@ -285,6 +285,266 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
   }
 })
 
+test("voicemail and meaningful missed calls refresh into their recovery folders", async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  test.skip(
+    !provisioningOutput || !databaseURL,
+    "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
+  )
+  await prepareBrowser(page.context())
+  const database = new Pool({ connectionString: databaseURL })
+
+  try {
+    await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+    await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+    await expect(
+      page.getByRole("switch", { name: "Availability" }),
+    ).toBeChecked({ timeout: 40_000 })
+    const scope = await database.query<{ practice_id: string; location_id: string }>(
+      `SELECT practice.id::text AS practice_id, location.id::text AS location_id
+         FROM access_practices practice
+         JOIN access_locations location ON location.practice_id = practice.id
+        WHERE practice.provisioning_key = 'abita-eye-group'
+          AND location.provisioning_key = 'fixture-location-1'`,
+    )
+    const practiceID = scope.rows[0]!.practice_id
+    const locationID = scope.rows[0]!.location_id
+    const voicemailPhone = "+15555550111"
+
+    for (const attempt of ["first", "second"] as const) {
+      const caller = await startAnsweredInboundCall(
+        page,
+        database,
+        practiceID,
+        locationID,
+        voicemailPhone,
+        `voicemail-${attempt}`,
+      )
+      const ring = await readSentVoiceCommand(
+        database,
+        caller.callID,
+        "START_RING_WINDOW",
+      )
+      await deliverProviderEvent(page, {
+        eventType: "call.playback.ended",
+        eventId: `voicemail-${attempt}-ring-ended`,
+        occurredAt: new Date().toISOString(),
+        payload: {
+          call_control_id: caller.controlID,
+          call_leg_id: caller.providerLegID,
+          call_session_id: caller.sessionID,
+          client_state: ring.client_state,
+          status: "completed",
+        },
+      })
+      const speak = await readSentVoiceCommand(
+        database,
+        caller.callID,
+        "SPEAK_VOICEMAIL",
+      )
+      const activeCall = page.getByRole("region", {
+        name: "Active call controls",
+      })
+      await expect(
+        activeCall.getByText("Voicemail greeting", { exact: true }).first(),
+      ).toBeVisible({ timeout: 30_000 })
+
+      await deliverProviderEvent(page, {
+        eventType: "call.speak.ended",
+        eventId: `voicemail-${attempt}-speak-ended`,
+        occurredAt: new Date().toISOString(),
+        payload: {
+          call_control_id: caller.controlID,
+          call_leg_id: caller.providerLegID,
+          call_session_id: caller.sessionID,
+          client_state: speak.client_state,
+          status: "completed",
+        },
+      })
+      const recording = await readSentVoiceCommand(
+        database,
+        caller.callID,
+        "START_VOICEMAIL_RECORDING",
+      )
+      await expect(
+        activeCall.getByText("Recording voicemail", { exact: true }).first(),
+      ).toBeVisible({ timeout: 30_000 })
+
+      const recordingEndedAt = new Date()
+      const recordingStartedAt = new Date(recordingEndedAt.getTime() - 8_000)
+      const savedEventID = `voicemail-${attempt}-recording-saved`
+      const savedEvent = {
+        eventType: "call.recording.saved",
+        eventId: savedEventID,
+        occurredAt: recordingEndedAt.toISOString(),
+        payload: {
+          call_control_id: caller.controlID,
+          call_leg_id: caller.providerLegID,
+          call_session_id: caller.sessionID,
+          client_state: recording.client_state,
+          recording_id: `voicemail-${attempt}-recording`,
+          recording_started_at: recordingStartedAt.toISOString(),
+          recording_ended_at: recordingEndedAt.toISOString(),
+        },
+      }
+      await deliverProviderEvent(page, savedEvent)
+      await deliverProviderEvent(page, savedEvent)
+      await expect(
+        activeCall.getByText("Voicemail", { exact: true }).first(),
+      ).toBeVisible({ timeout: 30_000 })
+
+      const voicemailFolder = page.getByRole("button", { name: /^Voicemails/ })
+      if ((await voicemailFolder.getAttribute("aria-expanded")) === "false") {
+        await voicemailFolder.click()
+      }
+      const expectedCount = attempt === "first" ? 1 : 2
+      await expect(
+        page.getByRole("button", {
+          name: new RegExp(`\\(555\\) 555-0111.*${expectedCount} voicemail`),
+        }),
+      ).toBeVisible({ timeout: 30_000 })
+
+      await expect
+        .poll(async () => {
+          const result = await database.query<{ duplicate_count: number }>(
+            `SELECT duplicate_count
+               FROM human_calling_provider_receipts
+              WHERE event_id = $1`,
+            [savedEventID],
+          )
+          return result.rows[0]?.duplicate_count ?? 0
+        })
+        .toBe(1)
+      await activeCall.getByRole("button", { name: "Close" }).click()
+      await expect(activeCall).toHaveCount(0)
+      if (attempt === "second") {
+        const availability = page.getByRole("switch", { name: "Availability" })
+        if (!(await availability.isChecked())) await availability.click()
+        await expect(availability).toBeChecked()
+        await page.waitForTimeout(2_500)
+        await expect(activeCall).toHaveCount(0)
+      }
+    }
+
+    const voicemailTask = await database.query<{
+      id: string
+      version: string
+      interactions: string
+      activities: string[]
+    }>(
+      `SELECT task.id::text,
+              task.version::text,
+              count(DISTINCT interaction.call_id)::text AS interactions,
+              array_agg(
+                DISTINCT activity.task_version::text || ':' || activity.kind
+                ORDER BY activity.task_version::text || ':' || activity.kind
+              ) AS activities
+         FROM work_tasks task
+         JOIN work_task_interactions interaction ON interaction.task_id = task.id
+         JOIN work_task_activities activity ON activity.task_id = task.id
+        WHERE task.phone = $1 AND task.origin = 'VOICEMAIL_RECOVERY'
+        GROUP BY task.id`,
+      [voicemailPhone],
+    )
+    expect(voicemailTask.rows).toHaveLength(1)
+    expect(voicemailTask.rows[0]).toMatchObject({
+      version: "2",
+      interactions: "2",
+      activities: ["1:TASK_CREATED", "2:INTERACTION_ATTACHED"],
+    })
+
+    const missedPhone = "+15555550112"
+    const missedCaller = await startAnsweredInboundCall(
+      page,
+      database,
+      practiceID,
+      locationID,
+      missedPhone,
+      "meaningful-missed",
+    )
+    const missedRing = await readSentVoiceCommand(
+      database,
+      missedCaller.callID,
+      "START_RING_WINDOW",
+    )
+    await deliverProviderEvent(page, {
+      eventType: "call.playback.ended",
+      eventId: "meaningful-missed-ring-ended",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: missedCaller.controlID,
+        call_leg_id: missedCaller.providerLegID,
+        call_session_id: missedCaller.sessionID,
+        client_state: missedRing.client_state,
+        status: "completed",
+      },
+    })
+    await readSentVoiceCommand(database, missedCaller.callID, "SPEAK_VOICEMAIL")
+    const missedHangup = {
+      eventType: "call.hangup",
+      eventId: "meaningful-missed-hangup",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: missedCaller.controlID,
+        call_leg_id: missedCaller.providerLegID,
+        call_session_id: missedCaller.sessionID,
+        hangup_cause: "NORMAL_CLEARING",
+        hangup_source: "CALLER",
+      },
+    }
+    await deliverProviderEvent(page, missedHangup)
+    await deliverProviderEvent(page, missedHangup)
+    const missedFolder = page.getByRole("button", { name: /^Missed Calls/ })
+    if ((await missedFolder.getAttribute("aria-expanded")) === "false") {
+      await missedFolder.click()
+    }
+    await expect(
+      page.getByRole("button", {
+        name: /\(555\) 555-0112.*1 missed/,
+      }),
+    ).toBeVisible({ timeout: 30_000 })
+    const missedTask = await database.query<{ id: string; version: string }>(
+      `SELECT id::text, version::text
+         FROM work_tasks
+        WHERE phone = $1
+          AND state = 'OPEN'
+          AND origin = 'MISSED_CALL_RECOVERY'`,
+      [missedPhone],
+    )
+    expect(missedTask.rows).toHaveLength(1)
+
+    const tokenResponse = await page.request.get(`${webURL}/api/auth/token`)
+    expect(tokenResponse.ok()).toBeTruthy()
+    const { token } = (await tokenResponse.json()) as { token: string }
+    for (const task of [voicemailTask.rows[0]!, missedTask.rows[0]!]) {
+      const completed = await page.request.post(
+        `${portalURL}/v1/tasks/${task.id}/complete`,
+        {
+          headers: { authorization: `Bearer ${token}` },
+          data: { expectedVersion: Number(task.version) },
+        },
+      )
+      expect(completed.status()).toBe(200)
+    }
+    await expect
+      .poll(async () => {
+        const result = await database.query<{ count: string }>(
+          `SELECT count(*)::text
+             FROM work_tasks
+            WHERE phone = ANY($1::text[])
+              AND state = 'OPEN'`,
+          [[voicemailPhone, missedPhone]],
+        )
+        return Number(result.rows[0]?.count ?? 0)
+      })
+      .toBe(0)
+  } finally {
+    await database.end()
+  }
+})
+
 type StaffLeg = {
   id: string
   email: string
@@ -293,6 +553,122 @@ type StaffLeg = {
   client_state: string
   media_token: string
   bridge_on_answer: boolean
+}
+
+type InboundCaller = {
+  callID: string
+  controlID: string
+  providerLegID: string
+  sessionID: string
+}
+
+async function startAnsweredInboundCall(
+  page: Page,
+  database: Pool,
+  practiceID: string,
+  locationID: string,
+  phone: string,
+  prefix: string,
+): Promise<InboundCaller> {
+  const handoffResponse = await page.request.post(`${portalURL}/v1/handoffs`, {
+    headers: { authorization: "Bearer synthetic-service-token" },
+    data: {
+      practiceId: practiceID,
+      locationId: locationID,
+      sourceCallId: `${prefix}-source`,
+      idempotencyKey: `${prefix}-handoff`,
+      contact: {
+        phone,
+        phoneSource: "Abita",
+        displayName: `${prefix} caller`,
+        nameSource: "Abita",
+        transferReason: "Needs a staff response",
+        reasonSource: "Abita AI",
+      },
+    },
+  })
+  expect(handoffResponse.status()).toBe(201)
+  const caller = {
+    callID: "",
+    controlID: `${prefix}-caller-control`,
+    providerLegID: `${prefix}-caller-leg`,
+    sessionID: `${prefix}-caller-session`,
+  }
+  await deliverProviderEvent(page, {
+    eventType: "call.initiated",
+    eventId: `${prefix}-caller-initiated`,
+    occurredAt: new Date().toISOString(),
+    payload: {
+      connection_id: "fixture-call-control",
+      call_control_id: caller.controlID,
+      call_leg_id: caller.providerLegID,
+      call_session_id: caller.sessionID,
+      from: phone,
+      to: "+17275550101",
+    },
+  })
+  caller.callID = await expect
+    .poll(async () => {
+      const result = await database.query<{ id: string }>(
+        `SELECT call_id::text AS id
+           FROM human_calling_call_legs
+          WHERE provider_call_leg_id = $1`,
+        [caller.providerLegID],
+      )
+      return result.rows[0]?.id ?? ""
+    })
+    .not.toBe("")
+    .then(async () => {
+      const result = await database.query<{ id: string }>(
+        `SELECT call_id::text AS id
+           FROM human_calling_call_legs
+          WHERE provider_call_leg_id = $1`,
+        [caller.providerLegID],
+      )
+      return result.rows[0]!.id
+    })
+  await deliverProviderEvent(page, {
+    eventType: "call.answered",
+    eventId: `${prefix}-caller-answered`,
+    occurredAt: new Date().toISOString(),
+    payload: {
+      connection_id: "fixture-call-control",
+      call_control_id: caller.controlID,
+      call_leg_id: caller.providerLegID,
+      call_session_id: caller.sessionID,
+    },
+  })
+  await readSentVoiceCommand(database, caller.callID, "START_RING_WINDOW")
+  return caller
+}
+
+async function readSentVoiceCommand(
+  database: Pool,
+  callID: string,
+  action: string,
+) {
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ state: string }>(
+        `SELECT state
+           FROM human_calling_provider_commands
+          WHERE call_id = $1 AND action = $2
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1`,
+        [callID, action],
+      )
+      return result.rows[0]?.state ?? ""
+    }, { timeout: 30_000 })
+    .toMatch(/^(SENT|RECONCILED)$/)
+  const result = await database.query<{ client_state: string }>(
+    `SELECT payload->>'client_state' AS client_state
+       FROM human_calling_provider_commands
+      WHERE call_id = $1 AND action = $2
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [callID, action],
+  )
+  return result.rows[0]!
 }
 
 async function readStaffLegs(database: Pool, callID: string) {

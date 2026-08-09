@@ -252,7 +252,7 @@ export type CallingCall = {
     direction: 'INBOUND' | 'OUTBOUND';
     entryPoint: 'AI_HANDOFF' | 'TASK' | 'STANDALONE';
     taskId?: string;
-    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    state: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'VOICEMAIL_GREETING' | 'VOICEMAIL_RECORDING' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     dispositionDeadline?: string;
     phone: string;
     phoneSource: string;
