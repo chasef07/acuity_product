@@ -367,6 +367,30 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if aileenLocationCount != 4 {
 		t.Fatalf("Aileen Locations = %d, want 4", aileenLocationCount)
 	}
+	var hollywoodGrantCount, sweetwaterOpticalGrantCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*) FILTER (WHERE location.provisioning_key = 'hollywood'),
+			count(*) FILTER (WHERE location.provisioning_key = 'sweetwater-optical')
+		FROM access_grants access_grant
+		JOIN access_grant_locations allowed ON allowed.access_grant_id = access_grant.id
+		JOIN access_locations location ON location.id = allowed.location_id
+		WHERE access_grant.provisioning_key IN (
+			'abel-alvarez',
+			'ari-nussbaum',
+			'denise-rivera',
+			'katie-einsohn',
+			'sasha-ojinaga'
+		)
+	`).Scan(&hollywoodGrantCount, &sweetwaterOpticalGrantCount); err != nil {
+		t.Fatalf("count expanded Hollywood Access Grants: %v", err)
+	}
+	if hollywoodGrantCount != 5 || sweetwaterOpticalGrantCount != 0 {
+		t.Fatalf(
+			"expanded Access Grant Locations = Hollywood:%d Sweetwater Optical:%d",
+			hollywoodGrantCount, sweetwaterOpticalGrantCount,
+		)
+	}
 	var provisioned access.Provisioned
 	outputFile, err := os.Open(output)
 	if err != nil {
