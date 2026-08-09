@@ -19,3 +19,10 @@ export function providerOutcomeLabel(value: string) {
       return value.toLowerCase().replaceAll("_", " ")
   }
 }
+
+export function dispositionWindowIsOpen(
+  deadline: string | undefined,
+  now: number,
+) {
+  return !deadline || new Date(deadline).getTime() > now
+}

@@ -65,7 +65,10 @@ import {
   microphoneFailureMessage,
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
-import { providerOutcomeLabel } from "@/lib/calling/outcomes"
+import {
+  dispositionWindowIsOpen,
+  providerOutcomeLabel,
+} from "@/lib/calling/outcomes"
 import {
   activeRingingOffers,
   offerSecondsRemaining,
@@ -599,6 +602,9 @@ export function CallingDock({
       setLease(result.data.softphone)
       setAvailable(result.data.softphone.available)
       setRingingLegs(result.data.ringing)
+      if (!result.data.disposition) {
+        setPendingOutcome(undefined)
+      }
       const currentCallID = currentCallingStateCallID(result.data)
       if (currentCallID && currentCallID !== expectedCallRef.current) {
         expectedCallRef.current = currentCallID
@@ -916,11 +922,11 @@ export function CallingDock({
     await resumeCalling()
   }
 
-  async function takeRingingLeg(ringingLeg: RingingCallLeg) {
+  async function answerRingingLeg(ringingLeg: RingingCallLeg) {
     setError("")
     const leg = incomingLegsRef.current.get(ringingLeg.mediaToken)
     if (!leg) {
-      setError("The browser media invite is still converging. Try Take again.")
+      setError("The browser media invite is still converging. Try Answer again.")
       await refreshCallingState()
       return
     }
@@ -1072,6 +1078,11 @@ export function CallingDock({
 
   const activeOffers = activeRingingOffers(ringingLegs, now)
   const earliest = activeOffers[0]
+  const visiblePendingOutcome =
+    pendingOutcome &&
+    dispositionWindowIsOpen(pendingOutcome.dispositionDeadline, now)
+      ? pendingOutcome
+      : undefined
   return (
     <CallingNavigationContext.Provider
       value={{
@@ -1095,7 +1106,7 @@ export function CallingDock({
             ringingLegs={activeOffers}
             now={now}
             error={error}
-            onTake={(leg) => void takeRingingLeg(leg)}
+            onAnswer={(leg) => void answerRingingLeg(leg)}
           />
         </div>
       )}
@@ -1103,43 +1114,69 @@ export function CallingDock({
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Active call controls" size="sm">
             <CardHeader>
-              <CardTitle className="flex min-w-0 items-center gap-2">
-                <Badge
-                  variant={
-                    activeCall.state === "CONNECTED" ? "secondary" : "outline"
-                  }
-                  className={cn(
-                    activeCall.state === "CONNECTED" && "text-success",
-                    endingCallID === activeCall.id && "text-warning",
-					activeCall.state === "CONNECTING" && "text-warning",
-                  )}
-                >
-                  {endingCallID === activeCall.id
-                    ? "Ending…"
-                    : callStateLabel(activeCall.state)}
-                </Badge>
-                <span className="truncate">
-                  {activeCall.displayName ||
-                    (activeCall.direction === "OUTBOUND"
-                      ? "Outbound call"
-                      : "Caller")}
-                </span>
+              <CardTitle
+                className={cn(
+                  "flex min-w-0 items-center gap-2",
+                  activeCall.direction === "OUTBOUND" &&
+                    "text-2xl font-semibold tracking-tight",
+                )}
+              >
+                {activeCall.direction === "OUTBOUND" ? (
+                  <span className="truncate tabular-nums">
+                    {formatPhone(activeCall.phone) || "Phone unavailable"}
+                  </span>
+                ) : (
+                  <>
+                    <Badge
+                      variant={
+                        activeCall.state === "CONNECTED"
+                          ? "secondary"
+                          : "outline"
+                      }
+                      className={cn(
+                        activeCall.state === "CONNECTED" && "text-success",
+                        endingCallID === activeCall.id && "text-warning",
+                        activeCall.state === "CONNECTING" && "text-warning",
+                      )}
+                    >
+                      {endingCallID === activeCall.id
+                        ? "Ending…"
+                        : callStateLabel(activeCall.state)}
+                    </Badge>
+                    <span className="truncate">
+                      {activeCall.displayName || "Caller"}
+                    </span>
+                  </>
+                )}
               </CardTitle>
               <CardDescription className="truncate">
-                {activeCall.phone || "Phone unavailable"} ·{" "}
-                {activeCall.locationName}
+                {activeCall.direction === "OUTBOUND" ? (
+                  activeCall.locationName
+                ) : (
+                  <>
+                    {activeCall.phone || "Phone unavailable"} ·{" "}
+                    {activeCall.locationName}
+                  </>
+                )}
               </CardDescription>
               <CardAction>
                 <Badge
-                  aria-label="Call timer"
+                  aria-label={
+                    activeCall.state === "CONNECTED" &&
+                    endingCallID !== activeCall.id
+                      ? "Call timer"
+                      : "Call status"
+                  }
                   variant="outline"
                   className="tabular-nums"
                 >
-                  {callTimerLabel(activeCall, now)}
+                  {endingCallID === activeCall.id
+                    ? "Ending…"
+                    : callTimerLabel(activeCall, now)}
                 </Badge>
               </CardAction>
             </CardHeader>
-            <CardContent className="flex flex-col gap-2">
+            <CardContent className="flex flex-col gap-2 empty:hidden">
               <ActiveCallControls
                 call={activeCall}
                 mediaState={mediaState}
@@ -1166,24 +1203,33 @@ export function CallingDock({
           </Card>
         </div>
       )}
-      {pendingOutcome && !activeCall && !earliest && (
+      {visiblePendingOutcome && !activeCall && !earliest && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <Card role="region" aria-label="Call outcome" size="sm">
             <CardHeader>
               <CardTitle>Call ended</CardTitle>
               <CardDescription>
-                {pendingOutcome.phone} · {pendingOutcome.locationName}
+                {visiblePendingOutcome.phone} ·{" "}
+                {visiblePendingOutcome.locationName}
               </CardDescription>
-			{pendingOutcome.dispositionDeadline && (
-				<CardAction>
-					<Badge aria-label="Resolution countdown" variant="outline" className="tabular-nums">
-						{secondsRemaining(pendingOutcome.dispositionDeadline, now)}s
-					</Badge>
-				</CardAction>
-			)}
+              {visiblePendingOutcome.dispositionDeadline && (
+                <CardAction>
+                  <Badge
+                    aria-label="Resolution countdown"
+                    variant="outline"
+                    className="tabular-nums"
+                  >
+                    {secondsRemaining(
+                      visiblePendingOutcome.dispositionDeadline,
+                      now,
+                    )}
+                    s
+                  </Badge>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
-              {callDispositionChoices(pendingOutcome).map((choice) => (
+              {callDispositionChoices(visiblePendingOutcome).map((choice) => (
                 <Button
                   key={choice.outcome}
                   variant={choice.label === "Resolved" ? "default" : "outline"}
@@ -1217,74 +1263,63 @@ function IncomingCallControls({
   ringingLegs,
   now,
   error,
-  onTake,
+  onAnswer,
 }: {
   ringingLegs: RingingCallLeg[]
   now: number
   error: string
-  onTake: (leg: RingingCallLeg) => void
+  onAnswer: (leg: RingingCallLeg) => void
 }) {
-  const earliest = ringingLegs[0]
-  if (!earliest) return null
+  if (ringingLegs.length === 0) return null
   return (
-    <Card role="region" aria-label="Incoming calls" size="sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <PhoneCallIcon className="text-warning" />
-          Incoming call
-        </CardTitle>
-        <CardDescription>
-          {earliest.displayName || "Incoming caller"} ·{" "}
-          {formatPhone(earliest.phone)} · {earliest.locationName}
-        </CardDescription>
-        <CardAction>
-          <Badge
-            data-testid="calling-queue-count"
-            variant="secondary"
-            className="tabular-nums text-warning"
-          >
-            {ringingLegs.length}
-          </Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {earliest.transferReason && (
-          <p className="text-muted-foreground">
-            {earliest.transferReason}
-          </p>
-        )}
-        {ringingLegs.slice(1).map((leg) => (
-          <Button
-            key={leg.callLegId}
-            type="button"
-            variant="outline"
-            className="h-auto w-full justify-between"
-            onClick={() => onTake(leg)}
-          >
-            <span className="truncate">
-              {leg.displayName || "Incoming caller"} · {leg.locationName}
-            </span>
-            <span className="text-warning">Ringing</span>
-            <span className="tabular-nums">
-              {offerSecondsRemaining(leg.deadline, now)}s
-            </span>
-          </Button>
-        ))}
-        {error && <p className="text-destructive">{error}</p>}
-      </CardContent>
-      <CardFooter className="justify-between">
-        <Badge
-          aria-label="Incoming offer countdown"
-          variant="outline"
-          className="tabular-nums text-warning"
-        >
-          {offerSecondsRemaining(earliest.deadline, now)}s
-        </Badge>
-        <Button size="sm" onClick={() => onTake(earliest)}>
-          Take
-        </Button>
-      </CardFooter>
-    </Card>
+    <div
+      role="region"
+      aria-label="Incoming calls"
+      className="flex max-h-[calc(100vh-1.5rem)] flex-col gap-2 overflow-y-auto p-px"
+    >
+      {ringingLegs.map((leg) => {
+        const phone = formatPhone(leg.phone)
+        const displayName = leg.displayName.trim()
+        const showDisplayName =
+          Boolean(displayName) && displayName.toLowerCase() !== "incoming caller"
+        return (
+          <Card key={leg.callLegId} size="sm">
+            <CardHeader>
+              <CardTitle className="flex min-w-0 items-start gap-3 text-2xl font-semibold tracking-tight">
+                <PhoneCallIcon className="mt-1 size-5 shrink-0 text-foreground" />
+                <span className="truncate tabular-nums">{phone}</span>
+              </CardTitle>
+              <CardDescription className="pl-8 text-sm">
+                {showDisplayName && <>{displayName} · </>}
+                {leg.locationName}
+              </CardDescription>
+            </CardHeader>
+            {leg.transferReason && (
+              <CardContent>
+                <p className="text-muted-foreground">{leg.transferReason}</p>
+              </CardContent>
+            )}
+            <CardFooter className="justify-between">
+              <Badge
+                aria-label={`Incoming offer countdown for ${phone}`}
+                variant="outline"
+                className="tabular-nums text-foreground"
+              >
+                {offerSecondsRemaining(leg.deadline, now)}s
+              </Badge>
+              <Button
+                size="sm"
+                aria-label={`Answer ${phone}`}
+                onClick={() => onAnswer(leg)}
+              >
+                Answer
+              </Button>
+            </CardFooter>
+          </Card>
+        )
+      })}
+      {error && <p className="text-destructive">{error}</p>}
+    </div>
   )
 }
 
@@ -1340,24 +1375,50 @@ function ActiveCallControls({
     mediaState === "ready" &&
     mediaAttached
   const dispositionChoices = callDispositionChoices(call)
+  const showCallDetails =
+    call.direction !== "OUTBOUND" || Boolean(call.providerTermination)
+  const showMute =
+    owner && (call.state === "CONNECTING" || call.state === "CONNECTED")
+  const showKeypad = owner && call.state === "CONNECTED"
+  const showDisposition = owner && ended
+  const showRetry = call.retryAllowed
+  const showClosedState = terminal || closedWithoutDisposition
+  if (
+    !showCallDetails &&
+    !showMute &&
+    !showKeypad &&
+    !showDisposition &&
+    !showRetry &&
+    !showClosedState
+  ) {
+    return null
+  }
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <p className="basis-full truncate text-xs text-muted-foreground">
-        {call.nameSource ? `Name: ${call.nameSource} · ` : ""}
-        Audio: {mediaAttached
-          ? "attached"
-          : mediaState === "ready"
-            ? "waiting for exact leg"
-            : mediaState}
-        {call.transferReason ? ` · ${call.transferReason}` : ""}
-        {call.reasonSource ? ` (${call.reasonSource})` : ""}
-        {call.callerId ? ` · Caller ID ${call.callerId}` : ""}
-        {call.providerTermination
-          ? ` · ${providerOutcomeLabel(call.providerTermination)}`
-          : ""}
-      </p>
-		{owner &&
-			(call.state === "CONNECTING" || call.state === "CONNECTED") && (
+      {showCallDetails && (
+        <p className="basis-full truncate text-xs text-muted-foreground">
+          {call.direction !== "OUTBOUND" && (
+            <>
+              {call.nameSource ? `Name: ${call.nameSource} · ` : ""}
+              Audio:{" "}
+              {mediaAttached
+                ? "attached"
+                : mediaState === "ready"
+                  ? "waiting for exact leg"
+                  : mediaState}
+              {call.transferReason ? ` · ${call.transferReason}` : ""}
+              {call.reasonSource ? ` (${call.reasonSource})` : ""}
+            </>
+          )}
+          {call.providerTermination && (
+            <>
+              {call.direction !== "OUTBOUND" && " · "}
+              {providerOutcomeLabel(call.providerTermination)}
+            </>
+          )}
+        </p>
+      )}
+      {showMute && (
         <Button
           size="sm"
           variant="outline"
@@ -1368,7 +1429,7 @@ function ActiveCallControls({
           {muted ? "Unmute" : "Mute"}
         </Button>
       )}
-      {owner && call.state === "CONNECTED" && (
+      {showKeypad && (
         <>
           <Button
             size="sm"
@@ -1389,7 +1450,7 @@ function ActiveCallControls({
           </Button>
         </>
       )}
-      {owner && ended && (
+      {showDisposition && (
         <>
           <Button
             size="sm"
@@ -1407,7 +1468,7 @@ function ActiveCallControls({
           </Button>
         </>
       )}
-      {call.retryAllowed && (
+      {showRetry && (
         <Button
           size="sm"
           variant="outline"
@@ -1418,7 +1479,7 @@ function ActiveCallControls({
           {retryPending ? "Preparing…" : "Try again"}
         </Button>
       )}
-      {(terminal || closedWithoutDisposition) && (
+      {showClosedState && (
         <>
           {terminal && (
             <span className="text-xs text-muted-foreground">

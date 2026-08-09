@@ -184,9 +184,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       await expect(
         offer.getByText("(555) 555-0100", { exact: false }),
       ).toBeVisible()
-      await expect(offer.getByLabel("Incoming offer countdown")).toHaveText(
-        /^\d+s$/,
-      )
+      await expect(
+        offer.getByLabel(/Incoming offer countdown for/),
+      ).toHaveText(/^\d+s$/)
     }
     const deadlineResult = await database.query<{ deadline: Date }>(
       `SELECT ring.sent_at + interval '20 seconds' AS deadline
@@ -207,7 +207,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       selectedLeg.provider_leg_id,
       selectedLeg.media_token,
     )
-    await selectedPage.getByRole("button", { name: "Take", exact: true }).click()
+    await selectedPage
+      .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
+      .click()
     await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
 
     await deliverProviderEvent(selectedPage, {
@@ -395,9 +397,11 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         activeCall.getByText("Voicemail", { exact: true }).first(),
       ).toBeVisible({ timeout: 30_000 })
 
-      const voicemailFolder = page.getByRole("button", { name: /^Voicemails/ })
-      if ((await voicemailFolder.getAttribute("aria-expanded")) === "false") {
-        await voicemailFolder.click()
+      const recoveryFolder = page.getByRole("button", {
+        name: /^Missed Calls & Voicemails/,
+      })
+      if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
+        await recoveryFolder.click()
       }
       const expectedCount = attempt === "first" ? 1 : 2
       await expect(
@@ -496,9 +500,11 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     }
     await deliverProviderEvent(page, missedHangup)
     await deliverProviderEvent(page, missedHangup)
-    const missedFolder = page.getByRole("button", { name: /^Missed Calls/ })
-    if ((await missedFolder.getAttribute("aria-expanded")) === "false") {
-      await missedFolder.click()
+    const recoveryFolder = page.getByRole("button", {
+      name: /^Missed Calls & Voicemails/,
+    })
+    if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
+      await recoveryFolder.click()
     }
     await expect(
       page.getByRole("button", {
