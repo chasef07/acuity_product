@@ -233,22 +233,18 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT membership.user_subject, lease.session_id, credential.provider_sip_username
-		FROM access_memberships membership
-		JOIN access_operational_users operational
-			ON operational.user_subject = membership.user_subject
+		SELECT calling_scope.user_subject, lease.session_id, credential.provider_sip_username
+		FROM access_calling_scopes calling_scope
 		JOIN human_calling_softphone_leases lease
-			ON lease.user_subject = membership.user_subject
+			ON lease.user_subject = calling_scope.user_subject
 		JOIN human_calling_credentials credential
-			ON credential.user_subject = membership.user_subject
-		WHERE membership.practice_id = $1
-			AND membership.role = 'STAFF'
-			AND membership.revoked_at IS NULL
+			ON credential.user_subject = calling_scope.user_subject
+		WHERE calling_scope.practice_id = $1
 			AND (
-				membership.location_scope = 'ALL'
+				calling_scope.location_scope = 'ALL'
 				OR EXISTS (
 					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = membership.id
+					WHERE allowed.membership_id = calling_scope.membership_id
 						AND allowed.location_id = $2
 				)
 			)
@@ -263,13 +259,13 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			AND credential.provider_sip_username IS NOT NULL
 			AND NOT EXISTS (
 				SELECT 1 FROM human_calling_call_legs occupied
-				WHERE occupied.staff_subject = membership.user_subject
+				WHERE occupied.staff_subject = calling_scope.user_subject
 					AND (
 						occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
 						OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
 					)
 			)
-		ORDER BY membership.user_subject
+		ORDER BY calling_scope.user_subject
 		FOR UPDATE OF lease
 	`, practiceID, locationID, m.now(), m.config.ReadinessGrace.String())
 	if err != nil {
@@ -473,17 +469,14 @@ func (m *Module) applyStaffInitiated(
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM access_memberships membership
-				JOIN access_operational_users operational
-					ON operational.user_subject = membership.user_subject
-				WHERE membership.practice_id = $1
-					AND membership.user_subject = $2
-					AND membership.revoked_at IS NULL
+				FROM access_calling_scopes calling_scope
+				WHERE calling_scope.practice_id = $1
+					AND calling_scope.user_subject = $2
 					AND (
-						membership.location_scope = 'ALL'
+						calling_scope.location_scope = 'ALL'
 						OR EXISTS (
 							SELECT 1 FROM access_membership_locations allowed
-							WHERE allowed.membership_id = membership.id
+							WHERE allowed.membership_id = calling_scope.membership_id
 								AND allowed.location_id = $3
 						)
 					)

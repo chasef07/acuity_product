@@ -2,9 +2,6 @@ package access
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,10 +30,6 @@ const (
 
 var (
 	ErrDenied             = errors.New("access denied")
-	ErrEmailNotVerified   = errors.New("verified email required")
-	ErrInvitationExpired  = errors.New("invitation expired")
-	ErrInvitationRevoked  = errors.New("invitation revoked")
-	ErrInvitationUsed     = errors.New("invitation already accepted")
 	ErrAccessGrantClaimed = errors.New("Access Grant already claimed")
 	ErrInvalidInput       = errors.New("invalid access input")
 )
@@ -94,7 +87,6 @@ type PracticeProvision struct {
 	Name         string
 	Locations    []LocationProvision
 	AccessGrants []AccessGrantProvision
-	Invitations  []InvitationProvision
 }
 
 type LocationProvision struct {
@@ -109,15 +101,6 @@ type LocationProvision struct {
 	VoicemailGreeting  string
 }
 
-type InvitationProvision struct {
-	Key                  string
-	Email                string
-	Role                 Role
-	LocationScope        LocationScope
-	SelectedLocationKeys []string
-	ExpiresAt            time.Time
-}
-
 type AccessGrantProvision struct {
 	Key                  string
 	Email                string
@@ -127,14 +110,7 @@ type AccessGrantProvision struct {
 }
 
 type Provisioned struct {
-	AccessGrantCount int                    `json:"accessGrantCount"`
-	Invitations      []InvitationCredential `json:"invitations"`
-}
-
-type InvitationCredential struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Token string `json:"token"`
+	AccessGrantCount int `json:"accessGrantCount"`
 }
 
 type Actor struct {
@@ -183,10 +159,9 @@ type Discovery struct {
 }
 
 // CallingEnabled is the shared capability rule for human calling. Platform
-// Operators need an explicit Staff Membership; global visibility is not enough.
+// Operators are operational in every Practice; other humans need a Membership.
 func CallingEnabled(platformOperator bool, membership *Membership) bool {
-	return membership != nil &&
-		(!platformOperator || membership.Role == RoleStaff)
+	return platformOperator || membership != nil
 }
 
 type AddLocationCommand struct {
@@ -194,12 +169,6 @@ type AddLocationCommand struct {
 	PracticeID string
 	Key        string
 	Name       string
-}
-
-type RevokeInvitationCommand struct {
-	Identity     Identity
-	PracticeID   string
-	InvitationID string
 }
 
 type RevokeAccessGrantCommand struct {
@@ -235,29 +204,6 @@ type LocationMutation struct {
 	Location        Location   `json:"location"`
 	PracticeVersion int64      `json:"practiceVersion"`
 	Audit           AuditEvent `json:"audit"`
-}
-
-type InvitationKind string
-
-const (
-	InvitationKindPractice         InvitationKind = "PRACTICE_INVITATION"
-	InvitationKindPlatformOperator InvitationKind = "PLATFORM_OPERATOR"
-)
-
-type InvitationInspection struct {
-	Token string
-	Email string
-}
-
-type InvitationPreview struct {
-	Kind          InvitationKind `json:"kind"`
-	Email         string         `json:"email"`
-	PracticeID    string         `json:"practiceId,omitempty"`
-	PracticeName  string         `json:"practiceName,omitempty"`
-	Role          Role           `json:"role,omitempty"`
-	LocationScope LocationScope  `json:"locationScope,omitempty"`
-	Locations     []Location     `json:"locations"`
-	ExpiresAt     time.Time      `json:"expiresAt,omitempty"`
 }
 
 type SignUpEligibilityKind string
@@ -313,7 +259,7 @@ func (m *Module) ProvisionInTx(
 	if tx == nil {
 		return Provisioned{}, ErrInvalidInput
 	}
-	if err := validateProvisioning(input, m.now()); err != nil {
+	if err := validateProvisioning(input); err != nil {
 		return Provisioned{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -338,7 +284,7 @@ func (m *Module) ProvisionInTx(
 		}
 	}
 
-	result := Provisioned{Invitations: []InvitationCredential{}}
+	result := Provisioned{}
 	operatorEmails := make([]string, 0, len(input.PlatformOperators))
 	for _, email := range input.PlatformOperators {
 		operatorEmails = append(operatorEmails, normalizeEmail(email))
@@ -471,71 +417,10 @@ func (m *Module) ProvisionInTx(
 			}
 		}
 
-		for _, invitationInput := range practiceInput.Invitations {
-			var exists bool
-			if err := tx.QueryRow(ctx, `
-				SELECT EXISTS (
-					SELECT 1
-					FROM access_invitations
-					WHERE practice_id = $1 AND provisioning_key = $2
-				)
-			`, practiceID, invitationInput.Key).Scan(&exists); err != nil {
-				return Provisioned{}, fmt.Errorf("check invitation %q: %w", invitationInput.Key, err)
-			}
-			if exists {
-				continue
-			}
-
-			token, tokenHash, err := newInvitationToken()
-			if err != nil {
-				return Provisioned{}, err
-			}
-			email := normalizeEmail(invitationInput.Email)
-			var invitationID string
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO access_invitations (
-					provisioning_key, practice_id, token_hash, email, role,
-					location_scope, expires_at
-				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-				RETURNING id::text
-			`,
-				invitationInput.Key,
-				practiceID,
-				tokenHash[:],
-				email,
-				invitationInput.Role,
-				invitationInput.LocationScope,
-				invitationInput.ExpiresAt,
-			).Scan(&invitationID); err != nil {
-				return Provisioned{}, fmt.Errorf("create invitation %q: %w", invitationInput.Key, err)
-			}
-			for _, locationKey := range invitationInput.SelectedLocationKeys {
-				locationID, ok := locationIDs[locationKey]
-				if !ok {
-					return Provisioned{}, fmt.Errorf("%w: invitation %q references location %q", ErrInvalidInput, invitationInput.Key, locationKey)
-				}
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO access_invitation_locations (
-						invitation_id, location_id, practice_id
-					)
-					VALUES ($1, $2, $3)
-				`, invitationID, locationID, practiceID); err != nil {
-					return Provisioned{}, fmt.Errorf("grant invitation location %q: %w", locationKey, err)
-				}
-			}
-			result.Invitations = append(result.Invitations, InvitationCredential{
-				ID:    invitationID,
-				Email: email,
-				Token: token,
-			})
-		}
-
 		details, _ := json.Marshal(map[string]any{
 			"practiceKey":  practiceInput.Key,
 			"locations":    len(practiceInput.Locations),
 			"accessGrants": len(practiceInput.AccessGrants),
-			"invitations":  len(practiceInput.Invitations),
 		})
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO access_audit_events (
@@ -599,104 +484,6 @@ func accessGrantMatchesProvisioning(
 	return true, nil
 }
 
-func (m *Module) AcceptInvitation(ctx context.Context, identity Identity, token string) (Authorization, error) {
-	if !identity.EmailVerified {
-		return Authorization{}, ErrEmailNotVerified
-	}
-	if strings.TrimSpace(identity.Subject) == "" || strings.TrimSpace(token) == "" {
-		return Authorization{}, ErrDenied
-	}
-
-	tokenHash := sha256.Sum256([]byte(token))
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Authorization{}, fmt.Errorf("begin invitation acceptance: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var invitationID, practiceID, invitationEmail, acceptedSubject string
-	var role Role
-	var scope LocationScope
-	var expiresAt time.Time
-	var revokedAt, acceptedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT
-			id::text,
-			practice_id::text,
-			email,
-			role,
-			location_scope,
-			expires_at,
-			revoked_at,
-			accepted_at,
-			COALESCE(accepted_by_subject, '')
-		FROM access_invitations
-		WHERE token_hash = $1
-		FOR UPDATE
-	`, tokenHash[:]).Scan(
-		&invitationID,
-		&practiceID,
-		&invitationEmail,
-		&role,
-		&scope,
-		&expiresAt,
-		&revokedAt,
-		&acceptedAt,
-		&acceptedSubject,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Authorization{}, ErrDenied
-		}
-		return Authorization{}, fmt.Errorf("load invitation: %w", err)
-	}
-
-	if revokedAt != nil {
-		return Authorization{}, ErrInvitationRevoked
-	}
-	if !m.now().Before(expiresAt) {
-		return Authorization{}, ErrInvitationExpired
-	}
-	if normalizeEmail(identity.Email) != invitationEmail {
-		return Authorization{}, ErrDenied
-	}
-	if acceptedAt != nil {
-		if acceptedSubject != identity.Subject {
-			return Authorization{}, ErrInvitationUsed
-		}
-		authorized, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
-		if err != nil {
-			return Authorization{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Authorization{}, fmt.Errorf("commit invitation replay: %w", err)
-		}
-		return authorized, nil
-	}
-
-	_, err = m.activateInvitation(ctx, tx, identity, invitationActivation{
-		ID:                 invitationID,
-		PracticeID:         practiceID,
-		Email:              invitationEmail,
-		Role:               role,
-		Scope:              scope,
-		AuditActorType:     "HUMAN",
-		AuditAction:        "invitation.accepted",
-		AuditInvitationKey: "invitationId",
-	})
-	if err != nil {
-		return Authorization{}, err
-	}
-
-	authorized, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
-	if err != nil {
-		return Authorization{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Authorization{}, fmt.Errorf("commit invitation acceptance: %w", err)
-	}
-	return authorized, nil
-}
-
 func (m *Module) InspectSignUpEligibility(
 	ctx context.Context,
 	emailInput string,
@@ -737,101 +524,6 @@ func (m *Module) InspectSignUpEligibility(
 		Kind:  SignUpEligibilityPlatformOperator,
 		Email: email,
 	}, nil
-}
-
-// InspectInvitation returns only scope attached to the presented legacy
-// credential. New human access is provisioned through Access Grants.
-func (m *Module) InspectInvitation(
-	ctx context.Context,
-	inspection InvitationInspection,
-) (InvitationPreview, error) {
-	email := normalizeEmail(inspection.Email)
-	if strings.TrimSpace(inspection.Token) == "" {
-		return InvitationPreview{}, ErrDenied
-	}
-
-	tokenHash := sha256.Sum256([]byte(inspection.Token))
-	var preview InvitationPreview
-	var revokedAt, acceptedAt *time.Time
-	if err := m.pool.QueryRow(ctx, `
-		SELECT
-			i.email,
-			i.practice_id::text,
-			p.name,
-			i.role,
-			i.location_scope,
-			i.expires_at,
-			i.revoked_at,
-			i.accepted_at
-		FROM access_invitations i
-		JOIN access_practices p ON p.id = i.practice_id
-		WHERE i.token_hash = $1
-	`, tokenHash[:]).Scan(
-		&preview.Email,
-		&preview.PracticeID,
-		&preview.PracticeName,
-		&preview.Role,
-		&preview.LocationScope,
-		&preview.ExpiresAt,
-		&revokedAt,
-		&acceptedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return InvitationPreview{}, ErrDenied
-		}
-		return InvitationPreview{}, fmt.Errorf("inspect invitation: %w", err)
-	}
-	if revokedAt != nil {
-		return InvitationPreview{}, ErrInvitationRevoked
-	}
-	if acceptedAt != nil {
-		return InvitationPreview{}, ErrInvitationUsed
-	}
-	if !m.now().Before(preview.ExpiresAt) {
-		return InvitationPreview{}, ErrInvitationExpired
-	}
-	if email != "" && email != preview.Email {
-		return InvitationPreview{}, ErrDenied
-	}
-	preview.Kind = InvitationKindPractice
-	preview.Locations = []Location{}
-
-	locationQuery := `
-		SELECT id::text, name
-		FROM access_locations
-		WHERE practice_id = $1
-		ORDER BY name, id
-	`
-	args := []any{preview.PracticeID}
-	if preview.LocationScope == LocationScopeSelected {
-		locationQuery = `
-			SELECT l.id::text, l.name
-			FROM access_invitation_locations il
-			JOIN access_locations l
-				ON l.practice_id = il.practice_id
-				AND l.id = il.location_id
-			JOIN access_invitations i ON i.id = il.invitation_id
-			WHERE i.token_hash = $1
-			ORDER BY l.name, l.id
-		`
-		args = []any{tokenHash[:]}
-	}
-	rows, err := m.pool.Query(ctx, locationQuery, args...)
-	if err != nil {
-		return InvitationPreview{}, fmt.Errorf("inspect invitation Locations: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var location Location
-		if err := rows.Scan(&location.ID, &location.Name); err != nil {
-			return InvitationPreview{}, fmt.Errorf("scan invitation Location: %w", err)
-		}
-		preview.Locations = append(preview.Locations, location)
-	}
-	if err := rows.Err(); err != nil {
-		return InvitationPreview{}, fmt.Errorf("iterate invitation Locations: %w", err)
-	}
-	return preview, nil
 }
 
 // ResolveActor returns current authorization from PostgreSQL. JWT claims never
@@ -903,6 +595,16 @@ func (m *Module) LockMembershipAuthorization(
 	if err != nil {
 		return Authorization{}, err
 	}
+	if isOperator {
+		authorization, err := loadOperatorAuthorization(ctx, tx, identity, practiceID)
+		if err != nil {
+			return Authorization{}, err
+		}
+		if err := selectRequestedLocation(&authorization, locationID); err != nil {
+			return Authorization{}, err
+		}
+		return authorization, nil
+	}
 	var membershipID string
 	var role Role
 	if err := tx.QueryRow(ctx, `
@@ -918,7 +620,7 @@ func (m *Module) LockMembershipAuthorization(
 		}
 		return Authorization{}, fmt.Errorf("lock Membership authorization: %w", err)
 	}
-	if !CallingEnabled(isOperator, &Membership{Role: role}) {
+	if !CallingEnabled(false, &Membership{Role: role}) {
 		return Authorization{}, ErrDenied
 	}
 	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
@@ -1144,9 +846,8 @@ func (m *Module) LockServiceVoiceAuthorization(
 	}, nil
 }
 
-// LockOperationalActor holds the actor's current Memberships against revocation
-// and returns their operational Practice IDs. Platform Operators need an
-// explicit Staff Membership; their global visibility alone is not operational.
+// LockOperationalActor holds the actor's current authority against concurrent
+// changes and returns every Practice in which they may operate.
 func (m *Module) LockOperationalActor(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1160,6 +861,33 @@ func (m *Module) LockOperationalActor(
 	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return nil, err
+	}
+	if isOperator {
+		rows, err := tx.Query(ctx, `
+			SELECT id::text
+			FROM access_practices
+			ORDER BY id
+			FOR SHARE
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("lock operator Practices: %w", err)
+		}
+		defer rows.Close()
+		practiceIDs := []string{}
+		for rows.Next() {
+			var practiceID string
+			if err := rows.Scan(&practiceID); err != nil {
+				return nil, fmt.Errorf("scan operator Practice: %w", err)
+			}
+			practiceIDs = append(practiceIDs, practiceID)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate operator Practices: %w", err)
+		}
+		if len(practiceIDs) == 0 {
+			return nil, ErrDenied
+		}
+		return practiceIDs, nil
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT practice_id::text, role
@@ -1180,7 +908,7 @@ func (m *Module) LockOperationalActor(
 		if err := rows.Scan(&practiceID, &role); err != nil {
 			return nil, fmt.Errorf("scan operational Practice: %w", err)
 		}
-		if !CallingEnabled(isOperator, &Membership{Role: role}) {
+		if !CallingEnabled(false, &Membership{Role: role}) {
 			continue
 		}
 		practiceIDs = append(practiceIDs, practiceID)
@@ -1194,8 +922,7 @@ func (m *Module) LockOperationalActor(
 	return practiceIDs, nil
 }
 
-// DiscoverActor returns every currently authorized Practice and Location. A
-// Platform Operator's global visibility does not imply mutation authority.
+// DiscoverActor returns every currently authorized Practice and Location.
 func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discovery, error) {
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
 		return Discovery{}, ErrDenied
@@ -1206,7 +933,7 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	operatorID, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return Discovery{}, err
 	}
@@ -1214,8 +941,10 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	if isOperator {
 		auditActorType = "PLATFORM_OPERATOR"
 	}
-	if err := m.activateProvisionedEmail(ctx, tx, identity, m.now(), auditActorType); err != nil {
-		return Discovery{}, err
+	if !isOperator {
+		if err := m.activateProvisionedEmail(ctx, tx, identity, m.now(), auditActorType); err != nil {
+			return Discovery{}, err
+		}
 	}
 	if !isOperator {
 		rows, err := tx.Query(ctx, `
@@ -1276,8 +1005,6 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		}
 		return result, nil
 	}
-	_ = operatorID
-
 	result := Discovery{
 		Actor: Actor{
 			Subject: identity.Subject,
@@ -1308,43 +1035,8 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return Discovery{}, fmt.Errorf("iterate discovered Practices: %w", err)
 	}
 	rows.Close()
-	memberships := make(map[string]Membership)
-	rows, err = tx.Query(ctx, `
-		SELECT practice_id::text, id::text, role, location_scope
-		FROM access_memberships
-		WHERE user_subject = $1 AND revoked_at IS NULL
-		ORDER BY practice_id
-	`, identity.Subject)
-	if err != nil {
-		return Discovery{}, fmt.Errorf("discover operator Memberships: %w", err)
-	}
-	for rows.Next() {
-		var practiceID string
-		var membership Membership
-		if err := rows.Scan(
-			&practiceID,
-			&membership.ID,
-			&membership.Role,
-			&membership.LocationScope,
-		); err != nil {
-			rows.Close()
-			return Discovery{}, fmt.Errorf("scan operator Membership: %w", err)
-		}
-		memberships[practiceID] = membership
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return Discovery{}, fmt.Errorf("iterate operator Memberships: %w", err)
-	}
-	rows.Close()
 	for index := range result.Practices {
-		if membership, ok := memberships[result.Practices[index].ID]; ok {
-			result.Practices[index].Membership = &membership
-		}
-		result.Practices[index].CallingEnabled = CallingEnabled(
-			true,
-			result.Practices[index].Membership,
-		)
+		result.Practices[index].CallingEnabled = CallingEnabled(true, nil)
 		result.Practices[index].Locations, err = loadLocations(ctx, tx, result.Practices[index].ID)
 		if err != nil {
 			return Discovery{}, err
@@ -1455,75 +1147,6 @@ func (m *Module) activateProvisionedEmail(
 	return nil
 }
 
-type invitationActivation struct {
-	ID                 string
-	PracticeID         string
-	Email              string
-	Role               Role
-	Scope              LocationScope
-	AuditActorType     string
-	AuditAction        string
-	AuditInvitationKey string
-}
-
-func (m *Module) activateInvitation(
-	ctx context.Context,
-	tx pgx.Tx,
-	identity Identity,
-	invitation invitationActivation,
-) (string, error) {
-	var membershipID string
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO access_memberships (
-			user_subject, email, practice_id, role, location_scope, invitation_id
-		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id::text
-	`, identity.Subject, invitation.Email, invitation.PracticeID, invitation.Role,
-		invitation.Scope, invitation.ID).Scan(&membershipID); err != nil {
-		return "", fmt.Errorf("activate invitation Membership: %w", err)
-	}
-	if invitation.Scope == LocationScopeSelected {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO access_membership_locations (
-				membership_id, location_id, practice_id
-			)
-			SELECT $1, location_id, practice_id
-			FROM access_invitation_locations
-			WHERE invitation_id = $2
-		`, membershipID, invitation.ID); err != nil {
-			return "", fmt.Errorf("activate invitation Location grants: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE access_invitations
-		SET accepted_at = $2, accepted_by_subject = $3
-		WHERE id = $1
-	`, invitation.ID, m.now(), identity.Subject); err != nil {
-		return "", fmt.Errorf("mark invitation accepted: %w", err)
-	}
-	details, err := json.Marshal(map[string]string{
-		invitation.AuditInvitationKey: invitation.ID,
-		"membershipId":                membershipID,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode invitation audit details: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO access_audit_events (
-			actor_type, actor_subject, practice_id, action, details
-		)
-		VALUES ($1, $2, $3, $4, $5)
-	`, invitation.AuditActorType, identity.Subject, invitation.PracticeID,
-		invitation.AuditAction, details); err != nil {
-		return "", fmt.Errorf("audit invitation activation: %w", err)
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, invitation.PracticeID); err != nil {
-		return "", err
-	}
-	return membershipID, nil
-}
-
 func (m *Module) RevokeAccessGrant(
 	ctx context.Context,
 	command RevokeAccessGrantCommand,
@@ -1587,73 +1210,6 @@ func (m *Module) RevokeAccessGrant(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Access Grant revocation: %w", err)
-	}
-	return nil
-}
-
-func (m *Module) RevokeInvitation(
-	ctx context.Context,
-	command RevokeInvitationCommand,
-) error {
-	if !command.Identity.EmailVerified || command.Identity.Subject == "" ||
-		command.PracticeID == "" || command.InvitationID == "" {
-		return ErrDenied
-	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin invitation revocation: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
-		return err
-	} else if !isOperator {
-		return ErrDenied
-	}
-
-	var acceptedAt, revokedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT accepted_at, revoked_at
-		FROM access_invitations
-		WHERE id = $1 AND practice_id = $2
-		FOR UPDATE
-	`, command.InvitationID, command.PracticeID).Scan(&acceptedAt, &revokedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDenied
-		}
-		return fmt.Errorf("load invitation for revocation: %w", err)
-	}
-	if acceptedAt != nil {
-		return ErrInvitationUsed
-	}
-	if revokedAt != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit repeated invitation revocation: %w", err)
-		}
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE access_invitations
-		SET revoked_at = $2
-		WHERE id = $1
-	`, command.InvitationID, m.now()); err != nil {
-		return fmt.Errorf("revoke invitation: %w", err)
-	}
-	if err := auditRevocation(
-		ctx,
-		tx,
-		command.Identity.Subject,
-		command.PracticeID,
-		"invitation.revoked",
-		"invitationId",
-		command.InvitationID,
-	); err != nil {
-		return err
-	}
-	if _, err := m.RecordWorkspaceChange(ctx, tx, command.PracticeID); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit invitation revocation: %w", err)
 	}
 	return nil
 }
@@ -2201,12 +1757,16 @@ func loadMembershipAuthorization(
 	return result, nil
 }
 
-func validateProvisioning(input Provisioning, now time.Time) error {
+func validateProvisioning(input Provisioning) error {
 	if strings.TrimSpace(input.Environment) == "" || strings.TrimSpace(input.RequestedBy) == "" {
 		return fmt.Errorf("%w: environment and requestedBy are required", ErrInvalidInput)
 	}
 	if len(input.Practices) == 0 {
 		return fmt.Errorf("%w: at least one practice is required", ErrInvalidInput)
+	}
+	operatorEmails := make(map[string]struct{}, len(input.PlatformOperators))
+	for _, email := range input.PlatformOperators {
+		operatorEmails[normalizeEmail(email)] = struct{}{}
 	}
 	for _, practice := range input.Practices {
 		if strings.TrimSpace(practice.Key) == "" || strings.TrimSpace(practice.Name) == "" {
@@ -2232,6 +1792,9 @@ func validateProvisioning(input Provisioning, now time.Time) error {
 			}
 		}
 		for _, grant := range practice.AccessGrants {
+			if _, isOperator := operatorEmails[normalizeEmail(grant.Email)]; isOperator {
+				return fmt.Errorf("%w: Platform Operators do not use Access Grants", ErrInvalidInput)
+			}
 			if grant.Role != RoleAdmin && grant.Role != RoleStaff {
 				return fmt.Errorf("%w: unsupported Access Grant role", ErrInvalidInput)
 			}
@@ -2243,23 +1806,6 @@ func validateProvisioning(input Provisioning, now time.Time) error {
 			}
 			if grant.LocationScope == LocationScopeSelected && len(grant.SelectedLocationKeys) == 0 {
 				return fmt.Errorf("%w: SELECTED scope requires a Location", ErrInvalidInput)
-			}
-		}
-		for _, invitation := range practice.Invitations {
-			if invitation.Role != RoleAdmin && invitation.Role != RoleStaff {
-				return fmt.Errorf("%w: unsupported invitation role", ErrInvalidInput)
-			}
-			if invitation.Role == RoleAdmin && invitation.LocationScope != LocationScopeAll {
-				return fmt.Errorf("%w: Admin requires ALL location scope", ErrInvalidInput)
-			}
-			if invitation.LocationScope != LocationScopeAll && invitation.LocationScope != LocationScopeSelected {
-				return fmt.Errorf("%w: unsupported location scope", ErrInvalidInput)
-			}
-			if invitation.LocationScope == LocationScopeSelected && len(invitation.SelectedLocationKeys) == 0 {
-				return fmt.Errorf("%w: SELECTED scope requires a location", ErrInvalidInput)
-			}
-			if !invitation.ExpiresAt.After(now) {
-				return fmt.Errorf("%w: invitation expiration must be in the future", ErrInvalidInput)
 			}
 		}
 	}
@@ -2276,15 +1822,6 @@ func serviceHasCapability(
 		}
 	}
 	return false
-}
-
-func newInvitationToken() (string, [32]byte, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", [32]byte{}, fmt.Errorf("generate invitation token: %w", err)
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
-	return token, sha256.Sum256([]byte(token)), nil
 }
 
 func normalizeEmail(email string) string {

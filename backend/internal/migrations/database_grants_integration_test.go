@@ -436,14 +436,14 @@ func expectedTablePrivileges() map[string]bool {
 
 	portalReads := []string{
 		"access_abita_office_locations",
+		"access_calling_scopes",
 		"access_grant_locations",
 		"access_grants",
 		"access_audit_events",
-		"access_invitation_locations",
-		"access_invitations",
 		"access_locations",
 		"access_membership_locations",
 		"access_memberships",
+		"access_operational_scopes",
 		"access_operational_users",
 		"access_platform_operators",
 		"access_practices",
@@ -491,7 +491,6 @@ func expectedTablePrivileges() map[string]bool {
 	)
 	grant("acuity_portal", "UPDATE",
 		"access_grants",
-		"access_invitations",
 		"access_locations",
 		"access_memberships",
 		"access_practices",
@@ -515,9 +514,11 @@ func expectedTablePrivileges() map[string]bool {
 	)
 
 	grant("acuity_worker", "SELECT",
+		"access_calling_scopes",
 		"access_locations",
 		"access_membership_locations",
 		"access_memberships",
+		"access_operational_scopes",
 		"access_operational_users",
 		"access_practices",
 		"ai_interactions",

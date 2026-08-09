@@ -32,13 +32,15 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 26 {
-		t.Fatalf("migration count = %d, want 26", migrationCount)
+	if migrationCount != 27 {
+		t.Fatalf("migration count = %d, want 27", migrationCount)
 	}
 
 	for _, relation := range []string{
 		"ai_interaction_receipts",
 		"ai_interactions",
+		"access_calling_scopes",
+		"access_operational_scopes",
 		"access_grants",
 		"access_grant_locations",
 		"human_calling_handoffs",
@@ -61,6 +63,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		}
 	}
 	for _, relation := range []string{
+		"access_invitation_locations",
+		"access_invitations",
 		"access_support_sessions",
 		"human_calling_connection_attempts",
 		"human_calling_recordings",
@@ -110,6 +114,209 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 	if legacyVoicemailColumns != 0 {
 		t.Fatalf("legacy voicemail copy columns = %d, want 0", legacyVoicemailColumns)
+	}
+}
+
+func TestGoogleOnlyAccessMigrationConvertsCompatibleLegacyMembership(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0026_ai_interactions.sql")
+	ctx := context.Background()
+	const (
+		legacyPracticeID   = "00000000-0000-0000-0000-000000000301"
+		legacyInvitationID = "00000000-0000-0000-0000-000000000302"
+		legacyGrantID      = "00000000-0000-0000-0000-000000000303"
+		legacyMembershipID = "00000000-0000-0000-0000-000000000304"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'legacy-practice', 'Legacy Practice')
+	`, legacyPracticeID); err != nil {
+		t.Fatalf("seed legacy Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_invitations (
+			id, provisioning_key, practice_id, token_hash, email, role,
+			location_scope, expires_at, accepted_at, accepted_by_subject
+		) VALUES (
+			$2, 'legacy-user', $1, decode(repeat('01', 32), 'hex'),
+			'legacy@example.com', 'STAFF', 'ALL', now() + interval '1 day',
+			now(), 'google-subject'
+		)
+	`, legacyPracticeID, legacyInvitationID); err != nil {
+		t.Fatalf("seed legacy invitation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_grants (
+			id, provisioning_key, practice_id, email, role, location_scope
+		) VALUES (
+			$2, 'google-user', $1, 'legacy@example.com', 'STAFF', 'ALL'
+		)
+	`, legacyPracticeID, legacyGrantID); err != nil {
+		t.Fatalf("seed matching Access Grant: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_memberships (
+			id, user_subject, email, practice_id, role, location_scope, invitation_id
+		) VALUES (
+			$3, 'google-subject', 'legacy@example.com', $1, 'STAFF', 'ALL', $2
+		)
+	`, legacyPracticeID, legacyInvitationID, legacyMembershipID); err != nil {
+		t.Fatalf("seed compatible legacy Membership: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Google-only Access migration: %v", err)
+	}
+
+	var accessGrantID, claimedSubject string
+	if err := pool.QueryRow(ctx, `
+		SELECT membership.access_grant_id::text, access_grant.claimed_by_subject
+		FROM access_memberships membership
+		JOIN access_grants access_grant ON access_grant.id = membership.access_grant_id
+		WHERE membership.id = $1
+	`, legacyMembershipID).Scan(&accessGrantID, &claimedSubject); err != nil {
+		t.Fatalf("read converted Membership: %v", err)
+	}
+	if accessGrantID != legacyGrantID || claimedSubject != "google-subject" {
+		t.Fatalf("converted Membership = grant:%q subject:%q", accessGrantID, claimedSubject)
+	}
+	for _, relation := range []string{"access_invitations", "access_invitation_locations"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatalf("legacy relation %s still exists", relation)
+		}
+	}
+	var invitationColumnExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public'
+				AND table_name = 'access_memberships'
+				AND column_name = 'invitation_id'
+		)
+	`).Scan(&invitationColumnExists); err != nil {
+		t.Fatal(err)
+	}
+	if invitationColumnExists {
+		t.Fatal("legacy Membership invitation_id column still exists")
+	}
+}
+
+func TestGoogleOnlyAccessMigrationRejectsUnmatchedLegacyMembership(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0026_ai_interactions.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name)
+		VALUES ('unmatched-practice', 'Unmatched Practice')
+	`); err != nil {
+		t.Fatalf("seed unmatched Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_invitations (
+			provisioning_key, practice_id, token_hash, email, role,
+			location_scope, expires_at, accepted_at, accepted_by_subject
+		)
+		SELECT
+			'unmatched-user', id, decode(repeat('02', 32), 'hex'),
+			'unmatched@example.com', 'STAFF', 'ALL', now() + interval '1 day',
+			now(), 'unmatched-subject'
+		FROM access_practices WHERE provisioning_key = 'unmatched-practice'
+	`); err != nil {
+		t.Fatalf("seed unmatched invitation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_memberships (
+			user_subject, email, practice_id, role, location_scope, invitation_id
+		)
+		SELECT
+			'unmatched-subject', 'unmatched@example.com', practice_id,
+			'STAFF', 'ALL', id
+		FROM access_invitations WHERE provisioning_key = 'unmatched-user'
+	`); err != nil {
+		t.Fatalf("seed unmatched legacy Membership: %v", err)
+	}
+
+	err := migrations.Apply(ctx, pool)
+	if err == nil || !strings.Contains(err.Error(), "legacy invitation Membership has no compatible Access Grant") {
+		t.Fatalf("Google-only migration error = %v", err)
+	}
+	var migrationRecorded bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM schema_migrations WHERE name = '0027_google_only_access.sql'
+		)
+	`).Scan(&migrationRecorded); err != nil {
+		t.Fatal(err)
+	}
+	if migrationRecorded {
+		t.Fatal("failed Google-only migration was recorded")
+	}
+}
+
+func TestGoogleOnlyAccessMigrationRemovesOperatorSpecificAccess(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0026_ai_interactions.sql")
+	ctx := context.Background()
+	const operatorSubject = "operator-google-subject"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name)
+		VALUES ('operator-practice', 'Operator Practice')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_platform_operators (email, user_subject)
+		VALUES ('operator@example.com', $1)
+	`, operatorSubject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_grants (
+			provisioning_key, practice_id, email, role, location_scope,
+			claimed_at, claimed_by_subject
+		)
+		SELECT
+			'operator-staff', id, 'operator@example.com', 'STAFF', 'ALL',
+			now(), $1
+		FROM access_practices WHERE provisioning_key = 'operator-practice'
+	`, operatorSubject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_memberships (
+			user_subject, email, practice_id, role, location_scope, access_grant_id
+		)
+		SELECT
+			$1, access_grant.email, access_grant.practice_id,
+			access_grant.role, access_grant.location_scope, access_grant.id
+		FROM access_grants access_grant
+		WHERE access_grant.email = 'operator@example.com'
+	`, operatorSubject); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply operator Access cleanup: %v", err)
+	}
+	var memberships, grants, operationalScopes, callingScopes int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM access_memberships WHERE email = 'operator@example.com'),
+			(SELECT count(*) FROM access_grants WHERE email = 'operator@example.com'),
+			(SELECT count(*) FROM access_operational_scopes WHERE user_subject = $1),
+			(SELECT count(*) FROM access_calling_scopes WHERE user_subject = $1)
+	`, operatorSubject).Scan(&memberships, &grants, &operationalScopes, &callingScopes); err != nil {
+		t.Fatal(err)
+	}
+	if memberships != 0 || grants != 0 || operationalScopes != 1 || callingScopes != 1 {
+		t.Fatalf(
+			"operator Access = Memberships:%d Grants:%d OperationalScopes:%d CallingScopes:%d",
+			memberships,
+			grants,
+			operationalScopes,
+			callingScopes,
+		)
 	}
 }
 
@@ -311,7 +518,7 @@ func TestAbitaLocationSplitSkipsUnrelatedDevelopmentTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrations.Apply(ctx, pool); err != nil {
+	if err := migrations.ApplyThrough(ctx, pool, "0023_split_abita_locations.sql"); err != nil {
 		t.Fatalf("apply Location split to development topology: %v", err)
 	}
 

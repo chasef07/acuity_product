@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -1079,7 +1080,7 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(
+	_, err := accessModule.Provision(
 		context.Background(),
 		access.Provisioning{
 			Environment:       "test",
@@ -1089,12 +1090,11 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 				Key:       "operator-practice",
 				Name:      "Operator Practice",
 				Locations: []access.LocationProvision{{Key: "office", Name: "Office"}},
-				Invitations: []access.InvitationProvision{{
+				AccessGrants: []access.AccessGrantProvision{{
 					Key:           "staff",
 					Email:         "staff@operator.test",
 					Role:          access.RoleStaff,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
 				}},
 			}},
 		},
@@ -1107,14 +1107,7 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 		Email:         "staff@operator.test",
 		EmailVerified: true,
 	}
-	staff, err := accessModule.AcceptInvitation(
-		context.Background(),
-		staffIdentity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept operator Task Staff invitation: %v", err)
-	}
+	staff := testaccess.Activate(t, accessModule, staffIdentity)
 	module := work.New(pool, accessModule, func() time.Time { return now })
 	task := createTask(
 		t,
@@ -1344,7 +1337,7 @@ func provisionStaff(
 	now time.Time,
 ) (access.Authorization, access.Identity) {
 	t.Helper()
-	provisioned, err := module.Provision(context.Background(), access.Provisioning{
+	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-3-work-test",
 		Practices: []access.PracticeProvision{{
@@ -1358,12 +1351,11 @@ func provisionStaff(
 				},
 				{Key: "synthetic-location-2", Name: "Synthetic Location 2"},
 			},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "synthetic-staff",
 				Email:         "staff@synthetic.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -1375,14 +1367,7 @@ func provisionStaff(
 		Email:         "staff@synthetic.test",
 		EmailVerified: true,
 	}
-	authorization, err := module.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept Staff invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, module, identity)
 	return authorization, identity
 }
 

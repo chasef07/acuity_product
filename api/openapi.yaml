@@ -73,53 +73,6 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/invitations/inspect:
-    post:
-      operationId: inspectInvitation
-      summary: Inspect only the scope attached to the presented invitation.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/InvitationCredentialRequest"
-      responses:
-        "200":
-          description: Pending invitation.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InvitationPreview"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/invitations/accept:
-    post:
-      operationId: acceptInvitation
-      summary: Atomically activate an invitation for the verified identity.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/InvitationCredentialRequest"
-      responses:
-        "200":
-          description: Membership and authorized scope.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Authorization"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/workspace:
     get:
       operationId: getWorkspace
@@ -1666,44 +1619,6 @@ components:
         email:
           type: string
           format: email
-    InvitationCredentialRequest:
-      type: object
-      additionalProperties: false
-      required: [token]
-      properties:
-        token:
-          type: string
-          minLength: 32
-          maxLength: 256
-    InvitationPreview:
-      type: object
-      additionalProperties: false
-      required: [kind, email, locations]
-      properties:
-        kind:
-          type: string
-          enum: [PRACTICE_INVITATION, PLATFORM_OPERATOR]
-        email:
-          type: string
-          format: email
-        practiceId:
-          type: string
-          format: uuid
-        practiceName:
-          type: string
-        role:
-          type: string
-          enum: [ADMIN, STAFF]
-        locationScope:
-          type: string
-          enum: [ALL, SELECTED]
-        locations:
-          type: array
-          items:
-            $ref: "#/components/schemas/Location"
-        expiresAt:
-          type: string
-          format: date-time
     Actor:
       type: object
       additionalProperties: false
@@ -1755,25 +1670,6 @@ components:
         locationScope:
           type: string
           enum: [ALL, SELECTED]
-    Authorization:
-      type: object
-      additionalProperties: false
-      required: [actor, practice, locations, platformOperator]
-      properties:
-        actor:
-          $ref: "#/components/schemas/Actor"
-        practice:
-          $ref: "#/components/schemas/Practice"
-        membership:
-          $ref: "#/components/schemas/Membership"
-        locations:
-          type: array
-          items:
-            $ref: "#/components/schemas/Location"
-        activeLocation:
-          $ref: "#/components/schemas/Location"
-        platformOperator:
-          type: boolean
     PracticeAccess:
       allOf:
         - $ref: "#/components/schemas/Practice"

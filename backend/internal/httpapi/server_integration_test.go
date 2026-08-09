@@ -27,6 +27,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -176,7 +177,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "voicemail-http-test",
 		Practices: []access.PracticeProvision{{
@@ -186,13 +187,12 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 				{Key: "voicemail-http-location", Name: "Voicemail HTTP Location"},
 				{Key: "voicemail-hidden-location", Name: "Voicemail Hidden Location"},
 			},
-			Invitations: []access.InvitationProvision{
+			AccessGrants: []access.AccessGrantProvision{
 				{
 					Key:           "voicemail-http-staff",
 					Email:         "voicemail-http@synthetic.test",
 					Role:          access.RoleStaff,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
 				},
 				{
 					Key:                  "voicemail-hidden-staff",
@@ -200,7 +200,6 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 					Role:                 access.RoleStaff,
 					LocationScope:        access.LocationScopeSelected,
 					SelectedLocationKeys: []string{"voicemail-hidden-location"},
-					ExpiresAt:            now.Add(time.Hour),
 				},
 			},
 		}},
@@ -213,14 +212,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		Email:         "voicemail-http@synthetic.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept voicemail HTTP invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	voicemailLocationID := ""
 	for _, location := range authorization.Locations {
 		if location.Name == "Voicemail HTTP Location" {
@@ -236,13 +228,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		Email:         "voicemail-hidden@synthetic.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(),
-		hiddenIdentity,
-		provisioned.Invitations[1].Token,
-	); err != nil {
-		t.Fatalf("accept hidden Location invitation: %v", err)
-	}
+	testaccess.Activate(t, accessModule, hiddenIdentity)
 	handoffID := uuid.NewString()
 	callID := uuid.NewString()
 	if _, err := pool.Exec(context.Background(), `
@@ -517,19 +503,18 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-3-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "task-practice",
 			Name:      "Task Practice",
 			Locations: []access.LocationProvision{{Key: "task-office", Name: "Task Office"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "task-staff",
 				Email:         "task-staff@synthetic.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -541,14 +526,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 		Email:         "task-staff@synthetic.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept Task HTTP invitation: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	handoffID := uuid.NewString()
 	callID := uuid.NewString()
 	if _, err := pool.Exec(context.Background(), `
@@ -775,19 +753,18 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-1-pool-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "pool-practice",
 			Name:      "Pool Fixture Practice",
 			Locations: []access.LocationProvision{{Key: "fixture-1", Name: "Fixture 1"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "pool-member",
 				Email:         "member@pool.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -799,13 +776,7 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 		Email:         "member@pool.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	); err != nil {
-		t.Fatalf("accept pool fixture: %v", err)
-	}
+	testaccess.Activate(t, accessModule, identity)
 	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 75 * time.Millisecond,
@@ -1008,7 +979,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(
+	_, err := accessModule.Provision(
 		context.Background(),
 		access.Provisioning{
 			Environment: "test",
@@ -1021,12 +992,11 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 					Name:            "Calling Location",
 					AbitaOfficeKeys: []string{"spring-hill"},
 				}},
-				Invitations: []access.InvitationProvision{{
+				AccessGrants: []access.AccessGrantProvision{{
 					Key:           "calling-staff",
 					Email:         "staff@calling.test",
 					Role:          access.RoleStaff,
 					LocationScope: access.LocationScopeAll,
-					ExpiresAt:     now.Add(time.Hour),
 				}},
 			}},
 		},
@@ -1039,13 +1009,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		Email:         "staff@calling.test",
 		EmailVerified: true,
 	}
-	if _, err := accessModule.AcceptInvitation(
-		context.Background(),
-		staffIdentity,
-		provisioned.Invitations[0].Token,
-	); err != nil {
-		t.Fatalf("accept staff Task HTTP fixture: %v", err)
-	}
+	testaccess.Activate(t, accessModule, staffIdentity)
 	var practiceID string
 	if err := pool.QueryRow(context.Background(), `
 		SELECT id::text
@@ -1340,19 +1304,18 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		slog.New(slog.NewJSONHandler(&metrics, nil)),
 	)
 	accessModule := access.New(pool, func() time.Time { return now })
-	provisioned, err := accessModule.Provision(context.Background(), access.Provisioning{
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
 		RequestedBy: "slice-2-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "calling-practice",
 			Name:      "Calling Practice",
 			Locations: []access.LocationProvision{{Key: "calling-location", Name: "Calling Location"}},
-			Invitations: []access.InvitationProvision{{
+			AccessGrants: []access.AccessGrantProvision{{
 				Key:           "calling-staff",
 				Email:         "staff@calling.test",
 				Role:          access.RoleStaff,
 				LocationScope: access.LocationScopeAll,
-				ExpiresAt:     now.Add(time.Hour),
 			}},
 		}},
 	})
@@ -1364,14 +1327,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		Email:         "staff@calling.test",
 		EmailVerified: true,
 	}
-	authorization, err := accessModule.AcceptInvitation(
-		context.Background(),
-		identity,
-		provisioned.Invitations[0].Token,
-	)
-	if err != nil {
-		t.Fatalf("accept calling HTTP fixture: %v", err)
-	}
+	authorization := testaccess.Activate(t, accessModule, identity)
 	calling := humancalling.New(
 		pool,
 		accessModule,

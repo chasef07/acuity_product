@@ -15,7 +15,7 @@ test("homepage opens a Google-only sign-in dialog", async ({
   await expect(
     card.getByRole("button", { name: "Continue with Google" }),
   ).toBeVisible()
-  await expect(card.getByText("Invite-only access")).toBeVisible()
+  await expect(card.getByText("Secure Google sign-in")).toBeVisible()
   await expect(card.getByLabel("Email")).toBeHidden()
   await expect(card.getByLabel("Password")).toBeHidden()
 })

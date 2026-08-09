@@ -308,8 +308,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
 		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if grantCount != 33 || abitaGrantCount != 31 || demoGrantCount != 2 {
-		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 33, 31, 2",
+	if grantCount != 31 || abitaGrantCount != 31 || demoGrantCount != 0 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 31, 31, 0",
 			grantCount, abitaGrantCount, demoGrantCount)
 	}
 	type grant struct {
@@ -368,11 +368,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if len(provisioned.Invitations) != 0 {
-		t.Fatalf("Access Grants emitted invitation credentials: %#v", provisioned.Invitations)
-	}
-	if provisioned.AccessGrantCount != 33 {
-		t.Fatalf("provisioning output Access Grant count = %d, want 33", provisioned.AccessGrantCount)
+	if provisioned.AccessGrantCount != 31 {
+		t.Fatalf("provisioning output Access Grant count = %d, want 31", provisioned.AccessGrantCount)
 	}
 }
 
@@ -440,8 +437,8 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 	`).Scan(&grantCount); err != nil {
 		t.Fatalf("count reconciled Access Grants: %v", err)
 	}
-	if grantCount != 33 {
-		t.Fatalf("reconciled Access Grants = %d, want 33", grantCount)
+	if grantCount != 31 {
+		t.Fatalf("reconciled Access Grants = %d, want 31", grantCount)
 	}
 }
 
