@@ -184,9 +184,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       await expect(
         offer.getByText("(555) 555-0100", { exact: false }),
       ).toBeVisible()
-      await expect(offer.getByLabel("Incoming offer countdown")).toHaveText(
-        /^\d+s$/,
-      )
+      await expect(
+        offer.getByLabel(/Incoming offer countdown for/),
+      ).toHaveText(/^\d+s$/)
     }
     const deadlineResult = await database.query<{ deadline: Date }>(
       `SELECT ring.sent_at + interval '20 seconds' AS deadline
@@ -207,7 +207,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       selectedLeg.provider_leg_id,
       selectedLeg.media_token,
     )
-    await selectedPage.getByRole("button", { name: "Take", exact: true }).click()
+    await selectedPage
+      .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
+      .click()
     await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
 
     await deliverProviderEvent(selectedPage, {

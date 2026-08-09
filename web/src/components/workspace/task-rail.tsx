@@ -62,12 +62,10 @@ export type ConnectionState = "connecting" | "connected" | "degraded"
 
 type AttentionSection =
   | "tasks"
-  | "missedCalls"
-  | "voicemails"
+  | "calls"
   | "bookings"
   | "cancellations"
   | "reschedules"
-  | "aiReview"
   | "texts"
   | "recent"
 
@@ -138,12 +136,10 @@ export function TaskRail({
   const [expanded, setExpanded] = useState<Record<AttentionSection, boolean>>(
     () => ({
       tasks: true,
-      missedCalls: false,
-      voicemails: false,
+      calls: false,
       bookings: false,
       cancellations: false,
       reschedules: false,
-      aiReview: false,
       texts: false,
       recent: false,
       ...readSidebarState(stateKey)?.expanded,
@@ -159,14 +155,7 @@ export function TaskRail({
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
   )
-  const missedCallRows = useMemo(
-    () => aggregateRecovery(tasks, "MISSED_CALL_RECOVERY"),
-    [tasks],
-  )
-  const voicemailRows = useMemo(
-    () => aggregateRecovery(tasks, "VOICEMAIL_RECOVERY"),
-    [tasks],
-  )
+  const recoveryRows = useMemo(() => aggregateRecovery(tasks), [tasks])
   const textRows = useMemo(() => aggregateTexts(messages), [messages])
 
   useEffect(() => {
@@ -283,21 +272,12 @@ export function TaskRail({
           </AttentionGroup>
 
           <RecoveryGroup
-            title="Missed Calls"
-            empty="No missed calls"
-            rows={missedCallRows}
-            expanded={expanded.missedCalls}
+            title="Missed Calls & Voicemails"
+            empty="No missed calls or voicemails"
+            rows={recoveryRows}
+            expanded={expanded.calls}
             selectedPhone={selectedPhone}
-            onToggle={() => toggle("missedCalls")}
-            onSelect={onEngagementSelect}
-          />
-          <RecoveryGroup
-            title="Voicemails"
-            empty="No voicemails"
-            rows={voicemailRows}
-            expanded={expanded.voicemails}
-            selectedPhone={selectedPhone}
-            onToggle={() => toggle("voicemails")}
+            onToggle={() => toggle("calls")}
             onSelect={onEngagementSelect}
           />
           {outcomesError && (
@@ -341,19 +321,6 @@ export function TaskRail({
             showOffice={showOffice}
             loading={outcomesLoading}
             onToggle={() => toggle("reschedules")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-          />
-          <AppointmentGroup
-            title="AI review"
-            tasks={[]}
-            outcomes={categorizedAIOutcomes.review}
-            expanded={expanded.aiReview}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            onToggle={() => toggle("aiReview")}
             onTaskSelect={onTaskSelect}
             onAIInteractionSelect={onAIInteractionSelect}
           />
@@ -844,12 +811,10 @@ function categorizeAIOutcomes(outcomes: AiOutcomeItem[]) {
     bookings: [] as AiOutcomeItem[],
     cancellations: [] as AiOutcomeItem[],
     reschedules: [] as AiOutcomeItem[],
-    review: [] as AiOutcomeItem[],
   }
   for (const outcome of outcomes) {
     const folder = appointmentFolder(outcome.appointmentOutcome)
     if (folder) categorized[folder].push(outcome)
-    else categorized.review.push(outcome)
   }
   return categorized
 }
@@ -869,13 +834,15 @@ function appointmentIntent(
   return undefined
 }
 
-function aggregateRecovery(
-  tasks: Task[],
-  origin: "MISSED_CALL_RECOVERY" | "VOICEMAIL_RECOVERY",
-): RecoveryRowValue[] {
+function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
   const rows = new Map<string, RecoveryRowValue>()
   for (const task of tasks) {
-    if (task.origin !== origin) continue
+    if (
+      task.origin !== "MISSED_CALL_RECOVERY" &&
+      task.origin !== "VOICEMAIL_RECOVERY"
+    ) {
+      continue
+    }
     const existing = rows.get(task.phone) ?? {
       phone: task.phone,
       tasks: [],

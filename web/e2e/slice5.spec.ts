@@ -26,8 +26,9 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     "aria-expanded",
     "true",
   )
-  await expect(page.getByRole("button", { name: /^Missed Calls/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Voicemails/ })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Missed Calls & Voicemails/ }),
+  ).toBeVisible()
   await expect(page.getByRole("button", { name: /^Bookings/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Cancellations/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Reschedules/ })).toBeVisible()
@@ -210,8 +211,18 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     contextPanel.getByRole("heading", { name: "Follow up on text" }),
   ).toBeVisible()
+  await expect(contextPanel).toHaveCSS("width", "288px")
+  expect(
+    await contextPanel.evaluate(
+      (element) => getComputedStyle(element).transitionProperty,
+    ),
+  ).toContain("width")
   await contextPanel.getByRole("button", { name: "Close context panel" }).click()
   await expect(contextPanel).not.toBeVisible()
+  await expect(page.getByTestId("context-panel")).toHaveAttribute(
+    "data-state",
+    "closed",
+  )
 
   await page
     .getByRole("button", { name: /^Follow up on text \(727\)/ })

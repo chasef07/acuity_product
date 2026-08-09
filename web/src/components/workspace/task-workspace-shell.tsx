@@ -67,6 +67,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
 import { normalizeUSPhone } from "@/lib/phone"
+import { cn } from "@/lib/utils"
 import {
   createWorkspaceSync,
   type WorkspaceSync,
@@ -75,7 +76,7 @@ import {
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type View = "none" | "engagement" | "analytics"
-type ContextView = "none" | "task" | "call"
+type ContextView = "task" | "call"
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
@@ -113,7 +114,8 @@ export function TaskWorkspaceShell() {
   const [selectedAIInteractionID, setSelectedAIInteractionID] = useState("")
   const [selectedTask, setSelectedTask] = useState<Task>()
   const [view, setView] = useState<View>("none")
-  const [contextView, setContextView] = useState<ContextView>("none")
+  const [contextView, setContextView] = useState<ContextView>("task")
+  const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
@@ -217,6 +219,7 @@ export function TaskWorkspaceShell() {
         updateSelectedTask(next[0])
         setSelectedEngagement(engagement)
         setContextView("task")
+        setContextPanelOpen(true)
         setView("engagement")
       }
     },
@@ -433,7 +436,7 @@ export function TaskWorkspaceShell() {
                   selectedResult?.response?.status === 403)
               ) {
                 updateSelectedTask(undefined)
-                setContextView("none")
+                setContextPanelOpen(false)
               }
             } else if (
               firstLoad &&
@@ -444,6 +447,7 @@ export function TaskWorkspaceShell() {
               updateSelectedTask(tasksWithSelection[0])
               setSelectedEngagement(engagement)
               setContextView("task")
+              setContextPanelOpen(true)
               setView("engagement")
             }
           }
@@ -640,7 +644,7 @@ export function TaskWorkspaceShell() {
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
-    setContextView("none")
+    setContextPanelOpen(false)
     setView("none")
     locationScopeRef.current = nextLocationID
     setLocationScopeID(nextLocationID)
@@ -695,7 +699,7 @@ export function TaskWorkspaceShell() {
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
     setHistoricalCall(undefined)
-    setContextView("none")
+    setContextPanelOpen(false)
     setView("none")
 
     const nextOrdering = readTaskOrdering(
@@ -733,13 +737,14 @@ export function TaskWorkspaceShell() {
     if (activeCall) returnTaskIDRef.current = task.id
     selectEngagement(taskEngagement(task), task)
     setContextView("task")
+    setContextPanelOpen(true)
   }
 
   function selectEngagement(engagement: EngagementSummary, focusedTask?: Task) {
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
     setSelectedAIInteractionID("")
-    setContextView("none")
+    setContextPanelOpen(false)
     updateSelectedTask(focusedTask)
     setSelectedEngagement(engagement)
     if (discovery && practiceID) {
@@ -854,6 +859,7 @@ export function TaskWorkspaceShell() {
     updateTaskProjection(task, false)
     updateSelectedTask(task)
     setContextView("task")
+    setContextPanelOpen(true)
   }
 
   async function openCallContext(callID: string) {
@@ -876,12 +882,12 @@ export function TaskWorkspaceShell() {
     updateSelectedTask(undefined)
     setHistoricalCall(result.data)
     setContextView("call")
+    setContextPanelOpen(true)
   }
 
   function closeContextPanel() {
     callDetailGenerationRef.current += 1
-    setContextView("none")
-    setHistoricalCall(undefined)
+    setContextPanelOpen(false)
   }
 
   const handleCallChanged = useCallback((call: CallingCall | undefined) => {
@@ -899,6 +905,7 @@ export function TaskWorkspaceShell() {
     if (returnTask?.phone !== call.phone) updateSelectedTask(undefined)
     setSelectedEngagement(callEngagement(call))
     setContextView("call")
+    setContextPanelOpen(true)
     setView("engagement")
   }, [])
 
@@ -926,7 +933,7 @@ export function TaskWorkspaceShell() {
     } else {
       const nextTask = tasksRef.current[0]
       if (nextTask) selectTask(nextTask)
-      else setContextView("none")
+      else setContextPanelOpen(false)
     }
   }
 
@@ -1041,7 +1048,7 @@ export function TaskWorkspaceShell() {
           }}
           onSearchSubmit={submitPhoneSearch}
           onAnalyticsSelect={() => {
-            setContextView("none")
+            setContextPanelOpen(false)
             setView("analytics")
           }}
           onEngagementSelect={selectEngagement}
@@ -1083,60 +1090,72 @@ export function TaskWorkspaceShell() {
                   onAIInteractionOpen={setSelectedAIInteractionID}
                 />
               </div>
-              {contextView !== "none" &&
-                ((contextView === "task" && selectedTask) ||
-                  (contextView === "call" && (historicalCall || activeCall))) && (
-                  <aside
-                    aria-label={`${contextView === "task" ? "Task" : "Call"} context`}
-                    className="absolute inset-y-3 right-3 flex w-[calc(100%-1.5rem)] max-w-sm flex-col overflow-hidden rounded-xl border bg-popover shadow-lg lg:relative lg:inset-auto lg:my-3 lg:mr-3 lg:w-96 lg:max-w-none lg:shrink-0"
-                  >
-                    <div className="flex h-12 shrink-0 items-center border-b px-4">
-                      <p className="text-sm font-medium">
-                        {contextView === "task" ? "Task context" : "Call context"}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="ml-auto"
-                        aria-label="Close context panel"
-                        onClick={closeContextPanel}
-                      >
-                        <PanelRightCloseIcon />
-                      </Button>
-                    </div>
-                    <div className="flex min-h-0 flex-1">
-                      <InteractionWorkspace
-                        task={selectedTask}
-                        activeCall={historicalCall ?? activeCall}
-                        view={contextView}
-                        canMutate
-                        canCall={callingEnabled}
-                        historyHint={workspaceRevision}
-                        taskCallPending={Boolean(taskCallRequest)}
-                        taskCallError={taskCallError}
-                        onTaskUpdated={(task) => {
-                          updateTaskProjection(task, false)
-                          updateSelectedTask(task)
-                          setContextView("task")
-                          void loadTasks()
-                        }}
-                        onStartTaskCall={(task) => {
-                          setTaskCallError("")
-                          returnTaskIDRef.current = task.id
-                          setTaskCallRequest({
-                            id: window.crypto.randomUUID(),
-                            taskID: task.id,
-                          })
-                        }}
-                        onReturnToCall={() => {
-                          if (!activeCall) return
-                          setContextView("call")
-                        }}
-                      />
-                    </div>
-                  </aside>
+              <aside
+                aria-label={`${contextView === "task" ? "Task" : "Call"} context`}
+                aria-hidden={!contextPanelOpen}
+                data-state={contextPanelOpen ? "open" : "closed"}
+                data-testid="context-panel"
+                inert={!contextPanelOpen}
+                className={cn(
+                  "absolute inset-y-3 right-3 flex w-[calc(100%-1.5rem)] max-w-[20rem] flex-col overflow-hidden rounded-xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
+                  contextPanelOpen
+                    ? "translate-x-0 opacity-100 lg:mr-3 lg:w-72"
+                    : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:mr-0 lg:w-0",
                 )}
+                onTransitionEnd={(event) => {
+                  if (event.currentTarget === event.target && !contextPanelOpen) {
+                    setHistoricalCall(undefined)
+                  }
+                }}
+              >
+                <div className="flex h-12 shrink-0 items-center border-b px-4">
+                  <p className="text-sm font-medium">
+                    {contextView === "task" ? "Task context" : "Call context"}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="ml-auto"
+                    aria-label="Close context panel"
+                    onClick={closeContextPanel}
+                  >
+                    <PanelRightCloseIcon />
+                  </Button>
+                </div>
+                <div className="flex min-h-0 flex-1">
+                  <InteractionWorkspace
+                    task={selectedTask}
+                    activeCall={historicalCall ?? activeCall}
+                    view={contextView}
+                    canMutate
+                    canCall={callingEnabled}
+                    historyHint={workspaceRevision}
+                    taskCallPending={Boolean(taskCallRequest)}
+                    taskCallError={taskCallError}
+                    onTaskUpdated={(task) => {
+                      updateTaskProjection(task, false)
+                      updateSelectedTask(task)
+                      setContextView("task")
+                      setContextPanelOpen(true)
+                      void loadTasks()
+                    }}
+                    onStartTaskCall={(task) => {
+                      setTaskCallError("")
+                      returnTaskIDRef.current = task.id
+                      setTaskCallRequest({
+                        id: window.crypto.randomUUID(),
+                        taskID: task.id,
+                      })
+                    }}
+                    onReturnToCall={() => {
+                      if (!activeCall) return
+                      setContextView("call")
+                      setContextPanelOpen(true)
+                    }}
+                  />
+                </div>
+              </aside>
             </div>
           ) : (
             <section aria-label="No number selected" className="min-h-0 flex-1" />
