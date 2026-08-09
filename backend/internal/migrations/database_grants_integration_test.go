@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5"
@@ -16,6 +17,70 @@ var runtimeRoles = []string{
 	"acuity_provider",
 	"acuity_realtime",
 	"acuity_worker",
+}
+
+func TestPortalCanLockServiceVoiceAuthorization(t *testing.T) {
+	pool := testdb.Open(t)
+	createDatabaseRoles(t, pool)
+	applyDatabaseGrants(t, pool)
+
+	ctx := context.Background()
+	var practiceID, locationID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO access_practices (provisioning_key, name)
+		VALUES ('voice-authorization-test', 'Voice Authorization Test')
+		RETURNING id::text
+	`).Scan(&practiceID); err != nil {
+		t.Fatalf("seed voice authorization Practice: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO access_locations (practice_id, provisioning_key, name)
+		VALUES ($1, 'main', 'Main')
+		RETURNING id::text
+	`, practiceID).Scan(&locationID); err != nil {
+		t.Fatalf("seed voice authorization Location: %v", err)
+	}
+	const phone = "+17275550123"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id, location_id, phone, enabled
+		) VALUES ($1, $2, $3, true)
+	`, practiceID, locationID, phone); err != nil {
+		t.Fatalf("seed voice authorization number: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin portal voice authorization: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE acuity_portal"); err != nil {
+		t.Fatalf("set portal database role: %v", err)
+	}
+	authorization, err := access.New(pool, nil).LockServiceVoiceAuthorization(
+		ctx,
+		tx,
+		access.ServiceIdentity{
+			Subject:       "abita-agent",
+			PracticeID:    practiceID,
+			LocationScope: access.LocationScopeAll,
+			Capabilities: []access.ServiceCapability{
+				access.ServiceCapabilityIngestAIInteraction,
+			},
+		},
+		phone,
+		access.ServiceCapabilityIngestAIInteraction,
+	)
+	if err != nil {
+		t.Fatalf("authorize Product voice as acuity_portal: %v", err)
+	}
+	if authorization.LocationID != locationID {
+		t.Fatalf(
+			"authorized Location = %q, want %q",
+			authorization.LocationID,
+			locationID,
+		)
+	}
 }
 
 func TestDatabaseGrantsMatchRuntimeAuthority(t *testing.T) {

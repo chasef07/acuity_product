@@ -826,7 +826,7 @@ func (m *Module) LockServiceVoiceAuthorization(
 					AND duplicate.enabled
 					AND duplicate.location_id <> voice.location_id
 			)
-		FOR SHARE OF voice, location
+		FOR SHARE OF location
 	`, identity.PracticeID, phone).Scan(&locationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceAuthorization{}, ErrDenied
