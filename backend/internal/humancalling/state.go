@@ -237,7 +237,18 @@ func (m *Module) readScopedVoicemailState(
 	var result CallingStateCall
 	err := m.pool.QueryRow(ctx, `
 		SELECT call.id::text, caller.id::text, call.practice_id::text,
-			call.location_id::text, location.name, caller.state, call.version
+			call.location_id::text, location.name,
+			CASE
+				WHEN call.terminal_outcome = 'VOICEMAIL' THEN 'VOICEMAIL'
+				WHEN EXISTS (
+					SELECT 1 FROM human_calling_provider_commands recording
+					WHERE recording.call_id = call.id
+						AND recording.action = 'START_VOICEMAIL_RECORDING'
+						AND recording.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+				) THEN 'VOICEMAIL_RECORDING'
+				ELSE 'VOICEMAIL_GREETING'
+			END,
+			call.version
 		FROM human_calling_calls call
 		JOIN human_calling_call_legs caller
 			ON caller.call_id = call.id AND caller.role = 'CALLER'
@@ -247,7 +258,18 @@ func (m *Module) readScopedVoicemailState(
 		JOIN access_calling_scopes calling_scope
 			ON calling_scope.practice_id = call.practice_id
 			AND calling_scope.user_subject = $1
-		WHERE call.terminal_outcome = 'VOICEMAIL'
+		WHERE (
+				call.terminal_outcome = 'VOICEMAIL'
+				OR (
+					call.terminal_outcome IS NULL
+					AND EXISTS (
+						SELECT 1 FROM human_calling_provider_commands voicemail
+						WHERE voicemail.call_id = call.id
+							AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
+							AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+					)
+				)
+			)
 			AND call.disposition_at IS NULL
 			AND (
 				calling_scope.location_scope = 'ALL'

@@ -20,6 +20,7 @@ type callProjection struct {
 	disposition      string
 	staffState       string
 	destinationState string
+	voicemailPhase   string
 }
 
 func (m *Module) ReadCall(
@@ -93,6 +94,21 @@ func (m *Module) loadCallProjection(
 				WHERE leg.call_id = call.id AND leg.role = 'DESTINATION'
 				ORDER BY leg.sequence DESC LIMIT 1
 			), ''),
+			COALESCE((
+				SELECT CASE command.action
+					WHEN 'START_VOICEMAIL_RECORDING' THEN 'VOICEMAIL_RECORDING'
+					ELSE 'VOICEMAIL_GREETING'
+				END
+				FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
+					AND command.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+				ORDER BY
+					CASE command.action WHEN 'START_VOICEMAIL_RECORDING' THEN 1 ELSE 2 END,
+					command.created_at DESC,
+					command.id DESC
+				LIMIT 1
+			), ''),
 			COALESCE(voicemail.outcome, ''), COALESCE(voicemail.audio_state, ''),
 			COALESCE(voicemail.task_id::text, ''),
 			COALESCE(voicemail.duration_millis / 1000, 0)
@@ -112,6 +128,7 @@ func (m *Module) loadCallProjection(
 		&result.terminalOutcome, &result.disposition,
 		&result.call.DispositionDeadline, &result.call.RetryOfCallID,
 		&connectedAt, &result.staffState, &result.destinationState,
+		&result.voicemailPhase,
 		&result.call.Voicemail.Outcome, &result.call.Voicemail.AudioState,
 		&result.call.Voicemail.TaskID, &result.call.Voicemail.DurationSeconds,
 	)
@@ -120,7 +137,8 @@ func (m *Module) loadCallProjection(
 	}
 	result.call.ConnectedAt = connectedAt
 	result.call.State = deriveCallState(result.terminalOutcome, result.disposition,
-		result.staffState, result.destinationState, result.call.Direction,
+		result.staffState, result.destinationState, result.voicemailPhase,
+		result.call.Direction,
 		connectedAt != nil)
 	result.call.RetryAllowed = result.call.Direction == CallOutbound &&
 		(result.call.State == CallUnanswered || result.call.State == CallMissed)
@@ -132,6 +150,7 @@ func deriveCallState(
 	disposition string,
 	staffState string,
 	destinationState string,
+	voicemailPhase string,
 	direction CallDirection,
 	connected bool,
 ) CallState {
@@ -161,6 +180,12 @@ func deriveCallState(
 		default:
 			return CallUnanswered
 		}
+	}
+	if voicemailPhase == string(CallVoicemailRecording) {
+		return CallVoicemailRecording
+	}
+	if voicemailPhase == string(CallVoicemailGreeting) {
+		return CallVoicemailGreeting
 	}
 	if staffState == "BRIDGED" || destinationState == "BRIDGED" {
 		return CallConnected
@@ -271,7 +296,7 @@ func (m *Module) QueryCallHistory(
 		}
 		item.Type = "CALL"
 		item.Outcome = deriveCallState(terminal, disposition, staffState,
-			destinationState, CallDirection(item.Direction), connected)
+			destinationState, "", CallDirection(item.Direction), connected)
 		item.Current = item.ID == query.CurrentCallID
 		item.Originating = item.ID == query.OriginatingCallID
 		page.Items = append(page.Items, item)
