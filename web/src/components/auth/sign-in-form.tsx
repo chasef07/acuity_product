@@ -1,17 +1,21 @@
 "use client"
 
 import { useRouter, useSearchParams } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { FieldError, FieldGroup } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
-import { authClient } from "@/lib/auth-client"
+import { authClient, clearAccessToken } from "@/lib/auth-client"
 
 export function SignInForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const session = authClient.useSession()
   const [pending, setPending] = useState(false)
+  const [signedInDestination, setSignedInDestination] = useState<string | null>(
+    null,
+  )
   const [error, setError] = useState<string | null>(
     searchParams.get("error") === "google"
       ? "Google sign-in didn’t finish. Try again."
@@ -23,10 +27,28 @@ export function SignInForm() {
     return requested?.startsWith("/") ? requested : "/workspace"
   }
 
+  useEffect(() => {
+    if (!signedInDestination) return
+    if (session.data) {
+      router.replace(signedInDestination)
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setSignedInDestination(null)
+      setPending(false)
+      setError(
+        "Google sign-in finished, but the session was not ready. Try again.",
+      )
+    }, 5_000)
+    return () => window.clearTimeout(timeout)
+  }, [router, session.data, signedInDestination])
+
   async function signInWithGoogle() {
     const destination = nextDestination()
     setPending(true)
     setError(null)
+    clearAccessToken()
     const result = await authClient.signIn.popup({
       provider: "google",
       callbackURL: destination,
@@ -37,8 +59,7 @@ export function SignInForm() {
       setError(googleErrorMessage(result.error.code))
       return
     }
-    setPending(false)
-    router.replace(destination)
+    setSignedInDestination(destination)
   }
 
   return (

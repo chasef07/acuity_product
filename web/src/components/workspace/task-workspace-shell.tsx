@@ -940,7 +940,9 @@ export function TaskWorkspaceShell() {
         description="Your identity is valid, but current Practice or Location authority is not available."
         action="Return to sign in"
         onAction={() =>
-          void authClient.signOut().then(() => router.push("/sign-in"))
+          void authClient.signOut().then((result) => {
+            if (!result.error) router.push("/sign-in")
+          })
         }
       />
     )
