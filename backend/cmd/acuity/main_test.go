@@ -289,6 +289,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	wantGreetings := []greetingConfiguration{
 		{Practice: "abita-eye-group", Location: "crystal-river", Greeting: sharedGreeting},
+		{Practice: "abita-eye-group", Location: "hollywood", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "north-miami-beach-optical", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: sharedGreeting},
