@@ -584,5 +584,33 @@
         "scale": 0.01
       }
     }
+  },
+  {
+    "name": "acuity_call_center_terminal_staff_occupancy",
+    "description": "Periodic count of terminal Calls whose Staff CallLeg still occupies softphone capacity beyond the reconciliation window.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_terminal_cleanup\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.staff_occupancy)",
+    "bucketOptions": {
+      "linearBuckets": {
+        "numFiniteBuckets": 20,
+        "width": 1,
+        "offset": 0
+      }
+    }
   }
 ]

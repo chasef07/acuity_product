@@ -65,6 +65,7 @@ These thresholds are operating hypotheses, not SLOs:
 | Lost Staff answer race ratio above 0.5 | more than half in 5 minutes |
 | At least ten Staff answers in five minutes | contention-volume guard |
 | Answer-to-Bridge p95 above eight seconds | p95 over 10 minutes for 60 seconds |
+| Any terminal Staff occupancy beyond reconciliation window | any sampled occupancy for 60 seconds after the 60-second reconciliation window |
 
 Load evidence must replace the receipt-depth and Staff-answer-contention hypotheses
 with measured baselines before the production gate is complete.
