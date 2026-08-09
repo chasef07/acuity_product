@@ -29,27 +29,60 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 	var commandID string
 	err = tx.QueryRow(ctx, `
 		SELECT command.id::text
-		FROM human_calling_provider_commands command
-		WHERE command.state = 'PENDING'
-			AND command.next_attempt_at <= $1
-			AND command.action <> 'CREATE_JWT'
-			AND (
-				command.depends_on_command_id IS NULL
-				OR EXISTS (
-					SELECT 1 FROM human_calling_provider_commands dependency
-					WHERE dependency.id = command.depends_on_command_id
-						AND dependency.state IN ('SENT', 'RECONCILED')
+		FROM human_calling_calls call
+		JOIN LATERAL (
+			SELECT pending.id, pending.created_at
+			FROM human_calling_provider_commands pending
+			WHERE pending.call_id = call.id
+				AND pending.state = 'PENDING'
+				AND pending.next_attempt_at <= $1
+				AND pending.action <> 'CREATE_JWT'
+				AND (
+					pending.depends_on_command_id IS NULL
+					OR EXISTS (
+						SELECT 1 FROM human_calling_provider_commands dependency
+						WHERE dependency.id = pending.depends_on_command_id
+							AND dependency.state IN ('SENT', 'RECONCILED')
+					)
 				)
-			)
+			ORDER BY pending.created_at, pending.id
+			LIMIT 1
+		) command ON true
+		WHERE NOT EXISTS (
+			SELECT 1 FROM human_calling_provider_commands active
+			WHERE active.call_id = call.id
+				AND active.state IN ('SENDING', 'AMBIGUOUS')
+		)
 		ORDER BY command.created_at, command.id
-		FOR UPDATE SKIP LOCKED
+		FOR UPDATE OF call SKIP LOCKED
 		LIMIT 1
 	`, m.now()).Scan(&commandID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return "", false, err
+		err = tx.QueryRow(ctx, `
+			SELECT command.id::text
+			FROM human_calling_provider_commands command
+			WHERE command.call_id IS NULL
+				AND command.state = 'PENDING'
+				AND command.next_attempt_at <= $1
+				AND command.action <> 'CREATE_JWT'
+				AND (
+					command.depends_on_command_id IS NULL
+					OR EXISTS (
+						SELECT 1 FROM human_calling_provider_commands dependency
+						WHERE dependency.id = command.depends_on_command_id
+							AND dependency.state IN ('SENT', 'RECONCILED')
+					)
+				)
+			ORDER BY command.created_at, command.id
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		`, m.now()).Scan(&commandID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if err := tx.Commit(ctx); err != nil {
+				return "", false, err
+			}
+			return "", false, nil
 		}
-		return "", false, nil
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("select provider command: %w", err)
@@ -68,16 +101,48 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 }
 
 func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) error {
-	tag, err := m.pool.Exec(ctx, `
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin committed provider command claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var callID string
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(call_id::text, '')
+		FROM human_calling_provider_commands
+		WHERE id = $1 AND state = 'PENDING'
+	`, commandID).Scan(&callID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		return fmt.Errorf("read committed provider command claim: %w", err)
+	}
+	if callID != "" {
+		if err := tx.QueryRow(ctx, `
+			SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
+		`, callID).Scan(&callID); err != nil {
+			return fmt.Errorf("lock provider command Call: %w", err)
+		}
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
 		WHERE id = $1 AND state = 'PENDING'
+			AND NOT EXISTS (
+				SELECT 1 FROM human_calling_provider_commands active
+				WHERE active.call_id = human_calling_provider_commands.call_id
+					AND active.id <> human_calling_provider_commands.id
+					AND active.state IN ('SENDING', 'AMBIGUOUS')
+			)
 	`, commandID, m.now())
 	if err != nil {
 		return fmt.Errorf("claim committed provider command: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return ErrConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit provider command claim: %w", err)
 	}
 	return nil
 }

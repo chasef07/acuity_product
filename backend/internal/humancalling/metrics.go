@@ -72,6 +72,71 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 		m.observer,
 		observability.ReceiptQueue(depth, oldestAge, quarantinedDepth),
 	)
+	var staffOccupancy, unresolvedHangups int64
+	var oldestStaffOccupancy, oldestHangup *time.Time
+	if err := m.pool.QueryRow(ctx, `
+		SELECT
+			occupancy.depth,
+			occupancy.oldest,
+			hangup.depth,
+			hangup.oldest
+		FROM (
+			SELECT count(*) AS depth,
+				min(COALESCE(
+					leg.ending_at,
+					leg.bridged_at,
+					leg.bridge_pending_at,
+					leg.updated_at
+				)) AS oldest
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE call.terminal_outcome IS NOT NULL
+				AND leg.role = 'STAFF'
+				AND (
+					leg.state IN ('BRIDGE_PENDING', 'BRIDGED')
+					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
+				)
+				AND COALESCE(
+					leg.ending_at,
+					leg.bridged_at,
+					leg.bridge_pending_at,
+					leg.updated_at
+				) <= $1::timestamptz - interval '60 seconds'
+		) occupancy
+		CROSS JOIN (
+			SELECT count(*) AS depth, min(command.created_at) AS oldest
+			FROM human_calling_calls call
+			JOIN human_calling_provider_commands command ON command.call_id = call.id
+			WHERE call.terminal_outcome IS NOT NULL
+				AND command.action = 'HANGUP_LEG'
+				AND command.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS')
+				AND command.created_at <= $1::timestamptz - interval '60 seconds'
+		) hangup
+	`, now).Scan(
+		&staffOccupancy,
+		&oldestStaffOccupancy,
+		&unresolvedHangups,
+		&oldestHangup,
+	); err != nil {
+		return fmt.Errorf("read terminal Call cleanup invariant: %w", err)
+	}
+	oldestStaffOccupancyAge := time.Duration(0)
+	if oldestStaffOccupancy != nil {
+		oldestStaffOccupancyAge = now.Sub(*oldestStaffOccupancy)
+	}
+	oldestHangupAge := time.Duration(0)
+	if oldestHangup != nil {
+		oldestHangupAge = now.Sub(*oldestHangup)
+	}
+	observability.Record(
+		m.observer,
+		observability.TerminalCleanup(
+			staffOccupancy,
+			oldestStaffOccupancyAge,
+			unresolvedHangups,
+			oldestHangupAge,
+		),
+	)
 	return nil
 }
 

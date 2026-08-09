@@ -457,5 +457,39 @@
         }
       }
     ]
+  },
+  {
+    "displayName": "Acuity call center - terminal Staff occupancy",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "terminal_staff_occupancy"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "A terminal Call still has a Staff CallLeg occupying softphone capacity after the 60-second reconciliation window. Inspect worker reconciliation and the PHI-free terminal cleanup invariant before manual intervention."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Any terminal Staff occupancy beyond reconciliation window",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_terminal_staff_occupancy\" AND resource.type=\"cloud_run_worker_pool\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "60s"
+        }
+      }
+    ]
   }
 ]

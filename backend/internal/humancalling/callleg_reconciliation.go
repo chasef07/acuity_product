@@ -77,10 +77,15 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			FROM human_calling_provider_commands pending
 			WHERE pending.call_leg_id = leg.id
 				AND pending.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+				AND (call.terminal_outcome IS NULL OR pending.action = 'HANGUP_LEG')
 			ORDER BY pending.created_at, pending.id
 			LIMIT 1
 		) command ON true
-		WHERE call.terminal_outcome IS NULL
+		WHERE (
+				call.terminal_outcome IS NULL
+				OR leg.state = 'ENDING'
+				OR command.id IS NOT NULL
+			)
 			AND (leg.state NOT IN ('ENDED', 'FAILED') OR command.id IS NOT NULL)
 			AND (
 				(leg.provider_call_control_id IS NOT NULL AND leg.provider_call_leg_id IS NOT NULL)

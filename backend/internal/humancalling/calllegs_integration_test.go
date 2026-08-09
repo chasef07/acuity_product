@@ -751,6 +751,289 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}
 }
 
+func TestTerminalStaffHangupReconciliationReleasesSoftphone(t *testing.T) {
+	pool, calling, provider, staff, callID, legID, commandID :=
+		prepareTerminalStaffHangup(t, false)
+
+	before, err := calling.ReadCallingState(context.Background(), staff)
+	if err != nil || before.Softphone.Available || before.Softphone.ActiveCallID != callID {
+		t.Fatalf("terminal Staff occupancy before reconciliation = %#v, %v", before.Softphone, err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile terminal inactive Staff leg = %d, %v", reconciled, err)
+	}
+
+	var legState, commandState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE leg.id = $1 AND command.id = $2
+	`, legID, commandID).Scan(&legState, &commandState); err != nil {
+		t.Fatal(err)
+	}
+	after, err := calling.ReadCallingState(context.Background(), staff)
+	if err != nil || legState != "ENDED" || commandState != "RECONCILED" ||
+		!after.Softphone.Available || after.Softphone.ActiveCallID != "" {
+		t.Fatalf("terminal Staff cleanup = leg=%s command=%s softphone=%#v err=%v observations=%d",
+			legState, commandState, after.Softphone, err, len(provider.observations))
+	}
+}
+
+func TestTerminalActiveStaffHangupRetriesExactCleanup(t *testing.T) {
+	pool, calling, provider, _, callID, legID, commandID :=
+		prepareTerminalStaffHangup(t, true)
+	dialCount := provider.count(humancalling.CommandDialStaff)
+
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile terminal active Staff leg = %d, %v", reconciled, err)
+	}
+
+	var terminal, originalState, retryLegID, retryTarget string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, original.state,
+			retry.call_leg_id::text, retry.target_id
+		FROM human_calling_calls call
+		JOIN human_calling_provider_commands original ON original.id = $2
+		JOIN human_calling_provider_commands retry
+			ON retry.call_id = call.id AND retry.action = 'HANGUP_LEG'
+			AND retry.state = 'PENDING' AND retry.id <> original.id
+		WHERE call.id = $1
+	`, callID, commandID).Scan(
+		&terminal, &originalState, &retryLegID, &retryTarget,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if terminal != "ENDED" || originalState != "FAILED" || retryLegID != legID ||
+		retryTarget != "terminal-staff-control" ||
+		provider.count(humancalling.CommandDialStaff) != dialCount {
+		t.Fatalf("active terminal cleanup = terminal=%s original=%s retry=%s/%s dials=%d want %d",
+			terminal, originalState, retryLegID, retryTarget,
+			provider.count(humancalling.CommandDialStaff), dialCount)
+	}
+}
+
+func TestWorkerMetricsReportTerminalStaffCleanupInvariant(t *testing.T) {
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"worker-terminal-cleanup-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
+	pool, calling, _, _, _, legID, _ := prepareTerminalStaffHangup(t, false, observer)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET updated_at = ending_at + interval '2 minutes'
+		WHERE id = $1
+	`, legID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+		t.Fatalf("report terminal cleanup invariant: %v", err)
+	}
+	for _, fragment := range []string{
+		`"metric":"acuity_call_center_terminal_cleanup"`,
+		`"staff_occupancy":1`,
+		`"unresolved_hangups":1`,
+		`"oldest_staff_occupancy_seconds":120`,
+		`"oldest_hangup_seconds":120`,
+	} {
+		if !strings.Contains(metrics.String(), fragment) {
+			t.Fatalf("terminal cleanup metric omitted %s: %s", fragment, metrics.String())
+		}
+	}
+}
+
+func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 10, 15, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "command-claim", 1)
+	provider := &recordingProvider{
+		blockAction:  humancalling.CommandStopRingWindow,
+		blockStarted: make(chan struct{}),
+		blockRelease: make(chan struct{}),
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		FromNumber:             "+14843336938",
+		RingbackURL:            "https://media.synthetic.test/ringback.wav",
+	}, func() time.Time { return now })
+
+	callIDs := make([]string, 2)
+	for index := range callIDs {
+		suffix := fmt.Sprint(index + 1)
+		if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject: "abita-command-claim", PracticeID: authorization.Practice.ID,
+			},
+			LocationID:     authorization.Locations[0].ID,
+			SourceCallID:   "command-claim-source-" + suffix,
+			IdempotencyKey: "command-claim-handoff-" + suffix,
+			Contact:        humancalling.ContactContext{Phone: "+1555555010" + suffix},
+		}); err != nil {
+			t.Fatalf("create command claim handoff %s: %v", suffix, err)
+		}
+		if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+			EventID: "command-claim-initiated-" + suffix,
+			Type:    humancalling.FactCallInitiated, OccurredAt: now,
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: "command-claim-control-" + suffix,
+			CallLegID:     "command-claim-leg-" + suffix,
+			CallSessionID: "command-claim-session-" + suffix,
+			From:          "+1555555010" + suffix, To: "+14843989071",
+		}); err != nil {
+			t.Fatalf("create command claim Call %s: %v", suffix, err)
+		}
+		if err := pool.QueryRow(context.Background(), `
+			SELECT call.id::text
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE leg.role = 'CALLER' AND leg.provider_call_control_id = $1
+		`, "command-claim-control-"+suffix).Scan(&callIDs[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, action, target_id, payload, created_at, next_attempt_at
+		) VALUES
+			($1, 'STOP_RING_WINDOW', 'call-a-first', '{}', $3::timestamptz - interval '3 seconds', $3),
+			($1, 'STOP_RING_WINDOW', 'call-a-second', '{}', $3::timestamptz - interval '2 seconds', $3),
+			($2, 'STOP_RING_WINDOW', 'call-b', '{}', $3::timestamptz - interval '1 second', $3)
+	`, callIDs[0], callIDs[1], now); err != nil {
+		t.Fatal(err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err == nil && !processed {
+			err = errors.New("first worker found no command")
+		}
+		firstDone <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first command did not reach provider barrier")
+	}
+
+	processed, secondErr := calling.ProcessNextCommand(context.Background())
+	close(provider.blockRelease)
+	if firstErr := <-firstDone; firstErr != nil {
+		t.Fatalf("first command worker: %v", firstErr)
+	}
+	if secondErr != nil || !processed {
+		t.Fatalf("second command worker = processed=%t err=%v", processed, secondErr)
+	}
+	var pendingA, sentB int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*) FILTER (WHERE call_id = $1 AND state = 'PENDING'),
+			count(*) FILTER (WHERE call_id = $2 AND state = 'SENT')
+		FROM human_calling_provider_commands
+	`, callIDs[0], callIDs[1]).Scan(&pendingA, &sentB); err != nil {
+		t.Fatal(err)
+	}
+	if pendingA != 1 || sentB != 1 {
+		t.Fatalf("concurrent command claims left pending Call A=%d sent Call B=%d", pendingA, sentB)
+	}
+}
+
+func prepareTerminalStaffHangup(
+	t *testing.T,
+	providerActive bool,
+	observers ...observability.Observer,
+) (*pgxpool.Pool, *humancalling.Module, *recordingProvider, access.Identity, string, string, string) {
+	t.Helper()
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{observations: []humancalling.ProviderCallObservation{{
+		Active:        providerActive,
+		CallControlID: "terminal-staff-control",
+		CallLegID:     "terminal-staff-provider-leg",
+		CallSessionID: "terminal-staff-session",
+	}}}
+	pool, calling, _, staff := prepareInboundFanout(
+		t, now, "terminal-staff-cleanup", provider, 1, observers...,
+	)
+	var callID, legID, commandID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.id::text, leg.id::text
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg ON leg.call_id = call.id
+		WHERE leg.role = 'STAFF'
+	`).Scan(&callID, &legID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'ENDED', ended_at = $2::timestamptz,
+			disposition_deadline = $2::timestamptz + interval '30 seconds',
+			updated_at = $2::timestamptz
+		WHERE id = $1
+	`, callID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDED',
+			ending_at = COALESCE(answered_at, $2::timestamptz),
+			ended_at = COALESCE(answered_at, $2::timestamptz),
+			updated_at = $2::timestamptz
+		WHERE call_id = $1 AND id <> $3
+	`, callID, now, legID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDING', provider_connection_id = 'staff-call-control-connection',
+			provider_call_control_id = 'terminal-staff-control',
+			provider_call_leg_id = 'terminal-staff-provider-leg',
+			provider_call_session_id = 'terminal-staff-session',
+			answered_at = $2::timestamptz - interval '2 minutes',
+			ending_at = $2::timestamptz - interval '2 minutes',
+			updated_at = $2::timestamptz - interval '2 minutes'
+		WHERE id = $1
+	`, legID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'RECONCILED', updated_at = $2
+		WHERE call_id = $1
+	`, callID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, user_subject, action, target_id, payload,
+			state, sent_at, created_at, updated_at
+		)
+		VALUES (
+			$1, $2, $3, 'HANGUP_LEG', 'terminal-staff-control', '{}',
+			'SENT', $4::timestamptz - interval '2 minutes',
+			$4::timestamptz - interval '2 minutes',
+			$4::timestamptz - interval '2 minutes'
+		)
+		RETURNING id::text
+	`, callID, legID, staff[0].Subject, now).Scan(&commandID); err != nil {
+		t.Fatal(err)
+	}
+	return pool, calling, provider, staff[0], callID, legID, commandID
+}
+
 func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 10, 13, 0, 0, 0, time.UTC)

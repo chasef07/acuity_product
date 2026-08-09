@@ -136,6 +136,19 @@ func ReceiptQueue(
 		"quarantined_depth", max(quarantinedDepth, 0))
 }
 
+func TerminalCleanup(
+	staffOccupancy int64,
+	oldestStaffOccupancy time.Duration,
+	unresolvedHangups int64,
+	oldestHangup time.Duration,
+) Event {
+	return event("acuity_call_center_terminal_cleanup",
+		"staff_occupancy", max(staffOccupancy, 0),
+		"oldest_staff_occupancy_seconds", positive(oldestStaffOccupancy).Seconds(),
+		"unresolved_hangups", max(unresolvedHangups, 0),
+		"oldest_hangup_seconds", positive(oldestHangup).Seconds())
+}
+
 func ReceiptProcessed(outcome ReceiptOutcome, queueAge, duration time.Duration) Event {
 	return event("acuity_call_center_receipt_processing",
 		"outcome", bounded(string(outcome), "applied", "unknown", "failed", "retry", "quarantined"),
