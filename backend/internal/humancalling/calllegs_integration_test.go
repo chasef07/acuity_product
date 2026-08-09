@@ -751,6 +751,112 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}
 }
 
+func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 10, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "outbound-media-timeout", 1,
+	)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "outbound-media-timeout-control",
+		CallLegID:     "outbound-media-timeout-provider-leg",
+	}}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "outbound-media-timeout-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "outbound-media-timeout-practice",
+			LocationKey: "outbound-media-timeout-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: "outbound-media-timeout-browser-1",
+			IdempotencyKey: "outbound-media-timeout",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialOutboundStaff)
+	clientState, _ := dial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: "outbound-media-timeout-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "outbound-media-timeout-control",
+		CallLegID:     "outbound-media-timeout-provider-leg",
+		CallSessionID: "outbound-media-timeout-session", ClientState: clientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	staffFact.EventID = "outbound-media-timeout-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(2 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff answer: %v", err)
+	}
+
+	now = now.Add(21 * time.Second)
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("early outbound media expiry = %d, %v", reconciled, err)
+	}
+	now = now.Add(2 * time.Second)
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("expire unconfirmed outbound media = %d, %v", reconciled, err)
+	}
+	var outcome, termination, staffState, staffError, hangupTarget string
+	var destinationLegs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, call.provider_termination,
+			staff_leg.state, staff_leg.error_code,
+			(SELECT count(*) FROM human_calling_call_legs destination
+			 WHERE destination.call_id = call.id AND destination.role = 'DESTINATION'),
+			hangup.target_id
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs staff_leg
+			ON staff_leg.call_id = call.id AND staff_leg.role = 'STAFF'
+		JOIN human_calling_provider_commands hangup
+			ON hangup.call_leg_id = staff_leg.id AND hangup.action = 'HANGUP_LEG'
+		WHERE call.id = $1
+	`, call.ID).Scan(&outcome, &termination, &staffState, &staffError,
+		&destinationLegs, &hangupTarget); err != nil {
+		t.Fatal(err)
+	}
+	if outcome != "UNANSWERED" || termination != "MEDIA_READINESS_FAILED" ||
+		staffState != "FAILED" || staffError != "MEDIA_READINESS_FAILED" ||
+		destinationLegs != 0 || hangupTarget != "outbound-media-timeout-control" {
+		t.Fatalf("expired media outcome=%s termination=%s staff=%s error=%s destinations=%d hangup=%s",
+			outcome, termination, staffState, staffError, destinationLegs, hangupTarget)
+	}
+	readiness, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity: staff[0], SessionID: "outbound-media-timeout-browser-1",
+		Registered: true, MicrophoneReady: true, AudioReady: true,
+		SessionHealthy: true, Available: true,
+	})
+	if err != nil || !readiness.Available || readiness.ActiveCallID != "" {
+		t.Fatalf("released outbound softphone = %#v, err = %v", readiness, err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("expired outbound media Hangups = %#v", provider.commands)
+	}
+}
+
 func TestCallerAbandonmentCancelsUnsentFanout(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 14, 0, 0, 0, time.UTC)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
