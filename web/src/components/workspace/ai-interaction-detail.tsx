@@ -9,13 +9,6 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { portalClient } from "@/lib/api/client"
 import { getAiInteraction } from "@/lib/api/generated/sdk.gen"
@@ -30,12 +23,10 @@ import {
 } from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
 
-export function AIInteractionDetailDialog({
+export function AIInteractionContext({
   interactionID,
-  onClose,
 }: {
   interactionID: string
-  onClose: () => void
 }) {
   const [request, setRequest] = useState<{
     interactionID: string
@@ -78,65 +69,53 @@ export function AIInteractionDetailDialog({
     return () => controller.abort()
   }, [interactionID])
 
-  return (
-    <Dialog
-      open={Boolean(interactionID)}
-      onOpenChange={(open) => !open && onClose()}
-    >
-      <DialogContent className="max-h-[calc(100vh-2rem)] gap-0 overflow-hidden p-0 sm:max-w-2xl">
-        <DialogHeader className="border-b px-5 py-4 pr-12">
-          <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle className="text-base">AI call details</DialogTitle>
-            {detail && (
-              <>
-                <Badge
-                  variant={
-                    detail.status === "ESCALATED" ? "outline" : "secondary"
-                  }
-                >
-                  {detail.status === "ESCALATED" ? (
-                    <PhoneForwardedIcon aria-hidden="true" />
-                  ) : (
-                    <BotIcon aria-hidden="true" />
-                  )}
-                  {aiCallCompletionLabel(detail.status)}
-                </Badge>
-                <Badge variant="outline">
-                  <CalendarCheck2Icon aria-hidden="true" />
-                  {appointmentOutcomeLabel(detail.appointmentOutcome)}
-                </Badge>
-              </>
-            )}
-          </div>
-          <DialogDescription>
-            Appointment and call details recorded by the AI receptionist.
-          </DialogDescription>
-        </DialogHeader>
+  if (loading) {
+    return (
+      <div className="flex min-h-48 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        Loading appointment
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="p-4">
+        <Alert variant="destructive">
+          <AlertTitle>Appointment unavailable</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    )
+  }
+  if (!detail) return null
 
-        {loading && (
-          <div className="flex min-h-64 items-center justify-center gap-2 text-muted-foreground">
-            <Spinner />
-            Loading AI call
-          </div>
-        )}
-        {!loading && error && (
-          <div className="p-5">
-            <Alert variant="destructive">
-              <AlertTitle>AI call unavailable</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          </div>
-        )}
-        {!loading && detail && <AIInteractionDetailView detail={detail} />}
-      </DialogContent>
-    </Dialog>
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex flex-wrap gap-2 border-b px-4 py-3">
+        <Badge
+          variant={detail.status === "ESCALATED" ? "outline" : "secondary"}
+        >
+          {detail.status === "ESCALATED" ? (
+            <PhoneForwardedIcon aria-hidden="true" />
+          ) : (
+            <BotIcon aria-hidden="true" />
+          )}
+          {aiCallCompletionLabel(detail.status)}
+        </Badge>
+        <Badge variant="outline">
+          <CalendarCheck2Icon aria-hidden="true" />
+          {appointmentOutcomeLabel(detail.appointmentOutcome)}
+        </Badge>
+      </div>
+      <AIInteractionDetailView detail={detail} />
+    </div>
   )
 }
 
 function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
   return (
-    <div className="min-h-0 overflow-y-auto">
-      <section className="border-b px-5 py-5">
+    <div>
+      <section className="border-b px-4 py-4">
         <AppointmentSummary
           facts={detail.appointment}
           label={primaryAppointmentLabel(detail.appointmentOutcome)}
@@ -144,7 +123,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         />
         {detail.previousAppointment &&
           hasAppointmentFacts(detail.previousAppointment) && (
-            <div className="mt-3 rounded-lg border border-dashed px-4 py-3">
+            <div className="mt-3 border-t pt-3">
               <p className="text-xs font-medium text-muted-foreground">
                 Previous appointment
               </p>
@@ -165,7 +144,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
       </section>
 
       {detail.summary && (
-        <section className="border-b px-5 py-4">
+        <section className="border-b px-4 py-4">
           <h2 className="text-xs font-medium text-muted-foreground">
             Call summary
           </h2>
@@ -173,9 +152,9 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         </section>
       )}
 
-      <section className="border-b px-5 py-4">
+      <section className="border-b px-4 py-4">
         <h2 className="mb-3 text-sm font-semibold">Call details</h2>
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-4 text-sm">
+        <dl className="grid gap-y-4 text-sm">
           <DetailValue label="Caller" value={formatPhone(detail.phone)} />
           <DetailValue label="Office" value={detail.locationName} />
           <DetailValue
@@ -189,7 +168,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
         </dl>
       </section>
 
-      <section className="px-5 py-4">
+      <section className="px-4 py-4">
         <details className="group rounded-lg border px-4 py-3">
           <summary className="cursor-pointer text-sm font-medium">
             Technical evidence
@@ -246,7 +225,7 @@ function AppointmentSummary({
 }) {
   const appointmentTime = formatAppointmentDateTime(facts)
   return (
-    <div className="rounded-xl border bg-muted/30 p-4">
+    <div>
       <div className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-success">
           <CalendarCheck2Icon className="size-4" aria-hidden="true" />
@@ -263,7 +242,7 @@ function AppointmentSummary({
           )}
         </div>
       </div>
-      <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-4 border-t pt-4 text-sm">
+      <dl className="mt-4 grid gap-y-4 border-t pt-4 text-sm">
         <DetailValue label="Patient" value={facts.patientName ?? "—"} />
         <DetailValue label="Visit" value={visitLabel(facts)} />
         <DetailValue label="Doctor" value={facts.providerName ?? "—"} />
