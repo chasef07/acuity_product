@@ -547,6 +547,114 @@ export type AiOutcomePage = {
     items: Array<AiOutcomeItem>;
 };
 
+export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
+
+export type OperatorAiAnalyticsQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    range: OperatorAiAnalyticsRange;
+    cursor?: string;
+    limit?: number;
+};
+
+export type OperatorAiAnalyticsSummary = {
+    totalCalls: number;
+    p50TotalLatencyMs?: number;
+    transferCount: number;
+    transferRate: number;
+    toolCallCount: number;
+    toolErrorCount: number;
+    toolFailureRate: number;
+};
+
+export type OperatorAiCallAnalytics = {
+    id: string;
+    locationId: string;
+    locationName: string;
+    sourceCallId: string;
+    phone: string;
+    startedAt: string;
+    endedAt?: string;
+    status: AiInteractionCallStatus;
+    durationSeconds: number;
+    p50SttMs?: number;
+    p50TtftMs?: number;
+    p50TtsTtfbMs?: number;
+    p50TotalLatencyMs?: number;
+    toolCallCount: number;
+    toolErrorCount: number;
+    toolActions: Array<string>;
+    transferred: boolean;
+    transcriptAvailable: boolean;
+};
+
+export type OperatorAiAnalyticsPage = {
+    summary: OperatorAiAnalyticsSummary;
+    calls: Array<OperatorAiCallAnalytics>;
+    nextCursor: string;
+};
+
+export type OperatorAiTimelineKind = 'CALLER_MESSAGE' | 'AGENT_MESSAGE' | 'TOOL_CALL' | 'TOOL_RESULT';
+
+export type OperatorAiTimelineItem = {
+    kind: OperatorAiTimelineKind;
+    occurredAt: string;
+    text?: string;
+    name?: string;
+    callId?: string;
+    payload?: {
+        [key: string]: unknown;
+    };
+    error?: string;
+    sttMs?: number;
+    ttftMs?: number;
+    ttsTtfbMs?: number;
+    totalLatencyMs?: number;
+};
+
+export type OperatorAiToolExecution = {
+    callId: string;
+    name: string;
+    occurredAt: string;
+    status: 'SUCCESS' | 'ERROR';
+    outputClass?: string;
+};
+
+export type OperatorAiInteractionAnalytics = {
+    id: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    sourceCallId: string;
+    phone: string;
+    officePhone: string;
+    externalPatientId?: string;
+    startedAt: string;
+    endedAt?: string;
+    status: AiInteractionCallStatus;
+    summary?: string;
+    appointmentOutcome: AiAppointmentOutcome;
+    appointment: AiAppointmentFacts;
+    previousAppointment?: AiAppointmentFacts;
+    appointmentOccurredAt?: string;
+    oldAppointmentId?: string;
+    newAppointmentId?: string;
+    bookingResult?: {
+        [key: string]: unknown;
+    };
+    cancellationResult?: {
+        [key: string]: unknown;
+    };
+    createdAt: string;
+    updatedAt: string;
+    p50SttMs?: number;
+    p50TtftMs?: number;
+    p50TtsTtfbMs?: number;
+    p50TotalLatencyMs?: number;
+    timeline: Array<OperatorAiTimelineItem>;
+    toolExecutions: Array<OperatorAiToolExecution>;
+};
+
 export type TaskQueryRequest = {
     practiceId: string;
     locationId?: string;
@@ -1862,6 +1970,82 @@ export type QueryAiInteractionOutcomesResponses = {
 };
 
 export type QueryAiInteractionOutcomesResponse = QueryAiInteractionOutcomesResponses[keyof QueryAiInteractionOutcomesResponses];
+
+export type QueryOperatorAiAnalyticsData = {
+    body: OperatorAiAnalyticsQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/ai-analytics/query';
+};
+
+export type QueryOperatorAiAnalyticsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryOperatorAiAnalyticsError = QueryOperatorAiAnalyticsErrors[keyof QueryOperatorAiAnalyticsErrors];
+
+export type QueryOperatorAiAnalyticsResponses = {
+    /**
+     * Scoped AI Interaction summary and cursor-paginated calls.
+     */
+    200: OperatorAiAnalyticsPage;
+};
+
+export type QueryOperatorAiAnalyticsResponse = QueryOperatorAiAnalyticsResponses[keyof QueryOperatorAiAnalyticsResponses];
+
+export type GetOperatorAiInteractionAnalyticsData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/operator/ai-interactions/{interactionId}/analytics';
+};
+
+export type GetOperatorAiInteractionAnalyticsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorAiInteractionAnalyticsError = GetOperatorAiInteractionAnalyticsErrors[keyof GetOperatorAiInteractionAnalyticsErrors];
+
+export type GetOperatorAiInteractionAnalyticsResponses = {
+    /**
+     * Operator-authorized normalized call detail and evidence.
+     */
+    200: OperatorAiInteractionAnalytics;
+};
+
+export type GetOperatorAiInteractionAnalyticsResponse = GetOperatorAiInteractionAnalyticsResponses[keyof GetOperatorAiInteractionAnalyticsResponses];
 
 export type CreateStaffTaskData = {
     body: CreateStaffTaskRequest;
