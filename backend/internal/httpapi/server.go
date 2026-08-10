@@ -234,7 +234,7 @@ func (server *Server) DiscoverAccess(w http.ResponseWriter, r *http.Request) {
 		server.writeAccessError(w, r, err)
 		return
 	}
-	response, err := discoveryResponse(discovery)
+	response, err := server.discoveryResponse(ctx, discovery)
 	if err != nil {
 		server.writeAccessError(w, r, err)
 		return
@@ -287,7 +287,7 @@ func (server *Server) GetWorkspace(
 		server.writeAccessError(w, r, err)
 		return
 	}
-	response, err := workspaceResponse(authorization)
+	response, err := server.workspaceResponse(ctx, authorization)
 	if err != nil {
 		server.writeAccessError(w, r, err)
 		return
@@ -2337,13 +2337,28 @@ func healthRole(role string) api.HealthRole {
 	}
 }
 
-func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) {
+func (server *Server) discoveryResponse(
+	ctx context.Context,
+	discovery access.Discovery,
+) (api.AccessDiscovery, error) {
 	response := api.AccessDiscovery{
 		Actor:            actorResponse(discovery.Actor),
 		PlatformOperator: discovery.PlatformOperator,
 		Practices:        make([]api.PracticeAccess, 0, len(discovery.Practices)),
 	}
 	for _, practice := range discovery.Practices {
+		locationIDs := make([]string, 0, len(practice.Locations))
+		for _, location := range practice.Locations {
+			locationIDs = append(locationIDs, location.ID)
+		}
+		callingNumbers, err := server.calling.CallingNumbersForLocations(
+			ctx,
+			practice.ID,
+			locationIDs,
+		)
+		if err != nil {
+			return api.AccessDiscovery{}, err
+		}
 		practiceResponse, err := practiceResponse(practice.Practice)
 		if err != nil {
 			return api.AccessDiscovery{}, err
@@ -2363,7 +2378,10 @@ func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) 
 			item.Membership = &membership
 		}
 		for _, location := range practice.Locations {
-			converted, err := authorizedLocationResponse(location)
+			converted, err := locationResponse(
+				location,
+				callingNumbers[location.ID],
+			)
 			if err != nil {
 				return api.AccessDiscovery{}, err
 			}
@@ -2374,7 +2392,10 @@ func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) 
 	return response, nil
 }
 
-func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapshot, error) {
+func (server *Server) workspaceResponse(
+	ctx context.Context,
+	authorization access.Authorization,
+) (api.WorkspaceSnapshot, error) {
 	if authorization.ActiveLocation == nil {
 		return api.WorkspaceSnapshot{}, access.ErrDenied
 	}
@@ -2382,7 +2403,18 @@ func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapsho
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
-	location, err := authorizedLocationResponse(*authorization.ActiveLocation)
+	callingNumbers, err := server.calling.CallingNumbersForLocations(
+		ctx,
+		authorization.Practice.ID,
+		[]string{authorization.ActiveLocation.ID},
+	)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
+	}
+	location, err := locationResponse(
+		*authorization.ActiveLocation,
+		callingNumbers[authorization.ActiveLocation.ID],
+	)
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
@@ -2415,7 +2447,7 @@ func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapsho
 }
 
 func locationMutationResponse(mutation access.LocationMutation) (api.LocationMutation, error) {
-	location, err := locationResponse(mutation.Location)
+	location, err := locationResponse(mutation.Location, "")
 	if err != nil {
 		return api.LocationMutation{}, err
 	}
@@ -2456,26 +2488,19 @@ func practiceResponse(practice access.Practice) (api.Practice, error) {
 	return api.Practice{Id: id, Name: practice.Name, Version: practice.Version}, nil
 }
 
-func locationResponse(location access.Location) (api.Location, error) {
+func locationResponse(
+	location access.Location,
+	callingNumber string,
+) (api.Location, error) {
 	id, err := uuid.Parse(location.ID)
 	if err != nil {
 		return api.Location{}, err
 	}
-	return api.Location{
-		Id:            id,
-		Name:          location.Name,
-		CallingNumber: location.CallingNumber,
-	}, nil
-}
-
-func authorizedLocationResponse(location access.Location) (api.Location, error) {
-	if location.CallingNumber == "" {
-		return api.Location{}, fmt.Errorf(
-			"Location %s has no enabled calling number",
-			location.ID,
-		)
+	response := api.Location{Id: id, Name: location.Name}
+	if callingNumber != "" {
+		response.CallingNumber = &callingNumber
 	}
-	return locationResponse(location)
+	return response, nil
 }
 
 func membershipResponse(membership access.Membership) (api.Membership, error) {

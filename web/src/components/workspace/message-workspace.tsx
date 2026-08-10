@@ -109,6 +109,8 @@ type TimelineSource = {
   phone: string
 }
 
+type CallingLocation = Location & { callingNumber: string }
+
 export function EngagementWorkspace({
   engagement,
   practiceID,
@@ -140,7 +142,7 @@ export function EngagementWorkspace({
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [route, setRoute] = useState(defaultRoute)
   const callableLocations = useMemo(
-    () => callingLocations.filter((location) => Boolean(location.callingNumber)),
+    () => callingLocations.filter(isCallingLocation),
     [callingLocations],
   )
   const callLocationPreferenceKey = outboundLocationPreferenceKey(
@@ -1348,12 +1350,16 @@ function taskTouchpoint(task: Task) {
   return { icon: <CheckSquareIcon />, label: "Task" }
 }
 
-function locationLabel(location: Location) {
+function isCallingLocation(location: Location): location is CallingLocation {
+  return Boolean(location.callingNumber)
+}
+
+function locationLabel(location: CallingLocation) {
   return `${location.name} — ${formatUSPhone(location.callingNumber)}`
 }
 
 function initialOutboundLocation(
-  locations: Location[],
+  locations: CallingLocation[],
   key: string,
   authorizedLocationCount: number,
 ) {

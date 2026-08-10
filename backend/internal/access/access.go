@@ -126,9 +126,8 @@ type Practice struct {
 }
 
 type Location struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	CallingNumber string `json:"callingNumber"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type Membership struct {
@@ -1551,18 +1550,10 @@ func loadOperatorAuthorization(
 
 func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Location, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT location.id::text, location.name,
-			COALESCE(voice.phone, ''), COALESCE(voice.enabled_count, 0)
-		FROM access_locations location
-		LEFT JOIN LATERAL (
-			SELECT min(number.phone) AS phone, count(*) AS enabled_count
-			FROM human_calling_location_voice_numbers number
-			WHERE number.practice_id = location.practice_id
-				AND number.location_id = location.id
-				AND number.enabled
-		) voice ON true
-		WHERE location.practice_id = $1
-		ORDER BY location.name, location.id
+		SELECT id::text, name
+		FROM access_locations
+		WHERE practice_id = $1
+		ORDER BY name, id
 	`, practiceID)
 	if err != nil {
 		return nil, fmt.Errorf("load Practice Locations: %w", err)
@@ -1571,17 +1562,8 @@ func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Locatio
 	locations := []Location{}
 	for rows.Next() {
 		var location Location
-		var enabledCount int
-		if err := rows.Scan(
-			&location.ID,
-			&location.Name,
-			&location.CallingNumber,
-			&enabledCount,
-		); err != nil {
+		if err := rows.Scan(&location.ID, &location.Name); err != nil {
 			return nil, fmt.Errorf("scan Practice Location: %w", err)
-		}
-		if enabledCount > 1 {
-			return nil, fmt.Errorf("Location %s has %d enabled calling numbers", location.ID, enabledCount)
 		}
 		locations = append(locations, location)
 	}
@@ -1738,35 +1720,19 @@ func loadMembershipAuthorization(
 	}
 
 	locationQuery := `
-		SELECT l.id::text, l.name,
-			COALESCE(voice.phone, ''), COALESCE(voice.enabled_count, 0)
+		SELECT l.id::text, l.name
 		FROM access_locations l
-		LEFT JOIN LATERAL (
-			SELECT min(number.phone) AS phone, count(*) AS enabled_count
-			FROM human_calling_location_voice_numbers number
-			WHERE number.practice_id = l.practice_id
-				AND number.location_id = l.id
-				AND number.enabled
-		) voice ON true
 		WHERE l.practice_id = $1
 		ORDER BY l.name, l.id
 	`
 	args := []any{practiceID}
 	if result.Membership.LocationScope == LocationScopeSelected {
 		locationQuery = `
-			SELECT l.id::text, l.name,
-				COALESCE(voice.phone, ''), COALESCE(voice.enabled_count, 0)
+			SELECT l.id::text, l.name
 			FROM access_membership_locations ml
 			JOIN access_locations l
 				ON l.practice_id = ml.practice_id
 				AND l.id = ml.location_id
-			LEFT JOIN LATERAL (
-				SELECT min(number.phone) AS phone, count(*) AS enabled_count
-				FROM human_calling_location_voice_numbers number
-				WHERE number.practice_id = l.practice_id
-					AND number.location_id = l.id
-					AND number.enabled
-			) voice ON true
 			WHERE ml.membership_id = $1
 			ORDER BY l.name, l.id
 		`
@@ -1780,21 +1746,8 @@ func loadMembershipAuthorization(
 	result.Locations = []Location{}
 	for rows.Next() {
 		var location Location
-		var enabledCount int
-		if err := rows.Scan(
-			&location.ID,
-			&location.Name,
-			&location.CallingNumber,
-			&enabledCount,
-		); err != nil {
+		if err := rows.Scan(&location.ID, &location.Name); err != nil {
 			return Authorization{}, fmt.Errorf("scan membership location: %w", err)
-		}
-		if enabledCount > 1 {
-			return Authorization{}, fmt.Errorf(
-				"Location %s has %d enabled calling numbers",
-				location.ID,
-				enabledCount,
-			)
 		}
 		result.Locations = append(result.Locations, location)
 	}

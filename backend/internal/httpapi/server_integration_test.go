@@ -130,7 +130,8 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	if len(accessDiscovery.Practices) != 1 ||
 		accessDiscovery.Practices[0].Membership == nil ||
 		len(accessDiscovery.Practices[0].Locations) != 1 ||
-		accessDiscovery.Practices[0].Locations[0].CallingNumber != "+17275550101" {
+		accessDiscovery.Practices[0].Locations[0].CallingNumber == nil ||
+		*accessDiscovery.Practices[0].Locations[0].CallingNumber != "+17275550101" {
 		t.Fatalf("discovery = %#v", accessDiscovery)
 	}
 	if encoded, err := json.Marshal(accessDiscovery); err != nil {
@@ -152,7 +153,9 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	if snapshot.State != api.EMPTY ||
 		snapshot.SchemaVersion != api.N20260724 ||
 		snapshot.Practice.Name != "Abita Eye Group" ||
-		snapshot.Location.Name != "Fixture Location 1" {
+		snapshot.Location.Name != "Fixture Location 1" ||
+		snapshot.Location.CallingNumber == nil ||
+		*snapshot.Location.CallingNumber != "+17275550101" {
 		t.Fatalf("workspace snapshot = %#v", snapshot)
 	}
 
@@ -200,10 +203,14 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		server.URL+"/v1/access",
 		"selected-token", nil,
 	)
-	if missingNumber.StatusCode != http.StatusServiceUnavailable {
+	if missingNumber.StatusCode != http.StatusOK {
 		t.Fatalf("missing caller ID status = %d, body = %s", missingNumber.StatusCode, readBody(t, missingNumber))
 	}
-	_ = missingNumber.Body.Close()
+	var discoveryWithoutNumber api.AccessDiscovery
+	decode(t, missingNumber, &discoveryWithoutNumber)
+	if discoveryWithoutNumber.Practices[0].Locations[0].CallingNumber != nil {
+		t.Fatalf("missing caller ID discovery = %#v", discoveryWithoutNumber)
+	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_location_voice_numbers (
 			practice_id, location_id, phone, enabled

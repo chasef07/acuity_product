@@ -249,19 +249,11 @@ func (m *Module) StartOutboundCall(
 		SELECT EXISTS (
 			SELECT 1 FROM human_calling_call_legs leg
 			WHERE leg.staff_subject = $1 AND leg.role = 'STAFF'
-				AND leg.state NOT IN ('ENDED', 'FAILED')
-				AND NOT (
-					leg.state = 'ENDING' AND leg.answered_at IS NULL
-					AND EXISTS (
-						SELECT 1 FROM human_calling_provider_commands voicemail
-						WHERE voicemail.call_id = leg.call_id
-							AND voicemail.action IN (
-								'SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING'
-							)
-							AND voicemail.state IN (
-								'PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED'
-							)
+				AND (
+					leg.state IN (
+						'PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED'
 					)
+					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
 				)
 		)
 	`, command.Identity.Subject).Scan(&occupied); err != nil || occupied {

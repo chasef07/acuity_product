@@ -83,7 +83,7 @@ const taskCategoryOptions: Array<{
   value: TaskCategoryFilter
   label: string
 }> = [
-  { value: "all", label: "All" },
+  { value: "all", label: "All types" },
   { value: "billing", label: "Billing" },
   { value: "appointments", label: "Appointments" },
   { value: "documentation", label: "Documentation" },
@@ -662,9 +662,9 @@ function RecoveryGroup({
         <RecoveryRow
           key={recoveryGroupKey(row.locationID, row.phone)}
           row={row}
-          active={row.tasks.some((task) => task.id === selectedTaskID)}
+          active={row.task.id === selectedTaskID}
           showOffice={showOffice}
-          onSelect={() => onSelect(recoveryTask(row))}
+          onSelect={() => onSelect(row.task)}
         />
       ))}
       {rows.length === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
@@ -728,7 +728,7 @@ type RecoveryRowValue = {
   phone: string
   locationID: string
   locationName: string
-  tasks: Task[]
+  task: Task
   voicemailCount: number
   missedCount: number
   oldestAt: string
@@ -895,44 +895,30 @@ function appointmentIntent(
 }
 
 function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
-  const rows = new Map<string, RecoveryRowValue>()
-  for (const task of tasks) {
-    if (
-      task.origin !== "MISSED_CALL_RECOVERY" &&
-      task.origin !== "VOICEMAIL_RECOVERY"
-    ) {
-      continue
-    }
-    const key = recoveryGroupKey(task.locationId, task.phone)
-    const existing = rows.get(key) ?? {
-      phone: task.phone,
-      locationID: task.locationId,
-      locationName: task.locationName,
-      tasks: [],
-      voicemailCount: 0,
-      missedCount: 0,
-      oldestAt: task.createdAt,
-      latestAt: task.updatedAt,
-    }
-    existing.tasks.push(task)
-    const related = Math.max(1, task.relatedInteractionCount)
-    if (task.origin === "VOICEMAIL_RECOVERY") existing.voicemailCount += related
-    else existing.missedCount += related
-    if (task.createdAt < existing.oldestAt) existing.oldestAt = task.createdAt
-    if (task.updatedAt > existing.latestAt) existing.latestAt = task.updatedAt
-    rows.set(key, existing)
-  }
-  return [...rows.values()].sort(
+  return tasks
+    .filter(
+      (task) =>
+        task.origin === "MISSED_CALL_RECOVERY" ||
+        task.origin === "VOICEMAIL_RECOVERY",
+    )
+    .map((task) => {
+      const related = Math.max(1, task.relatedInteractionCount)
+      return {
+        phone: task.phone,
+        locationID: task.locationId,
+        locationName: task.locationName,
+        task,
+        voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
+        missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
+        oldestAt: task.createdAt,
+        latestAt: task.updatedAt,
+      }
+    })
+    .sort(
     (left, right) =>
       left.oldestAt.localeCompare(right.oldestAt) ||
       right.latestAt.localeCompare(left.latestAt),
   )
-}
-
-function recoveryTask(row: RecoveryRowValue): Task {
-  return [...row.tasks].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  )[0]!
 }
 
 function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {

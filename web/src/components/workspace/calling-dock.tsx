@@ -672,45 +672,34 @@ export function CallingDock({
       path: { callId: callID },
     }).catch(() => undefined)
     if (expectedCallRef.current !== callID) return
+    const releaseCallControl = () => {
+      applyActiveCall()
+      expectedCallRef.current = ""
+      setExpectedCallID("")
+      mediaLegRef.current = null
+      setMediaAttached(false)
+      setMuted(false)
+      if (
+        ownerRef.current &&
+        mediaState === "ready" &&
+        availabilityIntentRef.current &&
+        !availabilityRef.current
+      ) {
+        setAvailabilityPending(true)
+        void updateReadiness(true, "ready")
+      }
+    }
     if (result?.data) {
       if (
         result.data.state === "VOICEMAIL_GREETING" ||
         result.data.state === "VOICEMAIL_RECORDING"
       ) {
-        applyActiveCall()
-        setExpectedCallID("")
-        expectedCallRef.current = ""
-        setMediaAttached(false)
-        mediaLegRef.current = null
-        setMuted(false)
-        if (
-          ownerRef.current &&
-          mediaState === "ready" &&
-          availabilityIntentRef.current &&
-          !availabilityRef.current
-        ) {
-          setAvailabilityPending(true)
-          void updateReadiness(true, "ready")
-        }
+        releaseCallControl()
         return
       }
       if (result.data.state === "NEEDS_DISPOSITION") {
         setPendingOutcome(result.data)
-        applyActiveCall()
-        setExpectedCallID("")
-        expectedCallRef.current = ""
-        setMediaAttached(false)
-        mediaLegRef.current = null
-        setMuted(false)
-        if (
-          ownerRef.current &&
-          mediaState === "ready" &&
-          availabilityIntentRef.current &&
-          !availabilityRef.current
-        ) {
-          setAvailabilityPending(true)
-          void updateReadiness(true, "ready")
-        }
+        releaseCallControl()
         return
       }
       if (!applyActiveCall(result.data)) return
@@ -724,37 +713,14 @@ export function CallingDock({
         setMediaAttached(false)
         mediaLegRef.current = null
       }
-      if (
-        result.data.state === "UNANSWERED" &&
-        ownerRef.current &&
-        mediaState === "ready" &&
-        availabilityIntentRef.current &&
-        !availabilityRef.current
-      ) {
-        setAvailabilityPending(true)
-        void updateReadiness(true, "ready")
-        applyActiveCall()
-        setExpectedCallID("")
-        expectedCallRef.current = ""
+      if (result.data.state === "UNANSWERED") {
+        releaseCallControl()
       }
     } else if (
       result?.response?.status === 403 ||
       result?.response?.status === 409
     ) {
-      applyActiveCall()
-      setExpectedCallID("")
-      expectedCallRef.current = ""
-      mediaLegRef.current = null
-      setMediaAttached(false)
-      if (
-        ownerRef.current &&
-        mediaState === "ready" &&
-        availabilityIntentRef.current &&
-        !availabilityRef.current
-      ) {
-        setAvailabilityPending(true)
-        void updateReadiness(true, "ready")
-      }
+      releaseCallControl()
     }
   }, [applyActiveCall, mediaState, updateReadiness])
 

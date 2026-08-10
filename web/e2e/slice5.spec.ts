@@ -345,10 +345,10 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   ).not.toBeVisible()
 
   await createAIStaffTask(page, "billing", "Review billing balance")
-  await createAIStaffTask(page, "medication", "Review medication refill")
   const taskCategory = page.getByLabel("Task category")
   await expect(taskCategory).toHaveValue("all")
   await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
+  await createAIStaffTask(page, "medication", "Review medication refill")
   await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
   await taskCategory.selectOption("billing")
   await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()

@@ -1649,7 +1649,7 @@ components:
     Location:
       type: object
       additionalProperties: false
-      required: [id, name, callingNumber]
+      required: [id, name]
       properties:
         id:
           type: string
