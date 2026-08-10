@@ -304,38 +304,36 @@ SELECT
 Both values must be zero for the first run. A later reviewed rerun may find the
 same 31 provisioning keys and creates no duplicates.
 
-After reviewing the exact image digest and JSON, an operator may run the
-reconciliation against the existing `acuity-migrate` job:
+Use the **Reconcile production provisioning** GitHub Action for a reviewed
+reconciliation. Run it from `main`, type `PROVISION`, and enter the exact number
+of new Access Grants expected (`0` for an idempotent rerun). The workflow uses
+the production environment and existing Google workload identity. It verifies
+that `acuity-migrate` is running the image built from the selected `main`
+commit, waits for one successful task, checks the structured
+`migrations_applied` receipt against the expected grant count, and passes the
+provisioning paths as execution-only overrides. The shared migration job
+configuration is never changed.
+
+The commands below are a break-glass fallback when GitHub Actions is
+unavailable. Review the exact image digest and JSON before running them:
 
 ```sh
-gcloud run jobs update acuity-migrate \
-  --project acuity-health-prod \
-  --region us-east1 \
-  --update-env-vars \
-  PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json \
-  --quiet
-
 gcloud run jobs execute acuity-migrate \
   --project acuity-health-prod \
   --region us-east1 \
+  --tasks 1 \
+  --update-env-vars \
+  PROVISIONING_INPUT=/etc/acuity/production-provisioning.json,PROVISIONING_OUTPUT=/tmp/production-provisioning-output.json \
   --wait \
-  --quiet
-
-gcloud run jobs update acuity-migrate \
-  --project acuity-health-prod \
-  --region us-east1 \
-  --remove-env-vars PROVISIONING_INPUT,PROVISIONING_OUTPUT \
   --quiet
 ```
 
 Access, Messaging, and voice configuration commit in one PostgreSQL
 transaction; any validation failure rolls the entire customer topology back.
 The restricted provisioning output is synced before that commit and contains no
-credentials for Access Grants. Stop after any failed command and inspect the
-migration execution before doing anything else. Do not rerun merely because
-environment cleanup failed. Ordinary releases remove these variables before
-migration, so they preserve the provisioned rows without silently replaying the
-reconciliation.
+credentials for Access Grants. Inspect the migration execution after any
+failure. Ordinary releases preserve the provisioned rows without silently
+replaying the reconciliation.
 
 The checked JSON and deterministic PostgreSQL test prove only the intended
 database topology. Before provider traffic, separately prove the production

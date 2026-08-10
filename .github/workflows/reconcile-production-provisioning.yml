@@ -1,0 +1,73 @@
+name: Reconcile production provisioning
+
+run-name: Reconcile production provisioning (${{ inputs.expected_access_grants_created }} grants)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type PROVISION to confirm the production reconciliation
+        required: true
+        type: string
+      expected_access_grants_created:
+        description: Exact number of new Access Grants expected (0 for an idempotent rerun)
+        required: true
+        default: "0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-provisioning
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate request
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          EXPECTED_ACCESS_GRANTS_CREATED: ${{ inputs.expected_access_grants_created }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production provisioning must run from main." >&2
+            exit 1
+          fi
+          if [[ "$CONFIRM" != "PROVISION" ]]; then
+            echo "Confirmation must be exactly PROVISION." >&2
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_ACCESS_GRANTS_CREATED" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected Access Grants must be a non-negative integer." >&2
+            exit 1
+          fi
+
+  reconcile:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Reconcile reviewed provisioning input
+        env:
+          EXPECTED_ACCESS_GRANTS_CREATED: ${{ inputs.expected_access_grants_created }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          PROVISION_CONFIRMATION: ${{ inputs.confirm }}
+        run: deploy/reconcile-production-provisioning.sh
