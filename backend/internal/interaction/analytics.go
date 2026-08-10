@@ -123,6 +123,7 @@ type analyticsCursor struct {
 
 type analyticsProjection struct {
 	call        AnalyticsCall
+	transcript  json.RawMessage
 	turnMetrics json.RawMessage
 	tools       json.RawMessage
 }
@@ -166,6 +167,111 @@ func (m *Module) QueryAnalytics(
 	if len(locationIDs) == 0 {
 		return AnalyticsPage{}, ErrDenied
 	}
+	summary, err := queryAnalyticsSummary(ctx, tx, command, locationIDs, from, to)
+	if err != nil {
+		return AnalyticsPage{}, err
+	}
+	calls, hasMore, err := queryAnalyticsCalls(
+		ctx,
+		tx,
+		command,
+		locationIDs,
+		from,
+		to,
+		cursor,
+	)
+	if err != nil {
+		return AnalyticsPage{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AnalyticsPage{}, fmt.Errorf("commit operator AI analytics query: %w", err)
+	}
+
+	page := AnalyticsPage{Summary: summary, Calls: calls}
+	if hasMore && len(page.Calls) > 0 {
+		page.NextCursor, err = encodeAnalyticsCursor(command, page.Calls[len(page.Calls)-1])
+		if err != nil {
+			return AnalyticsPage{}, fmt.Errorf("encode operator AI analytics cursor: %w", err)
+		}
+	}
+	return page, nil
+}
+
+func queryAnalyticsSummary(
+	ctx context.Context,
+	tx pgx.Tx,
+	command QueryAnalyticsCommand,
+	locationIDs []string,
+	from time.Time,
+	to time.Time,
+) (AnalyticsSummary, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT
+			interaction.started_at,
+			interaction.status,
+			COALESCE(interaction.transcript, '{}'::jsonb),
+			COALESCE(interaction.closeout_payload->'turnMetrics', '[]'::jsonb),
+			COALESCE(interaction.closeout_payload->'toolExecutions', '[]'::jsonb)
+		FROM ai_interactions interaction
+		WHERE interaction.practice_id = $1
+			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.started_at >= $3
+			AND interaction.started_at <= $4
+	`, command.PracticeID, locationIDs, from, to)
+	if err != nil {
+		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
+	}
+	defer rows.Close()
+	summary := AnalyticsSummary{}
+	totalLatencyValues := []float64{}
+	for rows.Next() {
+		var projection analyticsProjection
+		if err := rows.Scan(
+			&projection.call.StartedAt,
+			&projection.call.Status,
+			&projection.transcript,
+			&projection.turnMetrics,
+			&projection.tools,
+		); err != nil {
+			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
+		}
+		projectAnalyticsEvidence(&projection)
+		summary.TotalCalls++
+		if projection.call.Transferred {
+			summary.TransferCount++
+		}
+		summary.ToolCallCount += projection.call.ToolCallCount
+		summary.ToolErrorCount += projection.call.ToolErrorCount
+		totalLatencyValues = append(totalLatencyValues, projection.call.turnTotalLatencyValues...)
+	}
+	if err := rows.Err(); err != nil {
+		return AnalyticsSummary{}, fmt.Errorf("iterate operator AI analytics summary: %w", err)
+	}
+	if summary.TotalCalls > 0 {
+		summary.TransferRate = float64(summary.TransferCount) / float64(summary.TotalCalls)
+	}
+	if summary.ToolCallCount > 0 {
+		summary.ToolFailureRate = float64(summary.ToolErrorCount) / float64(summary.ToolCallCount)
+	}
+	summary.P50TotalLatencyMs = medianMilliseconds(totalLatencyValues)
+	return summary, nil
+}
+
+func queryAnalyticsCalls(
+	ctx context.Context,
+	tx pgx.Tx,
+	command QueryAnalyticsCommand,
+	locationIDs []string,
+	from time.Time,
+	to time.Time,
+	cursor *analyticsCursor,
+) ([]AnalyticsCall, bool, error) {
+	var cursorStartedAt any
+	var cursorID any
+	if cursor != nil {
+		cursorStartedAt = cursor.StartedAt
+		cursorID = cursor.ID
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text,
@@ -176,6 +282,7 @@ func (m *Module) QueryAnalytics(
 			interaction.started_at,
 			interaction.ended_at,
 			interaction.status,
+			COALESCE(interaction.transcript, '{}'::jsonb),
 			COALESCE(interaction.closeout_payload->'turnMetrics', '[]'::jsonb),
 			COALESCE(interaction.closeout_payload->'toolExecutions', '[]'::jsonb),
 			interaction.transcript IS NOT NULL
@@ -187,13 +294,18 @@ func (m *Module) QueryAnalytics(
 			AND interaction.location_id::text = ANY($2::text[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
+			AND (
+				$5::timestamptz IS NULL OR
+				(interaction.started_at, interaction.id) < ($5, $6::uuid)
+			)
 		ORDER BY interaction.started_at DESC, interaction.id DESC
-	`, command.PracticeID, locationIDs, from, to)
+		LIMIT $7
+	`, command.PracticeID, locationIDs, from, to, cursorStartedAt, cursorID, command.Limit+1)
 	if err != nil {
-		return AnalyticsPage{}, fmt.Errorf("query operator AI analytics: %w", err)
+		return nil, false, fmt.Errorf("query operator AI analytics page: %w", err)
 	}
 	defer rows.Close()
-	projections := []analyticsProjection{}
+	projections := make([]analyticsProjection, 0, command.Limit+1)
 	for rows.Next() {
 		var projection analyticsProjection
 		if err := rows.Scan(
@@ -205,40 +317,29 @@ func (m *Module) QueryAnalytics(
 			&projection.call.StartedAt,
 			&projection.call.EndedAt,
 			&projection.call.Status,
+			&projection.transcript,
 			&projection.turnMetrics,
 			&projection.tools,
 			&projection.call.TranscriptAvailable,
 		); err != nil {
-			return AnalyticsPage{}, fmt.Errorf("scan operator AI analytics: %w", err)
+			return nil, false, fmt.Errorf("scan operator AI analytics page: %w", err)
 		}
 		projectAnalyticsCall(&projection, to)
 		projections = append(projections, projection)
 	}
 	if err := rows.Err(); err != nil {
-		return AnalyticsPage{}, fmt.Errorf("iterate operator AI analytics: %w", err)
+		return nil, false, fmt.Errorf("iterate operator AI analytics page: %w", err)
 	}
-	rows.Close()
-	if err := tx.Commit(ctx); err != nil {
-		return AnalyticsPage{}, fmt.Errorf("commit operator AI analytics query: %w", err)
+	hasMore := len(projections) > command.Limit
+	if hasMore {
+		projections = projections[:command.Limit]
 	}
-
-	page := AnalyticsPage{
-		Summary: summarizeAnalytics(projections),
-		Calls:   []AnalyticsCall{},
-	}
-	pageStart := analyticsPageStart(projections, cursor)
-	pageEnd := min(pageStart+command.Limit, len(projections))
-	for _, projection := range projections[pageStart:pageEnd] {
+	calls := make([]AnalyticsCall, 0, len(projections))
+	for _, projection := range projections {
 		projection.call.turnTotalLatencyValues = nil
-		page.Calls = append(page.Calls, projection.call)
+		calls = append(calls, projection.call)
 	}
-	if pageEnd < len(projections) && len(page.Calls) > 0 {
-		page.NextCursor, err = encodeAnalyticsCursor(command, page.Calls[len(page.Calls)-1])
-		if err != nil {
-			return AnalyticsPage{}, fmt.Errorf("encode operator AI analytics cursor: %w", err)
-		}
-	}
-	return page, nil
+	return calls, hasMore, nil
 }
 
 func (m *Module) ReadOperatorAnalytics(
@@ -338,7 +439,11 @@ func projectAnalyticsCall(projection *analyticsProjection, now time.Time) {
 	}
 	seconds := int(math.Round(endedAt.Sub(projection.call.StartedAt).Seconds()))
 	projection.call.DurationSeconds = max(seconds, 0)
-	samples := latencySamples(projection.turnMetrics)
+	projectAnalyticsEvidence(projection)
+}
+
+func projectAnalyticsEvidence(projection *analyticsProjection) {
+	samples := analyticsLatencySamples(projection.transcript, projection.turnMetrics)
 	projection.call.P50SttMs = medianMilliseconds(samples.stt)
 	projection.call.P50TtftMs = medianMilliseconds(samples.ttft)
 	projection.call.P50TtsTtfbMs = medianMilliseconds(samples.ttsTtfb)
@@ -358,40 +463,6 @@ func projectAnalyticsCall(projection *analyticsProjection, now time.Time) {
 		}
 	}
 	projection.call.Transferred = projection.call.Status == CallEscalated
-}
-
-func summarizeAnalytics(projections []analyticsProjection) AnalyticsSummary {
-	summary := AnalyticsSummary{TotalCalls: len(projections)}
-	totalLatencyValues := []float64{}
-	for _, projection := range projections {
-		if projection.call.Transferred {
-			summary.TransferCount++
-		}
-		summary.ToolCallCount += projection.call.ToolCallCount
-		summary.ToolErrorCount += projection.call.ToolErrorCount
-		totalLatencyValues = append(totalLatencyValues, projection.call.turnTotalLatencyValues...)
-	}
-	if summary.TotalCalls > 0 {
-		summary.TransferRate = float64(summary.TransferCount) / float64(summary.TotalCalls)
-	}
-	if summary.ToolCallCount > 0 {
-		summary.ToolFailureRate = float64(summary.ToolErrorCount) / float64(summary.ToolCallCount)
-	}
-	summary.P50TotalLatencyMs = medianMilliseconds(totalLatencyValues)
-	return summary
-}
-
-func analyticsPageStart(projections []analyticsProjection, cursor *analyticsCursor) int {
-	if cursor == nil {
-		return 0
-	}
-	for index, projection := range projections {
-		if projection.call.StartedAt.Before(cursor.StartedAt) ||
-			(projection.call.StartedAt.Equal(cursor.StartedAt) && projection.call.ID < cursor.ID) {
-			return index
-		}
-	}
-	return len(projections)
 }
 
 func encodeAnalyticsCursor(command QueryAnalyticsCommand, call AnalyticsCall) (string, error) {
@@ -445,6 +516,45 @@ func latencySamples(raw json.RawMessage) latencyValueSet {
 		appendLatencyValues(&result, metrics)
 	}
 	return result
+}
+
+func analyticsLatencySamples(
+	transcript json.RawMessage,
+	turnMetricsRaw json.RawMessage,
+) latencyValueSet {
+	turnSamples := latencySamples(turnMetricsRaw)
+	var turnMetricEntries []any
+	decodeJSON(turnMetricsRaw, &turnMetricEntries)
+	turnMetrics := turnMetricsByEntries(turnMetricEntries)
+	transcriptSamples := latencyValueSet{}
+	for _, value := range transcriptItems(decodeRecord(transcript)) {
+		record := recordValue(value)
+		metrics := recordValue(record["metrics"])
+		if itemID := firstRecordString(record, "id"); itemID != "" && len(turnMetrics[itemID]) > 0 {
+			metrics = mergeRecords(metrics, turnMetrics[itemID])
+		}
+		appendLatencyValues(&transcriptSamples, metrics)
+	}
+	return latencySamplesWithFallback(turnSamples, transcriptSamples)
+}
+
+func latencySamplesWithFallback(
+	primary latencyValueSet,
+	fallback latencyValueSet,
+) latencyValueSet {
+	if len(primary.stt) == 0 {
+		primary.stt = fallback.stt
+	}
+	if len(primary.ttft) == 0 {
+		primary.ttft = fallback.ttft
+	}
+	if len(primary.ttsTtfb) == 0 {
+		primary.ttsTtfb = fallback.ttsTtfb
+	}
+	if len(primary.total) == 0 {
+		primary.total = fallback.total
+	}
+	return primary
 }
 
 func appendLatencyValues(result *latencyValueSet, metrics map[string]any) {
@@ -588,18 +698,11 @@ func normalizeTimeline(
 		appendLatencyValues(&transcriptSamples, metrics)
 		result = append(result, item)
 	}
-	samples := turnSamples
-	if latencySampleCount(samples) == 0 {
-		samples = transcriptSamples
-	}
+	samples := latencySamplesWithFallback(turnSamples, transcriptSamples)
 	sort.SliceStable(result, func(left, right int) bool {
 		return result[left].OccurredAt.Before(result[right].OccurredAt)
 	})
 	return result, samples
-}
-
-func latencySampleCount(samples latencyValueSet) int {
-	return len(samples.stt) + len(samples.ttft) + len(samples.ttsTtfb) + len(samples.total)
 }
 
 func transcriptItems(report map[string]any) []any {
@@ -656,8 +759,12 @@ func normalizeTimelineItem(record map[string]any, fallback time.Time) (TimelineI
 }
 
 func turnMetricsByItem(closeout map[string]any) map[string]map[string]any {
+	return turnMetricsByEntries(arrayValue(closeout["turnMetrics"]))
+}
+
+func turnMetricsByEntries(entries []any) map[string]map[string]any {
 	result := map[string]map[string]any{}
-	for _, value := range arrayValue(closeout["turnMetrics"]) {
+	for _, value := range entries {
 		record := recordValue(value)
 		if itemID := firstRecordString(record, "itemId", "item_id"); itemID != "" {
 			result[itemID] = recordValue(record["metrics"])

@@ -47,6 +47,15 @@ func TestNormalizeTimelineOmitsSystemMessagesAndNormalizesLiveKitItems(t *testin
 	if got := medianMilliseconds(samples.total); got == nil || *got != 1400 {
 		t.Fatalf("total latency p50 = %v, want 1400", got)
 	}
+	if got := medianMilliseconds(samples.stt); got == nil || *got != 200 {
+		t.Fatalf("STT latency p50 = %v, want 200", got)
+	}
+	if got := medianMilliseconds(samples.ttft); got == nil || *got != 400 {
+		t.Fatalf("TTFT latency p50 = %v, want 400", got)
+	}
+	if got := medianMilliseconds(samples.ttsTtfb); got == nil || *got != 100 {
+		t.Fatalf("TTS TTFB latency p50 = %v, want 100", got)
+	}
 	for _, item := range timeline {
 		if item.Text == "private prompt" {
 			t.Fatal("normalized timeline exposed system prompt")
@@ -57,6 +66,31 @@ func TestNormalizeTimelineOmitsSystemMessagesAndNormalizesLiveKitItems(t *testin
 	if len(executions) != 1 || executions[0].Status != "ERROR" ||
 		executions[0].OutputClass != "middleware_error" {
 		t.Fatalf("tool executions = %#v", executions)
+	}
+}
+
+func TestProjectAnalyticsCallMergesCloseoutAndTranscriptLatency(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.UTC)
+	endedAt := startedAt.Add(time.Minute)
+	projection := analyticsProjection{
+		call: AnalyticsCall{StartedAt: startedAt, EndedAt: &endedAt},
+		transcript: json.RawMessage(`{
+			"items":[
+				{"id":"caller","metrics":{"transcription_delay":0.2}},
+				{"id":"agent","metrics":{"llm_node_ttft":0.4,"tts_node_ttfb":0.1,"e2e_latency":1.2}}
+			]
+		}`),
+		turnMetrics: json.RawMessage(`[
+			{"itemId":"agent","metrics":{"e2eLatency":1.4}}
+		]`),
+	}
+
+	projectAnalyticsCall(&projection, endedAt)
+	if projection.call.P50SttMs == nil || *projection.call.P50SttMs != 200 ||
+		projection.call.P50TtftMs == nil || *projection.call.P50TtftMs != 400 ||
+		projection.call.P50TtsTtfbMs == nil || *projection.call.P50TtsTtfbMs != 100 ||
+		projection.call.P50TotalLatencyMs == nil || *projection.call.P50TotalLatencyMs != 1400 {
+		t.Fatalf("projected latency = %#v", projection.call)
 	}
 }
 
