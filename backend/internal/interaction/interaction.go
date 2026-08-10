@@ -3,6 +3,7 @@ package interaction
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,6 +137,8 @@ type QueryOutcomesCommand struct {
 	Identity   access.Identity
 	PracticeID string
 	LocationID string
+	Cursor     string
+	Limit      int
 }
 
 type OutcomeItem struct {
@@ -156,7 +159,8 @@ type OutcomeItem struct {
 }
 
 type OutcomePage struct {
-	Items []OutcomeItem
+	Items      []OutcomeItem
+	NextCursor string
 }
 
 func (m *Module) Read(
@@ -231,6 +235,17 @@ func (m *Module) QueryOutcomes(
 	if m.pool == nil || m.access == nil || command.PracticeID == "" {
 		return OutcomePage{}, ErrInvalidInput
 	}
+	limit := command.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 1 || limit > 50 {
+		return OutcomePage{}, ErrInvalidInput
+	}
+	cursor, err := decodeOutcomeCursor(command.Cursor)
+	if err != nil {
+		return OutcomePage{}, ErrInvalidInput
+	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return OutcomePage{}, fmt.Errorf("begin AI outcome query: %w", err)
@@ -288,8 +303,16 @@ func (m *Module) QueryOutcomes(
 			AND interaction.appointment_outcome IN (
 				'BOOKING', 'CANCELLATION', 'RESCHEDULE'
 			)
-		ORDER BY interaction.appointment_occurred_at, interaction.id
-	`, command.PracticeID, locationIDs, command.Identity.Subject)
+			AND (
+				NOT $4::boolean
+				OR (interaction.appointment_occurred_at, interaction.id) <
+					($5::timestamptz, $6::uuid)
+			)
+		ORDER BY interaction.appointment_occurred_at DESC, interaction.id DESC
+		LIMIT $7
+	`, command.PracticeID, locationIDs, command.Identity.Subject,
+		cursor.Present, nullableOutcomeCursorTime(cursor),
+		nullableOutcomeCursorID(cursor), limit+1)
 	if err != nil {
 		return OutcomePage{}, fmt.Errorf("query AI outcome attention: %w", err)
 	}
@@ -321,10 +344,70 @@ func (m *Module) QueryOutcomes(
 		return OutcomePage{}, fmt.Errorf("iterate AI outcome attention: %w", err)
 	}
 	rows.Close()
+	nextCursor := ""
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		nextCursor, err = encodeOutcomeCursor(page.Items[len(page.Items)-1])
+		if err != nil {
+			return OutcomePage{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return OutcomePage{}, fmt.Errorf("commit AI outcome attention query: %w", err)
 	}
+	page.NextCursor = nextCursor
 	return page, nil
+}
+
+type outcomeCursor struct {
+	Present    bool      `json:"-"`
+	OccurredAt time.Time `json:"occurredAt"`
+	ID         string    `json:"id"`
+}
+
+func encodeOutcomeCursor(item OutcomeItem) (string, error) {
+	if item.AppointmentOccurredAt == nil || uuid.Validate(item.ID) != nil {
+		return "", fmt.Errorf("encode AI outcome cursor: invalid outcome")
+	}
+	encoded, err := json.Marshal(outcomeCursor{
+		OccurredAt: *item.AppointmentOccurredAt,
+		ID:         item.ID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode AI outcome cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+func decodeOutcomeCursor(encoded string) (outcomeCursor, error) {
+	if encoded == "" {
+		return outcomeCursor{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return outcomeCursor{}, err
+	}
+	var cursor outcomeCursor
+	if err := json.Unmarshal(raw, &cursor); err != nil ||
+		cursor.OccurredAt.IsZero() || uuid.Validate(cursor.ID) != nil {
+		return outcomeCursor{}, ErrInvalidInput
+	}
+	cursor.Present = true
+	return cursor, nil
+}
+
+func nullableOutcomeCursorTime(cursor outcomeCursor) any {
+	if !cursor.Present {
+		return nil
+	}
+	return cursor.OccurredAt
+}
+
+func nullableOutcomeCursorID(cursor outcomeCursor) any {
+	if !cursor.Present {
+		return nil
+	}
+	return cursor.ID
 }
 
 func (m *Module) ReviewOutcome(

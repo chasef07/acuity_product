@@ -480,6 +480,67 @@ func TestOutboundVoiceFallbackMigrationBackfillsAbita(t *testing.T) {
 	}
 }
 
+func TestAIInteractionAttentionMigrationBackfillsAuthorizedOutcomes(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0031_correct_abita_access_grant_emails.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ('00000000-0000-0000-0000-000000000601', 'attention-practice', 'Attention Practice');
+
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name) VALUES
+			('00000000-0000-0000-0000-000000000602', '00000000-0000-0000-0000-000000000601', 'allowed', 'Allowed'),
+			('00000000-0000-0000-0000-000000000603', '00000000-0000-0000-0000-000000000601', 'hidden', 'Hidden');
+
+		INSERT INTO access_grants (
+			id, provisioning_key, practice_id, email, role, location_scope,
+			claimed_at, claimed_by_subject
+		) VALUES
+			('00000000-0000-0000-0000-000000000604', 'all-user', '00000000-0000-0000-0000-000000000601', 'all@example.com', 'ADMIN', 'ALL', now(), 'all-subject'),
+			('00000000-0000-0000-0000-000000000605', 'selected-user', '00000000-0000-0000-0000-000000000601', 'selected@example.com', 'STAFF', 'SELECTED', now(), 'selected-subject');
+
+		INSERT INTO access_memberships (
+			id, user_subject, email, practice_id, role, location_scope, access_grant_id
+		) VALUES
+			('00000000-0000-0000-0000-000000000606', 'all-subject', 'all@example.com', '00000000-0000-0000-0000-000000000601', 'ADMIN', 'ALL', '00000000-0000-0000-0000-000000000604'),
+			('00000000-0000-0000-0000-000000000607', 'selected-subject', 'selected@example.com', '00000000-0000-0000-0000-000000000601', 'STAFF', 'SELECTED', '00000000-0000-0000-0000-000000000605');
+
+		INSERT INTO access_membership_locations (membership_id, practice_id, location_id)
+		VALUES ('00000000-0000-0000-0000-000000000607', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000602');
+
+		INSERT INTO ai_interactions (
+			id, service_subject, practice_id, location_id, source_call_id,
+			phone, office_phone, started_at, ended_at, status,
+			appointment_outcome, appointment_occurred_at, lifecycle_stage
+		) VALUES
+			('00000000-0000-0000-0000-000000000608', 'abita-agent', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000602', 'allowed-booking', '+15555550101', '+15555550100', now() - interval '3 days', now() - interval '3 days' + interval '5 minutes', 'COMPLETED', 'BOOKING', now() - interval '3 days' + interval '4 minutes', 3),
+			('00000000-0000-0000-0000-000000000609', 'abita-agent', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000603', 'hidden-cancellation', '+15555550102', '+15555550100', now() - interval '2 days', now() - interval '2 days' + interval '5 minutes', 'COMPLETED', 'CANCELLATION', now() - interval '2 days' + interval '4 minutes', 3),
+			('00000000-0000-0000-0000-000000000610', 'abita-agent', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000602', 'partial-reschedule', '+15555550103', '+15555550100', now() - interval '1 day', now() - interval '1 day' + interval '5 minutes', 'COMPLETED', 'PARTIAL', now() - interval '1 day' + interval '4 minutes', 3);
+	`); err != nil {
+		t.Fatalf("seed existing AI Interaction outcomes: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply AI Interaction attention migration: %v", err)
+	}
+
+	var allAttention, selectedAttention, partialAttention int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE user_subject = 'all-subject'),
+			count(*) FILTER (WHERE user_subject = 'selected-subject'),
+			count(*) FILTER (WHERE interaction_id = '00000000-0000-0000-0000-000000000610')
+		FROM ai_interaction_attention
+	`).Scan(&allAttention, &selectedAttention, &partialAttention); err != nil {
+		t.Fatalf("read migrated AI Interaction attention: %v", err)
+	}
+	if allAttention != 2 || selectedAttention != 1 || partialAttention != 0 {
+		t.Fatalf(
+			"migrated AI Interaction attention = all:%d selected:%d partial:%d",
+			allAttention, selectedAttention, partialAttention,
+		)
+	}
+}
+
 func TestMadelynAccessGrantEmailCorrectionUpdatesUnclaimedGrant(t *testing.T) {
 	pool := testdb.OpenThrough(t, "0029_outbound_voice_fallback.sql")
 	ctx := context.Background()

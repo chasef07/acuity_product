@@ -648,6 +648,8 @@ func (server *Server) QueryAIInteractionOutcomes(
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
 			LocationID: uuidString(body.LocationId),
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -3328,7 +3330,8 @@ func aiOutcomePageResponse(
 	page interaction.OutcomePage,
 ) (api.AIOutcomePage, error) {
 	response := api.AIOutcomePage{
-		Items: make([]api.AIOutcomeItem, 0, len(page.Items)),
+		Items:      make([]api.AIOutcomeItem, 0, len(page.Items)),
+		NextCursor: page.NextCursor,
 	}
 	for _, item := range page.Items {
 		converted, err := aiOutcomeItemResponse(item)

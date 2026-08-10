@@ -132,6 +132,7 @@ export function TaskWorkspaceShell() {
   const [messageNextCursor, setMessageNextCursor] = useState("")
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [aiOutcomes, setAIOutcomes] = useState<AiOutcomeItem[]>([])
+  const [aiOutcomeNextCursor, setAIOutcomeNextCursor] = useState("")
   const [aiOutcomesLoading, setAIOutcomesLoading] = useState(false)
   const [aiOutcomesError, setAIOutcomesError] = useState("")
   const [selectedAIInteractionID, setSelectedAIInteractionID] = useState("")
@@ -151,6 +152,7 @@ export function TaskWorkspaceShell() {
   const workspaceRef = useRef<WorkspaceSnapshot | undefined>(undefined)
   const tasksRef = useRef<Task[]>([])
   const messageThreadsRef = useRef<MessageThreadSummary[]>([])
+  const aiOutcomesRef = useRef<AiOutcomeItem[]>([])
   const hasLoadedTasksRef = useRef(false)
   const hasLoadedThreadsRef = useRef(false)
   const taskQueryGenerationRef = useRef(0)
@@ -297,7 +299,7 @@ export function TaskWorkspaceShell() {
     },
     [locationScopeID, practiceID],
   )
-  const loadAIOutcomes = useCallback(async () => {
+  const loadAIOutcomes = useCallback(async (cursor = "", append = false) => {
     if (!practiceID) return
     const requestGeneration = ++aiOutcomeQueryGenerationRef.current
     setAIOutcomesLoading(true)
@@ -313,6 +315,8 @@ export function TaskWorkspaceShell() {
       body: {
         practiceId: practiceID,
         ...(locationScopeID ? { locationId: locationScopeID } : {}),
+        ...(cursor ? { cursor } : {}),
+        limit: 50,
       },
     }).catch(() => undefined)
     if (requestGeneration !== aiOutcomeQueryGenerationRef.current) return
@@ -322,7 +326,9 @@ export function TaskWorkspaceShell() {
         result?.response?.status === 401 ||
         result?.response?.status === 403
       ) {
+        aiOutcomesRef.current = []
         setAIOutcomes([])
+        setAIOutcomeNextCursor("")
         setSelectedAIInteractionID("")
         setLoadState("unauthorized")
         return
@@ -330,7 +336,12 @@ export function TaskWorkspaceShell() {
       setAIOutcomesError("AI appointment updates are unavailable.")
       return
     }
-    setAIOutcomes(result.data.items)
+    const next = append
+      ? [...aiOutcomesRef.current, ...result.data.items]
+      : result.data.items
+    aiOutcomesRef.current = next
+    setAIOutcomes(next)
+    setAIOutcomeNextCursor(result.data.nextCursor)
   }, [locationScopeID, practiceID])
   const reviewAIOutcome = useCallback(async (interactionID: string) => {
     const token = await getAccessToken()
@@ -340,9 +351,11 @@ export function TaskWorkspaceShell() {
       path: { interactionId: interactionID },
     }).catch(() => undefined)
     if (!result?.response?.ok) return
-    setAIOutcomes((current) =>
-      current.filter((outcome) => outcome.id !== interactionID),
+    const next = aiOutcomesRef.current.filter(
+      (outcome) => outcome.id !== interactionID,
     )
+    aiOutcomesRef.current = next
+    setAIOutcomes(next)
   }, [])
   const reconcileWorkspace = useCallback(
     async ({
@@ -673,10 +686,12 @@ export function TaskWorkspaceShell() {
     messageQueryKeyRef.current = ""
     tasksRef.current = []
     messageThreadsRef.current = []
+    aiOutcomesRef.current = []
     setTasks([])
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
+    setAIOutcomeNextCursor("")
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
@@ -729,10 +744,12 @@ export function TaskWorkspaceShell() {
     messageQueryKeyRef.current = ""
     tasksRef.current = []
     messageThreadsRef.current = []
+    aiOutcomesRef.current = []
     setTasks([])
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
+    setAIOutcomeNextCursor("")
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
@@ -1094,6 +1111,7 @@ export function TaskWorkspaceShell() {
           messageLoading={messagesLoading}
           outcomesLoading={aiOutcomesLoading}
           outcomesError={aiOutcomesError}
+          outcomeNextCursor={aiOutcomeNextCursor}
           nextCursor={nextCursor}
           messageNextCursor={messageNextCursor}
           connection={connection}
@@ -1113,6 +1131,9 @@ export function TaskWorkspaceShell() {
           onLoadMore={() => void loadTasks(nextCursor, true)}
           onMessageLoadMore={() =>
             void loadMessageThreads(messageNextCursor, true)
+          }
+          onOutcomeLoadMore={() =>
+            void loadAIOutcomes(aiOutcomeNextCursor, true)
           }
         />
         <SidebarInset

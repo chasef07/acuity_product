@@ -533,6 +533,8 @@ export type AiInteractionEvidence = {
 export type AiOutcomeQueryRequest = {
     practiceId: string;
     locationId?: string;
+    cursor?: string;
+    limit?: number;
 };
 
 export type AiOutcomeItem = {
@@ -554,6 +556,7 @@ export type AiOutcomeItem = {
 
 export type AiOutcomePage = {
     items: Array<AiOutcomeItem>;
+    nextCursor: string;
 };
 
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';

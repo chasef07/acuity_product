@@ -116,6 +116,7 @@ type TaskRailProps = {
   loading: boolean
   outcomesLoading: boolean
   outcomesError: string
+  outcomeNextCursor: string
   messageLoading: boolean
   nextCursor: string
   messageNextCursor: string
@@ -129,6 +130,7 @@ type TaskRailProps = {
   onTaskSelect: (task: Task) => void
   onLoadMore: () => void
   onMessageLoadMore: () => void
+  onOutcomeLoadMore: () => void
 }
 
 export function TaskRail({
@@ -149,6 +151,7 @@ export function TaskRail({
   loading,
   outcomesLoading,
   outcomesError,
+  outcomeNextCursor,
   messageLoading,
   nextCursor,
   messageNextCursor,
@@ -162,6 +165,7 @@ export function TaskRail({
   onTaskSelect,
   onLoadMore,
   onMessageLoadMore,
+  onOutcomeLoadMore,
 }: TaskRailProps) {
   const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
   const [expanded, setExpanded] = useState<Record<AttentionSection, boolean>>(
@@ -419,6 +423,14 @@ export function TaskRail({
             onAIInteractionSelect={onAIInteractionSelect}
             onLoadMore={onLoadMore}
           />
+          {(expanded.bookings || expanded.cancellations || expanded.reschedules) && (
+            <RailLoadSentinel
+              label="Loading older appointment updates"
+              cursor={outcomeNextCursor}
+              loading={outcomesLoading}
+              onLoadMore={onOutcomeLoadMore}
+            />
+          )}
           <AttentionGroup
             title="Texts"
             count={textRows.length}
@@ -603,7 +615,7 @@ function AppointmentGroup({
       expanded={expanded}
       onToggle={onToggle}
     >
-      {[...outcomes].reverse().map((interaction) => (
+      {outcomes.map((interaction) => (
         <AIOutcomeRow
           key={interaction.id}
           interaction={interaction}

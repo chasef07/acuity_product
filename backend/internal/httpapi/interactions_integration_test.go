@@ -756,6 +756,56 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("AI Interaction attention = %#v", attention)
 	}
 
+	firstPageBody, _ := json.Marshal(map[string]any{
+		"practiceId": practiceID,
+		"limit":      2,
+	})
+	firstPageResponse := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", firstPageBody,
+	)
+	if firstPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("query first AI outcome page status = %d, body = %s",
+			firstPageResponse.StatusCode, readBody(t, firstPageResponse))
+	}
+	var firstPage struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		NextCursor string `json:"nextCursor"`
+	}
+	decode(t, firstPageResponse, &firstPage)
+	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" {
+		t.Fatalf("first AI outcome page = %#v", firstPage)
+	}
+	secondPageBody, _ := json.Marshal(map[string]any{
+		"practiceId": practiceID,
+		"cursor":     firstPage.NextCursor,
+		"limit":      2,
+	})
+	secondPageResponse := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", secondPageBody,
+	)
+	if secondPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("query second AI outcome page status = %d, body = %s",
+			secondPageResponse.StatusCode, readBody(t, secondPageResponse))
+	}
+	var secondPage struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		NextCursor string `json:"nextCursor"`
+	}
+	decode(t, secondPageResponse, &secondPage)
+	if len(secondPage.Items) != 1 || secondPage.NextCursor != "" ||
+		secondPage.Items[0].ID == firstPage.Items[0].ID ||
+		secondPage.Items[0].ID == firstPage.Items[1].ID {
+		t.Fatalf("second AI outcome page = %#v after %#v", secondPage, firstPage)
+	}
+
 	staffOutcomes := request(
 		t, server.Client(), http.MethodPost,
 		server.URL+"/v1/ai/interactions/outcomes/query",
