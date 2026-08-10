@@ -27,6 +27,7 @@ GRANT SELECT ON TABLE
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
+    public.ai_interaction_attention,
     public.ai_interactions,
     public.human_calling_call_legs,
     public.human_calling_calls,
@@ -96,6 +97,7 @@ GRANT INSERT ON TABLE
     public.access_locations,
     public.access_membership_locations,
     public.access_memberships,
+    public.ai_interaction_attention,
     public.ai_interactions,
     public.ai_interaction_receipts,
     public.human_calling_call_legs,
@@ -140,6 +142,12 @@ TO acuity_portal;
 
 GRANT UPDATE (updated_at)
 ON TABLE public.messaging_location_configurations
+TO acuity_portal;
+
+GRANT UPDATE (
+    reviewed_at
+)
+ON TABLE public.ai_interaction_attention
 TO acuity_portal;
 
 GRANT UPDATE (
@@ -289,6 +297,7 @@ GRANT SELECT ON TABLE
     public.access_operational_users,
     public.access_platform_operators,
     public.access_practices,
+	public.ai_interaction_attention,
 	public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_calls,
@@ -328,6 +337,7 @@ ON TABLE public.ai_interaction_receipts
 TO acuity_worker;
 
 GRANT INSERT ON TABLE
+	public.ai_interaction_attention,
 	public.ai_interactions,
 	public.human_calling_call_legs,
     public.human_calling_calls,

@@ -25,8 +25,10 @@ import { getAccessToken } from "@/lib/auth-client"
 
 export function AIInteractionContext({
   interactionID,
+  onLoaded,
 }: {
   interactionID: string
+  onLoaded?: (interactionID: string) => void
 }) {
   const [request, setRequest] = useState<{
     interactionID: string
@@ -65,9 +67,10 @@ export function AIInteractionContext({
         return
       }
       setRequest({ interactionID, detail: result.data })
+      onLoaded?.(interactionID)
     })
     return () => controller.abort()
-  }, [interactionID])
+  }, [interactionID, onLoaded])
 
   if (loading) {
     return (

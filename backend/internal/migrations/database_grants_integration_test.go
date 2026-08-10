@@ -535,6 +535,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_operational_users",
 		"access_platform_operators",
 		"access_practices",
+		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
@@ -561,6 +562,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_locations",
 		"access_membership_locations",
 		"access_memberships",
+		"ai_interaction_attention",
 		"ai_interactions",
 		"ai_interaction_receipts",
 		"human_calling_call_legs",
@@ -611,6 +613,7 @@ func expectedTablePrivileges() map[string]bool {
 		"access_operational_users",
 		"access_platform_operators",
 		"access_practices",
+		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
@@ -634,6 +637,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
+		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
@@ -694,6 +698,12 @@ func expectedColumnPrivileges() map[string]bool {
 		"call_session_id",
 		"initiated_event_id",
 		"rejected_at",
+	)
+	grant(
+		"acuity_portal",
+		"public.ai_interaction_attention",
+		"UPDATE",
+		"reviewed_at",
 	)
 	grant(
 		"acuity_portal",

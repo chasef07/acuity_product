@@ -54,6 +54,7 @@ import {
   queryMessageThreads,
   queryTasks,
   readTask,
+  reviewAiInteractionOutcome,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
@@ -312,7 +313,6 @@ export function TaskWorkspaceShell() {
       body: {
         practiceId: practiceID,
         ...(locationScopeID ? { locationId: locationScopeID } : {}),
-        date: currentUTCDate(),
       },
     }).catch(() => undefined)
     if (requestGeneration !== aiOutcomeQueryGenerationRef.current) return
@@ -332,6 +332,18 @@ export function TaskWorkspaceShell() {
     }
     setAIOutcomes(result.data.items)
   }, [locationScopeID, practiceID])
+  const reviewAIOutcome = useCallback(async (interactionID: string) => {
+    const token = await getAccessToken()
+    if (!token) return
+    const result = await reviewAiInteractionOutcome({
+      client: portalClient(token),
+      path: { interactionId: interactionID },
+    }).catch(() => undefined)
+    if (!result?.response?.ok) return
+    setAIOutcomes((current) =>
+      current.filter((outcome) => outcome.id !== interactionID),
+    )
+  }, [])
   const reconcileWorkspace = useCallback(
     async ({
       scope,
@@ -1174,6 +1186,7 @@ export function TaskWorkspaceShell() {
                   {contextView === "appointment" ? (
                     <AIInteractionContext
                       interactionID={selectedAIInteractionID}
+                      onLoaded={reviewAIOutcome}
                     />
                   ) : (
                     <InteractionWorkspace
@@ -1218,10 +1231,6 @@ export function TaskWorkspaceShell() {
   )
 }
 
-function currentUTCDate() {
-  return new Date().toISOString().slice(0, 10)
-}
-
 function emptyTaskFolderCounts(): TaskFolderCounts {
   return {
     tasks: 0,
@@ -1240,7 +1249,6 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
     },
   }
 }
-
 function WorkspaceSelector({
   discovery,
   practiceID,
