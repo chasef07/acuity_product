@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,7 @@ func TestProductionProvisioningWorkflowIsManualAndProductionScoped(t *testing.T)
 
 	for _, expected := range []string{
 		"workflow_dispatch:",
+		"group: production-${{ github.ref }}",
 		"environment: production",
 		"id-token: write",
 		"Confirmation must be exactly PROVISION.",
@@ -68,6 +70,24 @@ func TestProductionProvisioningUsesOneExecutionOverrideAndVerifiesReceipt(t *tes
 	}
 }
 
+func TestProductionProvisioningWaitsForDelayedReceipt(t *testing.T) {
+	output, commands, err := runProductionProvisioningWithEmptyLogReads(
+		t,
+		"1",
+		provisioningDigest,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("reconcile production provisioning: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "acuity-migrate-test123 created 1 Access Grants") {
+		t.Fatalf("provisioning output = %q", output)
+	}
+	if reads := strings.Count(commands, "logging\tread"); reads != 2 {
+		t.Fatalf("logging reads = %d, want 2:\n%s", reads, commands)
+	}
+}
+
 func TestProductionProvisioningRejectsUnexpectedReceipt(t *testing.T) {
 	output, commands, err := runProductionProvisioning(t, "0", provisioningDigest)
 	if err == nil {
@@ -101,9 +121,20 @@ func runProductionProvisioning(
 	jobImage string,
 ) ([]byte, string, error) {
 	t.Helper()
+	return runProductionProvisioningWithEmptyLogReads(t, expectedCount, jobImage, 0)
+}
+
+func runProductionProvisioningWithEmptyLogReads(
+	t *testing.T,
+	expectedCount string,
+	jobImage string,
+	emptyLogReads int,
+) ([]byte, string, error) {
+	t.Helper()
 	directory := provisioningDeployDirectory(t)
 	fakeDirectory := t.TempDir()
 	capture := filepath.Join(fakeDirectory, "gcloud-commands")
+	logReadCount := filepath.Join(fakeDirectory, "gcloud-log-read-count")
 	gcloud := filepath.Join(fakeDirectory, "gcloud")
 	fake := `#!/usr/bin/env bash
 set -Eeuo pipefail
@@ -133,7 +164,17 @@ case "$*" in
     printf '{"status":{"conditions":[{"type":"Completed","status":"True"}],"succeededCount":1}}\n'
     ;;
   "logging read "*)
-    printf '[{"jsonPayload":{"msg":"migrations_applied","provisioning":true,"access_grant_count":1}}]\n'
+    read_count=0
+    if [[ -f "$GCLOUD_LOG_READ_COUNT" ]]; then
+      IFS= read -r read_count <"$GCLOUD_LOG_READ_COUNT"
+    fi
+    read_count=$((read_count + 1))
+    printf '%s\n' "$read_count" >"$GCLOUD_LOG_READ_COUNT"
+    if (( read_count <= EMPTY_LOG_READS )); then
+      printf '[]\n'
+    else
+      printf '[{"jsonPayload":{"msg":"migrations_applied","provisioning":true,"access_grant_count":1}}]\n'
+    fi
     ;;
   *)
     printf 'unexpected gcloud command: %s\n' "$*" >&2
@@ -144,12 +185,18 @@ esac
 	if err := os.WriteFile(gcloud, []byte(fake), 0o755); err != nil {
 		t.Fatalf("write fake gcloud: %v", err)
 	}
+	sleep := filepath.Join(fakeDirectory, "sleep")
+	if err := os.WriteFile(sleep, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake sleep: %v", err)
+	}
 
 	command := exec.Command("bash", filepath.Join(directory, "reconcile-production-provisioning.sh"))
 	command.Env = append(os.Environ(),
+		"EMPTY_LOG_READS="+strconv.Itoa(emptyLogReads),
 		"PATH="+fakeDirectory+":"+os.Getenv("PATH"),
 		"EXPECTED_ACCESS_GRANTS_CREATED="+expectedCount,
 		"GCLOUD_CAPTURE="+capture,
+		"GCLOUD_LOG_READ_COUNT="+logReadCount,
 		"GCP_PROJECT_ID=acuity-health-prod",
 		"GCP_REGION=us-east1",
 		"GITHUB_SHA="+provisioningCommit,

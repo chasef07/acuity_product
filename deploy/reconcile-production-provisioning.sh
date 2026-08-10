@@ -10,6 +10,8 @@ readonly expected_access_grants="${EXPECTED_ACCESS_GRANTS_CREATED:-}"
 readonly job_name="acuity-migrate"
 readonly provisioning_input="/etc/acuity/production-provisioning.json"
 readonly provisioning_output="/tmp/production-provisioning-output.json"
+readonly receipt_attempts=12
+readonly receipt_poll_seconds=5
 
 if [[ "$project_id" != "acuity-health-prod" || "$region" != "us-east1" ]]; then
   echo "Provisioning is restricted to acuity-health-prod in us-east1." >&2
@@ -100,20 +102,30 @@ if ! jq -e '
   exit 1
 fi
 
-logs="$(
+read_provisioning_receipt() {
   gcloud logging read \
     "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$job_name\" AND resource.labels.location=\"$region\" AND labels.\"run.googleapis.com/execution_name\"=\"$execution_name\" AND jsonPayload.msg=\"migrations_applied\"" \
     --project "$project_id" \
     --order desc \
     --limit 10 \
-    --format json
-)"
-receipt="$(
+    --format json |
   jq -cer '
     first(.[] | select(.jsonPayload.msg == "migrations_applied")) |
-    .jsonPayload // error("provisioning receipt was not found")
-  ' <<<"$logs"
-)"
+    .jsonPayload // empty
+  '
+}
+
+receipt=""
+for ((attempt = 1; attempt <= receipt_attempts; attempt++)); do
+  if receipt="$(read_provisioning_receipt)"; then
+    break
+  fi
+  if ((attempt == receipt_attempts)); then
+    echo "$execution_name did not emit a provisioning receipt." >&2
+    exit 1
+  fi
+  sleep "$receipt_poll_seconds"
+done
 if ! jq -e '.provisioning == true' >/dev/null <<<"$receipt"; then
   echo "$execution_name did not emit a provisioning receipt." >&2
   exit 1

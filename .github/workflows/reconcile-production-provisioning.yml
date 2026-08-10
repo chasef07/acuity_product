@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-provisioning
+  group: production-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
