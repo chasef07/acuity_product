@@ -32,8 +32,24 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 28 {
-		t.Fatalf("migration count = %d, want 28", migrationCount)
+	if migrationCount != 29 {
+		t.Fatalf("migration count = %d, want 29", migrationCount)
+	}
+	var locationTimeZoneColumn bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+				AND table_name = 'access_locations'
+				AND column_name = 'time_zone'
+				AND is_nullable = 'NO'
+		)
+	`).Scan(&locationTimeZoneColumn); err != nil {
+		t.Fatal(err)
+	}
+	if !locationTimeZoneColumn {
+		t.Fatal("Location timezone column is missing")
 	}
 
 	for _, relation := range []string{
@@ -114,6 +130,54 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 	if legacyVoicemailColumns != 0 {
 		t.Fatalf("legacy voicemail copy columns = %d, want 0", legacyVoicemailColumns)
+	}
+}
+
+func TestLocationTimeZoneMigrationBackfillsAbitaLocations(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0028_expand_hollywood_access.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name) VALUES
+			('00000000-0000-0000-0000-000000000201', 'abita-eye-group', 'Abita Eye Group'),
+			('00000000-0000-0000-0000-000000000202', 'another-practice', 'Another Practice');
+		INSERT INTO access_locations (practice_id, provisioning_key, name) VALUES
+			('00000000-0000-0000-0000-000000000201', 'spring-hill', 'Spring Hill'),
+			('00000000-0000-0000-0000-000000000202', 'central-office', 'Central Office');
+	`); err != nil {
+		t.Fatalf("seed pre-timezone Locations: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Location timezone migration: %v", err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT practice.provisioning_key, location.time_zone
+		FROM access_locations location
+		JOIN access_practices practice ON practice.id = location.practice_id
+		ORDER BY practice.provisioning_key
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	timeZones := map[string]string{}
+	for rows.Next() {
+		var practiceKey, timeZone string
+		if err := rows.Scan(&practiceKey, &timeZone); err != nil {
+			t.Fatal(err)
+		}
+		timeZones[practiceKey] = timeZone
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if timeZones["abita-eye-group"] != "America/New_York" {
+		t.Fatalf("Abita Location timezone = %q", timeZones["abita-eye-group"])
+	}
+	if timeZones["another-practice"] != "UTC" {
+		t.Fatalf("other Location timezone = %q", timeZones["another-practice"])
 	}
 }
 

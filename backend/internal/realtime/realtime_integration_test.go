@@ -135,6 +135,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 		PracticeID: practice.ID,
 		Key:        "fixture-2",
 		Name:       "Fixture 2",
+		TimeZone:   "America/New_York",
 	})
 	if err != nil {
 		t.Fatalf("publish Access mutation: %v", err)

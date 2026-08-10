@@ -12,6 +12,7 @@
         {
           "Key": "fixture-location-1",
           "Name": "Fixture Location 1",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["spring-hill"],
           "VoiceNumber": "+17275550101",
           "MessagingSender": "+17275550101",
@@ -20,6 +21,7 @@
         {
           "Key": "fixture-location-2",
           "Name": "Fixture Location 2",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["crystal-river"],
           "VoiceNumber": "+17275550102",
           "MessagingSender": "+17275550102",
@@ -28,6 +30,7 @@
         {
           "Key": "fixture-location-3",
           "Name": "Fixture Location 3",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["hollywood"],
           "VoiceNumber": "+17275550103",
           "MessagingSender": "+17275550103",
@@ -36,6 +39,7 @@
         {
           "Key": "fixture-location-4",
           "Name": "Fixture Location 4",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["sweetwater"],
           "VoiceNumber": "+17275550104",
           "MessagingSender": "+17275550104",
@@ -44,6 +48,7 @@
         {
           "Key": "fixture-location-5",
           "Name": "Fixture Location 5",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["north-miami-beach-optical"],
           "VoiceNumber": "+17275550105",
           "MessagingSender": "+17275550105",
@@ -52,6 +57,7 @@
         {
           "Key": "fixture-location-6",
           "Name": "Fixture Location 6",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["dev"],
           "VoiceNumber": "+17275550106",
           "MessagingSender": "+17275550106",

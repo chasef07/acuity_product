@@ -92,6 +92,7 @@ type PracticeProvision struct {
 type LocationProvision struct {
 	Key                string
 	Name               string
+	TimeZone           string
 	AbitaOfficeKeys    []string
 	MessagingSender    string
 	MessagingProfileID string
@@ -126,8 +127,9 @@ type Practice struct {
 }
 
 type Location struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TimeZone string `json:"timeZone"`
 }
 
 type Membership struct {
@@ -169,6 +171,7 @@ type AddLocationCommand struct {
 	PracticeID string
 	Key        string
 	Name       string
+	TimeZone   string
 }
 
 type RevokeAccessGrantCommand struct {
@@ -325,14 +328,19 @@ func (m *Module) ProvisionInTx(
 
 		locationIDs := make(map[string]string, len(practiceInput.Locations))
 		for _, locationInput := range practiceInput.Locations {
+			timeZone := locationTimeZone(locationInput.TimeZone)
 			var locationID string
 			if err := tx.QueryRow(ctx, `
-				INSERT INTO access_locations (practice_id, provisioning_key, name)
-				VALUES ($1, $2, $3)
+				INSERT INTO access_locations (
+					practice_id, provisioning_key, name, time_zone
+				)
+				VALUES ($1, $2, $3, $4)
 				ON CONFLICT (practice_id, provisioning_key)
-				DO UPDATE SET name = EXCLUDED.name
+				DO UPDATE SET
+					name = EXCLUDED.name,
+					time_zone = EXCLUDED.time_zone
 				RETURNING id::text
-			`, practiceID, locationInput.Key, locationInput.Name).Scan(&locationID); err != nil {
+			`, practiceID, locationInput.Key, locationInput.Name, timeZone).Scan(&locationID); err != nil {
 				return Provisioned{}, fmt.Errorf("provision location %q: %w", locationInput.Key, err)
 			}
 			locationIDs[locationInput.Key] = locationID
@@ -1359,17 +1367,26 @@ func (m *Module) AddLocation(
 	} else if !isOperator {
 		return LocationMutation{}, ErrDenied
 	}
+	command.TimeZone = strings.TrimSpace(command.TimeZone)
+	if !validTimeZone(command.TimeZone) {
+		return LocationMutation{}, ErrInvalidInput
+	}
 
 	var result LocationMutation
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO access_locations (practice_id, provisioning_key, name)
-		VALUES ($1, $2, $3)
+		INSERT INTO access_locations (
+			practice_id, provisioning_key, name, time_zone
+		)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (practice_id, provisioning_key)
-		DO UPDATE SET name = EXCLUDED.name
-		RETURNING id::text, name
-	`, command.PracticeID, command.Key, strings.TrimSpace(command.Name)).Scan(
+		DO UPDATE SET
+			name = EXCLUDED.name,
+			time_zone = EXCLUDED.time_zone
+		RETURNING id::text, name, time_zone
+	`, command.PracticeID, command.Key, strings.TrimSpace(command.Name), command.TimeZone).Scan(
 		&result.Location.ID,
 		&result.Location.Name,
+		&result.Location.TimeZone,
 	); err != nil {
 		return LocationMutation{}, fmt.Errorf("add Location: %w", err)
 	}
@@ -1550,7 +1567,7 @@ func loadOperatorAuthorization(
 
 func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Location, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT id::text, name
+		SELECT id::text, name, time_zone
 		FROM access_locations
 		WHERE practice_id = $1
 		ORDER BY name, id
@@ -1562,7 +1579,7 @@ func loadLocations(ctx context.Context, tx pgx.Tx, practiceID string) ([]Locatio
 	locations := []Location{}
 	for rows.Next() {
 		var location Location
-		if err := rows.Scan(&location.ID, &location.Name); err != nil {
+		if err := rows.Scan(&location.ID, &location.Name, &location.TimeZone); err != nil {
 			return nil, fmt.Errorf("scan Practice Location: %w", err)
 		}
 		locations = append(locations, location)
@@ -1720,7 +1737,7 @@ func loadMembershipAuthorization(
 	}
 
 	locationQuery := `
-		SELECT l.id::text, l.name
+		SELECT l.id::text, l.name, l.time_zone
 		FROM access_locations l
 		WHERE l.practice_id = $1
 		ORDER BY l.name, l.id
@@ -1728,7 +1745,7 @@ func loadMembershipAuthorization(
 	args := []any{practiceID}
 	if result.Membership.LocationScope == LocationScopeSelected {
 		locationQuery = `
-			SELECT l.id::text, l.name
+			SELECT l.id::text, l.name, l.time_zone
 			FROM access_membership_locations ml
 			JOIN access_locations l
 				ON l.practice_id = ml.practice_id
@@ -1746,7 +1763,7 @@ func loadMembershipAuthorization(
 	result.Locations = []Location{}
 	for rows.Next() {
 		var location Location
-		if err := rows.Scan(&location.ID, &location.Name); err != nil {
+		if err := rows.Scan(&location.ID, &location.Name, &location.TimeZone); err != nil {
 			return Authorization{}, fmt.Errorf("scan membership location: %w", err)
 		}
 		result.Locations = append(result.Locations, location)
@@ -1776,6 +1793,9 @@ func validateProvisioning(input Provisioning) error {
 		for _, location := range practice.Locations {
 			if strings.TrimSpace(location.Key) == "" || strings.TrimSpace(location.Name) == "" {
 				return fmt.Errorf("%w: location key and name are required", ErrInvalidInput)
+			}
+			if !validTimeZone(locationTimeZone(location.TimeZone)) {
+				return fmt.Errorf("%w: invalid Location time zone", ErrInvalidInput)
 			}
 			for _, officeKey := range location.AbitaOfficeKeys {
 				if !abitaOfficeKey.MatchString(officeKey) {
@@ -1810,6 +1830,22 @@ func validateProvisioning(input Provisioning) error {
 		}
 	}
 	return nil
+}
+
+func locationTimeZone(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "UTC"
+	}
+	return value
+}
+
+func validTimeZone(value string) bool {
+	if value == "" || value == "Local" || (value != "UTC" && !strings.Contains(value, "/")) {
+		return false
+	}
+	_, err := time.LoadLocation(value)
+	return err == nil
 }
 
 func serviceHasCapability(

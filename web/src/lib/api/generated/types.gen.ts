@@ -42,6 +42,7 @@ export type Practice = {
 export type Location = {
     id: string;
     name: string;
+    timeZone: string;
 };
 
 export type Membership = {
@@ -92,6 +93,7 @@ export type ProviderReceiptRecovery = {
 export type AddLocationRequest = {
     key: string;
     name: string;
+    timeZone: string;
 };
 
 export type AuditEvent = {
@@ -513,7 +515,10 @@ export type AiInteractionEvidence = {
 export type AiOutcomeQueryRequest = {
     practiceId: string;
     locationId?: string;
-    date: string;
+    /**
+     * Optional historical local calendar date applied to every authorized Location. Omit for each Location's current local day.
+     */
+    date?: string;
 };
 
 export type AiOutcomeCounts = {
@@ -542,7 +547,10 @@ export type AiOutcomeItem = {
 };
 
 export type AiOutcomePage = {
-    date: string;
+    /**
+     * Historical local calendar date when one was requested; omitted for a current per-Location query.
+     */
+    date?: string;
     counts: AiOutcomeCounts;
     items: Array<AiOutcomeItem>;
 };

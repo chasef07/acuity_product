@@ -240,10 +240,16 @@ func (m *Module) QueryDailyOutcomes(
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	date := command.Date.UTC()
+	invalidDate := !date.IsZero() && (date.Hour() != 0 || date.Minute() != 0 ||
+		date.Second() != 0 || date.Nanosecond() != 0)
 	if m.pool == nil || m.access == nil || command.PracticeID == "" ||
-		date.IsZero() || date.Hour() != 0 || date.Minute() != 0 ||
-		date.Second() != 0 || date.Nanosecond() != 0 {
+		invalidDate {
 		return DailyOutcomes{}, ErrInvalidInput
+	}
+	now := m.now()
+	var requestedDate *time.Time
+	if !date.IsZero() {
+		requestedDate = &date
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -293,11 +299,27 @@ func (m *Module) QueryDailyOutcomes(
 			AND location.id = interaction.location_id
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id::text = ANY($2::text[])
-			AND interaction.started_at >= $3
-			AND interaction.started_at < $4
+			AND interaction.started_at >= (
+				(
+					CASE
+						WHEN $3::date IS NULL
+							THEN ($4::timestamptz AT TIME ZONE location.time_zone)::date
+						ELSE $3::date
+					END
+				)::timestamp AT TIME ZONE location.time_zone
+			)
+			AND interaction.started_at < (
+				(
+					CASE
+						WHEN $3::date IS NULL
+							THEN ($4::timestamptz AT TIME ZONE location.time_zone)::date
+						ELSE $3::date
+					END + 1
+				)::timestamp AT TIME ZONE location.time_zone
+			)
 			AND interaction.status <> 'IN_PROGRESS'
 		ORDER BY interaction.started_at, interaction.id
-	`, command.PracticeID, locationIDs, date, date.AddDate(0, 0, 1))
+	`, command.PracticeID, locationIDs, requestedDate, now)
 	if err != nil {
 		return DailyOutcomes{}, fmt.Errorf("query daily AI outcomes: %w", err)
 	}

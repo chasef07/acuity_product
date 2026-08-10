@@ -318,6 +318,7 @@ func (server *Server) AddLocation(
 		PracticeID: practiceID.String(),
 		Key:        body.Key,
 		Name:       body.Name,
+		TimeZone:   body.TimeZone,
 	})
 	if err != nil {
 		server.writeAccessError(w, r, err)
@@ -648,7 +649,7 @@ func (server *Server) QueryAIInteractionOutcomes(
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
 			LocationID: uuidString(body.LocationId),
-			Date:       body.Date.Time,
+			Date:       optionalDate(body.Date),
 		},
 	)
 	if err != nil {
@@ -2532,7 +2533,7 @@ func locationResponse(location access.Location) (api.Location, error) {
 	if err != nil {
 		return api.Location{}, err
 	}
-	return api.Location{Id: id, Name: location.Name}, nil
+	return api.Location{Id: id, Name: location.Name, TimeZone: location.TimeZone}, nil
 }
 
 func membershipResponse(membership access.Membership) (api.Membership, error) {
@@ -3288,7 +3289,6 @@ func aiOutcomePageResponse(
 	page interaction.DailyOutcomes,
 ) (api.AIOutcomePage, error) {
 	response := api.AIOutcomePage{
-		Date: openapi_types.Date{Time: page.Date},
 		Counts: api.AIOutcomeCounts{
 			Bookings:      page.Counts.Bookings,
 			Cancellations: page.Counts.Cancellations,
@@ -3297,6 +3297,9 @@ func aiOutcomePageResponse(
 			Indeterminate: page.Counts.Indeterminate,
 		},
 		Items: make([]api.AIOutcomeItem, 0, len(page.Items)),
+	}
+	if !page.Date.IsZero() {
+		response.Date = &openapi_types.Date{Time: page.Date}
 	}
 	for _, item := range page.Items {
 		converted, err := aiOutcomeItemResponse(item)
@@ -3477,6 +3480,13 @@ func uuidString(value *openapi_types.UUID) string {
 		return ""
 	}
 	return value.String()
+}
+
+func optionalDate(value *openapi_types.Date) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return value.Time
 }
 
 func intValue(value *int) int {

@@ -67,11 +67,17 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		Email:         "selected@abita.test",
 		EmailVerified: true,
 	}
+	operator := access.Identity{
+		Subject:       "founder-subject",
+		Email:         "founder@acuity.test",
+		EmailVerified: true,
+	}
 	handler, err := newPortalHandler(t, httpapi.Config{
 		AllowedOrigins: []string{"http://localhost:3000"},
 		AcquireTimeout: 500 * time.Millisecond,
 	}, pool, accessModule, staticAuthenticator{
 		"selected-token": identity,
+		"operator-token": operator,
 	})
 	if err != nil {
 		t.Fatalf("new HTTP adapter: %v", err)
@@ -134,11 +140,44 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		t.Fatalf("workspace snapshot = %#v", snapshot)
 	}
 
-	operatorDiscovery, err := accessModule.DiscoverActor(context.Background(), access.Identity{
-		Subject:       "founder-subject",
-		Email:         "founder@acuity.test",
-		EmailVerified: true,
+	addLocationBody, _ := json.Marshal(map[string]any{
+		"key":      "pacific-office",
+		"name":     "Pacific Office",
+		"timeZone": "America/Los_Angeles",
 	})
+	addedLocation := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/practices/"+accessDiscovery.Practices[0].Id.String()+"/locations",
+		"operator-token", addLocationBody,
+	)
+	if addedLocation.StatusCode != http.StatusCreated {
+		t.Fatalf("add timezone-owned Location status = %d, body = %s",
+			addedLocation.StatusCode, readBody(t, addedLocation))
+	}
+	var locationMutation struct {
+		Location struct {
+			TimeZone string `json:"timeZone"`
+		} `json:"location"`
+	}
+	decode(t, addedLocation, &locationMutation)
+	if locationMutation.Location.TimeZone != "America/Los_Angeles" {
+		t.Fatalf("added Location timezone = %q", locationMutation.Location.TimeZone)
+	}
+	invalidLocationBody, _ := json.Marshal(map[string]any{
+		"key":      "invalid-time-zone",
+		"name":     "Invalid Time Zone",
+		"timeZone": "Local",
+	})
+	invalidLocation := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/practices/"+accessDiscovery.Practices[0].Id.String()+"/locations",
+		"operator-token", invalidLocationBody,
+	)
+	if invalidLocation.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid Location timezone status = %d, body = %s",
+			invalidLocation.StatusCode, readBody(t, invalidLocation))
+	}
+	_ = invalidLocation.Body.Close()
+
+	operatorDiscovery, err := accessModule.DiscoverActor(context.Background(), operator)
 	if err != nil {
 		t.Fatalf("discover test operator: %v", err)
 	}

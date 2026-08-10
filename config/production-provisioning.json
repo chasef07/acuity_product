@@ -11,6 +11,7 @@
         {
           "Key": "hollywood",
           "Name": "Hollywood",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["hollywood"],
           "VoiceNumber": "+19542872010",
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923.",
@@ -20,6 +21,7 @@
         {
           "Key": "sweetwater",
           "Name": "Sweetwater",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["sweetwater"],
           "VoiceNumber": "+17864654836",
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923.",
@@ -29,11 +31,13 @@
         {
           "Key": "sweetwater-optical",
           "Name": "Sweetwater Optical",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["sweetwater-optical"]
         },
         {
           "Key": "spring-hill",
           "Name": "Spring Hill",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["spring-hill"],
           "VoiceNumber": "+17275919997",
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923.",
@@ -43,6 +47,7 @@
         {
           "Key": "crystal-river",
           "Name": "Crystal River",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["crystal-river"],
           "VoiceNumber": "+13523202007",
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."
@@ -50,6 +55,7 @@
         {
           "Key": "north-miami-beach-optical",
           "Name": "North Miami Beach Optical",
+          "TimeZone": "America/New_York",
           "AbitaOfficeKeys": ["north-miami-beach-optical"],
           "VoiceNumber": "+13055095333",
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."

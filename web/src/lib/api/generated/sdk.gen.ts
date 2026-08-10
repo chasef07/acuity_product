@@ -320,7 +320,7 @@ export const getAiInteractionEvidence = <ThrowOnError extends boolean = false>(o
 });
 
 /**
- * Read authorized AI appointment outcomes for one UTC interaction date.
+ * Read authorized AI appointment outcomes for each Location business day.
  */
 export const queryAiInteractionOutcomes = <ThrowOnError extends boolean = false>(options: Options<QueryAiInteractionOutcomesData, ThrowOnError>) => (options.client ?? client).post<QueryAiInteractionOutcomesResponses, QueryAiInteractionOutcomesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

@@ -11,7 +11,7 @@ A customer tenant and security boundary containing one or more Locations.
 _Avoid_: Account, organization, clinic
 
 **Location**:
-A physical or operational office within one Practice.
+A physical or operational office within one Practice that owns its IANA business timezone.
 _Avoid_: Site, branch
 
 **Abita Office Route**:

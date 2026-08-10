@@ -826,7 +826,7 @@ paths:
   /v1/ai/interactions/outcomes/query:
     post:
       operationId: queryAIInteractionOutcomes
-      summary: Read authorized AI appointment outcomes for one UTC interaction date.
+      summary: Read authorized AI appointment outcomes for each Location business day.
       requestBody:
         required: true
         content:
@@ -1700,13 +1700,17 @@ components:
     Location:
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [id, name, timeZone]
       properties:
         id:
           type: string
           format: uuid
         name:
           type: string
+        timeZone:
+          type: string
+          minLength: 1
+          maxLength: 100
     Membership:
       type: object
       additionalProperties: false
@@ -1815,7 +1819,7 @@ components:
     AddLocationRequest:
       type: object
       additionalProperties: false
-      required: [key, name]
+      required: [key, name, timeZone]
       properties:
         key:
           type: string
@@ -1825,6 +1829,10 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+        timeZone:
+          type: string
+          minLength: 1
+          maxLength: 100
     AuditEvent:
       type: object
       additionalProperties: false
@@ -2845,7 +2853,7 @@ components:
     AIOutcomeQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, date]
+      required: [practiceId]
       properties:
         practiceId:
           type: string
@@ -2856,6 +2864,7 @@ components:
         date:
           type: string
           format: date
+          description: Optional historical local calendar date applied to every authorized Location. Omit for each Location's current local day.
     AIOutcomeCounts:
       type: object
       additionalProperties: false
@@ -2925,11 +2934,12 @@ components:
     AIOutcomePage:
       type: object
       additionalProperties: false
-      required: [date, counts, items]
+      required: [counts, items]
       properties:
         date:
           type: string
           format: date
+          description: Historical local calendar date when one was requested; omitted for a current per-Location query.
         counts:
           $ref: "#/components/schemas/AIOutcomeCounts"
         items:

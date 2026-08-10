@@ -26,7 +26,7 @@ import (
 
 func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	pool := testdb.Open(t)
-	now := time.Date(2026, time.August, 8, 9, 30, 0, 0, time.UTC)
+	now := time.Date(2026, time.August, 8, 0, 30, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
@@ -38,9 +38,15 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 				{
 					Key:             "spring-hill",
 					Name:            "Spring Hill",
+					TimeZone:        "America/New_York",
 					AbitaOfficeKeys: []string{"spring-hill"},
 				},
-				{Key: "hidden-office", Name: "Hidden Office"},
+				{
+					Key:             "hidden-office",
+					Name:            "Hidden Office",
+					TimeZone:        "America/Los_Angeles",
+					AbitaOfficeKeys: []string{"hidden-office"},
+				},
 			},
 			AccessGrants: []access.AccessGrantProvision{
 				{
@@ -166,7 +172,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	startedAt := now.Add(123_456_789 * time.Nanosecond)
+	startedAt := now.Add(-time.Hour).Add(123_456_789 * time.Nanosecond)
 
 	body, _ := json.Marshal(map[string]any{
 		"kind":         "START",
@@ -722,10 +728,40 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"cancellationResult": map[string]any{"status": "error", "reason": "middleware_error"},
 	})
 	postCloseout("abita-indeterminate-63", "+17275550204", nil)
+	postHiddenCloseout := func(sourceCallID string, startedAt time.Time) {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]any{
+			"kind":         "CLOSEOUT",
+			"officeKey":    "hidden-office",
+			"sourceCallId": sourceCallID,
+			"callerPhone":  "+17275550205",
+			"officePhone":  "+17275919996",
+			"startedAt":    startedAt.Format(time.RFC3339),
+			"endedAt":      startedAt.Add(5 * time.Minute).Format(time.RFC3339),
+			"status":       "COMPLETED",
+			"appointmentOutcome": map[string]any{
+				"action":           "BOOKED",
+				"occurredAt":       startedAt.Add(3 * time.Minute).Format(time.RFC3339),
+				"newAppointmentId": sourceCallID + "-appointment",
+				"bookingResult":    map[string]any{"status": "booked"},
+			},
+			"closeoutPayload": map[string]any{"callId": sourceCallID},
+		})
+		response := request(
+			t, server.Client(), http.MethodPost,
+			server.URL+"/v1/ai/interactions", "production-interaction-token", payload,
+		)
+		if response.StatusCode != http.StatusCreated {
+			t.Fatalf("create %s AI Interaction status = %d, body = %s",
+				sourceCallID, response.StatusCode, readBody(t, response))
+		}
+		_ = response.Body.Close()
+	}
+	postHiddenCloseout("hidden-prior-local-day", time.Date(2026, time.August, 7, 5, 0, 0, 0, time.UTC))
+	postHiddenCloseout("hidden-current-local-day", time.Date(2026, time.August, 7, 23, 45, 0, 0, time.UTC))
 
 	outcomeQueryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
-		"date":       "2026-08-08",
 	})
 	outcomes := request(
 		t, server.Client(), http.MethodPost,
@@ -751,11 +787,11 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	decode(t, outcomes, &daily)
 	if daily.Counts.Reschedules != 1 ||
-		daily.Counts.Bookings != 1 ||
+		daily.Counts.Bookings != 2 ||
 		daily.Counts.Cancellations != 1 ||
 		daily.Counts.Partial != 1 ||
 		daily.Counts.Indeterminate != 1 ||
-		len(daily.Items) != 5 ||
+		len(daily.Items) != 6 ||
 		daily.Items[0].ID != first.InteractionID ||
 		daily.Items[0].AppointmentOutcome != "RESCHEDULE" {
 		t.Fatalf("daily AI Interaction outcomes = %#v", daily)

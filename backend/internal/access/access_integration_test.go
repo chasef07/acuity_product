@@ -533,6 +533,7 @@ func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 		PracticeID: practiceA.ID,
 		Key:        "fixture-a-2",
 		Name:       "Fixture A 2",
+		TimeZone:   "America/New_York",
 	})
 	if err != nil {
 		t.Fatalf("add Location as operator: %v", err)
@@ -546,6 +547,7 @@ func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 		PracticeID: practiceB.ID,
 		Key:        "fixture-b-2",
 		Name:       "Fixture B 2",
+		TimeZone:   "America/Los_Angeles",
 	})
 	if err != nil {
 		t.Fatalf("add Location in second Practice: %v", err)

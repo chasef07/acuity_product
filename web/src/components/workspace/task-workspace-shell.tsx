@@ -307,7 +307,6 @@ export function TaskWorkspaceShell() {
       body: {
         practiceId: practiceID,
         ...(locationScopeID ? { locationId: locationScopeID } : {}),
-        date: currentUTCDate(),
       },
     }).catch(() => undefined)
     if (requestGeneration !== aiOutcomeQueryGenerationRef.current) return
@@ -1208,10 +1207,6 @@ export function TaskWorkspaceShell() {
         </SidebarInset>
     </>,
   )
-}
-
-function currentUTCDate() {
-  return new Date().toISOString().slice(0, 10)
 }
 
 function WorkspaceSelector({

@@ -299,6 +299,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
         data: {
           key: "fixture-location-7",
           name: "Fixture Location 7",
+          timeZone: "America/New_York",
         },
       },
     )
