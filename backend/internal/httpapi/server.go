@@ -2363,7 +2363,7 @@ func discoveryResponse(discovery access.Discovery) (api.AccessDiscovery, error) 
 			item.Membership = &membership
 		}
 		for _, location := range practice.Locations {
-			converted, err := locationResponse(location)
+			converted, err := authorizedLocationResponse(location)
 			if err != nil {
 				return api.AccessDiscovery{}, err
 			}
@@ -2382,7 +2382,7 @@ func workspaceResponse(authorization access.Authorization) (api.WorkspaceSnapsho
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
-	location, err := locationResponse(*authorization.ActiveLocation)
+	location, err := authorizedLocationResponse(*authorization.ActiveLocation)
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
@@ -2461,7 +2461,21 @@ func locationResponse(location access.Location) (api.Location, error) {
 	if err != nil {
 		return api.Location{}, err
 	}
-	return api.Location{Id: id, Name: location.Name}, nil
+	return api.Location{
+		Id:            id,
+		Name:          location.Name,
+		CallingNumber: location.CallingNumber,
+	}, nil
+}
+
+func authorizedLocationResponse(location access.Location) (api.Location, error) {
+	if location.CallingNumber == "" {
+		return api.Location{}, fmt.Errorf(
+			"Location %s has no enabled calling number",
+			location.ID,
+		)
+	}
+	return locationResponse(location)
 }
 
 func membershipResponse(membership access.Membership) (api.Membership, error) {

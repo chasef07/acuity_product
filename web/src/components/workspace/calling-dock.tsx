@@ -673,6 +673,27 @@ export function CallingDock({
     }).catch(() => undefined)
     if (expectedCallRef.current !== callID) return
     if (result?.data) {
+      if (
+        result.data.state === "VOICEMAIL_GREETING" ||
+        result.data.state === "VOICEMAIL_RECORDING"
+      ) {
+        applyActiveCall()
+        setExpectedCallID("")
+        expectedCallRef.current = ""
+        setMediaAttached(false)
+        mediaLegRef.current = null
+        setMuted(false)
+        if (
+          ownerRef.current &&
+          mediaState === "ready" &&
+          availabilityIntentRef.current &&
+          !availabilityRef.current
+        ) {
+          setAvailabilityPending(true)
+          void updateReadiness(true, "ready")
+        }
+        return
+      }
       if (result.data.state === "NEEDS_DISPOSITION") {
         setPendingOutcome(result.data)
         applyActiveCall()

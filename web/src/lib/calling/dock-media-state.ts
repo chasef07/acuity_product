@@ -20,16 +20,7 @@ type CurrentCallingState = {
 }
 
 export function currentCallingStateCallID(state: CurrentCallingState) {
-  const voicemailCallID =
-    state.voicemail?.state === "VOICEMAIL_GREETING" ||
-    state.voicemail?.state === "VOICEMAIL_RECORDING"
-      ? state.voicemail.callId
-      : undefined
-  return (
-    state.bridged?.callId ??
-    voicemailCallID ??
-    state.disposition?.callId
-  )
+  return state.bridged?.callId ?? state.disposition?.callId
 }
 
 export async function confirmOutboundMediaWithRetry<T>(

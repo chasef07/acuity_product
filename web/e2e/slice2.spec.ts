@@ -362,9 +362,18 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       const activeCall = page.getByRole("region", {
         name: "Active call controls",
       })
+      await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
       await expect(
-        activeCall.getByText("Voicemail greeting", { exact: true }).first(),
-      ).toBeVisible({ timeout: 30_000 })
+        page.getByRole("switch", { name: "Availability" }),
+      ).toBeChecked()
+
+      if (attempt === "first") {
+        await startAndEndOutboundWhileVoicemail(
+          page,
+          database,
+          "+15555550113",
+        )
+      }
 
       await deliverProviderEvent(page, {
         eventType: "call.speak.ended",
@@ -383,9 +392,10 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         caller.callID,
         "START_VOICEMAIL_RECORDING",
       )
+      await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
       await expect(
-        activeCall.getByText("Recording voicemail", { exact: true }).first(),
-      ).toBeVisible({ timeout: 30_000 })
+        page.getByRole("switch", { name: "Availability" }),
+      ).toBeChecked()
 
       const recordingEndedAt = new Date()
       const recordingStartedAt = new Date(recordingEndedAt.getTime() - 8_000)
@@ -406,9 +416,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       }
       await deliverProviderEvent(page, savedEvent)
       await deliverProviderEvent(page, savedEvent)
-      await expect(
-        activeCall.getByText("Voicemail", { exact: true }).first(),
-      ).toBeVisible({ timeout: 30_000 })
+      await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
 
       const recoveryFolder = page.getByRole("button", {
         name: /^Missed Calls \d+$/,
@@ -434,8 +442,6 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
           return result.rows[0]?.duplicate_count ?? 0
         })
         .toBe(1)
-      await activeCall.getByRole("button", { name: "Close" }).click()
-      await expect(activeCall).toHaveCount(0)
       if (attempt === "second") {
         const availability = page.getByRole("switch", { name: "Availability" })
         if (!(await availability.isChecked())) await availability.click()
@@ -471,6 +477,26 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       interactions: "2",
       activities: ["1:TASK_CREATED", "2:INTERACTION_ATTACHED"],
     })
+    const voicemailRow = page.getByRole("button", {
+      name: /\(555\) 555-0111.*2 voicemail/,
+    })
+    await voicemailRow.click()
+    const taskContext = page.getByRole("complementary", {
+      name: "Task context",
+    })
+    await expect(taskContext).toBeVisible()
+    await expect(
+      taskContext.getByRole("heading", { name: "Review voicemail" }),
+    ).toBeVisible()
+    await expect(taskContext.getByText("2 related")).toBeVisible()
+    await taskContext.getByRole("button", { name: "Play" }).click()
+    await expect(
+      taskContext.getByLabel("Voicemail recording"),
+    ).toBeVisible()
+    await taskContext
+      .getByRole("button", { name: "Complete", exact: true })
+      .click()
+    await expect(voicemailRow).toHaveCount(0)
 
     const missedPhone = "+15555550112"
     const missedCaller = await startAnsweredInboundCall(
@@ -537,7 +563,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     const tokenResponse = await page.request.get(`${webURL}/api/auth/token`)
     expect(tokenResponse.ok()).toBeTruthy()
     const { token } = (await tokenResponse.json()) as { token: string }
-    for (const task of [voicemailTask.rows[0]!, missedTask.rows[0]!]) {
+    for (const task of [missedTask.rows[0]!]) {
       const completed = await page.request.post(
         `${portalURL}/v1/tasks/${task.id}/complete`,
         {
@@ -563,6 +589,107 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     await database.end()
   }
 })
+
+async function startAndEndOutboundWhileVoicemail(
+  page: Page,
+  database: Pool,
+  destination: string,
+) {
+  await page.getByLabel("Search phone number").fill(destination)
+  await page.getByLabel("Search phone number").press("Enter")
+  const callButton = page.getByRole("button", { name: "Call", exact: true })
+  await expect(callButton).toBeEnabled()
+  await callButton.click()
+
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ count: string }>(
+        `SELECT count(*)::text
+           FROM human_calling_calls
+          WHERE direction = 'OUTBOUND' AND destination_phone = $1`,
+        [destination],
+      )
+      return Number(result.rows[0]?.count ?? 0)
+    })
+    .toBe(1)
+  const outbound = await database.query<{ id: string }>(
+    `SELECT id::text
+       FROM human_calling_calls
+      WHERE direction = 'OUTBOUND' AND destination_phone = $1`,
+    [destination],
+  )
+  const outboundCallID = outbound.rows[0]!.id
+  await expect(
+    page.getByRole("region", { name: "Active call controls" }),
+  ).toBeVisible()
+
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ ready: boolean }>(
+        `SELECT leg.provider_call_control_id IS NOT NULL
+                AND leg.provider_call_leg_id IS NOT NULL
+                AND command.state IN ('SENT', 'RECONCILED') AS ready
+           FROM human_calling_call_legs leg
+           JOIN human_calling_provider_commands command
+             ON command.call_leg_id = leg.id
+            AND command.action = 'DIAL_OUTBOUND_STAFF'
+          WHERE leg.call_id = $1 AND leg.role = 'STAFF'`,
+        [outboundCallID],
+      )
+      return result.rows[0]?.ready ?? false
+    }, { timeout: 30_000 })
+    .toBe(true)
+  const staffLeg = await database.query<{
+    control_id: string
+    leg_id: string
+    session_id: string
+    client_state: string
+  }>(
+    `SELECT leg.provider_call_control_id AS control_id,
+            leg.provider_call_leg_id AS leg_id,
+            COALESCE(leg.provider_call_session_id, '') AS session_id,
+            command.payload->>'client_state' AS client_state
+       FROM human_calling_call_legs leg
+       JOIN human_calling_provider_commands command
+         ON command.call_leg_id = leg.id
+        AND command.action = 'DIAL_OUTBOUND_STAFF'
+      WHERE leg.call_id = $1 AND leg.role = 'STAFF'`,
+    [outboundCallID],
+  )
+  const staffSessionID =
+    staffLeg.rows[0]!.session_id || "voicemail-concurrent-session"
+  await deliverProviderEvent(page, {
+    eventType: "call.initiated",
+    eventId: "voicemail-concurrent-outbound-initiated",
+    occurredAt: new Date().toISOString(),
+    payload: {
+      connection_id: "fixture-call-control",
+      call_control_id: staffLeg.rows[0]!.control_id,
+      call_leg_id: staffLeg.rows[0]!.leg_id,
+      call_session_id: staffSessionID,
+      client_state: staffLeg.rows[0]!.client_state,
+    },
+  })
+  await deliverProviderEvent(page, {
+    eventType: "call.hangup",
+    eventId: "voicemail-concurrent-outbound-hangup",
+    occurredAt: new Date().toISOString(),
+    payload: {
+      call_control_id: staffLeg.rows[0]!.control_id,
+      call_leg_id: staffLeg.rows[0]!.leg_id,
+      call_session_id: staffSessionID,
+      client_state: staffLeg.rows[0]!.client_state,
+      hangup_cause: "NORMAL_CLEARING",
+      hangup_source: "CALLER",
+    },
+  })
+  await expect(
+    page.getByRole("region", { name: "Active call controls" }),
+  ).toHaveCount(0, { timeout: 30_000 })
+  await expect(
+    page.getByRole("switch", { name: "Availability" }),
+  ).toBeChecked()
+}
 
 type StaffLeg = {
   id: string

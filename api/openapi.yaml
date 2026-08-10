@@ -1649,12 +1649,14 @@ components:
     Location:
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [id, name, callingNumber]
       properties:
         id:
           type: string
           format: uuid
         name:
+          type: string
+        callingNumber:
           type: string
     Membership:
       type: object

@@ -42,6 +42,7 @@ export type Practice = {
 export type Location = {
     id: string;
     name: string;
+    callingNumber: string;
 };
 
 export type Membership = {

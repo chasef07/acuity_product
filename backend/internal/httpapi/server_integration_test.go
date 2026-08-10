@@ -62,6 +62,22 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	if err != nil {
 		t.Fatalf("provision HTTP fixture: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id, location_id, phone, enabled
+		)
+		SELECT practice.id, location.id,
+			CASE location.provisioning_key
+				WHEN 'fixture-location-1' THEN '+17275550101'
+				ELSE '+17275550102'
+			END,
+			true
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'abita-eye-group'
+	`); err != nil {
+		t.Fatalf("seed Location voice numbers: %v", err)
+	}
 	identity := access.Identity{
 		Subject:       "selected-subject",
 		Email:         "selected@abita.test",
@@ -113,8 +129,14 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	decode(t, discovered, &accessDiscovery)
 	if len(accessDiscovery.Practices) != 1 ||
 		accessDiscovery.Practices[0].Membership == nil ||
-		len(accessDiscovery.Practices[0].Locations) != 1 {
+		len(accessDiscovery.Practices[0].Locations) != 1 ||
+		accessDiscovery.Practices[0].Locations[0].CallingNumber != "+17275550101" {
 		t.Fatalf("discovery = %#v", accessDiscovery)
+	}
+	if encoded, err := json.Marshal(accessDiscovery); err != nil {
+		t.Fatalf("encode scoped discovery: %v", err)
+	} else if strings.Contains(string(encoded), "+17275550102") {
+		t.Fatalf("scoped discovery leaked another Location caller ID: %s", encoded)
 	}
 
 	workspaceURL := server.URL + "/v1/workspace?" + url.Values{
@@ -165,6 +187,54 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 		t.Fatalf("missing credential status = %d, body = %s", missingCredential.StatusCode, readBody(t, missingCredential))
 	}
 	_ = missingCredential.Body.Close()
+
+	if _, err := pool.Exec(context.Background(), `
+		DELETE FROM human_calling_location_voice_numbers voice
+		USING access_locations location
+		WHERE voice.location_id = location.id
+			AND location.provisioning_key = 'fixture-location-1'
+	`); err != nil {
+		t.Fatalf("remove authorized Location caller ID: %v", err)
+	}
+	missingNumber := request(t, server.Client(), http.MethodGet,
+		server.URL+"/v1/access",
+		"selected-token", nil,
+	)
+	if missingNumber.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("missing caller ID status = %d, body = %s", missingNumber.StatusCode, readBody(t, missingNumber))
+	}
+	_ = missingNumber.Body.Close()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id, location_id, phone, enabled
+		)
+		SELECT location.practice_id, location.id, '+17275550101', true
+		FROM access_locations location
+		WHERE location.provisioning_key = 'fixture-location-1'
+	`); err != nil {
+		t.Fatalf("restore authorized Location caller ID: %v", err)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id, location_id, phone, enabled
+		)
+		SELECT practice.id, location.id, '+17275550109', true
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'abita-eye-group'
+			AND location.provisioning_key = 'fixture-location-1'
+	`); err != nil {
+		t.Fatalf("seed ambiguous Location caller ID: %v", err)
+	}
+	ambiguous := request(t, server.Client(), http.MethodGet,
+		server.URL+"/v1/access",
+		"selected-token", nil,
+	)
+	if ambiguous.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("ambiguous caller ID status = %d, body = %s", ambiguous.StatusCode, readBody(t, ambiguous))
+	}
+	_ = ambiguous.Body.Close()
 }
 
 func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
