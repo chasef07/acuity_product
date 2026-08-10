@@ -519,6 +519,7 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_location_voice_numbers",
+		"human_calling_outbound_voice_fallbacks",
 		"human_calling_provider_commands",
 		"human_calling_softphone_leases",
 		"human_calling_timeline",

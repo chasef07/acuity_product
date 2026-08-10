@@ -488,7 +488,12 @@ func runMigrate(
 		}
 	}
 	voiceLocations := make([]humancalling.LocationVoiceProvision, 0)
+	voiceFallbacks := make([]humancalling.OutboundVoiceFallbackProvision, 0, len(input.Practices))
 	for _, practice := range input.Practices {
+		voiceFallbacks = append(voiceFallbacks, humancalling.OutboundVoiceFallbackProvision{
+			PracticeKey: practice.Key,
+			LocationKey: practice.OutboundVoiceFallbackLocationKey,
+		})
 		for _, location := range practice.Locations {
 			if location.VoiceNumber == "" {
 				if location.VoicemailGreeting != "" {
@@ -530,6 +535,10 @@ func runMigrate(
 	}
 	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
 		ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
+		return err
+	}
+	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
+		ProvisionOutboundVoiceFallbacksInTx(ctx, tx, voiceFallbacks); err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)

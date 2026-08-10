@@ -83,10 +83,11 @@ type Provisioning struct {
 }
 
 type PracticeProvision struct {
-	Key          string
-	Name         string
-	Locations    []LocationProvision
-	AccessGrants []AccessGrantProvision
+	Key                              string
+	Name                             string
+	OutboundVoiceFallbackLocationKey string
+	Locations                        []LocationProvision
+	AccessGrants                     []AccessGrantProvision
 }
 
 type LocationProvision struct {

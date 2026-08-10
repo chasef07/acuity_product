@@ -1097,6 +1097,85 @@ func prepareTerminalStaffHangup(
 	return pool, calling, provider, staff[0], callID, legID, commandID
 }
 
+func TestOutboundCallUsesPracticeVoiceFallbackForLocationWithoutNumber(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 10, 15, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: "outbound-fallback-test",
+		Practices: []access.PracticeProvision{{
+			Key: "outbound-fallback-practice", Name: "Outbound Fallback Practice",
+			Locations: []access.LocationProvision{
+				{Key: "optical", Name: "Optical"},
+				{Key: "sweetwater", Name: "Sweetwater"},
+			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: "outbound-fallback-staff", Email: "staff@outbound-fallback.test",
+				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision outbound fallback access: %v", err)
+	}
+	identity := access.Identity{
+		Subject: "outbound-fallback-staff", Email: "staff@outbound-fallback.test",
+		EmailVerified: true,
+	}
+	authorization := testaccess.Activate(t, accessModule, identity)
+	var opticalLocationID string
+	for _, location := range authorization.Locations {
+		if location.Name == "Optical" {
+			opticalLocationID = location.ID
+		}
+	}
+	if opticalLocationID == "" {
+		t.Fatal("Optical Location was not provisioned")
+	}
+	provider := &recordingProvider{}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, []access.Identity{identity}, "outbound-fallback-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "outbound-fallback-practice",
+			LocationKey: "sweetwater",
+			Number:      "+17864654836",
+			Enabled:     true,
+		}}); err != nil {
+		t.Fatalf("provision Sweetwater caller ID: %v", err)
+	}
+	if err := calling.ProvisionOutboundVoiceFallbacks(context.Background(),
+		[]humancalling.OutboundVoiceFallbackProvision{{
+			PracticeKey: "outbound-fallback-practice",
+			LocationKey: "sweetwater",
+		}}); err != nil {
+		t.Fatalf("provision Sweetwater outbound fallback: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: identity, SessionID: "outbound-fallback-browser-1",
+			IdempotencyKey: "outbound-fallback-call",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     opticalLocationID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start fallback outbound Call: %v", err)
+	}
+	if call.LocationID != opticalLocationID || call.LocationName != "Optical" {
+		t.Fatalf("fallback Call Location = %q/%q, want Optical", call.LocationID, call.LocationName)
+	}
+	if call.CallerID != "+17864654836" {
+		t.Fatalf("fallback Call caller ID = %q, want Sweetwater number", call.CallerID)
+	}
+}
+
 func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 10, 13, 0, 0, 0, time.UTC)
