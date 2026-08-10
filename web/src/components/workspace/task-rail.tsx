@@ -11,6 +11,7 @@ import {
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
+  ArrowRightIcon,
   BotIcon,
   ChartNoAxesCombinedIcon,
   CheckCircle2Icon,
@@ -28,6 +29,7 @@ import { Badge } from "@/components/ui/badge"
 import {
   InputGroup,
   InputGroupAddon,
+  InputGroupButton,
   InputGroupInput,
 } from "@/components/ui/input-group"
 import {
@@ -250,13 +252,20 @@ export function TaskRail({
                 aria-label="Search phone number"
                 aria-invalid={Boolean(engagementError)}
                 autoComplete="off"
+                enterKeyHint="go"
                 inputMode="tel"
                 placeholder="Search phone number"
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
               />
               <InputGroupAddon align="inline-end">
-                <span className="text-[0.6875rem] text-muted-foreground">↵</span>
+                <InputGroupButton
+                  type="submit"
+                  size="icon-xs"
+                  aria-label="Open phone number"
+                >
+                  <ArrowRightIcon />
+                </InputGroupButton>
               </InputGroupAddon>
             </InputGroup>
             {engagementError && (

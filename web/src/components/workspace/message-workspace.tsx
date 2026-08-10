@@ -191,11 +191,12 @@ export function EngagementWorkspace({
                 : ""}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
           {headerTrailing}
           {engagement.locations.length > 1 && (
             <NativeSelect
               aria-label="Sender office"
+              className="max-w-24 md:max-w-none"
               size="sm"
               value={route}
               onChange={(event) => setRoute(event.target.value)}
@@ -211,6 +212,7 @@ export function EngagementWorkspace({
             </NativeSelect>
           )}
           <Button
+            className="order-first md:order-last"
             size="sm"
             disabled={
               !canMutate ||

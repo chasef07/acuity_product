@@ -38,7 +38,15 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
   await openNumberInbox(page, "7275550199")
-  await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
+  const callButton = page.getByRole("button", { name: "Call", exact: true })
+  await expect(callButton).toBeVisible()
+  const desktopViewport = page.viewportSize()
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileCallBox = await callButton.boundingBox()
+  expect(mobileCallBox).not.toBeNull()
+  expect(mobileCallBox!.x).toBeGreaterThanOrEqual(0)
+  expect(mobileCallBox!.x + mobileCallBox!.width).toBeLessThanOrEqual(390)
+  if (desktopViewport) await page.setViewportSize(desktopViewport)
   await context.grantPermissions(["clipboard-read", "clipboard-write"])
   await page.getByRole("button", { name: "Copy phone number" }).click()
   await expect(page.getByRole("button", { name: "Number copied" })).toBeVisible()
@@ -355,7 +363,7 @@ async function openNumberInbox(
   phone: string,
 ) {
   await page.getByLabel("Search phone number").fill(phone)
-  await page.getByLabel("Search phone number").press("Enter")
+  await page.getByRole("button", { name: "Open phone number" }).click()
   await expect(page.getByRole("heading", { name: /\(727\) 555-01\d\d/ })).toBeVisible()
 }
 
