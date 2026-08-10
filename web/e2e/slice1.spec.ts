@@ -14,6 +14,120 @@ const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 const replacementRealtimePIDFile =
   process.env.E2E_REALTIME_REPLACEMENT_PID_FILE
 
+const operatorAnalyticsFixture = {
+  summary: {
+    totalCalls: 42,
+    p50TotalLatencyMs: 1240,
+    transferCount: 5,
+    transferRate: 0.119,
+    toolCallCount: 31,
+    toolErrorCount: 2,
+    toolFailureRate: 0.065,
+  },
+  calls: [
+    {
+      id: "analytics-call-1",
+      locationId: "00000000-0000-0000-0000-000000000001",
+      locationName: "Abita Springs",
+      sourceCallId: "livekit-call-1",
+      phone: "+19855550142",
+      startedAt: "2026-08-10T08:15:00Z",
+      endedAt: "2026-08-10T08:18:42Z",
+      status: "COMPLETED",
+      durationSeconds: 222,
+      p50SttMs: 185,
+      p50TtftMs: 410,
+      p50TtsTtfbMs: 265,
+      p50TotalLatencyMs: 1240,
+      toolCallCount: 3,
+      toolErrorCount: 0,
+      toolActions: ["lookup_appointments", "reschedule_appointment"],
+      transferred: false,
+      transcriptAvailable: true,
+    },
+  ],
+  nextCursor: "",
+}
+
+const operatorAnalyticsDetailFixture = {
+  id: "analytics-call-1",
+  practiceId: "00000000-0000-0000-0000-000000000001",
+  sourceCallId: "livekit-call-1",
+  locationId: "00000000-0000-0000-0000-000000000001",
+  locationName: "Abita Springs",
+  phone: "+19855550142",
+  officePhone: "+19855550100",
+  startedAt: "2026-08-10T08:15:00Z",
+  endedAt: "2026-08-10T08:18:42Z",
+  status: "COMPLETED",
+  summary: "The caller rescheduled an existing eye exam for next Tuesday.",
+  appointmentOutcome: "RESCHEDULE",
+  appointment: {
+    appointmentId: "appointment-new",
+    patientName: "Patient redacted",
+    providerName: "Dr. Example",
+    locationName: "Abita Springs",
+    appointmentTypeName: "Eye exam",
+    startDatetime: "2026-08-18T14:30:00Z",
+  },
+  previousAppointment: {
+    appointmentId: "appointment-old",
+    providerName: "Dr. Example",
+    locationName: "Abita Springs",
+    appointmentTypeName: "Eye exam",
+    startDatetime: "2026-08-12T14:30:00Z",
+  },
+  appointmentOccurredAt: "2026-08-10T08:16:30Z",
+  oldAppointmentId: "appointment-old",
+  newAppointmentId: "appointment-new",
+  bookingResult: {
+    status: "ACCEPTED",
+    referenceId: "receipt-reschedule-1",
+  },
+  createdAt: "2026-08-10T08:18:43Z",
+  updatedAt: "2026-08-10T08:18:43Z",
+  p50SttMs: 185,
+  p50TtftMs: 410,
+  p50TtsTtfbMs: 265,
+  p50TotalLatencyMs: 1240,
+  timeline: [
+    {
+      kind: "CALLER_MESSAGE",
+      occurredAt: "2026-08-10T08:15:07Z",
+      text: "I need to move my appointment to next Tuesday.",
+    },
+    {
+      kind: "AGENT_MESSAGE",
+      occurredAt: "2026-08-10T08:15:09Z",
+      text: "I can help you find the current appointment.",
+    },
+    {
+      kind: "TOOL_CALL",
+      occurredAt: "2026-08-10T08:15:11Z",
+      name: "lookup_appointments",
+      callId: "tool-call-1",
+      payload: { patientId: "patient-redacted" },
+    },
+    {
+      kind: "TOOL_RESULT",
+      occurredAt: "2026-08-10T08:15:12Z",
+      name: "lookup_appointments",
+      callId: "tool-call-1",
+      payload: { appointmentsFound: 1 },
+      totalLatencyMs: 284,
+    },
+  ],
+  toolExecutions: [
+    {
+      callId: "tool-call-1",
+      name: "lookup_appointments",
+      occurredAt: "2026-08-10T08:15:11Z",
+      status: "SUCCESS",
+      outputClass: "appointments_found",
+    },
+  ],
+}
+
 test("Slice 1 authority, operator analytics, browser state, and reconnect", async ({
   browser,
   page,
@@ -31,6 +145,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     await expect(workspaceSelector).toContainText("Abita Eye Group")
     await expect(workspaceSelector).toContainText("All offices")
     await expect(page.getByLabel("Live updates connected")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Analytics" })).toHaveCount(0)
   })
 
   await test.step("cross-Location expansion is denied without protected data", async () => {
@@ -149,7 +264,11 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     )
     expect(accessResponse.ok()).toBeTruthy()
     const access = (await accessResponse.json()) as {
-      practices: Array<{ id: string; name: string }>
+      practices: Array<{
+        id: string
+        name: string
+        locations: Array<{ id: string; name: string }>
+      }>
     }
     const operatorPractice = access.practices.find(
       (practice) => practice.name === "Abita Eye Group",
@@ -179,12 +298,94 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
       )
       .toBeGreaterThan(initialVersion)
 
+    const analyticsRequests: Array<{
+      practiceId: string
+      locationId?: string
+      range: string
+    }> = []
+    await operatorPage.route(
+      `${portalURL}/v1/operator/ai-analytics/query`,
+      async (route) => {
+        analyticsRequests.push(route.request().postDataJSON())
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(operatorAnalyticsFixture),
+        })
+      },
+    )
+    await operatorPage.route(
+      `${portalURL}/v1/operator/ai-interactions/*/analytics`,
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(operatorAnalyticsDetailFixture),
+        }),
+    )
+
     const analytics = operatorPage.getByRole("button", { name: "Analytics" })
     await expect(analytics).toBeVisible()
     await analytics.click()
+    const analyticsRegion = operatorPage.getByRole("region", {
+      name: "AI call analytics",
+    })
+    await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
+    await expect(analyticsRegion.getByText("42", { exact: true })).toBeVisible()
     await expect(
-      operatorPage.getByRole("region", { name: "Analytics" }),
-    ).toContainText("Transcripts, latency, and call performance")
+      analyticsRegion.getByText("1.24 s", { exact: true }).first(),
+    ).toBeVisible()
+    await expect(
+      analyticsRegion.getByText("(985) 555-0142").first(),
+    ).toBeVisible()
+    await expect
+      .poll(() => analyticsRequests.at(-1))
+      .toMatchObject({
+        practiceId: operatorPractice!.id,
+        range: "7d",
+      })
+    expect(analyticsRequests.at(-1)?.locationId).toBeUndefined()
+
+    await operatorPage.getByRole("button", { name: "Last 30 days" }).click()
+    await expect
+      .poll(() => analyticsRequests.at(-1)?.range)
+      .toBe("30d")
+
+    const selectedLocation = operatorPractice!.locations[0]!
+    await operatorPage.getByRole("button", { name: "Workspace selector" }).click()
+    await operatorPage
+      .getByRole("button", { name: selectedLocation.name, exact: true })
+      .click()
+    await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
+    await operatorPage.getByRole("button", { name: "Analytics" }).click()
+    await expect
+      .poll(() => analyticsRequests.at(-1)?.locationId)
+      .toBe(selectedLocation.id)
+
+    await operatorPage
+      .getByRole("button", { name: /Open analytics for call from/ })
+      .first()
+      .click()
+    const callDialog = operatorPage.getByRole("dialog", {
+      name: "AI call evidence",
+    })
+    await expect(callDialog).toContainText(
+      "The caller rescheduled an existing eye exam",
+    )
+    await expect(callDialog.getByLabel("Caller message")).toContainText(
+      "move my appointment",
+    )
+    const toolCall = callDialog
+      .locator("details")
+      .filter({ hasText: "lookup_appointments" })
+      .first()
+    await toolCall.locator("summary").click()
+    await expect(toolCall.getByText("patient-redacted")).toBeVisible()
+    await expect(callDialog).toContainText("Receipt backed")
+    await operatorPage.screenshot({
+      path: testInfo.outputPath("operator-analytics-detail.png"),
+      fullPage: true,
+    })
   })
 
   await test.step("persisted theme and explicit browser states", async () => {
