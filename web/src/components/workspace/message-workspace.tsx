@@ -84,6 +84,7 @@ import {
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
+import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 
 const maximumMessageLength = 1_600
@@ -148,7 +149,7 @@ export function EngagementWorkspace({
         {headerLeading}
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <h1 className="truncate text-base font-semibold tracking-[-0.015em] tabular-nums sm:text-lg">
-            {formatPhone(engagement.phone)}
+            {formatUSPhone(engagement.phone)}
           </h1>
           <Tooltip>
             <TooltipTrigger
@@ -1298,12 +1299,6 @@ function taskTouchpoint(task: Task) {
     return { icon: <PhoneMissedIcon />, label: "Missed call follow-up" }
   }
   return { icon: <CheckSquareIcon />, label: "Task" }
-}
-
-function formatPhone(phone: string) {
-  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
-  if (!match) return phone
-  return `(${match[1]}) ${match[2]}-${match[3]}`
 }
 
 function formatDateTime(value: string) {

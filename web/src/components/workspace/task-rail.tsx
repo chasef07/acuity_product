@@ -42,6 +42,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select"
 import type {
   AccessDiscovery,
   AiOutcomeItem,
@@ -56,7 +60,13 @@ import {
   appointmentOutcomeLabel,
 } from "@/lib/ai-interactions"
 import { authClient } from "@/lib/auth-client"
+import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
+import {
+  filterTasksByCategory,
+  recoveryGroupKey,
+  type TaskCategoryFilter,
+} from "@/lib/workspace-triage"
 
 export type ConnectionState = "connecting" | "connected" | "degraded"
 
@@ -68,6 +78,20 @@ type AttentionSection =
   | "reschedules"
   | "texts"
   | "recent"
+
+const taskCategoryOptions: Array<{
+  value: TaskCategoryFilter
+  label: string
+}> = [
+  { value: "all", label: "All types" },
+  { value: "billing", label: "Billing" },
+  { value: "appointments", label: "Appointments" },
+  { value: "documentation", label: "Documentation" },
+  { value: "optical", label: "Optical" },
+  { value: "medication", label: "Medication" },
+  { value: "referrals", label: "Referrals" },
+  { value: "other", label: "Other" },
+]
 
 type TaskRailProps = {
   discovery: AccessDiscovery
@@ -145,12 +169,19 @@ export function TaskRail({
       ...readSidebarState(stateKey)?.expanded,
     }),
   )
+  const [taskCategory, setTaskCategory] =
+    useState<TaskCategoryFilter>("all")
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
   const showOffice = practice.locations.length > 1 && !locationScopeID
   const categorizedTasks = useMemo(() => categorizeTasks(tasks), [tasks])
+  const filteredTasks = useMemo(
+    () =>
+      filterTasksByCategory(categorizedTasks.general, taskCategory),
+    [categorizedTasks.general, taskCategory],
+  )
   const categorizedAIOutcomes = useMemo(
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
@@ -242,11 +273,27 @@ export function TaskRail({
         >
           <AttentionGroup
             title="Tasks"
-            count={categorizedTasks.general.length}
+            count={filteredTasks.length}
             expanded={expanded.tasks}
             onToggle={() => toggle("tasks")}
           >
-            {categorizedTasks.general.map((task) => (
+            <SidebarMenuItem className="px-1 py-1">
+              <NativeSelect
+                aria-label="Task category"
+                size="sm"
+                value={taskCategory}
+                onChange={(event) =>
+                  setTaskCategory(event.target.value as TaskCategoryFilter)
+                }
+              >
+                {taskCategoryOptions.map((option) => (
+                  <NativeSelectOption key={option.value} value={option.value}>
+                    {option.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </SidebarMenuItem>
+            {filteredTasks.map((task) => (
               <TaskRow
                 key={task.id}
                 task={task}
@@ -255,11 +302,15 @@ export function TaskRail({
                 onSelect={() => onTaskSelect(task)}
               />
             ))}
-            {loading && categorizedTasks.general.length === 0 && (
+            {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
-            {!loading && categorizedTasks.general.length === 0 && (
-              <RailEmpty inMenu>No open Tasks</RailEmpty>
+            {!loading && filteredTasks.length === 0 && (
+              <RailEmpty inMenu>
+                {taskCategory === "all"
+                  ? "No open Tasks"
+                  : "No Tasks of this type"}
+              </RailEmpty>
             )}
             {expanded.tasks && (
               <RailLoadSentinel
@@ -276,9 +327,10 @@ export function TaskRail({
             empty="No missed calls"
             rows={recoveryRows}
             expanded={expanded.calls}
-            selectedPhone={selectedPhone}
+            selectedTaskID={selectedTaskID}
+            showOffice={showOffice}
             onToggle={() => toggle("calls")}
-            onSelect={onEngagementSelect}
+            onSelect={onTaskSelect}
           />
           {outcomesError && (
             <p role="alert" className="px-6 py-1 text-[0.6875rem] text-destructive">
@@ -546,13 +598,13 @@ function AIOutcomeRow({
       <SidebarMenuButton
         isActive={active}
         className="h-auto min-h-11 rounded-lg px-3 py-2"
-        tooltip={`${formatPhone(interaction.phone)} · ${aiCallCompletionLabel(interaction.status)}`}
+        tooltip={`${formatUSPhone(interaction.phone)} · ${aiCallCompletionLabel(interaction.status)}`}
         onClick={onSelect}
       >
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-medium tabular-nums">
-              {formatPhone(interaction.phone)}
+              {formatUSPhone(interaction.phone)}
             </span>
             <Badge variant="outline" className="h-4 gap-1 px-1 text-[0.6875rem]">
               <BotIcon className="size-2.5" aria-hidden="true" />
@@ -585,7 +637,8 @@ function RecoveryGroup({
   empty,
   rows,
   expanded,
-  selectedPhone,
+  selectedTaskID,
+  showOffice,
   onToggle,
   onSelect,
 }: {
@@ -593,9 +646,10 @@ function RecoveryGroup({
   empty: string
   rows: RecoveryRowValue[]
   expanded: boolean
-  selectedPhone: string
+  selectedTaskID: string
+  showOffice: boolean
   onToggle: () => void
-  onSelect: (engagement: EngagementSummary) => void
+  onSelect: (task: Task) => void
 }) {
   return (
     <AttentionGroup
@@ -606,10 +660,11 @@ function RecoveryGroup({
     >
       {rows.map((row) => (
         <RecoveryRow
-          key={row.phone}
+          key={recoveryGroupKey(row.locationID, row.phone)}
           row={row}
-          active={row.phone === selectedPhone}
-          onSelect={() => onSelect(recoveryEngagement(row))}
+          active={row.task.id === selectedTaskID}
+          showOffice={showOffice}
+          onSelect={() => onSelect(row.task)}
         />
       ))}
       {rows.length === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
@@ -653,7 +708,7 @@ function TaskRow({
             )}
           </span>
           <span className="flex min-w-0 items-center gap-1.5 text-[0.6875rem] tabular-nums text-muted-foreground">
-            <span>{formatPhone(task.phone)}</span>
+            <span>{formatUSPhone(task.phone)}</span>
             <span aria-hidden="true">·</span>
             <time dateTime={taskRelativeAt(task)}>{relativeTime(taskRelativeAt(task))}</time>
             {showOffice && (
@@ -671,7 +726,9 @@ function TaskRow({
 
 type RecoveryRowValue = {
   phone: string
-  tasks: Task[]
+  locationID: string
+  locationName: string
+  task: Task
   voicemailCount: number
   missedCount: number
   oldestAt: string
@@ -681,10 +738,12 @@ type RecoveryRowValue = {
 function RecoveryRow({
   row,
   active,
+  showOffice,
   onSelect,
 }: {
   row: RecoveryRowValue
   active: boolean
+  showOffice: boolean
   onSelect: () => void
 }) {
   return (
@@ -697,12 +756,13 @@ function RecoveryRow({
       >
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-sm font-medium tabular-nums">
-            {formatPhone(row.phone)}
+            {formatUSPhone(row.phone)}
           </span>
           <span className="truncate text-[0.6875rem] text-muted-foreground">
             {row.missedCount > 0 ? `${row.missedCount} missed` : ""}
             {row.missedCount > 0 && row.voicemailCount > 0 ? " · " : ""}
             {row.voicemailCount > 0 ? `${row.voicemailCount} voicemail` : ""}
+            {showOffice ? ` · ${row.locationName}` : ""}
           </span>
         </span>
         <time className="text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={row.oldestAt}>
@@ -742,7 +802,7 @@ function TextRow({
               <span aria-label="Unread message" className="size-1.5 rounded-full bg-warning" />
             )}
             <span className="truncate text-sm font-medium tabular-nums">
-              {formatPhone(row.engagement.phone)}
+              {formatUSPhone(row.engagement.phone)}
             </span>
           </span>
           <span className="truncate text-[0.6875rem] text-muted-foreground">
@@ -775,7 +835,7 @@ function RecentRow({
         onClick={onSelect}
       >
         <span className="truncate text-sm font-medium tabular-nums">
-          {formatPhone(engagement.phone)}
+          {formatUSPhone(engagement.phone)}
         </span>
         <time className="ml-auto text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={engagement.latestActivity}>
           {relativeTime(engagement.latestActivity)}
@@ -835,49 +895,30 @@ function appointmentIntent(
 }
 
 function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
-  const rows = new Map<string, RecoveryRowValue>()
-  for (const task of tasks) {
-    if (
-      task.origin !== "MISSED_CALL_RECOVERY" &&
-      task.origin !== "VOICEMAIL_RECOVERY"
-    ) {
-      continue
-    }
-    const existing = rows.get(task.phone) ?? {
-      phone: task.phone,
-      tasks: [],
-      voicemailCount: 0,
-      missedCount: 0,
-      oldestAt: task.createdAt,
-      latestAt: task.updatedAt,
-    }
-    existing.tasks.push(task)
-    const related = Math.max(1, task.relatedInteractionCount)
-    if (task.origin === "VOICEMAIL_RECOVERY") existing.voicemailCount += related
-    else existing.missedCount += related
-    if (task.createdAt < existing.oldestAt) existing.oldestAt = task.createdAt
-    if (task.updatedAt > existing.latestAt) existing.latestAt = task.updatedAt
-    rows.set(task.phone, existing)
-  }
-  return [...rows.values()].sort(
+  return tasks
+    .filter(
+      (task) =>
+        task.origin === "MISSED_CALL_RECOVERY" ||
+        task.origin === "VOICEMAIL_RECOVERY",
+    )
+    .map((task) => {
+      const related = Math.max(1, task.relatedInteractionCount)
+      return {
+        phone: task.phone,
+        locationID: task.locationId,
+        locationName: task.locationName,
+        task,
+        voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
+        missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
+        oldestAt: task.createdAt,
+        latestAt: task.updatedAt,
+      }
+    })
+    .sort(
     (left, right) =>
       left.oldestAt.localeCompare(right.oldestAt) ||
       right.latestAt.localeCompare(left.latestAt),
   )
-}
-
-function recoveryEngagement(row: RecoveryRowValue): EngagementSummary {
-  const newest = [...row.tasks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]!
-  return {
-    phone: row.phone,
-    ...(newest.callerName ? { displayName: newest.callerName } : {}),
-    locations: [
-      ...new Map(row.tasks.map((task) => [task.locationId, { id: task.locationId, name: task.locationName }])).values(),
-    ],
-    latestActivity: row.latestAt,
-    openTaskCount: row.tasks.length,
-    unread: row.tasks.some((task) => task.unread),
-  }
 }
 
 function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {
@@ -1014,10 +1055,4 @@ function relativeTime(value: string) {
 
 function taskRelativeAt(task: Task) {
   return task.state === "OPEN" ? task.createdAt : (task.completedAt ?? task.updatedAt)
-}
-
-function formatPhone(phone: string) {
-  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
-  if (!match) return phone
-  return `(${match[1]}) ${match[2]}-${match[3]}`
 }

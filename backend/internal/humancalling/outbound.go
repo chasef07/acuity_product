@@ -247,9 +247,14 @@ func (m *Module) StartOutboundCall(
 	var occupied bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM human_calling_call_legs
-			WHERE staff_subject = $1 AND role = 'STAFF'
-				AND state NOT IN ('ENDED', 'FAILED')
+			SELECT 1 FROM human_calling_call_legs leg
+			WHERE leg.staff_subject = $1 AND leg.role = 'STAFF'
+				AND (
+					leg.state IN (
+						'PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED'
+					)
+					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
+				)
 		)
 	`, command.Identity.Subject).Scan(&occupied); err != nil || occupied {
 		return Call{}, ErrIneligible

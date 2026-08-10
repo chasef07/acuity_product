@@ -9,19 +9,19 @@ import {
   routeIncomingMedia,
 } from "./dock-media-state.ts"
 
-test("calling state adopts live voicemail without reopening saved voicemail", () => {
+test("calling state leaves provider voicemail out of staff call controls", () => {
   assert.equal(currentCallingStateCallID({}), undefined)
   assert.equal(
     currentCallingStateCallID({
       voicemail: { callId: "call-1", state: "VOICEMAIL_GREETING" },
     }),
-    "call-1",
+    undefined,
   )
   assert.equal(
     currentCallingStateCallID({
       voicemail: { callId: "call-1", state: "VOICEMAIL_RECORDING" },
     }),
-    "call-1",
+    undefined,
   )
   assert.equal(
     currentCallingStateCallID({

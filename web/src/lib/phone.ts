@@ -20,3 +20,9 @@ export function normalizeUSPhone(value: string) {
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
   return ""
 }
+
+export function formatUSPhone(phone: string) {
+  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
+  if (!match) return phone
+  return `(${match[1]}) ${match[2]}-${match[3]}`
+}

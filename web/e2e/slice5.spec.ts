@@ -4,6 +4,7 @@ import { signInAs } from "./support"
 
 const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
+const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
@@ -152,7 +153,18 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("article")
     .filter({ hasText: inboundText })
   await expect(inbound).toBeVisible()
-  await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
+  await expect(
+    page
+      .getByTestId("text-attention-row")
+      .filter({ hasText: "(727) 555-0199" }),
+  ).toHaveCount(0)
+  const recentAfterRead = page.getByRole("button", { name: "Recent", exact: true })
+  if ((await recentAfterRead.getAttribute("aria-expanded")) === "false") {
+    await recentAfterRead.click()
+  }
+  await expect(
+    page.getByRole("button", { name: /\(727\) 555-0199/ }).last(),
+  ).toBeVisible()
 
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
@@ -308,6 +320,11 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeDisabled()
+  await expect(
+    page
+      .getByTestId("text-attention-row")
+      .filter({ hasText: "(727) 555-0199" }),
+  ).toBeVisible()
 
   await sendInbound(page, "slice-5-start", "START")
   await expect(
@@ -316,6 +333,21 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByText("Outbound messaging is blocked after STOP"),
   ).not.toBeVisible()
+
+  await createAIStaffTask(page, "billing", "Review billing balance")
+  const taskCategory = page.getByLabel("Task category")
+  await expect(taskCategory).toHaveValue("all")
+  await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
+  await createAIStaffTask(page, "medication", "Review medication refill")
+  await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
+  await taskCategory.selectOption("billing")
+  await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /Review medication refill/ })).toHaveCount(0)
+  await expect(
+    page.getByRole("button", { name: /^Missed Calls \d+$/ }),
+  ).toBeVisible()
+  await taskCategory.selectOption("all")
+  await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
 })
 
 async function openNumberInbox(
@@ -342,4 +374,28 @@ async function sendInbound(page: Page, eventID: string, text: string) {
     },
   )
   expect(response.ok()).toBeTruthy()
+}
+
+async function createAIStaffTask(
+  page: Page,
+  category: "billing" | "medication",
+  summary: string,
+) {
+  const suffix = category === "billing" ? "billing" : "medication"
+  const response = await page.request.post(`${portalURL}/v1/tasks`, {
+    headers: { authorization: "Bearer synthetic-service-token" },
+    data: {
+      callId: `slice-5-${suffix}`,
+      callerPhone: category === "billing" ? "+17275550196" : "+17275550195",
+      category,
+      idempotencyKey: `slice-5-${suffix}`,
+      message: summary,
+      officeKey: "spring-hill",
+      officePhone: "+17275550101",
+      source: "agent",
+      summary,
+      urgency: "normal",
+    },
+  })
+  expect([200, 201]).toContain(response.status())
 }
