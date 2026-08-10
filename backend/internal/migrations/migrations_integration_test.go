@@ -32,8 +32,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 28 {
-		t.Fatalf("migration count = %d, want 28", migrationCount)
+	if migrationCount != 29 {
+		t.Fatalf("migration count = %d, want 29", migrationCount)
 	}
 
 	for _, relation := range []string{
@@ -51,6 +51,7 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_projected_facts",
 		"human_calling_timeline",
 		"human_calling_location_voice_numbers",
+		"human_calling_outbound_voice_fallbacks",
 		"human_calling_voicemails",
 		"work_task_interactions",
 	} {
@@ -400,6 +401,60 @@ func TestHollywoodAccessExpansionUpdatesGrantsAndClaimedMemberships(t *testing.T
 		t.Fatalf(
 			"Hollywood Access expansion = grants:%d memberships:%d audits:%d workspace:%d",
 			grantLocations, membershipLocations, auditEvents, workspaceVersion,
+		)
+	}
+}
+
+func TestOutboundVoiceFallbackMigrationBackfillsAbita(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0028_expand_hollywood_access.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name)
+		VALUES ('abita-eye-group', 'Abita Eye Group');
+
+		INSERT INTO access_locations (practice_id, provisioning_key, name)
+		SELECT practice.id, location.key, location.name
+		FROM access_practices practice
+		CROSS JOIN (VALUES
+			('sweetwater-optical', 'Sweetwater Optical'),
+			('sweetwater', 'Sweetwater')
+		) location(key, name)
+		WHERE practice.provisioning_key = 'abita-eye-group';
+
+		INSERT INTO human_calling_location_voice_numbers (
+			practice_id,
+			location_id,
+			phone
+		)
+		SELECT practice.id, location.id, '+17864654836'
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'abita-eye-group'
+			AND location.provisioning_key = 'sweetwater';
+	`); err != nil {
+		t.Fatalf("seed Abita outbound voice fallback: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply outbound voice fallback migration: %v", err)
+	}
+
+	var fallbackPractice, fallbackLocation string
+	if err := pool.QueryRow(ctx, `
+		SELECT practice.provisioning_key, location.provisioning_key
+		FROM human_calling_outbound_voice_fallbacks fallback
+		JOIN access_practices practice ON practice.id = fallback.practice_id
+		JOIN access_locations location
+			ON location.practice_id = fallback.practice_id
+			AND location.id = fallback.location_id
+	`).Scan(&fallbackPractice, &fallbackLocation); err != nil {
+		t.Fatalf("read migrated outbound voice fallback: %v", err)
+	}
+	if fallbackPractice != "abita-eye-group" || fallbackLocation != "sweetwater" {
+		t.Fatalf(
+			"migrated outbound voice fallback = %q/%q, want abita-eye-group/sweetwater",
+			fallbackPractice,
+			fallbackLocation,
 		)
 	}
 }

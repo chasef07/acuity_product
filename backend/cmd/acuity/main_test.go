@@ -179,6 +179,25 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		t.Fatalf("voice numbers = %#v, want %#v", voiceNumbers, wantVoiceNumbers)
 	}
 
+	var fallbackPractice, fallbackLocation string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.provisioning_key, location.provisioning_key
+		FROM human_calling_outbound_voice_fallbacks fallback
+		JOIN access_practices practice ON practice.id = fallback.practice_id
+		JOIN access_locations location
+			ON location.practice_id = fallback.practice_id
+			AND location.id = fallback.location_id
+	`).Scan(&fallbackPractice, &fallbackLocation); err != nil {
+		t.Fatalf("read outbound voice fallback: %v", err)
+	}
+	if fallbackPractice != "abita-eye-group" || fallbackLocation != "sweetwater" {
+		t.Fatalf(
+			"outbound voice fallback = %q/%q, want abita-eye-group/sweetwater",
+			fallbackPractice,
+			fallbackLocation,
+		)
+	}
+
 	type messagingConfiguration struct {
 		Practice string
 		Location string

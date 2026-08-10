@@ -48,6 +48,11 @@ type LocationVoiceProvision struct {
 	VoicemailGreeting string
 }
 
+type OutboundVoiceFallbackProvision struct {
+	PracticeKey string
+	LocationKey string
+}
+
 type OutboundEligibility struct {
 	Eligible bool
 	Reason   string
@@ -74,14 +79,10 @@ func (m *Module) TaskOutboundEligibility(
 	if !supportedUSDestination(task.Phone) {
 		return OutboundEligibility{Reason: "This Task does not have a supported US destination."}, nil
 	}
-	var count int
-	if err := m.pool.QueryRow(ctx, `
-		SELECT count(*) FROM human_calling_location_voice_numbers
-		WHERE practice_id = $1 AND location_id = $2 AND enabled
-	`, task.PracticeID, task.LocationID).Scan(&count); err != nil {
-		return OutboundEligibility{}, fmt.Errorf("read Task voice configuration: %w", err)
-	}
-	if count != 1 {
+	if _, err := outboundCallerID(ctx, m.pool, task.PracticeID, task.LocationID); err != nil {
+		if !errors.Is(err, ErrConflict) {
+			return OutboundEligibility{}, err
+		}
 		return OutboundEligibility{Reason: "Calling requires one configured office caller ID."}, nil
 	}
 	return OutboundEligibility{Eligible: true}, nil
@@ -158,6 +159,90 @@ func (m *Module) ProvisionLocationVoicesInTx(
 		`, practiceID, locationID, provision.Number, provision.Enabled,
 			provision.VoicemailGreeting); err != nil {
 			return fmt.Errorf("provision Location voice number: %w", err)
+		}
+	}
+	return nil
+}
+
+func (m *Module) ProvisionOutboundVoiceFallbacks(
+	ctx context.Context,
+	provisions []OutboundVoiceFallbackProvision,
+) error {
+	if m.pool == nil {
+		return ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin outbound voice fallback provisioning: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := m.ProvisionOutboundVoiceFallbacksInTx(ctx, tx, provisions); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit outbound voice fallback provisioning: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) ProvisionOutboundVoiceFallbacksInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	provisions []OutboundVoiceFallbackProvision,
+) error {
+	if tx == nil {
+		return ErrInvalidInput
+	}
+	for _, provision := range provisions {
+		provision.PracticeKey = strings.TrimSpace(provision.PracticeKey)
+		provision.LocationKey = strings.TrimSpace(provision.LocationKey)
+		if provision.PracticeKey == "" {
+			return ErrInvalidInput
+		}
+		var practiceID string
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text FROM access_practices
+			WHERE provisioning_key = $1
+			FOR UPDATE
+		`, provision.PracticeKey).Scan(&practiceID); err != nil {
+			return ErrInvalidInput
+		}
+		if provision.LocationKey == "" {
+			if _, err := tx.Exec(ctx, `
+				DELETE FROM human_calling_outbound_voice_fallbacks
+				WHERE practice_id = $1
+			`, practiceID); err != nil {
+				return fmt.Errorf("remove outbound voice fallback: %w", err)
+			}
+			continue
+		}
+		var locationID string
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text FROM access_locations
+			WHERE practice_id = $1 AND provisioning_key = $2
+			FOR UPDATE
+		`, practiceID, provision.LocationKey).Scan(&locationID); err != nil {
+			return ErrInvalidInput
+		}
+		var voiceCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM human_calling_location_voice_numbers
+			WHERE practice_id = $1 AND location_id = $2 AND enabled
+		`, practiceID, locationID).Scan(&voiceCount); err != nil {
+			return fmt.Errorf("read outbound voice fallback number: %w", err)
+		}
+		if voiceCount != 1 {
+			return fmt.Errorf("%w: outbound voice fallback requires one enabled voice number", ErrInvalidInput)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO human_calling_outbound_voice_fallbacks (
+				practice_id, location_id
+			) VALUES ($1, $2)
+			ON CONFLICT (practice_id) DO UPDATE SET
+				location_id = EXCLUDED.location_id,
+				updated_at = now()
+		`, practiceID, locationID); err != nil {
+			return fmt.Errorf("provision outbound voice fallback: %w", err)
 		}
 	}
 	return nil
@@ -259,14 +344,9 @@ func (m *Module) StartOutboundCall(
 	`, command.Identity.Subject).Scan(&occupied); err != nil || occupied {
 		return Call{}, ErrIneligible
 	}
-	var callerID string
-	var callerIDCount int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*), COALESCE(min(phone), '')
-		FROM human_calling_location_voice_numbers
-		WHERE practice_id = $1 AND location_id = $2 AND enabled
-	`, practiceID, locationID).Scan(&callerIDCount, &callerID); err != nil || callerIDCount != 1 {
-		return Call{}, fmt.Errorf("%w: Location requires one enabled voice number", ErrConflict)
+	callerID, err := outboundCallerID(ctx, tx, practiceID, locationID)
+	if err != nil {
+		return Call{}, err
 	}
 	var sipUsername string
 	if err := tx.QueryRow(ctx, `
@@ -358,6 +438,50 @@ func (m *Module) StartOutboundCall(
 		return Call{}, fmt.Errorf("commit outbound Call: %w", err)
 	}
 	return m.ReadCall(ctx, command.Identity, callID)
+}
+
+type outboundCallerIDQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func outboundCallerID(
+	ctx context.Context,
+	querier outboundCallerIDQuerier,
+	practiceID string,
+	locationID string,
+) (string, error) {
+	var callerID string
+	var callerIDCount int
+	if err := querier.QueryRow(ctx, `
+		WITH direct AS (
+			SELECT voice.phone
+			FROM human_calling_location_voice_numbers voice
+			WHERE voice.practice_id = $1
+				AND voice.location_id = $2
+				AND voice.enabled
+		), configured_fallback AS (
+			SELECT voice.phone
+			FROM human_calling_outbound_voice_fallbacks fallback
+			JOIN human_calling_location_voice_numbers voice
+				ON voice.practice_id = fallback.practice_id
+				AND voice.location_id = fallback.location_id
+			WHERE fallback.practice_id = $1
+				AND voice.enabled
+				AND NOT EXISTS (SELECT 1 FROM direct)
+		)
+		SELECT count(*), COALESCE(min(phone), '')
+		FROM (
+			SELECT phone FROM direct
+			UNION ALL
+			SELECT phone FROM configured_fallback
+		) candidates
+	`, practiceID, locationID).Scan(&callerIDCount, &callerID); err != nil {
+		return "", fmt.Errorf("read outbound caller ID: %w", err)
+	}
+	if callerIDCount != 1 {
+		return "", fmt.Errorf("%w: Location requires one enabled voice number", ErrConflict)
+	}
+	return callerID, nil
 }
 
 func (m *Module) ConfirmOutboundMedia(

@@ -33,6 +33,7 @@ GRANT SELECT ON TABLE
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_location_voice_numbers,
+    public.human_calling_outbound_voice_fallbacks,
     public.human_calling_provider_commands,
     public.human_calling_softphone_leases,
     public.human_calling_timeline,
