@@ -1,5 +1,4 @@
 import { expect, test, type Page } from "@playwright/test"
-import { Pool } from "pg"
 
 import { signInAs } from "./support"
 
@@ -7,17 +6,13 @@ const telnyxFixtureURL =
   process.env.E2E_TELNYX_FIXTURE_URL ?? "http://127.0.0.1:19000"
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
-const databaseURL = process.env.E2E_DATABASE_URL
 
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
   context,
   page,
 }) => {
   test.setTimeout(180_000)
-  test.skip(
-    !provisioningOutput || !databaseURL,
-    "E2E_PROVISIONING_OUTPUT and E2E_DATABASE_URL are required",
-  )
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
@@ -27,9 +22,6 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("button", { name: "Workspace selector" }),
   ).toContainText("Fixture Location 1")
-  await expect(
-    page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("(727) 555-0101")
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
     "aria-expanded",
@@ -45,9 +37,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(page.getByRole("button", { name: "Recent" })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
-
   await openNumberInbox(page, "7275550199")
-  await expect(page.getByLabel("Call from office")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Call", exact: true })).toBeVisible()
   await context.grantPermissions(["clipboard-read", "clipboard-write"])
   await page.getByRole("button", { name: "Copy phone number" }).click()
@@ -358,76 +348,6 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   ).toBeVisible()
   await taskCategory.selectOption("all")
   await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
-
-  await signInAs(page, "admin@abita.test", "Fixture Admin")
-  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
-  await openNumberInbox(page, "7275550188")
-  const callLocation = page.getByLabel("Call from office")
-  await expect(callLocation).toHaveValue("")
-  await expect(
-    page.getByRole("button", { name: "Call", exact: true }),
-  ).toBeDisabled()
-  await expect(callLocation.getByRole("option")).toContainText([
-    "Choose office",
-    "Fixture Location 1 — (727) 555-0101",
-    "Fixture Location 2 — (727) 555-0102",
-    "Fixture Location 3 — (727) 555-0103",
-    "Fixture Location 4 — (727) 555-0104",
-    "Fixture Location 5 — (727) 555-0105",
-    "Fixture Location 6 — (727) 555-0106",
-  ])
-  await callLocation.selectOption({ label: "Fixture Location 2 — (727) 555-0102" })
-  const rememberedCallLocation = await callLocation.inputValue()
-  const callLocationPreferenceKey = await page.evaluate(() =>
-    Object.keys(window.localStorage).find((key) =>
-      key.startsWith("acuity.outboundLocation."),
-    ),
-  )
-  expect(callLocationPreferenceKey).toBeTruthy()
-  await openNumberInbox(page, "7275550187")
-  await expect(page.getByLabel("Call from office")).toHaveValue(
-    rememberedCallLocation,
-  )
-  await page.reload()
-  await openNumberInbox(page, "7275550186")
-  await expect(page.getByLabel("Call from office")).toHaveValue(
-    rememberedCallLocation,
-  )
-  const database = new Pool({ connectionString: databaseURL })
-  try {
-    await database.query(`
-      WITH changed AS (
-        UPDATE access_memberships
-        SET role = 'STAFF', location_scope = 'SELECTED'
-        WHERE email = 'admin@abita.test'
-        RETURNING id, practice_id
-      )
-      INSERT INTO access_membership_locations (
-        membership_id, location_id, practice_id
-      )
-      SELECT changed.id, location.id, changed.practice_id
-      FROM changed
-      JOIN access_locations location
-        ON location.practice_id = changed.practice_id
-        AND location.provisioning_key = 'fixture-location-1'
-    `)
-  } finally {
-    await database.end()
-  }
-  await page.reload()
-  await openNumberInbox(page, "7275550185")
-  await expect(page.getByLabel("Call from office")).toHaveCount(0)
-  await expect(
-    page.getByRole("button", { name: "Workspace selector" }),
-  ).toContainText("Fixture Location 1")
-  await expect
-    .poll(() =>
-      page.evaluate(
-        (key) => window.localStorage.getItem(key ?? ""),
-        callLocationPreferenceKey,
-      ),
-    )
-    .toBeNull()
 })
 
 async function openNumberInbox(

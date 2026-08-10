@@ -66,7 +66,7 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
-import { formatUSPhone, normalizeUSPhone } from "@/lib/phone"
+import { normalizeUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import {
   createWorkspaceSync,
@@ -970,11 +970,6 @@ export function TaskWorkspaceShell() {
   const practice =
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
-  const engagementWorkspaceKey = selectedEngagement
-    ? `${discovery.actor.subject}:${practiceID}:${selectedEngagement.phone}:${practice.locations
-        .map((location) => `${location.id}:${location.callingNumber}`)
-        .join(",")}`
-    : ""
   const callingEnabled = practice.callingEnabled
   const callingShell = (children: ReactNode) => (
     <SidebarProvider>
@@ -1082,11 +1077,9 @@ export function TaskWorkspaceShell() {
             <div className="relative flex min-h-0 flex-1 bg-muted/20">
               <div className="flex min-h-0 min-w-0 flex-1 bg-background">
                 <EngagementWorkspace
-                  key={engagementWorkspaceKey}
+                  key={selectedEngagement.phone}
                   engagement={selectedEngagement}
                   practiceID={practiceID}
-                  actorSubject={discovery.actor.subject}
-                  callingLocations={practice.locations}
                   canMutate
                   revision={workspaceRevision}
                   headerLeading={<SidebarTrigger />}
@@ -1180,15 +1173,6 @@ function currentUTCDate() {
   return new Date().toISOString().slice(0, 10)
 }
 
-function locationOptionLabel(
-  location: AccessDiscovery["practices"][number]["locations"][number] | undefined,
-) {
-  if (!location) return "Office"
-  return location.callingNumber
-    ? `${location.name} — ${formatUSPhone(location.callingNumber)}`
-    : location.name
-}
-
 function WorkspaceSelector({
   discovery,
   practiceID,
@@ -1207,9 +1191,8 @@ function WorkspaceSelector({
   if (!practice) return null
   const selectedLocationID = locationScopeID
   const locationLabel = selectedLocationID
-    ? locationOptionLabel(
-        practice.locations.find((item) => item.id === selectedLocationID),
-      )
+    ? (practice.locations.find((item) => item.id === selectedLocationID)?.name ??
+      "Office")
     : "All offices"
 
   function select(nextPracticeID: string, nextLocationID: string) {
@@ -1283,7 +1266,7 @@ function WorkspaceSelector({
                     onClick={() => select(item.id, location.id)}
                   >
                     {selected && <CheckIcon data-icon="inline-start" />}
-                    {locationOptionLabel(location)}
+                    {location.name}
                   </Button>
                 )
               })}

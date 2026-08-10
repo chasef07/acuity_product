@@ -6,7 +6,6 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react"
@@ -75,7 +74,6 @@ import {
 import type {
   ConversationTimelineItem,
   EngagementSummary,
-  Location,
   Message,
   MessageAttachment,
   Task,
@@ -88,10 +86,6 @@ import {
 import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
-import {
-  outboundLocationPreferenceKey,
-  resolveOutboundLocation,
-} from "@/lib/workspace-triage"
 
 const maximumMessageLength = 1_600
 const maximumAttachmentBytes = 600 * 1_024
@@ -109,13 +103,9 @@ type TimelineSource = {
   phone: string
 }
 
-type CallingLocation = Location & { callingNumber: string }
-
 export function EngagementWorkspace({
   engagement,
   practiceID,
-  actorSubject,
-  callingLocations,
   canMutate,
   revision,
   headerLeading,
@@ -127,8 +117,6 @@ export function EngagementWorkspace({
 }: {
   engagement: EngagementSummary
   practiceID: string
-  actorSubject: string
-  callingLocations: Location[]
   canMutate: boolean
   revision: number
   headerLeading?: ReactNode
@@ -141,21 +129,6 @@ export function EngagementWorkspace({
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [route, setRoute] = useState(defaultRoute)
-  const callableLocations = useMemo(
-    () => callingLocations.filter(isCallingLocation),
-    [callingLocations],
-  )
-  const callLocationPreferenceKey = outboundLocationPreferenceKey(
-    actorSubject,
-    practiceID,
-  )
-  const [callLocationID, setCallLocationID] = useState(() =>
-    initialOutboundLocation(
-      callableLocations,
-      callLocationPreferenceKey,
-      callingLocations.length,
-    ),
-  )
   const [callError, setCallError] = useState("")
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
@@ -170,11 +143,6 @@ export function EngagementWorkspace({
   const routeName =
     engagement.locations.find((location) => location.id === route)?.name ??
     "Choose office"
-
-  function selectCallLocation(locationID: string) {
-    setCallLocationID(locationID)
-    window.localStorage.setItem(callLocationPreferenceKey, locationID)
-  }
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -242,36 +210,19 @@ export function EngagementWorkspace({
               ))}
             </NativeSelect>
           )}
-          {callingLocations.length > 1 && (
-            <NativeSelect
-              aria-label="Call from office"
-              size="sm"
-              value={callLocationID}
-              onChange={(event) => selectCallLocation(event.target.value)}
-            >
-              <NativeSelectOption value="" disabled>
-                Choose office
-              </NativeSelectOption>
-              {callableLocations.map((location) => (
-                <NativeSelectOption key={location.id} value={location.id}>
-                  {locationLabel(location)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          )}
           <Button
             size="sm"
             disabled={
               !canMutate ||
               !callingEnabled ||
-              !callLocationID ||
+              !route ||
               !ownsSoftphone ||
               Boolean(activeCall) ||
               outboundPending
             }
             onClick={() => {
               setCallError("")
-              void startOutbound(callLocationID, engagement.phone).then(
+              void startOutbound(route, engagement.phone).then(
                 (requestError) => setCallError(requestError ?? ""),
               )
             }}
@@ -1348,34 +1299,6 @@ function taskTouchpoint(task: Task) {
     return { icon: <PhoneMissedIcon />, label: "Missed call follow-up" }
   }
   return { icon: <CheckSquareIcon />, label: "Task" }
-}
-
-function isCallingLocation(location: Location): location is CallingLocation {
-  return Boolean(location.callingNumber)
-}
-
-function locationLabel(location: CallingLocation) {
-  return `${location.name} — ${formatUSPhone(location.callingNumber)}`
-}
-
-function initialOutboundLocation(
-  locations: CallingLocation[],
-  key: string,
-  authorizedLocationCount: number,
-) {
-  if (typeof window === "undefined") return ""
-  const remembered = window.localStorage.getItem(key) ?? ""
-  if (
-    remembered &&
-    !locations.some((location) => location.id === remembered)
-  ) {
-    window.localStorage.removeItem(key)
-  }
-  return resolveOutboundLocation(
-    locations,
-    remembered,
-    authorizedLocationCount,
-  )
 }
 
 function formatDateTime(value: string) {
