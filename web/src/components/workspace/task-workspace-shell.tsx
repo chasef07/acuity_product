@@ -773,6 +773,7 @@ export function TaskWorkspaceShell() {
   }
 
   function openAIInteractionContext(interactionID: string) {
+    callDetailGenerationRef.current += 1
     setSelectedAIInteractionID(interactionID)
     setContextView("appointment")
     setContextPanelOpen(true)
