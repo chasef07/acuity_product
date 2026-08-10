@@ -1038,6 +1038,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 				PracticeID:    practiceID,
 				LocationScope: access.LocationScopeAll,
 				Capabilities: []access.ServiceCapability{
+					access.ServiceCapabilityCreateTask,
 					access.ServiceCapabilityHumanHandoff,
 					access.ServiceCapabilityIngestAIInteraction,
 				},
@@ -1154,29 +1155,12 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 	}
 	_ = protected.Body.Close()
 
-	forbidden := request(
-		t,
-		server.Client(),
-		http.MethodPost,
-		server.URL+"/v1/tasks",
-		"production-token",
-		body,
-	)
-	if forbidden.StatusCode != http.StatusForbidden {
-		t.Fatalf(
-			"production service Task status = %d, body = %s",
-			forbidden.StatusCode,
-			readBody(t, forbidden),
-		)
-	}
-	_ = forbidden.Body.Close()
-
 	created := request(
 		t,
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"demo-token",
+		"production-token",
 		body,
 	)
 	if created.StatusCode != http.StatusCreated {
@@ -1205,7 +1189,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"demo-token",
+		"production-token",
 		body,
 	)
 	if duplicate.StatusCode != http.StatusOK {
@@ -1263,6 +1247,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		*projected.SourceMessage != payload["message"] ||
 		projected.CallId != nil ||
 		projected.CreatedBy.Kind != api.TaskActorKindSERVICE ||
+		projected.CreatedBy.Subject != "abita-eye-group" ||
 		projected.CreatedBy.Email != nil {
 		t.Fatalf("projected staff Task = %#v", projected)
 	}
@@ -1274,7 +1259,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		server.Client(),
 		http.MethodPost,
 		server.URL+"/v1/tasks",
-		"demo-token",
+		"production-token",
 		changedBody,
 	)
 	if conflict.StatusCode != http.StatusConflict {
