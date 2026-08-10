@@ -321,7 +321,7 @@ function AnalyticsKPIs({ summary }: { summary: OperatorAiAnalyticsSummary }) {
     {
       label: "Tool failure rate",
       value: formatRate(summary.toolFailureRate),
-      note: `${summary.toolErrorCount.toLocaleString()} errors / ${summary.toolCallCount.toLocaleString()} calls`,
+      note: `${summary.toolErrorCount.toLocaleString()} errors / ${summary.toolCallCount.toLocaleString()} tool calls`,
       icon: WrenchIcon,
     },
   ]
