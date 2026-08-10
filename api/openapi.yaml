@@ -848,6 +848,57 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/operator/ai-analytics/query:
+    post:
+      operationId: queryOperatorAIAnalytics
+      summary: Query bounded AI Interaction analytics as a Platform Operator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorAIAnalyticsQueryRequest"
+      responses:
+        "200":
+          description: Scoped AI Interaction summary and cursor-paginated calls.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorAIAnalyticsPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/ai-interactions/{interactionId}/analytics:
+    get:
+      operationId: getOperatorAIInteractionAnalytics
+      summary: Read normalized AI Interaction analytics as a Platform Operator.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Operator-authorized normalized call detail and evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorAIInteractionAnalytics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks:
     post:
       operationId: createStaffTask
@@ -2885,6 +2936,295 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AIOutcomeItem"
+    OperatorAIAnalyticsRange:
+      type: string
+      enum: [24h, 7d, 30d]
+    OperatorAIAnalyticsQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, range]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        range:
+          $ref: "#/components/schemas/OperatorAIAnalyticsRange"
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+    OperatorAIAnalyticsSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - totalCalls
+        - transferCount
+        - transferRate
+        - toolCallCount
+        - toolErrorCount
+        - toolFailureRate
+      properties:
+        totalCalls:
+          type: integer
+          minimum: 0
+        p50TotalLatencyMs:
+          type: integer
+          minimum: 0
+        transferCount:
+          type: integer
+          minimum: 0
+        transferRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        toolCallCount:
+          type: integer
+          minimum: 0
+        toolErrorCount:
+          type: integer
+          minimum: 0
+        toolFailureRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+    OperatorAICallAnalytics:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - locationId
+        - locationName
+        - sourceCallId
+        - phone
+        - startedAt
+        - status
+        - durationSeconds
+        - toolCallCount
+        - toolErrorCount
+        - toolActions
+        - transferred
+        - transcriptAvailable
+      properties:
+        id:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        sourceCallId:
+          type: string
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/AIInteractionCallStatus"
+        durationSeconds:
+          type: integer
+          minimum: 0
+        p50SttMs:
+          type: integer
+          minimum: 0
+        p50TtftMs:
+          type: integer
+          minimum: 0
+        p50TtsTtfbMs:
+          type: integer
+          minimum: 0
+        p50TotalLatencyMs:
+          type: integer
+          minimum: 0
+        toolCallCount:
+          type: integer
+          minimum: 0
+        toolErrorCount:
+          type: integer
+          minimum: 0
+        toolActions:
+          type: array
+          items:
+            type: string
+        transferred:
+          type: boolean
+        transcriptAvailable:
+          type: boolean
+    OperatorAIAnalyticsPage:
+      type: object
+      additionalProperties: false
+      required: [summary, calls, nextCursor]
+      properties:
+        summary:
+          $ref: "#/components/schemas/OperatorAIAnalyticsSummary"
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorAICallAnalytics"
+        nextCursor:
+          type: string
+    OperatorAITimelineKind:
+      type: string
+      enum: [CALLER_MESSAGE, AGENT_MESSAGE, TOOL_CALL, TOOL_RESULT]
+    OperatorAITimelineItem:
+      type: object
+      additionalProperties: false
+      required: [kind, occurredAt]
+      properties:
+        kind:
+          $ref: "#/components/schemas/OperatorAITimelineKind"
+        occurredAt:
+          type: string
+          format: date-time
+        text:
+          type: string
+        name:
+          type: string
+        callId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+        sttMs:
+          type: integer
+          minimum: 0
+        ttftMs:
+          type: integer
+          minimum: 0
+        ttsTtfbMs:
+          type: integer
+          minimum: 0
+        totalLatencyMs:
+          type: integer
+          minimum: 0
+    OperatorAIToolExecution:
+      type: object
+      additionalProperties: false
+      required: [callId, name, occurredAt, status]
+      properties:
+        callId:
+          type: string
+        name:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [SUCCESS, ERROR]
+        outputClass:
+          type: string
+    OperatorAIInteractionAnalytics:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - practiceId
+        - locationId
+        - locationName
+        - sourceCallId
+        - phone
+        - officePhone
+        - startedAt
+        - status
+        - appointmentOutcome
+        - appointment
+        - createdAt
+        - updatedAt
+        - timeline
+        - toolExecutions
+      properties:
+        id:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        sourceCallId:
+          type: string
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        officePhone:
+          type: string
+          pattern: '^\+[1-9][0-9]{7,14}$'
+        externalPatientId:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/AIInteractionCallStatus"
+        summary:
+          type: string
+        appointmentOutcome:
+          $ref: "#/components/schemas/AIAppointmentOutcome"
+        appointment:
+          $ref: "#/components/schemas/AIAppointmentFacts"
+        previousAppointment:
+          $ref: "#/components/schemas/AIAppointmentFacts"
+        appointmentOccurredAt:
+          type: string
+          format: date-time
+        oldAppointmentId:
+          type: string
+        newAppointmentId:
+          type: string
+        bookingResult:
+          type: object
+          additionalProperties: true
+        cancellationResult:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        p50SttMs:
+          type: integer
+          minimum: 0
+        p50TtftMs:
+          type: integer
+          minimum: 0
+        p50TtsTtfbMs:
+          type: integer
+          minimum: 0
+        p50TotalLatencyMs:
+          type: integer
+          minimum: 0
+        timeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorAITimelineItem"
+        toolExecutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorAIToolExecution"
     TaskQueryRequest:
       type: object
       additionalProperties: false

@@ -663,6 +663,77 @@ func (server *Server) QueryAIInteractionOutcomes(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) QueryOperatorAIAnalytics(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.OperatorAIAnalyticsQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	page, err := server.interactions.QueryAnalytics(
+		ctx,
+		interaction.QueryAnalyticsCommand{
+			Identity:   identity,
+			PracticeID: body.PracticeId.String(),
+			LocationID: uuidString(body.LocationId),
+			Range:      interaction.AnalyticsRange(body.Range),
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
+		},
+	)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	response, err := operatorAIAnalyticsPageResponse(page)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) GetOperatorAIInteractionAnalytics(
+	w http.ResponseWriter,
+	r *http.Request,
+	interactionID openapi_types.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	detail, err := server.interactions.ReadOperatorAnalytics(
+		ctx,
+		identity,
+		interactionID.String(),
+	)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	response, err := operatorAIInteractionAnalyticsResponse(detail)
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Request) {
 	if server.role != "provider-ingress" {
 		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
@@ -3264,6 +3335,128 @@ func aiOutcomeItemResponse(
 		OldAppointmentId:      stringPointer(item.OldAppointmentID),
 		NewAppointmentId:      stringPointer(item.NewAppointmentID),
 	}, nil
+}
+
+func operatorAIAnalyticsPageResponse(
+	page interaction.AnalyticsPage,
+) (api.OperatorAIAnalyticsPage, error) {
+	response := api.OperatorAIAnalyticsPage{
+		Summary: api.OperatorAIAnalyticsSummary{
+			TotalCalls:        page.Summary.TotalCalls,
+			P50TotalLatencyMs: page.Summary.P50TotalLatencyMs,
+			TransferCount:     page.Summary.TransferCount,
+			TransferRate:      page.Summary.TransferRate,
+			ToolCallCount:     page.Summary.ToolCallCount,
+			ToolErrorCount:    page.Summary.ToolErrorCount,
+			ToolFailureRate:   page.Summary.ToolFailureRate,
+		},
+		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor: page.NextCursor,
+	}
+	for _, call := range page.Calls {
+		id, err := uuid.Parse(call.ID)
+		if err != nil {
+			return api.OperatorAIAnalyticsPage{}, err
+		}
+		locationID, err := uuid.Parse(call.LocationID)
+		if err != nil {
+			return api.OperatorAIAnalyticsPage{}, err
+		}
+		response.Calls = append(response.Calls, api.OperatorAICallAnalytics{
+			Id:                  id,
+			LocationId:          locationID,
+			LocationName:        call.LocationName,
+			SourceCallId:        call.SourceCallID,
+			Phone:               call.Phone,
+			StartedAt:           call.StartedAt,
+			EndedAt:             call.EndedAt,
+			Status:              api.AIInteractionCallStatus(call.Status),
+			DurationSeconds:     call.DurationSeconds,
+			P50SttMs:            call.P50SttMs,
+			P50TtftMs:           call.P50TtftMs,
+			P50TtsTtfbMs:        call.P50TtsTtfbMs,
+			P50TotalLatencyMs:   call.P50TotalLatencyMs,
+			ToolCallCount:       call.ToolCallCount,
+			ToolErrorCount:      call.ToolErrorCount,
+			ToolActions:         call.ToolActions,
+			Transferred:         call.Transferred,
+			TranscriptAvailable: call.TranscriptAvailable,
+		})
+	}
+	return response, nil
+}
+
+func operatorAIInteractionAnalyticsResponse(
+	detail interaction.OperatorAnalyticsDetail,
+) (api.OperatorAIInteractionAnalytics, error) {
+	base, err := aiInteractionDetailResponse(detail.Interaction)
+	if err != nil {
+		return api.OperatorAIInteractionAnalytics{}, err
+	}
+	response := api.OperatorAIInteractionAnalytics{
+		Id:                    base.Id,
+		PracticeId:            base.PracticeId,
+		LocationId:            base.LocationId,
+		LocationName:          base.LocationName,
+		SourceCallId:          base.SourceCallId,
+		Phone:                 base.Phone,
+		OfficePhone:           base.OfficePhone,
+		ExternalPatientId:     base.ExternalPatientId,
+		StartedAt:             base.StartedAt,
+		EndedAt:               base.EndedAt,
+		Status:                base.Status,
+		Summary:               base.Summary,
+		AppointmentOutcome:    base.AppointmentOutcome,
+		Appointment:           base.Appointment,
+		PreviousAppointment:   base.PreviousAppointment,
+		AppointmentOccurredAt: base.AppointmentOccurredAt,
+		OldAppointmentId:      base.OldAppointmentId,
+		NewAppointmentId:      base.NewAppointmentId,
+		BookingResult:         base.BookingResult,
+		CancellationResult:    base.CancellationResult,
+		CreatedAt:             base.CreatedAt,
+		UpdatedAt:             base.UpdatedAt,
+		P50SttMs:              detail.P50SttMs,
+		P50TtftMs:             detail.P50TtftMs,
+		P50TtsTtfbMs:          detail.P50TtsTtfbMs,
+		P50TotalLatencyMs:     detail.P50TotalLatencyMs,
+		Timeline:              make([]api.OperatorAITimelineItem, 0, len(detail.Timeline)),
+		ToolExecutions:        make([]api.OperatorAIToolExecution, 0, len(detail.ToolExecutions)),
+	}
+	for _, item := range detail.Timeline {
+		payload := item.Payload
+		response.Timeline = append(response.Timeline, api.OperatorAITimelineItem{
+			Kind:           api.OperatorAITimelineKind(item.Kind),
+			OccurredAt:     item.OccurredAt,
+			Text:           stringPointer(item.Text),
+			Name:           stringPointer(item.Name),
+			CallId:         stringPointer(item.CallID),
+			Payload:        mapPointer(payload),
+			Error:          stringPointer(item.Error),
+			SttMs:          item.SttMs,
+			TtftMs:         item.TtftMs,
+			TtsTtfbMs:      item.TtsTtfbMs,
+			TotalLatencyMs: item.TotalLatencyMs,
+		})
+	}
+	for _, execution := range detail.ToolExecutions {
+		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
+			CallId:      execution.CallID,
+			Name:        execution.Name,
+			OccurredAt:  execution.OccurredAt,
+			Status:      api.OperatorAIToolExecutionStatus(execution.Status),
+			OutputClass: stringPointer(execution.OutputClass),
+		})
+	}
+	return response, nil
+}
+
+func mapPointer(value map[string]any) *map[string]interface{} {
+	if value == nil {
+		return nil
+	}
+	converted := map[string]interface{}(value)
+	return &converted
 }
 
 func jsonMap(value json.RawMessage) *map[string]interface{} {
