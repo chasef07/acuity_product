@@ -32,8 +32,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 29 {
-		t.Fatalf("migration count = %d, want 29", migrationCount)
+	if migrationCount != 30 {
+		t.Fatalf("migration count = %d, want 30", migrationCount)
 	}
 
 	for _, relation := range []string{
@@ -456,6 +456,87 @@ func TestOutboundVoiceFallbackMigrationBackfillsAbita(t *testing.T) {
 			fallbackPractice,
 			fallbackLocation,
 		)
+	}
+}
+
+func TestMadelynAccessGrantEmailCorrectionUpdatesUnclaimedGrant(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0029_outbound_voice_fallback.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name, workspace_version)
+		VALUES ('abita-eye-group', 'Abita Eye Group', 4);
+
+		INSERT INTO access_grants (
+			provisioning_key, practice_id, email, role, location_scope
+		)
+		SELECT 'madelyn', id, 'madylen@abitaeye.com', 'STAFF', 'SELECTED'
+		FROM access_practices
+		WHERE provisioning_key = 'abita-eye-group';
+	`); err != nil {
+		t.Fatalf("seed Madelyn Access Grant: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Madelyn email correction: %v", err)
+	}
+
+	var email string
+	var workspaceVersion int64
+	var auditEvents int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			access_grant.email,
+			practice.workspace_version,
+			(SELECT count(*)
+			 FROM access_audit_events
+			 WHERE action = 'access.grant_email_corrected')
+		FROM access_grants access_grant
+		JOIN access_practices practice ON practice.id = access_grant.practice_id
+		WHERE access_grant.provisioning_key = 'madelyn'
+	`).Scan(&email, &workspaceVersion, &auditEvents); err != nil {
+		t.Fatal(err)
+	}
+	if email != "madelyn@abitaeye.com" || workspaceVersion != 5 || auditEvents != 1 {
+		t.Fatalf(
+			"Madelyn correction = email:%s workspace:%d audits:%d",
+			email, workspaceVersion, auditEvents,
+		)
+	}
+}
+
+func TestMadelynAccessGrantEmailCorrectionRejectsClaimedGrant(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0029_outbound_voice_fallback.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name)
+		VALUES ('abita-eye-group', 'Abita Eye Group');
+
+		INSERT INTO access_grants (
+			provisioning_key, practice_id, email, role, location_scope,
+			claimed_at, claimed_by_subject
+		)
+		SELECT
+			'madelyn', id, 'madylen@abitaeye.com', 'STAFF', 'SELECTED',
+			now(), 'madelyn-subject'
+		FROM access_practices
+		WHERE provisioning_key = 'abita-eye-group';
+	`); err != nil {
+		t.Fatalf("seed claimed Madelyn Access Grant: %v", err)
+	}
+
+	err := migrations.Apply(ctx, pool)
+	if err == nil || !strings.Contains(err.Error(), "incompatible Access Grant state") {
+		t.Fatalf("claimed Madelyn correction error = %v", err)
+	}
+
+	var email string
+	if err := pool.QueryRow(ctx, `
+		SELECT email FROM access_grants WHERE provisioning_key = 'madelyn'
+	`).Scan(&email); err != nil {
+		t.Fatal(err)
+	}
+	if email != "madylen@abitaeye.com" {
+		t.Fatalf("claimed Madelyn Grant email = %s", email)
 	}
 }
 
