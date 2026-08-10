@@ -795,7 +795,7 @@ func lockBySourceCall(
 	interaction, err := scanInteraction(tx.QueryRow(ctx, interactionSelect+`
 		WHERE interaction.practice_id = $1
 			AND interaction.source_call_id = $2
-		FOR UPDATE
+		FOR UPDATE OF interaction
 	`, practiceID, sourceCallID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Interaction{}, false, nil
