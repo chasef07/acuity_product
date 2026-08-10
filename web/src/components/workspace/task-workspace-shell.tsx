@@ -1012,7 +1012,6 @@ export function TaskWorkspaceShell() {
       <CallingDock
         callingEnabled={callingEnabled}
         practiceID={practiceID}
-        workspaceRevision={workspaceRevision}
         taskCallRequest={taskCallRequest}
         onTaskCallHandled={(requestID, requestError) => {
           setTaskCallRequest((current) =>

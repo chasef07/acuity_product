@@ -23,8 +23,8 @@ remaining gates are recorded separately below.
 - A successful automated backup and a successful on-demand backup exist in
   `us-east1`. A restore rehearsal is still required before launch.
 - PostgreSQL reports 400 total connections and three superuser-reserved slots:
-  a 397-connection non-superuser ceiling. The 22-connection production
-  reservation therefore has 375 connections of configured ceiling headroom;
+  a 397-connection non-superuser ceiling. The 26-connection production
+  reservation therefore has 371 connections of configured ceiling headroom;
   eight client connections were active at the dated snapshot.
 
 This checkpoint is infrastructure and configuration evidence, not Florida
@@ -117,7 +117,7 @@ not delete the Vercel deployment or the validation CNAMEs before acceptance.
   must not lose durable state.
 - `worker` owns receipt projection, provider-command retry, and reconciliation.
   Stop if either receipt or command lane stalls on one fixed instance.
-- Cloud SQL is the sole durable authority. Stop if fewer than 22 connections are
+- Cloud SQL is the sole durable authority. Stop if fewer than 26 connections are
   usable after current reserved and active sessions.
 
 Do not collapse roles to mitigate a failed gate. Record pool wait, transaction
@@ -181,7 +181,7 @@ migration when any gate is missing or false.
    WHERE backend_type = 'client backend';
    ```
 
-   Prove at least 22 connections remain usable by the application and operator
+   Prove at least 26 connections remain usable by the application and operator
    identities. Do not infer capacity from the machine size alone.
 4. Confirm immutable backend and web image digests, exact database credentials
    per role, Secret Manager references, recording and Messaging attachment
@@ -476,7 +476,7 @@ This target has no automatic database failover. During an outage:
 3. Preserve Telnyx retry delivery and command IDs. Do not manually replay an
    uncertain provider effect under a new ID.
 4. Recover the zonal instance or restore from backup/PITR into `us-east1`.
-5. Re-establish database roles and the measured 22-connection reservation.
+5. Re-establish database roles and the measured 26-connection reservation.
 6. Start the single worker first for durable convergence, then ingress,
    portal/realtime, and web. Reconcile every indeterminate command before
    restoring ordinary traffic.

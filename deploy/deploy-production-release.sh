@@ -90,6 +90,7 @@ service_runtime() {
   case "$1" in
     acuity-portal-api)
       read -r concurrency minimum maximum <<<"20 1 3"
+      runtime_environment="DATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
       runtime_environment+=",HUMAN_CALLING_RING_WINDOW_SECONDS=20"
       if [[ "$destructive_cutover" == true ]]; then
         runtime_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"

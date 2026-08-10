@@ -134,7 +134,7 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 			Concurrency:                    20,
 			MinimumInstances:               1,
 			MaximumInstances:               3,
-			PoolMaximum:                    1,
+			PoolMaximum:                    2,
 			AcquisitionTimeoutMilliseconds: 1500,
 		},
 		"provider-ingress": {
@@ -206,9 +206,9 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 	if len(expected) != 0 {
 		t.Fatalf("missing production runtimes: %v", expected)
 	}
-	if serviceConnections != 11 {
+	if serviceConnections != 14 {
 		t.Errorf(
-			"configured service connection demand = %d, want 11",
+			"configured service connection demand = %d, want 14",
 			serviceConnections,
 		)
 	}
@@ -239,9 +239,9 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 	if contract.OperatorHeadroom != 3 {
 		t.Errorf("operator headroom = %d, want 3", contract.OperatorHeadroom)
 	}
-	if oneExtraServiceInstanceConnections != 5 {
+	if oneExtraServiceInstanceConnections != 6 {
 		t.Errorf(
-			"one-extra-instance service demand = %d, want 5",
+			"one-extra-instance service demand = %d, want 6",
 			oneExtraServiceInstanceConnections,
 		)
 	}
@@ -259,8 +259,8 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 		contract.Migration.Tasks*contract.Migration.PoolMaximum +
 		oneExtraServiceInstanceConnections +
 		contract.OperatorHeadroom
-	if calculated != 22 {
-		t.Errorf("calculated production connection reservation = %d, want 22", calculated)
+	if calculated != 26 {
+		t.Errorf("calculated production connection reservation = %d, want 26", calculated)
 	}
 	if contract.RequiredDatabaseConnections != calculated {
 		t.Errorf(
@@ -284,9 +284,9 @@ func TestProductionRendererIncludesAuditableResourceAndRegionRows(t *testing.T) 
 	}
 	rows := strings.Split(strings.TrimSpace(string(output)), "\n")
 	expected := []string{
-		"capacity\tmeta\t0\t0\t22\t0\t0\t0\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
+		"capacity\tmeta\t0\t0\t26\t0\t0\t0\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
 		"web\tservice\t40\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
-		"portal-api\tservice\t20\t1\t3\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
+		"portal-api\tservice\t20\t1\t3\t2\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
 		"provider-ingress\tservice\t20\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
 		"realtime\tservice\t50\t1\t2\t1\t1\t1500\t300\t270\t30\t0\t1\t512\trequest-based\tus-east1",
 		"worker\tworker-pool\t0\t1\t1\t1\t0\t1500\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
@@ -340,7 +340,7 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--concurrency\t20",
 		"--min\t1",
 		"--max\t3",
-		"DATABASE_POOL_MAX=1",
+		"DATABASE_POOL_MAX=2",
 		"BROWSER_ORIGIN=https://portal.example,https://legacy.example",
 		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY=playback-signing-key:latest",
 		"MESSAGING_WEBHOOK_BASE_URL=https://ingress.example/v1/provider/telnyx/messaging-webhooks",
@@ -436,8 +436,8 @@ func TestProductionCloudRunCommandsFailClosed(t *testing.T) {
 		{
 			name:    "connections",
 			key:     "USABLE_DATABASE_CONNECTIONS",
-			value:   "21",
-			message: "production requires at least 22 usable database connections",
+			value:   "25",
+			message: "production requires at least 26 usable database connections",
 		},
 		{
 			name:    "messaging attachment bucket",
@@ -679,7 +679,7 @@ func productionRuntimeEnvironment() []string {
 		"MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1",
 		"MESSAGING_ATTACHMENT_DIRECTORY=/mnt/acuity-messaging",
 		"ACUITY_DEPLOYMENT_PROFILE=production",
-		"USABLE_DATABASE_CONNECTIONS=22",
+		"USABLE_DATABASE_CONNECTIONS=26",
 	}
 }
 
