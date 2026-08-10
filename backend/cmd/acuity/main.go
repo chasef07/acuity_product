@@ -259,6 +259,7 @@ func runAuthorizedHTTP(
 					PracticeID:    config.Service.AbitaEyeGroup.PracticeID,
 					LocationScope: access.LocationScopeAll,
 					Capabilities: []access.ServiceCapability{
+						access.ServiceCapabilityCreateTask,
 						access.ServiceCapabilityHumanHandoff,
 						access.ServiceCapabilityIngestAIInteraction,
 					},

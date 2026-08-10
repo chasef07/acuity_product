@@ -24,6 +24,7 @@ func TestServiceAuthenticatorReturnsTheTenantBoundToEachCredential(t *testing.T)
 		PracticeID:    "00000000-0000-0000-0000-000000000002",
 		LocationScope: access.LocationScopeAll,
 		Capabilities: []access.ServiceCapability{
+			access.ServiceCapabilityCreateTask,
 			access.ServiceCapabilityHumanHandoff,
 			access.ServiceCapabilityIngestAIInteraction,
 		},
@@ -56,8 +57,9 @@ func TestServiceAuthenticatorReturnsTheTenantBoundToEachCredential(t *testing.T)
 		!demo.Allows(access.ServiceCapabilityHumanHandoff) {
 		t.Fatalf("demo capabilities = %#v", demo.Capabilities)
 	}
-	if !production.Allows(access.ServiceCapabilityHumanHandoff) ||
-		production.Allows(access.ServiceCapabilityCreateTask) {
+	if !production.Allows(access.ServiceCapabilityCreateTask) ||
+		!production.Allows(access.ServiceCapabilityHumanHandoff) ||
+		!production.Allows(access.ServiceCapabilityIngestAIInteraction) {
 		t.Fatalf("production capabilities = %#v", production.Capabilities)
 	}
 }
