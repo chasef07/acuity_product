@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react"
+import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import {
   CheckIcon,
@@ -39,7 +40,6 @@ import {
 import { AIInteractionContext } from "@/components/workspace/ai-interaction-detail"
 import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
 import { EngagementWorkspace } from "@/components/workspace/message-workspace"
-import { OperatorAnalytics } from "@/components/workspace/operator-analytics"
 import {
   type ConnectionState,
   TaskRail,
@@ -73,6 +73,24 @@ import {
   type WorkspaceSync,
   WorkspaceSyncUnauthorizedError,
 } from "@/lib/workspace-sync/workspace-sync"
+
+const OperatorAnalytics = dynamic(
+  () =>
+    import("@/components/workspace/operator-analytics").then(
+      (module) => module.OperatorAnalytics,
+    ),
+  {
+    loading: () => (
+      <div
+        aria-label="Loading analytics workspace"
+        aria-busy="true"
+        className="flex min-h-0 flex-1 bg-muted/20 p-4 sm:p-6 lg:p-8"
+      >
+        <Skeleton className="h-40 w-full rounded-xl" />
+      </div>
+    ),
+  },
+)
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type View = "none" | "engagement" | "analytics"
@@ -1090,7 +1108,10 @@ export function TaskWorkspaceShell() {
             </header>
           )}
           {view === "analytics" ? (
-            <OperatorAnalytics />
+            <OperatorAnalytics
+              practiceID={practiceID}
+              locationScopeID={locationScopeID}
+            />
           ) : view === "engagement" && selectedEngagement ? (
             <div className="relative flex min-h-0 flex-1 bg-muted/20">
               <div className="flex min-h-0 min-w-0 flex-1 bg-background">
