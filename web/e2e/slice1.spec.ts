@@ -26,7 +26,7 @@ const operatorAnalyticsFixture = {
   },
   calls: [
     {
-      id: "analytics-call-1",
+      id: "10000000-0000-0000-0000-000000000101",
       locationId: "00000000-0000-0000-0000-000000000001",
       locationName: "Abita Springs",
       sourceCallId: "livekit-call-1",
@@ -46,11 +46,26 @@ const operatorAnalyticsFixture = {
       transcriptAvailable: true,
     },
   ],
+  nextCursor: "page-2",
+}
+
+const operatorAnalyticsNextPageFixture = {
+  summary: operatorAnalyticsFixture.summary,
+  calls: [
+    {
+      ...operatorAnalyticsFixture.calls[0],
+      id: "10000000-0000-0000-0000-000000000102",
+      sourceCallId: "livekit-call-2",
+      phone: "+19855550143",
+      startedAt: "2026-08-10T07:45:00Z",
+      endedAt: "2026-08-10T07:48:00Z",
+    },
+  ],
   nextCursor: "",
 }
 
 const operatorAnalyticsDetailFixture = {
-  id: "analytics-call-1",
+  id: "10000000-0000-0000-0000-000000000101",
   practiceId: "00000000-0000-0000-0000-000000000001",
   sourceCallId: "livekit-call-1",
   locationId: "00000000-0000-0000-0000-000000000001",
@@ -302,15 +317,21 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
       practiceId: string
       locationId?: string
       range: string
+      cursor?: string
     }> = []
     await operatorPage.route(
       `${portalURL}/v1/operator/ai-analytics/query`,
       async (route) => {
-        analyticsRequests.push(route.request().postDataJSON())
+        const body = route.request().postDataJSON()
+        analyticsRequests.push(body)
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify(operatorAnalyticsFixture),
+          body: JSON.stringify(
+            body.cursor
+              ? operatorAnalyticsNextPageFixture
+              : operatorAnalyticsFixture,
+          ),
         })
       },
     )
@@ -345,6 +366,19 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
         range: "7d",
       })
     expect(analyticsRequests.at(-1)?.locationId).toBeUndefined()
+
+    await analyticsRegion
+      .getByRole("button", { name: "Load more calls" })
+      .click()
+    await expect
+      .poll(() => analyticsRequests.at(-1)?.cursor)
+      .toBe("page-2")
+    await expect(
+      analyticsRegion.getByText("(985) 555-0143").first(),
+    ).toBeVisible()
+    await expect(
+      analyticsRegion.getByRole("button", { name: "Load more calls" }),
+    ).toHaveCount(0)
 
     await operatorPage.getByRole("button", { name: "Last 30 days" }).click()
     await expect

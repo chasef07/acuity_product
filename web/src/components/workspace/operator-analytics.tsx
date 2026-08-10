@@ -35,6 +35,7 @@ import type {
 import { getAccessToken } from "@/lib/auth-client"
 
 type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
+type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
 
 const ranges: Array<{
   value: OperatorAiAnalyticsRange
@@ -61,11 +62,17 @@ export function OperatorAnalytics({
     data?: OperatorAiAnalyticsPage
   }>({ key: "", state: "loading" })
   const [selectedInteractionID, setSelectedInteractionID] = useState("")
+  const [nextPageRequest, setNextPageRequest] = useState<{
+    key: string
+    state: AnalyticsNextPageState
+  }>({ key: "", state: "idle" })
   const requestKey = `${practiceID}:${locationScopeID}:${range}:${requestVersion}`
   const currentRequest =
     request.key === requestKey
       ? request
       : { key: requestKey, state: "loading" as const }
+  const nextPageState =
+    nextPageRequest.key === requestKey ? nextPageRequest.state : "idle"
 
   useEffect(() => {
     if (!practiceID) return
@@ -106,6 +113,65 @@ export function OperatorAnalytics({
     })
     return () => controller.abort()
   }, [locationScopeID, practiceID, range, requestKey])
+
+  async function loadNextPage() {
+    if (
+      currentRequest.state !== "ready" ||
+      !currentRequest.data?.nextCursor ||
+      nextPageState === "loading"
+    ) {
+      return
+    }
+    const cursor = currentRequest.data.nextCursor
+    setNextPageRequest({ key: requestKey, state: "loading" })
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        setRequest((current) =>
+          current.key === requestKey
+            ? { key: requestKey, state: "unauthorized" }
+            : current,
+        )
+        setNextPageRequest({ key: requestKey, state: "idle" })
+        return
+      }
+      const result = await queryOperatorAiAnalytics({
+        client: portalClient(token),
+        body: {
+          practiceId: practiceID,
+          locationId: locationScopeID || undefined,
+          range,
+          cursor,
+          limit: 50,
+        },
+      }).catch(() => undefined)
+      if (!result?.data) {
+        setNextPageRequest({ key: requestKey, state: "unavailable" })
+        return
+      }
+      setRequest((current) => {
+        if (
+          current.key !== requestKey ||
+          current.state !== "ready" ||
+          !current.data
+        ) {
+          return current
+        }
+        return {
+          key: requestKey,
+          state: "ready",
+          data: {
+            ...current.data,
+            calls: [...current.data.calls, ...result.data.calls],
+            nextCursor: result.data.nextCursor,
+          },
+        }
+      })
+      setNextPageRequest({ key: requestKey, state: "idle" })
+    } catch {
+      setNextPageRequest({ key: requestKey, state: "unavailable" })
+    }
+  }
 
   return (
     <section
@@ -175,6 +241,8 @@ export function OperatorAnalytics({
             <AnalyticsReady
               data={currentRequest.data}
               range={range}
+              nextPageState={nextPageState}
+              onLoadNextPage={loadNextPage}
               onSelect={setSelectedInteractionID}
             />
           )}
@@ -191,10 +259,14 @@ export function OperatorAnalytics({
 function AnalyticsReady({
   data,
   range,
+  nextPageState,
+  onLoadNextPage,
   onSelect,
 }: {
   data: OperatorAiAnalyticsPage
   range: OperatorAiAnalyticsRange
+  nextPageState: AnalyticsNextPageState
+  onLoadNextPage: () => void
   onSelect: (interactionID: string) => void
 }) {
   return (
@@ -212,7 +284,15 @@ function AnalyticsReady({
           </p>
         </div>
       ) : (
-        <CallLedger calls={data.calls} range={range} onSelect={onSelect} />
+        <CallLedger
+          calls={data.calls}
+          totalCalls={data.summary.totalCalls}
+          range={range}
+          hasNextPage={Boolean(data.nextCursor)}
+          nextPageState={nextPageState}
+          onLoadNextPage={onLoadNextPage}
+          onSelect={onSelect}
+        />
       )}
     </>
   )
@@ -223,7 +303,7 @@ function AnalyticsKPIs({ summary }: { summary: OperatorAiAnalyticsSummary }) {
     {
       label: "Total calls",
       value: summary.totalCalls.toLocaleString(),
-      note: "Completed and escalated",
+      note: "All calls in selected range",
       icon: ChartNoAxesCombinedIcon,
     },
     {
@@ -271,11 +351,19 @@ function AnalyticsKPIs({ summary }: { summary: OperatorAiAnalyticsSummary }) {
 
 function CallLedger({
   calls,
+  totalCalls,
   range,
+  hasNextPage,
+  nextPageState,
+  onLoadNextPage,
   onSelect,
 }: {
   calls: OperatorAiCallAnalytics[]
+  totalCalls: number
   range: OperatorAiAnalyticsRange
+  hasNextPage: boolean
+  nextPageState: AnalyticsNextPageState
+  onLoadNextPage: () => void
   onSelect: (interactionID: string) => void
 }) {
   return (
@@ -290,7 +378,8 @@ function CallLedger({
           </h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          {calls.length.toLocaleString()} shown · {range}
+          {calls.length.toLocaleString()} shown · {totalCalls.toLocaleString()} total
+          · {range}
         </p>
       </div>
 
@@ -400,6 +489,30 @@ function CallLedger({
           </button>
         ))}
       </div>
+
+      {(hasNextPage || nextPageState === "unavailable") && (
+        <div className="mt-4 flex flex-col items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={nextPageState === "loading"}
+            onClick={onLoadNextPage}
+          >
+            {nextPageState === "loading" && (
+              <RefreshCwIcon className="animate-spin" aria-hidden="true" />
+            )}
+            {nextPageState === "unavailable"
+              ? "Retry loading calls"
+              : "Load more calls"}
+          </Button>
+          {nextPageState === "unavailable" && (
+            <p className="text-xs text-destructive" role="status">
+              More call evidence could not be loaded. The calls already shown are
+              unchanged.
+            </p>
+          )}
+        </div>
+      )}
     </section>
   )
 }
