@@ -3,6 +3,7 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,8 +33,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 30 {
-		t.Fatalf("migration count = %d, want 30", migrationCount)
+	if migrationCount != 31 {
+		t.Fatalf("migration count = %d, want 31", migrationCount)
 	}
 
 	for _, relation := range []string{
@@ -372,7 +373,7 @@ func TestHollywoodAccessExpansionUpdatesGrantsAndClaimedMemberships(t *testing.T
 		t.Fatalf("seed Hollywood Access expansion: %v", err)
 	}
 
-	if err := migrations.Apply(ctx, pool); err != nil {
+	if err := migrations.ApplyThrough(ctx, pool, "0028_expand_hollywood_access.sql"); err != nil {
 		t.Fatalf("apply Hollywood Access expansion: %v", err)
 	}
 
@@ -537,6 +538,108 @@ func TestMadelynAccessGrantEmailCorrectionRejectsClaimedGrant(t *testing.T) {
 	}
 	if email != "madylen@abitaeye.com" {
 		t.Fatalf("claimed Madelyn Grant email = %s", email)
+	}
+}
+
+func TestAbitaAccessGrantEmailCorrectionsUpdateUnclaimedGrants(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0030_correct_madelyn_access_grant_email.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (provisioning_key, name, workspace_version)
+		VALUES ('abita-eye-group', 'Abita Eye Group', 8);
+
+		INSERT INTO access_grants (
+			id, provisioning_key, practice_id, email, role, location_scope
+		)
+		SELECT reviewed.id::uuid, reviewed.provisioning_key, practice.id,
+			reviewed.email, 'STAFF', 'SELECTED'
+		FROM access_practices practice
+		CROSS JOIN (VALUES
+			('00000000-0000-0000-0000-000000000401', 'ari-nussbaum', 'anussbaum@abitaeye.com'),
+			('00000000-0000-0000-0000-000000000402', 'sherry', 'sherry@abitaeye.com')
+		) reviewed(id, provisioning_key, email)
+		WHERE practice.provisioning_key = 'abita-eye-group';
+	`); err != nil {
+		t.Fatalf("seed Abita Access Grants: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply Abita email corrections: %v", err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT id::text, provisioning_key, email, role::text, location_scope::text
+		FROM access_grants
+		ORDER BY provisioning_key
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	type grant struct {
+		id       string
+		key      string
+		email    string
+		role     string
+		location string
+	}
+	var grants []grant
+	for rows.Next() {
+		var current grant
+		if err := rows.Scan(
+			&current.id,
+			&current.key,
+			&current.email,
+			&current.role,
+			&current.location,
+		); err != nil {
+			t.Fatal(err)
+		}
+		grants = append(grants, current)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []grant{
+		{
+			id:       "00000000-0000-0000-0000-000000000401",
+			key:      "ari-nussbaum",
+			email:    "ari@abitaeye.com",
+			role:     "STAFF",
+			location: "SELECTED",
+		},
+		{
+			id:       "00000000-0000-0000-0000-000000000402",
+			key:      "sherry",
+			email:    "lutzoptical@abitaeye.com",
+			role:     "STAFF",
+			location: "SELECTED",
+		},
+	}
+	if !reflect.DeepEqual(grants, want) {
+		t.Fatalf("corrected Abita Access Grants = %#v, want %#v", grants, want)
+	}
+
+	var workspaceVersion int64
+	var auditEvents int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			workspace_version,
+			(SELECT count(*)
+			 FROM access_audit_events
+			 WHERE actor_subject = 'migration:0031_correct_abita_access_grant_emails')
+		FROM access_practices
+		WHERE provisioning_key = 'abita-eye-group'
+	`).Scan(&workspaceVersion, &auditEvents); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceVersion != 9 || auditEvents != 2 {
+		t.Fatalf(
+			"Abita email corrections = workspace:%d audits:%d",
+			workspaceVersion,
+			auditEvents,
+		)
 	}
 }
 

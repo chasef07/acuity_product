@@ -73,7 +73,7 @@
         },
         {
           "Key": "ari-nussbaum",
-          "Email": "anussbaum@abitaeye.com",
+          "Email": "ari@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
           "SelectedLocationKeys": ["hollywood", "north-miami-beach-optical", "sweetwater"]
@@ -227,7 +227,7 @@
         },
         {
           "Key": "sherry",
-          "Email": "sherry@abitaeye.com",
+          "Email": "lutzoptical@abitaeye.com",
           "Role": "STAFF",
           "LocationScope": "SELECTED",
           "SelectedLocationKeys": ["spring-hill"]
