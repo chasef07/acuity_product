@@ -63,6 +63,7 @@ import type {
   EngagementSummary,
   MessageThreadSummary,
   Task,
+  TaskFolderCounts,
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
@@ -119,6 +120,9 @@ export function TaskWorkspaceShell() {
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
   const [recentInboxes, setRecentInboxes] = useState<EngagementSummary[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [taskCounts, setTaskCounts] = useState<TaskFolderCounts>(() =>
+    emptyTaskFolderCounts(),
+  )
   const [nextCursor, setNextCursor] = useState("")
   const [tasksLoading, setTasksLoading] = useState(false)
   const [messageThreads, setMessageThreads] = useState<MessageThreadSummary[]>(
@@ -227,6 +231,7 @@ export function TaskWorkspaceShell() {
       tasksRef.current = next
       setTasks(next)
       setNextCursor(result.data.nextCursor)
+      setTaskCounts(result.data.counts)
 
       const selected = selectedTaskRef.current
       if (selected) {
@@ -441,6 +446,7 @@ export function TaskWorkspaceShell() {
             tasksRef.current = tasksWithSelection
             setTasks(tasksWithSelection)
             setNextCursor(taskResult.data.nextCursor)
+            setTaskCounts(taskResult.data.counts)
             const selected = selectedTaskRef.current
             if (selected) {
               const current =
@@ -656,6 +662,7 @@ export function TaskWorkspaceShell() {
     tasksRef.current = []
     messageThreadsRef.current = []
     setTasks([])
+    setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
     setAIOutcomesError("")
@@ -711,6 +718,7 @@ export function TaskWorkspaceShell() {
     tasksRef.current = []
     messageThreadsRef.current = []
     setTasks([])
+    setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
     setAIOutcomesError("")
@@ -1061,6 +1069,7 @@ export function TaskWorkspaceShell() {
           }
           locationScopeID={locationScopeID}
           tasks={tasks}
+          taskCounts={taskCounts}
           messages={messageThreads}
           aiOutcomes={aiOutcomes}
           recent={recentInboxes}
@@ -1211,6 +1220,16 @@ export function TaskWorkspaceShell() {
 
 function currentUTCDate() {
   return new Date().toISOString().slice(0, 10)
+}
+
+function emptyTaskFolderCounts(): TaskFolderCounts {
+  return {
+    tasks: 0,
+    missedCalls: 0,
+    bookings: 0,
+    cancellations: 0,
+    reschedules: 0,
+  }
 }
 
 function WorkspaceSelector({

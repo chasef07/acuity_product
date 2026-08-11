@@ -213,6 +213,15 @@ type QueryTasksCommand struct {
 type TaskPage struct {
 	Items      []Task
 	NextCursor string
+	Counts     TaskFolderCounts
+}
+
+type TaskFolderCounts struct {
+	Tasks         int
+	MissedCalls   int
+	Bookings      int
+	Cancellations int
+	Reschedules   int
 }
 
 // Module owns durable Task state and lifecycle behavior.
@@ -1163,6 +1172,18 @@ func (m *Module) QueryTasks(
 		return TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
 	}
 	rows.Close()
+	counts, err := queryTaskFolderCounts(
+		ctx,
+		tx,
+		command.PracticeID,
+		locationIDs,
+		command.Search,
+		normalizedDigits(command.Search),
+		command.State,
+	)
+	if err != nil {
+		return TaskPage{}, err
+	}
 	for index := range items {
 		if err := m.loadRelatedInteractionCount(ctx, tx, &items[index]); err != nil {
 			return TaskPage{}, err
@@ -1183,7 +1204,77 @@ func (m *Module) QueryTasks(
 	if err := tx.Commit(ctx); err != nil {
 		return TaskPage{}, fmt.Errorf("commit Task query: %w", err)
 	}
-	return TaskPage{Items: items, NextCursor: nextCursor}, nil
+	return TaskPage{Items: items, NextCursor: nextCursor, Counts: counts}, nil
+}
+
+func queryTaskFolderCounts(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	locationIDs []string,
+	search string,
+	phoneDigits string,
+	state TaskState,
+) (TaskFolderCounts, error) {
+	var counts TaskFolderCounts
+	err := tx.QueryRow(ctx, `
+		WITH scoped AS (
+			SELECT
+				task.origin,
+				task.category,
+				lower(task.title || ' ' || COALESCE(task.source_message, '')) AS task_text
+			FROM work_tasks task
+			WHERE task.practice_id = $1
+				AND task.location_id::text = ANY($2::text[])
+				AND (
+					$3 = ''
+						OR strpos(lower(task.title), lower($3)) > 0
+						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
+				)
+				AND task.state = $5
+		), classified AS (
+			SELECT
+				origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AS recovery,
+				COALESCE(
+					category = 'appointments'
+						AND task_text ~ '\m(cancel|cancellation)\M',
+					false
+				) AS cancellation,
+				COALESCE(
+					category = 'appointments'
+						AND task_text ~ '\m(reschedule|rescheduling|move appointment|change appointment)\M',
+					false
+				) AS reschedule,
+				COALESCE(
+					category = 'appointments'
+						AND task_text ~ '\m(book|booking|schedule|new appointment|appointment request)\M',
+					false
+				) AS booking
+			FROM scoped
+		)
+		SELECT
+			count(*) FILTER (
+				WHERE NOT recovery
+					AND NOT cancellation
+					AND NOT reschedule
+					AND NOT booking
+			),
+			count(*) FILTER (WHERE recovery),
+			count(*) FILTER (WHERE NOT recovery AND booking AND NOT cancellation AND NOT reschedule),
+			count(*) FILTER (WHERE NOT recovery AND cancellation),
+			count(*) FILTER (WHERE NOT recovery AND reschedule AND NOT cancellation)
+		FROM classified
+	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
+		&counts.Tasks,
+		&counts.MissedCalls,
+		&counts.Bookings,
+		&counts.Cancellations,
+		&counts.Reschedules,
+	)
+	if err != nil {
+		return TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
+	}
+	return counts, nil
 }
 
 const taskQuerySelect = `
