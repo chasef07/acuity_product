@@ -258,7 +258,10 @@ export function TaskRail({
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
               />
-              <InputGroupAddon align="inline-end">
+              <InputGroupAddon align="inline-end" className="hidden md:flex">
+                <span className="text-[0.6875rem] text-muted-foreground">↵</span>
+              </InputGroupAddon>
+              <InputGroupAddon align="inline-end" className="md:hidden">
                 <InputGroupButton
                   type="submit"
                   size="icon-xs"
