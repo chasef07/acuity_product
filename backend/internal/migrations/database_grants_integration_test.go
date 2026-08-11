@@ -335,6 +335,28 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 			 FROM human_calling_softphone_leases
 			 WHERE false
 			 FOR UPDATE`,
+			`INSERT INTO human_calling_rejected_provider_legs (
+				call_control_id,
+				call_leg_id,
+				call_session_id,
+				initiated_event_id,
+				rejected_at
+			)
+			VALUES (
+				'grant-contract-control',
+				'grant-contract-leg',
+				'grant-contract-session',
+				'grant-contract-rejected-initiation',
+				now()
+			)
+			ON CONFLICT DO NOTHING`,
+			`SELECT EXISTS (
+				SELECT 1
+				FROM human_calling_rejected_provider_legs
+				WHERE call_control_id = 'grant-contract-control'
+					AND call_leg_id = 'grant-contract-leg'
+					AND call_session_id = 'grant-contract-session'
+			)`,
 			`INSERT INTO human_calling_projected_facts (
 				event_id,
 				event_type,
@@ -655,6 +677,24 @@ func expectedColumnPrivileges() map[string]bool {
 			result[columnPrivilegeKey(role, relation, column, privilege)] = true
 		}
 	}
+	grant(
+		"acuity_worker",
+		"public.human_calling_rejected_provider_legs",
+		"SELECT",
+		"call_control_id",
+		"call_leg_id",
+		"call_session_id",
+	)
+	grant(
+		"acuity_worker",
+		"public.human_calling_rejected_provider_legs",
+		"INSERT",
+		"call_control_id",
+		"call_leg_id",
+		"call_session_id",
+		"initiated_event_id",
+		"rejected_at",
+	)
 	grant(
 		"acuity_portal",
 		"public.ai_interaction_receipts",
