@@ -655,6 +655,9 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Id.String() != task.ID {
 		t.Fatalf("Task query page = %#v", page)
 	}
+	if page.Counts.Tasks != 1 {
+		t.Fatalf("Task query counts = %#v, want one Task", page.Counts)
+	}
 
 	renameBody, _ := json.Marshal(map[string]any{
 		"expectedVersion": 1,

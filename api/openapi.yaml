@@ -2552,7 +2552,7 @@ components:
     TaskPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required: [items, nextCursor, counts]
       properties:
         items:
           type: array
@@ -2560,6 +2560,56 @@ components:
             $ref: "#/components/schemas/Task"
         nextCursor:
           type: string
+        counts:
+          $ref: "#/components/schemas/TaskFolderCounts"
+    TaskFolderCounts:
+      type: object
+      additionalProperties: false
+      required: [tasks, missedCalls, bookings, cancellations, reschedules, categories]
+      properties:
+        tasks:
+          type: integer
+          minimum: 0
+        missedCalls:
+          type: integer
+          minimum: 0
+        bookings:
+          type: integer
+          minimum: 0
+        cancellations:
+          type: integer
+          minimum: 0
+        reschedules:
+          type: integer
+          minimum: 0
+        categories:
+          $ref: "#/components/schemas/TaskCategoryCounts"
+    TaskCategoryCounts:
+      type: object
+      additionalProperties: false
+      required: [billing, appointments, documentation, optical, medication, referrals, other]
+      properties:
+        billing:
+          type: integer
+          minimum: 0
+        appointments:
+          type: integer
+          minimum: 0
+        documentation:
+          type: integer
+          minimum: 0
+        optical:
+          type: integer
+          minimum: 0
+        medication:
+          type: integer
+          minimum: 0
+        referrals:
+          type: integer
+          minimum: 0
+        other:
+          type: integer
+          minimum: 0
     EngagementLocation:
       type: object
       additionalProperties: false

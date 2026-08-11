@@ -55,6 +55,7 @@ import type {
   MessageThreadSummary,
   PracticeAccess,
   Task,
+  TaskFolderCounts,
 } from "@/lib/api/generated/types.gen"
 import {
   aiCallCompletionLabel,
@@ -67,6 +68,8 @@ import { cn } from "@/lib/utils"
 import {
   filterTasksByCategory,
   recoveryGroupKey,
+  taskCountForCategory,
+  taskFolderCursor,
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
@@ -101,6 +104,7 @@ type TaskRailProps = {
   workspaceControl: ReactNode
   locationScopeID: string
   tasks: Task[]
+  taskCounts: TaskFolderCounts
   aiOutcomes: AiOutcomeItem[]
   messages: MessageThreadSummary[]
   recent: EngagementSummary[]
@@ -133,6 +137,7 @@ export function TaskRail({
   workspaceControl,
   locationScopeID,
   tasks,
+  taskCounts,
   aiOutcomes,
   messages,
   recent,
@@ -184,6 +189,7 @@ export function TaskRail({
       filterTasksByCategory(categorizedTasks.general, taskCategory),
     [categorizedTasks.general, taskCategory],
   )
+  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const categorizedAIOutcomes = useMemo(
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
@@ -285,7 +291,7 @@ export function TaskRail({
         >
           <AttentionGroup
             title="Tasks"
-            count={filteredTasks.length}
+            count={selectedTaskCount}
             expanded={expanded.tasks}
             onToggle={() => toggle("tasks")}
           >
@@ -317,32 +323,37 @@ export function TaskRail({
             {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
-            {!loading && filteredTasks.length === 0 && (
+            {!loading && selectedTaskCount === 0 && (
               <RailEmpty inMenu>
                 {taskCategory === "all"
                   ? "No open Tasks"
                   : "No Tasks of this type"}
               </RailEmpty>
             )}
-            {expanded.tasks && (
-              <RailLoadSentinel
-                label="Loading more tasks"
-                cursor={nextCursor}
-                loading={loading}
-                onLoadMore={onLoadMore}
-              />
-            )}
+            <RailShowMore
+              cursor={taskFolderCursor(
+                nextCursor,
+                filteredTasks.length,
+                selectedTaskCount,
+              )}
+              loading={loading}
+              onLoadMore={onLoadMore}
+            />
           </AttentionGroup>
 
           <RecoveryGroup
             title="Missed Calls"
             empty="No missed calls"
             rows={recoveryRows}
+            count={taskCounts.missedCalls}
             expanded={expanded.calls}
             selectedTaskID={selectedTaskID}
             showOffice={showOffice}
             onToggle={() => toggle("calls")}
             onSelect={onTaskSelect}
+            cursor={nextCursor}
+            loading={loading}
+            onLoadMore={onLoadMore}
           />
           {outcomesError && (
             <p role="alert" className="px-6 py-1 text-[0.6875rem] text-destructive">
@@ -353,40 +364,60 @@ export function TaskRail({
             title="Bookings"
             tasks={categorizedTasks.bookings}
             outcomes={categorizedAIOutcomes.bookings}
+            count={taskCounts.bookings + categorizedAIOutcomes.bookings.length}
+            taskCount={taskCounts.bookings}
             expanded={expanded.bookings}
             selectedTaskID={selectedTaskID}
             selectedAIInteractionID={selectedAIInteractionID}
             showOffice={showOffice}
             loading={outcomesLoading}
+            pageLoading={loading}
+            cursor={nextCursor}
             onToggle={() => toggle("bookings")}
             onTaskSelect={onTaskSelect}
             onAIInteractionSelect={onAIInteractionSelect}
+            onLoadMore={onLoadMore}
           />
           <AppointmentGroup
             title="Cancellations"
             tasks={categorizedTasks.cancellations}
             outcomes={categorizedAIOutcomes.cancellations}
+            count={
+              taskCounts.cancellations +
+              categorizedAIOutcomes.cancellations.length
+            }
+            taskCount={taskCounts.cancellations}
             expanded={expanded.cancellations}
             selectedTaskID={selectedTaskID}
             selectedAIInteractionID={selectedAIInteractionID}
             showOffice={showOffice}
             loading={outcomesLoading}
+            pageLoading={loading}
+            cursor={nextCursor}
             onToggle={() => toggle("cancellations")}
             onTaskSelect={onTaskSelect}
             onAIInteractionSelect={onAIInteractionSelect}
+            onLoadMore={onLoadMore}
           />
           <AppointmentGroup
             title="Reschedules"
             tasks={categorizedTasks.reschedules}
             outcomes={categorizedAIOutcomes.reschedules}
+            count={
+              taskCounts.reschedules + categorizedAIOutcomes.reschedules.length
+            }
+            taskCount={taskCounts.reschedules}
             expanded={expanded.reschedules}
             selectedTaskID={selectedTaskID}
             selectedAIInteractionID={selectedAIInteractionID}
             showOffice={showOffice}
             loading={outcomesLoading}
+            pageLoading={loading}
+            cursor={nextCursor}
             onToggle={() => toggle("reschedules")}
             onTaskSelect={onTaskSelect}
             onAIInteractionSelect={onAIInteractionSelect}
+            onLoadMore={onLoadMore}
           />
           <AttentionGroup
             title="Texts"
@@ -534,31 +565,41 @@ function AppointmentGroup({
   title,
   tasks,
   outcomes,
+  count,
+  taskCount,
   expanded,
   selectedTaskID,
   selectedAIInteractionID,
   showOffice,
   loading,
+  pageLoading,
+  cursor,
   onToggle,
   onTaskSelect,
   onAIInteractionSelect,
+  onLoadMore,
 }: {
   title: string
   tasks: Task[]
   outcomes: AiOutcomeItem[]
+  count: number
+  taskCount: number
   expanded: boolean
   selectedTaskID: string
   selectedAIInteractionID: string
   showOffice: boolean
   loading: boolean
+  pageLoading: boolean
+  cursor: string
   onToggle: () => void
   onTaskSelect: (task: Task) => void
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
+  onLoadMore: () => void
 }) {
   return (
     <AttentionGroup
       title={title}
-      count={tasks.length + outcomes.length}
+      count={count}
       expanded={expanded}
       onToggle={onToggle}
     >
@@ -583,9 +624,14 @@ function AppointmentGroup({
       {loading && tasks.length === 0 && outcomes.length === 0 && (
         <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
       )}
-      {!loading && tasks.length === 0 && outcomes.length === 0 && (
+      {!loading && count === 0 && (
         <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
       )}
+      <RailShowMore
+        cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
+        loading={pageLoading}
+        onLoadMore={onLoadMore}
+      />
     </AttentionGroup>
   )
 }
@@ -648,25 +694,33 @@ function RecoveryGroup({
   title,
   empty,
   rows,
+  count,
   expanded,
   selectedTaskID,
   showOffice,
   onToggle,
   onSelect,
+  cursor,
+  loading,
+  onLoadMore,
 }: {
   title: string
   empty: string
   rows: RecoveryRowValue[]
+  count: number
   expanded: boolean
   selectedTaskID: string
   showOffice: boolean
   onToggle: () => void
   onSelect: (task: Task) => void
+  cursor: string
+  loading: boolean
+  onLoadMore: () => void
 }) {
   return (
     <AttentionGroup
       title={title}
-      count={rows.length}
+      count={count}
       expanded={expanded}
       onToggle={onToggle}
     >
@@ -679,7 +733,12 @@ function RecoveryGroup({
           onSelect={() => onSelect(row.task)}
         />
       ))}
-      {rows.length === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
+      {count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
+      <RailShowMore
+        cursor={taskFolderCursor(cursor, rows.length, count)}
+        loading={loading}
+        onLoadMore={onLoadMore}
+      />
     </AttentionGroup>
   )
 }
@@ -980,6 +1039,30 @@ function RailEmpty({ children, inMenu = false }: { children: string; inMenu?: bo
   return <p className={className}>{children}</p>
 }
 
+function RailShowMore({
+  cursor,
+  loading,
+  onLoadMore,
+}: {
+  cursor: string
+  loading: boolean
+  onLoadMore: () => void
+}) {
+  if (!cursor) return null
+  return (
+    <SidebarMenuItem className="px-1 py-1">
+      <button
+        type="button"
+        className="flex h-8 w-full items-center justify-center rounded-md text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-60"
+        disabled={loading}
+        onClick={onLoadMore}
+      >
+        {loading ? <Spinner /> : "Show more Tasks"}
+      </button>
+    </SidebarMenuItem>
+  )
+}
+
 function RailLoadSentinel({
   label,
   cursor,
@@ -1006,7 +1089,11 @@ function RailLoadSentinel({
   }, [cursor, loading, onLoadMore])
   if (!cursor) return null
   return (
-    <div ref={sentinel} aria-label={label} className="flex h-8 items-center justify-center text-muted-foreground">
+    <div
+      ref={sentinel}
+      aria-label={label}
+      className="flex h-8 items-center justify-center text-muted-foreground"
+    >
       {loading && <Spinner />}
     </div>
   )

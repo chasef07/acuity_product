@@ -3087,6 +3087,22 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	response := api.TaskPage{
 		Items:      make([]api.Task, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
+		Counts: api.TaskFolderCounts{
+			Tasks:         page.Counts.Tasks,
+			MissedCalls:   page.Counts.MissedCalls,
+			Bookings:      page.Counts.Bookings,
+			Cancellations: page.Counts.Cancellations,
+			Reschedules:   page.Counts.Reschedules,
+			Categories: api.TaskCategoryCounts{
+				Billing:       page.Counts.Categories.Billing,
+				Appointments:  page.Counts.Categories.Appointments,
+				Documentation: page.Counts.Categories.Documentation,
+				Optical:       page.Counts.Categories.Optical,
+				Medication:    page.Counts.Categories.Medication,
+				Referrals:     page.Counts.Categories.Referrals,
+				Other:         page.Counts.Categories.Other,
+			},
+		},
 	}
 	for _, task := range page.Items {
 		item, err := taskResponse(task)

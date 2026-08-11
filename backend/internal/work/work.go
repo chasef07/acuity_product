@@ -213,6 +213,26 @@ type QueryTasksCommand struct {
 type TaskPage struct {
 	Items      []Task
 	NextCursor string
+	Counts     TaskFolderCounts
+}
+
+type TaskFolderCounts struct {
+	Tasks         int
+	MissedCalls   int
+	Bookings      int
+	Cancellations int
+	Reschedules   int
+	Categories    TaskCategoryCounts
+}
+
+type TaskCategoryCounts struct {
+	Billing       int
+	Appointments  int
+	Documentation int
+	Optical       int
+	Medication    int
+	Referrals     int
+	Other         int
 }
 
 // Module owns durable Task state and lifecycle behavior.
@@ -1163,6 +1183,18 @@ func (m *Module) QueryTasks(
 		return TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
 	}
 	rows.Close()
+	counts, err := queryTaskFolderCounts(
+		ctx,
+		tx,
+		command.PracticeID,
+		locationIDs,
+		command.Search,
+		normalizedDigits(command.Search),
+		command.State,
+	)
+	if err != nil {
+		return TaskPage{}, err
+	}
 	for index := range items {
 		if err := m.loadRelatedInteractionCount(ctx, tx, &items[index]); err != nil {
 			return TaskPage{}, err
@@ -1183,7 +1215,98 @@ func (m *Module) QueryTasks(
 	if err := tx.Commit(ctx); err != nil {
 		return TaskPage{}, fmt.Errorf("commit Task query: %w", err)
 	}
-	return TaskPage{Items: items, NextCursor: nextCursor}, nil
+	return TaskPage{Items: items, NextCursor: nextCursor, Counts: counts}, nil
+}
+
+func queryTaskFolderCounts(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	locationIDs []string,
+	search string,
+	phoneDigits string,
+	state TaskState,
+) (TaskFolderCounts, error) {
+	var counts TaskFolderCounts
+	err := tx.QueryRow(ctx, `
+		WITH scoped AS (
+			SELECT
+				task.origin,
+				task.category,
+				lower(task.title || ' ' || COALESCE(task.source_message, '')) AS task_text
+			FROM work_tasks task
+			WHERE task.practice_id = $1
+				AND task.location_id::text = ANY($2::text[])
+				AND (
+					$3 = ''
+						OR strpos(lower(task.title), lower($3)) > 0
+						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
+				)
+				AND task.state = $5
+		), classified AS (
+			SELECT
+				category,
+				origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AS recovery,
+				COALESCE(
+					category = 'appointments'
+						AND task_text ~ '\m(cancel|cancellation)\M',
+					false
+				) AS cancellation,
+				COALESCE(
+					category = 'appointments'
+						AND task_text ~ '\m(reschedule|rescheduling|move appointment|change appointment)\M',
+					false
+				) AS reschedule,
+				COALESCE(
+					category = 'appointments'
+						AND task_text ~ '\m(book|booking|schedule|new appointment|appointment request)\M',
+					false
+				) AS booking
+			FROM scoped
+		), foldered AS (
+			SELECT
+				category,
+				CASE
+					WHEN recovery THEN 'missed_calls'
+					WHEN cancellation THEN 'cancellations'
+					WHEN reschedule THEN 'reschedules'
+					WHEN booking THEN 'bookings'
+					ELSE 'tasks'
+				END AS folder
+			FROM classified
+		)
+		SELECT
+			count(*) FILTER (WHERE folder = 'tasks'),
+			count(*) FILTER (WHERE folder = 'missed_calls'),
+			count(*) FILTER (WHERE folder = 'bookings'),
+			count(*) FILTER (WHERE folder = 'cancellations'),
+			count(*) FILTER (WHERE folder = 'reschedules'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'optical'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'medication'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'referrals'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other')
+		FROM foldered
+	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
+		&counts.Tasks,
+		&counts.MissedCalls,
+		&counts.Bookings,
+		&counts.Cancellations,
+		&counts.Reschedules,
+		&counts.Categories.Billing,
+		&counts.Categories.Appointments,
+		&counts.Categories.Documentation,
+		&counts.Categories.Optical,
+		&counts.Categories.Medication,
+		&counts.Categories.Referrals,
+		&counts.Categories.Other,
+	)
+	if err != nil {
+		return TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
+	}
+	return counts, nil
 }
 
 const taskQuerySelect = `

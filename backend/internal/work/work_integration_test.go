@@ -3,6 +3,7 @@ package work_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -943,6 +944,114 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 			t.Fatalf("search literal %q: %v", literal, err)
 		}
 		assertTaskIDs(t, literalPage.Items)
+	}
+}
+
+func TestQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	service := access.ServiceIdentity{
+		Subject:       "abita-counts",
+		PracticeID:    authorization.Practice.ID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	for index := range 55 {
+		key := fmt.Sprintf("count-%02d", index)
+		if _, _, err := module.CreateAITask(
+			context.Background(),
+			work.CreateAITaskCommand{
+				Service:        service,
+				OfficeKey:      "spring-hill",
+				OfficePhone:    "+17275919997",
+				SourceCallID:   "source-" + key,
+				IdempotencyKey: "staff_task_" + key,
+				Phone:          "+17275551212",
+				Summary:        "Review request " + key,
+				Message:        "Caller supplied a complete request for " + key + ".",
+				Category:       work.TaskCategoryOther,
+				Urgency:        work.TaskUrgencyNormal,
+			},
+		); err != nil {
+			t.Fatalf("create Task %d: %v", index, err)
+		}
+		now = now.Add(time.Second)
+	}
+	for index, title := range []string{
+		"Book annual exam",
+		"Cancel annual exam",
+		"Reschedule annual exam",
+	} {
+		key := fmt.Sprintf("appointment-count-%d", index)
+		if _, _, err := module.CreateAITask(
+			context.Background(),
+			work.CreateAITaskCommand{
+				Service:        service,
+				OfficeKey:      "spring-hill",
+				OfficePhone:    "+17275919997",
+				SourceCallID:   "source-" + key,
+				IdempotencyKey: "staff_task_" + key,
+				Phone:          "+17275551212",
+				Summary:        title,
+				Message:        "Caller requested: " + title + ".",
+				Category:       work.TaskCategoryAppointments,
+				Urgency:        work.TaskUrgencyNormal,
+			},
+		); err != nil {
+			t.Fatalf("create appointment Task %d: %v", index, err)
+		}
+		now = now.Add(time.Second)
+	}
+
+	firstPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("query first Task page: %v", err)
+	}
+	if len(firstPage.Items) != 50 || firstPage.NextCursor == "" {
+		t.Fatalf(
+			"first Task page = %d items, cursor %q; want 50 items and another page",
+			len(firstPage.Items),
+			firstPage.NextCursor,
+		)
+	}
+	wantCounts := work.TaskFolderCounts{
+		Tasks:         55,
+		Bookings:      1,
+		Cancellations: 1,
+		Reschedules:   1,
+		Categories: work.TaskCategoryCounts{
+			Other: 55,
+		},
+	}
+	if firstPage.Counts != wantCounts {
+		t.Fatalf("first Task page counts = %#v, want %#v", firstPage.Counts, wantCounts)
+	}
+
+	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Cursor:     firstPage.NextCursor,
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("query second Task page: %v", err)
+	}
+	if len(secondPage.Items) != 8 || secondPage.NextCursor != "" {
+		t.Fatalf(
+			"second Task page = %d items, cursor %q; want 8 items and no cursor",
+			len(secondPage.Items),
+			secondPage.NextCursor,
+		)
+	}
+	if secondPage.Counts != wantCounts {
+		t.Fatalf("second Task page counts = %#v, want %#v", secondPage.Counts, wantCounts)
 	}
 }
 

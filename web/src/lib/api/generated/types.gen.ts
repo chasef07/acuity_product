@@ -380,6 +380,26 @@ export type TaskInteraction = {
 export type TaskPage = {
     items: Array<Task>;
     nextCursor: string;
+    counts: TaskFolderCounts;
+};
+
+export type TaskFolderCounts = {
+    tasks: number;
+    missedCalls: number;
+    bookings: number;
+    cancellations: number;
+    reschedules: number;
+    categories: TaskCategoryCounts;
+};
+
+export type TaskCategoryCounts = {
+    billing: number;
+    appointments: number;
+    documentation: number;
+    optical: number;
+    medication: number;
+    referrals: number;
+    other: number;
 };
 
 export type EngagementLocation = {
