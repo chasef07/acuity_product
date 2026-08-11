@@ -379,6 +379,24 @@ GRANT SELECT (event_id)
 ON TABLE public.human_calling_projected_facts
 TO acuity_worker;
 
+GRANT SELECT (
+    call_control_id,
+    call_leg_id,
+    call_session_id
+)
+ON TABLE public.human_calling_rejected_provider_legs
+TO acuity_worker;
+
+GRANT INSERT (
+    call_control_id,
+    call_leg_id,
+    call_session_id,
+    initiated_event_id,
+    rejected_at
+)
+ON TABLE public.human_calling_rejected_provider_legs
+TO acuity_worker;
+
 GRANT UPDATE ON TABLE
     public.access_practices,
 	public.human_calling_call_legs,

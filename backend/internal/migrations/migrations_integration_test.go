@@ -3,6 +3,7 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 31 {
-		t.Fatalf("migration count = %d, want 31", migrationCount)
+	if migrationCount != 32 {
+		t.Fatalf("migration count = %d, want 32", migrationCount)
 	}
 
 	for _, relation := range []string{
@@ -50,6 +51,7 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
 		"human_calling_projected_facts",
+		"human_calling_rejected_provider_legs",
 		"human_calling_timeline",
 		"human_calling_location_voice_numbers",
 		"human_calling_outbound_voice_fallbacks",
@@ -70,7 +72,6 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"access_support_sessions",
 		"human_calling_connection_attempts",
 		"human_calling_recordings",
-		"human_calling_rejected_provider_legs",
 	} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {
@@ -1146,6 +1147,126 @@ func TestProviderReceiptRetryConstraintsRemainEnforced(t *testing.T) {
 		"human_calling_provider_receipts_attempt_visibility_check")
 	assertViolation("missing-quarantine-time", "QUARANTINED", 0, nil, nil,
 		"human_calling_provider_receipts_quarantine_check")
+}
+
+func TestRejectedProviderLegMigrationTerminalizesOnlyExactLifecycleMatches(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0031_correct_abita_access_grant_emails.sql")
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
+	rows := []struct {
+		eventID, eventType, state, controlID, legID, sessionID, errorCode string
+	}{
+		{"rejected-initiated", "call.initiated", "FAILED", "rejected-control", "rejected-leg", "rejected-session", "HANDOFF_REJECTED"},
+		{"exact-answered", "call.answered", "PENDING", "rejected-control", "rejected-leg", "rejected-session", "WAITING_FOR_RELATED_FACT"},
+		{"exact-bridged", "call.bridged", "QUARANTINED", "rejected-control", "rejected-leg", "rejected-session", "PROJECTION_RETRY_EXHAUSTED"},
+		{"exact-hangup", "call.hangup", "PROCESSING", "rejected-control", "rejected-leg", "rejected-session", "PROJECTION_RETRY"},
+		{"exact-applied", "call.hangup", "APPLIED", "rejected-control", "rejected-leg", "rejected-session", ""},
+		{"other-session", "call.answered", "PENDING", "rejected-control", "rejected-leg", "other-session", "WAITING_FOR_RELATED_FACT"},
+		{"unrelated-recording", "call.recording.saved", "PENDING", "rejected-control", "rejected-leg", "rejected-session", "PROJECTION_RETRY"},
+	}
+	originalBodies := make(map[string][]byte, len(rows))
+	for index, row := range rows {
+		body := []byte(fmt.Sprintf(
+			`{"data":{"payload":{"call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s"}}}`,
+			row.controlID,
+			row.legID,
+			row.sessionID,
+		))
+		attempts := 1
+		lastAttemptAt := now
+		if row.eventID == "rejected-initiated" || row.state == "APPLIED" {
+			attempts = 0
+			lastAttemptAt = time.Time{}
+		}
+		var lastAttempt any
+		if !lastAttemptAt.IsZero() {
+			lastAttempt = lastAttemptAt
+		}
+		var processingStarted, projectedAt, quarantinedAt any
+		if row.state == "PROCESSING" {
+			processingStarted = now
+		}
+		if row.state == "FAILED" || row.state == "APPLIED" {
+			projectedAt = now
+		}
+		if row.state == "QUARANTINED" {
+			quarantinedAt = now
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO human_calling_provider_receipts (
+				event_id, event_type, occurred_at, received_at, signature_timestamp,
+				raw_body, state, projection_attempts, projection_error_code,
+				processing_started_at, next_attempt_at, last_attempt_at,
+				projected_at, quarantined_at
+			) VALUES ($1, $2, $3, $3, $4, $5, $6, $7, NULLIF($8, ''),
+				$9, $3, $10, $11, $12)
+		`, row.eventID, row.eventType, now.Add(time.Duration(index)*time.Second),
+			now.Unix(), body, row.state, attempts, row.errorCode,
+			processingStarted, lastAttempt, projectedAt, quarantinedAt); err != nil {
+			t.Fatalf("seed %s: %v", row.eventID, err)
+		}
+		originalBodies[row.eventID] = body
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply rejected provider leg migration: %v", err)
+	}
+
+	var remembered int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM human_calling_rejected_provider_legs
+	`).Scan(&remembered); err != nil {
+		t.Fatal(err)
+	}
+	if remembered != 1 {
+		t.Fatalf("remembered rejected provider legs = %d, want 1", remembered)
+	}
+	for _, eventID := range []string{"exact-answered", "exact-bridged", "exact-hangup"} {
+		var state, errorCode string
+		var processingStarted, quarantinedAt *time.Time
+		var projectedAt *time.Time
+		if err := pool.QueryRow(ctx, `
+			SELECT state, projection_error_code, processing_started_at,
+				projected_at, quarantined_at
+			FROM human_calling_provider_receipts
+			WHERE event_id = $1
+		`, eventID).Scan(
+			&state, &errorCode, &processingStarted, &projectedAt, &quarantinedAt,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if state != "FAILED" || errorCode != "RELATED_HANDOFF_REJECTED" ||
+			processingStarted != nil || projectedAt == nil || quarantinedAt != nil {
+			t.Fatalf("terminalized %s = %s/%s processing=%v projected=%v quarantined=%v",
+				eventID, state, errorCode, processingStarted, projectedAt, quarantinedAt)
+		}
+	}
+	for eventID, wantState := range map[string]string{
+		"exact-applied":       "APPLIED",
+		"other-session":       "PENDING",
+		"unrelated-recording": "PENDING",
+	} {
+		var state string
+		if err := pool.QueryRow(ctx, `
+			SELECT state FROM human_calling_provider_receipts WHERE event_id = $1
+		`, eventID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if state != wantState {
+			t.Fatalf("unrelated %s state = %s, want %s", eventID, state, wantState)
+		}
+	}
+	for eventID, wantBody := range originalBodies {
+		var gotBody []byte
+		if err := pool.QueryRow(ctx, `
+			SELECT raw_body FROM human_calling_provider_receipts WHERE event_id = $1
+		`, eventID).Scan(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(gotBody, wantBody) {
+			t.Fatalf("migration changed raw receipt %s", eventID)
+		}
+	}
 }
 
 func seedLegacyScope(t *testing.T, pool interface {
