@@ -222,6 +222,17 @@ type TaskFolderCounts struct {
 	Bookings      int
 	Cancellations int
 	Reschedules   int
+	Categories    TaskCategoryCounts
+}
+
+type TaskCategoryCounts struct {
+	Billing       int
+	Appointments  int
+	Documentation int
+	Optical       int
+	Medication    int
+	Referrals     int
+	Other         int
 }
 
 // Module owns durable Task state and lifecycle behavior.
@@ -1234,6 +1245,7 @@ func queryTaskFolderCounts(
 				AND task.state = $5
 		), classified AS (
 			SELECT
+				category,
 				origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AS recovery,
 				COALESCE(
 					category = 'appointments'
@@ -1251,25 +1263,45 @@ func queryTaskFolderCounts(
 					false
 				) AS booking
 			FROM scoped
+		), foldered AS (
+			SELECT
+				category,
+				CASE
+					WHEN recovery THEN 'missed_calls'
+					WHEN cancellation THEN 'cancellations'
+					WHEN reschedule THEN 'reschedules'
+					WHEN booking THEN 'bookings'
+					ELSE 'tasks'
+				END AS folder
+			FROM classified
 		)
 		SELECT
-			count(*) FILTER (
-				WHERE NOT recovery
-					AND NOT cancellation
-					AND NOT reschedule
-					AND NOT booking
-			),
-			count(*) FILTER (WHERE recovery),
-			count(*) FILTER (WHERE NOT recovery AND booking AND NOT cancellation AND NOT reschedule),
-			count(*) FILTER (WHERE NOT recovery AND cancellation),
-			count(*) FILTER (WHERE NOT recovery AND reschedule AND NOT cancellation)
-		FROM classified
+			count(*) FILTER (WHERE folder = 'tasks'),
+			count(*) FILTER (WHERE folder = 'missed_calls'),
+			count(*) FILTER (WHERE folder = 'bookings'),
+			count(*) FILTER (WHERE folder = 'cancellations'),
+			count(*) FILTER (WHERE folder = 'reschedules'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'optical'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'medication'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'referrals'),
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other')
+		FROM foldered
 	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
 		&counts.Bookings,
 		&counts.Cancellations,
 		&counts.Reschedules,
+		&counts.Categories.Billing,
+		&counts.Categories.Appointments,
+		&counts.Categories.Documentation,
+		&counts.Categories.Optical,
+		&counts.Categories.Medication,
+		&counts.Categories.Referrals,
+		&counts.Categories.Other,
 	)
 	if err != nil {
 		return TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)

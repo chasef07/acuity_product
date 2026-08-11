@@ -1026,6 +1026,9 @@ func TestQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testing.T) {
 		Bookings:      1,
 		Cancellations: 1,
 		Reschedules:   1,
+		Categories: work.TaskCategoryCounts{
+			Other: 55,
+		},
 	}
 	if firstPage.Counts != wantCounts {
 		t.Fatalf("first Task page counts = %#v, want %#v", firstPage.Counts, wantCounts)

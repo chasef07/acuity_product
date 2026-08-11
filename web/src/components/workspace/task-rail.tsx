@@ -68,6 +68,8 @@ import { cn } from "@/lib/utils"
 import {
   filterTasksByCategory,
   recoveryGroupKey,
+  taskCountForCategory,
+  taskFolderCursor,
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
@@ -187,6 +189,7 @@ export function TaskRail({
       filterTasksByCategory(categorizedTasks.general, taskCategory),
     [categorizedTasks.general, taskCategory],
   )
+  const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const categorizedAIOutcomes = useMemo(
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
@@ -288,9 +291,7 @@ export function TaskRail({
         >
           <AttentionGroup
             title="Tasks"
-            count={
-              taskCategory === "all" ? taskCounts.tasks : filteredTasks.length
-            }
+            count={selectedTaskCount}
             expanded={expanded.tasks}
             onToggle={() => toggle("tasks")}
           >
@@ -322,7 +323,7 @@ export function TaskRail({
             {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
-            {!loading && filteredTasks.length === 0 && (
+            {!loading && selectedTaskCount === 0 && (
               <RailEmpty inMenu>
                 {taskCategory === "all"
                   ? "No open Tasks"
@@ -330,11 +331,11 @@ export function TaskRail({
               </RailEmpty>
             )}
             <RailShowMore
-              cursor={
-                taskCategory === "all" && filteredTasks.length >= taskCounts.tasks
-                  ? ""
-                  : nextCursor
-              }
+              cursor={taskFolderCursor(
+                nextCursor,
+                filteredTasks.length,
+                selectedTaskCount,
+              )}
               loading={loading}
               onLoadMore={onLoadMore}
             />
@@ -364,6 +365,7 @@ export function TaskRail({
             tasks={categorizedTasks.bookings}
             outcomes={categorizedAIOutcomes.bookings}
             count={taskCounts.bookings + categorizedAIOutcomes.bookings.length}
+            taskCount={taskCounts.bookings}
             expanded={expanded.bookings}
             selectedTaskID={selectedTaskID}
             selectedAIInteractionID={selectedAIInteractionID}
@@ -384,6 +386,7 @@ export function TaskRail({
               taskCounts.cancellations +
               categorizedAIOutcomes.cancellations.length
             }
+            taskCount={taskCounts.cancellations}
             expanded={expanded.cancellations}
             selectedTaskID={selectedTaskID}
             selectedAIInteractionID={selectedAIInteractionID}
@@ -403,6 +406,7 @@ export function TaskRail({
             count={
               taskCounts.reschedules + categorizedAIOutcomes.reschedules.length
             }
+            taskCount={taskCounts.reschedules}
             expanded={expanded.reschedules}
             selectedTaskID={selectedTaskID}
             selectedAIInteractionID={selectedAIInteractionID}
@@ -562,6 +566,7 @@ function AppointmentGroup({
   tasks,
   outcomes,
   count,
+  taskCount,
   expanded,
   selectedTaskID,
   selectedAIInteractionID,
@@ -578,6 +583,7 @@ function AppointmentGroup({
   tasks: Task[]
   outcomes: AiOutcomeItem[]
   count: number
+  taskCount: number
   expanded: boolean
   selectedTaskID: string
   selectedAIInteractionID: string
@@ -622,7 +628,7 @@ function AppointmentGroup({
         <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
       )}
       <RailShowMore
-        cursor={tasks.length + outcomes.length < count ? cursor : ""}
+        cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
         loading={pageLoading}
         onLoadMore={onLoadMore}
       />
@@ -729,7 +735,7 @@ function RecoveryGroup({
       ))}
       {count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
       <RailShowMore
-        cursor={rows.length < count ? cursor : ""}
+        cursor={taskFolderCursor(cursor, rows.length, count)}
         loading={loading}
         onLoadMore={onLoadMore}
       />
@@ -1051,7 +1057,7 @@ function RailShowMore({
         disabled={loading}
         onClick={onLoadMore}
       >
-        {loading ? <Spinner /> : "Show more"}
+        {loading ? <Spinner /> : "Show more Tasks"}
       </button>
     </SidebarMenuItem>
   )

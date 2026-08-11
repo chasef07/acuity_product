@@ -1229,6 +1229,15 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
     bookings: 0,
     cancellations: 0,
     reschedules: 0,
+    categories: {
+      billing: 0,
+      appointments: 0,
+      documentation: 0,
+      optical: 0,
+      medication: 0,
+      referrals: 0,
+      other: 0,
+    },
   }
 }
 
