@@ -227,7 +227,7 @@ sum(each service's maximum instances × its pool maximum)
 Rules:
 
 1. Each runtime role has explicit concurrency, minimum-instance, maximum-instance, and `pgxpool` limits.
-2. The checked pilot reservation is 26 usable client connections: 14 across configured request-service maxima, 2 across overlapping one-instance worker revisions, 1 migration connection, 6 for one extra instance of every request role, and 3 operator/recovery connections. Cloud Run can temporarily exceed configured maxima, so live overshoot remains a gate rather than a claimed hard ceiling.
+2. The checked pilot reservation is 28 usable client connections: 14 across configured request-service maxima, 4 across overlapping one-instance worker revisions with two connections each, 1 migration connection, 6 for one extra instance of every request role, and 3 operator/recovery connections. Cloud Run can temporarily exceed configured maxima, so live overshoot remains a gate rather than a claimed hard ceiling.
 3. `realtime` uses one dedicated direct connection per instance for `LISTEN/NOTIFY`; notifications are hints and durable rows repair every gap.
 4. Transactions are short. Shared rows are locked in deterministic order, and serialization failures or deadlocks retry the complete bounded transaction.
 5. No provider request runs while a PostgreSQL transaction is open.

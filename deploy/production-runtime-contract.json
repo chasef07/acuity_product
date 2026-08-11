@@ -30,7 +30,7 @@
     "maximumRetries": 0
   },
   "operatorHeadroom": 3,
-  "requiredDatabaseConnections": 26,
+  "requiredDatabaseConnections": 28,
   "runtimes": [
     {
       "name": "web",
@@ -96,7 +96,7 @@
       "concurrency": 0,
       "minimumInstances": 1,
       "maximumInstances": 1,
-      "poolMaximum": 1,
+      "poolMaximum": 2,
       "dedicatedConnections": 0,
       "acquisitionTimeoutMilliseconds": 1500
     }

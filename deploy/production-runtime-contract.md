@@ -47,7 +47,7 @@ capacity while the warm floor and local pools reflect the measured pilot load.
 | `portal-api` | service | request | 20 | 1 | 3 | 2 | 0 |
 | `provider-ingress` | service | request | 20 | 1 | 2 | 1 | 0 |
 | `realtime` | service | request | 50 | 1 | 2 | 1 | 1 `LISTEN` |
-| `worker` | worker pool | instance | n/a | 1 fixed | 1 fixed | 1 | 0 |
+| `worker` | worker pool | instance | n/a | 1 fixed | 1 fixed | 2 | 0 |
 
 The realtime service explicitly keeps Cloud Run's request timeout at 300
 seconds. The application rotates each SSE stream between 240 and 270 seconds
@@ -80,12 +80,12 @@ Only the worker pool gets a rollout-overlap multiplier:
 
 ```text
 request services under configured service caps  14
-two worker revisions                  2 × 1 =     2
+two worker revisions                  2 × 2 =     4
 one migration task, pool max 1                   1
 one extra instance per request role               6
 operator/database-operations headroom            3
                                                   --
-required usable application connections         26
+required usable application connections         28
 ```
 
 Cloud Run documents that rapid traffic spikes or maintenance can temporarily
@@ -97,7 +97,7 @@ overshoot it. The three operator connections provide two simultaneous
 diagnostic sessions and one recovery session. Autovacuum uses PostgreSQL worker
 slots rather than these client connections. Deployment reads the actual
 `max_connections` value and active reserved usage; it stops before any `gcloud`
-call unless at least 26 connections are measured usable. Live maximum-instance
+call unless at least 28 connections are measured usable. Live maximum-instance
 overshoot and pool saturation remain acceptance gates.
 
 Every runtime pool uses `MinConns=0`, its checked `DATABASE_POOL_MAX`, a 1500 ms
@@ -126,8 +126,8 @@ checked proof deliberately exceeds that observation:
   one-connection portal pool;
 - portal and realtime authorization database paths remain responsive while
   ingress is observably blocked; and
-- one worker connection keeps receipt and command lanes moving while a provider
-  command is held.
+- the two-connection worker pool keeps receipt and command lanes moving while
+  stale-CallLeg maintenance is active.
 
 Ten repeated runs on 2026-08-06 passed at the one-connection portal floor. HTTP
 webhook burst maxima were about 20–66 ms, mixed-role webhook p99 was about
@@ -142,7 +142,7 @@ Production runtime rendering and its fail-closed capacity check:
 
 ```sh
 ACUITY_DEPLOYMENT_PROFILE=production \
-USABLE_DATABASE_CONNECTIONS=26 \
+USABLE_DATABASE_CONNECTIONS=28 \
 MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1 \
   ./deploy/cloud-run-commands.example.sh
 ```

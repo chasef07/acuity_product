@@ -34,8 +34,26 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 32 {
-		t.Fatalf("migration count = %d, want 32", migrationCount)
+	if migrationCount != 33 {
+		t.Fatalf("migration count = %d, want 33", migrationCount)
+	}
+	var staleCommandIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'human_calling_stale_leg_commands_idx'
+	`).Scan(&staleCommandIndex); err != nil {
+		t.Fatalf("read stale CallLeg command index: %v", err)
+	}
+	for _, fragment := range []string{
+		"(call_leg_id, created_at, id)",
+		"INCLUDE (action, payload)",
+		"call_leg_id IS NOT NULL",
+		"state = ANY (ARRAY['SENDING'::text, 'SENT'::text, 'AMBIGUOUS'::text])",
+	} {
+		if !strings.Contains(staleCommandIndex, fragment) {
+			t.Errorf("stale CallLeg command index omits %q: %s", fragment, staleCommandIndex)
+		}
 	}
 
 	for _, relation := range []string{
