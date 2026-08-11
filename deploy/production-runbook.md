@@ -182,7 +182,11 @@ migration when any gate is missing or false.
    ```
 
    Prove at least 26 connections remain usable by the application and operator
-   identities. Do not infer capacity from the machine size alone.
+   identities. Do not infer capacity from the machine size alone. Record that
+   freshly measured count in the GitHub `production` environment variable
+   `USABLE_DATABASE_CONNECTIONS`; the automated release stops before its first
+   Cloud command when the value is missing, invalid, or below the checked
+   runtime contract.
 4. Confirm immutable backend and web image digests, exact database credentials
    per role, Secret Manager references, recording and Messaging attachment
    bucket IAM/retention, cross-runtime attachment visibility, alert notification

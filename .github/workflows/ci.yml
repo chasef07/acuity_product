@@ -192,11 +192,12 @@ jobs:
       - name: Build and release the tested commit
         env:
           CALLLEG_SCHEMA_CUTOVER_COMPLETE: ${{ vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE }}
+          USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}
         run: |
           gcloud builds submit \
             --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${{ vars.GCP_REGION }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" \
             --config=cloudbuild.release.yaml \
-            --substitutions="_IMAGE_TAG=${GITHUB_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE}" \
+            --substitutions="_IMAGE_TAG=${GITHUB_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}" \
             .
