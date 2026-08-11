@@ -91,7 +91,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--cpu\t1",
 		"--memory\t512Mi",
 		"--instances\t1",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
+		"--update-env-vars\tDATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate-instance-split\tacuity-worker",
 		"--to-revisions\tacuity-worker-release-1234=100",
@@ -139,12 +139,12 @@ func TestProductionReleaseRejectsInsufficientDatabaseCapacityBeforeCloudMutation
 		"PATH=" + path,
 		"GCLOUD_CAPTURE=" + gcloudCapture,
 		"CURL_CAPTURE=" + curlCapture,
-	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "25")...)
+	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "27")...)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatalf("release unexpectedly accepted insufficient database capacity:\n%s", output)
 	}
-	if !strings.Contains(string(output), "production requires at least 26 usable database connections; measured 25") {
+	if !strings.Contains(string(output), "production requires at least 28 usable database connections; measured 27") {
 		t.Fatalf("release returned the wrong capacity error:\n%s", output)
 	}
 	captured, err := os.ReadFile(gcloudCapture)
@@ -277,7 +277,7 @@ func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tdeploy\tacuity-worker",
 		"--instances\t0",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+		"--update-env-vars\tDATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
 	)
 	assertCapturedCommand(t, commands, "run\tworker-pools\tupdate\tacuity-worker",
 		"--instances\t1",
@@ -622,7 +622,7 @@ func releaseEnvironment() []string {
 		"IMAGE_TAG=0123456789abcdef0123456789abcdef01234567",
 		"DEPLOYMENT_ID=release-1234",
 		"CALLLEG_SCHEMA_CUTOVER_COMPLETE=true",
-		"USABLE_DATABASE_CONNECTIONS=26",
+		"USABLE_DATABASE_CONNECTIONS=28",
 	}
 }
 

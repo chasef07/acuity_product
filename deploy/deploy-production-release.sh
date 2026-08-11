@@ -428,7 +428,7 @@ stage_backend_services() {
 
 stage_worker() {
   local instances="$1"
-  local worker_environment="DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20"
+  local worker_environment="DATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20"
   if [[ "$destructive_cutover" == true ]]; then
     worker_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
   fi

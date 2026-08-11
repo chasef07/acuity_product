@@ -173,7 +173,7 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 			MemoryMiB:                      512,
 			MinimumInstances:               1,
 			MaximumInstances:               1,
-			PoolMaximum:                    1,
+			PoolMaximum:                    2,
 			AcquisitionTimeoutMilliseconds: 1500,
 		},
 	}
@@ -212,9 +212,9 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 			serviceConnections,
 		)
 	}
-	if workerPoolConnectionsPerRevision != 1 {
+	if workerPoolConnectionsPerRevision != 2 {
 		t.Errorf(
-			"worker-pool connection demand per revision = %d, want 1",
+			"worker-pool connection demand per revision = %d, want 2",
 			workerPoolConnectionsPerRevision,
 		)
 	}
@@ -259,8 +259,8 @@ func TestProductionRuntimeContractIsLeanAuditableAndKeepsCallingWarm(t *testing.
 		contract.Migration.Tasks*contract.Migration.PoolMaximum +
 		oneExtraServiceInstanceConnections +
 		contract.OperatorHeadroom
-	if calculated != 26 {
-		t.Errorf("calculated production connection reservation = %d, want 26", calculated)
+	if calculated != 28 {
+		t.Errorf("calculated production connection reservation = %d, want 28", calculated)
 	}
 	if contract.RequiredDatabaseConnections != calculated {
 		t.Errorf(
@@ -284,12 +284,12 @@ func TestProductionRendererIncludesAuditableResourceAndRegionRows(t *testing.T) 
 	}
 	rows := strings.Split(strings.TrimSpace(string(output)), "\n")
 	expected := []string{
-		"capacity\tmeta\t0\t0\t26\t0\t0\t0\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
+		"capacity\tmeta\t0\t0\t28\t0\t0\t0\t0\t0\t0\t0\t0\t0\tmeta\tus-east1",
 		"web\tservice\t40\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
 		"portal-api\tservice\t20\t1\t3\t2\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
 		"provider-ingress\tservice\t20\t1\t2\t1\t0\t1500\t0\t0\t0\t0\t1\t512\trequest-based\tus-east1",
 		"realtime\tservice\t50\t1\t2\t1\t1\t1500\t300\t270\t30\t0\t1\t512\trequest-based\tus-east1",
-		"worker\tworker-pool\t0\t1\t1\t1\t0\t1500\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
+		"worker\tworker-pool\t0\t1\t1\t2\t0\t1500\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
 		"migrate\tjob\t0\t0\t1\t1\t0\t5000\t0\t0\t0\t0\t1\t512\tinstance-based\tus-east1",
 		"database\tdatabase\t0\t0\t1\t0\t0\t0\t0\t0\t0\t0\t2\t8192\tinstance-based\tus-east1\tPOSTGRES_16\tENTERPRISE\tZONAL\t50\tSSD\t04:00\t7\t7\t1\t1\t1\t0\t1\tus-east1",
 	}
@@ -394,7 +394,7 @@ func TestProductionCloudRunCommandsUseRenderedValues(t *testing.T) {
 		"--instances\t1",
 		"--cpu\t1",
 		"--memory\t512Mi",
-		"DATABASE_POOL_MAX=1",
+		"DATABASE_POOL_MAX=2",
 		"MESSAGING_MEDIA_SIGNING_KEY=messaging-media-signing-key:latest",
 		"HUMAN_CALLING_HANDOFF_TOKEN_KEY=handoff-token-key:latest",
 		"HUMAN_CALLING_PLAYBACK_SIGNING_KEY=playback-signing-key:latest",
@@ -436,8 +436,8 @@ func TestProductionCloudRunCommandsFailClosed(t *testing.T) {
 		{
 			name:    "connections",
 			key:     "USABLE_DATABASE_CONNECTIONS",
-			value:   "25",
-			message: "production requires at least 26 usable database connections",
+			value:   "27",
+			message: "production requires at least 28 usable database connections",
 		},
 		{
 			name:    "messaging attachment bucket",
@@ -679,7 +679,7 @@ func productionRuntimeEnvironment() []string {
 		"MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1",
 		"MESSAGING_ATTACHMENT_DIRECTORY=/mnt/acuity-messaging",
 		"ACUITY_DEPLOYMENT_PROFILE=production",
-		"USABLE_DATABASE_CONNECTIONS=26",
+		"USABLE_DATABASE_CONNECTIONS=28",
 	}
 }
 
