@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import {
   BotIcon,
   CalendarCheck2Icon,
+  ChevronRightIcon,
   CircleAlertIcon,
   Clock3Icon,
   PhoneForwardedIcon,
@@ -14,12 +15,12 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
 import {
   appointmentOutcomeLabel,
@@ -34,7 +35,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 
-export function OperatorAnalyticsDetailDialog({
+export function OperatorAnalyticsDetailSheet({
   interactionID,
   onClose,
 }: {
@@ -87,14 +88,14 @@ export function OperatorAnalyticsDetailDialog({
   }, [interactionID])
 
   return (
-    <Dialog
+    <Sheet
       open={Boolean(interactionID)}
       onOpenChange={(open) => !open && onClose()}
     >
-      <DialogContent className="max-h-[calc(100svh-1rem)] gap-0 overflow-hidden p-0 sm:max-w-[min(72rem,calc(100vw-2rem))]">
-        <DialogHeader className="border-b px-5 py-4 pr-12 sm:px-6">
+      <SheetContent className="h-full overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
+        <SheetHeader className="shrink-0 border-b px-5 py-4 pr-12 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle className="text-base">AI call evidence</DialogTitle>
+            <SheetTitle className="text-base">AI call evidence</SheetTitle>
             {detail && (
               <>
                 <Badge variant="secondary">{detail.status}</Badge>
@@ -107,10 +108,10 @@ export function OperatorAnalyticsDetailDialog({
               </>
             )}
           </div>
-          <DialogDescription>
+          <SheetDescription>
             Transcript, timing, tool activity, and receipt-backed outcomes.
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
         {loading && (
           <div className="flex min-h-80 items-center justify-center gap-2 text-muted-foreground">
@@ -128,8 +129,8 @@ export function OperatorAnalyticsDetailDialog({
           </div>
         )}
         {!loading && detail && <OperatorAnalyticsDetailView detail={detail} />}
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -143,8 +144,13 @@ function OperatorAnalyticsDetailView({
       item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
   ).length
 
+  const entries = timelineEntries(detail.timeline)
+
   return (
-    <div className="min-h-0 overflow-y-auto">
+    <div
+      aria-label="Scrollable call evidence"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
       <section className="grid border-b lg:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]">
         <div className="border-b px-5 py-5 sm:px-6 lg:border-r lg:border-b-0">
           <p className="text-[0.6875rem] font-medium tracking-wide text-muted-foreground uppercase">
@@ -196,7 +202,7 @@ function OperatorAnalyticsDetailView({
       </section>
 
       <section
-        aria-labelledby="timeline-title"
+        aria-label="Call conversation"
         className="border-b px-5 py-5 sm:px-6"
       >
         <div className="mb-4 flex items-end justify-between gap-4">
@@ -226,10 +232,11 @@ function OperatorAnalyticsDetailView({
 
         {detail.timeline.length > 0 ? (
           <ol className="relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-[0.6875rem] before:w-px before:bg-border sm:before:left-3">
-            {detail.timeline.map((item, index) => (
+            {entries.map(({ item, result }, index) => (
               <TimelineItem
                 key={`${item.occurredAt}-${item.kind}-${item.callId ?? index}`}
                 item={item}
+                result={result}
               />
             ))}
           </ol>
@@ -404,7 +411,13 @@ function AppointmentFacts({ facts }: { facts: AiAppointmentFacts }) {
   )
 }
 
-function TimelineItem({ item }: { item: OperatorAiTimelineItem }) {
+function TimelineItem({
+  item,
+  result,
+}: {
+  item: OperatorAiTimelineItem
+  result?: OperatorAiTimelineItem
+}) {
   if (item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE") {
     const agent = item.kind === "AGENT_MESSAGE"
     return (
@@ -418,21 +431,25 @@ function TimelineItem({ item }: { item: OperatorAiTimelineItem }) {
         </span>
         <div
           aria-label={`${agent ? "Agent" : "Caller"} message`}
-          className={`max-w-[44rem] rounded-xl px-4 py-3 ${
+          className={`max-w-[88%] rounded-2xl px-4 py-3 shadow-sm ${
             agent
-              ? "rounded-tl-sm bg-muted"
-              : "ml-auto rounded-tr-sm border bg-card"
+              ? "rounded-bl-md border bg-muted/70"
+              : "ml-auto rounded-br-md bg-primary text-primary-foreground"
           }`}
         >
           <div className="mb-1 flex items-center justify-between gap-3">
             <span className="text-xs font-medium">
-              {agent ? "Agent" : "Caller"}
+              {agent ? "Acuity" : "Caller"}
             </span>
-            <time className="font-mono text-[0.625rem] text-muted-foreground">
+            <time
+              className={`font-mono text-[0.625rem] ${
+                agent ? "text-muted-foreground" : "text-primary-foreground/75"
+              }`}
+            >
               {formatTime(item.occurredAt)}
             </time>
           </div>
-          <p className="text-sm leading-6">
+          <p className="whitespace-pre-wrap break-words text-sm leading-6">
             {item.text || "Message content unavailable"}
           </p>
         </div>
@@ -440,39 +457,136 @@ function TimelineItem({ item }: { item: OperatorAiTimelineItem }) {
     )
   }
 
-  const result = item.kind === "TOOL_RESULT"
+  const toolResult = result ?? (item.kind === "TOOL_RESULT" ? item : undefined)
+  const toolCall = item.kind === "TOOL_CALL" ? item : undefined
+  const failed = Boolean(toolResult?.error)
   return (
     <li className="relative pl-8 sm:pl-10">
       <span className="absolute top-2 left-0 z-10 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground">
         <WrenchIcon className="size-3.5" aria-hidden="true" />
       </span>
-      <details className="rounded-lg border bg-card px-4 py-3">
+      <details className="group rounded-lg border bg-card px-4 py-3">
         <summary className="cursor-pointer list-none focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={result ? "secondary" : "outline"}>
-              {result ? "Tool result" : "Tool call"}
-            </Badge>
-            <span className="font-mono text-xs font-medium">
-              {item.name ?? "Unknown tool"}
+            <ChevronRightIcon
+              className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90"
+              aria-hidden="true"
+            />
+            <span className="text-xs font-semibold">
+              {formatToolLabel(item.name)}
             </span>
-            {item.error && <Badge variant="destructive">Error</Badge>}
+            <span className="font-mono text-[0.625rem] text-muted-foreground">
+              {item.name ?? "unknown_tool"}
+            </span>
+            <Badge variant={failed ? "destructive" : "secondary"}>
+              {failed ? "Error" : toolResult ? "Complete" : "Called"}
+            </Badge>
             <span className="ml-auto font-mono text-[0.625rem] text-muted-foreground">
-              {item.totalLatencyMs !== undefined &&
-                `${formatLatency(item.totalLatencyMs)} · `}
+              {(toolResult?.totalLatencyMs ?? item.totalLatencyMs) !== undefined &&
+                `${formatLatency(toolResult?.totalLatencyMs ?? item.totalLatencyMs)} · `}
               {formatTime(item.occurredAt)}
             </span>
           </div>
         </summary>
-        <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted/60 p-3 font-mono text-[0.6875rem] leading-5">
-          {formatPayload(
-            item.error
-              ? { error: item.error, payload: item.payload }
-              : item.payload,
+        <div className="mt-3 space-y-3 border-t pt-3">
+          {toolCall && (
+            <ToolPayload label="Request" value={toolCall.payload} />
           )}
-        </pre>
+          {toolResult && (
+            <ToolPayload
+              label={failed ? "Error" : "Response"}
+              value={
+                failed
+                  ? { error: toolResult.error, payload: toolResult.payload }
+                  : toolResult.payload
+              }
+              error={failed}
+            />
+          )}
+          {!toolCall && !toolResult && (
+            <p className="text-xs text-muted-foreground">
+              No request or response payload was recorded.
+            </p>
+          )}
+        </div>
       </details>
     </li>
   )
+}
+
+function ToolPayload({
+  label,
+  value,
+  error = false,
+}: {
+  label: string
+  value: unknown
+  error?: boolean
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[0.6875rem] font-medium text-muted-foreground">
+        {label}
+      </p>
+      <pre
+        className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-[0.6875rem] leading-5 ${
+          error
+            ? "border-destructive/30 bg-destructive/5 text-destructive"
+            : "bg-muted/60"
+        }`}
+      >
+        {formatPayload(value)}
+      </pre>
+    </div>
+  )
+}
+
+function timelineEntries(items: OperatorAiTimelineItem[]) {
+  const entries: Array<{
+    item: OperatorAiTimelineItem
+    result?: OperatorAiTimelineItem
+  }> = []
+  const calls = new Map<string, number>()
+
+  for (const item of items) {
+    if (item.kind === "TOOL_CALL" && item.callId) {
+      calls.set(item.callId, entries.length)
+      entries.push({ item })
+      continue
+    }
+    if (item.kind === "TOOL_RESULT" && item.callId) {
+      const callIndex = calls.get(item.callId)
+      if (callIndex !== undefined) {
+        entries[callIndex] = { ...entries[callIndex], result: item }
+        continue
+      }
+    }
+    entries.push({ item })
+  }
+
+  return entries
+}
+
+function formatToolLabel(name?: string) {
+  switch (name) {
+    case "book_appt":
+    case "book_appointment":
+      return "Book appointment"
+    case "cancel_appt":
+    case "cancel_appointment":
+      return "Cancel appointment"
+    case "reschedule_appt":
+    case "reschedule_appointment":
+      return "Reschedule appointment"
+    case "transfer_call":
+      return "Transfer call"
+    default:
+      return name
+        ? name.replaceAll("_", " ").replace(/\b\w/g, (character) =>
+            character.toUpperCase(),
+          )
+        : "Unknown tool"
+  }
 }
 
 function DetailValue({ label, value }: { label: string; value: string }) {

@@ -36,34 +36,48 @@ type QueryAnalyticsCommand struct {
 
 type AnalyticsSummary struct {
 	TotalCalls        int
+	BookingCount      int
+	CancellationCount int
+	RescheduleCount   int
+	P50SttMs          *int
+	P90SttMs          *int
+	P99SttMs          *int
+	P50TtftMs         *int
+	P90TtftMs         *int
+	P99TtftMs         *int
+	P50TtsTtfbMs      *int
+	P90TtsTtfbMs      *int
+	P99TtsTtfbMs      *int
 	P50TotalLatencyMs *int
+	P90TotalLatencyMs *int
+	P99TotalLatencyMs *int
 	TransferCount     int
 	TransferRate      float64
 	ToolCallCount     int
 	ToolErrorCount    int
 	ToolFailureRate   float64
+	latencySamples    latencyValueSet
 }
 
 type AnalyticsCall struct {
-	ID                     string
-	LocationID             string
-	LocationName           string
-	SourceCallID           string
-	Phone                  string
-	StartedAt              time.Time
-	EndedAt                *time.Time
-	Status                 CallStatus
-	DurationSeconds        int
-	P50SttMs               *int
-	P50TtftMs              *int
-	P50TtsTtfbMs           *int
-	P50TotalLatencyMs      *int
-	ToolCallCount          int
-	ToolErrorCount         int
-	ToolActions            []string
-	Transferred            bool
-	TranscriptAvailable    bool
-	turnTotalLatencyValues []float64
+	ID                  string
+	LocationID          string
+	LocationName        string
+	SourceCallID        string
+	Phone               string
+	StartedAt           time.Time
+	EndedAt             *time.Time
+	Status              CallStatus
+	DurationSeconds     int
+	P50SttMs            *int
+	P50TtftMs           *int
+	P50TtsTtfbMs        *int
+	P50TotalLatencyMs   *int
+	ToolCallCount       int
+	ToolErrorCount      int
+	ToolActions         []string
+	Transferred         bool
+	TranscriptAvailable bool
 }
 
 type AnalyticsPage struct {
@@ -122,10 +136,12 @@ type analyticsCursor struct {
 }
 
 type analyticsProjection struct {
-	call        AnalyticsCall
-	transcript  json.RawMessage
-	turnMetrics json.RawMessage
-	tools       json.RawMessage
+	call               AnalyticsCall
+	appointmentOutcome AppointmentOutcome
+	transcript         json.RawMessage
+	turnMetrics        json.RawMessage
+	tools              json.RawMessage
+	latencySamples     latencyValueSet
 }
 
 func (m *Module) QueryAnalytics(
@@ -209,6 +225,7 @@ func queryAnalyticsSummary(
 		SELECT
 			interaction.started_at,
 			interaction.status,
+			interaction.appointment_outcome,
 			COALESCE(interaction.transcript, '{}'::jsonb),
 			COALESCE(interaction.closeout_payload->'turnMetrics', '[]'::jsonb),
 			COALESCE(interaction.closeout_payload->'toolExecutions', '[]'::jsonb)
@@ -223,12 +240,12 @@ func queryAnalyticsSummary(
 	}
 	defer rows.Close()
 	summary := AnalyticsSummary{}
-	totalLatencyValues := []float64{}
 	for rows.Next() {
 		var projection analyticsProjection
 		if err := rows.Scan(
 			&projection.call.StartedAt,
 			&projection.call.Status,
+			&projection.appointmentOutcome,
 			&projection.transcript,
 			&projection.turnMetrics,
 			&projection.tools,
@@ -236,25 +253,68 @@ func queryAnalyticsSummary(
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
 		}
 		projectAnalyticsEvidence(&projection)
-		summary.TotalCalls++
-		if projection.call.Transferred {
-			summary.TransferCount++
-		}
-		summary.ToolCallCount += projection.call.ToolCallCount
-		summary.ToolErrorCount += projection.call.ToolErrorCount
-		totalLatencyValues = append(totalLatencyValues, projection.call.turnTotalLatencyValues...)
+		summarizeAnalyticsProjection(&summary, projection)
 	}
 	if err := rows.Err(); err != nil {
 		return AnalyticsSummary{}, fmt.Errorf("iterate operator AI analytics summary: %w", err)
 	}
+	finalizeAnalyticsSummary(&summary)
+	return summary, nil
+}
+
+func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analyticsProjection) {
+	summary.TotalCalls++
+	switch projection.appointmentOutcome {
+	case OutcomeBooking:
+		summary.BookingCount++
+	case OutcomeCancellation:
+		summary.CancellationCount++
+	case OutcomeReschedule:
+		summary.RescheduleCount++
+	}
+	if projection.call.Transferred {
+		summary.TransferCount++
+	}
+	summary.ToolCallCount += projection.call.ToolCallCount
+	summary.ToolErrorCount += projection.call.ToolErrorCount
+	summary.latencySamples.stt = append(
+		summary.latencySamples.stt,
+		projection.latencySamples.stt...,
+	)
+	summary.latencySamples.ttft = append(
+		summary.latencySamples.ttft,
+		projection.latencySamples.ttft...,
+	)
+	summary.latencySamples.ttsTtfb = append(
+		summary.latencySamples.ttsTtfb,
+		projection.latencySamples.ttsTtfb...,
+	)
+	summary.latencySamples.total = append(
+		summary.latencySamples.total,
+		projection.latencySamples.total...,
+	)
+}
+
+func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
 	if summary.TotalCalls > 0 {
 		summary.TransferRate = float64(summary.TransferCount) / float64(summary.TotalCalls)
 	}
 	if summary.ToolCallCount > 0 {
 		summary.ToolFailureRate = float64(summary.ToolErrorCount) / float64(summary.ToolCallCount)
 	}
-	summary.P50TotalLatencyMs = medianMilliseconds(totalLatencyValues)
-	return summary, nil
+	summary.P50SttMs = medianMilliseconds(summary.latencySamples.stt)
+	summary.P90SttMs = percentileMilliseconds(summary.latencySamples.stt, 90)
+	summary.P99SttMs = percentileMilliseconds(summary.latencySamples.stt, 99)
+	summary.P50TtftMs = medianMilliseconds(summary.latencySamples.ttft)
+	summary.P90TtftMs = percentileMilliseconds(summary.latencySamples.ttft, 90)
+	summary.P99TtftMs = percentileMilliseconds(summary.latencySamples.ttft, 99)
+	summary.P50TtsTtfbMs = medianMilliseconds(summary.latencySamples.ttsTtfb)
+	summary.P90TtsTtfbMs = percentileMilliseconds(summary.latencySamples.ttsTtfb, 90)
+	summary.P99TtsTtfbMs = percentileMilliseconds(summary.latencySamples.ttsTtfb, 99)
+	summary.P50TotalLatencyMs = medianMilliseconds(summary.latencySamples.total)
+	summary.P90TotalLatencyMs = percentileMilliseconds(summary.latencySamples.total, 90)
+	summary.P99TotalLatencyMs = percentileMilliseconds(summary.latencySamples.total, 99)
+	summary.latencySamples = latencyValueSet{}
 }
 
 func queryAnalyticsCalls(
@@ -336,7 +396,6 @@ func queryAnalyticsCalls(
 	}
 	calls := make([]AnalyticsCall, 0, len(projections))
 	for _, projection := range projections {
-		projection.call.turnTotalLatencyValues = nil
 		calls = append(calls, projection.call)
 	}
 	return calls, hasMore, nil
@@ -448,7 +507,7 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 	projection.call.P50TtftMs = medianMilliseconds(samples.ttft)
 	projection.call.P50TtsTtfbMs = medianMilliseconds(samples.ttsTtfb)
 	projection.call.P50TotalLatencyMs = medianMilliseconds(samples.total)
-	projection.call.turnTotalLatencyValues = samples.total
+	projection.latencySamples = samples
 	executions := toolExecutionsFromRaw(projection.tools, projection.call.StartedAt)
 	projection.call.ToolCallCount = len(executions)
 	projection.call.ToolActions = []string{}
@@ -633,6 +692,18 @@ func medianMilliseconds(values []float64) *int {
 		value = (ordered[middle-1] + value) / 2
 	}
 	result := int(math.Round(value))
+	return &result
+}
+
+func percentileMilliseconds(values []float64, percentile float64) *int {
+	if len(values) == 0 || percentile < 0 || percentile > 100 {
+		return nil
+	}
+	ordered := append([]float64(nil), values...)
+	sort.Float64s(ordered)
+	index := int(math.Ceil(percentile/100*float64(len(ordered)))) - 1
+	index = max(0, min(index, len(ordered)-1))
+	result := int(math.Round(ordered[index]))
 	return &result
 }
 

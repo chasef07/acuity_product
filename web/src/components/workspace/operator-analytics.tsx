@@ -3,6 +3,9 @@
 import { type ReactNode, useEffect, useState } from "react"
 import {
   ArrowRightIcon,
+  CalendarCheck2Icon,
+  CalendarClockIcon,
+  CalendarX2Icon,
   ChartNoAxesCombinedIcon,
   CircleAlertIcon,
   Clock3Icon,
@@ -23,7 +26,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { OperatorAnalyticsDetailDialog } from "@/components/workspace/operator-analytics-detail"
+import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { portalClient } from "@/lib/api/client"
 import { queryOperatorAiAnalytics } from "@/lib/api/generated/sdk.gen"
 import type {
@@ -36,6 +39,14 @@ import { getAccessToken } from "@/lib/auth-client"
 
 type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
+type AnalyticsTab = "overview" | "performance" | "tools" | "calls"
+
+const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
+  { value: "overview", label: "Overview" },
+  { value: "performance", label: "Performance" },
+  { value: "tools", label: "Tools" },
+  { value: "calls", label: "Calls" },
+]
 
 const ranges: Array<{
   value: OperatorAiAnalyticsRange
@@ -55,6 +66,7 @@ export function OperatorAnalytics({
   locationScopeID: string
 }) {
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("7d")
+  const [tab, setTab] = useState<AnalyticsTab>("overview")
   const [requestVersion, setRequestVersion] = useState(0)
   const [request, setRequest] = useState<{
     key: string
@@ -223,6 +235,8 @@ export function OperatorAnalytics({
             </div>
           </header>
 
+          <AnalyticsTabs tab={tab} onChange={setTab} />
+
           {currentRequest.state === "loading" && <AnalyticsLoading />}
           {currentRequest.state === "unauthorized" && (
             <AnalyticsFailure
@@ -240,6 +254,7 @@ export function OperatorAnalytics({
           {currentRequest.state === "ready" && currentRequest.data && (
             <AnalyticsReady
               data={currentRequest.data}
+              tab={tab}
               range={range}
               nextPageState={nextPageState}
               onLoadNextPage={loadNextPage}
@@ -248,7 +263,7 @@ export function OperatorAnalytics({
           )}
         </div>
       </div>
-      <OperatorAnalyticsDetailDialog
+      <OperatorAnalyticsDetailSheet
         interactionID={selectedInteractionID}
         onClose={() => setSelectedInteractionID("")}
       />
@@ -258,12 +273,14 @@ export function OperatorAnalytics({
 
 function AnalyticsReady({
   data,
+  tab,
   range,
   nextPageState,
   onLoadNextPage,
   onSelect,
 }: {
   data: OperatorAiAnalyticsPage
+  tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
   nextPageState: AnalyticsNextPageState
   onLoadNextPage: () => void
@@ -271,8 +288,12 @@ function AnalyticsReady({
 }) {
   return (
     <>
-      <AnalyticsKPIs summary={data.summary} />
-      {data.calls.length === 0 ? (
+      {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
+      {tab === "performance" && (
+        <AnalyticsPerformance summary={data.summary} />
+      )}
+      {tab === "tools" && <AnalyticsTools summary={data.summary} />}
+      {tab === "calls" && data.calls.length === 0 ? (
         <div className="mt-5 flex min-h-72 flex-col items-center justify-center rounded-xl border border-dashed bg-card px-6 text-center sm:mt-6">
           <span className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <InboxIcon className="size-5" aria-hidden="true" />
@@ -283,7 +304,7 @@ function AnalyticsReady({
             call evidence.
           </p>
         </div>
-      ) : (
+      ) : tab === "calls" ? (
         <CallLedger
           calls={data.calls}
           totalCalls={data.summary.totalCalls}
@@ -293,13 +314,45 @@ function AnalyticsReady({
           onLoadNextPage={onLoadNextPage}
           onSelect={onSelect}
         />
-      )}
+      ) : null}
     </>
   )
 }
 
-function AnalyticsKPIs({ summary }: { summary: OperatorAiAnalyticsSummary }) {
-  const items = [
+function AnalyticsTabs({
+  tab,
+  onChange,
+}: {
+  tab: AnalyticsTab
+  onChange: (tab: AnalyticsTab) => void
+}) {
+  return (
+    <div className="mb-5 max-w-full overflow-x-auto pb-1 sm:mb-6">
+      <div
+        role="tablist"
+        aria-label="Analytics section"
+        className="grid min-w-max grid-cols-4 rounded-lg border bg-card p-1"
+      >
+        {analyticsTabs.map((item) => (
+          <Button
+            key={item.value}
+            role="tab"
+            aria-selected={tab === item.value}
+            variant={tab === item.value ? "secondary" : "ghost"}
+            size="sm"
+            className="min-w-24"
+            onClick={() => onChange(item.value)}
+          >
+            {item.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary }) {
+  const outcomes = [
     {
       label: "Total calls",
       value: summary.totalCalls.toLocaleString(),
@@ -307,32 +360,184 @@ function AnalyticsKPIs({ summary }: { summary: OperatorAiAnalyticsSummary }) {
       icon: ChartNoAxesCombinedIcon,
     },
     {
-      label: "P50 E2E latency",
-      value: formatLatency(summary.p50TotalLatencyMs),
-      note: "Median conversational turn",
-      icon: Clock3Icon,
+      label: "Booked",
+      value: summary.bookingCount.toLocaleString(),
+      note: "Appointments booked",
+      icon: CalendarCheck2Icon,
     },
     {
-      label: "Transfer rate",
-      value: formatRate(summary.transferRate),
-      note: `${summary.transferCount.toLocaleString()} transferred`,
-      icon: PhoneForwardedIcon,
+      label: "Cancelled",
+      value: summary.cancellationCount.toLocaleString(),
+      note: "Appointments cancelled",
+      icon: CalendarX2Icon,
     },
     {
-      label: "Tool failure rate",
-      value: formatRate(summary.toolFailureRate),
-      note: `${summary.toolErrorCount.toLocaleString()} errors / ${summary.toolCallCount.toLocaleString()} tool calls`,
-      icon: WrenchIcon,
+      label: "Rescheduled",
+      value: summary.rescheduleCount.toLocaleString(),
+      note: "Appointments moved",
+      icon: CalendarClockIcon,
     },
   ]
   return (
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {outcomes.map((item) => (
+          <Card key={item.label} size="sm" className="min-w-0">
+            <CardHeader className="grid-cols-[1fr_auto]">
+              <div>
+                <CardDescription>{item.label}</CardDescription>
+                <CardTitle className="mt-1 font-mono text-xl font-semibold tracking-[-0.03em] sm:text-2xl">
+                  {item.value}
+                </CardTitle>
+              </div>
+              <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                <item.icon className="size-3.5" aria-hidden="true" />
+              </span>
+            </CardHeader>
+            <CardContent className="truncate text-[0.6875rem] text-muted-foreground">
+              {item.note}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <OperationalHealth summary={summary} />
+      </div>
+    </div>
+  )
+}
+
+function AnalyticsPerformance({
+  summary,
+}: {
+  summary: OperatorAiAnalyticsSummary
+}) {
+  return (
+    <div className="space-y-6">
+      <LatencyPipeline summary={summary} />
+      <LatencyPercentiles summary={summary} />
+    </div>
+  )
+}
+
+function LatencyPercentiles({
+  summary,
+}: {
+  summary: OperatorAiAnalyticsSummary
+}) {
+  const rows = [
+    {
+      label: "STT final transcript",
+      p50: summary.p50SttMs,
+      p90: summary.p90SttMs,
+      p99: summary.p99SttMs,
+    },
+    {
+      label: "LLM TTFT",
+      p50: summary.p50TtftMs,
+      p90: summary.p90TtftMs,
+      p99: summary.p99TtftMs,
+    },
+    {
+      label: "TTS TTFB",
+      p50: summary.p50TtsTtfbMs,
+      p90: summary.p90TtsTtfbMs,
+      p99: summary.p99TtsTtfbMs,
+    },
+    {
+      label: "E2E response",
+      p50: summary.p50TotalLatencyMs,
+      p90: summary.p90TotalLatencyMs,
+      p99: summary.p99TotalLatencyMs,
+    },
+  ]
+
+  return (
+    <Card size="sm" className="gap-0 py-0">
+      <CardHeader className="border-b py-4">
+        <CardTitle>Latency percentiles</CardTitle>
+        <CardDescription>
+          Median, tail, and worst-tail response timing across measured turns.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto p-0">
+        <table className="w-full min-w-[38rem] border-collapse text-left text-xs">
+          <thead className="bg-muted/60 text-muted-foreground">
+            <tr>
+              <TableHeading>Pipeline stage</TableHeading>
+              <TableHeading>P50</TableHeading>
+              <TableHeading>P90</TableHeading>
+              <TableHeading>P99</TableHeading>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map((row) => (
+              <tr key={row.label}>
+                <td className="px-4 py-3 font-medium">{row.label}</td>
+                <PercentileCell value={row.p50} />
+                <PercentileCell value={row.p90} />
+                <PercentileCell value={row.p99} emphasized />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PercentileCell({
+  value,
+  emphasized = false,
+}: {
+  value?: number
+  emphasized?: boolean
+}) {
+  return (
+    <td
+      className={`px-3 py-3 font-mono ${
+        emphasized ? "font-semibold" : ""
+      }`}
+    >
+      {formatLatency(value)}
+    </td>
+  )
+}
+
+function AnalyticsTools({ summary }: { summary: OperatorAiAnalyticsSummary }) {
+  const items = [
+    {
+      label: "Total tool calls",
+      value: summary.toolCallCount.toLocaleString(),
+      note: "Across selected calls",
+      icon: WrenchIcon,
+    },
+    {
+      label: "Failure rate",
+      value: formatRate(summary.toolFailureRate),
+      note: `${summary.toolErrorCount.toLocaleString()} / ${summary.toolCallCount.toLocaleString()} tool calls`,
+      icon: CircleAlertIcon,
+    },
+    {
+      label: "Avg tools / call",
+      value:
+        summary.totalCalls > 0
+          ? (summary.toolCallCount / summary.totalCalls).toFixed(1)
+          : "—",
+      note: "Tool activity per conversation",
+      icon: ChartNoAxesCombinedIcon,
+    },
+  ]
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((item) => (
-        <Card key={item.label} size="sm" className="min-w-0">
+        <Card key={item.label} size="sm">
           <CardHeader className="grid-cols-[1fr_auto]">
             <div>
               <CardDescription>{item.label}</CardDescription>
-              <CardTitle className="mt-1 font-mono text-xl font-semibold tracking-[-0.03em] sm:text-2xl">
+              <CardTitle className="mt-1 font-mono text-2xl font-semibold tracking-[-0.03em]">
                 {item.value}
               </CardTitle>
             </div>
@@ -340,12 +545,102 @@ function AnalyticsKPIs({ summary }: { summary: OperatorAiAnalyticsSummary }) {
               <item.icon className="size-3.5" aria-hidden="true" />
             </span>
           </CardHeader>
-          <CardContent className="truncate text-[0.6875rem] text-muted-foreground">
+          <CardContent className="text-[0.6875rem] text-muted-foreground">
             {item.note}
           </CardContent>
         </Card>
       ))}
     </div>
+  )
+}
+
+function LatencyPipeline({ summary }: { summary: OperatorAiAnalyticsSummary }) {
+  const stages = [
+    {
+      label: "P50 STT",
+      value: summary.p50SttMs,
+      note: "Final transcript",
+    },
+    {
+      label: "P50 LLM TTFT",
+      value: summary.p50TtftMs,
+      note: "First token",
+    },
+    {
+      label: "P50 TTS TTFB",
+      value: summary.p50TtsTtfbMs,
+      note: "First audio byte",
+    },
+    {
+      label: "P50 E2E",
+      value: summary.p50TotalLatencyMs,
+      note: "Caller stop to audio",
+    },
+  ]
+
+  return (
+    <Card
+      role="region"
+      aria-label="Median response pipeline"
+      size="sm"
+      className="min-w-0 gap-0 overflow-hidden py-0"
+    >
+      <CardHeader className="border-b">
+        <div className="flex items-center gap-2">
+          <Clock3Icon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <CardTitle className="text-sm">Median response pipeline</CardTitle>
+        </div>
+        <CardDescription>
+          Measured turns across the selected range
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid grid-cols-2 gap-px bg-border p-0 sm:grid-cols-4">
+        {stages.map((stage, index) => (
+          <div key={stage.label} className="relative min-w-0 bg-card px-4 py-3">
+            <p className="text-[0.6875rem] font-medium text-muted-foreground">
+              {stage.label}
+            </p>
+            <p className="mt-1 font-mono text-base font-semibold tracking-[-0.02em]">
+              {formatLatency(stage.value)}
+            </p>
+            <p className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">
+              {stage.note}
+            </p>
+            {index < stages.length - 1 && (
+              <ArrowRightIcon
+                className="absolute top-1/2 right-0 z-10 hidden size-3 -translate-y-1/2 translate-x-1/2 rounded-full bg-card text-muted-foreground sm:block"
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function OperationalHealth({ summary }: { summary: OperatorAiAnalyticsSummary }) {
+  return (
+    <Card size="sm" className="min-w-0">
+      <CardHeader>
+        <CardTitle className="text-sm">Operational health</CardTitle>
+        <CardDescription>Transfers and tool reliability</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-2 gap-4 border-t pt-3">
+          <CompactValue
+            label="Transfer rate"
+            value={formatRate(summary.transferRate)}
+            note={`${summary.transferCount.toLocaleString()} calls`}
+          />
+          <CompactValue
+            label="Tool failure rate"
+            value={formatRate(summary.toolFailureRate)}
+            note={`${summary.toolErrorCount.toLocaleString()} / ${summary.toolCallCount.toLocaleString()} tool calls`}
+          />
+        </dl>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -533,6 +828,10 @@ function AnalyticsLoading() {
           </Card>
         ))}
       </div>
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(17rem,0.75fr)]">
+        <Skeleton className="h-36 rounded-xl" />
+        <Skeleton className="h-36 rounded-xl" />
+      </div>
       <div className="mt-5 space-y-px overflow-hidden rounded-xl border bg-border sm:mt-6">
         <Skeleton className="h-10 rounded-none" />
         {Array.from({ length: 5 }, (_, index) => (
@@ -613,11 +912,20 @@ function TransferBadge({ transferred }: { transferred: boolean }) {
   )
 }
 
-function CompactValue({ label, value }: { label: string; value: string }) {
+function CompactValue({
+  label,
+  value,
+  note,
+}: {
+  label: string
+  value: string
+  note?: string
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-[0.6875rem] text-muted-foreground">{label}</dt>
       <dd className="mt-1 truncate font-mono text-xs font-semibold">{value}</dd>
+      {note && <dd className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">{note}</dd>}
     </div>
   )
 }

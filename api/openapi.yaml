@@ -3014,6 +3014,9 @@ components:
       additionalProperties: false
       required:
         - totalCalls
+        - bookingCount
+        - cancellationCount
+        - rescheduleCount
         - transferCount
         - transferRate
         - toolCallCount
@@ -3023,7 +3026,49 @@ components:
         totalCalls:
           type: integer
           minimum: 0
+        bookingCount:
+          type: integer
+          minimum: 0
+        cancellationCount:
+          type: integer
+          minimum: 0
+        rescheduleCount:
+          type: integer
+          minimum: 0
+        p50SttMs:
+          type: integer
+          minimum: 0
+        p90SttMs:
+          type: integer
+          minimum: 0
+        p99SttMs:
+          type: integer
+          minimum: 0
+        p50TtftMs:
+          type: integer
+          minimum: 0
+        p90TtftMs:
+          type: integer
+          minimum: 0
+        p99TtftMs:
+          type: integer
+          minimum: 0
+        p50TtsTtfbMs:
+          type: integer
+          minimum: 0
+        p90TtsTtfbMs:
+          type: integer
+          minimum: 0
+        p99TtsTtfbMs:
+          type: integer
+          minimum: 0
         p50TotalLatencyMs:
+          type: integer
+          minimum: 0
+        p90TotalLatencyMs:
+          type: integer
+          minimum: 0
+        p99TotalLatencyMs:
           type: integer
           minimum: 0
         transferCount:
