@@ -2980,7 +2980,7 @@ components:
     AIOutcomePage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required: [items, nextCursor, counts]
       properties:
         items:
           type: array
@@ -2988,6 +2988,22 @@ components:
             $ref: "#/components/schemas/AIOutcomeItem"
         nextCursor:
           type: string
+        counts:
+          $ref: "#/components/schemas/AIOutcomeCounts"
+    AIOutcomeCounts:
+      type: object
+      additionalProperties: false
+      required: [bookings, cancellations, reschedules]
+      properties:
+        bookings:
+          type: integer
+          minimum: 0
+        cancellations:
+          type: integer
+          minimum: 0
+        reschedules:
+          type: integer
+          minimum: 0
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]

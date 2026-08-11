@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/native-select"
 import type {
   AccessDiscovery,
+  AiOutcomeCounts,
   AiOutcomeItem,
   EngagementSummary,
   MessageThreadSummary,
@@ -106,6 +107,7 @@ type TaskRailProps = {
   tasks: Task[]
   taskCounts: TaskFolderCounts
   aiOutcomes: AiOutcomeItem[]
+  outcomeCounts: AiOutcomeCounts
   messages: MessageThreadSummary[]
   recent: EngagementSummary[]
   selectedTaskID: string
@@ -141,6 +143,7 @@ export function TaskRail({
   tasks,
   taskCounts,
   aiOutcomes,
+  outcomeCounts,
   messages,
   recent,
   selectedTaskID,
@@ -368,7 +371,7 @@ export function TaskRail({
             title="Bookings"
             tasks={categorizedTasks.bookings}
             outcomes={categorizedAIOutcomes.bookings}
-            count={taskCounts.bookings + categorizedAIOutcomes.bookings.length}
+            count={taskCounts.bookings + outcomeCounts.bookings}
             taskCount={taskCounts.bookings}
             expanded={expanded.bookings}
             selectedTaskID={selectedTaskID}
@@ -387,8 +390,7 @@ export function TaskRail({
             tasks={categorizedTasks.cancellations}
             outcomes={categorizedAIOutcomes.cancellations}
             count={
-              taskCounts.cancellations +
-              categorizedAIOutcomes.cancellations.length
+              taskCounts.cancellations + outcomeCounts.cancellations
             }
             taskCount={taskCounts.cancellations}
             expanded={expanded.cancellations}
@@ -408,7 +410,7 @@ export function TaskRail({
             tasks={categorizedTasks.reschedules}
             outcomes={categorizedAIOutcomes.reschedules}
             count={
-              taskCounts.reschedules + categorizedAIOutcomes.reschedules.length
+              taskCounts.reschedules + outcomeCounts.reschedules
             }
             taskCount={taskCounts.reschedules}
             expanded={expanded.reschedules}

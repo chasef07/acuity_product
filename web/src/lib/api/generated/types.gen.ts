@@ -557,6 +557,13 @@ export type AiOutcomeItem = {
 export type AiOutcomePage = {
     items: Array<AiOutcomeItem>;
     nextCursor: string;
+    counts: AiOutcomeCounts;
+};
+
+export type AiOutcomeCounts = {
+    bookings: number;
+    cancellations: number;
+    reschedules: number;
 };
 
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';

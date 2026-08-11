@@ -58,6 +58,7 @@ import {
 } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
+  AiOutcomeCounts,
   AiOutcomeItem,
   CallingCall,
   CallingDispositionResult,
@@ -68,6 +69,11 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
+import {
+  appendOutcomePage,
+  decrementOutcomeCount,
+  mergeOutcomePages,
+} from "@/lib/ai-outcome-attention"
 import { normalizeUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import {
@@ -132,6 +138,9 @@ export function TaskWorkspaceShell() {
   const [messageNextCursor, setMessageNextCursor] = useState("")
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [aiOutcomes, setAIOutcomes] = useState<AiOutcomeItem[]>([])
+  const [aiOutcomeCounts, setAIOutcomeCounts] = useState<AiOutcomeCounts>(() =>
+    emptyAIOutcomeCounts(),
+  )
   const [aiOutcomeNextCursor, setAIOutcomeNextCursor] = useState("")
   const [aiOutcomesLoading, setAIOutcomesLoading] = useState(false)
   const [aiOutcomesError, setAIOutcomesError] = useState("")
@@ -328,6 +337,7 @@ export function TaskWorkspaceShell() {
       ) {
         aiOutcomesRef.current = []
         setAIOutcomes([])
+        setAIOutcomeCounts(emptyAIOutcomeCounts())
         setAIOutcomeNextCursor("")
         setSelectedAIInteractionID("")
         setLoadState("unauthorized")
@@ -336,26 +346,42 @@ export function TaskWorkspaceShell() {
       setAIOutcomesError("AI appointment updates are unavailable.")
       return
     }
+    const loaded = aiOutcomesRef.current
+    const refreshing = !append && loaded.length > 0
     const next = append
-      ? [...aiOutcomesRef.current, ...result.data.items]
-      : result.data.items
+      ? appendOutcomePage(loaded, result.data.items)
+      : refreshing
+        ? mergeOutcomePages(loaded, result.data.items)
+        : result.data.items
     aiOutcomesRef.current = next
     setAIOutcomes(next)
-    setAIOutcomeNextCursor(result.data.nextCursor)
+    setAIOutcomeCounts(result.data.counts)
+    if (!refreshing || append) {
+      setAIOutcomeNextCursor(result.data.nextCursor)
+    }
   }, [locationScopeID, practiceID])
   const reviewAIOutcome = useCallback(async (interactionID: string) => {
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) return false
     const result = await reviewAiInteractionOutcome({
       client: portalClient(token),
       path: { interactionId: interactionID },
     }).catch(() => undefined)
-    if (!result?.response?.ok) return
+    if (!result?.response?.ok) return false
+    const reviewed = aiOutcomesRef.current.find(
+      (outcome) => outcome.id === interactionID,
+    )
     const next = aiOutcomesRef.current.filter(
       (outcome) => outcome.id !== interactionID,
     )
     aiOutcomesRef.current = next
     setAIOutcomes(next)
+    if (reviewed) {
+      setAIOutcomeCounts((counts) =>
+        decrementOutcomeCount(counts, reviewed.appointmentOutcome),
+      )
+    }
+    return true
   }, [])
   const reconcileWorkspace = useCallback(
     async ({
@@ -691,6 +717,7 @@ export function TaskWorkspaceShell() {
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
+    setAIOutcomeCounts(emptyAIOutcomeCounts())
     setAIOutcomeNextCursor("")
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
@@ -749,6 +776,7 @@ export function TaskWorkspaceShell() {
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
+    setAIOutcomeCounts(emptyAIOutcomeCounts())
     setAIOutcomeNextCursor("")
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
@@ -1101,6 +1129,7 @@ export function TaskWorkspaceShell() {
           taskCounts={taskCounts}
           messages={messageThreads}
           aiOutcomes={aiOutcomes}
+          outcomeCounts={aiOutcomeCounts}
           recent={recentInboxes}
           selectedTaskID={selectedTask?.id ?? ""}
           selectedAIInteractionID={selectedAIInteractionID}
@@ -1207,7 +1236,7 @@ export function TaskWorkspaceShell() {
                   {contextView === "appointment" ? (
                     <AIInteractionContext
                       interactionID={selectedAIInteractionID}
-                      onLoaded={reviewAIOutcome}
+                      onReview={reviewAIOutcome}
                     />
                   ) : (
                     <InteractionWorkspace
@@ -1270,6 +1299,15 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
     },
   }
 }
+
+function emptyAIOutcomeCounts(): AiOutcomeCounts {
+  return {
+    bookings: 0,
+    cancellations: 0,
+    reschedules: 0,
+  }
+}
+
 function WorkspaceSelector({
   discovery,
   practiceID,

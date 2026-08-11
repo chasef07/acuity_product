@@ -161,6 +161,13 @@ type OutcomeItem struct {
 type OutcomePage struct {
 	Items      []OutcomeItem
 	NextCursor string
+	Counts     OutcomeCounts
+}
+
+type OutcomeCounts struct {
+	Bookings      int
+	Cancellations int
+	Reschedules   int
 }
 
 func (m *Module) Read(
@@ -272,6 +279,31 @@ func (m *Module) QueryOutcomes(
 	if len(locationIDs) == 0 {
 		return OutcomePage{}, ErrDenied
 	}
+	page := OutcomePage{Items: []OutcomeItem{}}
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE interaction.appointment_outcome = 'BOOKING'),
+			count(*) FILTER (WHERE interaction.appointment_outcome = 'CANCELLATION'),
+			count(*) FILTER (WHERE interaction.appointment_outcome = 'RESCHEDULE')
+		FROM ai_interactions interaction
+		JOIN ai_interaction_attention attention
+			ON attention.interaction_id = interaction.id
+			AND attention.user_subject = $3
+			AND attention.outcome_occurred_at = interaction.appointment_occurred_at
+			AND attention.reviewed_at IS NULL
+		WHERE interaction.practice_id = $1
+			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.status <> 'IN_PROGRESS'
+			AND interaction.appointment_outcome IN (
+				'BOOKING', 'CANCELLATION', 'RESCHEDULE'
+			)
+	`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
+		&page.Counts.Bookings,
+		&page.Counts.Cancellations,
+		&page.Counts.Reschedules,
+	); err != nil {
+		return OutcomePage{}, fmt.Errorf("count AI outcome attention: %w", err)
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT
 			interaction.id::text,
@@ -317,7 +349,6 @@ func (m *Module) QueryOutcomes(
 		return OutcomePage{}, fmt.Errorf("query AI outcome attention: %w", err)
 	}
 	defer rows.Close()
-	page := OutcomePage{Items: []OutcomeItem{}}
 	for rows.Next() {
 		var item OutcomeItem
 		if err := rows.Scan(

@@ -774,9 +774,17 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"items"`
 		NextCursor string `json:"nextCursor"`
+		Counts     struct {
+			Bookings      int `json:"bookings"`
+			Cancellations int `json:"cancellations"`
+			Reschedules   int `json:"reschedules"`
+		} `json:"counts"`
 	}
 	decode(t, firstPageResponse, &firstPage)
-	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" {
+	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" ||
+		firstPage.Counts.Bookings != 1 ||
+		firstPage.Counts.Cancellations != 1 ||
+		firstPage.Counts.Reschedules != 1 {
 		t.Fatalf("first AI outcome page = %#v", firstPage)
 	}
 	secondPageBody, _ := json.Marshal(map[string]any{
@@ -798,9 +806,17 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"items"`
 		NextCursor string `json:"nextCursor"`
+		Counts     struct {
+			Bookings      int `json:"bookings"`
+			Cancellations int `json:"cancellations"`
+			Reschedules   int `json:"reschedules"`
+		} `json:"counts"`
 	}
 	decode(t, secondPageResponse, &secondPage)
 	if len(secondPage.Items) != 1 || secondPage.NextCursor != "" ||
+		secondPage.Counts.Bookings != 1 ||
+		secondPage.Counts.Cancellations != 1 ||
+		secondPage.Counts.Reschedules != 1 ||
 		secondPage.Items[0].ID == firstPage.Items[0].ID ||
 		secondPage.Items[0].ID == firstPage.Items[1].ID {
 		t.Fatalf("second AI outcome page = %#v after %#v", secondPage, firstPage)
@@ -859,9 +875,17 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		Items []struct {
 			ID string `json:"id"`
 		} `json:"items"`
+		Counts struct {
+			Bookings      int `json:"bookings"`
+			Cancellations int `json:"cancellations"`
+			Reschedules   int `json:"reschedules"`
+		} `json:"counts"`
 	}
 	decode(t, adminAfterReview, &remainingAttention)
-	if len(remainingAttention.Items) != 2 {
+	if len(remainingAttention.Items) != 2 ||
+		remainingAttention.Counts.Bookings != 1 ||
+		remainingAttention.Counts.Cancellations != 1 ||
+		remainingAttention.Counts.Reschedules != 0 {
 		t.Fatalf("reviewed AI Interaction attention = %#v", remainingAttention)
 	}
 

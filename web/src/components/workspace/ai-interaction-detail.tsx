@@ -9,6 +9,7 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { portalClient } from "@/lib/api/client"
 import { getAiInteraction } from "@/lib/api/generated/sdk.gen"
@@ -25,16 +26,20 @@ import { getAccessToken } from "@/lib/auth-client"
 
 export function AIInteractionContext({
   interactionID,
-  onLoaded,
+  onReview,
 }: {
   interactionID: string
-  onLoaded?: (interactionID: string) => void
+  onReview?: (interactionID: string) => Promise<boolean>
 }) {
   const [request, setRequest] = useState<{
     interactionID: string
     detail?: AiInteractionDetail
     error?: string
   }>({ interactionID: "" })
+  const [reviewRequest, setReviewRequest] = useState<{
+    interactionID: string
+    state: "saving" | "saved" | "failed"
+  }>({ interactionID: "", state: "saved" })
   const currentRequest =
     request.interactionID === interactionID ? request : undefined
   const detail = currentRequest?.detail
@@ -67,10 +72,27 @@ export function AIInteractionContext({
         return
       }
       setRequest({ interactionID, detail: result.data })
-      onLoaded?.(interactionID)
+      if (!onReview) return
+      setReviewRequest({ interactionID, state: "saving" })
+      const reviewed = await onReview(interactionID).catch(() => false)
+      if (controller.signal.aborted) return
+      setReviewRequest({
+        interactionID,
+        state: reviewed ? "saved" : "failed",
+      })
     })
     return () => controller.abort()
-  }, [interactionID, onLoaded])
+  }, [interactionID, onReview])
+
+  async function retryReview() {
+    if (!onReview) return
+    setReviewRequest({ interactionID, state: "saving" })
+    const reviewed = await onReview(interactionID).catch(() => false)
+    setReviewRequest({
+      interactionID,
+      state: reviewed ? "saved" : "failed",
+    })
+  }
 
   if (loading) {
     return (
@@ -91,9 +113,32 @@ export function AIInteractionContext({
     )
   }
   if (!detail) return null
-
+  const reviewFailed =
+    reviewRequest.interactionID === interactionID &&
+    reviewRequest.state === "failed"
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
+      {reviewFailed && (
+        <div className="px-4 pt-4">
+          <Alert variant="destructive">
+            <AlertTitle>Review status not saved</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-3">
+              <span>
+                This appointment will remain in the sidebar until its review
+                status is saved.
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void retryReview()}
+              >
+                Try again
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 border-b px-4 py-3">
         <Badge
           variant={detail.status === "ESCALATED" ? "outline" : "secondary"}

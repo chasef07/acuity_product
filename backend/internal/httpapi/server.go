@@ -3332,6 +3332,11 @@ func aiOutcomePageResponse(
 	response := api.AIOutcomePage{
 		Items:      make([]api.AIOutcomeItem, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
+		Counts: api.AIOutcomeCounts{
+			Bookings:      page.Counts.Bookings,
+			Cancellations: page.Counts.Cancellations,
+			Reschedules:   page.Counts.Reschedules,
+		},
 	}
 	for _, item := range page.Items {
 		converted, err := aiOutcomeItemResponse(item)
