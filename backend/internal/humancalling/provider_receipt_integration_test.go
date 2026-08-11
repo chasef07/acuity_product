@@ -95,6 +95,66 @@ func TestRejectedHandoffTerminalizesExactProviderLegLifecycleReceipts(t *testing
 	}
 }
 
+func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 11, 12, 30, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		nil,
+		humancalling.Config{
+			CallControlID:     "expected-connection",
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	receive := func(eventID, eventType string) humancalling.WebhookReceipt {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"connection_id":"rollout-connection","call_control_id":"rollout-control","call_leg_id":"rollout-leg","call_session_id":"rollout-session"}}}`,
+			eventType,
+			eventID,
+			now.Format(time.RFC3339Nano),
+		))
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		receipt, err := calling.ReceiveWebhook(
+			context.Background(), raw, timestamp, signature,
+		)
+		if err != nil {
+			t.Fatalf("receive %s: %v", eventType, err)
+		}
+		return receipt
+	}
+
+	receive("rollout-initiated", "call.initiated")
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_receipts
+		SET state = 'FAILED', projection_attempts = 1,
+			projection_error_code = 'HANDOFF_REJECTED',
+			last_attempt_at = $2, projected_at = $2
+		WHERE event_id = $1
+	`, "rollout-initiated", now); err != nil {
+		t.Fatalf("simulate old worker rejection after migration: %v", err)
+	}
+
+	receive("rollout-answered", "call.answered")
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process rollout-overlap answer: processed=%t err=%v", processed, err)
+	}
+	if receipt := receive("rollout-answered", "call.answered"); receipt.State != humancalling.ReceiptFailed {
+		t.Fatalf("rollout-overlap answer state = %s, want FAILED", receipt.State)
+	}
+}
+
 func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 11, 13, 0, 0, 0, time.UTC)

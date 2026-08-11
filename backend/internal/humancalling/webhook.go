@@ -530,6 +530,56 @@ func (m *Module) providerLegWasRejected(
 	`, fact.CallControlID, fact.CallLegID, fact.CallSessionID).Scan(&rejected); err != nil {
 		return false, fmt.Errorf("find rejected provider leg: %w", err)
 	}
+	if rejected {
+		return true, nil
+	}
+	return m.restoreRejectedProviderLeg(ctx, fact)
+}
+
+func (m *Module) restoreRejectedProviderLeg(
+	ctx context.Context,
+	fact ProviderFact,
+) (bool, error) {
+	var rejected bool
+	if err := m.pool.QueryRow(ctx, `
+		WITH historical_rejection AS (
+			SELECT
+				receipt.event_id,
+				COALESCE(
+					receipt.projected_at,
+					receipt.last_attempt_at,
+					receipt.received_at
+				) AS rejected_at
+			FROM human_calling_provider_receipts receipt
+			WHERE receipt.event_type = 'call.initiated'
+				AND receipt.state = 'FAILED'
+				AND receipt.projection_error_code = 'HANDOFF_REJECTED'
+				AND convert_from(receipt.raw_body, 'UTF8')::jsonb
+					#>> '{data,payload,call_control_id}' = $1
+				AND convert_from(receipt.raw_body, 'UTF8')::jsonb
+					#>> '{data,payload,call_leg_id}' = $2
+				AND convert_from(receipt.raw_body, 'UTF8')::jsonb
+					#>> '{data,payload,call_session_id}' = $3
+			ORDER BY receipt.received_at, receipt.event_id
+			LIMIT 1
+		), remembered AS (
+			INSERT INTO human_calling_rejected_provider_legs (
+				call_control_id,
+				call_leg_id,
+				call_session_id,
+				initiated_event_id,
+				rejected_at
+			)
+			SELECT $1, $2, $3, event_id, rejected_at
+			FROM historical_rejection
+			ON CONFLICT DO NOTHING
+			RETURNING 1
+		)
+		SELECT EXISTS (SELECT 1 FROM historical_rejection)
+			OR EXISTS (SELECT 1 FROM remembered)
+	`, fact.CallControlID, fact.CallLegID, fact.CallSessionID).Scan(&rejected); err != nil {
+		return false, fmt.Errorf("restore rejected provider leg: %w", err)
+	}
 	return rejected, nil
 }
 
