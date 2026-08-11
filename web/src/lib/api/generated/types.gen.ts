@@ -533,15 +533,8 @@ export type AiInteractionEvidence = {
 export type AiOutcomeQueryRequest = {
     practiceId: string;
     locationId?: string;
-    date: string;
-};
-
-export type AiOutcomeCounts = {
-    bookings: number;
-    cancellations: number;
-    reschedules: number;
-    partial: number;
-    indeterminate: number;
+    cursor?: string;
+    limit?: number;
 };
 
 export type AiOutcomeItem = {
@@ -562,9 +555,15 @@ export type AiOutcomeItem = {
 };
 
 export type AiOutcomePage = {
-    date: string;
-    counts: AiOutcomeCounts;
     items: Array<AiOutcomeItem>;
+    nextCursor: string;
+    counts: AiOutcomeCounts;
+};
+
+export type AiOutcomeCounts = {
+    bookings: number;
+    cancellations: number;
+    reschedules: number;
 };
 
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
@@ -1968,6 +1967,45 @@ export type GetAiInteractionEvidenceResponses = {
 
 export type GetAiInteractionEvidenceResponse = GetAiInteractionEvidenceResponses[keyof GetAiInteractionEvidenceResponses];
 
+export type ReviewAiInteractionOutcomeData = {
+    body?: never;
+    path: {
+        interactionId: string;
+    };
+    query?: never;
+    url: '/v1/ai/interactions/{interactionId}/review';
+};
+
+export type ReviewAiInteractionOutcomeErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReviewAiInteractionOutcomeError = ReviewAiInteractionOutcomeErrors[keyof ReviewAiInteractionOutcomeErrors];
+
+export type ReviewAiInteractionOutcomeResponses = {
+    /**
+     * AI appointment outcome reviewed.
+     */
+    204: void;
+};
+
+export type ReviewAiInteractionOutcomeResponse = ReviewAiInteractionOutcomeResponses[keyof ReviewAiInteractionOutcomeResponses];
+
 export type QueryAiInteractionOutcomesData = {
     body: AiOutcomeQueryRequest;
     path?: never;
@@ -1998,7 +2036,7 @@ export type QueryAiInteractionOutcomesError = QueryAiInteractionOutcomesErrors[k
 
 export type QueryAiInteractionOutcomesResponses = {
     /**
-     * Authorized date-scoped AI outcome projection.
+     * Authorized per-User AI outcome attention projection.
      */
     200: AiOutcomePage;
 };

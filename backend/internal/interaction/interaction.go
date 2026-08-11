@@ -3,6 +3,7 @@ package interaction
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,11 +133,12 @@ type Interaction struct {
 	UpdatedAt             time.Time
 }
 
-type QueryDailyOutcomesCommand struct {
+type QueryOutcomesCommand struct {
 	Identity   access.Identity
 	PracticeID string
 	LocationID string
-	Date       time.Time
+	Cursor     string
+	Limit      int
 }
 
 type OutcomeItem struct {
@@ -156,18 +158,16 @@ type OutcomeItem struct {
 	NewAppointmentID      string
 }
 
+type OutcomePage struct {
+	Items      []OutcomeItem
+	NextCursor string
+	Counts     OutcomeCounts
+}
+
 type OutcomeCounts struct {
 	Bookings      int
 	Cancellations int
 	Reschedules   int
-	Partial       int
-	Indeterminate int
-}
-
-type DailyOutcomes struct {
-	Date   time.Time
-	Counts OutcomeCounts
-	Items  []OutcomeItem
 }
 
 func (m *Module) Read(
@@ -233,21 +233,29 @@ func (m *Module) read(
 	return stored, nil
 }
 
-func (m *Module) QueryDailyOutcomes(
+func (m *Module) QueryOutcomes(
 	ctx context.Context,
-	command QueryDailyOutcomesCommand,
-) (DailyOutcomes, error) {
+	command QueryOutcomesCommand,
+) (OutcomePage, error) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
-	date := command.Date.UTC()
-	if m.pool == nil || m.access == nil || command.PracticeID == "" ||
-		date.IsZero() || date.Hour() != 0 || date.Minute() != 0 ||
-		date.Second() != 0 || date.Nanosecond() != 0 {
-		return DailyOutcomes{}, ErrInvalidInput
+	if m.pool == nil || m.access == nil || command.PracticeID == "" {
+		return OutcomePage{}, ErrInvalidInput
+	}
+	limit := command.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 1 || limit > 50 {
+		return OutcomePage{}, ErrInvalidInput
+	}
+	cursor, err := decodeOutcomeCursor(command.Cursor)
+	if err != nil {
+		return OutcomePage{}, ErrInvalidInput
 	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return DailyOutcomes{}, fmt.Errorf("begin AI outcome query: %w", err)
+		return OutcomePage{}, fmt.Errorf("begin AI outcome query: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	authorization, err := m.access.LockReadAuthorization(
@@ -258,7 +266,7 @@ func (m *Module) QueryDailyOutcomes(
 		command.LocationID,
 	)
 	if err != nil {
-		return DailyOutcomes{}, ErrDenied
+		return OutcomePage{}, ErrDenied
 	}
 	locationIDs := make([]string, 0, len(authorization.Locations))
 	if command.LocationID != "" {
@@ -269,7 +277,32 @@ func (m *Module) QueryDailyOutcomes(
 		}
 	}
 	if len(locationIDs) == 0 {
-		return DailyOutcomes{}, ErrDenied
+		return OutcomePage{}, ErrDenied
+	}
+	page := OutcomePage{Items: []OutcomeItem{}}
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE interaction.appointment_outcome = 'BOOKING'),
+			count(*) FILTER (WHERE interaction.appointment_outcome = 'CANCELLATION'),
+			count(*) FILTER (WHERE interaction.appointment_outcome = 'RESCHEDULE')
+		FROM ai_interactions interaction
+		JOIN ai_interaction_attention attention
+			ON attention.interaction_id = interaction.id
+			AND attention.user_subject = $3
+			AND attention.outcome_occurred_at = interaction.appointment_occurred_at
+			AND attention.reviewed_at IS NULL
+		WHERE interaction.practice_id = $1
+			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.status <> 'IN_PROGRESS'
+			AND interaction.appointment_outcome IN (
+				'BOOKING', 'CANCELLATION', 'RESCHEDULE'
+			)
+	`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
+		&page.Counts.Bookings,
+		&page.Counts.Cancellations,
+		&page.Counts.Reschedules,
+	); err != nil {
+		return OutcomePage{}, fmt.Errorf("count AI outcome attention: %w", err)
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -288,21 +321,34 @@ func (m *Module) QueryDailyOutcomes(
 			COALESCE(interaction.old_appointment_id, ''),
 			COALESCE(interaction.new_appointment_id, '')
 		FROM ai_interactions interaction
+		JOIN ai_interaction_attention attention
+			ON attention.interaction_id = interaction.id
+			AND attention.user_subject = $3
+			AND attention.outcome_occurred_at = interaction.appointment_occurred_at
+			AND attention.reviewed_at IS NULL
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
 			AND location.id = interaction.location_id
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id::text = ANY($2::text[])
-			AND interaction.started_at >= $3
-			AND interaction.started_at < $4
 			AND interaction.status <> 'IN_PROGRESS'
-		ORDER BY interaction.started_at, interaction.id
-	`, command.PracticeID, locationIDs, date, date.AddDate(0, 0, 1))
+			AND interaction.appointment_outcome IN (
+				'BOOKING', 'CANCELLATION', 'RESCHEDULE'
+			)
+			AND (
+				NOT $4::boolean
+				OR (interaction.appointment_occurred_at, interaction.id) <
+					($5::timestamptz, $6::uuid)
+			)
+		ORDER BY interaction.appointment_occurred_at DESC, interaction.id DESC
+		LIMIT $7
+	`, command.PracticeID, locationIDs, command.Identity.Subject,
+		cursor.Present, nullableOutcomeCursorTime(cursor),
+		nullableOutcomeCursorID(cursor), limit+1)
 	if err != nil {
-		return DailyOutcomes{}, fmt.Errorf("query daily AI outcomes: %w", err)
+		return OutcomePage{}, fmt.Errorf("query AI outcome attention: %w", err)
 	}
 	defer rows.Close()
-	page := DailyOutcomes{Date: date, Items: []OutcomeItem{}}
 	for rows.Next() {
 		var item OutcomeItem
 		if err := rows.Scan(
@@ -321,34 +367,159 @@ func (m *Module) QueryDailyOutcomes(
 			&item.OldAppointmentID,
 			&item.NewAppointmentID,
 		); err != nil {
-			return DailyOutcomes{}, fmt.Errorf("scan daily AI outcome: %w", err)
+			return OutcomePage{}, fmt.Errorf("scan AI outcome attention: %w", err)
 		}
-		countOutcome(&page.Counts, item.AppointmentOutcome)
 		page.Items = append(page.Items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return DailyOutcomes{}, fmt.Errorf("iterate daily AI outcomes: %w", err)
+		return OutcomePage{}, fmt.Errorf("iterate AI outcome attention: %w", err)
 	}
 	rows.Close()
-	if err := tx.Commit(ctx); err != nil {
-		return DailyOutcomes{}, fmt.Errorf("commit daily AI outcome query: %w", err)
+	nextCursor := ""
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		nextCursor, err = encodeOutcomeCursor(page.Items[len(page.Items)-1])
+		if err != nil {
+			return OutcomePage{}, err
+		}
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return OutcomePage{}, fmt.Errorf("commit AI outcome attention query: %w", err)
+	}
+	page.NextCursor = nextCursor
 	return page, nil
 }
 
-func countOutcome(counts *OutcomeCounts, outcome AppointmentOutcome) {
-	switch outcome {
-	case OutcomeBooking:
-		counts.Bookings++
-	case OutcomeCancellation:
-		counts.Cancellations++
-	case OutcomeReschedule:
-		counts.Reschedules++
-	case OutcomePartial:
-		counts.Partial++
-	default:
-		counts.Indeterminate++
+type outcomeCursor struct {
+	Present    bool      `json:"-"`
+	OccurredAt time.Time `json:"occurredAt"`
+	ID         string    `json:"id"`
+}
+
+func encodeOutcomeCursor(item OutcomeItem) (string, error) {
+	if item.AppointmentOccurredAt == nil || uuid.Validate(item.ID) != nil {
+		return "", fmt.Errorf("encode AI outcome cursor: invalid outcome")
 	}
+	encoded, err := json.Marshal(outcomeCursor{
+		OccurredAt: *item.AppointmentOccurredAt,
+		ID:         item.ID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode AI outcome cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+func decodeOutcomeCursor(encoded string) (outcomeCursor, error) {
+	if encoded == "" {
+		return outcomeCursor{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return outcomeCursor{}, err
+	}
+	var cursor outcomeCursor
+	if err := json.Unmarshal(raw, &cursor); err != nil ||
+		cursor.OccurredAt.IsZero() || uuid.Validate(cursor.ID) != nil {
+		return outcomeCursor{}, ErrInvalidInput
+	}
+	cursor.Present = true
+	return cursor, nil
+}
+
+func nullableOutcomeCursorTime(cursor outcomeCursor) any {
+	if !cursor.Present {
+		return nil
+	}
+	return cursor.OccurredAt
+}
+
+func nullableOutcomeCursorID(cursor outcomeCursor) any {
+	if !cursor.Present {
+		return nil
+	}
+	return cursor.ID
+}
+
+func (m *Module) ReviewOutcome(
+	ctx context.Context,
+	identity access.Identity,
+	interactionID string,
+) error {
+	interactionID = strings.TrimSpace(interactionID)
+	if m.pool == nil || m.access == nil {
+		return ErrInvalidInput
+	}
+	if _, err := uuid.Parse(interactionID); err != nil {
+		return ErrInvalidInput
+	}
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin AI outcome review: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	stored, err := scanInteraction(tx.QueryRow(ctx, interactionSelect+`
+		WHERE interaction.id = $1
+		FOR UPDATE
+	`, interactionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrDenied
+	}
+	if err != nil {
+		return fmt.Errorf("lock AI Interaction review: %w", err)
+	}
+	authorization, err := m.access.LockMutationAuthorization(
+		ctx,
+		tx,
+		identity,
+		stored.PracticeID,
+		stored.LocationID,
+	)
+	if err != nil {
+		return ErrDenied
+	}
+	if stored.AppointmentOccurredAt == nil {
+		return ErrDenied
+	}
+	reviewedAt := m.now()
+	tag, err := tx.Exec(ctx, `
+		UPDATE ai_interaction_attention
+		SET reviewed_at = $4
+		WHERE interaction_id = $1
+			AND user_subject = $2
+			AND outcome_occurred_at = $3
+			AND reviewed_at IS NULL
+	`, stored.ID, identity.Subject, stored.AppointmentOccurredAt, reviewedAt)
+	if err != nil {
+		return fmt.Errorf("review AI Interaction outcome: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		if err := m.access.AuditOperatorMutation(
+			ctx,
+			tx,
+			authorization,
+			access.OperatorMutationAudit{
+				Action:          "ai_interaction.review",
+				ResourceType:    "ai_interaction",
+				ResourceID:      stored.ID,
+				ResourceVersion: 1,
+				OccurredAt:      reviewedAt,
+			},
+		); err != nil {
+			return err
+		}
+		if _, err := m.access.RecordWorkspaceChange(
+			ctx,
+			tx,
+			stored.PracticeID,
+		); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit AI outcome review: %w", err)
+	}
+	return nil
 }
 
 type Module struct {

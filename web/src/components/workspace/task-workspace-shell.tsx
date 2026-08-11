@@ -54,9 +54,11 @@ import {
   queryMessageThreads,
   queryTasks,
   readTask,
+  reviewAiInteractionOutcome,
 } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
+  AiOutcomeCounts,
   AiOutcomeItem,
   CallingCall,
   CallingDispositionResult,
@@ -67,6 +69,11 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
+import {
+  appendOutcomePage,
+  decrementOutcomeCount,
+  mergeOutcomePages,
+} from "@/lib/ai-outcome-attention"
 import { normalizeUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import {
@@ -131,6 +138,10 @@ export function TaskWorkspaceShell() {
   const [messageNextCursor, setMessageNextCursor] = useState("")
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [aiOutcomes, setAIOutcomes] = useState<AiOutcomeItem[]>([])
+  const [aiOutcomeCounts, setAIOutcomeCounts] = useState<AiOutcomeCounts>(() =>
+    emptyAIOutcomeCounts(),
+  )
+  const [aiOutcomeNextCursor, setAIOutcomeNextCursor] = useState("")
   const [aiOutcomesLoading, setAIOutcomesLoading] = useState(false)
   const [aiOutcomesError, setAIOutcomesError] = useState("")
   const [selectedAIInteractionID, setSelectedAIInteractionID] = useState("")
@@ -150,6 +161,7 @@ export function TaskWorkspaceShell() {
   const workspaceRef = useRef<WorkspaceSnapshot | undefined>(undefined)
   const tasksRef = useRef<Task[]>([])
   const messageThreadsRef = useRef<MessageThreadSummary[]>([])
+  const aiOutcomesRef = useRef<AiOutcomeItem[]>([])
   const hasLoadedTasksRef = useRef(false)
   const hasLoadedThreadsRef = useRef(false)
   const taskQueryGenerationRef = useRef(0)
@@ -296,7 +308,7 @@ export function TaskWorkspaceShell() {
     },
     [locationScopeID, practiceID],
   )
-  const loadAIOutcomes = useCallback(async () => {
+  const loadAIOutcomes = useCallback(async (cursor = "", append = false) => {
     if (!practiceID) return
     const requestGeneration = ++aiOutcomeQueryGenerationRef.current
     setAIOutcomesLoading(true)
@@ -312,7 +324,8 @@ export function TaskWorkspaceShell() {
       body: {
         practiceId: practiceID,
         ...(locationScopeID ? { locationId: locationScopeID } : {}),
-        date: currentUTCDate(),
+        ...(cursor ? { cursor } : {}),
+        limit: 50,
       },
     }).catch(() => undefined)
     if (requestGeneration !== aiOutcomeQueryGenerationRef.current) return
@@ -322,7 +335,10 @@ export function TaskWorkspaceShell() {
         result?.response?.status === 401 ||
         result?.response?.status === 403
       ) {
+        aiOutcomesRef.current = []
         setAIOutcomes([])
+        setAIOutcomeCounts(emptyAIOutcomeCounts())
+        setAIOutcomeNextCursor("")
         setSelectedAIInteractionID("")
         setLoadState("unauthorized")
         return
@@ -330,8 +346,43 @@ export function TaskWorkspaceShell() {
       setAIOutcomesError("AI appointment updates are unavailable.")
       return
     }
-    setAIOutcomes(result.data.items)
+    const loaded = aiOutcomesRef.current
+    const refreshing = !append && loaded.length > 0
+    const next = append
+      ? appendOutcomePage(loaded, result.data.items)
+      : refreshing
+        ? mergeOutcomePages(loaded, result.data.items)
+        : result.data.items
+    aiOutcomesRef.current = next
+    setAIOutcomes(next)
+    setAIOutcomeCounts(result.data.counts)
+    if (!refreshing || append) {
+      setAIOutcomeNextCursor(result.data.nextCursor)
+    }
   }, [locationScopeID, practiceID])
+  const reviewAIOutcome = useCallback(async (interactionID: string) => {
+    const token = await getAccessToken()
+    if (!token) return false
+    const result = await reviewAiInteractionOutcome({
+      client: portalClient(token),
+      path: { interactionId: interactionID },
+    }).catch(() => undefined)
+    if (!result?.response?.ok) return false
+    const reviewed = aiOutcomesRef.current.find(
+      (outcome) => outcome.id === interactionID,
+    )
+    const next = aiOutcomesRef.current.filter(
+      (outcome) => outcome.id !== interactionID,
+    )
+    aiOutcomesRef.current = next
+    setAIOutcomes(next)
+    if (reviewed) {
+      setAIOutcomeCounts((counts) =>
+        decrementOutcomeCount(counts, reviewed.appointmentOutcome),
+      )
+    }
+    return true
+  }, [])
   const reconcileWorkspace = useCallback(
     async ({
       scope,
@@ -661,10 +712,13 @@ export function TaskWorkspaceShell() {
     messageQueryKeyRef.current = ""
     tasksRef.current = []
     messageThreadsRef.current = []
+    aiOutcomesRef.current = []
     setTasks([])
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
+    setAIOutcomeCounts(emptyAIOutcomeCounts())
+    setAIOutcomeNextCursor("")
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
@@ -717,10 +771,13 @@ export function TaskWorkspaceShell() {
     messageQueryKeyRef.current = ""
     tasksRef.current = []
     messageThreadsRef.current = []
+    aiOutcomesRef.current = []
     setTasks([])
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
+    setAIOutcomeCounts(emptyAIOutcomeCounts())
+    setAIOutcomeNextCursor("")
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
@@ -1072,6 +1129,7 @@ export function TaskWorkspaceShell() {
           taskCounts={taskCounts}
           messages={messageThreads}
           aiOutcomes={aiOutcomes}
+          outcomeCounts={aiOutcomeCounts}
           recent={recentInboxes}
           selectedTaskID={selectedTask?.id ?? ""}
           selectedAIInteractionID={selectedAIInteractionID}
@@ -1082,6 +1140,7 @@ export function TaskWorkspaceShell() {
           messageLoading={messagesLoading}
           outcomesLoading={aiOutcomesLoading}
           outcomesError={aiOutcomesError}
+          outcomeNextCursor={aiOutcomeNextCursor}
           nextCursor={nextCursor}
           messageNextCursor={messageNextCursor}
           connection={connection}
@@ -1101,6 +1160,9 @@ export function TaskWorkspaceShell() {
           onLoadMore={() => void loadTasks(nextCursor, true)}
           onMessageLoadMore={() =>
             void loadMessageThreads(messageNextCursor, true)
+          }
+          onOutcomeLoadMore={() =>
+            void loadAIOutcomes(aiOutcomeNextCursor, true)
           }
         />
         <SidebarInset
@@ -1174,6 +1236,7 @@ export function TaskWorkspaceShell() {
                   {contextView === "appointment" ? (
                     <AIInteractionContext
                       interactionID={selectedAIInteractionID}
+                      onReview={reviewAIOutcome}
                     />
                   ) : (
                     <InteractionWorkspace
@@ -1218,10 +1281,6 @@ export function TaskWorkspaceShell() {
   )
 }
 
-function currentUTCDate() {
-  return new Date().toISOString().slice(0, 10)
-}
-
 function emptyTaskFolderCounts(): TaskFolderCounts {
   return {
     tasks: 0,
@@ -1238,6 +1297,14 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
       referrals: 0,
       other: 0,
     },
+  }
+}
+
+function emptyAIOutcomeCounts(): AiOutcomeCounts {
+  return {
+    bookings: 0,
+    cancellations: 0,
+    reschedules: 0,
   }
 }
 

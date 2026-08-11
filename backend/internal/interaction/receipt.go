@@ -352,6 +352,19 @@ func (m *Module) projectReceipt(
 	if err := save(ctx, tx, current, found); err != nil {
 		return Interaction{}, "", err
 	}
+	attentionSeeded, err := seedOutcomeAttention(ctx, tx, current, projectedAt)
+	if err != nil {
+		return Interaction{}, "", err
+	}
+	if attentionSeeded {
+		if _, err := m.access.RecordWorkspaceChange(
+			ctx,
+			tx,
+			current.PracticeID,
+		); err != nil {
+			return Interaction{}, "", err
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE ai_interaction_receipts
 		SET
@@ -367,6 +380,52 @@ func (m *Module) projectReceipt(
 		return Interaction{}, "", fmt.Errorf("commit AI Interaction projection: %w", err)
 	}
 	return current, status, nil
+}
+
+func seedOutcomeAttention(
+	ctx context.Context,
+	tx pgx.Tx,
+	interaction Interaction,
+	createdAt time.Time,
+) (bool, error) {
+	if interaction.AppointmentOccurredAt == nil ||
+		(interaction.AppointmentOutcome != OutcomeBooking &&
+			interaction.AppointmentOutcome != OutcomeCancellation &&
+			interaction.AppointmentOutcome != OutcomeReschedule) {
+		return false, nil
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO ai_interaction_attention (
+			interaction_id,
+			user_subject,
+			outcome_occurred_at,
+			created_at
+		)
+		SELECT
+			$1,
+			operational_scope.user_subject,
+			$2,
+			$3
+		FROM access_operational_scopes operational_scope
+		WHERE operational_scope.practice_id = $4
+			AND (
+				operational_scope.location_scope = 'ALL'
+				OR EXISTS (
+					SELECT 1
+					FROM access_membership_locations location_grant
+					WHERE location_grant.membership_id = operational_scope.membership_id
+						AND location_grant.practice_id = operational_scope.practice_id
+						AND location_grant.location_id = $5
+				)
+			)
+		ON CONFLICT (interaction_id, user_subject, outcome_occurred_at)
+		DO NOTHING
+	`, interaction.ID, interaction.AppointmentOccurredAt, createdAt,
+		interaction.PracticeID, interaction.LocationID)
+	if err != nil {
+		return false, fmt.Errorf("seed AI Interaction attention: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (m *Module) quarantineReceipt(

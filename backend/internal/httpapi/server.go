@@ -642,13 +642,14 @@ func (server *Server) QueryAIInteractionOutcomes(
 	}
 	ctx, cancel := server.databaseContext(r)
 	defer cancel()
-	page, err := server.interactions.QueryDailyOutcomes(
+	page, err := server.interactions.QueryOutcomes(
 		ctx,
-		interaction.QueryDailyOutcomesCommand{
+		interaction.QueryOutcomesCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
 			LocationID: uuidString(body.LocationId),
-			Date:       body.Date.Time,
+			Cursor:     stringValue(body.Cursor),
+			Limit:      intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -661,6 +662,31 @@ func (server *Server) QueryAIInteractionOutcomes(
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) ReviewAIInteractionOutcome(
+	w http.ResponseWriter,
+	r *http.Request,
+	interactionID openapi_types.UUID,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	if err := server.interactions.ReviewOutcome(
+		ctx,
+		identity,
+		interactionID.String(),
+	); err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (server *Server) QueryOperatorAIAnalytics(
@@ -3301,18 +3327,16 @@ func aiAppointmentFactsResponse(
 }
 
 func aiOutcomePageResponse(
-	page interaction.DailyOutcomes,
+	page interaction.OutcomePage,
 ) (api.AIOutcomePage, error) {
 	response := api.AIOutcomePage{
-		Date: openapi_types.Date{Time: page.Date},
+		Items:      make([]api.AIOutcomeItem, 0, len(page.Items)),
+		NextCursor: page.NextCursor,
 		Counts: api.AIOutcomeCounts{
 			Bookings:      page.Counts.Bookings,
 			Cancellations: page.Counts.Cancellations,
 			Reschedules:   page.Counts.Reschedules,
-			Partial:       page.Counts.Partial,
-			Indeterminate: page.Counts.Indeterminate,
 		},
-		Items: make([]api.AIOutcomeItem, 0, len(page.Items)),
 	}
 	for _, item := range page.Items {
 		converted, err := aiOutcomeItemResponse(item)

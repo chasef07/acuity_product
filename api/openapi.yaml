@@ -823,10 +823,32 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/{interactionId}/review:
+    post:
+      operationId: reviewAIInteractionOutcome
+      summary: Clear the real User's attention marker for one AI appointment outcome.
+      parameters:
+        - name: interactionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: AI appointment outcome reviewed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/ai/interactions/outcomes/query:
     post:
       operationId: queryAIInteractionOutcomes
-      summary: Read authorized AI appointment outcomes for one UTC interaction date.
+      summary: Read the real User's unreviewed AI appointment outcomes.
       requestBody:
         required: true
         content:
@@ -835,7 +857,7 @@ paths:
               $ref: "#/components/schemas/AIOutcomeQueryRequest"
       responses:
         "200":
-          description: Authorized date-scoped AI outcome projection.
+          description: Authorized per-User AI outcome attention projection.
           content:
             application/json:
               schema:
@@ -2895,7 +2917,7 @@ components:
     AIOutcomeQueryRequest:
       type: object
       additionalProperties: false
-      required: [practiceId, date]
+      required: [practiceId]
       properties:
         practiceId:
           type: string
@@ -2903,29 +2925,12 @@ components:
         locationId:
           type: string
           format: uuid
-        date:
+        cursor:
           type: string
-          format: date
-    AIOutcomeCounts:
-      type: object
-      additionalProperties: false
-      required: [bookings, cancellations, reschedules, partial, indeterminate]
-      properties:
-        bookings:
+        limit:
           type: integer
-          minimum: 0
-        cancellations:
-          type: integer
-          minimum: 0
-        reschedules:
-          type: integer
-          minimum: 0
-        partial:
-          type: integer
-          minimum: 0
-        indeterminate:
-          type: integer
-          minimum: 0
+          minimum: 1
+          maximum: 50
     AIOutcomeItem:
       type: object
       additionalProperties: false
@@ -2975,17 +2980,30 @@ components:
     AIOutcomePage:
       type: object
       additionalProperties: false
-      required: [date, counts, items]
+      required: [items, nextCursor, counts]
       properties:
-        date:
-          type: string
-          format: date
-        counts:
-          $ref: "#/components/schemas/AIOutcomeCounts"
         items:
           type: array
           items:
             $ref: "#/components/schemas/AIOutcomeItem"
+        nextCursor:
+          type: string
+        counts:
+          $ref: "#/components/schemas/AIOutcomeCounts"
+    AIOutcomeCounts:
+      type: object
+      additionalProperties: false
+      required: [bookings, cancellations, reschedules]
+      properties:
+        bookings:
+          type: integer
+          minimum: 0
+        cancellations:
+          type: integer
+          minimum: 0
+        reschedules:
+          type: integer
+          minimum: 0
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]
