@@ -230,3 +230,181 @@ func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 		t.Fatalf("valid quick hangup receipt state = %s, want APPLIED", receipt.State)
 	}
 }
+
+func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 14, 0, 0, 0, time.UTC)
+	prefix := "delayed-hangup-after-local-ending"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+	}}}
+	pool, setupCalling, caller, staff := prepareInboundFanout(
+		t, now, prefix, provider, 1,
+	)
+	processAllCommands(t, setupCalling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID:       prefix + "-staff-initiated",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now.Add(2 * time.Second),
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+		CallSessionID: prefix + "-staff-session",
+		ClientState:   staffState,
+	}
+	if err := setupCalling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project Staff initiation: %v", err)
+	}
+	staffFact.EventID = prefix + "-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(3 * time.Second)
+	if err := setupCalling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project Staff answer: %v", err)
+	}
+	processAllCommands(t, setupCalling)
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       prefix + "-staff-bridged",
+		Type:          humancalling.FactCallBridged,
+		OccurredAt:    now.Add(4 * time.Second),
+		CallControlID: staffFact.CallControlID,
+		CallLegID:     staffFact.CallLegID,
+		CallSessionID: staffFact.CallSessionID,
+		ClientState:   bridgeState,
+	}); err != nil {
+		t.Fatalf("project Staff Bridge: %v", err)
+	}
+	caller.EventID = prefix + "-caller-bridged"
+	caller.Type = humancalling.FactCallBridged
+	caller.OccurredAt = now.Add(4 * time.Second)
+	if err := setupCalling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("project caller Bridge: %v", err)
+	}
+
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs
+		WHERE provider_call_leg_id = $1
+	`, staffFact.CallLegID).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentTime := now.Add(6 * time.Second)
+	accessModule := access.New(pool, func() time.Time { return currentTime })
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		provider,
+		humancalling.Config{
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return currentTime },
+	)
+	sessionID := prefix + "-browser-1"
+	if _, err := calling.RequestHangup(
+		context.Background(), staff[0], sessionID, callID,
+	); err != nil {
+		t.Fatalf("begin local ending: %v", err)
+	}
+	processAllCommands(t, calling)
+	localEndingAt := currentTime
+	providerOccurredAt := now.Add(5 * time.Second)
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.hangup","id":"%s","occurred_at":"%s","payload":{"connection_id":"staff-call-control-connection","call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","hangup_cause":"normal_clearing","hangup_source":"staff"}}}`,
+		prefix+"-delayed-staff-hangup",
+		providerOccurredAt.Format(time.RFC3339Nano),
+		staffFact.CallControlID,
+		staffFact.CallLegID,
+		staffFact.CallSessionID,
+	))
+	timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), raw, timestamp, signature,
+	); err != nil {
+		t.Fatalf("receive delayed provider Hangup: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process delayed provider Hangup: processed=%t err=%v", processed, err)
+	}
+
+	var receiptState, projectionError, legState, terminalOutcome string
+	var projectionAttempts int
+	var receiptOccurredAt, answeredAt, endingAt time.Time
+	var endedAt, quarantinedAt, timelineOccurredAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, ''),
+			occurred_at, quarantined_at
+		FROM human_calling_provider_receipts WHERE event_id = $1
+	`, prefix+"-delayed-staff-hangup").Scan(
+		&receiptState,
+		&projectionAttempts,
+		&projectionError,
+		&receiptOccurredAt,
+		&quarantinedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, leg.answered_at, leg.ending_at, leg.ended_at,
+			COALESCE(call.terminal_outcome, '')
+		FROM human_calling_call_legs leg
+		JOIN human_calling_calls call ON call.id = leg.call_id
+		WHERE leg.provider_call_leg_id = $1
+	`, staffFact.CallLegID).Scan(
+		&legState,
+		&answeredAt,
+		&endingAt,
+		&endedAt,
+		&terminalOutcome,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT max(occurred_at) FROM human_calling_timeline
+		WHERE provider_event_id = $1 AND kind = 'call_leg.ended'
+	`, prefix+"-delayed-staff-hangup").Scan(&timelineOccurredAt); err != nil {
+		t.Fatalf("read delayed Hangup timeline evidence: %v", err)
+	}
+	if receiptState != string(humancalling.ReceiptApplied) ||
+		projectionAttempts != 1 || projectionError != "" || quarantinedAt != nil {
+		t.Errorf("delayed Hangup receipt = state:%s attempts:%d error:%s quarantine:%v",
+			receiptState, projectionAttempts, projectionError, quarantinedAt)
+	}
+	if legState != "ENDED" || terminalOutcome != "ENDED" {
+		t.Errorf("delayed Hangup outcome = leg:%s Call:%s", legState, terminalOutcome)
+	}
+	if endedAt == nil || answeredAt.After(endingAt) ||
+		providerOccurredAt.After(endingAt) || localEndingAt.After(endingAt) ||
+		(endedAt != nil && endingAt.After(*endedAt)) {
+		t.Errorf("non-monotonic CallLeg times = answered:%s provider:%s local:%s ending:%s ended:%s",
+			answeredAt, providerOccurredAt, localEndingAt, endingAt, endedAt)
+	}
+	if !receiptOccurredAt.Equal(providerOccurredAt) || timelineOccurredAt == nil ||
+		(timelineOccurredAt != nil && !timelineOccurredAt.Equal(providerOccurredAt)) {
+		t.Errorf("provider time was not preserved = receipt:%s timeline:%s want:%s",
+			receiptOccurredAt, timelineOccurredAt, providerOccurredAt)
+	}
+	if _, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity: staff[0], SessionID: sessionID, Registered: true,
+		MicrophoneReady: true, AudioReady: true, SessionHealthy: true,
+		Available: true,
+	}); err != nil {
+		t.Fatalf("enable Staff availability after delayed Hangup: %v", err)
+	}
+	state, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || !state.Softphone.Available || state.Softphone.ActiveCallID != "" {
+		t.Errorf("Staff availability after delayed Hangup = %#v err=%v",
+			state.Softphone, err)
+	}
+}
