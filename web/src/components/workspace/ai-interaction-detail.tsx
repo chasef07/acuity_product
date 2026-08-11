@@ -269,7 +269,8 @@ function primaryAppointmentLabel(
   if (outcome === "CANCELLATION") return "Cancelled appointment"
   if (outcome === "RESCHEDULE") return "New appointment"
   if (outcome === "BOOKING") return "Appointment"
-  return "Appointment review"
+  if (outcome === "PARTIAL") return "Appointment review"
+  return "No appointment actions"
 }
 
 function hasAppointmentFacts(facts: AiAppointmentFacts) {

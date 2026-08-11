@@ -36,8 +36,8 @@ const appointmentPresentations: Record<
     title: "Appointment change needs review",
   },
   INDETERMINATE: {
-    label: "No verified appointment outcome",
-    title: "AI call needs review",
+    label: "No appointment actions",
+    title: "AI call",
   },
 }
 

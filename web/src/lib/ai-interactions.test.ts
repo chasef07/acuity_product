@@ -16,11 +16,11 @@ test("routes verified outcomes to their operator folders", () => {
   assert.equal(appointmentFolder("INDETERMINATE"), undefined)
 })
 
-test("keeps ambiguous outcomes distinguishable for operator review", () => {
+test("keeps ambiguous outcomes distinguishable without implying staff work", () => {
   assert.equal(appointmentOutcomeLabel("PARTIAL"), "Partially completed")
   assert.equal(
     appointmentOutcomeLabel("INDETERMINATE"),
-    "No verified appointment outcome",
+    "No appointment actions",
   )
 })
 
@@ -40,4 +40,5 @@ test("uses receipt-backed appointment language", () => {
     appointmentOutcomeTitle("PARTIAL"),
     "Appointment change needs review",
   )
+  assert.equal(appointmentOutcomeTitle("INDETERMINATE"), "AI call")
 })
