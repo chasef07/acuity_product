@@ -39,7 +39,10 @@ func (m *Module) AuditProviderReceipts(ctx context.Context) (ProviderReceiptAudi
 		return ProviderReceiptAudit{}, ErrInvalidInput
 	}
 	checkedAt := m.now().UTC().Truncate(time.Microsecond)
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
 		return ProviderReceiptAudit{}, fmt.Errorf("begin provider receipt audit: %w", err)
 	}
