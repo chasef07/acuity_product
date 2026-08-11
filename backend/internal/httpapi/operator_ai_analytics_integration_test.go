@@ -118,7 +118,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 			"turnMetrics":    []map[string]any{{"itemId": "agent", "metrics": map[string]any{"e2eLatency": 2.0}}},
 			"toolExecutions": []map[string]any{{"callId": "lookup-1", "createdAt": now.Add(-58 * time.Minute), "outputClass": "patient_verified", "status": "success", "toolName": "resolve_patient"}},
 		},
-		AppointmentOutcome: "INDETERMINATE",
+		AppointmentOutcome: "BOOKING",
 	})
 	insertOperatorAIInteraction(t, pool, operatorAIInteractionFixture{
 		ID:                 "10000000-0000-0000-0000-000000000003",
@@ -208,9 +208,15 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	decode(t, firstPageResponse, &firstPage)
 	if firstPage.Summary.TotalCalls != 2 || firstPage.Summary.TransferCount != 1 ||
 		math.Abs(firstPage.Summary.TransferRate-0.5) > 0.0001 ||
+		firstPage.Summary.BookingCount != 1 || firstPage.Summary.CancellationCount != 0 ||
+		firstPage.Summary.RescheduleCount != 0 ||
 		firstPage.Summary.ToolCallCount != 3 || firstPage.Summary.ToolErrorCount != 1 ||
 		math.Abs(firstPage.Summary.ToolFailureRate-(1.0/3.0)) > 0.0001 ||
-		firstPage.Summary.P50TotalLatencyMs != 1200 {
+		firstPage.Summary.P50SttMs != 200 || firstPage.Summary.P50TtftMs != 400 ||
+		firstPage.Summary.P50TtsTtfbMs != 100 ||
+		firstPage.Summary.P50TotalLatencyMs != 1200 ||
+		firstPage.Summary.P90TotalLatencyMs != 2000 ||
+		firstPage.Summary.P99TotalLatencyMs != 2000 {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
 	if len(firstPage.Calls) != 1 || firstPage.Calls[0].ID != escalatedID ||
@@ -330,7 +336,21 @@ type operatorAIInteractionFixture struct {
 type operatorAIAnalyticsTestPage struct {
 	Summary struct {
 		TotalCalls        int     `json:"totalCalls"`
+		BookingCount      int     `json:"bookingCount"`
+		CancellationCount int     `json:"cancellationCount"`
+		RescheduleCount   int     `json:"rescheduleCount"`
+		P50SttMs          int     `json:"p50SttMs"`
+		P90SttMs          int     `json:"p90SttMs"`
+		P99SttMs          int     `json:"p99SttMs"`
+		P50TtftMs         int     `json:"p50TtftMs"`
+		P90TtftMs         int     `json:"p90TtftMs"`
+		P99TtftMs         int     `json:"p99TtftMs"`
+		P50TtsTtfbMs      int     `json:"p50TtsTtfbMs"`
+		P90TtsTtfbMs      int     `json:"p90TtsTtfbMs"`
+		P99TtsTtfbMs      int     `json:"p99TtsTtfbMs"`
 		P50TotalLatencyMs int     `json:"p50TotalLatencyMs"`
+		P90TotalLatencyMs int     `json:"p90TotalLatencyMs"`
+		P99TotalLatencyMs int     `json:"p99TotalLatencyMs"`
 		TransferCount     int     `json:"transferCount"`
 		TransferRate      float64 `json:"transferRate"`
 		ToolCallCount     int     `json:"toolCallCount"`

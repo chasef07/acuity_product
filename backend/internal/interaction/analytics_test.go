@@ -115,3 +115,46 @@ func TestProjectAnalyticsCallDerivesTransferOnlyFromEscalatedStatus(t *testing.T
 		t.Fatal("ESCALATED call was not marked transferred")
 	}
 }
+
+func TestSummarizeAnalyticsProjectionIncludesOutcomesAndPipelineLatency(t *testing.T) {
+	summary := AnalyticsSummary{}
+	projection := analyticsProjection{
+		appointmentOutcome: OutcomeReschedule,
+		call: AnalyticsCall{
+			Transferred:    true,
+			ToolCallCount:  3,
+			ToolErrorCount: 1,
+		},
+		latencySamples: latencyValueSet{
+			stt:     []float64{100, 300},
+			ttft:    []float64{400, 600},
+			ttsTtfb: []float64{200, 400},
+			total:   []float64{1000, 1400},
+		},
+	}
+
+	summarizeAnalyticsProjection(&summary, projection)
+	finalizeAnalyticsSummary(&summary)
+
+	if summary.TotalCalls != 1 || summary.RescheduleCount != 1 ||
+		summary.BookingCount != 0 || summary.CancellationCount != 0 ||
+		summary.TransferCount != 1 || summary.TransferRate != 1 ||
+		summary.ToolCallCount != 3 || summary.ToolErrorCount != 1 ||
+		summary.ToolFailureRate != 1.0/3.0 {
+		t.Fatalf("analytics totals = %#v", summary)
+	}
+	if summary.P50SttMs == nil || *summary.P50SttMs != 200 ||
+		summary.P90SttMs == nil || *summary.P90SttMs != 300 ||
+		summary.P99SttMs == nil || *summary.P99SttMs != 300 ||
+		summary.P50TtftMs == nil || *summary.P50TtftMs != 500 ||
+		summary.P90TtftMs == nil || *summary.P90TtftMs != 600 ||
+		summary.P99TtftMs == nil || *summary.P99TtftMs != 600 ||
+		summary.P50TtsTtfbMs == nil || *summary.P50TtsTtfbMs != 300 ||
+		summary.P90TtsTtfbMs == nil || *summary.P90TtsTtfbMs != 400 ||
+		summary.P99TtsTtfbMs == nil || *summary.P99TtsTtfbMs != 400 ||
+		summary.P50TotalLatencyMs == nil || *summary.P50TotalLatencyMs != 1200 ||
+		summary.P90TotalLatencyMs == nil || *summary.P90TotalLatencyMs != 1400 ||
+		summary.P99TotalLatencyMs == nil || *summary.P99TotalLatencyMs != 1400 {
+		t.Fatalf("analytics pipeline latency = %#v", summary)
+	}
+}

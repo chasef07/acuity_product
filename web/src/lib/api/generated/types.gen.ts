@@ -579,7 +579,21 @@ export type OperatorAiAnalyticsQueryRequest = {
 
 export type OperatorAiAnalyticsSummary = {
     totalCalls: number;
+    bookingCount: number;
+    cancellationCount: number;
+    rescheduleCount: number;
+    p50SttMs?: number;
+    p90SttMs?: number;
+    p99SttMs?: number;
+    p50TtftMs?: number;
+    p90TtftMs?: number;
+    p99TtftMs?: number;
+    p50TtsTtfbMs?: number;
+    p90TtsTtfbMs?: number;
+    p99TtsTtfbMs?: number;
     p50TotalLatencyMs?: number;
+    p90TotalLatencyMs?: number;
+    p99TotalLatencyMs?: number;
     transferCount: number;
     transferRate: number;
     toolCallCount: number;

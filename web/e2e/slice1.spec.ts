@@ -17,7 +17,21 @@ const replacementRealtimePIDFile =
 const operatorAnalyticsFixture = {
   summary: {
     totalCalls: 42,
+    bookingCount: 8,
+    cancellationCount: 3,
+    rescheduleCount: 4,
+    p50SttMs: 185,
+    p90SttMs: 420,
+    p99SttMs: 780,
+    p50TtftMs: 410,
+    p90TtftMs: 900,
+    p99TtftMs: 1600,
+    p50TtsTtfbMs: 265,
+    p90TtsTtfbMs: 540,
+    p99TtsTtfbMs: 900,
     p50TotalLatencyMs: 1240,
+    p90TotalLatencyMs: 2200,
+    p99TotalLatencyMs: 4200,
     transferCount: 5,
     transferRate: 0.119,
     toolCallCount: 31,
@@ -353,9 +367,55 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     })
     await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
     await expect(analyticsRegion.getByText("42", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText("Booked", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText("8", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText("Cancelled", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText("3", { exact: true })).toBeVisible()
+    await expect(
+      analyticsRegion.getByText("Rescheduled", { exact: true }),
+    ).toBeVisible()
+    await expect(analyticsRegion.getByText("4", { exact: true })).toBeVisible()
+    await operatorPage.screenshot({
+      path: testInfo.outputPath("operator-analytics-overview.png"),
+      fullPage: true,
+    })
+    await analyticsRegion.getByRole("tab", { name: "Performance" }).click()
+    const latencyPipeline = analyticsRegion.getByRole("region", {
+      name: "Median response pipeline",
+    })
+    await expect(latencyPipeline.getByText("P50 STT")).toBeVisible()
+    await expect(latencyPipeline.getByText("185 ms", { exact: true })).toBeVisible()
+    await expect(latencyPipeline.getByText("P50 LLM TTFT")).toBeVisible()
+    await expect(latencyPipeline.getByText("410 ms", { exact: true })).toBeVisible()
+    await expect(latencyPipeline.getByText("P50 TTS TTFB")).toBeVisible()
+    await expect(latencyPipeline.getByText("265 ms", { exact: true })).toBeVisible()
     await expect(
       analyticsRegion.getByText("1.24 s", { exact: true }).first(),
     ).toBeVisible()
+    const percentileTable = analyticsRegion.getByRole("table")
+    await expect(
+      percentileTable.getByRole("columnheader", { name: "P50" }),
+    ).toBeVisible()
+    await expect(
+      percentileTable.getByRole("columnheader", { name: "P90" }),
+    ).toBeVisible()
+    await expect(
+      percentileTable.getByRole("columnheader", { name: "P99" }),
+    ).toBeVisible()
+    const e2eRow = percentileTable.getByRole("row", { name: /E2E response/ })
+    await expect(e2eRow).toContainText("1.24 s")
+    await expect(e2eRow).toContainText("2.20 s")
+    await expect(e2eRow).toContainText("4.20 s")
+    await operatorPage.screenshot({
+      path: testInfo.outputPath("operator-analytics-performance.png"),
+      fullPage: true,
+    })
+
+    await analyticsRegion.getByRole("tab", { name: "Tools" }).click()
+    await expect(analyticsRegion.getByText("Total tool calls")).toBeVisible()
+    await expect(analyticsRegion.getByText("31", { exact: true })).toBeVisible()
+
+    await analyticsRegion.getByRole("tab", { name: "Calls" }).click()
     await expect(
       analyticsRegion.getByText("(985) 555-0142").first(),
     ).toBeVisible()
@@ -395,27 +455,38 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     await expect
       .poll(() => analyticsRequests.at(-1)?.locationId)
       .toBe(selectedLocation.id)
+    await analyticsRegion.getByRole("tab", { name: "Calls" }).click()
 
     await operatorPage
       .getByRole("button", { name: /Open analytics for call from/ })
       .first()
       .click()
-    const callDialog = operatorPage.getByRole("dialog", {
+    const callSheet = operatorPage.getByRole("dialog", {
       name: "AI call evidence",
     })
-    await expect(callDialog).toContainText(
+    await expect(callSheet).toContainText(
       "The caller rescheduled an existing eye exam",
     )
-    await expect(callDialog.getByLabel("Caller message")).toContainText(
+    await expect(callSheet.getByLabel("Call conversation")).toBeVisible()
+    await expect(callSheet.getByLabel("Caller message")).toContainText(
       "move my appointment",
     )
-    const toolCall = callDialog
+    const scrollBody = callSheet.getByLabel("Scrollable call evidence")
+    await expect
+      .poll(() =>
+        scrollBody.evaluate(
+          (element) => element.scrollHeight > element.clientHeight,
+        ),
+      )
+      .toBe(true)
+    const toolCall = callSheet
       .locator("details")
       .filter({ hasText: "lookup_appointments" })
       .first()
     await toolCall.locator("summary").click()
+    await expect(toolCall.getByText("Request")).toBeVisible()
     await expect(toolCall.getByText("patient-redacted")).toBeVisible()
-    await expect(callDialog).toContainText("Receipt backed")
+    await expect(callSheet).toContainText("Receipt backed")
     await operatorPage.screenshot({
       path: testInfo.outputPath("operator-analytics-detail.png"),
       fullPage: true,
