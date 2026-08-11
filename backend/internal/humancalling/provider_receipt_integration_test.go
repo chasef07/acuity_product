@@ -155,6 +155,66 @@ func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *te
 	}
 }
 
+func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		nil,
+		humancalling.Config{
+			CallControlID:     "expected-connection",
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"expired-related-fact","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"orphan-control","call_leg_id":"orphan-leg","call_session_id":"orphan-session"}}}`,
+		now.Add(-25*time.Hour).Format(time.RFC3339Nano),
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), raw, timestamp, signature,
+	); err != nil {
+		t.Fatalf("receive unrelated provider receipt: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_receipts
+		SET received_at = $2, projection_attempts = 10,
+			last_attempt_at = $2, next_attempt_at = $3
+		WHERE event_id = $1
+	`, "expired-related-fact", now.Add(-25*time.Hour), now); err != nil {
+		t.Fatalf("age unrelated provider receipt: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process unrelated provider receipt: processed=%t err=%v", processed, err)
+	}
+
+	var state, errorCode string
+	var quarantinedAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, COALESCE(projection_error_code, ''), quarantined_at
+		FROM human_calling_provider_receipts
+		WHERE event_id = $1
+	`, "expired-related-fact").Scan(&state, &errorCode, &quarantinedAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(humancalling.ReceiptQuarantined) ||
+		errorCode != "RELATED_FACT_TIMEOUT" || quarantinedAt == nil {
+		t.Fatalf("expired unrelated receipt = state:%s error:%s quarantine:%v",
+			state, errorCode, quarantinedAt)
+	}
+}
+
 func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 11, 13, 0, 0, 0, time.UTC)
@@ -315,7 +375,8 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 	}
 	processAllCommands(t, calling)
 	localEndingAt := currentTime
-	providerOccurredAt := now.Add(5 * time.Second)
+	providerOccurredAt := now.Add(7 * time.Second)
+	currentTime = now.Add(8 * time.Second)
 	raw := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"call.hangup","id":"%s","occurred_at":"%s","payload":{"connection_id":"staff-call-control-connection","call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","hangup_cause":"normal_clearing","hangup_source":"staff"}}}`,
 		prefix+"-delayed-staff-hangup",
@@ -338,7 +399,7 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 		t.Fatalf("process delayed provider Hangup: processed=%t err=%v", processed, err)
 	}
 
-	var receiptState, projectionError, legState, terminalOutcome string
+	var receiptState, projectionError, legState, terminalOutcome, hangupCommandState string
 	var projectionAttempts int
 	var receiptOccurredAt, answeredAt, endingAt time.Time
 	var endedAt, quarantinedAt, timelineOccurredAt *time.Time
@@ -376,6 +437,16 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 	`, prefix+"-delayed-staff-hangup").Scan(&timelineOccurredAt); err != nil {
 		t.Fatalf("read delayed Hangup timeline evidence: %v", err)
 	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT command.state
+		FROM human_calling_provider_commands command
+		JOIN human_calling_call_legs leg ON leg.id = command.call_leg_id
+		WHERE leg.provider_call_leg_id = $1 AND command.action = 'HANGUP_LEG'
+		ORDER BY command.created_at DESC, command.id DESC
+		LIMIT 1
+	`, staffFact.CallLegID).Scan(&hangupCommandState); err != nil {
+		t.Fatalf("read delayed Hangup command state: %v", err)
+	}
 	if receiptState != string(humancalling.ReceiptApplied) ||
 		projectionAttempts != 1 || projectionError != "" || quarantinedAt != nil {
 		t.Errorf("delayed Hangup receipt = state:%s attempts:%d error:%s quarantine:%v",
@@ -384,10 +455,14 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 	if legState != "ENDED" || terminalOutcome != "ENDED" {
 		t.Errorf("delayed Hangup outcome = leg:%s Call:%s", legState, terminalOutcome)
 	}
+	if hangupCommandState != "RECONCILED" {
+		t.Errorf("delayed Hangup command = %s, want RECONCILED", hangupCommandState)
+	}
 	if endedAt == nil || answeredAt.After(endingAt) ||
-		providerOccurredAt.After(endingAt) || localEndingAt.After(endingAt) ||
+		!localEndingAt.Equal(endingAt) ||
+		(endedAt != nil && providerOccurredAt.After(*endedAt)) ||
 		(endedAt != nil && endingAt.After(*endedAt)) {
-		t.Errorf("non-monotonic CallLeg times = answered:%s provider:%s local:%s ending:%s ended:%s",
+		t.Errorf("CallLeg termination times = answered:%s provider:%s local:%s ending:%s ended:%s",
 			answeredAt, providerOccurredAt, localEndingAt, endingAt, endedAt)
 	}
 	if !receiptOccurredAt.Equal(providerOccurredAt) || timelineOccurredAt == nil ||

@@ -34,7 +34,7 @@ func TestReconcileStaleCallsDoesNotStarveRealtimeCommandsAtProductionCardinality
 			SELECT $1, $2, 'INBOUND', 'STANDALONE',
 				$3::timestamptz - interval '2 hours',
 				$3::timestamptz - interval '2 hours'
-			FROM generate_series(1, 2450)
+			FROM generate_series(1, 2447)
 			RETURNING id
 		), inserted_legs AS (
 			INSERT INTO human_calling_call_legs (
@@ -67,19 +67,46 @@ func TestReconcileStaleCallsDoesNotStarveRealtimeCommandsAtProductionCardinality
 		FROM numbered
 		CROSS JOIN LATERAL generate_series(
 			1,
-			CASE WHEN leg_number <= 662 THEN 3 ELSE 2 END
+			CASE WHEN leg_number <= 668 THEN 3 ELSE 2 END
 		) ordinal
 	`, authorization.Practice.ID, authorization.Locations[0].ID, now); err != nil {
 		t.Fatalf("seed production-sized stale CallLegs: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(), `
+		WITH realtime_calls AS (
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point,
+				created_at, updated_at
+			)
+			SELECT $1, $2, 'INBOUND', 'STANDALONE', $3, $3
+			FROM generate_series(1, 3)
+			RETURNING id
+		), realtime_legs AS (
+			INSERT INTO human_calling_call_legs (
+				call_id, role, sequence, state, provider_connection_id,
+				provider_call_control_id, provider_call_leg_id,
+				provider_call_session_id, created_at, updated_at
+			)
+			SELECT id, 'CALLER', 1, 'RINGING', 'realtime-connection',
+				'realtime-control-' || row_number() OVER (),
+				'realtime-leg-' || row_number() OVER (),
+				'realtime-session-' || row_number() OVER (), $3, $3
+			FROM realtime_calls
+			RETURNING id, call_id
+		), numbered AS (
+			SELECT id, call_id, row_number() OVER () AS command_number
+			FROM realtime_legs
+		)
 		INSERT INTO human_calling_provider_commands (
-			action, target_id, payload, created_at, next_attempt_at
-		) VALUES
-			('ANSWER_CALLER', 'realtime-answer', '{}', $1, $1),
-			('BRIDGE', 'realtime-bridge', '{}', $1 + interval '1 millisecond', $1),
-			('HANGUP_LEG', 'realtime-hangup', '{}', $1 + interval '2 milliseconds', $1)
-	`, now); err != nil {
+			call_id, call_leg_id, action, target_id, payload,
+			created_at, next_attempt_at
+		)
+		SELECT call_id, id,
+			(ARRAY['ANSWER_CALLER', 'BRIDGE', 'HANGUP_LEG'])[command_number],
+			(ARRAY['realtime-answer', 'realtime-bridge', 'realtime-hangup'])[command_number],
+			'{}'::jsonb, $3 + command_number * interval '1 millisecond', $3
+		FROM numbered
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now); err != nil {
 		t.Fatalf("seed realtime provider commands: %v", err)
 	}
 	var callLegs, commands int
@@ -103,13 +130,40 @@ func TestReconcileStaleCallsDoesNotStarveRealtimeCommandsAtProductionCardinality
 			t.Fatalf("analyze %s: %v", relation, err)
 		}
 	}
+	planRows, err := pool.Query(
+		context.Background(),
+		"EXPLAIN (COSTS OFF) "+humancalling.StaleCallLegCandidateQueryForTest,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("explain stale CallLeg reconciliation: %v", err)
+	}
+	var plan strings.Builder
+	for planRows.Next() {
+		var line string
+		if err := planRows.Scan(&line); err != nil {
+			planRows.Close()
+			t.Fatal(err)
+		}
+		plan.WriteString(line)
+		plan.WriteByte('\n')
+	}
+	if err := planRows.Err(); err != nil {
+		planRows.Close()
+		t.Fatal(err)
+	}
+	planRows.Close()
+	if !strings.Contains(plan.String(), "human_calling_stale_leg_commands_idx") ||
+		strings.Contains(plan.String(), "Seq Scan on human_calling_provider_commands pending") {
+		t.Fatalf("stale CallLeg reconciliation lost its indexed lateral lookup:\n%s", plan.String())
+	}
 
 	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
 	if err != nil {
 		t.Fatal(err)
 	}
 	queryStarted := make(chan struct{})
-	config.MaxConns = 1
+	config.MaxConns = 2
 	config.ConnConfig.Tracer = &reconciliationQueryTracer{started: queryStarted}
 	workerPool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -168,6 +222,18 @@ func TestReconcileStaleCallsDoesNotStarveRealtimeCommandsAtProductionCardinality
 	}
 	if sent != 3 {
 		t.Fatalf("realtime commands sent = %d, want 3", sent)
+	}
+	var unbound int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_provider_commands
+		WHERE target_id IN ('realtime-answer', 'realtime-bridge', 'realtime-hangup')
+			AND (call_id IS NULL OR call_leg_id IS NULL)
+	`).Scan(&unbound); err != nil {
+		t.Fatal(err)
+	}
+	if unbound != 0 {
+		t.Fatalf("realtime commands without Call/CallLeg ownership = %d", unbound)
 	}
 }
 

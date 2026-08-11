@@ -29,6 +29,7 @@ const (
 	fastReceiptProjectionAttempts = 10
 	maxFastReceiptRetryDelay      = time.Minute
 	slowRelatedFactRetryDelay     = 15 * time.Minute
+	maxRelatedFactWait            = 24 * time.Hour
 )
 
 type WebhookReceipt struct {
@@ -402,7 +403,11 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	completedAt := m.now()
 	nextAttemptAt := completedAt
 	if state == ReceiptPending {
-		if projectionAttempts >= fastReceiptProjectionAttempts {
+		if errorCode == "WAITING_FOR_RELATED_FACT" &&
+			!receivedAt.Add(maxRelatedFactWait).After(completedAt) {
+			state = ReceiptQuarantined
+			errorCode = "RELATED_FACT_TIMEOUT"
+		} else if projectionAttempts >= fastReceiptProjectionAttempts {
 			switch errorCode {
 			case "WAITING_FOR_RELATED_FACT":
 				errorCode = "WAITING_FOR_RELATED_FACT_SLOW_RETRY"

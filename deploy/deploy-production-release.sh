@@ -54,26 +54,95 @@ if [[ ! "$DEPLOYMENT_ID" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
 fi
 
 database_contract="$script_directory/production-runtime-contract.json"
-required_database_connections="$(
+runtime_contract_values="$(
   awk '
-    match($0, /"requiredDatabaseConnections"[[:space:]]*:[[:space:]]*[0-9]+/) {
-      value = substr($0, RSTART, RLENGTH)
-      sub(/^.*:[[:space:]]*/, "", value)
+    /"requiredDatabaseConnections"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"requiredDatabaseConnections"[[:space:]]*:[[:space:]]*/, "", value)
+      sub(/[^0-9].*$/, "", value)
       required = value
-      matches++
+      required_matches++
     }
+    /"runtimes"[[:space:]]*:[[:space:]]*\[/ { in_runtimes = 1; next }
+    in_runtimes && /^[[:space:]]*\{/ {
+      in_runtime = 1
+      name = minimum = maximum = pool = timeout = ""
+      next
+    }
+    in_runtime && /"name"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", value)
+      sub(/".*$/, "", value)
+      name = value
+    }
+    in_runtime && /"minimumInstances"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"minimumInstances"[[:space:]]*:[[:space:]]*/, "", value)
+      sub(/[^0-9].*$/, "", value)
+      minimum = value
+    }
+    in_runtime && /"maximumInstances"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"maximumInstances"[[:space:]]*:[[:space:]]*/, "", value)
+      sub(/[^0-9].*$/, "", value)
+      maximum = value
+    }
+    in_runtime && /"poolMaximum"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"poolMaximum"[[:space:]]*:[[:space:]]*/, "", value)
+      sub(/[^0-9].*$/, "", value)
+      pool = value
+    }
+    in_runtime && /"acquisitionTimeoutMilliseconds"[[:space:]]*:/ {
+      value = $0
+      sub(/^.*"acquisitionTimeoutMilliseconds"[[:space:]]*:[[:space:]]*/, "", value)
+      sub(/[^0-9].*$/, "", value)
+      timeout = value
+    }
+    in_runtime && /^[[:space:]]*\}[,]?[[:space:]]*$/ {
+      if (name == "worker") {
+        worker_matches++
+        worker_minimum = minimum
+        worker_maximum = maximum
+        worker_pool = pool
+        worker_timeout = timeout
+      }
+      in_runtime = 0
+      next
+    }
+    in_runtimes && /^[[:space:]]*\][,]?[[:space:]]*$/ { in_runtimes = 0 }
     END {
-      if (matches != 1) exit 1
-      print required
+      if (required_matches != 1 || worker_matches != 1) exit 1
+      print required "\t" worker_minimum "\t" worker_maximum "\t" worker_pool "\t" worker_timeout
     }
   ' "$database_contract"
 )" || {
-  echo "production runtime contract must define requiredDatabaseConnections exactly once." >&2
+  echo "production runtime contract must define one capacity and worker profile." >&2
   exit 1
 }
+IFS=$'\t' read -r \
+  required_database_connections \
+  worker_contract_instances \
+  worker_contract_maximum \
+  worker_contract_pool \
+  worker_contract_acquire_timeout <<<"$runtime_contract_values"
 if [[ ! "$required_database_connections" =~ ^[0-9]+$ ]] ||
   ((10#$required_database_connections < 1)); then
-  echo "production runtime contract must define a positive requiredDatabaseConnections value." >&2
+  echo "production runtime contract must render positive database capacity." >&2
+  exit 1
+fi
+for value in \
+  "$worker_contract_instances" \
+  "$worker_contract_maximum" \
+  "$worker_contract_pool" \
+  "$worker_contract_acquire_timeout"; do
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || ((10#$value < 1)); then
+    echo "production runtime contract must render a positive worker profile." >&2
+    exit 1
+  fi
+done
+if [[ "$worker_contract_instances" != "$worker_contract_maximum" ]]; then
+  echo "production worker instance range must be fixed." >&2
   exit 1
 fi
 if [[ ! "$USABLE_DATABASE_CONNECTIONS" =~ ^[0-9]+$ ]] ||
@@ -428,7 +497,7 @@ stage_backend_services() {
 
 stage_worker() {
   local instances="$1"
-  local worker_environment="DATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20"
+  local worker_environment="DATABASE_POOL_MAX=$worker_contract_pool,DATABASE_ACQUIRE_TIMEOUT_MS=$worker_contract_acquire_timeout,HUMAN_CALLING_RING_WINDOW_SECONDS=20"
   if [[ "$destructive_cutover" == true ]]; then
     worker_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
   fi
@@ -570,12 +639,12 @@ if [[ "$destructive_cutover" == true ]]; then
   gcloud run worker-pools update acuity-worker \
     --project "$PROJECT_ID" \
     --region "$REGION" \
-    --instances 1 \
+    --instances "$worker_contract_instances" \
     --quiet
 else
   run_migration
   stage_backend_services
-  stage_worker 1
+  stage_worker "$worker_contract_instances"
   for service in "${backend_services[@]}"; do
     revision="$service-$DEPLOYMENT_ID"
     gcloud run services update-traffic "$service" \
