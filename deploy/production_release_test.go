@@ -1,6 +1,7 @@
 package deploy_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,72 @@ func TestProductionReleaseRejectsInsufficientDatabaseCapacityBeforeCloudMutation
 	if len(captured) != 0 {
 		t.Fatalf("release mutated cloud state before rejecting capacity:\n%s", captured)
 	}
+}
+
+func TestProductionReleaseLoadsWorkerCapacityFromRuntimeContract(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	temporaryDirectory := t.TempDir()
+	for _, name := range []string{
+		"deploy-production-release.sh",
+		"production-runtime-contract.json",
+	} {
+		raw, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(name, ".sh") {
+			mode = 0o755
+		}
+		if err := os.WriteFile(filepath.Join(temporaryDirectory, name), raw, mode); err != nil {
+			t.Fatalf("copy %s: %v", name, err)
+		}
+	}
+	contractPath := filepath.Join(temporaryDirectory, "production-runtime-contract.json")
+	raw, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract map[string]any
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatal(err)
+	}
+	contract["requiredDatabaseConnections"] = float64(30)
+	runtimes, ok := contract["runtimes"].([]any)
+	if !ok {
+		t.Fatal("runtime contract omits runtimes")
+	}
+	for _, value := range runtimes {
+		runtime, ok := value.(map[string]any)
+		if ok && runtime["name"] == "worker" {
+			runtime["poolMaximum"] = float64(3)
+		}
+	}
+	raw, err = json.MarshalIndent(contract, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(contractPath, append(raw, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command("bash", filepath.Join(temporaryDirectory, "deploy-production-release.sh"))
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "30")...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("release with varied worker contract: %v\n%s", err, output)
+	}
+	assertCapturedCommand(
+		t,
+		capturedGcloudCommands(t, gcloudCapture),
+		"run\tworker-pools\tdeploy\tacuity-worker",
+		"--update-env-vars\tDATABASE_POOL_MAX=3,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
+	)
 }
 
 func TestBackendImageIncludesReviewedProductionProvisioning(t *testing.T) {

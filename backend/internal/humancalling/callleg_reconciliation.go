@@ -10,6 +10,60 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const staleCallLegCandidateQuery = `
+	SELECT call.id::text, call.practice_id::text, leg.id::text,
+		leg.role, call.direction, leg.state,
+		COALESCE(call.terminal_outcome, ''),
+		COALESCE(leg.provider_connection_id, command.payload->>'connection_id', ''),
+		COALESCE(leg.provider_call_control_id, ''),
+		COALESCE(leg.provider_call_leg_id, ''),
+		COALESCE(leg.provider_call_session_id, ''),
+		COALESCE(command.id::text, ''), COALESCE(command.action, ''),
+		COALESCE(command.payload->>'client_state', ''), leg.updated_at,
+		COALESCE(command.created_at, leg.updated_at),
+		COALESCE(call.ended_at, leg.ended_at, leg.updated_at)
+	FROM human_calling_calls call
+	JOIN human_calling_call_legs leg ON leg.call_id = call.id
+	LEFT JOIN LATERAL (
+		SELECT pending.id, pending.action, pending.payload, pending.created_at
+		FROM human_calling_provider_commands pending
+		WHERE pending.call_leg_id = leg.id
+			AND pending.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+			AND (
+				call.terminal_outcome IS NULL
+				OR pending.action = 'HANGUP_LEG'
+				OR (
+					pending.action = 'STOP_RING_WINDOW'
+					AND leg.role = 'CALLER'
+					AND leg.state IN ('ENDED', 'FAILED')
+					AND leg.provider_connection_id IS NOT NULL
+					AND leg.provider_call_control_id IS NOT NULL
+					AND leg.provider_call_leg_id IS NOT NULL
+					AND leg.provider_call_session_id IS NOT NULL
+					AND pending.target_id = leg.provider_call_control_id
+					AND pending.payload->>'stop' = 'all'
+					AND COALESCE(pending.payload->>'client_state', '') <> ''
+				)
+			)
+		ORDER BY pending.created_at, pending.id
+		LIMIT 1
+	) command ON true
+	WHERE (
+			call.terminal_outcome IS NULL
+			OR leg.state = 'ENDING'
+			OR command.id IS NOT NULL
+		)
+		AND (leg.state NOT IN ('ENDED', 'FAILED') OR command.id IS NOT NULL)
+		AND (
+			(leg.provider_call_control_id IS NOT NULL AND leg.provider_call_leg_id IS NOT NULL)
+			OR command.id IS NOT NULL
+		)
+		AND leg.updated_at <= $1::timestamptz - interval '60 seconds'
+	ORDER BY leg.updated_at, leg.id
+	FOR UPDATE OF call, leg SKIP LOCKED
+	LIMIT 1
+`
+
 func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	commandID, ok, err := m.claimNextCallLegCommand(ctx)
 	if err != nil || !ok {
@@ -56,50 +110,17 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var callID, legID, role, direction, connectionID string
+	var callID, practiceID, legID, role, direction, legState, terminalOutcome string
+	var connectionID string
 	var controlID, providerLegID, sessionID string
 	var commandID, providerClientState string
 	var commandAction CommandAction
-	var observationSince, commandCreatedAt time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT call.id::text, leg.id::text, leg.role, call.direction,
-			COALESCE(leg.provider_connection_id, command.payload->>'connection_id', ''),
-			COALESCE(leg.provider_call_control_id, ''),
-			COALESCE(leg.provider_call_leg_id, ''),
-			COALESCE(leg.provider_call_session_id, ''),
-			COALESCE(command.id::text, ''), COALESCE(command.action, ''),
-			COALESCE(command.payload->>'client_state', ''),
-			leg.updated_at, COALESCE(command.created_at, leg.updated_at)
-		FROM human_calling_calls call
-		JOIN human_calling_call_legs leg ON leg.call_id = call.id
-		LEFT JOIN LATERAL (
-			SELECT pending.id, pending.action, pending.payload, pending.created_at
-			FROM human_calling_provider_commands pending
-			WHERE pending.call_leg_id = leg.id
-				AND pending.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
-				AND (call.terminal_outcome IS NULL OR pending.action = 'HANGUP_LEG')
-			ORDER BY pending.created_at, pending.id
-			LIMIT 1
-		) command ON true
-		WHERE (
-				call.terminal_outcome IS NULL
-				OR leg.state = 'ENDING'
-				OR command.id IS NOT NULL
-			)
-			AND (leg.state NOT IN ('ENDED', 'FAILED') OR command.id IS NOT NULL)
-			AND (
-				(leg.provider_call_control_id IS NOT NULL AND leg.provider_call_leg_id IS NOT NULL)
-				OR command.id IS NOT NULL
-			)
-			AND leg.updated_at <= $1::timestamptz - interval '60 seconds'
-		ORDER BY leg.updated_at, leg.id
-		FOR UPDATE OF call, leg SKIP LOCKED
-		LIMIT 1
-	`, m.now()).Scan(
-		&callID, &legID, &role, &direction, &connectionID,
+	var observationSince, commandCreatedAt, terminalAt time.Time
+	err = tx.QueryRow(ctx, staleCallLegCandidateQuery, m.now()).Scan(
+		&callID, &practiceID, &legID, &role, &direction, &legState,
+		&terminalOutcome, &connectionID,
 		&controlID, &providerLegID, &sessionID, &commandID, &commandAction,
-		&providerClientState,
-		&observationSince, &commandCreatedAt,
+		&providerClientState, &observationSince, &commandCreatedAt, &terminalAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, tx.Commit(ctx)
@@ -115,6 +136,31 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit stale CallLeg claim: %w", err)
+	}
+	if commandAction == CommandStopRingWindow && terminalOutcome != "" &&
+		(legState == "ENDED" || legState == "FAILED") {
+		state, valid := parseCallLegClientState(providerClientState)
+		if !valid || state.CallID != callID || state.CallLegID != legID ||
+			state.Role != "CALLER" || state.Kind != "ring_window" {
+			return 0, nil
+		}
+		terminalized, err := m.terminalizeStopRingWindow(
+			ctx,
+			commandID,
+			callID,
+			practiceID,
+			legID,
+			commandCreatedAt,
+			terminalAt,
+			providerClientState,
+		)
+		if err != nil {
+			return 1, err
+		}
+		if terminalized {
+			return 1, nil
+		}
+		return 0, nil
 	}
 	clientState := encodeCallLegClientState(callID, legID, role, "reconciled")
 	if providerClientState == "" {
@@ -277,6 +323,100 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		return 1, err
 	}
 	return 1, nil
+}
+
+func (m *Module) terminalizeStopRingWindow(
+	ctx context.Context,
+	commandID string,
+	callID string,
+	practiceID string,
+	callLegID string,
+	commandCreatedAt time.Time,
+	terminalAt time.Time,
+	providerClientState string,
+) (bool, error) {
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin terminal ring-window reconciliation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	reconciledAt := m.now()
+	tag, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands command
+		SET state = 'RECONCILED', last_error_code = NULL, updated_at = $2
+		FROM human_calling_calls call, human_calling_call_legs caller
+		WHERE command.id = $1 AND command.action = 'STOP_RING_WINDOW'
+			AND command.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+			AND command.call_id = call.id AND call.id = $3
+			AND command.call_leg_id = caller.id AND caller.id = $4
+			AND call.terminal_outcome IS NOT NULL
+			AND caller.role = 'CALLER' AND caller.state IN ('ENDED', 'FAILED')
+			AND caller.provider_connection_id IS NOT NULL
+			AND caller.provider_call_control_id IS NOT NULL
+			AND caller.provider_call_leg_id IS NOT NULL
+			AND caller.provider_call_session_id IS NOT NULL
+			AND command.target_id = caller.provider_call_control_id
+			AND command.payload->>'stop' = 'all'
+			AND command.payload->>'client_state' = $5
+	`, commandID, reconciledAt, callID, callLegID, providerClientState)
+	if err != nil {
+		return false, fmt.Errorf("terminalize ring-window command: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return false, tx.Commit(ctx)
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		callID,
+		practiceID,
+		"ring_window.terminalized",
+		"",
+		"",
+		commandID,
+		opaqueReference(callLegID),
+		"CALL_TERMINAL",
+		terminalAt,
+	); err != nil {
+		return false, err
+	}
+	var degraded bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM human_calling_timeline
+			WHERE call_id = $1 AND kind = 'caller_audio.degraded'
+				AND provider_command_id = $2
+		)
+	`, callID, commandID).Scan(&degraded); err != nil {
+		return false, fmt.Errorf("read terminal degraded caller audio: %w", err)
+	}
+	if degraded {
+		if err := appendTimeline(
+			ctx,
+			tx,
+			callID,
+			practiceID,
+			"caller_audio.converged",
+			"",
+			"",
+			commandID,
+			opaqueReference(callLegID),
+			"CALL_TERMINAL",
+			terminalAt,
+		); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit terminal ring-window reconciliation: %w", err)
+	}
+	m.recordProviderCommand(
+		ProviderCommand{Action: CommandStopRingWindow, createdAt: commandCreatedAt},
+		"RECONCILED",
+		reconciledAt,
+		0,
+	)
+	return true, nil
 }
 
 func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, error) {

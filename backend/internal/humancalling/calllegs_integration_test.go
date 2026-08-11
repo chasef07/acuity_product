@@ -780,6 +780,186 @@ func TestTerminalStaffHangupReconciliationReleasesSoftphone(t *testing.T) {
 	}
 }
 
+func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 15, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	pool, calling, _, staff := prepareInboundFanout(
+		t, now, "terminal-stop-ring-window", provider, 1,
+	)
+	var callID, callerLegID, practiceID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.id::text, caller.id::text, call.practice_id::text
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.role = 'CALLER'
+	`).Scan(&callID, &callerLegID, &practiceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'RECONCILED', updated_at = $2
+		WHERE call_id = $1
+	`, callID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("reconcile existing terminal Call commands: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'ENDED', ended_at = $2::timestamptz,
+			disposition_deadline = $2::timestamptz + interval '30 seconds',
+			updated_at = $2::timestamptz
+		WHERE id = $1
+	`, callID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("terminalize ring-window Call: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDED',
+			ending_at = COALESCE(ending_at, answered_at, $2::timestamptz),
+			ended_at = COALESCE(ended_at, ending_at, answered_at, $2::timestamptz),
+			updated_at = $2::timestamptz
+		WHERE call_id = $1
+	`, callID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("terminalize ring-window CallLegs: %v", err)
+	}
+	var commandID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, payload, state,
+			sent_at, created_at, updated_at
+		)
+		SELECT $1, $2, 'STOP_RING_WINDOW', provider_call_control_id,
+			jsonb_build_object(
+				'stop', 'all',
+				'client_state', (
+					SELECT payload->>'client_state'
+					FROM human_calling_provider_commands
+					WHERE call_id = $1 AND action = 'START_RING_WINDOW'
+					ORDER BY created_at, id LIMIT 1
+				)
+			),
+			'SENT', $3, $3, $3
+		FROM human_calling_call_legs
+		WHERE id = $2
+		RETURNING id::text
+	`, callID, callerLegID, now.Add(-2*time.Minute),
+	).Scan(&commandID); err != nil {
+		t.Fatalf("seed accepted Stop ring-window command: %v", err)
+	}
+	var beforeCommandCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands WHERE call_id = $1
+	`, callID).Scan(&beforeCommandCount); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_timeline (
+			call_id, practice_id, kind, provider_command_id,
+			opaque_reference, error_code, occurred_at
+		)
+		VALUES ($1, $2, 'caller_audio.degraded', $3, $4,
+			'STOP_RING_WINDOW_EVENT_ABSENT', $5)
+	`, callID, practiceID, commandID, "terminal-stop-ring-window", now.Add(-time.Minute)); err != nil {
+		t.Fatalf("seed degraded caller-audio evidence: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET target_id = 'mismatched-provider-target'
+		WHERE id = $1
+	`, commandID); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("mismatched terminal Stop ring-window = %d, %v", reconciled, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands command
+		SET target_id = caller.provider_call_control_id
+		FROM human_calling_call_legs caller
+		WHERE command.id = $1 AND caller.id = command.call_leg_id
+	`, commandID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET payload = jsonb_set(payload, '{client_state}', '"malformed-client-state"')
+		WHERE id = $1
+	`, commandID); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("malformed terminal Stop ring-window = %d, %v", reconciled, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands command
+		SET payload = jsonb_set(command.payload, '{client_state}', to_jsonb(start.payload->>'client_state'))
+		FROM human_calling_provider_commands start
+		WHERE command.id = $1 AND start.call_id = command.call_id
+			AND start.action = 'START_RING_WINDOW'
+	`, commandID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET updated_at = $1
+		WHERE id = $2
+	`, now.Add(-2*time.Minute), callerLegID); err != nil {
+		t.Fatal(err)
+	}
+
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile terminal Stop ring-window = %d, %v", reconciled, err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("repeat terminal Stop ring-window = %d, %v", reconciled, err)
+	}
+
+	var commandState, commandReason, terminalOutcome, callerState string
+	var terminalEvidenceReason, convergedAudioReason string
+	var runnableCommands, terminalizedEvents, convergedAudio, commandCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT command.state, COALESCE(command.last_error_code, ''),
+			call.terminal_outcome, caller.state,
+			(SELECT count(*) FROM human_calling_provider_commands
+			 WHERE call_id = call.id AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE call_id = call.id AND kind = 'ring_window.terminalized'),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE call_id = call.id AND kind = 'caller_audio.converged'),
+			COALESCE((SELECT max(error_code) FROM human_calling_timeline
+			 WHERE call_id = call.id AND kind = 'ring_window.terminalized'), ''),
+			COALESCE((SELECT max(error_code) FROM human_calling_timeline
+			 WHERE call_id = call.id AND kind = 'caller_audio.converged'), ''),
+			(SELECT count(*) FROM human_calling_provider_commands
+			 WHERE call_id = call.id)
+		FROM human_calling_provider_commands command
+		JOIN human_calling_calls call ON call.id = command.call_id
+		JOIN human_calling_call_legs caller ON caller.id = command.call_leg_id
+		WHERE command.id = $1
+	`, commandID).Scan(
+		&commandState, &commandReason, &terminalOutcome, &callerState,
+		&runnableCommands, &terminalizedEvents, &convergedAudio,
+		&terminalEvidenceReason, &convergedAudioReason, &commandCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil {
+		t.Fatalf("read Staff state after terminal Stop convergence: %v", err)
+	}
+	if commandState != "RECONCILED" || commandReason != "" ||
+		terminalOutcome != "ENDED" || callerState != "ENDED" ||
+		runnableCommands != 0 || terminalizedEvents != 1 || convergedAudio != 1 ||
+		terminalEvidenceReason != "CALL_TERMINAL" ||
+		convergedAudioReason != "CALL_TERMINAL" ||
+		commandCount != beforeCommandCount || callingState.Softphone.ActiveCallID != "" {
+		t.Fatalf("terminal Stop convergence = command:%s/%s Call:%s caller:%s runnable:%d timeline:%d/%d reasons:%s/%s commands:%d softphone:%#v",
+			commandState, commandReason, terminalOutcome, callerState,
+			runnableCommands, terminalizedEvents, convergedAudio,
+			terminalEvidenceReason, convergedAudioReason, commandCount,
+			callingState.Softphone)
+	}
+}
+
 func TestTerminalActiveStaffHangupRetriesExactCleanup(t *testing.T) {
 	pool, calling, provider, _, callID, legID, commandID :=
 		prepareTerminalStaffHangup(t, true)

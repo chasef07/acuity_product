@@ -1230,8 +1230,8 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_legs
 		SET state = 'ENDED',
-			ending_at = GREATEST(
-				$2, COALESCE(ending_at, $2), COALESCE(answered_at, $2)
+			ending_at = COALESCE(
+				ending_at, GREATEST($2, COALESCE(answered_at, $2))
 			),
 			ended_at = GREATEST(
 				$2, COALESCE(ending_at, $2), COALESCE(answered_at, $2),
