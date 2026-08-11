@@ -137,8 +137,8 @@ export function CallingAvailabilityControl() {
   } = useCallingNavigation()
   if (!callingEnabled) return null
   return (
-    <div className="ml-auto flex items-center gap-2">
-      <span className="text-sm font-medium">Availability</span>
+    <div className="ml-auto flex shrink-0 items-center gap-2">
+      <span className="hidden text-sm font-medium md:inline">Availability</span>
       {availabilityPending && <Spinner aria-label="Updating availability" />}
       {!availabilityPending && availabilityError && (
         <ShieldAlertIcon

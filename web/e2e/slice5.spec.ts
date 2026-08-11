@@ -7,6 +7,31 @@ const telnyxFixtureURL =
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 
+test("mobile phone search keeps Call visible across multiple offices", async ({
+  page,
+}) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await page.setViewportSize({ width: 390, height: 844 })
+  await signInAs(page, "admin@abita.test", "Fixture Admin")
+  await page.getByRole("button", { name: "Toggle Sidebar" }).click()
+
+  const searchInput = page.getByLabel("Search phone number")
+  const submitButton = page.getByRole("button", { name: "Open phone number" })
+  await expect(submitButton).toBeVisible()
+  await searchInput.fill("7275550199")
+  await submitButton.click()
+  await page.keyboard.press("Escape")
+
+  await expect(page.getByRole("heading", { name: "(727) 555-0199" })).toBeVisible()
+  await expect(page.getByLabel("Sender office")).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Call", exact: true }),
+  ).toBeInViewport({ ratio: 1 })
+
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await expect(page.locator('button[aria-label="Open phone number"]')).toBeHidden()
+})
+
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
   context,
   page,
