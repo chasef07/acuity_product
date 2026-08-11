@@ -81,7 +81,6 @@ type CallingDockProps = {
   children: ReactNode
   callingEnabled: boolean
   practiceID: string
-  workspaceRevision: number
   taskCallRequest?: { id: string; taskID: string }
   onTaskCallHandled: (requestID: string, error?: string) => void
   onCallChanged: (call: CallingCall | undefined) => void
@@ -165,7 +164,6 @@ export function CallingDock({
   children,
   callingEnabled,
   practiceID,
-  workspaceRevision,
   taskCallRequest,
   onTaskCallHandled,
   onCallChanged,
@@ -205,6 +203,7 @@ export function CallingDock({
   const incomingLegsRef = useRef(new Map<string, IncomingMediaLeg>())
   const callingStateETagRef = useRef("")
   const statePollRef = useRef<Promise<void> | null>(null)
+  const ownershipPollRef = useRef<Promise<void> | null>(null)
   const ringtoneRef = useRef<(() => void) | null>(null)
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
@@ -724,7 +723,7 @@ export function CallingDock({
     }
   }, [applyActiveCall, mediaState, updateReadiness])
 
-  const refreshOwnership = useCallback(async () => {
+  const refreshOwnershipNow = useCallback(async () => {
     const token = await getAccessToken()
     if (!token) return
     const result = await acquireSoftphone({
@@ -788,6 +787,15 @@ export function CallingDock({
     )
   }, [applyActiveCall, connectMedia, refreshCall, sessionID, updateReadiness])
 
+  const refreshOwnership = useCallback(() => {
+    if (ownershipPollRef.current) return ownershipPollRef.current
+    const poll = refreshOwnershipNow().finally(() => {
+      ownershipPollRef.current = null
+    })
+    ownershipPollRef.current = poll
+    return poll
+  }, [refreshOwnershipNow])
+
   useEffect(() => {
     if (!callingEnabled && !lease?.owner) return
     const timeout = window.setTimeout(() => {
@@ -795,7 +803,7 @@ export function CallingDock({
       void refreshCallingState()
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [callingEnabled, lease?.owner, refreshCallingState, refreshOwnership, workspaceRevision])
+  }, [callingEnabled, lease?.owner, refreshCallingState, refreshOwnership])
 
   useEffect(() => {
     if (!lease?.owner) return
@@ -826,10 +834,10 @@ export function CallingDock({
   }, [lease?.owner, refreshCall, refreshCallingState])
 
   useEffect(() => {
-    if (!lease?.owner) return
+    if (!callingEnabled && !lease?.owner) return
     const interval = window.setInterval(() => void refreshOwnership(), 5_000)
     return () => window.clearInterval(interval)
-  }, [lease?.owner, refreshOwnership])
+  }, [callingEnabled, lease?.owner, refreshOwnership])
 
   useEffect(() => {
     if (callingEnabled || !ownerRef.current) return

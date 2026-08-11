@@ -64,7 +64,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t20",
 		"--min\t1",
 		"--max\t3",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
+		"--update-env-vars\tDATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--cpu\t1",
@@ -125,6 +125,34 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		if !strings.Contains(string(curlCalls), expected) {
 			t.Errorf("release smoke omits %s:\n%s", expected, curlCalls)
 		}
+	}
+}
+
+func TestProductionReleaseRejectsInsufficientDatabaseCapacityBeforeCloudMutation(t *testing.T) {
+	directory := releaseDeployDirectory(t)
+	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	command := exec.Command(
+		"bash",
+		filepath.Join(directory, "deploy-production-release.sh"),
+	)
+	command.Env = append([]string{
+		"PATH=" + path,
+		"GCLOUD_CAPTURE=" + gcloudCapture,
+		"CURL_CAPTURE=" + curlCapture,
+	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "25")...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("release unexpectedly accepted insufficient database capacity:\n%s", output)
+	}
+	if !strings.Contains(string(output), "production requires at least 26 usable database connections; measured 25") {
+		t.Fatalf("release returned the wrong capacity error:\n%s", output)
+	}
+	captured, err := os.ReadFile(gcloudCapture)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read captured gcloud commands: %v", err)
+	}
+	if len(captured) != 0 {
+		t.Fatalf("release mutated cloud state before rejecting capacity:\n%s", captured)
 	}
 }
 
@@ -241,7 +269,7 @@ func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
 		"--min\t1",
-		"--update-env-vars\tDATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+		"--update-env-vars\tDATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--min\t1",
@@ -396,6 +424,8 @@ func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 		"google-github-actions/auth",
 		"gcloud builds submit",
 		"cloudbuild.release.yaml",
+		"USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}",
+		"_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}",
 		"url: https://acuity-web-cbuqwpsdsq-ue.a.run.app",
 	} {
 		if !strings.Contains(content, required) {
@@ -422,6 +452,8 @@ func TestCloudBuildReleaseBuildsBothImagesBeforeDeploy(t *testing.T) {
 		"gcr.io/google.com/cloudsdktool/google-cloud-cli:578.0.0-slim",
 		"deploy/deploy-production-release.sh",
 		"IMAGE_TAG=${_IMAGE_TAG}",
+		"USABLE_DATABASE_CONNECTIONS=${_USABLE_DATABASE_CONNECTIONS}",
+		"_USABLE_DATABASE_CONNECTIONS: DO_NOT_DEPLOY",
 		"_REGION: us-east1",
 		"_PORTAL_API_URL: https://acuity-portal-api-cbuqwpsdsq-ue.a.run.app",
 		"_REALTIME_URL: https://acuity-realtime-cbuqwpsdsq-ue.a.run.app",
@@ -590,7 +622,20 @@ func releaseEnvironment() []string {
 		"IMAGE_TAG=0123456789abcdef0123456789abcdef01234567",
 		"DEPLOYMENT_ID=release-1234",
 		"CALLLEG_SCHEMA_CUTOVER_COMPLETE=true",
+		"USABLE_DATABASE_CONNECTIONS=26",
 	}
+}
+
+func environmentWithValue(environment []string, name string, value string) []string {
+	prefix := name + "="
+	result := append([]string(nil), environment...)
+	for index, assignment := range result {
+		if strings.HasPrefix(assignment, prefix) {
+			result[index] = prefix + value
+			return result
+		}
+	}
+	return append(result, prefix+value)
 }
 
 func releaseDeployDirectory(t *testing.T) string {

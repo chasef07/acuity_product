@@ -38,7 +38,8 @@ for name in \
   BACKEND_IMAGE \
   WEB_IMAGE \
   IMAGE_TAG \
-  DEPLOYMENT_ID; do
+  DEPLOYMENT_ID \
+  USABLE_DATABASE_CONNECTIONS; do
   require_value "$name"
 done
 
@@ -49,6 +50,39 @@ fi
 if [[ ! "$DEPLOYMENT_ID" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
   ((${#DEPLOYMENT_ID} > 38)); then
   echo "DEPLOYMENT_ID must be a short lowercase Cloud Run revision suffix." >&2
+  exit 1
+fi
+
+database_contract="$script_directory/production-runtime-contract.json"
+required_database_connections="$(
+  awk '
+    match($0, /"requiredDatabaseConnections"[[:space:]]*:[[:space:]]*[0-9]+/) {
+      value = substr($0, RSTART, RLENGTH)
+      sub(/^.*:[[:space:]]*/, "", value)
+      required = value
+      matches++
+    }
+    END {
+      if (matches != 1) exit 1
+      print required
+    }
+  ' "$database_contract"
+)" || {
+  echo "production runtime contract must define requiredDatabaseConnections exactly once." >&2
+  exit 1
+}
+if [[ ! "$required_database_connections" =~ ^[0-9]+$ ]] ||
+  ((10#$required_database_connections < 1)); then
+  echo "production runtime contract must define a positive requiredDatabaseConnections value." >&2
+  exit 1
+fi
+if [[ ! "$USABLE_DATABASE_CONNECTIONS" =~ ^[0-9]+$ ]] ||
+  ((10#$USABLE_DATABASE_CONNECTIONS < 1)); then
+  echo "USABLE_DATABASE_CONNECTIONS must be a measured positive integer." >&2
+  exit 1
+fi
+if ((10#$USABLE_DATABASE_CONNECTIONS < 10#$required_database_connections)); then
+  echo "production requires at least $required_database_connections usable database connections; measured $USABLE_DATABASE_CONNECTIONS" >&2
   exit 1
 fi
 
@@ -90,6 +124,7 @@ service_runtime() {
   case "$1" in
     acuity-portal-api)
       read -r concurrency minimum maximum <<<"20 1 3"
+      runtime_environment="DATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
       runtime_environment+=",HUMAN_CALLING_RING_WINDOW_SECONDS=20"
       if [[ "$destructive_cutover" == true ]]; then
         runtime_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"

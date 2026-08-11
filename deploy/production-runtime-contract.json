@@ -19,7 +19,7 @@
     "storageAutoIncrease": true
   },
   "workerPoolRevisionOverlap": 2,
-  "autoscalerOvershootHeadroom": 5,
+  "autoscalerOvershootHeadroom": 6,
   "migration": {
     "tasks": 1,
     "billingMode": "instance-based",
@@ -30,7 +30,7 @@
     "maximumRetries": 0
   },
   "operatorHeadroom": 3,
-  "requiredDatabaseConnections": 22,
+  "requiredDatabaseConnections": 26,
   "runtimes": [
     {
       "name": "web",
@@ -54,7 +54,7 @@
       "concurrency": 20,
       "minimumInstances": 1,
       "maximumInstances": 3,
-      "poolMaximum": 1,
+      "poolMaximum": 2,
       "dedicatedConnections": 0,
       "acquisitionTimeoutMilliseconds": 1500
     },

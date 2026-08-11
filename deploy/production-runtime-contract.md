@@ -44,7 +44,7 @@ capacity while the warm floor and local pools reflect the measured pilot load.
 | Runtime | Kind | Billing | Concurrency | Min | Max | Pool max | Direct |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | web / Better Auth | service | request | 40 | 1 | 2 | 1 | 0 |
-| `portal-api` | service | request | 20 | 1 | 3 | 1 | 0 |
+| `portal-api` | service | request | 20 | 1 | 3 | 2 | 0 |
 | `provider-ingress` | service | request | 20 | 1 | 2 | 1 | 0 |
 | `realtime` | service | request | 50 | 1 | 2 | 1 | 1 `LISTEN` |
 | `worker` | worker pool | instance | n/a | 1 fixed | 1 fixed | 1 | 0 |
@@ -69,34 +69,35 @@ revisions in ordinary operation:
 
 ```text
 web                 2 × (1 + 0) = 2
-portal-api          3 × (1 + 0) = 3
+portal-api          3 × (2 + 0) = 6
 provider-ingress    2 × (1 + 0) = 2
 realtime            2 × (1 + 1) = 4
                                      --
-configured request-service demand    11
+configured request-service demand    14
 ```
 
 Only the worker pool gets a rollout-overlap multiplier:
 
 ```text
-request services under configured service caps  11
+request services under configured service caps  14
 two worker revisions                  2 × 1 =     2
 one migration task, pool max 1                   1
-one extra instance per request role               5
+one extra instance per request role               6
 operator/database-operations headroom            3
                                                   --
-required usable application connections         22
+required usable application connections         26
 ```
 
 Cloud Run documents that rapid traffic spikes or maintenance can temporarily
-exceed a configured maximum. The five-connection autoscaler allowance covers
-one extra web, portal, ingress, and realtime instance, including realtime's
-direct listener. It is explicit headroom, not a claim that the platform cannot
+exceed a configured maximum. The six-connection autoscaler allowance covers
+one extra web, portal, ingress, and realtime instance, including the portal's
+two-connection pool and realtime's direct listener. It is explicit headroom,
+not a claim that the platform cannot
 overshoot it. The three operator connections provide two simultaneous
 diagnostic sessions and one recovery session. Autovacuum uses PostgreSQL worker
 slots rather than these client connections. Deployment reads the actual
 `max_connections` value and active reserved usage; it stops before any `gcloud`
-call unless at least 22 connections are measured usable. Live maximum-instance
+call unless at least 26 connections are measured usable. Live maximum-instance
 overshoot and pool saturation remain acceptance gates.
 
 Every runtime pool uses `MinConns=0`, its checked `DATABASE_POOL_MAX`, a 1500 ms
@@ -141,7 +142,7 @@ Production runtime rendering and its fail-closed capacity check:
 
 ```sh
 ACUITY_DEPLOYMENT_PROFILE=production \
-USABLE_DATABASE_CONNECTIONS=22 \
+USABLE_DATABASE_CONNECTIONS=26 \
 MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1 \
   ./deploy/cloud-run-commands.example.sh
 ```
