@@ -834,10 +834,10 @@ export function CallingDock({
   }, [lease?.owner, refreshCall, refreshCallingState])
 
   useEffect(() => {
-    if (!lease?.owner) return
+    if (!callingEnabled && !lease?.owner) return
     const interval = window.setInterval(() => void refreshOwnership(), 5_000)
     return () => window.clearInterval(interval)
-  }, [lease?.owner, refreshOwnership])
+  }, [callingEnabled, lease?.owner, refreshOwnership])
 
   useEffect(() => {
     if (callingEnabled || !ownerRef.current) return
