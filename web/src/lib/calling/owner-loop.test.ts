@@ -9,6 +9,7 @@ test("a visible idle owner stays within its 30-second request budget", async () 
   let readinessHeartbeats = 0
   let stateReads = 0
   const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {},
     heartbeat: async () => {
       readinessHeartbeats += 1
       return "owner"
@@ -31,6 +32,37 @@ test("a visible idle owner stays within its 30-second request budget", async () 
   loop.stop()
 })
 
+test("an owner heartbeat recovers media without reacquiring its lease", async () => {
+  const clock = new ManualClock()
+  const leasePosts = 1
+  let mediaConnectionAttempts = 1
+  let mediaConnected = false
+  let readinessHeartbeats = 0
+  const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {
+      mediaConnectionAttempts += 1
+      mediaConnected = true
+    },
+    heartbeat: async () => {
+      if (mediaConnected) readinessHeartbeats += 1
+      return "owner"
+    },
+    refresh: async () => {},
+    onOwnershipLost: async () => {},
+    isHidden: () => false,
+    random: () => 0.5,
+    clock,
+  })
+
+  loop.start()
+  await clock.advance(6_500)
+
+  assert.equal(leasePosts, 1)
+  assert.equal(mediaConnectionAttempts, 2)
+  assert.equal(readinessHeartbeats, 1)
+  loop.stop()
+})
+
 test("a lost owner fails closed and stops owner work", async () => {
   const clock = new ManualClock()
   let owner = true
@@ -38,6 +70,7 @@ test("a lost owner fails closed and stops owner work", async () => {
   let readinessHeartbeats = 0
   let stateReads = 0
   const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {},
     heartbeat: async () => {
       readinessHeartbeats += 1
       return "lost"
@@ -68,6 +101,7 @@ test("overlapping incoming media signals cause one immediate authoritative refre
   const releaseRefresh = deferred()
   let stateReads = 0
   const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {},
     heartbeat: async () => "owner",
     refresh: async () => {
       stateReads += 1
@@ -96,6 +130,7 @@ test("fallback polling discovers state within six seconds without signals", asyn
   const clock = new ManualClock()
   let stateReads = 0
   const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {},
     heartbeat: async () => "owner",
     refresh: async () => {
       stateReads += 1

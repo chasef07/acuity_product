@@ -202,6 +202,7 @@ export function CallingDock({
   const expectedCallRef = useRef("")
   const activeCallSnapshotRef = useRef<CallingCall | undefined>(undefined)
   const ownerRef = useRef(false)
+  const leaseRef = useRef<SoftphoneState | undefined>(undefined)
   const ownerGenerationRef = useRef(0)
   const mediaStateRef = useRef<MediaState>("unavailable")
   const availabilityRef = useRef(false)
@@ -238,6 +239,9 @@ export function CallingDock({
   useEffect(() => {
     ownerRef.current = Boolean(lease?.owner)
   }, [lease?.owner])
+  useEffect(() => {
+    leaseRef.current = lease
+  }, [lease])
   useEffect(() => {
     mediaStateRef.current = mediaState
   }, [mediaState])
@@ -869,6 +873,12 @@ export function CallingDock({
     if (!lease?.owner) return
     let lostReason: ReadinessCommit["failure"]
     const loop = createCallingOwnerLoop({
+      ensureMediaConnected: async () => {
+        const ownedLease = leaseRef.current
+        if (!adapterRef.current && ownedLease?.owner) {
+          await connectMedia(ownedLease)
+        }
+      },
       heartbeat: async () => {
         const result = await updateReadiness(
           availabilityIntentRef.current && expectedCallRef.current === "",
@@ -923,7 +933,13 @@ export function CallingDock({
       if (ownerLoopRef.current === loop) ownerLoopRef.current = null
       document.removeEventListener("visibilitychange", handleVisibility)
     }
-  }, [lease?.owner, refreshCall, refreshCallingState, updateReadiness])
+  }, [
+    connectMedia,
+    lease?.owner,
+    refreshCall,
+    refreshCallingState,
+    updateReadiness,
+  ])
 
   useEffect(() => {
     if (callingEnabled || !ownerRef.current) return

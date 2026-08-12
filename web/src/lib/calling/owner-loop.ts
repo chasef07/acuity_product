@@ -8,6 +8,7 @@ type Clock = {
 }
 
 type CallingOwnerLoopOptions = {
+  ensureMediaConnected: () => Promise<void>
   heartbeat: () => Promise<OwnerHeartbeatResult>
   refresh: () => Promise<void>
   onOwnershipLost: () => Promise<void>
@@ -112,6 +113,7 @@ export function createCallingOwnerLoop(
 
   function runHeartbeat() {
     heartbeat ??= (async () => {
+      await options.ensureMediaConnected().catch(() => undefined)
       const result = await options.heartbeat()
       if (!running) return
       if (result === "lost") {
