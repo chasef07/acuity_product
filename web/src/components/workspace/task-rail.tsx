@@ -816,7 +816,6 @@ type RecoveryRowValue = {
   task: Task
   voicemailCount: number
   missedCount: number
-  oldestAt: string
   latestAt: string
 }
 
@@ -850,8 +849,8 @@ function RecoveryRow({
             {showOffice ? ` · ${row.locationName}` : ""}
           </span>
         </span>
-        <time className="text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={row.oldestAt}>
-          {relativeTime(row.oldestAt)}
+        <time className="text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={row.latestAt}>
+          {relativeTime(row.latestAt)}
         </time>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -995,15 +994,10 @@ function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
         task,
         voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
         missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
-        oldestAt: task.createdAt,
         latestAt: task.updatedAt,
       }
     })
-    .sort(
-    (left, right) =>
-      left.oldestAt.localeCompare(right.oldestAt) ||
-      right.latestAt.localeCompare(left.latestAt),
-  )
+    .sort((left, right) => right.latestAt.localeCompare(left.latestAt))
 }
 
 function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {
