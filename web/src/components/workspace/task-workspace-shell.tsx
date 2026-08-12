@@ -493,9 +493,11 @@ export function TaskWorkspaceShell() {
           setWorkspace(snapshot)
           setLoadState("ready")
 
+          let selectedDetailsWereMounted = false
           if (taskGeneration === taskQueryGenerationRef.current) {
             setTasksLoading(false)
             const firstLoad = !hasLoadedTasksRef.current
+            selectedDetailsWereMounted = !firstLoad
             hasLoadedTasksRef.current = true
             taskQueryKeyRef.current = taskQueryKey
             const refreshed = selectedResult?.data
@@ -545,7 +547,9 @@ export function TaskWorkspaceShell() {
             setMessageThreads(nextMessages)
             setMessageNextCursor(messageResult.data.nextCursor)
           }
-          requestBudget.signalDetailRefresh()
+          if (selectedDetailsWereMounted) {
+            requestBudget.signalDetailRefresh()
+          }
         },
       }
     },

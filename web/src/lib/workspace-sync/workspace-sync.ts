@@ -224,18 +224,18 @@ export function createWorkspaceSync(
                 return
               }
               beginOutage()
-              scheduleHintRetry()
+              scheduleHintRetry(force)
             })
         }
       }, 0)
     }
 
-    function scheduleHintRetry() {
+    function scheduleHintRetry(force = false) {
       if (
         signal.aborted ||
         !streamReady ||
         hintRetryScheduled ||
-        highestHint <= appliedVersion
+        (!force && highestHint <= appliedVersion)
       ) {
         return
       }
@@ -252,7 +252,10 @@ export function createWorkspaceSync(
         await sleep(delay, signal)
         if (generation !== hintRetryGeneration) return
         hintRetryScheduled = false
-        if (!signal.aborted && streamReady) queueHint(highestHint)
+        if (!signal.aborted && streamReady) {
+          if (force) queueReconciliation(true)
+          else queueHint(highestHint)
+        }
       })()
     }
 
@@ -334,8 +337,6 @@ export function createWorkspaceSync(
             hiddenReconciliationPending = true
             ready = true
             streamReady = true
-            markHealthy()
-            options.onStateChange("connected")
             continue
           }
           await reconcile(event.version, true)
