@@ -1,7 +1,7 @@
 name: Report a failure
 description: Capture an Acuity Product failure with sanitized evidence.
 title: "[Failure] "
-labels: [portfolio, failure, needs-grilling]
+labels: [portfolio, failure]
 body:
   - type: markdown
     attributes:

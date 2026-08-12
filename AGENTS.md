@@ -11,19 +11,24 @@ This repo uses the five default triage labels. See `docs/agents/triage-labels.md
 ### Product workflow
 
 - Portfolio: `https://github.com/users/chasef07/projects/1`.
-- `needs-grilling` means material decisions remain open; run `grill-me` and do
-  not implement.
+- Put every new signal in Project 1 at `Inbox`. If material decisions remain
+  open, apply `needs-grilling`, run `grill-me`, and move it to `Shaping`.
 - `ready-for-agent` means the issue is the implementation contract; run
   `implement` against it.
 - After `to-spec`, add the issue to Project 1 with `gh project item-add`, then
-  set Product, Work Type, Priority, Size, Cycle, and Status. GitHub Free only
+  set Product, Work Type, Priority, Size, Cycle, and `Status: Ready`. GitHub Free only
   auto-adds Observatory issues.
+- When `implement` claims a ready issue, move it to `Building`. Opening a linked
+  pull request moves it to `Review`.
 - Work on one issue and one branch at a time. Link the pull request to the issue.
 - Merged or released work moves to `Measuring`. Only production evidence moves
   it to `Done`.
 - Agents may shape, specify, implement, test, and open draft pull requests. Do
   not merge, deploy, reprioritize, or mutate production without explicit
   authority.
+- Run Monday-to-Friday cycles. Allow at most one `Building` item per product and
+  three globally. On Friday, prove, recommit, reduce, or stop unfinished work;
+  never roll it forward silently.
 
 ### Domain docs
 
