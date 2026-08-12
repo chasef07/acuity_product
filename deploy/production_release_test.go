@@ -65,7 +65,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		"--concurrency\t20",
 		"--min\t1",
 		"--max\t3",
-		"--update-env-vars\tDATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
+		"--update-env-vars\tDATABASE_POOL_MAX=4,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--cpu\t1",
@@ -140,12 +140,12 @@ func TestProductionReleaseRejectsInsufficientDatabaseCapacityBeforeCloudMutation
 		"PATH=" + path,
 		"GCLOUD_CAPTURE=" + gcloudCapture,
 		"CURL_CAPTURE=" + curlCapture,
-	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "27")...)
+	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "35")...)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatalf("release unexpectedly accepted insufficient database capacity:\n%s", output)
 	}
-	if !strings.Contains(string(output), "production requires at least 28 usable database connections; measured 27") {
+	if !strings.Contains(string(output), "production requires at least 36 usable database connections; measured 35") {
 		t.Fatalf("release returned the wrong capacity error:\n%s", output)
 	}
 	captured, err := os.ReadFile(gcloudCapture)
@@ -336,7 +336,7 @@ func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
 		"--min\t1",
-		"--update-env-vars\tDATABASE_POOL_MAX=2,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
+		"--update-env-vars\tDATABASE_POOL_MAX=4,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20,HUMAN_CALLING_HANDOFF_ADMISSION=closed",
 	)
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-provider-ingress",
 		"--min\t1",
@@ -689,7 +689,7 @@ func releaseEnvironment() []string {
 		"IMAGE_TAG=0123456789abcdef0123456789abcdef01234567",
 		"DEPLOYMENT_ID=release-1234",
 		"CALLLEG_SCHEMA_CUTOVER_COMPLETE=true",
-		"USABLE_DATABASE_CONNECTIONS=28",
+		"USABLE_DATABASE_CONNECTIONS=36",
 	}
 }
 
