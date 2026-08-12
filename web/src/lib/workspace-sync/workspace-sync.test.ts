@@ -207,6 +207,49 @@ test("hint bursts coalesce to the newest version without regression", async () =
   sync.stop()
 })
 
+test("hidden hints defer DB reconciliation until one visible reconstruction", async () => {
+  let hidden = false
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const requested: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      return { version: minimumVersion, apply: () => {} }
+    },
+    onStateChange: () => {},
+    isHidden: () => hidden,
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+
+  await eventually(() => assert.ok(stream))
+  stream!.enqueue(readyEvent(1))
+  await eventually(() => assert.deepEqual(requested, [1]))
+
+  hidden = true
+  for (const version of [2, 3, 4, 5, 9]) {
+    stream!.enqueue(hintEvent(version))
+    await new Promise((resolve) => setTimeout(resolve, 2))
+  }
+  assert.deepEqual(requested, [1])
+
+  hidden = false
+  sync.visibilityChanged()
+  await eventually(() => assert.deepEqual(requested, [1, 9]))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(requested, [1, 9])
+  sync.stop()
+})
+
 test("failed hint reconciliation retries once immediately then backs off", async () => {
   const clock = new ManualClock()
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined

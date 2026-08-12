@@ -22,6 +22,7 @@ type WorkspaceSyncOptions = {
   }) => Promise<Reconciliation>
   onStateChange: (state: WorkspaceSyncState) => void
   onUnauthorized?: () => void
+  isHidden?: () => boolean
   random?: () => number
   sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
   timing?: Partial<WorkspaceSyncTiming>
@@ -46,6 +47,7 @@ const defaultTiming: WorkspaceSyncTiming = {
 export type WorkspaceSync = {
   setScope: (scope?: WorkspaceSyncScope) => void
   refresh: () => void
+  visibilityChanged: () => void
   stop: () => void
 }
 
@@ -60,12 +62,14 @@ export function createWorkspaceSync(
   let controller: AbortController | undefined
   let scopeKey = ""
   let activeScope: WorkspaceSyncScope | undefined
+  let handleVisibility = () => {}
 
   function stop() {
     scopeKey = ""
     activeScope = undefined
     controller?.abort()
     controller = undefined
+    handleVisibility = () => {}
   }
 
   function start(scope: WorkspaceSyncScope) {
@@ -106,6 +110,27 @@ export function createWorkspaceSync(
     let outageEpoch = 0
     let degraded = false
     let streamReady = false
+    let hiddenReconciliationPending = false
+    let hiddenForcePending = false
+
+    handleVisibility = () => {
+      if (
+        signal.aborted ||
+        options.isHidden?.() ||
+        !hiddenReconciliationPending
+      ) {
+        return
+      }
+      const force = hiddenForcePending
+      hiddenReconciliationPending = false
+      hiddenForcePending = false
+      resetHintRetry()
+      if (force) {
+        queueReconciliation(true)
+      } else {
+        queueHint(highestHint)
+      }
+    }
 
     function beginOutage() {
       if (outage || signal.aborted) return
@@ -126,6 +151,11 @@ export function createWorkspaceSync(
             )
           await sleep(pollingDelay, signal)
           if (signal.aborted || !outage || epoch !== outageEpoch) return
+          if (options.isHidden?.()) {
+            hiddenForcePending = true
+            hiddenReconciliationPending = true
+            continue
+          }
           try {
             await reconcile(0, true)
             restoreHealthyStream()
@@ -167,19 +197,24 @@ export function createWorkspaceSync(
     function queueHint(version: number) {
       if (signal.aborted) return
       highestHint = Math.max(highestHint, version)
-      if (
-        highestHint <= appliedVersion ||
-        reconciliation ||
-        hintedReconciliationQueued ||
-        hintRetryScheduled
-      ) {
+      if (highestHint <= appliedVersion) return
+      if (options.isHidden?.()) {
+        hiddenReconciliationPending = true
         return
       }
+      if (reconciliation || hintRetryScheduled) {
+        return
+      }
+      queueReconciliation()
+    }
+
+    function queueReconciliation(force = false) {
+      if (signal.aborted || reconciliation || hintedReconciliationQueued) return
       hintedReconciliationQueued = true
       setTimeout(() => {
         hintedReconciliationQueued = false
         if (!signal.aborted) {
-          void reconcile(highestHint)
+          void reconcile(highestHint, force)
             .then(() => {
               restoreHealthyStream()
             })
@@ -293,6 +328,16 @@ export function createWorkspaceSync(
             continue
           }
           if (event.type !== "ready" || ready) continue
+          highestHint = Math.max(highestHint, event.version)
+          if (options.isHidden?.()) {
+            hiddenForcePending = true
+            hiddenReconciliationPending = true
+            ready = true
+            streamReady = true
+            markHealthy()
+            options.onStateChange("connected")
+            continue
+          }
           await reconcile(event.version, true)
           if (signal.aborted) return
           ready = true
@@ -323,7 +368,12 @@ export function createWorkspaceSync(
     }
   }
 
-  return { setScope, refresh, stop }
+  return {
+    setScope,
+    refresh,
+    visibilityChanged: () => handleVisibility(),
+    stop,
+  }
 }
 
 function wait(milliseconds: number, signal: AbortSignal) {
