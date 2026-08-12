@@ -18,21 +18,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestCallingPollsKeepServingWhenOnePortalConnectionIsBusy(t *testing.T) {
-	var oneConnection []int
-	t.Run("one connection", func(t *testing.T) {
-		oneConnection = runCallingPollBurst(t, 1)
-	})
-	if oneConnection[0] == http.StatusOK || oneConnection[1] == http.StatusOK {
-		t.Fatalf("one-connection portal unexpectedly served busy burst: %v", oneConnection)
+func TestCallingPollsKeepServingDuringParallelPortalRefresh(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
 	}
 
 	var twoConnections []int
 	t.Run("two connections", func(t *testing.T) {
 		twoConnections = runCallingPollBurst(t, 2)
 	})
-	if twoConnections[0] != http.StatusOK || twoConnections[1] != http.StatusOK {
-		t.Fatalf("two-connection portal burst statuses = %v, want two 200s", twoConnections)
+	if twoConnections[0] == http.StatusOK || twoConnections[1] == http.StatusOK {
+		t.Fatalf("two-connection portal unexpectedly served busy burst: %v", twoConnections)
+	}
+
+	var fourConnections []int
+	t.Run("four connections", func(t *testing.T) {
+		fourConnections = runCallingPollBurst(t, 4)
+	})
+	if fourConnections[0] != http.StatusOK || fourConnections[1] != http.StatusOK {
+		t.Fatalf("four-connection portal burst statuses = %v, want two 200s", fourConnections)
 	}
 }
 
@@ -104,9 +108,13 @@ func runCallingPollBurst(t *testing.T, poolMaximum int32) []int {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	held, err := pool.Acquire(context.Background())
-	if err != nil {
-		t.Fatalf("hold portal connection: %v", err)
+	held := make([]*pgxpool.Conn, 0, 2)
+	for range 2 {
+		connection, err := pool.Acquire(context.Background())
+		if err != nil {
+			t.Fatalf("hold portal connection: %v", err)
+		}
+		held = append(held, connection)
 	}
 	requests := []*http.Request{
 		pollingRequest(t, http.MethodGet, server.URL+"/v1/calling/state", nil),
@@ -126,7 +134,9 @@ func runCallingPollBurst(t *testing.T, poolMaximum int32) []int {
 		}(request)
 	}
 	result := []int{<-statuses, <-statuses}
-	held.Release()
+	for _, connection := range held {
+		connection.Release()
+	}
 	sort.Ints(result)
 	return result
 }
