@@ -126,6 +126,35 @@ test("overlapping incoming media signals cause one immediate authoritative refre
   loop.stop()
 })
 
+test("incoming media queues one refresh behind an in-flight fallback read", async () => {
+  const clock = new ManualClock()
+  const releaseFallback = deferred()
+  let stateReads = 0
+  const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {},
+    heartbeat: async () => "owner",
+    refresh: async () => {
+      stateReads += 1
+      if (stateReads === 1) await releaseFallback.promise
+    },
+    onOwnershipLost: async () => {},
+    isHidden: () => false,
+    random: () => 0,
+    clock,
+  })
+
+  loop.start()
+  await clock.advance(4_000)
+  assert.equal(stateReads, 1)
+
+  const incoming = loop.incomingMedia()
+  releaseFallback.resolve()
+  await incoming
+
+  assert.equal(stateReads, 2)
+  loop.stop()
+})
+
 test("fallback polling discovers state within six seconds without signals", async () => {
   const clock = new ManualClock()
   let stateReads = 0

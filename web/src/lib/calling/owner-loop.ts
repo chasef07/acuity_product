@@ -62,6 +62,9 @@ export function createCallingOwnerLoop(
   let refreshTimer: TimerID | undefined
   let heartbeat: Promise<void> | undefined
   let refresh: Promise<void> | undefined
+  let refreshOrigin: "periodic" | "signal" | undefined
+  let signalRefresh: Promise<void> | undefined
+  let signalFollowupPending = false
 
   function stop() {
     running = false
@@ -105,7 +108,7 @@ export function createCallingOwnerLoop(
         )
     refreshTimer = clock.setTimeout(() => {
       refreshTimer = undefined
-      void runRefresh().finally(() => {
+      void runRefresh("periodic").finally(() => {
         if (running) scheduleRefresh()
       })
     }, delay)
@@ -128,19 +131,33 @@ export function createCallingOwnerLoop(
     return heartbeat
   }
 
-  function runRefresh() {
-    refresh ??= options.refresh().finally(() => {
-      refresh = undefined
-    })
+  function runRefresh(origin: "periodic" | "signal") {
+    if (!refresh) {
+      refreshOrigin = origin
+      refresh = options.refresh().finally(() => {
+        refresh = undefined
+        refreshOrigin = undefined
+      })
+    }
     return refresh
   }
 
-  async function refreshFromSignal() {
-    if (!running) return
+  function refreshFromSignal() {
+    if (!running) return Promise.resolve()
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
     refreshTimer = undefined
-    await runRefresh()
-    if (running) scheduleRefresh()
+    if (refreshOrigin === "periodic") signalFollowupPending = true
+    signalRefresh ??= (async () => {
+      await runRefresh("signal")
+      if (running && signalFollowupPending) {
+        signalFollowupPending = false
+        await runRefresh("signal")
+      }
+      if (running) scheduleRefresh()
+    })().finally(() => {
+      signalRefresh = undefined
+    })
+    return signalRefresh
   }
 
   function start() {
