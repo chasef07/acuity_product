@@ -1,0 +1,60 @@
+name: Publish a ready spec
+description: Commit fully shaped Acuity Product work for bounded implementation.
+title: "[Spec] "
+labels: [portfolio, ready-for-agent]
+body:
+  - type: markdown
+    attributes:
+      value: Use this only after material decisions are settled. Otherwise use Grill an idea.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solution
+    validations:
+      required: true
+  - type: textarea
+    id: stories
+    attributes:
+      label: User Stories
+      description: Add a numbered list in the form "As an actor, I want a capability, so that a benefit."
+    validations:
+      required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Decisions
+      description: Record settled modules, boundaries, interfaces, schema, contracts, and interactions without brittle file paths.
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing Decisions
+      description: Name the agreed public test seam, expected behavior, and relevant prior art.
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of Scope
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Production Evidence
+      description: Define what proof will move the work from Measuring to Done.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Further Notes
+    validations:
+      required: false

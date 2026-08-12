@@ -1,0 +1,35 @@
+name: Grill an idea
+description: Shape an unclear product idea before committing implementation work.
+title: "[Idea] "
+labels: [portfolio, needs-grilling]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include PHI, raw transcripts, recordings, credentials, or secrets.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user or operational problem, not a proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add sanitized metrics, customer signals, or secure evidence links.
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Open decisions
+      description: What choices must be settled before this can become a spec?
+    validations:
+      required: true
+  - type: textarea
+    id: why_now
+    attributes:
+      label: Why now?
+    validations:
+      required: true

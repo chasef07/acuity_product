@@ -1,0 +1,51 @@
+name: Report a failure
+description: Capture an Acuity Product failure with sanitized evidence.
+title: "[Failure] "
+labels: [portfolio, failure, needs-grilling]
+body:
+  - type: markdown
+    attributes:
+      value: Record observable behavior and protected evidence references. Never paste PHI or secrets.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Customer or operational impact
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Add timestamps, non-sensitive identifiers, metrics, logs, or protected links.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Describe the smallest reliable reproduction, or state why one is unavailable.
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - P0 - Active safety, security, or widespread outage
+        - P1 - Major customer workflow is failing
+        - P2 - Degraded behavior with a workaround
+        - P3 - Minor or monitor-only signal
+    validations:
+      required: true
