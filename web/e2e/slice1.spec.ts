@@ -167,7 +167,9 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
   await abortFirstRealtimeRequest(page)
   await test.step("provisioned Admin receives an authenticated session", async () => {
     await signInAs(page, "admin@abita.test", "Fixture Admin")
-    await expect(page.getByText("No open Tasks")).toBeVisible()
+    const tasksSection = page.getByRole("button", { name: /^Tasks/ })
+    await expect(tasksSection).toHaveAttribute("aria-expanded", "false")
+    await expectNoOpenTasks(page)
     const workspaceSelector = page.getByRole("button", {
       name: "Workspace selector",
     })
@@ -206,7 +208,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
   const secondCustomerPage = await secondCustomerContext.newPage()
   await abortFirstRealtimeRequest(secondCustomerPage)
   await secondCustomerPage.goto("/workspace")
-  await expect(secondCustomerPage.getByText("No open Tasks")).toBeVisible()
+  await expectNoOpenTasks(secondCustomerPage)
   await expect(
     secondCustomerPage.getByLabel("Live updates connected"),
   ).toBeVisible()
@@ -276,7 +278,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
   const operatorPage = await operatorContext.newPage()
   await test.step("Platform Operator writes directly and gets workspace analytics", async () => {
     await signInAs(operatorPage, "founder@acuity.test", "Fixture Founder")
-    await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
+    await expectNoOpenTasks(operatorPage)
     await expect(
       operatorPage.getByRole("region", { name: "Call diagnostics" }),
     ).toHaveCount(0)
@@ -450,7 +452,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     await operatorPage
       .getByRole("button", { name: selectedLocation.name, exact: true })
       .click()
-    await expect(operatorPage.getByText("No open Tasks")).toBeVisible()
+    await expectNoOpenTasks(operatorPage)
     await operatorPage.getByRole("button", { name: "Analytics" }).click()
     await expect
       .poll(() => analyticsRequests.at(-1)?.locationId)
@@ -495,7 +497,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
 
   await test.step("persisted theme and explicit browser states", async () => {
     await page.goto("/workspace")
-    await expect(page.getByText("No open Tasks")).toBeVisible()
+    await expectNoOpenTasks(page)
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
       fullPage: true,
@@ -517,7 +519,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     })
     const coarsePage = await coarseContext.newPage()
     await coarsePage.goto("/workspace")
-    await expect(coarsePage.getByText("No open Tasks")).toBeVisible()
+    await expectNoOpenTasks(coarsePage)
     await expect(
       coarsePage.getByRole("button", { name: "Workspace selector" }),
     ).toContainText("Abita Eye Group")
@@ -575,6 +577,15 @@ async function accessToken(page: Page): Promise<string> {
   const response = await page.request.get(`${webURL}/api/auth/token`)
   expect(response.ok()).toBeTruthy()
   return ((await response.json()) as { token: string }).token
+}
+
+async function expectNoOpenTasks(page: Page) {
+  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
+  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
+    await tasksSection.click()
+  }
+  await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
+  await expect(page.getByText("No open Tasks")).toBeVisible()
 }
 
 async function abortFirstRealtimeRequest(page: Page) {
