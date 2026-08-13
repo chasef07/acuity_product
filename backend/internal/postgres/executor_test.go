@@ -1,11 +1,15 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -57,8 +61,49 @@ func TestExecutorClassifiesOnlySupportedPostgresCauses(t *testing.T) {
 	}
 }
 
+func TestExecutorClassifiesTimeoutWhileReadingRows(t *testing.T) {
+	var output bytes.Buffer
+	pool := &scriptedPool{
+		query: func(ctx context.Context, _ string, _ ...any) (pgx.Rows, error) {
+			return &deadlineRows{ctx: ctx}, nil
+		},
+	}
+	executor, err := newExecutor(scriptedAcquirer{connection: pool}, ExecutorConfig{
+		AcquireTimeout:   10 * time.Millisecond,
+		OperationTimeout: 100 * time.Millisecond,
+		StatementTimeout: 25 * time.Millisecond,
+	}, observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"portal-api-test",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	))
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+
+	rows, err := executor.Query(context.Background(), "SELECT pg_sleep(1)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if rows.Next() {
+		t.Fatal("deadline rows returned a result")
+	}
+	if !errors.Is(rows.Err(), context.DeadlineExceeded) {
+		t.Fatalf("rows error = %v, want deadline exceeded", rows.Err())
+	}
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &entry); err != nil {
+		t.Fatalf("decode database execution metric: %v", err)
+	}
+	if entry["cause"] != string(CauseStatementTimeout) {
+		t.Fatalf("row iteration cause = %q, want %q", entry["cause"], CauseStatementTimeout)
+	}
+}
+
 type scriptedPool struct {
 	queryRow func(context.Context, string, ...any) pgx.Row
+	query    func(context.Context, string, ...any) (pgx.Rows, error)
 }
 
 func (pool *scriptedPool) Release() {}
@@ -73,7 +118,10 @@ func (pool *scriptedPool) Exec(context.Context, string, ...any) (pgconn.CommandT
 	return pgconn.CommandTag{}, nil
 }
 
-func (pool *scriptedPool) Query(context.Context, string, ...any) (pgx.Rows, error) {
+func (pool *scriptedPool) Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error) {
+	if pool.query != nil {
+		return pool.query(ctx, sql, arguments...)
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -88,3 +136,23 @@ func (pool *scriptedPool) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error
 type scriptedErrorRow struct{ err error }
 
 func (row scriptedErrorRow) Scan(...any) error { return row.err }
+
+type deadlineRows struct {
+	ctx context.Context
+	err error
+}
+
+func (rows *deadlineRows) Close()                                       {}
+func (rows *deadlineRows) Err() error                                   { return rows.err }
+func (rows *deadlineRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (rows *deadlineRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (rows *deadlineRows) Scan(...any) error                            { return errors.New("no current row") }
+func (rows *deadlineRows) Values() ([]any, error)                       { return nil, errors.New("no current row") }
+func (rows *deadlineRows) RawValues() [][]byte                          { return nil }
+func (rows *deadlineRows) Conn() *pgx.Conn                              { return nil }
+
+func (rows *deadlineRows) Next() bool {
+	<-rows.ctx.Done()
+	rows.err = rows.ctx.Err()
+	return false
+}

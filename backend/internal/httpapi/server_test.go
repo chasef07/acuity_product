@@ -82,6 +82,42 @@ func TestRequestMetadataRecordsOnlyFixedCustomerJourneyRoutes(t *testing.T) {
 	}
 }
 
+func TestRequestMetadataRecordsCriticalRoutePanicsAsUnavailable(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{
+		observer: observability.NewLogger(
+			observability.RuntimePortalAPI,
+			"portal-api-test",
+			slog.New(slog.NewJSONHandler(&output, nil)),
+		),
+	}
+	handler := server.withRequestMetadata(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("synthetic handler panic")
+	}))
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		handler.ServeHTTP(
+			httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, "/v1/access", nil),
+		)
+	}()
+	if recovered == nil {
+		t.Fatal("critical route panic did not propagate")
+	}
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &entry); err != nil {
+		t.Fatalf("decode panic availability metric: %v", err)
+	}
+	if entry["route"] != "/v1/access" ||
+		entry["outcome"] != "unavailable" ||
+		entry["failure_stage"] != "handler" {
+		t.Fatalf("panic availability entry = %#v", entry)
+	}
+}
+
 func TestAvailabilityResultTreatsCallingNotModifiedAsAvailable(t *testing.T) {
 	outcome, stage := availabilityResult(
 		observability.AvailabilityCallingState,

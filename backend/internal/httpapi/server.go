@@ -2414,14 +2414,22 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 		}
 		response := &statusResponseWriter{ResponseWriter: w}
 		started := time.Now()
+		completed := false
+		defer func() {
+			outcome, failureStage := availabilityResult(route, response.statusCode())
+			if !completed {
+				outcome = observability.AvailabilityUnavailable
+				failureStage = observability.FailureHandler
+			}
+			observability.Record(server.observer, observability.BackendRequest(
+				route,
+				outcome,
+				failureStage,
+				time.Since(started),
+			))
+		}()
 		next.ServeHTTP(response, r.WithContext(ctx))
-		outcome, failureStage := availabilityResult(route, response.statusCode())
-		observability.Record(server.observer, observability.BackendRequest(
-			route,
-			outcome,
-			failureStage,
-			time.Since(started),
-		))
+		completed = true
 	})
 }
 

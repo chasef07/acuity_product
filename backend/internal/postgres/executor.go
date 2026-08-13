@@ -175,9 +175,9 @@ func (executor *Executor) Query(
 	return &ownedRows{
 		Rows: rows,
 		finish: func() {
+			_ = executor.finishOperation(rows.Err(), statementContext, started)
 			cancel()
 			finish()
-			executor.record(CauseOf(rows.Err()), time.Since(started))
 		},
 	}, nil
 }
