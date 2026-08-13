@@ -30,7 +30,6 @@ GRANT SELECT ON TABLE
     public.ai_interaction_attention,
     public.ai_interactions,
     public.human_calling_call_legs,
-    public.human_calling_call_recordings,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_handoffs,
@@ -48,6 +47,18 @@ GRANT SELECT ON TABLE
     public.work_task_activities,
     public.work_task_interactions,
     public.work_tasks
+TO acuity_portal;
+
+GRANT SELECT (
+    call_id,
+    practice_id,
+    location_id,
+    audio_state,
+    provider_recording_id,
+    content_expires_at,
+    duration_millis
+)
+ON TABLE public.human_calling_call_recordings
 TO acuity_portal;
 
 GRANT SELECT (

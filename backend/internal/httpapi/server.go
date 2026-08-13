@@ -1219,7 +1219,7 @@ func (server *Server) IssueCallingRecordingPlayback(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	capability, err := server.calling.IssueCallRecordingPlayback(
 		ctx,

@@ -511,22 +511,22 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 
 	failures := []struct {
 		name       string
-		reason     humancalling.VoicemailUnavailableReason
+		reason     humancalling.RecordingUnavailableReason
 		retryAfter string
 		status     int
 		retryable  bool
 	}{
-		{name: "recording not found", reason: humancalling.VoicemailRecordingNotFound, status: http.StatusNotFound},
-		{name: "provider auth", reason: humancalling.VoicemailProviderAuth, status: http.StatusServiceUnavailable},
-		{name: "provider rate limited", reason: humancalling.VoicemailProviderRateLimited, retryAfter: "7", status: http.StatusServiceUnavailable, retryable: true},
-		{name: "provider timeout", reason: humancalling.VoicemailProviderTimeout, status: http.StatusGatewayTimeout, retryable: true},
-		{name: "provider unavailable", reason: humancalling.VoicemailProviderUnavailable, status: http.StatusServiceUnavailable, retryable: true},
-		{name: "recording URL expired", reason: humancalling.VoicemailRecordingURLExpired, status: http.StatusServiceUnavailable, retryable: true},
+		{name: "recording not found", reason: humancalling.RecordingNotFound, status: http.StatusNotFound},
+		{name: "provider auth", reason: humancalling.RecordingProviderAuth, status: http.StatusServiceUnavailable},
+		{name: "provider rate limited", reason: humancalling.RecordingRateLimited, retryAfter: "7", status: http.StatusServiceUnavailable, retryable: true},
+		{name: "provider timeout", reason: humancalling.RecordingProviderTimeout, status: http.StatusGatewayTimeout, retryable: true},
+		{name: "provider unavailable", reason: humancalling.RecordingProviderFailure, status: http.StatusServiceUnavailable, retryable: true},
+		{name: "recording URL expired", reason: humancalling.RecordingURLExpired, status: http.StatusServiceUnavailable, retryable: true},
 	}
 	for _, failure := range failures {
 		t.Run(failure.name, func(t *testing.T) {
 			audio.update(func(audio *httpVoicemailAudio) {
-				audio.err = &humancalling.VoicemailUnavailableError{
+				audio.err = &humancalling.RecordingUnavailableError{
 					Reason:     failure.reason,
 					RetryAfter: failure.retryAfter,
 				}

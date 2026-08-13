@@ -28,23 +28,16 @@ const (
 	RecoveryMissedCall RecoveryOutcome = "MISSED_CALL"
 )
 
-type RecordingAudioState string
+type VoicemailAudioState string
 
 const (
-	RecordingProcessing  RecordingAudioState = "PROCESSING"
-	RecordingReady       RecordingAudioState = "READY"
-	RecordingUnavailable RecordingAudioState = "UNAVAILABLE"
-	RecordingExpired     RecordingAudioState = "EXPIRED"
-	RecordingDeleted     RecordingAudioState = "DELETED"
+	VoicemailProcessing  VoicemailAudioState = "PROCESSING"
+	VoicemailReady       VoicemailAudioState = "READY"
+	VoicemailUnavailable VoicemailAudioState = "UNAVAILABLE"
 
-	VoicemailProcessing       = RecordingProcessing
-	VoicemailReady            = RecordingReady
-	VoicemailUnavailable      = RecordingUnavailable
 	voicemailRecordingMaximum = 120 * time.Second
 	defaultVoicemailGreeting  = "Please leave a message after the beep."
 )
-
-type VoicemailAudioState = RecordingAudioState
 
 type Voicemail struct {
 	Outcome         RecoveryOutcome
@@ -176,14 +169,6 @@ const (
 	RecordingProviderFailure RecordingUnavailableReason = "provider_unavailable"
 	RecordingInvalidResponse RecordingUnavailableReason = "provider_invalid_response"
 	RecordingURLExpired      RecordingUnavailableReason = "recording_url_expired"
-
-	VoicemailRecordingNotFound   = RecordingNotFound
-	VoicemailProviderAuth        = RecordingProviderAuth
-	VoicemailProviderRateLimited = RecordingRateLimited
-	VoicemailProviderTimeout     = RecordingProviderTimeout
-	VoicemailProviderUnavailable = RecordingProviderFailure
-	VoicemailProviderInvalid     = RecordingInvalidResponse
-	VoicemailRecordingURLExpired = RecordingURLExpired
 )
 
 type RecordingUnavailableError struct {
@@ -192,9 +177,6 @@ type RecordingUnavailableError struct {
 }
 
 func (err *RecordingUnavailableError) Error() string { return "recording is unavailable" }
-
-type VoicemailUnavailableReason = RecordingUnavailableReason
-type VoicemailUnavailableError = RecordingUnavailableError
 
 type playbackClaims struct {
 	CallID    string       `json:"callId"`
@@ -694,7 +676,7 @@ func (m *Module) openPlayback(
 	identity := access.Identity{Subject: claims.Subject, EmailVerified: true}
 	tx, err := m.database.BeginTx(authorizationContext, pgx.TxOptions{})
 	if err != nil {
-		return PlaybackContent{}, fmt.Errorf("begin voicemail playback: %w", err)
+		return PlaybackContent{}, fmt.Errorf("begin recording playback: %w", err)
 	}
 	defer func() { _ = tx.Rollback(authorizationContext) }()
 	var practiceID, locationID, recordingID string

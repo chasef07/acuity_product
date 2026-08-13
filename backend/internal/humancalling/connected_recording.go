@@ -9,6 +9,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type RecordingAudioState string
+
+const (
+	RecordingProcessing  RecordingAudioState = "PROCESSING"
+	RecordingReady       RecordingAudioState = "READY"
+	RecordingUnavailable RecordingAudioState = "UNAVAILABLE"
+	RecordingExpired     RecordingAudioState = "EXPIRED"
+	RecordingDeleted     RecordingAudioState = "DELETED"
+)
+
 type CallRecording struct {
 	AudioState      RecordingAudioState
 	DurationSeconds int64
@@ -24,7 +34,7 @@ func (m *Module) applyConnectedCallRecordingSaved(
 	}
 	if fact.RecordingID == "" {
 		var alreadyApplied bool
-		if err := m.pool.QueryRow(ctx, `
+		if err := m.database.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM human_calling_projected_facts WHERE event_id = $1
 			)
@@ -47,7 +57,7 @@ func (m *Module) applyConnectedCallRecordingSaved(
 		fact.RecordingStartedAt = recording.StartedAt
 		fact.RecordingEndedAt = recording.EndedAt
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin connected recording save: %w", err)
 	}
@@ -119,7 +129,7 @@ func (m *Module) applyConnectedCallRecordingError(
 	if !ok {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin connected recording failure: %w", err)
 	}
@@ -182,7 +192,7 @@ func (m *Module) ProcessNextRecordingReconciliation(
 		return false, nil
 	}
 	now := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin recording reconciliation claim: %w", err)
 	}
@@ -250,6 +260,30 @@ func (m *Module) ProcessNextRecordingReconciliation(
 
 	recording, err := provider.ResolveRecording(ctx, providerCallLegID, callSessionID)
 	if err != nil {
+		if errors.Is(err, ErrProviderRecordingFailed) {
+			failedAt := now
+			var failure *providerRecordingFailure
+			if errors.As(err, &failure) && !failure.OccurredAt.IsZero() {
+				failedAt = failure.OccurredAt
+			}
+			fact := ProviderFact{
+				EventID: "recording-error-reconciliation-" + opaqueReference(
+					providerCallLegID+"\x00"+callSessionID+"\x00"+
+						failedAt.UTC().Format(time.RFC3339Nano),
+				),
+				Type:          FactRecordingError,
+				OccurredAt:    failedAt,
+				CallLegID:     providerCallLegID,
+				CallSessionID: callSessionID,
+				ClientState:   encodeCallLegClientState(callID, callLegID, role, "bridge"),
+			}
+			if applyErr := m.applyConnectedCallRecordingError(ctx, fact); applyErr != nil {
+				return m.failRecordingReconciliation(
+					ctx, callID, now, attempts, applyErr,
+				)
+			}
+			return true, nil
+		}
 		return m.failRecordingReconciliation(ctx, callID, now, attempts, err)
 	}
 	fact := ProviderFact{
@@ -275,7 +309,7 @@ func (m *Module) failRecordingReconciliation(
 	reconciliationErr error,
 ) (bool, error) {
 	retryAt := claimedAt.Add(recordingMaintenanceBackoff(attempts))
-	result, err := m.pool.Exec(ctx, `
+	result, err := m.database.Exec(ctx, `
 		UPDATE human_calling_call_recordings
 		SET reconciliation_claimed_at = NULL,
 			next_reconciliation_attempt_at = $3,
@@ -300,7 +334,7 @@ func (m *Module) ProcessNextRecordingRetention(
 		return false, nil
 	}
 	now := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin recording retention claim: %w", err)
 	}
@@ -347,7 +381,7 @@ func (m *Module) ProcessNextRecordingRetention(
 
 	if err := provider.DeleteRecording(ctx, recordingID); err != nil {
 		retryAt := now.Add(recordingMaintenanceBackoff(attempts))
-		if _, updateErr := m.pool.Exec(ctx, `
+		if _, updateErr := m.database.Exec(ctx, `
 			UPDATE human_calling_call_recordings
 			SET deletion_claimed_at = NULL, next_deletion_attempt_at = $3,
 				deletion_error_code = $4, updated_at = $2
@@ -358,7 +392,7 @@ func (m *Module) ProcessNextRecordingRetention(
 		return true, fmt.Errorf("delete expired provider recording: %w", err)
 	}
 
-	completion, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	completion, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return true, fmt.Errorf("begin recording retention completion: %w", err)
 	}

@@ -109,9 +109,22 @@ var (
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
 	ErrDefinitiveProviderFailure = errors.New("provider effect definitely failed")
+	ErrProviderRecordingFailed   = errors.New("provider recording failed")
 	ErrProviderTargetAbsent      = errors.New("provider target is absent")
 	ErrInvalidWebhook            = errors.New("invalid provider webhook")
 )
+
+type providerRecordingFailure struct {
+	OccurredAt time.Time
+}
+
+func (failure *providerRecordingFailure) Error() string {
+	return ErrProviderRecordingFailed.Error()
+}
+
+func (failure *providerRecordingFailure) Is(target error) bool {
+	return target == ErrProviderRecordingFailed
+}
 
 var canonicalE164 = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
 

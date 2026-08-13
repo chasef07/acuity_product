@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 35 {
-		t.Fatalf("migration count = %d, want 35", migrationCount)
+	if migrationCount != 36 {
+		t.Fatalf("migration count = %d, want 36", migrationCount)
 	}
 	var recordingRetentionIndex string
 	if err := pool.QueryRow(ctx, `

@@ -494,7 +494,7 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		t.Fatalf("save connected recording: %v", err)
 	}
 	recordedCall, err := calling.ReadCall(context.Background(), staff[0], callID)
-	if err != nil || recordedCall.Recording.AudioState != humancalling.VoicemailReady ||
+	if err != nil || recordedCall.Recording.AudioState != humancalling.RecordingReady ||
 		recordedCall.Recording.DurationSeconds != 30 {
 		t.Fatalf("connected recording projection = %#v, err = %v", recordedCall.Recording, err)
 	}
@@ -3684,14 +3684,15 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	}
 }
 
-func TestStaleConnectedRecordingReconcilesWithoutSavedWebhook(t *testing.T) {
+func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 	pool := testdb.Open(t)
 	endedAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
 	currentTime := endedAt.Add(3 * time.Minute)
 	accessModule := access.New(pool, func() time.Time { return currentTime })
 	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
-		Environment: "test",
-		RequestedBy: "recording-reconciliation-test",
+		Environment:       "test",
+		RequestedBy:       "recording-reconciliation-test",
+		PlatformOperators: []string{"recording-operator@example.test"},
 		Practices: []access.PracticeProvision{{
 			Key:                                 "recording-reconciliation",
 			Name:                                "Recording Reconciliation",
@@ -3755,7 +3756,7 @@ func TestStaleConnectedRecordingReconcilesWithoutSavedWebhook(t *testing.T) {
 			CallLegID: "recording-leg", CallSessionID: "recording-session",
 			StartedAt: endedAt.Add(-time.Minute), EndedAt: endedAt,
 		},
-		recordingErr: humancalling.ErrAmbiguousEffect,
+		recordingErr: humancalling.ErrProviderRecordingFailed,
 	}
 	calling := humancalling.New(
 		pool,
@@ -3765,6 +3766,32 @@ func TestStaleConnectedRecordingReconcilesWithoutSavedWebhook(t *testing.T) {
 		func() time.Time { return currentTime },
 	)
 	processed, err := calling.ProcessNextRecordingReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("failed recording reconciliation = %t, %v", processed, err)
+	}
+	failedCall, err := calling.ReadCall(context.Background(), access.Identity{
+		Subject:       "recording-operator",
+		Email:         "recording-operator@example.test",
+		EmailVerified: true,
+	}, callID)
+	if err != nil || failedCall.Recording.AudioState != humancalling.RecordingUnavailable {
+		t.Fatalf("failed recording projection = %#v, %v", failedCall.Recording, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_recordings SET
+			audio_state = 'PROCESSING', last_error_code = NULL,
+			reconciliation_attempts = 0, reconciliation_claimed_at = NULL,
+			next_reconciliation_attempt_at = NULL,
+			reconciliation_error_code = NULL, updated_at = $2
+		WHERE call_id = $1
+	`, callID, currentTime); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.recordingErr = humancalling.ErrAmbiguousEffect
+	provider.mu.Unlock()
+
+	processed, err = calling.ProcessNextRecordingReconciliation(context.Background())
 	if !processed || !errors.Is(err, humancalling.ErrAmbiguousEffect) {
 		t.Fatalf("first recording reconciliation = %t, %v", processed, err)
 	}
