@@ -73,6 +73,8 @@ import {
 import {
   activeRingingOffers,
   offerSecondsRemaining,
+  outboundCallBlockReason,
+  outboundCallOccupiedMessage,
 } from "@/lib/calling/offers"
 import { portalClient } from "@/lib/api/client"
 import { cn } from "@/lib/utils"
@@ -327,6 +329,8 @@ export function CallingDock({
       if (activeCall || expectedCallRef.current) {
         return "Finish the active Call before starting another."
       }
+      const offerBlock = outboundCallBlockReason(ringingLegs, Date.now())
+      if (offerBlock) return offerBlock
       const token = await getAccessToken()
       if (!token) return "Your authentication needs to be refreshed."
       setOutboundPending(true)
@@ -343,6 +347,9 @@ export function CallingDock({
       if (!result?.data) {
         const status = result?.response?.status
         if (status === 409) {
+          if (result?.error?.error.code === "CALL_OCCUPIED") {
+            return outboundCallOccupiedMessage
+          }
           return "The Call route or active softphone state changed. Refresh and try again."
         }
         if (status === 400) {
@@ -360,7 +367,15 @@ export function CallingDock({
       availabilityRef.current = false
       return undefined
     },
-    [activeCall, applyActiveCall, callingEnabled, lease?.owner, mediaState, sessionID],
+    [
+      activeCall,
+      applyActiveCall,
+      callingEnabled,
+      lease?.owner,
+      mediaState,
+      ringingLegs,
+      sessionID,
+    ],
   )
 
   useEffect(() => {

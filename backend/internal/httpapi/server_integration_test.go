@@ -1623,6 +1623,31 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		!state.Ringing[0].Deadline.Equal(now.Add(20*time.Second)) || etag == "" {
 		t.Fatalf("HTTP Calling state = %#v, ETag = %q", state, etag)
 	}
+	outboundBody, _ := json.Marshal(map[string]any{
+		"sessionId":      "http-browser",
+		"idempotencyKey": "http-outbound-while-ringing",
+		"practiceId":     authorization.Practice.ID,
+		"locationId":     authorization.Locations[0].ID,
+		"destination":    "+15555550102",
+	})
+	outbound := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/outbound-calls",
+		"calling-token",
+		outboundBody,
+	)
+	var outboundEnvelope api.ErrorEnvelope
+	decode(t, outbound, &outboundEnvelope)
+	if outbound.StatusCode != http.StatusConflict ||
+		outboundEnvelope.Error.Code != "CALL_OCCUPIED" {
+		t.Fatalf(
+			"outbound during inbound offer = status:%d body:%#v",
+			outbound.StatusCode,
+			outboundEnvelope,
+		)
+	}
 }
 
 func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {

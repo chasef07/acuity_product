@@ -2,7 +2,12 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import type { RingingCallLeg } from "../api/generated/types.gen.ts"
-import { activeRingingOffers, offerSecondsRemaining } from "./offers.ts"
+import {
+  activeRingingOffers,
+  offerSecondsRemaining,
+  outboundCallBlockReason,
+  outboundCallOccupiedMessage,
+} from "./offers.ts"
 
 const offer = {
   callId: "call-id",
@@ -39,5 +44,22 @@ test("incoming offer is hidden at its authoritative deadline", () => {
   assert.deepEqual(
     activeRingingOffers([offer], Date.parse("2026-08-09T12:00:20Z")),
     [],
+  )
+})
+
+test("active incoming offer explains why an outbound Call cannot start", () => {
+  assert.equal(
+    outboundCallBlockReason(
+      [offer],
+      Date.parse("2026-08-09T12:00:10Z"),
+    ),
+    "An incoming Call is pending. Wait for it to clear and try again.",
+  )
+})
+
+test("backend occupancy does not assume the occupying Call is incoming", () => {
+  assert.equal(
+    outboundCallOccupiedMessage,
+    "Another Call is pending or active.",
   )
 })

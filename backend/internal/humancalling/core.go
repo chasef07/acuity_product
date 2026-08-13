@@ -90,6 +90,7 @@ var (
 	ErrConflict                  = errors.New("human calling transition conflict")
 	ErrExpired                   = errors.New("human calling deadline expired")
 	ErrIneligible                = errors.New("user is not currently call eligible")
+	ErrOccupied                  = errors.New("user has an occupying Call")
 	ErrInvalidHandoff            = errors.New("invalid handoff")
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")

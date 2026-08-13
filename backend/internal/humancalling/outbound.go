@@ -341,8 +341,11 @@ func (m *Module) StartOutboundCall(
 					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
 				)
 		)
-	`, command.Identity.Subject).Scan(&occupied); err != nil || occupied {
-		return Call{}, ErrIneligible
+	`, command.Identity.Subject).Scan(&occupied); err != nil {
+		return Call{}, fmt.Errorf("read outbound Call occupancy: %w", err)
+	}
+	if occupied {
+		return Call{}, ErrOccupied
 	}
 	callerID, err := outboundCallerID(ctx, tx, practiceID, locationID)
 	if err != nil {

@@ -2257,6 +2257,8 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 	case errors.Is(err, humancalling.ErrInvalidInput),
 		errors.Is(err, humancalling.ErrInvalidWebhook):
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, humancalling.ErrOccupied):
+		server.writeError(w, r, http.StatusConflict, "CALL_OCCUPIED", "Another Call is pending or active.", false)
 	case errors.Is(err, humancalling.ErrDenied),
 		errors.Is(err, humancalling.ErrInvalidHandoff),
 		errors.Is(err, humancalling.ErrIneligible):
