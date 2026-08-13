@@ -30,10 +30,10 @@ type CallingOwnerLoopTiming = {
 }
 
 const defaultTiming: CallingOwnerLoopTiming = {
-  heartbeatMinimumMilliseconds: 6_000,
-  heartbeatMaximumMilliseconds: 7_000,
-  heartbeatRetryMinimumMilliseconds: 500,
-  heartbeatRetryMaximumMilliseconds: 1_000,
+  heartbeatMinimumMilliseconds: 3_500,
+  heartbeatMaximumMilliseconds: 4_000,
+  heartbeatRetryMinimumMilliseconds: 250,
+  heartbeatRetryMaximumMilliseconds: 500,
   visibleRefreshMinimumMilliseconds: 4_000,
   visibleRefreshMaximumMilliseconds: 6_000,
   hiddenRefreshMinimumMilliseconds: 8_000,

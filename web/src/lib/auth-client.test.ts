@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { clearAccessToken, getAccessToken } from "./auth-client.ts"
+import {
+  clearAccessToken,
+  getAccessToken,
+  getAccessTokenResult,
+} from "./auth-client.ts"
 
 test("one valid access token serves concurrent callers until it is invalidated", async () => {
   const originalFetch = globalThis.fetch
@@ -92,6 +96,48 @@ test("initial token acquisition retries one transient failure", async () => {
       token,
     ])
     assert.equal(requests, 2)
+  } finally {
+    clearAccessToken()
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("transient token failures are not reported as authentication loss", async () => {
+  const originalFetch = globalThis.fetch
+
+  try {
+    for (const failure of ["network", "rate-limit", "server"] as const) {
+      globalThis.fetch = async () => {
+        if (failure === "network") throw new TypeError("network unavailable")
+        return new Response(null, {
+          status: failure === "rate-limit" ? 429 : 503,
+          headers: { "X-Retry-After": "0.001" },
+        })
+      }
+      clearAccessToken()
+      assert.deepEqual(
+        await getAccessTokenResult(),
+        { status: "unavailable" },
+        failure,
+      )
+    }
+  } finally {
+    clearAccessToken()
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("rejected token sessions are reported as authentication loss", async () => {
+  const originalFetch = globalThis.fetch
+
+  try {
+    for (const status of [401, 403]) {
+      globalThis.fetch = async () => new Response(null, { status })
+      clearAccessToken()
+      assert.deepEqual(await getAccessTokenResult(), {
+        status: "unauthenticated",
+      })
+    }
   } finally {
     clearAccessToken()
     globalThis.fetch = originalFetch

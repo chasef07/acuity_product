@@ -51,7 +51,7 @@ import type {
   RingingCallLeg,
   SoftphoneState,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { getAccessToken, getAccessTokenResult } from "@/lib/auth-client"
 import {
   createCallingMediaAdapter,
   type CallingMediaAdapter,
@@ -258,8 +258,14 @@ export function CallingDock({
       const write = readinessWriter.write(
         { available: nextAvailable, mediaState: effectiveMediaState },
         async (update, signal) => {
-          const token = await getAccessToken()
-          if (!token) return { failure: "authentication" }
+          const authentication = await getAccessTokenResult()
+          if (authentication.status === "unauthenticated") {
+            return { failure: "authentication" }
+          }
+          if (authentication.status === "unavailable") {
+            return { failure: "request" }
+          }
+          const token = authentication.token
           if (signal.aborted) return { failure: "request" }
           const probeTrack = probeStreamRef.current?.getAudioTracks()[0]
           const technicallyReady =
@@ -765,6 +771,28 @@ export function CallingDock({
     }
   }, [applyActiveCall, updateReadiness])
 
+  const releaseCallingOwnership = useCallback(
+    async (currentLease?: SoftphoneState) => {
+      if (ownerRef.current) ownerGenerationRef.current += 1
+      ownerRef.current = false
+      setLease(currentLease)
+      setAvailable(false)
+      availabilityRef.current = false
+      setMediaState("unavailable")
+      mediaStateRef.current = "unavailable"
+      setRingingLegs([])
+      incomingLegsRef.current.clear()
+      mediaLegRef.current = null
+      setMediaAttached(false)
+      setMuted(false)
+      await adapterRef.current?.disconnect()
+      adapterRef.current = null
+      probeStreamRef.current?.getTracks().forEach((track) => track.stop())
+      probeStreamRef.current = null
+    },
+    [],
+  )
+
   const refreshOwnershipNow = useCallback(async () => {
     const token = await getAccessToken()
     if (!token) return
@@ -773,9 +801,7 @@ export function CallingDock({
       body: { sessionId: sessionID, takeover: false },
     }).catch(() => undefined)
     if (!result?.data?.owner) {
-      if (ownerRef.current) ownerGenerationRef.current += 1
-      ownerRef.current = false
-      setLease(result?.data)
+      await releaseCallingOwnership(result?.data)
       if (result?.data?.activeCallId) {
         expectedCallRef.current = result.data.activeCallId
         setExpectedCallID(result.data.activeCallId)
@@ -785,16 +811,6 @@ export function CallingDock({
         setExpectedCallID("")
         applyActiveCall()
       }
-      setAvailable(false)
-      availabilityRef.current = false
-      setMediaState("unavailable")
-      mediaLegRef.current = null
-      setMediaAttached(false)
-      setMuted(false)
-      await adapterRef.current?.disconnect()
-      adapterRef.current = null
-      probeStreamRef.current?.getTracks().forEach((track) => track.stop())
-      probeStreamRef.current = null
       return
     }
     setLease(result.data)
@@ -829,7 +845,14 @@ export function CallingDock({
     await updateReadiness(
       availabilityIntentRef.current && expectedCallRef.current === "",
     )
-  }, [applyActiveCall, connectMedia, refreshCall, sessionID, updateReadiness])
+  }, [
+    applyActiveCall,
+    connectMedia,
+    refreshCall,
+    releaseCallingOwnership,
+    sessionID,
+    updateReadiness,
+  ])
 
   const refreshOwnership = useCallback(() => {
     if (ownershipPollRef.current) return ownershipPollRef.current
@@ -900,22 +923,7 @@ export function CallingDock({
         await refreshCall()
       },
       onOwnershipLost: async () => {
-        ownerGenerationRef.current += 1
-        setLease(undefined)
-        setAvailable(false)
-        availabilityRef.current = false
-        ownerRef.current = false
-        setMediaState("unavailable")
-        mediaStateRef.current = "unavailable"
-        setRingingLegs([])
-        incomingLegsRef.current.clear()
-        mediaLegRef.current = null
-        setMediaAttached(false)
-        setMuted(false)
-        await adapterRef.current?.disconnect()
-        adapterRef.current = null
-        probeStreamRef.current?.getTracks().forEach((track) => track.stop())
-        probeStreamRef.current = null
+        await releaseCallingOwnership()
         setError(
           lostReason === "authentication"
             ? "Your authentication needs to be refreshed."
@@ -938,6 +946,7 @@ export function CallingDock({
     lease?.owner,
     refreshCall,
     refreshCallingState,
+    releaseCallingOwnership,
     updateReadiness,
   ])
 

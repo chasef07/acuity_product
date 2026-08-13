@@ -27,7 +27,7 @@ test("a visible idle owner stays within its 30-second request budget", async () 
   await clock.advance(30_000)
 
   assert.equal(leasePosts, 1)
-  assert.equal(readinessHeartbeats, 4)
+  assert.equal(readinessHeartbeats, 8)
   assert.equal(stateReads, 6)
   loop.stop()
 })
@@ -93,7 +93,34 @@ test("a lost owner fails closed and stops owner work", async () => {
   assert.equal(owner, false)
   assert.equal(mediaConnected, false)
   assert.equal(readinessHeartbeats, 1)
-  assert.equal(stateReads, 1)
+  assert.equal(stateReads, 0)
+})
+
+test("a maximum-duration heartbeat retry completes inside the readiness grace", async () => {
+  const clock = new ManualClock()
+  const completedAt: number[] = []
+  let attempts = 0
+  const loop = createCallingOwnerLoop({
+    ensureMediaConnected: async () => {},
+    heartbeat: async () => {
+      attempts += 1
+      await new Promise<void>((resolve) => clock.setTimeout(resolve, 5_000))
+      completedAt.push(clock.now)
+      return attempts === 1 ? "retry" : "owner"
+    },
+    refresh: async () => {},
+    onOwnershipLost: async () => {},
+    isHidden: () => false,
+    random: () => 1,
+    clock,
+  })
+
+  loop.start()
+  await clock.advance(14_999)
+
+  assert.equal(completedAt.length, 2)
+  assert.ok(completedAt[1] < 15_000)
+  loop.stop()
 })
 
 test("overlapping incoming media signals cause one immediate authoritative refresh", async () => {
