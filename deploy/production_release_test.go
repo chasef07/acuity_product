@@ -62,7 +62,7 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 	assertCapturedCommand(t, commands, "run\tdeploy\tacuity-portal-api",
 		"--cpu\t1",
 		"--memory\t512Mi",
-		"--concurrency\t20",
+		"--concurrency\t8",
 		"--min\t1",
 		"--max\t3",
 		"--update-env-vars\tDATABASE_POOL_MAX=4,DATABASE_ACQUIRE_TIMEOUT_MS=1500,HUMAN_CALLING_RING_WINDOW_SECONDS=20",
