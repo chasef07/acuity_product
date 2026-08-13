@@ -35,11 +35,11 @@ type ProviderReceiptAudit struct {
 // AuditProviderReceipts returns aggregate durable queue evidence without
 // exposing receipt, Call, provider, phone, or raw webhook identifiers.
 func (m *Module) AuditProviderReceipts(ctx context.Context) (ProviderReceiptAudit, error) {
-	if m.pool == nil {
+	if m.database == nil {
 		return ProviderReceiptAudit{}, ErrInvalidInput
 	}
 	checkedAt := m.now().UTC().Truncate(time.Microsecond)
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
 		AccessMode: pgx.ReadOnly,
 	})

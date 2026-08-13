@@ -75,7 +75,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	now := m.now()
-	if _, err := m.pool.Exec(ctx, `
+	if _, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = CASE
 				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'PENDING'
@@ -105,7 +105,7 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	if !ok {
 		return 0, nil
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
 	}
@@ -234,7 +234,7 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	}
 	if commandID != "" {
 		var unresolved bool
-		if err := m.pool.QueryRow(ctx, `
+		if err := m.database.QueryRow(ctx, `
 			SELECT state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 			FROM human_calling_provider_commands WHERE id = $1
 		`, commandID).Scan(&unresolved); err != nil {
@@ -335,7 +335,7 @@ func (m *Module) terminalizeStopRingWindow(
 	terminalAt time.Time,
 	providerClientState string,
 ) (bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin terminal ring-window reconciliation: %w", err)
 	}
@@ -420,7 +420,7 @@ func (m *Module) terminalizeStopRingWindow(
 }
 
 func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin outbound media expiry: %w", err)
 	}
@@ -495,7 +495,7 @@ func (m *Module) markUnobservedCommandAmbiguous(
 	commandCreatedAt time.Time,
 	observedAt time.Time,
 ) error {
-	tag, err := m.pool.Exec(ctx, `
+	tag, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
 		WHERE id = $1 AND state IN ('SENDING', 'SENT')
@@ -523,7 +523,7 @@ func (m *Module) rejectUnobservedCommand(
 	errorCode string,
 ) error {
 	observedAt := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin provider observation result: %w", err)
 	}

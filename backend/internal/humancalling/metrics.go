@@ -46,7 +46,7 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	var depth int64
 	var quarantinedDepth int64
 	var oldest *time.Time
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT
 			pending.depth,
 			pending.oldest,
@@ -74,7 +74,7 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	)
 	var staffOccupancy, unresolvedHangups int64
 	var oldestStaffOccupancy, oldestHangup *time.Time
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT
 			occupancy.depth,
 			occupancy.oldest,

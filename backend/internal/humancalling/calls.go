@@ -31,7 +31,7 @@ func (m *Module) ReadCall(
 	if m.access == nil || callID == "" {
 		return Call{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Call{}, fmt.Errorf("begin Call read: %w", err)
 	}
@@ -227,7 +227,7 @@ func (m *Module) QueryCallHistory(
 			return CallHistoryPage{}, ErrInvalidInput
 		}
 	}
-	rows, err := m.pool.Query(ctx, `
+	rows, err := m.database.Query(ctx, `
 		SELECT call.id::text, call.direction, call.created_at, call.ended_at,
 			GREATEST(0, EXTRACT(EPOCH FROM (
 				COALESCE(call.ended_at, $6) - call.created_at
@@ -322,7 +322,7 @@ func (m *Module) RequestHangup(
 	if sessionID == "" || callID == "" {
 		return Call{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Call{}, fmt.Errorf("begin exact-leg Hangup: %w", err)
 	}
@@ -423,7 +423,7 @@ func (m *Module) RecordDisposition(
 	if sessionID == "" || m.work == nil || !validDisposition(disposition) {
 		return DispositionResult{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return DispositionResult{}, fmt.Errorf("begin Call disposition: %w", err)
 	}
@@ -538,7 +538,7 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 	if m.work == nil {
 		return 0, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("begin disposition expiry: %w", err)
 	}
@@ -682,7 +682,7 @@ func (m *Module) ReadOperatorTimeline(
 	if err != nil || !discovery.PlatformOperator {
 		return OperatorTimeline{}, ErrDenied
 	}
-	projection, err := m.loadCallProjection(ctx, m.pool, callID)
+	projection, err := m.loadCallProjection(ctx, m.database, callID)
 	if err != nil {
 		return OperatorTimeline{}, ErrDenied
 	}
@@ -691,7 +691,7 @@ func (m *Module) ReadOperatorTimeline(
 		State: projection.call.State, Version: projection.call.Version,
 		Entries: []TimelineEntry{},
 	}
-	rows, err := m.pool.Query(ctx, `
+	rows, err := m.database.Query(ctx, `
 		WITH entries AS (
 			SELECT timeline.kind, COALESCE(timeline.opaque_reference, '') AS opaque_reference,
 				COALESCE(timeline.error_code, command.last_error_code,

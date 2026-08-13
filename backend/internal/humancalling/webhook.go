@@ -96,7 +96,7 @@ func (m *Module) ReceiveWebhook(
 		return WebhookReceipt{}, ErrInvalidWebhook
 	}
 
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf("begin provider receipt: %w", err)
 	}
@@ -175,7 +175,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 		(eventID == "") == (receiptReference == "") {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf(
 			"begin quarantined provider receipt requeue: %w",
@@ -349,7 +349,7 @@ func (m *Module) resolveQuarantinedReceiptReference(
 
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	now := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin provider receipt claim: %w", err)
 	}
@@ -420,7 +420,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			nextAttemptAt = completedAt.Add(receiptRetryDelay(projectionAttempts))
 		}
 	}
-	tag, err := m.pool.Exec(ctx, `
+	tag, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_receipts
 		SET
 			state = $2,
@@ -499,7 +499,7 @@ func (m *Module) rememberRejectedProviderLeg(
 	if fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
 		return nil
 	}
-	_, err := m.pool.Exec(ctx, `
+	_, err := m.database.Exec(ctx, `
 		INSERT INTO human_calling_rejected_provider_legs (
 			call_control_id,
 			call_leg_id,
@@ -524,7 +524,7 @@ func (m *Module) providerLegWasRejected(
 		return false, nil
 	}
 	var rejected bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM human_calling_rejected_provider_legs
@@ -546,7 +546,7 @@ func (m *Module) restoreRejectedProviderLeg(
 	fact ProviderFact,
 ) (bool, error) {
 	var rejected bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		WITH historical_rejection AS (
 			SELECT
 				receipt.event_id,
@@ -614,7 +614,7 @@ func (m *Module) attachReceiptCall(
 	fact ProviderFact,
 ) error {
 	if clientState, ok := parseCallLegClientState(fact.ClientState); ok {
-		tag, err := m.pool.Exec(ctx, `
+		tag, err := m.database.Exec(ctx, `
 			UPDATE human_calling_provider_receipts receipt
 			SET call_id = call.id
 			FROM human_calling_calls call
@@ -632,7 +632,7 @@ func (m *Module) attachReceiptCall(
 	if fact.CallControlID == "" || fact.CallLegID == "" {
 		return nil
 	}
-	if _, err := m.pool.Exec(ctx, `
+	if _, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_receipts receipt
 		SET call_id = leg.call_id
 		FROM human_calling_call_legs leg

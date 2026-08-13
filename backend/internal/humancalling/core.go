@@ -369,7 +369,7 @@ type DispositionResult struct {
 }
 
 type Module struct {
-	pool        productpostgres.Database
+	database    productpostgres.Database
 	access      *access.Module
 	work        *work.Module
 	provider    Provider
@@ -381,7 +381,7 @@ type Module struct {
 }
 
 func New(
-	pool productpostgres.Database,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	provider Provider,
 	config Config,
@@ -419,7 +419,7 @@ func New(
 		}
 	}
 	module := &Module{
-		pool:        pool,
+		database:    database,
 		access:      accessModule,
 		provider:    provider,
 		config:      config,
@@ -431,8 +431,8 @@ func New(
 	if len(module.playbackKey) == 0 {
 		module.playbackKey = append([]byte(nil), tokenKey...)
 	}
-	if pool != nil && accessModule != nil {
-		module.work = work.New(pool, accessModule, now)
+	if database != nil && accessModule != nil {
+		module.work = work.New(database, accessModule, now)
 	}
 	return module
 }

@@ -79,7 +79,7 @@ func (m *Module) TaskOutboundEligibility(
 	if !supportedUSDestination(task.Phone) {
 		return OutboundEligibility{Reason: "This Task does not have a supported US destination."}, nil
 	}
-	if _, err := outboundCallerID(ctx, m.pool, task.PracticeID, task.LocationID); err != nil {
+	if _, err := outboundCallerID(ctx, m.database, task.PracticeID, task.LocationID); err != nil {
 		if !errors.Is(err, ErrConflict) {
 			return OutboundEligibility{}, err
 		}
@@ -92,10 +92,10 @@ func (m *Module) ProvisionLocationVoices(
 	ctx context.Context,
 	provisions []LocationVoiceProvision,
 ) error {
-	if m.pool == nil {
+	if m.database == nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Location voice provisioning: %w", err)
 	}
@@ -168,10 +168,10 @@ func (m *Module) ProvisionOutboundVoiceFallbacks(
 	ctx context.Context,
 	provisions []OutboundVoiceFallbackProvision,
 ) error {
-	if m.pool == nil {
+	if m.database == nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin outbound voice fallback provisioning: %w", err)
 	}
@@ -265,7 +265,7 @@ func (m *Module) StartOutboundCall(
 	if err != nil {
 		return Call{}, err
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Call{}, fmt.Errorf("begin outbound Call: %w", err)
 	}
@@ -498,7 +498,7 @@ func (m *Module) ConfirmOutboundMedia(
 		command.CallID == "" || command.MediaToken == "" {
 		return Call{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Call{}, fmt.Errorf("begin outbound media confirmation: %w", err)
 	}
@@ -603,7 +603,7 @@ func (m *Module) applyOutboundDestinationFact(
 		fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin outbound destination projection: %w", err)
 	}
@@ -730,7 +730,7 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 	if !ok || state.Role != "DESTINATION" || state.Kind != "bridge" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin outbound Bridge projection: %w", err)
 	}
@@ -812,7 +812,7 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 	if !ok || state.Role != "STAFF" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin outbound Staff Bridge projection: %w", err)
 	}

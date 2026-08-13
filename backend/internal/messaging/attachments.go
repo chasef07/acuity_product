@@ -81,7 +81,7 @@ func (m *Module) uploadAttachment(
 	command.FileName = strings.TrimSpace(filepath.Base(command.FileName))
 	command.DeclaredType = strings.ToLower(strings.TrimSpace(command.DeclaredType))
 	contentType, err := detectAttachmentType(command.Content)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		m.config.AttachmentStore == nil ||
 		command.Identity.Subject == "" ||
@@ -94,7 +94,7 @@ func (m *Module) uploadAttachment(
 		!fileNameMatchesType(command.FileName, contentType) {
 		return Attachment{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Attachment{}, fmt.Errorf("begin attachment upload: %w", err)
 	}
@@ -324,13 +324,13 @@ func (m *Module) OpenAttachment(
 	attachmentID string,
 ) (AttachmentContent, error) {
 	attachmentID = strings.TrimSpace(attachmentID)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		m.config.AttachmentStore == nil ||
 		attachmentID == "" {
 		return AttachmentContent{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return AttachmentContent{}, fmt.Errorf("begin attachment read: %w", err)
 	}
@@ -415,7 +415,7 @@ func (m *Module) OpenProviderAttachment(
 	}
 	var attachment Attachment
 	var objectKey string
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT
 			id::text,
 			COALESCE(message_id::text, ''),
@@ -454,13 +454,13 @@ func (m *Module) OpenProviderAttachment(
 }
 
 func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		m.config.AttachmentStore == nil ||
 		m.config.HTTPClient == nil {
 		return false, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin inbound attachment copy: %w", err)
 	}
@@ -527,7 +527,7 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 	if copyErr == nil {
 		copyErr = m.config.AttachmentStore.Put(ctx, objectKey, content)
 	}
-	finishTx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	finishTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		if copyErr == nil {
 			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
@@ -586,12 +586,12 @@ func (m *Module) RetryAttachment(
 	command RetryAttachmentCommand,
 ) (Attachment, error) {
 	command.AttachmentID = strings.TrimSpace(command.AttachmentID)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		command.AttachmentID == "" {
 		return Attachment{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Attachment{}, fmt.Errorf("begin attachment copy retry: %w", err)
 	}
@@ -655,10 +655,10 @@ func (m *Module) RetryAttachment(
 }
 
 func (m *Module) ExpirePendingAttachments(ctx context.Context) error {
-	if m.pool == nil || m.config.AttachmentStore == nil {
+	if m.database == nil || m.config.AttachmentStore == nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin pending attachment expiration: %w", err)
 	}

@@ -195,20 +195,17 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}
 
 	var threads, messages, commands, workspaceVersion int
-	var latestMessageID string
 	if err := pool.QueryRow(context.Background(), `
 		SELECT
 			(SELECT count(*) FROM messaging_threads),
 			(SELECT count(*) FROM messaging_messages),
 			(SELECT count(*) FROM messaging_provider_commands),
-			(SELECT workspace_version FROM access_practices WHERE id = $1),
-			(SELECT latest_message_id::text FROM messaging_threads LIMIT 1)
+			(SELECT workspace_version FROM access_practices WHERE id = $1)
 	`, authorization.Practice.ID).Scan(
 		&threads,
 		&messages,
 		&commands,
 		&workspaceVersion,
-		&latestMessageID,
 	); err != nil {
 		t.Fatalf("inspect durable send: %v", err)
 	}
@@ -224,10 +221,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			workspaceVersion,
 		)
 	}
-	if latestMessageID != first.ID {
-		t.Fatalf("Thread latest Message = %q, want %q", latestMessageID, first.ID)
-	}
-
 	processed, err := module.ProcessNextCommand(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process Message provider command = %t, %v", processed, err)

@@ -61,7 +61,7 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		fact.ConnectionID != m.config.CallControlID {
 		return ErrInvalidHandoff
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin CallLeg handoff admission: %w", err)
 	}
@@ -156,7 +156,7 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 }
 
 func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin caller answer fan-out: %w", err)
 	}
@@ -364,7 +364,7 @@ func (m *Module) applyStaffInitiated(
 		fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Staff CallLeg projection: %w", err)
 	}
@@ -659,7 +659,7 @@ func (m *Module) recordRingWindowFact(
 	state callLegClientState,
 	ended bool,
 ) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin ring-window projection: %w", err)
 	}
@@ -774,7 +774,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 	if !ok || state.Role != "STAFF" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Bridge projection: %w", err)
 	}
@@ -959,7 +959,7 @@ func (m *Module) correlateBridgeFact(
 	fact ProviderFact,
 ) (ProviderFact, error) {
 	var callID, callLegID, role, direction string
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT leg.call_id::text, leg.id::text, leg.role, call.direction
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
@@ -1071,7 +1071,7 @@ func (m *Module) applyCallerBridge(ctx context.Context, fact ProviderFact) error
 	if !ok || state.Role != "CALLER" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin caller Bridge projection: %w", err)
 	}
@@ -1149,7 +1149,7 @@ func (m *Module) applyCallerBridge(ctx context.Context, fact ProviderFact) error
 
 func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	state, hasState := parseCallLegClientState(fact.ClientState)
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin CallLeg Hangup projection: %w", err)
 	}

@@ -113,10 +113,10 @@ func run() error {
 			nil,
 		)
 		handler, err := httpapi.NewProviderIngressWithMessaging(httpapi.Config{
-			AllowedOrigins:   config.BrowserOrigins,
-			AcquireTimeout:   config.AcquireTimeout,
-			OperationTimeout: config.AcquireTimeout + config.OperationTimeout,
-			Observer:         observer,
+			AllowedOrigins: config.BrowserOrigins,
+			AcquireTimeout: config.AcquireTimeout,
+			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
+			Observer:       observer,
 		}, pool, calling, messages)
 		if err != nil {
 			return err
@@ -213,10 +213,10 @@ func runAuthorizedHTTP(
 		}
 		go hub.Run(ctx)
 		handler, err = httpapi.NewRealtime(httpapi.Config{
-			AllowedOrigins:   config.BrowserOrigins,
-			AcquireTimeout:   config.AcquireTimeout,
-			OperationTimeout: config.AcquireTimeout + config.OperationTimeout,
-			Observer:         observer,
+			AllowedOrigins: config.BrowserOrigins,
+			AcquireTimeout: config.AcquireTimeout,
+			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
+			Observer:       observer,
 		}, pool, httpapi.RealtimeDependencies{
 			Access:        accessModule,
 			Authenticator: authenticator,
@@ -284,10 +284,10 @@ func runAuthorizedHTTP(
 			return err
 		}
 		handler, err = httpapi.NewPortal(httpapi.Config{
-			AllowedOrigins:   config.BrowserOrigins,
-			AcquireTimeout:   config.AcquireTimeout,
-			OperationTimeout: config.AcquireTimeout + config.OperationTimeout,
-			Observer:         observer,
+			AllowedOrigins: config.BrowserOrigins,
+			AcquireTimeout: config.AcquireTimeout,
+			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
+			Observer:       observer,
 		}, pool, httpapi.PortalDependencies{
 			Access:               accessModule,
 			Authenticator:        authenticator,
