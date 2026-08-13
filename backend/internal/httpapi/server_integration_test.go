@@ -347,15 +347,30 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	var capability api.VoicemailPlaybackCapability
 	decode(t, capabilityResponse, &capability)
+	deniedCapabilityResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/calls/"+callID+"/voicemail-playback",
+		"voicemail-hidden-token",
+		nil,
+	)
+	_ = deniedCapabilityResponse.Body.Close()
+	if deniedCapabilityResponse.StatusCode != http.StatusForbidden || audio.calls != 0 {
+		t.Fatalf(
+			"cross-Location capability = status:%d provider-calls:%d",
+			deniedCapabilityResponse.StatusCode,
+			audio.calls,
+		)
+	}
 	deniedRequest, err := http.NewRequest(
 		http.MethodGet,
-		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token+"invalid"),
 		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deniedRequest.Header.Set("Authorization", "Bearer voicemail-hidden-token")
 	deniedResponse, err := server.Client().Do(deniedRequest)
 	if err != nil {
 		t.Fatalf("request cross-Location voicemail playback: %v", err)
@@ -364,7 +379,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	deniedAudio := audio.snapshot()
 	if deniedResponse.StatusCode != http.StatusForbidden || deniedAudio.calls != 0 {
 		t.Fatalf(
-			"cross-Location playback = status:%d provider-calls:%d",
+			"invalid capability playback = status:%d provider-calls:%d",
 			deniedResponse.StatusCode,
 			deniedAudio.calls,
 		)
@@ -377,7 +392,6 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	playbackRequest.Header.Set("Authorization", "Bearer voicemail-http-token")
 	playbackRequest.Header.Set("Range", "bytes=0-3")
 	playbackResponse, err := server.Client().Do(playbackRequest)
 	if err != nil {
@@ -398,6 +412,35 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		playbackAudio.rangeHeader != "bytes=0-3" {
 		t.Fatalf("voicemail playback response = status:%d headers:%v body:%q fixture:%#v",
 			playbackResponse.StatusCode, playbackResponse.Header, body, playbackAudio)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET revoked_at = $2
+		WHERE user_subject = $1
+	`, identity.Subject, now); err != nil {
+		t.Fatalf("revoke voicemail playback membership: %v", err)
+	}
+	revokedRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedResponse, err := server.Client().Do(revokedRequest)
+	if err != nil {
+		t.Fatalf("request revoked voicemail playback: %v", err)
+	}
+	_ = revokedResponse.Body.Close()
+	if revokedResponse.StatusCode != http.StatusForbidden || audio.calls != 1 {
+		t.Fatalf("revoked playback = status:%d provider-calls:%d",
+			revokedResponse.StatusCode, audio.calls)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET revoked_at = NULL
+		WHERE user_subject = $1
+	`, identity.Subject); err != nil {
+		t.Fatalf("restore voicemail playback membership: %v", err)
 	}
 
 	waitForLog(t, &metrics, `"outcome":"succeeded"`)

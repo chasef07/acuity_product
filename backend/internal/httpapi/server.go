@@ -1242,12 +1242,11 @@ func (server *Server) GetCallingVoicemailPlayback(
 	token string,
 	params api.GetCallingVoicemailPlaybackParams,
 ) {
-	identity, ok := server.callingIdentity(w, r)
-	if !ok {
+	if !server.portalOnly(w, r) {
 		return
 	}
 	server.streamCallingPlayback(
-		w, r, identity, token, stringValue(params.Range), humancalling.PlaybackVoicemail,
+		w, r, token, stringValue(params.Range), humancalling.PlaybackVoicemail,
 		server.calling.OpenVoicemailPlayback,
 	)
 }
@@ -1258,12 +1257,11 @@ func (server *Server) GetCallingRecordingPlayback(
 	token string,
 	params api.GetCallingRecordingPlaybackParams,
 ) {
-	identity, ok := server.callingIdentity(w, r)
-	if !ok {
+	if !server.portalOnly(w, r) {
 		return
 	}
 	server.streamCallingPlayback(
-		w, r, identity, token, stringValue(params.Range), humancalling.PlaybackCallRecording,
+		w, r, token, stringValue(params.Range), humancalling.PlaybackCallRecording,
 		server.calling.OpenCallRecordingPlayback,
 	)
 }
@@ -1271,14 +1269,12 @@ func (server *Server) GetCallingRecordingPlayback(
 func (server *Server) streamCallingPlayback(
 	w http.ResponseWriter,
 	r *http.Request,
-	identity access.Identity,
 	token string,
 	rangeHeader string,
 	kind humancalling.PlaybackKind,
 	open func(
 		context.Context,
 		context.Context,
-		access.Identity,
 		string,
 		string,
 	) (humancalling.PlaybackContent, error),
@@ -1288,7 +1284,6 @@ func (server *Server) streamCallingPlayback(
 	content, err := open(
 		ctx,
 		r.Context(),
-		identity,
 		token,
 		rangeHeader,
 	)
@@ -1304,6 +1299,7 @@ func (server *Server) streamCallingPlayback(
 		server.writePlaybackError(w, r, err, kind)
 		return
 	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.Header().Set("Content-Type", safeAudioContentType(content.ContentType))
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Disposition", "inline")

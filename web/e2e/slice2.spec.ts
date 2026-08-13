@@ -301,7 +301,12 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       selectedPage.getByRole("heading", { name: "Call recording" }),
     ).toBeVisible({ timeout: 20_000 })
     await selectedPage.getByRole("button", { name: "Play" }).click()
-    await expect(selectedPage.getByLabel("Call recording")).toBeVisible()
+    const callRecording = selectedPage.getByLabel("Call recording")
+    await expect(callRecording).toBeVisible()
+    await expect(callRecording).toHaveAttribute(
+      "src",
+      /\/v1\/calling\/recording-playback\//,
+    )
     const contextPanel = selectedPage.getByRole("complementary", {
       name: "Call context",
     })

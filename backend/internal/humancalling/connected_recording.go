@@ -86,7 +86,9 @@ func (m *Module) applyConnectedCallRecordingSaved(
 			audio_state = 'READY', provider_recording_id = $2,
 			recording_started_at = $3, recording_ended_at = $4,
 			content_expires_at = $5, duration_millis = $6,
-			last_error_code = NULL, updated_at = $7
+			last_error_code = NULL, reconciliation_claimed_at = NULL,
+			next_reconciliation_attempt_at = NULL,
+			reconciliation_error_code = NULL, updated_at = $7
 		WHERE call_id = $1
 	`, state.CallID, fact.RecordingID, fact.RecordingStartedAt,
 		fact.RecordingEndedAt, contentExpiresAt, duration.Milliseconds(), m.now()); err != nil {
@@ -137,7 +139,10 @@ func (m *Module) applyConnectedCallRecordingError(
 		UPDATE human_calling_call_recordings SET
 			audio_state = 'UNAVAILABLE', provider_recording_id = NULL,
 			recording_started_at = NULL, recording_ended_at = NULL,
-			duration_millis = NULL, last_error_code = 'RECORDING_FAILED', updated_at = $2
+			duration_millis = NULL, last_error_code = 'RECORDING_FAILED',
+			reconciliation_claimed_at = NULL,
+			next_reconciliation_attempt_at = NULL,
+			reconciliation_error_code = NULL, updated_at = $2
 		WHERE call_id = $1 AND audio_state IN ('PROCESSING', 'UNAVAILABLE')
 	`, state.CallID, m.now())
 	if err != nil {
@@ -167,6 +172,124 @@ func connectedRecordingState(fact ProviderFact) (callLegClientState, bool) {
 	state, ok := parseCallLegClientState(fact.ClientState)
 	return state, ok && state.Kind == "bridge" &&
 		(state.Role == "STAFF" || state.Role == "DESTINATION")
+}
+
+func (m *Module) ProcessNextRecordingReconciliation(
+	ctx context.Context,
+) (bool, error) {
+	provider, ok := m.provider.(RecordingStateProvider)
+	if !ok {
+		return false, nil
+	}
+	now := m.now()
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin recording reconciliation claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var callID, callLegID, role string
+	var providerCallLegID, callSessionID string
+	var attempts int
+	err = tx.QueryRow(ctx, `
+		SELECT recording.call_id::text, bridge.call_leg_id::text, bridge.role,
+			bridge.provider_call_leg_id,
+			bridge.provider_call_session_id, recording.reconciliation_attempts + 1
+		FROM human_calling_call_recordings recording
+		JOIN human_calling_calls call ON call.id = recording.call_id
+		JOIN LATERAL (
+			SELECT leg.id AS call_leg_id, leg.role,
+				leg.provider_call_control_id, leg.provider_call_leg_id,
+				leg.provider_call_session_id
+			FROM human_calling_provider_commands command
+			JOIN human_calling_call_legs leg ON leg.id = command.call_leg_id
+			WHERE command.call_id = recording.call_id
+				AND command.action = 'BRIDGE'
+				AND command.state IN ('SENT', 'AMBIGUOUS', 'RECONCILED')
+				AND leg.role IN ('STAFF', 'DESTINATION')
+				AND leg.provider_call_control_id IS NOT NULL
+				AND leg.provider_call_leg_id IS NOT NULL
+				AND leg.provider_call_session_id IS NOT NULL
+			ORDER BY command.created_at DESC, command.id DESC
+			LIMIT 1
+		) bridge ON true
+		WHERE recording.audio_state = 'PROCESSING'
+			AND call.ended_at IS NOT NULL
+			AND call.ended_at <= $1::timestamptz - interval '2 minutes'
+			AND (
+				recording.next_reconciliation_attempt_at IS NULL
+				OR recording.next_reconciliation_attempt_at <= $1
+			)
+			AND (
+				recording.reconciliation_claimed_at IS NULL
+				OR recording.reconciliation_claimed_at <= $1::timestamptz - interval '2 minutes'
+			)
+		ORDER BY call.ended_at, recording.call_id
+		FOR UPDATE OF recording SKIP LOCKED
+		LIMIT 1
+	`, now).Scan(
+		&callID, &callLegID, &role, &providerCallLegID, &callSessionID, &attempts,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim stale recording: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_recordings
+		SET reconciliation_attempts = $2, reconciliation_claimed_at = $3,
+			next_reconciliation_attempt_at = NULL,
+			reconciliation_error_code = NULL, updated_at = $3
+		WHERE call_id = $1
+	`, callID, attempts, now); err != nil {
+		return false, fmt.Errorf("mark recording reconciliation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit recording reconciliation claim: %w", err)
+	}
+
+	recording, err := provider.ResolveRecording(ctx, providerCallLegID, callSessionID)
+	if err != nil {
+		return m.failRecordingReconciliation(ctx, callID, now, attempts, err)
+	}
+	fact := ProviderFact{
+		EventID: "recording-reconciliation-" + opaqueReference(recording.ID),
+		Type:    FactRecordingSaved, OccurredAt: recording.EndedAt,
+		CallControlID: recording.CallControlID, CallLegID: recording.CallLegID,
+		CallSessionID: recording.CallSessionID,
+		ClientState:   encodeCallLegClientState(callID, callLegID, role, "bridge"),
+		RecordingID:   recording.ID, RecordingStartedAt: recording.StartedAt,
+		RecordingEndedAt: recording.EndedAt,
+	}
+	if err := m.applyConnectedCallRecordingSaved(ctx, fact); err != nil {
+		return m.failRecordingReconciliation(ctx, callID, now, attempts, err)
+	}
+	return true, nil
+}
+
+func (m *Module) failRecordingReconciliation(
+	ctx context.Context,
+	callID string,
+	claimedAt time.Time,
+	attempts int,
+	reconciliationErr error,
+) (bool, error) {
+	retryAt := claimedAt.Add(recordingMaintenanceBackoff(attempts))
+	result, err := m.pool.Exec(ctx, `
+		UPDATE human_calling_call_recordings
+		SET reconciliation_claimed_at = NULL,
+			next_reconciliation_attempt_at = $3,
+			reconciliation_error_code = $4, updated_at = $2
+		WHERE call_id = $1 AND audio_state = 'PROCESSING'
+			AND reconciliation_claimed_at = $2
+	`, callID, claimedAt, retryAt, safeProviderErrorCode(reconciliationErr))
+	if err != nil {
+		return true, fmt.Errorf("record recording reconciliation failure: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return true, nil
+	}
+	return true, fmt.Errorf("reconcile provider recording: %w", reconciliationErr)
 }
 
 func (m *Module) ProcessNextRecordingRetention(
@@ -223,7 +346,7 @@ func (m *Module) ProcessNextRecordingRetention(
 	}
 
 	if err := provider.DeleteRecording(ctx, recordingID); err != nil {
-		retryAt := now.Add(recordingDeletionBackoff(attempts))
+		retryAt := now.Add(recordingMaintenanceBackoff(attempts))
 		if _, updateErr := m.pool.Exec(ctx, `
 			UPDATE human_calling_call_recordings
 			SET deletion_claimed_at = NULL, next_deletion_attempt_at = $3,
@@ -271,7 +394,7 @@ func (m *Module) ProcessNextRecordingRetention(
 	return true, completion.Commit(ctx)
 }
 
-func recordingDeletionBackoff(attempts int) time.Duration {
+func recordingMaintenanceBackoff(attempts int) time.Duration {
 	if attempts < 1 {
 		attempts = 1
 	}

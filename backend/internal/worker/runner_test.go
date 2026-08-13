@@ -489,6 +489,10 @@ func (*controlledWork) ProcessNextCredentialReconciliation(context.Context) (boo
 	return false, nil
 }
 
+func (*controlledWork) ProcessNextRecordingReconciliation(context.Context) (bool, error) {
+	return false, nil
+}
+
 func (*controlledWork) ProcessNextRecordingRetention(context.Context) (bool, error) {
 	return false, nil
 }

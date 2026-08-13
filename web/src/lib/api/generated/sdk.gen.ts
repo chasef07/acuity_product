@@ -258,13 +258,9 @@ export const issueCallingVoicemailPlayback = <ThrowOnError extends boolean = fal
 });
 
 /**
- * Refresh and stream Telnyx-owned voicemail audio without exposing the provider URL.
+ * Stream Telnyx-owned voicemail audio through a short-lived bearer capability without exposing the provider URL.
  */
-export const getCallingVoicemailPlayback = <ThrowOnError extends boolean = false>(options: Options<GetCallingVoicemailPlaybackData, ThrowOnError>) => (options.client ?? client).get<GetCallingVoicemailPlaybackResponses, GetCallingVoicemailPlaybackErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/voicemail-playback/{token}',
-    ...options
-});
+export const getCallingVoicemailPlayback = <ThrowOnError extends boolean = false>(options: Options<GetCallingVoicemailPlaybackData, ThrowOnError>) => (options.client ?? client).get<GetCallingVoicemailPlaybackResponses, GetCallingVoicemailPlaybackErrors, ThrowOnError>({ url: '/v1/calling/voicemail-playback/{token}', ...options });
 
 /**
  * Issue a short-lived connected-call recording playback capability after current Location authorization.
@@ -276,13 +272,9 @@ export const issueCallingRecordingPlayback = <ThrowOnError extends boolean = fal
 });
 
 /**
- * Refresh and stream Telnyx-owned connected-call audio without exposing the provider URL.
+ * Stream Telnyx-owned connected-call audio through a short-lived bearer capability without exposing the provider URL.
  */
-export const getCallingRecordingPlayback = <ThrowOnError extends boolean = false>(options: Options<GetCallingRecordingPlaybackData, ThrowOnError>) => (options.client ?? client).get<GetCallingRecordingPlaybackResponses, GetCallingRecordingPlaybackErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/v1/calling/recording-playback/{token}',
-    ...options
-});
+export const getCallingRecordingPlayback = <ThrowOnError extends boolean = false>(options: Options<GetCallingRecordingPlaybackData, ThrowOnError>) => (options.client ?? client).get<GetCallingRecordingPlaybackResponses, GetCallingRecordingPlaybackErrors, ThrowOnError>({ url: '/v1/calling/recording-playback/{token}', ...options });
 
 /**
  * Resolve one authorized exact-phone Engagement across Practice Locations.

@@ -3684,6 +3684,131 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	}
 }
 
+func TestStaleConnectedRecordingReconcilesWithoutSavedWebhook(t *testing.T) {
+	pool := testdb.Open(t)
+	endedAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	currentTime := endedAt.Add(3 * time.Minute)
+	accessModule := access.New(pool, func() time.Time { return currentTime })
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "recording-reconciliation-test",
+		Practices: []access.PracticeProvision{{
+			Key:                                 "recording-reconciliation",
+			Name:                                "Recording Reconciliation",
+			ConnectedCallRecordingEnabled:       true,
+			ConnectedCallRecordingRetentionDays: 90,
+			Locations:                           []access.LocationProvision{{Key: "office", Name: "Office"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var practiceID, locationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.id::text, location.id::text
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'recording-reconciliation'
+	`).Scan(&practiceID, &locationID); err != nil {
+		t.Fatal(err)
+	}
+	const callID = "20000000-0000-4000-8000-000000000001"
+	const callLegID = "20000000-0000-4000-8000-000000000002"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, practice_id, location_id, direction, entry_point,
+			terminal_outcome, ended_at, version, created_at, updated_at
+		) VALUES ($1, $2, $3, 'OUTBOUND', 'STANDALONE', 'RESOLVED', $4, 1, $5, $4)
+	`, callID, practiceID, locationID, endedAt, endedAt.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			id, call_id, role, sequence, state, provider_connection_id,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, ending_at, ended_at,
+			created_at, updated_at
+		) VALUES ($1, $2, 'DESTINATION', 1, 'ENDED', 'recording-connection',
+			'recording-control', 'recording-leg', 'recording-session',
+			$3, $3, $3, $4, $4, $3, $4)
+	`, callLegID, callID, endedAt.Add(-time.Minute), endedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, payload, state,
+			sent_at, created_at, updated_at
+		) VALUES ($1, $2, 'BRIDGE', 'recording-control', '{}', 'RECONCILED', $3, $3, $3)
+	`, callID, callLegID, endedAt.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_recordings (
+			call_id, practice_id, location_id, audio_state, retention_days,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, 'PROCESSING', 90, $4, $4)
+	`, callID, practiceID, locationID, endedAt.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingProvider{
+		recording: humancalling.ProviderRecording{
+			ID: "reconciled-recording", CallControlID: "recording-control",
+			CallLegID: "recording-leg", CallSessionID: "recording-session",
+			StartedAt: endedAt.Add(-time.Minute), EndedAt: endedAt,
+		},
+		recordingErr: humancalling.ErrAmbiguousEffect,
+	}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		provider,
+		humancalling.Config{},
+		func() time.Time { return currentTime },
+	)
+	processed, err := calling.ProcessNextRecordingReconciliation(context.Background())
+	if !processed || !errors.Is(err, humancalling.ErrAmbiguousEffect) {
+		t.Fatalf("first recording reconciliation = %t, %v", processed, err)
+	}
+	var attempts int
+	var claimedAt *time.Time
+	var nextAttempt time.Time
+	var reconciliationError string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT reconciliation_attempts, reconciliation_claimed_at,
+			next_reconciliation_attempt_at, reconciliation_error_code
+		FROM human_calling_call_recordings WHERE call_id = $1
+	`, callID).Scan(&attempts, &claimedAt, &nextAttempt, &reconciliationError); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || claimedAt != nil || !nextAttempt.After(currentTime) ||
+		reconciliationError == "" {
+		t.Fatalf("recording reconciliation retry = %d %v %v %q",
+			attempts, claimedAt, nextAttempt, reconciliationError)
+	}
+	if processed, err := calling.ProcessNextRecordingReconciliation(context.Background()); err != nil || processed {
+		t.Fatalf("early recording reconciliation retry = %t, %v", processed, err)
+	}
+	provider.mu.Lock()
+	provider.recordingErr = nil
+	provider.mu.Unlock()
+	currentTime = nextAttempt
+	processed, err = calling.ProcessNextRecordingReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("successful recording reconciliation = %t, %v", processed, err)
+	}
+	var state, providerRecordingID string
+	var contentExpiresAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT audio_state, provider_recording_id, content_expires_at
+		FROM human_calling_call_recordings WHERE call_id = $1
+	`, callID).Scan(&state, &providerRecordingID, &contentExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "READY" || providerRecordingID != "reconciled-recording" ||
+		!contentExpiresAt.Equal(endedAt.Add(90*24*time.Hour)) {
+		t.Fatalf("reconciled recording = %q %q %v", state, providerRecordingID, contentExpiresAt)
+	}
+}
+
 type recordingProvider struct {
 	mu                sync.Mutex
 	commands          []humancalling.ProviderCommand

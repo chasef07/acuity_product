@@ -54,6 +54,23 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 				fragment, recordingRetentionIndex)
 		}
 	}
+	var recordingReconciliationIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'human_calling_call_recordings_reconciliation_idx'
+	`).Scan(&recordingReconciliationIndex); err != nil {
+		t.Fatalf("read connected recording reconciliation index: %v", err)
+	}
+	for _, fragment := range []string{
+		"(next_reconciliation_attempt_at, updated_at, call_id)",
+		"audio_state = 'PROCESSING'::text",
+	} {
+		if !strings.Contains(recordingReconciliationIndex, fragment) {
+			t.Errorf("connected recording reconciliation index omits %q: %s",
+				fragment, recordingReconciliationIndex)
+		}
+	}
 	var staleCommandIndex string
 	if err := pool.QueryRow(ctx, `
 		SELECT indexdef FROM pg_indexes

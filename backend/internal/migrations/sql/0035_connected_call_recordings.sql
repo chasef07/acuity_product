@@ -29,6 +29,10 @@ CREATE TABLE human_calling_call_recordings (
     content_expires_at timestamptz,
     duration_millis bigint CHECK (duration_millis IS NULL OR duration_millis > 0),
     last_error_code text,
+    reconciliation_attempts integer NOT NULL DEFAULT 0 CHECK (reconciliation_attempts >= 0),
+    reconciliation_claimed_at timestamptz,
+    next_reconciliation_attempt_at timestamptz,
+    reconciliation_error_code text,
     content_deleted_at timestamptz,
     deletion_attempts integer NOT NULL DEFAULT 0 CHECK (deletion_attempts >= 0),
     deletion_claimed_at timestamptz,
@@ -61,6 +65,9 @@ CREATE TABLE human_calling_call_recordings (
             AND content_expires_at > recording_ended_at
             AND duration_millis IS NOT NULL
             AND last_error_code IS NULL
+            AND reconciliation_claimed_at IS NULL
+            AND next_reconciliation_attempt_at IS NULL
+            AND reconciliation_error_code IS NULL
             AND content_deleted_at IS NULL
         )
         OR (
@@ -71,6 +78,9 @@ CREATE TABLE human_calling_call_recordings (
             AND content_expires_at IS NULL
             AND duration_millis IS NULL
             AND last_error_code IS NOT NULL
+            AND reconciliation_claimed_at IS NULL
+            AND next_reconciliation_attempt_at IS NULL
+            AND reconciliation_error_code IS NULL
             AND content_deleted_at IS NULL
             AND deletion_claimed_at IS NULL
             AND next_deletion_attempt_at IS NULL
@@ -85,6 +95,9 @@ CREATE TABLE human_calling_call_recordings (
             AND content_expires_at > recording_ended_at
             AND duration_millis IS NOT NULL
             AND last_error_code IS NULL
+            AND reconciliation_claimed_at IS NULL
+            AND next_reconciliation_attempt_at IS NULL
+            AND reconciliation_error_code IS NULL
             AND content_deleted_at IS NOT NULL
             AND deletion_claimed_at IS NULL
             AND next_deletion_attempt_at IS NULL
@@ -92,6 +105,14 @@ CREATE TABLE human_calling_call_recordings (
         )
     )
 );
+
+CREATE INDEX human_calling_call_recordings_reconciliation_idx
+    ON human_calling_call_recordings (
+        next_reconciliation_attempt_at,
+        updated_at,
+        call_id
+    )
+    WHERE audio_state = 'PROCESSING';
 
 CREATE INDEX human_calling_call_recordings_retention_idx
     ON human_calling_call_recordings (

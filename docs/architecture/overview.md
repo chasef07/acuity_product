@@ -185,7 +185,7 @@ Dependency rules:
 
 1. `Access` resolves Platform Operator or Practice membership, role, and dynamic or selected location scope before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
 2. `HumanCalling` and `Messaging` may ask `Work` to create accountable work. `Work` does not know Telnyx.
-3. `HumanCalling` grants protected recording access after authorization. PostgreSQL stores the durable Telnyx recording identity; the backend refreshes and proxies provider audio without exposing a raw provider URL, then deletes provider content when the configured retention period expires.
+3. `HumanCalling` grants a short-lived signed playback capability after authorization. The native media element uses that capability for range requests; each request rechecks the signed subject's current Practice and Location access, and the backend streams provider audio without buffering it or exposing a raw provider URL. PostgreSQL stores the durable Telnyx recording identity, reconciles stale processing rows when a saved/error webhook is lost, and deletes provider content when the configured retention period expires.
 4. PostgreSQL is the sole durable product authority. SSE, browser state, and provider commands are projections or requests.
 5. Provider events are facts. A browser click cannot prove that a call bridged, an SMS delivered, or a recording became available.
 

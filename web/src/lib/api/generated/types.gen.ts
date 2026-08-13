@@ -1739,10 +1739,6 @@ export type GetCallingVoicemailPlaybackData = {
 
 export type GetCallingVoicemailPlaybackErrors = {
     /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
      * Current identity lacks the requested authority.
      */
     403: ErrorEnvelope;
@@ -1830,10 +1826,6 @@ export type GetCallingRecordingPlaybackData = {
 };
 
 export type GetCallingRecordingPlaybackErrors = {
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
     /**
      * Current identity lacks the requested authority.
      */

@@ -619,7 +619,8 @@ paths:
   /v1/calling/voicemail-playback/{token}:
     get:
       operationId: getCallingVoicemailPlayback
-      summary: Refresh and stream Telnyx-owned voicemail audio without exposing the provider URL.
+      summary: Stream Telnyx-owned voicemail audio through a short-lived bearer capability without exposing the provider URL.
+      security: []
       parameters:
         - name: token
           in: path
@@ -650,8 +651,6 @@ paths:
               schema:
                 type: string
                 format: binary
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Denied"
         "404":
@@ -697,7 +696,8 @@ paths:
   /v1/calling/recording-playback/{token}:
     get:
       operationId: getCallingRecordingPlayback
-      summary: Refresh and stream Telnyx-owned connected-call audio without exposing the provider URL.
+      summary: Stream Telnyx-owned connected-call audio through a short-lived bearer capability without exposing the provider URL.
+      security: []
       parameters:
         - name: token
           in: path
@@ -728,8 +728,6 @@ paths:
               schema:
                 type: string
                 format: binary
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Denied"
         "404":

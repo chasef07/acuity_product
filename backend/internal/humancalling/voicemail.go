@@ -199,6 +199,7 @@ type VoicemailUnavailableError = RecordingUnavailableError
 type playbackClaims struct {
 	CallID    string       `json:"callId"`
 	Kind      PlaybackKind `json:"kind"`
+	Subject   string       `json:"subject"`
 	ExpiresAt int64        `json:"expiresAt"`
 	Nonce     string       `json:"nonce"`
 }
@@ -599,7 +600,9 @@ func (m *Module) IssueVoicemailPlayback(
 	if call.Voicemail.AudioState != VoicemailReady {
 		return PlaybackCapability{}, ErrConflict
 	}
-	return m.issuePlaybackCapability(callID, PlaybackVoicemail)
+	return m.issuePlaybackCapability(
+		callID, PlaybackVoicemail, identity, call.Voicemail.DurationSeconds,
+	)
 }
 
 func (m *Module) IssueCallRecordingPlayback(
@@ -614,16 +617,30 @@ func (m *Module) IssueCallRecordingPlayback(
 	if call.Recording.AudioState != RecordingReady {
 		return PlaybackCapability{}, ErrConflict
 	}
-	return m.issuePlaybackCapability(callID, PlaybackCallRecording)
+	return m.issuePlaybackCapability(
+		callID, PlaybackCallRecording, identity, call.Recording.DurationSeconds,
+	)
 }
 
 func (m *Module) issuePlaybackCapability(
 	callID string,
 	kind PlaybackKind,
+	identity access.Identity,
+	durationSeconds int64,
 ) (PlaybackCapability, error) {
-	expiresAt := m.now().Add(5 * time.Minute)
+	const minimumLifetime = 5 * time.Minute
+	const maximumLifetime = 4 * time.Hour
+	lifetime := minimumLifetime
+	maximumDurationSeconds := int64((maximumLifetime - minimumLifetime) / time.Second)
+	if durationSeconds >= maximumDurationSeconds {
+		lifetime = maximumLifetime
+	} else if durationSeconds > 0 {
+		lifetime = time.Duration(durationSeconds)*time.Second + minimumLifetime
+	}
+	expiresAt := m.now().Add(lifetime)
 	raw, err := json.Marshal(playbackClaims{
-		CallID: callID, Kind: kind, ExpiresAt: expiresAt.Unix(), Nonce: uuid.NewString(),
+		CallID: callID, Kind: kind, Subject: identity.Subject,
+		ExpiresAt: expiresAt.Unix(), Nonce: uuid.NewString(),
 	})
 	if err != nil {
 		return PlaybackCapability{}, fmt.Errorf("encode playback capability: %w", err)
@@ -638,31 +655,28 @@ func (m *Module) issuePlaybackCapability(
 func (m *Module) OpenVoicemailPlayback(
 	authorizationContext context.Context,
 	streamContext context.Context,
-	identity access.Identity,
 	token string,
 	rangeHeader string,
 ) (content PlaybackContent, resultErr error) {
 	return m.openPlayback(
-		authorizationContext, streamContext, identity, token, rangeHeader, PlaybackVoicemail,
+		authorizationContext, streamContext, token, rangeHeader, PlaybackVoicemail,
 	)
 }
 
 func (m *Module) OpenCallRecordingPlayback(
 	authorizationContext context.Context,
 	streamContext context.Context,
-	identity access.Identity,
 	token string,
 	rangeHeader string,
 ) (content PlaybackContent, resultErr error) {
 	return m.openPlayback(
-		authorizationContext, streamContext, identity, token, rangeHeader, PlaybackCallRecording,
+		authorizationContext, streamContext, token, rangeHeader, PlaybackCallRecording,
 	)
 }
 
 func (m *Module) openPlayback(
 	authorizationContext context.Context,
 	streamContext context.Context,
-	identity access.Identity,
 	token string,
 	rangeHeader string,
 	kind PlaybackKind,
@@ -677,6 +691,7 @@ func (m *Module) openPlayback(
 	if err != nil || claims.Kind != kind {
 		return PlaybackContent{}, ErrDenied
 	}
+	identity := access.Identity{Subject: claims.Subject, EmailVerified: true}
 	tx, err := m.database.BeginTx(authorizationContext, pgx.TxOptions{})
 	if err != nil {
 		return PlaybackContent{}, fmt.Errorf("begin voicemail playback: %w", err)
@@ -756,7 +771,8 @@ func (m *Module) parsePlaybackCapability(token string) (playbackClaims, error) {
 	var claims playbackClaims
 	if err := json.Unmarshal(raw, &claims); err != nil || claims.CallID == "" ||
 		(claims.Kind != PlaybackVoicemail && claims.Kind != PlaybackCallRecording) ||
-		claims.Nonce == "" || !m.now().Before(time.Unix(claims.ExpiresAt, 0)) {
+		claims.Subject == "" || claims.Nonce == "" ||
+		!m.now().Before(time.Unix(claims.ExpiresAt, 0)) {
 		return playbackClaims{}, ErrDenied
 	}
 	return claims, nil

@@ -588,19 +588,12 @@ function RecordingSource({
   const [audioURL, setAudioURL] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-	const audioRef = useRef<HTMLAudioElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const presentation = recordingPresentation[kind]
 
-  useEffect(
-    () => () => {
-      if (audioURL) URL.revokeObjectURL(audioURL)
-    },
-    [audioURL],
-  )
-
-	useEffect(() => {
-		if (audioURL) void audioRef.current?.play().catch(() => undefined)
-	}, [audioURL])
+  useEffect(() => {
+    if (audioURL) void audioRef.current?.play().catch(() => undefined)
+  }, [audioURL])
 
   const stateLabel =
     unavailable
@@ -627,26 +620,12 @@ function RecordingSource({
       setError("Playback authorization is unavailable.")
       return
     }
-    const response = await fetch(
+    setAudioURL(
       new URL(
         `/v1/calling/${presentation.playbackPath}/${encodeURIComponent(issued.data.token)}`,
         portalAPIURL(),
-      ),
-      {
-        headers: { authorization: `Bearer ${token}` },
-        cache: "no-store",
-      },
-    ).catch(() => undefined)
-    if (!response?.ok) {
-      setLoading(false)
-      setError(`The ${presentation.label} could not be opened.`)
-      return
-    }
-    const objectURL = URL.createObjectURL(await response.blob())
-    setAudioURL((current) => {
-      if (current) URL.revokeObjectURL(current)
-      return objectURL
-    })
+      ).toString(),
+    )
     setLoading(false)
   }
 
@@ -677,12 +656,13 @@ function RecordingSource({
         )}
         {audioURL && (
           <audio
-			ref={audioRef}
-			aria-label={presentation.audioLabel}
+            ref={audioRef}
+            aria-label={presentation.audioLabel}
             controls
             controlsList="nodownload"
             preload="metadata"
             src={audioURL}
+            onError={() => setError(`The ${presentation.label} could not be opened.`)}
             className="h-9 max-w-full"
           />
         )}
