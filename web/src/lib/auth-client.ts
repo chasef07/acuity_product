@@ -27,7 +27,12 @@ let accessTokenGeneration = 0
 let cachedAccessToken:
   | { token: string; expiresAtMilliseconds: number }
   | undefined
-let pendingAccessToken: Promise<string | undefined> | undefined
+export type AccessTokenResult =
+  | { status: "authenticated"; token: string }
+  | { status: "unauthenticated" }
+  | { status: "unavailable" }
+
+let pendingAccessToken: Promise<AccessTokenResult> | undefined
 let accessTokenRefreshRetryAtMilliseconds = 0
 let accessTokenRefreshFailureCount = 0
 
@@ -36,17 +41,22 @@ accessTokenChannel?.addEventListener("message", (event) => {
 })
 
 export async function getAccessToken(): Promise<string | undefined> {
+  const result = await getAccessTokenResult()
+  return result.status === "authenticated" ? result.token : undefined
+}
+
+export async function getAccessTokenResult(): Promise<AccessTokenResult> {
   const now = Date.now()
   if (
     cachedAccessToken &&
     cachedAccessToken.expiresAtMilliseconds - now >
       accessTokenRefreshSkewMilliseconds
   ) {
-    return cachedAccessToken.token
+    return { status: "authenticated", token: cachedAccessToken.token }
   }
   if (pendingAccessToken) return pendingAccessToken
   if (accessTokenRefreshRetryAtMilliseconds > now) {
-    return unexpiredCachedAccessToken()
+    return accessTokenResult(unexpiredCachedAccessToken())
   }
 
   const generation = accessTokenGeneration
@@ -75,28 +85,30 @@ function invalidateAccessToken() {
 async function requestAccessToken(
   generation: number,
   retry = true,
-): Promise<string | undefined> {
+): Promise<AccessTokenResult> {
   const response = await fetch("/api/auth/token", {
     credentials: "same-origin",
     cache: "no-store",
   }).catch(() => undefined)
-  if (generation !== accessTokenGeneration) return undefined
+  if (generation !== accessTokenGeneration) return { status: "unauthenticated" }
   if (!response) return recoverFromTransientFailure(generation, retry)
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
       clearAccessToken()
-      return undefined
+      return { status: "unauthenticated" }
     }
     if (response.status === 429 || response.status >= 500) {
       return recoverFromTransientFailure(generation, retry, response)
     }
-    return undefined
+    return { status: "unavailable" }
   }
 
   const body = (await response.json().catch(() => undefined)) as
     | { token?: unknown }
     | undefined
-  if (typeof body?.token !== "string" || !body.token) return undefined
+  if (typeof body?.token !== "string" || !body.token) {
+    return { status: "unavailable" }
+  }
 
   const expiresAtMilliseconds = tokenExpirationMilliseconds(body.token)
   if (expiresAtMilliseconds && expiresAtMilliseconds > Date.now()) {
@@ -104,27 +116,33 @@ async function requestAccessToken(
   }
   accessTokenRefreshRetryAtMilliseconds = 0
   accessTokenRefreshFailureCount = 0
-  return body.token
+  return { status: "authenticated", token: body.token }
 }
 
 async function recoverFromTransientFailure(
   generation: number,
   retry: boolean,
   response?: Response,
-): Promise<string | undefined> {
+): Promise<AccessTokenResult> {
   const delayMilliseconds = retryDelayMilliseconds(response)
   accessTokenRefreshRetryAtMilliseconds = Date.now() + delayMilliseconds
   accessTokenRefreshFailureCount += 1
 
   const cachedToken = unexpiredCachedAccessToken()
-  if (cachedToken || !retry) return cachedToken
+  if (cachedToken || !retry) return accessTokenResult(cachedToken)
 
   await new Promise<void>((resolve) =>
     globalThis.setTimeout(resolve, delayMilliseconds),
   )
-  if (generation !== accessTokenGeneration) return undefined
+  if (generation !== accessTokenGeneration) return { status: "unauthenticated" }
   accessTokenRefreshRetryAtMilliseconds = 0
   return requestAccessToken(generation, false)
+}
+
+function accessTokenResult(token?: string): AccessTokenResult {
+  return token
+    ? { status: "authenticated", token }
+    : { status: "unavailable" }
 }
 
 function retryDelayMilliseconds(response?: Response) {

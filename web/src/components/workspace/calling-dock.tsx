@@ -51,7 +51,7 @@ import type {
   RingingCallLeg,
   SoftphoneState,
 } from "@/lib/api/generated/types.gen"
-import { getAccessToken } from "@/lib/auth-client"
+import { getAccessToken, getAccessTokenResult } from "@/lib/auth-client"
 import {
   createCallingMediaAdapter,
   type CallingMediaAdapter,
@@ -66,6 +66,10 @@ import {
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
 import { LatestWrite } from "@/lib/calling/latest-write"
+import {
+  createCallingOwnerLoop,
+  type CallingOwnerLoop,
+} from "@/lib/calling/owner-loop"
 import {
   dispositionWindowIsOpen,
   providerOutcomeLabel,
@@ -111,7 +115,7 @@ type ReadinessUpdate = {
 }
 
 type ReadinessCommit = {
-  failure?: "authentication" | "request"
+  failure?: "authentication" | "ownership" | "request"
   state?: SoftphoneState
 }
 
@@ -198,6 +202,8 @@ export function CallingDock({
   const expectedCallRef = useRef("")
   const activeCallSnapshotRef = useRef<CallingCall | undefined>(undefined)
   const ownerRef = useRef(false)
+  const leaseRef = useRef<SoftphoneState | undefined>(undefined)
+  const ownerGenerationRef = useRef(0)
   const mediaStateRef = useRef<MediaState>("unavailable")
   const availabilityRef = useRef(false)
   const availabilityIntentRef = useRef(false)
@@ -206,6 +212,7 @@ export function CallingDock({
   const callingStateETagRef = useRef("")
   const statePollRef = useRef<Promise<void> | null>(null)
   const ownershipPollRef = useRef<Promise<void> | null>(null)
+  const ownerLoopRef = useRef<CallingOwnerLoop | null>(null)
   const ringtoneRef = useRef<(() => void) | null>(null)
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
@@ -233,6 +240,9 @@ export function CallingDock({
     ownerRef.current = Boolean(lease?.owner)
   }, [lease?.owner])
   useEffect(() => {
+    leaseRef.current = lease
+  }, [lease])
+  useEffect(() => {
     mediaStateRef.current = mediaState
   }, [mediaState])
   useEffect(() => {
@@ -243,12 +253,19 @@ export function CallingDock({
   }, [activeCall, onCallChanged])
 
   const updateReadiness = useCallback(
-    async (nextAvailable: boolean, nextMediaState = mediaState) => {
+    async (nextAvailable: boolean, nextMediaState?: MediaState) => {
+      const effectiveMediaState = nextMediaState ?? mediaStateRef.current
       const write = readinessWriter.write(
-        { available: nextAvailable, mediaState: nextMediaState },
+        { available: nextAvailable, mediaState: effectiveMediaState },
         async (update, signal) => {
-          const token = await getAccessToken()
-          if (!token) return { failure: "authentication" }
+          const authentication = await getAccessTokenResult()
+          if (authentication.status === "unauthenticated") {
+            return { failure: "authentication" }
+          }
+          if (authentication.status === "unavailable") {
+            return { failure: "request" }
+          }
+          const token = authentication.token
           if (signal.aborted) return { failure: "request" }
           const probeTrack = probeStreamRef.current?.getAudioTracks()[0]
           const technicallyReady =
@@ -265,9 +282,13 @@ export function CallingDock({
               available: update.available,
             },
           }).catch(() => undefined)
-          return result?.data
-            ? { state: result.data }
-            : { failure: "request" }
+          if (result?.data) return { state: result.data }
+          const status = result?.response?.status
+          if (status === 401) return { failure: "authentication" }
+          if (status === 403 || status === 409) {
+            return { failure: "ownership" }
+          }
+          return { failure: "request" }
         },
       )
       const writeGeneration = readinessWriter.generation
@@ -283,7 +304,7 @@ export function CallingDock({
         return undefined
       }
       if (settled.generation !== readinessWriter.generation) {
-        return settled.output.state
+        return settled.output
       }
       if (settled.output.state) {
         setLease(settled.output.state)
@@ -299,9 +320,9 @@ export function CallingDock({
         )
       }
       setAvailabilityPending(false)
-      return settled.output.state
+      return settled.output
     },
-    [mediaState, readinessWriter, sessionID],
+    [readinessWriter, sessionID],
   )
 
   const rememberAvailabilityIntent = useCallback((nextAvailable: boolean) => {
@@ -406,6 +427,7 @@ export function CallingDock({
 
   const handleIncoming = useCallback(
     async (leg: IncomingMediaLeg) => {
+      void ownerLoopRef.current?.incomingMedia()
       const attached = mediaLegRef.current
       const route = routeIncomingMedia(
         attached,
@@ -459,7 +481,7 @@ export function CallingDock({
     [applyActiveCall, sessionID],
   )
 
-  const connectMedia = useCallback(async () => {
+  const connectMedia = useCallback(async (ownedLease?: SoftphoneState) => {
     if (connectingRef.current) return
     connectingRef.current = true
     try {
@@ -478,23 +500,27 @@ export function CallingDock({
         setAvailabilityPending(false)
         return
       }
-      const acquired = await acquireSoftphone({
-        client: portalClient(token),
-        body: { sessionId: sessionID, takeover: false },
-      }).catch(() => undefined)
-      if (!acquired?.data) {
+      const acquiredState =
+        ownedLease ??
+        (
+          await acquireSoftphone({
+            client: portalClient(token),
+            body: { sessionId: sessionID, takeover: false },
+          }).catch(() => undefined)
+        )?.data
+      if (!acquiredState) {
         setError("The softphone lease is temporarily unavailable.")
         setAvailabilityPending(false)
         return
       }
-      setLease(acquired.data)
-      if (!acquired.data.owner) {
-        if (acquired.data.activeCallId) {
-          expectedCallRef.current = acquired.data.activeCallId
-          setExpectedCallID(acquired.data.activeCallId)
+      setLease(acquiredState)
+      if (!acquiredState.owner) {
+        if (acquiredState.activeCallId) {
+          expectedCallRef.current = acquiredState.activeCallId
+          setExpectedCallID(acquiredState.activeCallId)
           const observed = await getCallingCall({
             client: portalClient(token),
-            path: { callId: acquired.data.activeCallId },
+            path: { callId: acquiredState.activeCallId },
           }).catch(() => undefined)
           if (observed?.data) applyActiveCall(observed.data)
         }
@@ -502,24 +528,24 @@ export function CallingDock({
         setAvailabilityPending(false)
         return
       }
-      if (acquired.data.activeCallId) {
-        expectedCallRef.current = acquired.data.activeCallId
-        setExpectedCallID(acquired.data.activeCallId)
+      if (acquiredState.activeCallId) {
+        expectedCallRef.current = acquiredState.activeCallId
+        setExpectedCallID(acquiredState.activeCallId)
         setAvailable(false)
         availabilityRef.current = false
         const restored = await getCallingCall({
           client: portalClient(token),
-          path: { callId: acquired.data.activeCallId },
+          path: { callId: acquiredState.activeCallId },
         }).catch(() => undefined)
         if (restored?.data) {
           applyActiveCall(restored.data)
           setMediaAttached(false)
         }
       }
-      if (acquired.data.pendingOutcomeCallId) {
+      if (acquiredState.pendingOutcomeCallId) {
         const pending = await getCallingCall({
           client: portalClient(token),
-          path: { callId: acquired.data.pendingOutcomeCallId },
+          path: { callId: acquiredState.pendingOutcomeCallId },
         }).catch(() => undefined)
         if (pending?.data?.state === "NEEDS_DISPOSITION") {
           setPendingOutcome(pending.data)
@@ -637,6 +663,7 @@ export function CallingDock({
     }
     if (statePollRef.current) return statePollRef.current
     const poll = (async () => {
+      const ownerGeneration = ownerGenerationRef.current
       const availabilityGeneration = readinessWriter.generation
       const availabilityWriteWasPending = readinessWriter.pending
       const token = await getAccessToken()
@@ -648,6 +675,12 @@ export function CallingDock({
           : undefined,
       }).catch(() => undefined)
       if (!result?.data) return
+      if (
+        !ownerRef.current ||
+        ownerGeneration !== ownerGenerationRef.current
+      ) {
+        return
+      }
       setLease(result.data.softphone)
       const availabilitySnapshotIsCurrent =
         readinessWriter.snapshotIsCurrent(
@@ -695,7 +728,7 @@ export function CallingDock({
       setMuted(false)
       if (
         ownerRef.current &&
-        mediaState === "ready" &&
+        mediaStateRef.current === "ready" &&
         availabilityIntentRef.current &&
         !availabilityRef.current
       ) {
@@ -736,7 +769,29 @@ export function CallingDock({
     ) {
       releaseCallControl()
     }
-  }, [applyActiveCall, mediaState, updateReadiness])
+  }, [applyActiveCall, updateReadiness])
+
+  const releaseCallingOwnership = useCallback(
+    async (currentLease?: SoftphoneState) => {
+      if (ownerRef.current) ownerGenerationRef.current += 1
+      ownerRef.current = false
+      setLease(currentLease)
+      setAvailable(false)
+      availabilityRef.current = false
+      setMediaState("unavailable")
+      mediaStateRef.current = "unavailable"
+      setRingingLegs([])
+      incomingLegsRef.current.clear()
+      mediaLegRef.current = null
+      setMediaAttached(false)
+      setMuted(false)
+      await adapterRef.current?.disconnect()
+      adapterRef.current = null
+      probeStreamRef.current?.getTracks().forEach((track) => track.stop())
+      probeStreamRef.current = null
+    },
+    [],
+  )
 
   const refreshOwnershipNow = useCallback(async () => {
     const token = await getAccessToken()
@@ -746,7 +801,7 @@ export function CallingDock({
       body: { sessionId: sessionID, takeover: false },
     }).catch(() => undefined)
     if (!result?.data?.owner) {
-      setLease(result?.data)
+      await releaseCallingOwnership(result?.data)
       if (result?.data?.activeCallId) {
         expectedCallRef.current = result.data.activeCallId
         setExpectedCallID(result.data.activeCallId)
@@ -756,20 +811,10 @@ export function CallingDock({
         setExpectedCallID("")
         applyActiveCall()
       }
-      setAvailable(false)
-      availabilityRef.current = false
-      ownerRef.current = false
-      setMediaState("unavailable")
-      mediaLegRef.current = null
-      setMediaAttached(false)
-      setMuted(false)
-      await adapterRef.current?.disconnect()
-      adapterRef.current = null
-      probeStreamRef.current?.getTracks().forEach((track) => track.stop())
-      probeStreamRef.current = null
       return
     }
     setLease(result.data)
+    if (!ownerRef.current) ownerGenerationRef.current += 1
     ownerRef.current = true
     if (result.data.pendingOutcomeCallId) {
       const pending = await getCallingCall({
@@ -794,13 +839,20 @@ export function CallingDock({
       if (restoredCall) await refreshCall()
     }
     if (!adapterRef.current) {
-      await connectMedia()
+      await connectMedia(result.data)
       return
     }
     await updateReadiness(
       availabilityIntentRef.current && expectedCallRef.current === "",
     )
-  }, [applyActiveCall, connectMedia, refreshCall, sessionID, updateReadiness])
+  }, [
+    applyActiveCall,
+    connectMedia,
+    refreshCall,
+    releaseCallingOwnership,
+    sessionID,
+    updateReadiness,
+  ])
 
   const refreshOwnership = useCallback(() => {
     if (ownershipPollRef.current) return ownershipPollRef.current
@@ -812,47 +864,91 @@ export function CallingDock({
   }, [refreshOwnershipNow])
 
   useEffect(() => {
-    if (!callingEnabled && !lease?.owner) return
-    const timeout = window.setTimeout(() => {
-      void refreshOwnership()
-      void refreshCallingState()
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [callingEnabled, lease?.owner, refreshCallingState, refreshOwnership])
-
-  useEffect(() => {
-    if (!lease?.owner) return
-    let timeout = 0
+    if (!callingEnabled || lease?.owner) return
     let cancelled = false
-    const schedule = () => {
-      if (cancelled) return
-      timeout = window.setTimeout(
-        async () => {
+    let timeout = 0
+    const schedule = (delay: number) => {
+      timeout = window.setTimeout(async () => {
+        await refreshOwnership()
+        if (ownerRef.current) {
           await refreshCallingState()
           await refreshCall()
-          schedule()
-        },
-        document.hidden ? 10_000 : 2_000,
-      )
+          return
+        }
+        if (cancelled) return
+        schedule(6_000 + Math.floor(Math.random() * 2_001))
+      }, delay)
     }
-    const handleVisibility = () => {
-      window.clearTimeout(timeout)
-      void refreshCallingState().finally(schedule)
-    }
-    document.addEventListener("visibilitychange", handleVisibility)
-    schedule()
+    schedule(0)
     return () => {
       cancelled = true
       window.clearTimeout(timeout)
-      document.removeEventListener("visibilitychange", handleVisibility)
     }
-  }, [lease?.owner, refreshCall, refreshCallingState])
+  }, [
+    callingEnabled,
+    lease?.owner,
+    refreshCall,
+    refreshCallingState,
+    refreshOwnership,
+  ])
 
   useEffect(() => {
-    if (!callingEnabled && !lease?.owner) return
-    const interval = window.setInterval(() => void refreshOwnership(), 5_000)
-    return () => window.clearInterval(interval)
-  }, [callingEnabled, lease?.owner, refreshOwnership])
+    if (!lease?.owner) return
+    let lostReason: ReadinessCommit["failure"]
+    const loop = createCallingOwnerLoop({
+      ensureMediaConnected: async () => {
+        const ownedLease = leaseRef.current
+        if (!adapterRef.current && ownedLease?.owner) {
+          await connectMedia(ownedLease)
+        }
+      },
+      heartbeat: async () => {
+        const result = await updateReadiness(
+          availabilityIntentRef.current && expectedCallRef.current === "",
+          mediaStateRef.current,
+        )
+        if (result?.state?.owner) return "owner"
+        if (
+          result?.failure === "authentication" ||
+          result?.failure === "ownership" ||
+          (result?.state && !result.state.owner)
+        ) {
+          lostReason = result.failure ?? "ownership"
+          return "lost"
+        }
+        return "retry"
+      },
+      refresh: async () => {
+        await refreshCallingState()
+        await refreshCall()
+      },
+      onOwnershipLost: async () => {
+        await releaseCallingOwnership()
+        setError(
+          lostReason === "authentication"
+            ? "Your authentication needs to be refreshed."
+            : "Calling ownership moved to another browser. Reconnect to continue.",
+        )
+      },
+      isHidden: () => document.hidden,
+    })
+    ownerLoopRef.current = loop
+    const handleVisibility = () => void loop.visibilityChanged()
+    document.addEventListener("visibilitychange", handleVisibility)
+    loop.start()
+    return () => {
+      loop.stop()
+      if (ownerLoopRef.current === loop) ownerLoopRef.current = null
+      document.removeEventListener("visibilitychange", handleVisibility)
+    }
+  }, [
+    connectMedia,
+    lease?.owner,
+    refreshCall,
+    refreshCallingState,
+    releaseCallingOwnership,
+    updateReadiness,
+  ])
 
   useEffect(() => {
     if (callingEnabled || !ownerRef.current) return
@@ -942,8 +1038,12 @@ export function CallingDock({
       setAvailabilityPending(false)
       return
     }
+    if (!ownerRef.current) ownerGenerationRef.current += 1
+    ownerRef.current = true
     setLease(result.data)
-    await connectMedia()
+    await connectMedia(result.data)
+    await refreshCallingState()
+    await refreshCall()
   }
 
   async function pauseCalling() {
@@ -971,7 +1071,7 @@ export function CallingDock({
       return
     }
     if (mediaState !== "ready") {
-      await connectMedia()
+      await connectMedia(lease)
       return
     }
     await resumeCalling()
@@ -1091,7 +1191,7 @@ export function CallingDock({
     applyActiveCall(result.data)
     setAvailable(false)
     availabilityRef.current = false
-    await connectMedia()
+    await connectMedia(lease)
   }
 
   async function dispose(
