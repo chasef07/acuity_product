@@ -746,13 +746,32 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 	}
 	decode(t, outcomes, &attention)
-	if len(attention.Items) != 1 ||
-		attention.Items[0].SourceCallID != "abita-partial-63" ||
-		attention.Items[0].AppointmentAction != "RESCHEDULED" ||
-		attention.Items[0].AppointmentOutcome != "PARTIAL" {
+	if len(attention.Items) != 4 {
 		t.Fatalf("AI Interaction attention = %#v", attention)
 	}
-	partialInteractionID := attention.Items[0].ID
+	itemsBySource := make(map[string]struct {
+		ID      string
+		Action  string
+		Outcome string
+	}, len(attention.Items))
+	for _, item := range attention.Items {
+		itemsBySource[item.SourceCallID] = struct {
+			ID      string
+			Action  string
+			Outcome string
+		}{item.ID, item.AppointmentAction, item.AppointmentOutcome}
+	}
+	if itemsBySource["abita-booking-63"].Action != "BOOKED" ||
+		itemsBySource["abita-booking-63"].Outcome != "BOOKING" ||
+		itemsBySource["abita-cancellation-63"].Action != "CANCELLED" ||
+		itemsBySource["abita-cancellation-63"].Outcome != "CANCELLATION" ||
+		itemsBySource["abita-call-63"].Action != "RESCHEDULED" ||
+		itemsBySource["abita-call-63"].Outcome != "RESCHEDULE" ||
+		itemsBySource["abita-partial-63"].Action != "RESCHEDULED" ||
+		itemsBySource["abita-partial-63"].Outcome != "PARTIAL" {
+		t.Fatalf("AI Interaction attention by source = %#v", itemsBySource)
+	}
+	partialInteractionID := itemsBySource["abita-partial-63"].ID
 	partialTask, _, err := workModule.CreateAITask(
 		context.Background(),
 		work.CreateAITaskCommand{
@@ -782,7 +801,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 	}
 	decode(t, coveredByTask, &coveredAttention)
-	if len(coveredAttention.Items) != 0 {
+	if len(coveredAttention.Items) != 3 {
 		t.Fatalf("AI outcome duplicated by open Task = %#v", coveredAttention)
 	}
 	if _, err := workModule.CompleteTask(
@@ -820,11 +839,11 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"counts"`
 	}
 	decode(t, firstPageResponse, &firstPage)
-	if len(firstPage.Items) != 1 || firstPage.NextCursor != "" ||
+	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" ||
 		firstPage.Counts.Tasks != 0 ||
-		firstPage.Counts.Bookings != 0 ||
-		firstPage.Counts.Cancellations != 0 ||
-		firstPage.Counts.Reschedules != 1 {
+		firstPage.Counts.Bookings != 1 ||
+		firstPage.Counts.Cancellations != 1 ||
+		firstPage.Counts.Reschedules != 2 {
 		t.Fatalf("first AI outcome page = %#v", firstPage)
 	}
 
@@ -843,7 +862,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 	}
 	decode(t, staffOutcomes, &staffAttention)
-	if len(staffAttention.Items) != 1 {
+	if len(staffAttention.Items) != 4 {
 		t.Fatalf("staff AI Interaction attention = %#v", staffAttention)
 	}
 
@@ -889,11 +908,11 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"counts"`
 	}
 	decode(t, adminAfterReview, &remainingAttention)
-	if len(remainingAttention.Items) != 0 ||
+	if len(remainingAttention.Items) != 3 ||
 		remainingAttention.Counts.Tasks != 0 ||
-		remainingAttention.Counts.Bookings != 0 ||
-		remainingAttention.Counts.Cancellations != 0 ||
-		remainingAttention.Counts.Reschedules != 0 {
+		remainingAttention.Counts.Bookings != 1 ||
+		remainingAttention.Counts.Cancellations != 1 ||
+		remainingAttention.Counts.Reschedules != 1 {
 		t.Fatalf("reviewed AI Interaction attention = %#v", remainingAttention)
 	}
 
@@ -912,7 +931,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 	}
 	decode(t, staffStillUnread, &staffAttentionAfterAdminReview)
-	if len(staffAttentionAfterAdminReview.Items) != 1 {
+	if len(staffAttentionAfterAdminReview.Items) != 4 {
 		t.Fatalf("staff attention changed after admin review = %#v",
 			staffAttentionAfterAdminReview)
 	}

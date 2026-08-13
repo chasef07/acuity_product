@@ -62,11 +62,13 @@ import {
   aiCallCompletionLabel,
   appointmentOutcomeLabel,
 } from "@/lib/ai-interactions"
+import { appointmentFolderForAction } from "@/lib/ai-outcome-attention"
 import { authClient } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import {
+  appointmentFolderForTask,
   filterTasksByCategory,
   taskCountForCategory,
   taskFolderCursor,
@@ -78,10 +80,10 @@ export type ConnectionState = "connecting" | "connected" | "degraded"
 type AttentionSection =
   | "tasks"
   | "calls"
-  | "bookings"
-  | "cancellations"
-  | "reschedules"
+  | "appointments"
   | "texts"
+
+type AppointmentSection = "bookings" | "cancellations" | "reschedules"
 
 const taskCategoryOptions: Array<{
   value: TaskCategoryFilter
@@ -180,6 +182,14 @@ export function TaskRail({
     section: AttentionSection
   }>()
   const expanded = expansion?.stateKey === stateKey ? expansion.section : undefined
+  const [appointmentExpansion, setAppointmentExpansion] = useState<{
+    stateKey: string
+    section: AppointmentSection
+  }>()
+  const expandedAppointment =
+    appointmentExpansion?.stateKey === stateKey
+      ? appointmentExpansion.section
+      : undefined
   const [taskCategory, setTaskCategory] =
     useState<TaskCategoryFilter>("all")
   const scrollContainer = useRef<HTMLDivElement | null>(null)
@@ -198,18 +208,44 @@ export function TaskRail({
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
   )
+  const appointmentFolders = [
+    {
+      key: "bookings" as const,
+      title: "Bookings",
+      tasks: categorizedTasks.bookings,
+      outcomes: categorizedAIOutcomes.bookings,
+      taskCount: taskCounts.bookings,
+      count: taskCounts.bookings + outcomeCounts.bookings,
+    },
+    {
+      key: "cancellations" as const,
+      title: "Cancellations",
+      tasks: categorizedTasks.cancellations,
+      outcomes: categorizedAIOutcomes.cancellations,
+      taskCount: taskCounts.cancellations,
+      count: taskCounts.cancellations + outcomeCounts.cancellations,
+    },
+    {
+      key: "reschedules" as const,
+      title: "Reschedules",
+      tasks: categorizedTasks.reschedules,
+      outcomes: categorizedAIOutcomes.reschedules,
+      taskCount: taskCounts.reschedules,
+      count: taskCounts.reschedules + outcomeCounts.reschedules,
+    },
+  ]
+  const appointmentCount = appointmentFolders.reduce(
+    (total, folder) => total + folder.count,
+    0,
+  )
   const recoveryRows = useMemo(
     () => aggregateRecovery(recoveryTasks),
     [recoveryTasks],
   )
   const textRows = useMemo(() => aggregateTexts(messages), [messages])
-  const appointmentFolderExpanded =
-    expanded === "bookings" ||
-    expanded === "cancellations" ||
-    expanded === "reschedules"
   const outcomeFolderExpanded =
     (expanded === "tasks" && taskCategory === "all") ||
-    appointmentFolderExpanded
+    (expanded === "appointments" && Boolean(expandedAppointment))
 
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -231,7 +267,15 @@ export function TaskRail({
   }, [stateKey])
 
   function toggle(section: AttentionSection) {
-    setExpansion((current) =>
+    const closing = expanded === section
+    setExpansion(closing ? undefined : { stateKey, section })
+    if (section === "appointments" || expanded === "appointments") {
+      setAppointmentExpansion(undefined)
+    }
+  }
+
+  function toggleAppointment(section: AppointmentSection) {
+    setAppointmentExpansion((current) =>
       current?.stateKey === stateKey && current.section === section
         ? undefined
         : { stateKey, section },
@@ -258,6 +302,7 @@ export function TaskRail({
               event.preventDefault()
               if (resolveWorkspaceSearch(search).kind === "tasks") {
                 setExpansion({ stateKey, section: "tasks" })
+                setAppointmentExpansion(undefined)
               }
               onSearchSubmit()
             }}
@@ -387,72 +432,42 @@ export function TaskRail({
               AI appointment updates are unavailable.
             </p>
           )}
-          <AppointmentGroup
-            title="Bookings"
-            tasks={categorizedTasks.bookings}
-            outcomes={categorizedAIOutcomes.bookings}
-            count={taskCounts.bookings + outcomeCounts.bookings}
-            taskCount={taskCounts.bookings}
-            expanded={expanded === "bookings"}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            pageLoading={loading}
-            cursor={nextCursor}
-            onToggle={() => toggle("bookings")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-            onLoadMore={onLoadMore}
-          />
-          <AppointmentGroup
-            title="Cancellations"
-            tasks={categorizedTasks.cancellations}
-            outcomes={categorizedAIOutcomes.cancellations}
-            count={
-              taskCounts.cancellations + outcomeCounts.cancellations
-            }
-            taskCount={taskCounts.cancellations}
-            expanded={expanded === "cancellations"}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            pageLoading={loading}
-            cursor={nextCursor}
-            onToggle={() => toggle("cancellations")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-            onLoadMore={onLoadMore}
-          />
-          <AppointmentGroup
-            title="Reschedules"
-            tasks={categorizedTasks.reschedules}
-            outcomes={categorizedAIOutcomes.reschedules}
-            count={
-              taskCounts.reschedules + outcomeCounts.reschedules
-            }
-            taskCount={taskCounts.reschedules}
-            expanded={expanded === "reschedules"}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            pageLoading={loading}
-            cursor={nextCursor}
-            onToggle={() => toggle("reschedules")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-            onLoadMore={onLoadMore}
-          />
-          {outcomeFolderExpanded && (
-            <RailLoadSentinel
-              label="Loading older appointment updates"
-              cursor={outcomeNextCursor}
-              loading={outcomesLoading}
-              onLoadMore={onOutcomeLoadMore}
-            />
-          )}
+          <AttentionGroup
+            title="Appointments"
+            count={appointmentCount}
+            expanded={expanded === "appointments"}
+            onToggle={() => toggle("appointments")}
+          >
+            {appointmentFolders.map((folder) => (
+              <AppointmentFolder
+                key={folder.key}
+                title={folder.title}
+                tasks={folder.tasks}
+                outcomes={folder.outcomes}
+                count={folder.count}
+                taskCount={folder.taskCount}
+                expanded={expandedAppointment === folder.key}
+                selectedTaskID={selectedTaskID}
+                selectedAIInteractionID={selectedAIInteractionID}
+                showOffice={showOffice}
+                loading={outcomesLoading}
+                pageLoading={loading}
+                cursor={nextCursor}
+                onToggle={() => toggleAppointment(folder.key)}
+                onTaskSelect={onTaskSelect}
+                onAIInteractionSelect={onAIInteractionSelect}
+                onLoadMore={onLoadMore}
+              />
+            ))}
+            {outcomeFolderExpanded && (
+              <RailLoadSentinel
+                label="Loading older appointment updates"
+                cursor={outcomeNextCursor}
+                loading={outcomesLoading}
+                onLoadMore={onOutcomeLoadMore}
+              />
+            )}
+          </AttentionGroup>
           <AttentionGroup
             title="Texts"
             count={textRows.length}
@@ -578,7 +593,7 @@ function AttentionGroup({
   )
 }
 
-function AppointmentGroup({
+function AppointmentFolder({
   title,
   tasks,
   outcomes,
@@ -613,43 +628,64 @@ function AppointmentGroup({
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onLoadMore: () => void
 }) {
+  const contentID = useId()
   return (
-    <AttentionGroup
-      title={title}
-      count={count}
-      expanded={expanded}
-      onToggle={onToggle}
-    >
-      {outcomes.map((interaction) => (
-        <AIOutcomeRow
-          key={interaction.id}
-          interaction={interaction}
-          active={interaction.id === selectedAIInteractionID}
-          showOffice={showOffice}
-          onSelect={() => onAIInteractionSelect(interaction)}
+    <SidebarMenuItem>
+      <button
+        type="button"
+        aria-controls={contentID}
+        aria-expanded={expanded}
+        className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground/70 outline-hidden transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        onClick={onToggle}
+      >
+        <ChevronRightIcon
+          aria-hidden="true"
+          className={cn(
+            "mr-1.5 size-3.5 shrink-0 stroke-[1.5] transition-transform motion-reduce:transition-none",
+            expanded && "rotate-90",
+          )}
         />
-      ))}
-      {tasks.map((task) => (
-        <TaskRow
-          key={task.id}
-          task={task}
-          active={task.id === selectedTaskID}
-          showOffice={showOffice}
-          onSelect={() => onTaskSelect(task)}
+        <span className="truncate">{title}</span>
+        <span className="ml-auto text-[0.6875rem] tabular-nums text-sidebar-foreground/40">
+          {count}
+        </span>
+      </button>
+      <SidebarMenu
+        id={contentID}
+        hidden={!expanded}
+        className="ml-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2"
+      >
+        {outcomes.map((interaction) => (
+          <AIOutcomeRow
+            key={interaction.id}
+            interaction={interaction}
+            active={interaction.id === selectedAIInteractionID}
+            showOffice={showOffice}
+            onSelect={() => onAIInteractionSelect(interaction)}
+          />
+        ))}
+        {tasks.map((task) => (
+          <TaskRow
+            key={task.id}
+            task={task}
+            active={task.id === selectedTaskID}
+            showOffice={showOffice}
+            onSelect={() => onTaskSelect(task)}
+          />
+        ))}
+        {loading && tasks.length === 0 && outcomes.length === 0 && (
+          <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
+        )}
+        {!loading && count === 0 && (
+          <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
+        )}
+        <RailShowMore
+          cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
+          loading={pageLoading}
+          onLoadMore={onLoadMore}
         />
-      ))}
-      {loading && tasks.length === 0 && outcomes.length === 0 && (
-        <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
-      )}
-      {!loading && count === 0 && (
-        <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
-      )}
-      <RailShowMore
-        cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
-        loading={pageLoading}
-        onLoadMore={onLoadMore}
-      />
-    </AttentionGroup>
+      </SidebarMenu>
+    </SidebarMenuItem>
   )
 }
 
@@ -916,7 +952,7 @@ function categorizeTasks(tasks: Task[]) {
     ) {
       continue
     }
-    const intent = appointmentIntent(task)
+    const intent = appointmentFolderForTask(task)
     if (intent) categorized[intent].push(task)
     else categorized.general.push(task)
   }
@@ -931,36 +967,11 @@ function categorizeAIOutcomes(outcomes: AiOutcomeItem[]) {
     reschedules: [] as AiOutcomeItem[],
   }
   for (const outcome of outcomes) {
-    switch (outcome.appointmentAction) {
-      case "BOOKED":
-        categorized.bookings.push(outcome)
-        break
-      case "CANCELLED":
-        categorized.cancellations.push(outcome)
-        break
-      case "RESCHEDULED":
-        categorized.reschedules.push(outcome)
-        break
-      default:
-        categorized.tasks.push(outcome)
-    }
+    const folder = appointmentFolderForAction(outcome.appointmentAction)
+    if (folder) categorized[folder].push(outcome)
+    else categorized.tasks.push(outcome)
   }
   return categorized
-}
-
-function appointmentIntent(
-  task: Task,
-): "bookings" | "cancellations" | "reschedules" | undefined {
-  if (task.category !== "appointments") return undefined
-  const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
-  if (/\b(cancel|cancellation)\b/.test(text)) return "cancellations"
-  if (/\b(reschedule|rescheduling|move appointment|change appointment)\b/.test(text)) {
-    return "reschedules"
-  }
-  if (/\b(book|booking|schedule|new appointment|appointment request)\b/.test(text)) {
-    return "bookings"
-  }
-  return undefined
 }
 
 function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {

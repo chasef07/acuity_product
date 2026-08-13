@@ -2,9 +2,17 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  appointmentFolderForAction,
   decrementOutcomeCount,
   mergeOutcomePages,
 } from "./ai-outcome-attention.ts"
+
+test("appointment actions have one authoritative review folder", () => {
+  assert.equal(appointmentFolderForAction("BOOKED"), "bookings")
+  assert.equal(appointmentFolderForAction("CANCELLED"), "cancellations")
+  assert.equal(appointmentFolderForAction("RESCHEDULED"), "reschedules")
+  assert.equal(appointmentFolderForAction(), undefined)
+})
 
 test("refreshing outcomes preserves loaded older pages without duplicates", () => {
   const loaded = [{ id: "current" }, { id: "older" }]

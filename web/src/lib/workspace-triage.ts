@@ -4,6 +4,27 @@ import type {
 } from "./api/generated/types.gen.ts"
 
 export type TaskCategoryFilter = "all" | StaffTaskCategory
+export type AppointmentFolder =
+  | "bookings"
+  | "cancellations"
+  | "reschedules"
+
+export function appointmentFolderForTask(task: {
+  category?: StaffTaskCategory
+  title: string
+  sourceMessage?: string
+}): AppointmentFolder | undefined {
+  if (task.category !== "appointments") return undefined
+  const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
+  if (/\b(cancel|cancellation)\b/.test(text)) return "cancellations"
+  if (/\b(reschedule|rescheduling|move appointment|change appointment)\b/.test(text)) {
+    return "reschedules"
+  }
+  if (/\b(book|booking|schedule|new appointment|appointment request)\b/.test(text)) {
+    return "bookings"
+  }
+  return undefined
+}
 
 export function filterTasksByCategory<
   T extends { category?: StaffTaskCategory },

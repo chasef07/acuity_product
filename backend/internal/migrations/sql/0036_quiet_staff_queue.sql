@@ -295,12 +295,13 @@ WHERE practice.id IN (
     JOIN activities ON activities.task_id = task.id
 );
 
--- Completed AI appointment work belongs in Engagement History. Only failures,
--- transfers, and partial appointment changes remain in the staff action rail.
+-- Every appointment change is a concise review item. Failed, escalated, and
+-- partial calls without a completed appointment action remain reviewable too.
 DELETE FROM ai_interaction_attention attention
 USING ai_interactions interaction
 WHERE attention.interaction_id = interaction.id
     AND attention.reviewed_at IS NULL
+    AND interaction.appointment_action IS NULL
     AND interaction.status NOT IN ('FAILED', 'ESCALATED')
     AND interaction.appointment_outcome <> 'PARTIAL';
 
@@ -323,7 +324,12 @@ FROM ai_interactions interaction
 JOIN access_operational_scopes operational_scope
     ON operational_scope.practice_id = interaction.practice_id
 WHERE (
-        interaction.status IN ('FAILED', 'ESCALATED')
+        interaction.appointment_action IN (
+            'BOOKED',
+            'CANCELLED',
+            'RESCHEDULED'
+        )
+        OR interaction.status IN ('FAILED', 'ESCALATED')
         OR interaction.appointment_outcome = 'PARTIAL'
     )
     AND (

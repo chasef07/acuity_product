@@ -305,7 +305,12 @@ func (m *Module) QueryOutcomes(
 					AND task.state = 'OPEN'
 			)
 			AND (
-				interaction.status IN ('FAILED', 'ESCALATED')
+				interaction.appointment_action IN (
+					'BOOKED',
+					'CANCELLED',
+					'RESCHEDULED'
+				)
+				OR interaction.status IN ('FAILED', 'ESCALATED')
 				OR interaction.appointment_outcome = 'PARTIAL'
 			)
 	`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
@@ -352,7 +357,12 @@ func (m *Module) QueryOutcomes(
 					AND task.state = 'OPEN'
 			)
 			AND (
-				interaction.status IN ('FAILED', 'ESCALATED')
+				interaction.appointment_action IN (
+					'BOOKED',
+					'CANCELLED',
+					'RESCHEDULED'
+				)
+				OR interaction.status IN ('FAILED', 'ESCALATED')
 				OR interaction.appointment_outcome = 'PARTIAL'
 			)
 			AND (

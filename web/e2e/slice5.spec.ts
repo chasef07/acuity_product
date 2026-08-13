@@ -32,6 +32,53 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   await expect(page.locator('button[aria-label="Search"]')).toBeHidden()
 })
 
+test("appointment reviews are nested and leave the queue when opened", async ({
+  page,
+}) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+  await createAIAppointmentReview(page)
+  await page.reload()
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+
+  const appointmentsSection = page.getByRole("button", {
+    name: /^Appointments/,
+  })
+  await expect(appointmentsSection).toHaveAttribute("aria-expanded", "false")
+  await expect(page.getByRole("button", { name: /^Bookings/ })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Cancellations/ })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Reschedules/ })).toHaveCount(0)
+
+  await appointmentsSection.click()
+  const bookingsSection = page.getByRole("button", { name: /^Bookings/ })
+  const cancellationsSection = page.getByRole("button", {
+    name: /^Cancellations/,
+  })
+  await expect(bookingsSection).toHaveAttribute("aria-expanded", "false")
+  await expect(cancellationsSection).toHaveAttribute("aria-expanded", "false")
+  await expect(page.getByRole("button", { name: /^Reschedules/ })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  )
+  await bookingsSection.click()
+  await expect(bookingsSection).toHaveAttribute("aria-expanded", "true")
+  await cancellationsSection.click()
+  await expect(bookingsSection).toHaveAttribute("aria-expanded", "false")
+  await expect(cancellationsSection).toHaveAttribute("aria-expanded", "true")
+
+  await expect(appointmentsSection).toContainText("1")
+  await bookingsSection.click()
+  const bookingReview = page.getByRole("button", {
+    name: /\(727\) 555-0188/,
+  })
+  await expect(bookingReview).toBeVisible()
+  await bookingReview.click()
+  await expect(page.getByRole("heading", { name: "Appointment booked" })).toBeVisible()
+  await expect(bookingReview).toHaveCount(0)
+  await expect(appointmentsSection).toContainText("0")
+})
+
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
   context,
   page,
@@ -55,9 +102,6 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("button", { name: /^Missed Calls \d+$/ }),
   ).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Bookings/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Cancellations/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Reschedules/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Texts/ })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
@@ -412,6 +456,36 @@ async function createAIStaffTask(
       source: "agent",
       summary,
       urgency: "normal",
+    },
+  })
+  expect([200, 201]).toContain(response.status())
+}
+
+async function createAIAppointmentReview(page: Page) {
+  const occurredAt = new Date()
+  const startedAt = new Date(occurredAt.getTime() - 60_000)
+  const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
+    headers: { authorization: "Bearer synthetic-production-token" },
+    data: {
+      kind: "CLOSEOUT",
+      officeKey: "spring-hill",
+      sourceCallId: "slice-5-booking-review",
+      callerPhone: "+17275550188",
+      officePhone: "+17275550101",
+      startedAt: startedAt.toISOString(),
+      endedAt: occurredAt.toISOString(),
+      status: "COMPLETED",
+      summary: "Caller booked an appointment.",
+      closeoutPayload: { callId: "slice-5-booking-review" },
+      appointmentOutcome: {
+        action: "BOOKED",
+        occurredAt: occurredAt.toISOString(),
+        newAppointmentId: "slice-5-booking",
+        bookingResult: {
+          status: "booked",
+          appointmentId: "slice-5-booking",
+        },
+      },
     },
   })
   expect([200, 201]).toContain(response.status())

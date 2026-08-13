@@ -2,12 +2,38 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  appointmentFolderForTask,
   filterTasksByCategory,
   reconcileLoadedPage,
   recoveryGroupKey,
   taskCountForCategory,
   taskFolderCursor,
 } from "./workspace-triage.ts"
+
+test("appointment Tasks use one folder classification in rail and history", () => {
+  assert.equal(
+    appointmentFolderForTask({
+      category: "appointments",
+      title: "Review request",
+      sourceMessage: "Please move appointment to Friday",
+    }),
+    "reschedules",
+  )
+  assert.equal(
+    appointmentFolderForTask({
+      category: "appointments",
+      title: "Schedule new appointment",
+    }),
+    "bookings",
+  )
+  assert.equal(
+    appointmentFolderForTask({
+      category: "billing",
+      title: "Cancel balance reminder",
+    }),
+    undefined,
+  )
+})
 
 test("Task categories filter only the supplied Task rows", () => {
   const tasks = [

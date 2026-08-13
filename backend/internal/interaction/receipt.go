@@ -408,7 +408,10 @@ func syncOutcomeAttention(
 	interaction Interaction,
 	createdAt time.Time,
 ) (bool, error) {
-	actionable := interaction.Status == CallFailed ||
+	reviewable := interaction.AppointmentAction == AppointmentBooked ||
+		interaction.AppointmentAction == AppointmentCancelled ||
+		interaction.AppointmentAction == AppointmentRescheduled ||
+		interaction.Status == CallFailed ||
 		interaction.Status == CallEscalated ||
 		interaction.AppointmentOutcome == OutcomePartial
 	attentionAt := outcomeAttentionAt(interaction)
@@ -417,11 +420,11 @@ func syncOutcomeAttention(
 		WHERE interaction_id = $1
 			AND reviewed_at IS NULL
 			AND (NOT $2 OR outcome_occurred_at <> $3)
-	`, interaction.ID, actionable, attentionAt)
+	`, interaction.ID, reviewable, attentionAt)
 	if err != nil {
 		return false, fmt.Errorf("clear obsolete AI Interaction attention: %w", err)
 	}
-	if !actionable {
+	if !reviewable {
 		return removed.RowsAffected() > 0, nil
 	}
 	tag, err := tx.Exec(ctx, `

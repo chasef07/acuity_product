@@ -91,6 +91,7 @@ import {
   recoveryFollowUpCallIDs,
   technicalTimelineItems,
 } from "@/lib/workspace-history"
+import { appointmentFolderForTask } from "@/lib/workspace-triage"
 
 const maximumMessageLength = 1_600
 const maximumAttachmentBytes = 600 * 1_024
@@ -1312,17 +1313,15 @@ function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
 }
 
 function taskTouchpoint(task: Task) {
-  if (task.category === "appointments") {
-    const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
-    if (/\b(cancel|cancellation)\b/.test(text)) {
+  switch (appointmentFolderForTask(task)) {
+    case "cancellations":
       return { icon: <CalendarX2Icon />, label: "Cancellation" }
-    }
-    if (/\b(reschedule|rescheduling|move appointment|change appointment)\b/.test(text)) {
+    case "reschedules":
       return { icon: <CalendarClockIcon />, label: "Reschedule" }
-    }
-    if (/\b(book|booking|schedule|new appointment|appointment request)\b/.test(text)) {
+    case "bookings":
       return { icon: <CalendarCheck2Icon />, label: "Booking" }
-    }
+  }
+  if (task.category === "appointments") {
     return { icon: <CalendarClockIcon />, label: "Appointment" }
   }
   if (task.origin === "VOICEMAIL_RECOVERY") {

@@ -112,8 +112,6 @@ type ContextView = "task" | "call" | "appointment"
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
 const taskScopeStorageKey = "acuity.taskLocationScope"
-const taskOrderingStorageKey = "acuity.taskOrdering"
-type TaskOrdering = "recent" | "priority"
 
 export function TaskWorkspaceShell() {
   const router = useRouter()
@@ -127,7 +125,6 @@ export function TaskWorkspaceShell() {
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
   const [taskSearch, setTaskSearch] = useState("")
-  const [ordering, setOrdering] = useState<TaskOrdering>("priority")
   const [engagementError, setEngagementError] = useState("")
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
   const [tasks, setTasks] = useState<Task[]>([])
@@ -190,7 +187,6 @@ export function TaskWorkspaceShell() {
   const snapshotGenerationRef = useRef(0)
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
-  const orderingRef = useRef<TaskOrdering>("priority")
   const locationScopeRef = useRef("")
   const taskSearchRef = useRef("")
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
@@ -211,9 +207,6 @@ export function TaskWorkspaceShell() {
     )
   }, [requestBudget, selectedEngagement, view])
   useEffect(() => {
-    orderingRef.current = ordering
-  }, [ordering])
-  useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
   useEffect(() => {
@@ -225,7 +218,6 @@ export function TaskWorkspaceShell() {
       const queryKey = workspaceTaskQueryKey(
         practiceID,
         locationScopeID,
-        ordering,
         taskSearch,
       )
       const requestGeneration = ++taskQueryGenerationRef.current
@@ -242,7 +234,7 @@ export function TaskWorkspaceShell() {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
           state: "OPEN",
-          ordering,
+          ordering: "priority",
           folder: "work",
           ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
@@ -291,7 +283,7 @@ export function TaskWorkspaceShell() {
         setView("engagement")
       }
     },
-    [locationScopeID, ordering, practiceID, taskSearch],
+    [locationScopeID, practiceID, taskSearch],
   )
   const loadRecoveryTasks = useCallback(
     async (cursor = "", append = false) => {
@@ -494,13 +486,11 @@ export function TaskWorkspaceShell() {
         ++recoveryTaskQueryGenerationRef.current
       const messageGeneration = ++messageQueryGenerationRef.current
       const taskLocationID = locationScopeRef.current
-      const taskOrdering = orderingRef.current
       const currentTaskSearch = taskSearchRef.current
       const selectedTaskID = selectedTaskRef.current?.id
       const taskQueryKey = workspaceTaskQueryKey(
         scope.practiceID,
         taskLocationID,
-        taskOrdering,
         currentTaskSearch,
       )
       const recoveryTaskQueryKey = workspaceRecoveryTaskQueryKey(
@@ -535,7 +525,7 @@ export function TaskWorkspaceShell() {
               practiceId: scope.practiceID,
               ...(taskLocationID ? { locationId: taskLocationID } : {}),
               state: "OPEN",
-              ordering: taskOrdering,
+              ordering: "priority",
               folder: "work",
               ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
               limit: 50,
@@ -770,13 +760,7 @@ export function TaskWorkspaceShell() {
         : practice.locations.some((item) => item.id === storedScope)
           ? (storedScope ?? "")
           : ""
-    const initialOrdering = readTaskOrdering(
-      result.data.actor.subject,
-      practice.id,
-    )
-    orderingRef.current = initialOrdering
     locationScopeRef.current = scope
-    setOrdering(initialOrdering)
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -802,7 +786,6 @@ export function TaskWorkspaceShell() {
     const queryKey = workspaceTaskQueryKey(
       practiceID,
       locationScopeID,
-      ordering,
       taskSearch,
     )
     if (taskQueryKeyRef.current === queryKey) return
@@ -812,7 +795,6 @@ export function TaskWorkspaceShell() {
     loadState,
     loadTasks,
     locationScopeID,
-    ordering,
     practiceID,
     taskSearch,
   ])
@@ -1011,16 +993,10 @@ export function TaskWorkspaceShell() {
     setContextPanelOpen(false)
     setView("none")
 
-    const nextOrdering = readTaskOrdering(
-      discovery.actor.subject,
-      nextPractice.id,
-    )
     const nextScope = nextLocationScopeID
-    orderingRef.current = nextOrdering
     locationScopeRef.current = nextScope
     workspaceRef.current = undefined
     setWorkspace(undefined)
-    setOrdering(nextOrdering)
     setPracticeID(nextPractice.id)
     setLocationID(nextLocation.id)
     setLocationScopeID(nextScope)
@@ -1639,17 +1615,12 @@ function WorkspaceSelector({
   )
 }
 
-function taskOrderingKey(userSubject: string, practiceID: string) {
-  return `${taskOrderingStorageKey}.${userSubject}.${practiceID}`
-}
-
 function workspaceTaskQueryKey(
   practiceID: string,
   locationID: string,
-  ordering: TaskOrdering,
   search: string,
 ) {
-  return `${practiceID}:${locationID}:OPEN:${ordering}:work:${search}`
+  return `${practiceID}:${locationID}:OPEN:priority:work:${search}`
 }
 
 function workspaceRecoveryTaskQueryKey(
@@ -1665,16 +1636,6 @@ function workspaceMessageQueryKey(
   locationID: string,
 ) {
   return `${practiceID}:${locationID}`
-}
-
-function readTaskOrdering(
-  userSubject: string,
-  practiceID: string,
-): TaskOrdering {
-  const stored = window.localStorage.getItem(
-    taskOrderingKey(userSubject, practiceID),
-  )
-  return stored === "recent" ? "recent" : "priority"
 }
 
 function taskEngagement(task: Task): EngagementSummary {
