@@ -24,3 +24,31 @@ a cache, or a second authority because the maintained Message reference alone
 produced a material improvement.
 
 This is local query evidence, not production latency proof.
+
+## Authenticated burst evidence
+
+Repeated locally on PostgreSQL 16 on 2026-08-14 through the production HTTP
+handler and database executor. The fixture again contained 5,000 Threads and
+50,000 Messages. Twenty distinct authenticated Staff identities started the
+same 50-row Thread query together against a four-connection pool and the
+production 1,500 ms acquisition timeout.
+
+- 20 of 20 responses returned `200`.
+- No request exhausted the database acquisition timeout.
+- The slowest HTTP response completed in 145.6 ms.
+- The longest measured database connection hold was 48.7 ms.
+
+`TestMessageThreadBurstUsesFourConnectionsWithoutTimeouts` recreates the
+fixture and assertion. This is production-sized local evidence, not a claim
+about Cloud Run or Cloud SQL latency. The production runtime contract separately
+sets portal concurrency to eight; its live 20-workspace verification is the
+production admission-control proof.
+
+## Migration-first rollout compatibility
+
+Migration `0037_messaging_latest_message.sql` owns latest-Message advancement
+with an `AFTER INSERT` trigger. It backfills existing Threads, covers old
+binaries that only insert Messages during the migration-to-deploy gap, and
+orders delayed provider Messages by `(created_at, id)` without regressing the
+reference. Portal and worker roles do not receive direct update authority for
+`messaging_threads.latest_message_id`.

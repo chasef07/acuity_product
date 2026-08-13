@@ -139,6 +139,155 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 }
 
+func TestMessagingLatestMessageMigrationSupportsOldWriters(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0034_ai_interaction_attention.sql")
+	ctx := context.Background()
+	const (
+		migrationPracticeID = "00000000-0000-0000-0000-000000000201"
+		migrationLocationID = "00000000-0000-0000-0000-000000000202"
+		backfilledThreadID  = "00000000-0000-0000-0000-000000000203"
+		backfilledMessageID = "00000000-0000-0000-0000-000000000204"
+		newThreadID         = "00000000-0000-0000-0000-000000000205"
+		newMessageID        = "00000000-0000-0000-0000-000000000206"
+		newerMessageID      = "00000000-0000-0000-0000-000000000207"
+		olderMessageID      = "00000000-0000-0000-0000-000000000208"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'latest-message-migration', 'Latest Message Migration')
+	`, migrationPracticeID); err != nil {
+		t.Fatalf("seed pre-migration Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES ($2, $1, 'main', 'Main')
+	`, migrationPracticeID, migrationLocationID); err != nil {
+		t.Fatalf("seed pre-migration Location: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO messaging_threads (
+			id, practice_id, location_id, office_phone, external_phone
+		) VALUES ($3, $1, $2, '+17275550100', '+17275550101')
+	`, migrationPracticeID, migrationLocationID, backfilledThreadID); err != nil {
+		t.Fatalf("seed pre-migration Thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO messaging_messages (
+			id, thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_by_subject, created_at, updated_at
+		) VALUES (
+			$4, $3, $1, $2, 'OUTBOUND', 'Before migration',
+			'+17275550100', '+17275550101', 'SENT', 'old-writer',
+			'2026-08-13T20:00:00Z', '2026-08-13T20:00:00Z'
+		)
+	`, migrationPracticeID, migrationLocationID, backfilledThreadID, backfilledMessageID); err != nil {
+		t.Fatalf("seed pre-migration Message: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply latest-Message migration: %v", err)
+	}
+	if err := migrations.ApplyRuntimeGrants(ctx, pool); err != nil {
+		t.Fatalf("apply latest-Message runtime grants: %v", err)
+	}
+	portal, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire old-writer connection: %v", err)
+	}
+	defer portal.Release()
+	if _, err := portal.Exec(ctx, `SET ROLE acuity_portal`); err != nil {
+		t.Fatalf("assume old portal writer role: %v", err)
+	}
+	defer func() { _, _ = portal.Exec(ctx, `RESET ROLE`) }()
+
+	// These inserts intentionally match the old binary: they do not maintain
+	// messaging_threads.latest_message_id themselves.
+	if _, err := portal.Exec(ctx, `
+		INSERT INTO messaging_threads (
+			id, practice_id, location_id, office_phone, external_phone
+		) VALUES ($3, $1, $2, '+17275550100', '+17275550102')
+	`, migrationPracticeID, migrationLocationID, newThreadID); err != nil {
+		t.Fatalf("write Thread with old binary shape: %v", err)
+	}
+	if _, err := portal.Exec(ctx, `
+		INSERT INTO messaging_messages (
+			id, thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_by_subject, created_at, updated_at
+		) VALUES (
+			$4, $3, $1, $2, 'OUTBOUND', 'New thread during rollout',
+			'+17275550100', '+17275550102', 'SENT', 'old-writer',
+			'2026-08-13T20:01:00Z', '2026-08-13T20:01:00Z'
+		)
+	`, migrationPracticeID, migrationLocationID, newThreadID, newMessageID); err != nil {
+		t.Fatalf("write new-Thread Message with old binary shape: %v", err)
+	}
+	if _, err := portal.Exec(ctx, `
+		INSERT INTO messaging_messages (
+			id, thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_by_subject, created_at, updated_at
+		) VALUES (
+			$3, $4, $1, $2, 'OUTBOUND', 'After migration',
+			'+17275550100', '+17275550101', 'SENT', 'old-writer',
+			'2026-08-13T20:02:00Z', '2026-08-13T20:02:00Z'
+		)
+	`, migrationPracticeID, migrationLocationID, newerMessageID, backfilledThreadID); err != nil {
+		t.Fatalf("write newer Message with old binary shape: %v", err)
+	}
+	if _, err := portal.Exec(ctx, `
+		INSERT INTO messaging_messages (
+			id, thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_by_subject, created_at, updated_at
+		) VALUES (
+			$3, $4, $1, $2, 'OUTBOUND', 'Delayed older message',
+			'+17275550100', '+17275550101', 'SENT', 'old-writer',
+			'2026-08-13T19:59:00Z', '2026-08-13T20:03:00Z'
+		)
+	`, migrationPracticeID, migrationLocationID, olderMessageID, backfilledThreadID); err != nil {
+		t.Fatalf("write delayed Message with old binary shape: %v", err)
+	}
+
+	rows, err := portal.Query(ctx, `
+		SELECT thread.id::text, latest_message.id::text, latest_message.body
+		FROM messaging_threads thread
+		LEFT JOIN messaging_messages latest_message
+			ON latest_message.id = thread.latest_message_id
+			AND latest_message.thread_id = thread.id
+		ORDER BY thread.id
+	`)
+	if err != nil {
+		t.Fatalf("query Threads with new reader: %v", err)
+	}
+	defer rows.Close()
+	want := map[string]struct {
+		messageID string
+		body      string
+	}{
+		backfilledThreadID: {newerMessageID, "After migration"},
+		newThreadID:        {newMessageID, "New thread during rollout"},
+	}
+	for rows.Next() {
+		var threadID, messageID, body string
+		if err := rows.Scan(&threadID, &messageID, &body); err != nil {
+			t.Fatalf("scan new-reader result: %v", err)
+		}
+		expected, ok := want[threadID]
+		if !ok {
+			t.Fatalf("unexpected Thread %q", threadID)
+		}
+		if messageID != expected.messageID || body != expected.body {
+			t.Errorf("Thread %s latest Message = %s/%q, want %s/%q",
+				threadID, messageID, body, expected.messageID, expected.body)
+		}
+		delete(want, threadID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate new-reader results: %v", err)
+	}
+	if len(want) != 0 {
+		t.Fatalf("new reader omitted Threads: %v", want)
+	}
+}
+
 func TestGoogleOnlyAccessMigrationConvertsCompatibleLegacyMembership(t *testing.T) {
 	pool := testdb.OpenThrough(t, "0026_ai_interactions.sql")
 	ctx := context.Background()

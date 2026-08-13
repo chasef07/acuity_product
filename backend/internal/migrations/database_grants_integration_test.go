@@ -877,7 +877,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"acuity_portal",
 		"public.messaging_threads",
 		"UPDATE",
-		"latest_message_id",
 		"updated_at",
 	)
 	grant(
@@ -908,7 +907,6 @@ func expectedColumnPrivileges() map[string]bool {
 		"acuity_worker",
 		"public.messaging_threads",
 		"UPDATE",
-		"latest_message_id",
 		"outbound_blocked",
 		"opt_out_evidence_at",
 		"opt_out_evidence_event_id",

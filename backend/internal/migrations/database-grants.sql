@@ -181,7 +181,7 @@ GRANT UPDATE (
 ON TABLE public.ai_interaction_receipts
 TO acuity_portal;
 
-GRANT UPDATE (latest_message_id, updated_at)
+GRANT UPDATE (updated_at)
 ON TABLE public.messaging_threads
 TO acuity_portal;
 
@@ -448,7 +448,6 @@ ON TABLE public.messaging_location_configurations
 TO acuity_worker;
 
 GRANT UPDATE (
-    latest_message_id,
     outbound_blocked,
     opt_out_evidence_at,
     opt_out_evidence_event_id,

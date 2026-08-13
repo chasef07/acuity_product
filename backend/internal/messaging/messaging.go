@@ -1335,9 +1335,6 @@ func (m *Module) Send(
 	); err != nil {
 		return Message{}, "", fmt.Errorf("commit outbound Message: %w", err)
 	}
-	if err := advanceThreadLatestMessage(ctx, tx, thread.ID, messageID); err != nil {
-		return Message{}, "", err
-	}
 	if attachment != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE messaging_attachments
@@ -3431,11 +3428,6 @@ func (m *Module) projectInboundReceipt(
 		return fmt.Errorf("append inbound Message: %w", err)
 	}
 	inserted := tag.RowsAffected() > 0
-	if inserted {
-		if err := advanceThreadLatestMessage(ctx, tx, threadID, messageID); err != nil {
-			return err
-		}
-	}
 	if inserted && len(payload.Media) == 1 {
 		providerMediaURL := strings.TrimSpace(payload.Media[0].URL)
 		provisionalType := strings.ToLower(strings.TrimSpace(
@@ -4086,37 +4078,6 @@ func loadThread(
 		return Thread{}, fmt.Errorf("load Message Thread: %w", err)
 	}
 	return thread, nil
-}
-
-func advanceThreadLatestMessage(
-	ctx context.Context,
-	tx pgx.Tx,
-	threadID string,
-	messageID string,
-) error {
-	if _, err := tx.Exec(ctx, `
-		UPDATE messaging_threads thread
-		SET latest_message_id = $2
-		WHERE thread.id = $1
-			AND EXISTS (
-				SELECT 1
-				FROM messaging_messages candidate
-				WHERE candidate.id = $2
-					AND candidate.thread_id = thread.id
-					AND (
-						thread.latest_message_id IS NULL
-						OR (candidate.created_at, candidate.id) > (
-							SELECT current.created_at, current.id
-							FROM messaging_messages current
-							WHERE current.id = thread.latest_message_id
-								AND current.thread_id = thread.id
-						)
-					)
-			)
-	`, threadID, messageID); err != nil {
-		return fmt.Errorf("advance Message Thread latest Message: %w", err)
-	}
-	return nil
 }
 
 func normalizeSendCommand(command *SendCommand) {
