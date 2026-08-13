@@ -1436,6 +1436,20 @@ func bindPlatformOperator(
 	tx pgx.Tx,
 	identity Identity,
 ) (string, bool, error) {
+	email := normalizeEmail(identity.Email)
+	var operatorID string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM access_platform_operators
+		WHERE user_subject = $1 AND email = $2
+	`, identity.Subject, email).Scan(&operatorID)
+	if err == nil {
+		return operatorID, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, fmt.Errorf("resolve bound Platform Operator: %w", err)
+	}
+
 	if err := lockPlatformOperatorIdentity(ctx, tx, identity); err != nil {
 		return "", false, err
 	}
@@ -1445,18 +1459,18 @@ func bindPlatformOperator(
 		WHERE user_subject = $1 OR email = $2
 		ORDER BY id
 		FOR UPDATE
-	`, identity.Subject, normalizeEmail(identity.Email))
+	`, identity.Subject, email)
 	if err != nil {
 		return "", false, fmt.Errorf("resolve Platform Operator: %w", err)
 	}
 	defer rows.Close()
-	var operatorID, emailOperatorID string
+	var emailOperatorID string
 	for rows.Next() {
-		var id, email, subject string
-		if err := rows.Scan(&id, &email, &subject); err != nil {
+		var id, rowEmail, subject string
+		if err := rows.Scan(&id, &rowEmail, &subject); err != nil {
 			return "", false, fmt.Errorf("scan Platform Operator: %w", err)
 		}
-		if email == normalizeEmail(identity.Email) {
+		if rowEmail == email {
 			if subject != "" && subject != identity.Subject {
 				return "", false, ErrDenied
 			}
