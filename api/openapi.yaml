@@ -3358,6 +3358,9 @@ components:
         ordering:
           type: string
           enum: [priority, recent]
+        folder:
+          type: string
+          enum: [work, missed_calls]
         cursor:
           type: string
         limit:

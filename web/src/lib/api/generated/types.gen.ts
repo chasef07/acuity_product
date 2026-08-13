@@ -694,6 +694,7 @@ export type TaskQueryRequest = {
     search?: string;
     state?: 'OPEN' | 'COMPLETED';
     ordering?: 'priority' | 'recent';
+    folder?: 'work' | 'missed_calls';
     cursor?: string;
     limit?: number;
 };
