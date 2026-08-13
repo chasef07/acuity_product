@@ -26,8 +26,9 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 		return "", false, fmt.Errorf("begin provider command claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var commandID string
-	err = tx.QueryRow(ctx, `
+	for {
+		var commandID string
+		err = tx.QueryRow(ctx, `
 		WITH call_candidate AS MATERIALIZED (
 			SELECT command.id, command.created_at
 			FROM human_calling_calls call
@@ -85,27 +86,32 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 		) candidate
 		ORDER BY candidate.created_at, candidate.id
 		LIMIT 1
-	`, m.now()).Scan(&commandID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return "", false, err
+		`, m.now()).Scan(&commandID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if err := tx.Commit(ctx); err != nil {
+				return "", false, err
+			}
+			return "", false, nil
 		}
-		return "", false, nil
+		if err != nil {
+			return "", false, fmt.Errorf("select provider command: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE human_calling_provider_commands
+			SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
+			WHERE id = $1 AND state = 'PENDING'
+		`, commandID, m.now())
+		if err != nil {
+			return "", false, fmt.Errorf("claim provider command: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return "", false, fmt.Errorf("commit provider command claim: %w", err)
+		}
+		return commandID, true, nil
 	}
-	if err != nil {
-		return "", false, fmt.Errorf("select provider command: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_provider_commands
-		SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
-		WHERE id = $1
-	`, commandID, m.now()); err != nil {
-		return "", false, fmt.Errorf("claim provider command: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", false, fmt.Errorf("commit provider command claim: %w", err)
-	}
-	return commandID, true, nil
 }
 
 func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) error {
