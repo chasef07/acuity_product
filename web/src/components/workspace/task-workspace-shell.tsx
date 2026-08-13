@@ -77,6 +77,10 @@ import {
 import { normalizeUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import {
+  createWorkspaceRequestBudget,
+  type WorkspaceRequestBudget,
+} from "@/lib/workspace-sync/workspace-request-budget"
+import {
   createWorkspaceSync,
   type WorkspaceSync,
   WorkspaceSyncUnauthorizedError,
@@ -152,6 +156,12 @@ export function TaskWorkspaceShell() {
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
+  const [requestBudget] = useState<WorkspaceRequestBudget>(() =>
+    createWorkspaceRequestBudget({
+      refreshDetails: () => setWorkspaceRevision((current) => current + 1),
+      isHidden: () => document.hidden,
+    }),
+  )
   const [taskCallRequest, setTaskCallRequest] = useState<{
     id: string
     taskID: string
@@ -186,6 +196,11 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     viewRef.current = view
   }, [view])
+  useEffect(() => {
+    requestBudget.setDetailRefreshMounted(
+      view === "engagement" && Boolean(selectedEngagement),
+    )
+  }, [requestBudget, selectedEngagement, view])
   useEffect(() => {
     orderingRef.current = ordering
   }, [ordering])
@@ -535,11 +550,11 @@ export function TaskWorkspaceShell() {
             setMessageThreads(nextMessages)
             setMessageNextCursor(messageResult.data.nextCursor)
           }
-          setWorkspaceRevision((current) => current + 1)
+          requestBudget.signalDetailRefresh()
         },
       }
     },
-    [],
+    [requestBudget],
   )
   const reconcileWorkspaceRef = useRef(reconcileWorkspace)
   useEffect(() => {
@@ -656,14 +671,14 @@ export function TaskWorkspaceShell() {
   ])
 
   useEffect(() => {
-    if (!practiceID || loadState !== "ready") return
-    const timeout = window.setTimeout(() => void loadAIOutcomes(), 0)
-    const interval = window.setInterval(() => void loadAIOutcomes(), 30_000)
-    return () => {
-      window.clearTimeout(timeout)
-      window.clearInterval(interval)
-    }
-  }, [loadAIOutcomes, loadState, practiceID, workspaceRevision])
+    const scopeKey =
+      practiceID && loadState === "ready"
+        ? `${practiceID}:${locationScopeID}`
+        : ""
+    requestBudget.setAIRefresh(scopeKey, () => loadAIOutcomes())
+  }, [loadAIOutcomes, loadState, locationScopeID, practiceID, requestBudget])
+
+  useEffect(() => () => requestBudget.stop(), [requestBudget])
 
   useEffect(() => {
     const sync = createWorkspaceSync({
@@ -672,13 +687,20 @@ export function TaskWorkspaceShell() {
       reconcile: (input) => reconcileWorkspaceRef.current(input),
       onStateChange: setConnection,
       onUnauthorized: () => setLoadState("unauthorized"),
+      isHidden: () => document.hidden,
     })
     workspaceSyncRef.current = sync
+    const handleVisibility = () => {
+      sync.visibilityChanged()
+      requestBudget.visibilityChanged()
+    }
+    document.addEventListener("visibilitychange", handleVisibility)
     return () => {
       workspaceSyncRef.current = undefined
+      document.removeEventListener("visibilitychange", handleVisibility)
       sync.stop()
     }
-  }, [])
+  }, [requestBudget])
 
   useEffect(() => {
     const sync = workspaceSyncRef.current

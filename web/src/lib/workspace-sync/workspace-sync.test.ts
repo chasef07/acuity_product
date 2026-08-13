@@ -207,6 +207,250 @@ test("hint bursts coalesce to the newest version without regression", async () =
   sync.stop()
 })
 
+test("hidden hints defer DB reconciliation until one visible reconstruction", async () => {
+  let hidden = false
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const requested: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      return { version: minimumVersion, apply: () => {} }
+    },
+    onStateChange: () => {},
+    isHidden: () => hidden,
+  })
+  sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+
+  await eventually(() => assert.ok(stream))
+  stream!.enqueue(readyEvent(1))
+  await eventually(() => assert.deepEqual(requested, [1]))
+
+  hidden = true
+  for (const version of [2, 3, 4, 5, 9]) {
+    stream!.enqueue(hintEvent(version))
+    await new Promise((resolve) => setTimeout(resolve, 2))
+  }
+  assert.deepEqual(requested, [1])
+
+  hidden = false
+  sync.visibilityChanged()
+  await eventually(() => assert.deepEqual(requested, [1, 9]))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(requested, [1, 9])
+  sync.stop()
+})
+
+test("visible forced catch-up waits for an active reconciliation", async () => {
+  let hidden = false
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const releaseVersionTwo = deferred<void>()
+  const requested: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      if (requested.length === 2) await releaseVersionTwo.promise
+      return { version: minimumVersion, apply: () => {} }
+    },
+    onStateChange: () => {},
+    isHidden: () => hidden,
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(streams.length, 1))
+    streams[0]!.enqueue(readyEvent(1))
+    await eventually(() => assert.deepEqual(requested, [1]))
+
+    streams[0]!.enqueue(hintEvent(2))
+    await eventually(() => assert.deepEqual(requested, [1, 2]))
+    hidden = true
+    streams[0]!.close()
+    await eventually(() => assert.equal(streams.length, 2))
+    streams[1]!.enqueue(readyEvent(2))
+
+    hidden = false
+    sync.visibilityChanged()
+    releaseVersionTwo.resolve()
+    await eventually(() => assert.deepEqual(requested, [1, 2, 2]))
+  } finally {
+    sync.stop()
+  }
+})
+
+test("initial hidden startup connects after its visible catch-up succeeds", async () => {
+  let hidden = true
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const requested: number[] = []
+  const states: string[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      return { version: minimumVersion, apply: () => {} }
+    },
+    onStateChange: (state) => states.push(state),
+    isHidden: () => hidden,
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.ok(stream))
+    stream!.enqueue(readyEvent(1))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.deepEqual(requested, [])
+    assert.deepEqual(states, ["connecting"])
+
+    hidden = false
+    sync.visibilityChanged()
+    await eventually(() => assert.deepEqual(requested, [1]))
+    assert.equal(states.at(-1), "connected")
+  } finally {
+    sync.stop()
+  }
+})
+
+test("a hidden reconnect stays degraded until its visible catch-up succeeds", async () => {
+  const clock = new ManualClock()
+  let hidden = false
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const requested: number[] = []
+  const states: string[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      return { version: minimumVersion, apply: () => {} }
+    },
+    onStateChange: (state) => states.push(state),
+    isHidden: () => hidden,
+    sleep: clock.sleep,
+    timing: {
+      degradedGraceMilliseconds: 100,
+      pollMinimumMilliseconds: 1_000,
+      pollMaximumMilliseconds: 2_000,
+    },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(streams.length, 1))
+    streams[0]!.enqueue(readyEvent(1))
+    await eventually(() => assert.deepEqual(requested, [1]))
+
+    hidden = true
+    streams[0]!.close()
+    await eventually(() => assert.equal(streams.length, 2))
+    await clock.advance(100)
+    assert.equal(states.at(-1), "degraded")
+
+    streams[1]!.enqueue(readyEvent(1))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(states.at(-1), "degraded")
+    assert.deepEqual(requested, [1])
+
+    hidden = false
+    sync.visibilityChanged()
+    await eventually(() => assert.deepEqual(requested, [1, 1]))
+    assert.equal(states.at(-1), "connected")
+  } finally {
+    sync.stop()
+  }
+})
+
+test("a failed same-version visibility catch-up retries immediately", async () => {
+  const clock = new ManualClock()
+  let hidden = false
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const requested: number[] = []
+  const sync = createWorkspaceSync({
+    realtimeURL: "https://realtime.example",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+          },
+        }),
+      ),
+    getToken: async () => "token",
+    reconcile: async ({ minimumVersion }) => {
+      requested.push(minimumVersion)
+      if (requested.length === 2) throw new Error("portal unavailable")
+      return { version: minimumVersion, apply: () => {} }
+    },
+    onStateChange: () => {},
+    isHidden: () => hidden,
+    random: () => 0.5,
+    sleep: clock.sleep,
+    timing: {
+      retryBaseMilliseconds: 1_000,
+      retryCapMilliseconds: 8_000,
+      degradedGraceMilliseconds: 5_000,
+      pollMinimumMilliseconds: 10_000,
+      pollMaximumMilliseconds: 20_000,
+    },
+  })
+
+  try {
+    sync.setScope({ practiceID: "practice-1", locationID: "location-1" })
+    await eventually(() => assert.equal(streams.length, 1))
+    streams[0]!.enqueue(readyEvent(1))
+    await eventually(() => assert.deepEqual(requested, [1]))
+
+    hidden = true
+    streams[0]!.close()
+    await eventually(() => assert.equal(streams.length, 2))
+    streams[1]!.enqueue(readyEvent(1))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    hidden = false
+    sync.visibilityChanged()
+    await eventually(() => assert.deepEqual(requested, [1, 1]))
+    await clock.advance(0)
+    await eventually(() => assert.deepEqual(requested, [1, 1, 1]))
+  } finally {
+    sync.stop()
+  }
+})
+
 test("failed hint reconciliation retries once immediately then backs off", async () => {
   const clock = new ManualClock()
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined
