@@ -195,17 +195,20 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}
 
 	var threads, messages, commands, workspaceVersion int
+	var latestMessageID string
 	if err := pool.QueryRow(context.Background(), `
 		SELECT
 			(SELECT count(*) FROM messaging_threads),
 			(SELECT count(*) FROM messaging_messages),
 			(SELECT count(*) FROM messaging_provider_commands),
-			(SELECT workspace_version FROM access_practices WHERE id = $1)
+			(SELECT workspace_version FROM access_practices WHERE id = $1),
+			(SELECT latest_message_id::text FROM messaging_threads LIMIT 1)
 	`, authorization.Practice.ID).Scan(
 		&threads,
 		&messages,
 		&commands,
 		&workspaceVersion,
+		&latestMessageID,
 	); err != nil {
 		t.Fatalf("inspect durable send: %v", err)
 	}
@@ -220,6 +223,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			commands,
 			workspaceVersion,
 		)
+	}
+	if latestMessageID != first.ID {
+		t.Fatalf("Thread latest Message = %q, want %q", latestMessageID, first.ID)
 	}
 
 	processed, err := module.ProcessNextCommand(context.Background())
@@ -769,6 +775,18 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process reordered older START = %t, %v", processed, err)
+	}
+	reorderedThreads, err := module.QueryThreads(
+		context.Background(),
+		messaging.QueryThreadsCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID,
+		},
+	)
+	if err != nil || len(reorderedThreads.Items) != 1 ||
+		reorderedThreads.Items[0].Preview != "STOP" {
+		t.Fatalf("reordered latest Message projection = %#v, %v", reorderedThreads, err)
 	}
 	rawEqualStart := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"message.received","id":"zzzz-message-event-equal-start","occurred_at":"%s","payload":{"id":"provider-inbound-equal-start","from":"+17275550199","to":"+17275550100","text":"START"}}}`,

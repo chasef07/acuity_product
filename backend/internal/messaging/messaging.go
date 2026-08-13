@@ -1335,6 +1335,9 @@ func (m *Module) Send(
 	); err != nil {
 		return Message{}, "", fmt.Errorf("commit outbound Message: %w", err)
 	}
+	if err := advanceThreadLatestMessage(ctx, tx, thread.ID, messageID); err != nil {
+		return Message{}, "", err
+	}
 	if attachment != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE messaging_attachments
@@ -2339,9 +2342,16 @@ func (m *Module) QueryThreads(
 			thread.outbound_blocked,
 			thread.created_at,
 			thread.updated_at,
-			COALESCE(latest.preview, ''),
-			COALESCE(latest.direction, ''),
-			COALESCE(latest.delivery_state, ''),
+			COALESCE(
+				latest_message.body,
+				CASE
+					WHEN latest_attachment.content_type = 'application/pdf' THEN 'PDF'
+					WHEN latest_attachment.id IS NOT NULL THEN 'Image'
+					ELSE ''
+				END
+			),
+			COALESCE(latest_message.direction, ''),
+			COALESCE(latest_message.delivery_state, ''),
 			COALESCE(activity.occurred_at, thread.updated_at),
 			EXISTS (
 				SELECT 1
@@ -2353,30 +2363,15 @@ func (m *Module) QueryThreads(
 		JOIN access_locations location
 			ON location.practice_id = thread.practice_id
 			AND location.id = thread.location_id
-		LEFT JOIN LATERAL (
-			SELECT
-				COALESCE(
-					message.body,
-					CASE
-						WHEN attachment.content_type = 'application/pdf' THEN 'PDF'
-						WHEN attachment.id IS NOT NULL THEN 'Image'
-						ELSE ''
-					END
-				) AS preview,
-				message.direction,
-				message.delivery_state,
-				message.created_at
-			FROM messaging_messages message
-			LEFT JOIN messaging_attachments attachment
-				ON attachment.message_id = message.id
-			WHERE message.thread_id = thread.id
-			ORDER BY message.created_at DESC, message.id DESC
-			LIMIT 1
-		) latest ON true
+		LEFT JOIN messaging_messages latest_message
+			ON latest_message.id = thread.latest_message_id
+			AND latest_message.thread_id = thread.id
+		LEFT JOIN messaging_attachments latest_attachment
+			ON latest_attachment.message_id = latest_message.id
 		LEFT JOIN LATERAL (
 			SELECT max(event.occurred_at) AS occurred_at
 			FROM (
-				SELECT latest.created_at AS occurred_at
+				SELECT latest_message.created_at AS occurred_at
 				UNION ALL
 				SELECT call.created_at
 				FROM human_calling_calls call
@@ -3436,6 +3431,11 @@ func (m *Module) projectInboundReceipt(
 		return fmt.Errorf("append inbound Message: %w", err)
 	}
 	inserted := tag.RowsAffected() > 0
+	if inserted {
+		if err := advanceThreadLatestMessage(ctx, tx, threadID, messageID); err != nil {
+			return err
+		}
+	}
 	if inserted && len(payload.Media) == 1 {
 		providerMediaURL := strings.TrimSpace(payload.Media[0].URL)
 		provisionalType := strings.ToLower(strings.TrimSpace(
@@ -4086,6 +4086,37 @@ func loadThread(
 		return Thread{}, fmt.Errorf("load Message Thread: %w", err)
 	}
 	return thread, nil
+}
+
+func advanceThreadLatestMessage(
+	ctx context.Context,
+	tx pgx.Tx,
+	threadID string,
+	messageID string,
+) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE messaging_threads thread
+		SET latest_message_id = $2
+		WHERE thread.id = $1
+			AND EXISTS (
+				SELECT 1
+				FROM messaging_messages candidate
+				WHERE candidate.id = $2
+					AND candidate.thread_id = thread.id
+					AND (
+						thread.latest_message_id IS NULL
+						OR (candidate.created_at, candidate.id) > (
+							SELECT current.created_at, current.id
+							FROM messaging_messages current
+							WHERE current.id = thread.latest_message_id
+								AND current.thread_id = thread.id
+						)
+					)
+			)
+	`, threadID, messageID); err != nil {
+		return fmt.Errorf("advance Message Thread latest Message: %w", err)
+	}
+	return nil
 }
 
 func normalizeSendCommand(command *SendCommand) {
