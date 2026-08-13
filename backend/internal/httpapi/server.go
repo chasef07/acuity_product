@@ -2407,8 +2407,84 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(ctx))
+		route := availabilityRoute(r.Method, r.URL.Path)
+		if route == "" {
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		response := &statusResponseWriter{ResponseWriter: w}
+		started := time.Now()
+		next.ServeHTTP(response, r.WithContext(ctx))
+		outcome, failureStage := availabilityResult(route, response.statusCode())
+		observability.Record(server.observer, observability.BackendRequest(
+			route,
+			outcome,
+			failureStage,
+			time.Since(started),
+		))
 	})
+}
+
+type statusResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (writer *statusResponseWriter) WriteHeader(status int) {
+	if writer.status != 0 {
+		return
+	}
+	writer.status = status
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *statusResponseWriter) Write(body []byte) (int, error) {
+	if writer.status == 0 {
+		writer.WriteHeader(http.StatusOK)
+	}
+	return writer.ResponseWriter.Write(body)
+}
+
+func (writer *statusResponseWriter) statusCode() int {
+	if writer.status == 0 {
+		return http.StatusOK
+	}
+	return writer.status
+}
+
+func availabilityRoute(method string, path string) observability.AvailabilityRoute {
+	if method != http.MethodGet {
+		return ""
+	}
+	switch path {
+	case string(observability.AvailabilityAccess):
+		return observability.AvailabilityAccess
+	case string(observability.AvailabilityCallingState):
+		return observability.AvailabilityCallingState
+	default:
+		return ""
+	}
+}
+
+func availabilityResult(
+	route observability.AvailabilityRoute,
+	status int,
+) (observability.AvailabilityOutcome, observability.FailureStage) {
+	available := status == http.StatusOK ||
+		(route == observability.AvailabilityCallingState && status == http.StatusNotModified)
+	if available {
+		return observability.AvailabilityAvailable, observability.FailureNone
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return observability.AvailabilityUnavailable, observability.FailureAuthentication
+	case http.StatusForbidden:
+		return observability.AvailabilityUnavailable, observability.FailureAuthorization
+	}
+	if status >= 500 {
+		return observability.AvailabilityUnavailable, observability.FailureDependency
+	}
+	return observability.AvailabilityUnavailable, observability.FailureHandler
 }
 
 type correlationContextKey struct{}

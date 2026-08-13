@@ -1,9 +1,15 @@
 package httpapi
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 )
 
 func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
@@ -32,5 +38,56 @@ func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
 		if got := response.Header().Get("Access-Control-Allow-Origin"); got != test.want {
 			t.Errorf("origin %q allowed as %q, want %q", test.origin, got, test.want)
 		}
+	}
+}
+
+func TestRequestMetadataRecordsOnlyFixedCustomerJourneyRoutes(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{
+		config: Config{},
+		observer: observability.NewLogger(
+			observability.RuntimePortalAPI,
+			"portal-api-test",
+			slog.New(slog.NewJSONHandler(&output, nil)),
+		),
+	}
+	handler := server.withRequestMetadata(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/access" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{"/health/ready", "/v1/access"} {
+		handler.ServeHTTP(
+			httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, path, nil),
+		)
+	}
+
+	scanner := bufio.NewScanner(&output)
+	var entries []map[string]any
+	for scanner.Scan() {
+		var entry map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			t.Fatalf("decode availability metric: %v", err)
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) != 1 || entries[0]["route"] != "/v1/access" ||
+		entries[0]["outcome"] != "unavailable" ||
+		entries[0]["failure_stage"] != "dependency" {
+		t.Fatalf("availability entries = %#v", entries)
+	}
+}
+
+func TestAvailabilityResultTreatsCallingNotModifiedAsAvailable(t *testing.T) {
+	outcome, stage := availabilityResult(
+		observability.AvailabilityCallingState,
+		http.StatusNotModified,
+	)
+	if outcome != observability.AvailabilityAvailable || stage != observability.FailureNone {
+		t.Fatalf("Calling State 304 = %q/%q", outcome, stage)
 	}
 }
