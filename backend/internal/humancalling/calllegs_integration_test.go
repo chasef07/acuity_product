@@ -16,6 +16,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -1130,6 +1131,140 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 	if pendingA != 1 || sentB != 1 {
 		t.Fatalf("concurrent command claims left pending Call A=%d sent Call B=%d", pendingA, sentB)
 	}
+}
+
+func TestCommandWorkerRetriesAfterLosingClaimRace(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "lost-command-claim", 1)
+
+	callIDs := make([]string, 2)
+	legIDs := make([]string, 2)
+	for index := range callIDs {
+		if err := pool.QueryRow(context.Background(), `
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point, created_at, updated_at
+			) VALUES ($1, $2, 'INBOUND', 'STANDALONE', $3, $3)
+			RETURNING id::text
+		`, authorization.Practice.ID, authorization.Locations[0].ID, now).Scan(&callIDs[index]); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(context.Background(), `
+			INSERT INTO human_calling_call_legs (
+				call_id, role, sequence, state, created_at, updated_at
+			) VALUES ($1, 'CALLER', 1, 'RINGING', $2, $2)
+			RETURNING id::text
+		`, callIDs[index], now).Scan(&legIDs[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, payload, created_at, next_attempt_at
+		) VALUES
+			($1, $2, 'STOP_RING_WINDOW', 'claimed-elsewhere', '{}', $5::timestamptz - interval '1 second', $5),
+			($3, $4, 'STOP_RING_WINDOW', 'available-after-race', '{}', $5, $5)
+	`, callIDs[0], legIDs[0], callIDs[1], legIDs[1], now); err != nil {
+		t.Fatal(err)
+	}
+
+	claimStarted := make(chan struct{})
+	claimRelease := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-claimRelease:
+		default:
+			close(claimRelease)
+		}
+	})
+	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.MaxConns = 1
+	config.ConnConfig.Tracer = &commandClaimTracer{
+		started: claimStarted,
+		release: claimRelease,
+	}
+	workerPool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(workerPool.Close)
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		workerPool, nil, provider, humancalling.Config{}, func() time.Time { return now },
+	)
+
+	type processResult struct {
+		processed bool
+		err       error
+	}
+	result := make(chan processResult, 1)
+	go func() {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		result <- processResult{processed: processed, err: err}
+	}()
+	select {
+	case <-claimStarted:
+	case <-time.After(time.Second):
+		t.Fatal("provider command claim did not reach the race barrier")
+	}
+	tag, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENT', sent_at = $2, updated_at = $2
+		WHERE target_id = $1 AND state = 'PENDING'
+	`, "claimed-elsewhere", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("competing command claims = %d, want 1", tag.RowsAffected())
+	}
+	close(claimRelease)
+
+	var processed processResult
+	select {
+	case processed = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("command worker did not recover from the lost claim")
+	}
+	if processed.err != nil || !processed.processed {
+		t.Fatalf("process command after lost claim = %t, %v", processed.processed, processed.err)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.commands) != 1 || provider.commands[0].TargetID != "available-after-race" {
+		t.Fatalf("provider commands after lost claim = %#v", provider.commands)
+	}
+}
+
+type commandClaimTracer struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (tracer *commandClaimTracer) TraceQueryStart(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceQueryStartData,
+) context.Context {
+	if strings.Contains(data.SQL, "attempts = attempts + 1") {
+		tracer.once.Do(func() {
+			close(tracer.started)
+			<-tracer.release
+		})
+	}
+	return ctx
+}
+
+func (*commandClaimTracer) TraceQueryEnd(
+	context.Context,
+	*pgx.Conn,
+	pgx.TraceQueryEndData,
+) {
 }
 
 func TestCommandWorkerPreservesGlobalOrderAcrossCallAndCredentialWork(t *testing.T) {
