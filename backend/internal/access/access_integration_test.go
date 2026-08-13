@@ -704,6 +704,73 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 	}
 }
 
+func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *testing.T) {
+	pool := testdb.Open(t)
+	module := access.New(pool, nil)
+	identity := access.Identity{
+		Subject:       "concurrent-operator-subject",
+		Email:         "concurrent-operator@acuity.test",
+		EmailVerified: true,
+	}
+	if _, err := module.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "operator-concurrency-test",
+		PlatformOperators: []string{identity.Email},
+		Practices: []access.PracticeProvision{{
+			Key:  "operator-concurrency-practice",
+			Name: "Operator Concurrency Practice",
+		}},
+	}); err != nil {
+		t.Fatalf("provision concurrent operator: %v", err)
+	}
+	discovery, err := module.DiscoverActor(context.Background(), identity)
+	if err != nil || !discovery.PlatformOperator || len(discovery.Practices) != 1 {
+		t.Fatalf("bind concurrent operator: discovery=%#v err=%v", discovery, err)
+	}
+
+	firstConnection, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire first authorization connection: %v", err)
+	}
+	defer firstConnection.Release()
+	firstTransaction, err := firstConnection.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin first authorization transaction: %v", err)
+	}
+	defer func() { _ = firstTransaction.Rollback(context.Background()) }()
+	if _, err := module.LockReadAuthorization(
+		context.Background(),
+		firstTransaction,
+		identity,
+		discovery.Practices[0].ID,
+		"",
+	); err != nil {
+		t.Fatalf("authorize first operator read: %v", err)
+	}
+
+	secondConnection, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire second authorization connection: %v", err)
+	}
+	defer secondConnection.Release()
+	secondTransaction, err := secondConnection.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin second authorization transaction: %v", err)
+	}
+	defer func() { _ = secondTransaction.Rollback(context.Background()) }()
+	secondContext, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if _, err := module.LockReadAuthorization(
+		secondContext,
+		secondTransaction,
+		identity,
+		discovery.Practices[0].ID,
+		"",
+	); err != nil {
+		t.Fatalf("authorize concurrent operator read while first transaction remains open: %v", err)
+	}
+}
+
 func TestPlatformOperatorHasOperationalAccessWithoutMemberships(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
