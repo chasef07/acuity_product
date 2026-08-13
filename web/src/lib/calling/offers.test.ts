@@ -6,6 +6,7 @@ import {
   activeRingingOffers,
   offerSecondsRemaining,
   outboundCallBlockReason,
+  outboundCallOccupiedMessage,
 } from "./offers.ts"
 
 const offer = {
@@ -53,5 +54,12 @@ test("active incoming offer explains why an outbound Call cannot start", () => {
       Date.parse("2026-08-09T12:00:10Z"),
     ),
     "An incoming Call is pending. Wait for it to clear and try again.",
+  )
+})
+
+test("backend occupancy does not assume the occupying Call is incoming", () => {
+  assert.equal(
+    outboundCallOccupiedMessage,
+    "Another Call is pending or active.",
   )
 })
