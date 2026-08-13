@@ -2099,7 +2099,7 @@ func TestInboundAnswerAndOutboundStartShareOneSoftphoneLease(t *testing.T) {
 			Identity: staff[0], SessionID: prefix + "-browser-1",
 			IdempotencyKey: prefix + "-pending-outbound", PracticeID: practiceID,
 			LocationID: locationID, Destination: "+15555550123",
-		}); !errors.Is(err, humancalling.ErrIneligible) {
+		}); !errors.Is(err, humancalling.ErrOccupied) {
 		t.Fatalf("outbound start with pending inbound Staff leg error = %v", err)
 	}
 	processAllCommands(t, calling)
@@ -2134,7 +2134,7 @@ func TestInboundAnswerAndOutboundStartShareOneSoftphoneLease(t *testing.T) {
 		t.Fatalf("concurrent inbound answer: %v", err)
 	}
 	outboundErr := <-outboundResult
-	if outboundErr != nil && !errors.Is(outboundErr, humancalling.ErrIneligible) {
+	if outboundErr != nil && !errors.Is(outboundErr, humancalling.ErrOccupied) {
 		t.Fatalf("concurrent outbound start: %v", outboundErr)
 	}
 	var occupyingLegs, outboundCalls int
