@@ -9,7 +9,7 @@
       "Key": "abita-eye-group",
       "Name": "Abita Eye Group",
       "ConnectedCallRecordingEnabled": true,
-      "ConnectedCallRecordingRetentionDays": 30,
+      "ConnectedCallRecordingRetentionDays": 90,
       "Locations": [
         {
           "Key": "fixture-location-1",

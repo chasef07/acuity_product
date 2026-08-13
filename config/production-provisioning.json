@@ -8,7 +8,7 @@
       "Key": "abita-eye-group",
       "Name": "Abita Eye Group",
       "ConnectedCallRecordingEnabled": true,
-      "ConnectedCallRecordingRetentionDays": 30,
+      "ConnectedCallRecordingRetentionDays": 90,
       "OutboundVoiceFallbackLocationKey": "sweetwater",
       "Locations": [
         {

@@ -244,7 +244,7 @@ Visual system:
 - Human call state is not considered connected solely because a browser clicked Answer.
 - Telnyx provider events confirm ringing, answered legs, bridging, recording, and termination.
 - A Practice-level policy may record every portal-controlled connected inbound and outbound human call automatically. Recording starts on the explicit Telnyx Bridge command with dual channels, both tracks, and MP3 output; it has no browser control.
-- Abita Eye Group has connected-call recording enabled by default with a 30-day content-retention period. Other Practices remain disabled unless explicitly provisioned with a retention period.
+- Abita Eye Group has connected-call recording enabled by default with a 90-day content-retention period. Other Practices remain disabled unless explicitly provisioned with a retention period.
 - AI-only receptionist audio is outside the portal recording archive.
 - Browser calling uses one TelnyxRTC client per tab. The Telnyx SDK owns its signaling WebSocket and WebRTC media.
 
@@ -473,7 +473,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Store secrets in Secret Manager.
 - Generate internal application credentials through approved tooling or deployment automation. Do not commit them, paste them into product configuration, or ask an operator to invent them manually.
 - Keep recording audio in Telnyx. Store canonical lifecycle, authorization metadata, durable provider recording identity, timestamps, and audit evidence in PostgreSQL; stream audio through short-lived, location-authorized backend access.
-- Require an approved recording retention period in each enabled practice's production configuration. Deny playback at expiry, delete content through the provider with durable retry state, and retain canonical non-content audit metadata.
+- Require an approved connected-call audio retention period in each enabled practice's production configuration. Abita Eye Group's approved default is 90 days. Deny playback at expiry, delete content through the provider with durable retry state, and retain canonical non-content audit metadata. Voicemail audio, transcript content, backups, and legal holds require separately approved lifecycle policies and must not be represented as covered by the connected-call cleanup path.
 - Use one public product domain with path routing to the web and API services.
 - Publish immutable frontend and backend images by digest. Deploy backend roles from the same tested backend digest.
 - Deploy request-role revisions with no traffic and smoke-test startup, run `migrate` once, exercise the tagged revisions against the expanded schema, deploy the compatible worker and realtime revisions, then shift traffic gradually.

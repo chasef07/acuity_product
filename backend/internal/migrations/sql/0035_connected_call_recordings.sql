@@ -12,7 +12,7 @@ ALTER TABLE access_practices
 
 UPDATE access_practices
 SET connected_call_recording_enabled = true,
-    connected_call_recording_retention_days = 30
+    connected_call_recording_retention_days = 90
 WHERE provisioning_key = 'abita-eye-group';
 
 CREATE TABLE human_calling_call_recordings (

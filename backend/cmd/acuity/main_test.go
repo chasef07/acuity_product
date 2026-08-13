@@ -492,7 +492,7 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 	`).Scan(&recordingEnabled, &recordingRetentionDays); err != nil {
 		t.Fatalf("read reconciled recording policy: %v", err)
 	}
-	if !recordingEnabled || recordingRetentionDays != 30 {
+	if !recordingEnabled || recordingRetentionDays != 90 {
 		t.Fatalf("reconciled recording policy = %t, %d", recordingEnabled, recordingRetentionDays)
 	}
 	var grantCount int
