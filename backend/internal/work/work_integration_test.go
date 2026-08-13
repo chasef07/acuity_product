@@ -1055,6 +1055,162 @@ func TestQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testing.T) {
 	}
 }
 
+func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 13, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	locationID := authorization.Locations[0].ID
+
+	ensureRecovery := func(phone string, occurredAt time.Time) work.Task {
+		t.Helper()
+		callID := insertCallAt(
+			t,
+			pool,
+			authorization,
+			locationID,
+			phone,
+			"Recovery caller",
+			occurredAt,
+		)
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin recovery Task transaction: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		task, err := module.EnsureRecoveryTask(
+			context.Background(),
+			tx,
+			work.EnsureRecoveryTaskCommand{
+				CallID:     callID,
+				PracticeID: authorization.Practice.ID,
+				LocationID: locationID,
+				Phone:      phone,
+				Outcome:    work.RecoveryOutcomeMissedCall,
+				OccurredAt: occurredAt,
+			},
+		)
+		if err != nil {
+			t.Fatalf("ensure recovery Task: %v", err)
+		}
+		if err := tx.Commit(context.Background()); err != nil {
+			t.Fatalf("commit recovery Task: %v", err)
+		}
+		return task
+	}
+
+	older := ensureRecovery("+15555550101", now)
+	now = now.Add(time.Minute)
+	newest := ensureRecovery("+15555550102", now)
+
+	service := access.ServiceIdentity{
+		Subject:       "abita-folder-pagination",
+		PracticeID:    authorization.Practice.ID,
+		LocationScope: access.LocationScopeAll,
+		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+	}
+	for index := range 3 {
+		now = now.Add(time.Minute)
+		key := fmt.Sprintf("newer-general-%d", index)
+		if _, _, err := module.CreateAITask(
+			context.Background(),
+			work.CreateAITaskCommand{
+				Service:        service,
+				OfficeKey:      "spring-hill",
+				OfficePhone:    "+17275919997",
+				SourceCallID:   "source-" + key,
+				IdempotencyKey: "staff_task_" + key,
+				Phone:          "+17275551212",
+				Summary:        "Review request " + key,
+				Message:        "Caller supplied a complete request.",
+				Category:       work.TaskCategoryOther,
+				Urgency:        work.TaskUrgencyNormal,
+			},
+		); err != nil {
+			t.Fatalf("create newer general Task %d: %v", index, err)
+		}
+	}
+
+	unfiltered, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Ordering:   work.TaskOrderingRecent,
+		Limit:      1,
+	})
+	if err != nil {
+		t.Fatalf("query unfiltered Tasks: %v", err)
+	}
+	if len(unfiltered.Items) != 1 || unfiltered.Items[0].ID == newest.ID {
+		t.Fatalf(
+			"unfiltered first row = %#v, want a newer unrelated Task before recovery %q",
+			unfiltered.Items,
+			newest.ID,
+		)
+	}
+	tasksPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Ordering:   work.TaskOrderingRecent,
+		Folder:     work.TaskFolderWork,
+		Limit:      50,
+	})
+	if err != nil {
+		t.Fatalf("query Tasks folder: %v", err)
+	}
+	if len(tasksPage.Items) != 3 {
+		t.Fatalf("Tasks folder = %#v, want only the 3 unrelated Tasks", tasksPage.Items)
+	}
+	for _, task := range tasksPage.Items {
+		if task.Origin == work.TaskOriginMissedCall ||
+			task.Origin == work.TaskOriginVoicemail {
+			t.Fatalf("Tasks folder contains recovery Task %#v", task)
+		}
+	}
+
+	page, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Ordering:   work.TaskOrderingRecent,
+		Folder:     work.TaskFolderMissedCalls,
+		Limit:      1,
+	})
+	if err != nil {
+		t.Fatalf("query Missed Calls folder: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != newest.ID {
+		t.Fatalf(
+			"first Missed Calls row = %#v, want newest recovery Task %q (older %q)",
+			page.Items,
+			newest.ID,
+			older.ID,
+		)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("first Missed Calls page has no cursor; want the older recovery page")
+	}
+	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+		Identity:   identity,
+		PracticeID: authorization.Practice.ID,
+		Ordering:   work.TaskOrderingRecent,
+		Folder:     work.TaskFolderMissedCalls,
+		Cursor:     page.NextCursor,
+		Limit:      1,
+	})
+	if err != nil {
+		t.Fatalf("query second Missed Calls page: %v", err)
+	}
+	if len(secondPage.Items) != 1 || secondPage.Items[0].ID != older.ID ||
+		secondPage.NextCursor != "" {
+		t.Fatalf(
+			"second Missed Calls page = %#v with cursor %q, want older recovery Task %q and no cursor",
+			secondPage.Items,
+			secondPage.NextCursor,
+			older.ID,
+		)
+	}
+}
+
 func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)

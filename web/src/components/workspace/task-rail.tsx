@@ -105,6 +105,7 @@ type TaskRailProps = {
   workspaceControl: ReactNode
   locationScopeID: string
   tasks: Task[]
+  recoveryTasks: Task[]
   taskCounts: TaskFolderCounts
   aiOutcomes: AiOutcomeItem[]
   outcomeCounts: AiOutcomeCounts
@@ -116,11 +117,13 @@ type TaskRailProps = {
   search: string
   engagementError: string
   loading: boolean
+  recoveryLoading: boolean
   outcomesLoading: boolean
   outcomesError: string
   outcomeNextCursor: string
   messageLoading: boolean
   nextCursor: string
+  recoveryNextCursor: string
   messageNextCursor: string
   connection: ConnectionState
   analyticsActive: boolean
@@ -131,6 +134,7 @@ type TaskRailProps = {
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onTaskSelect: (task: Task) => void
   onLoadMore: () => void
+  onRecoveryLoadMore: () => void
   onMessageLoadMore: () => void
   onOutcomeLoadMore: () => void
 }
@@ -141,6 +145,7 @@ export function TaskRail({
   workspaceControl,
   locationScopeID,
   tasks,
+  recoveryTasks,
   taskCounts,
   aiOutcomes,
   outcomeCounts,
@@ -152,11 +157,13 @@ export function TaskRail({
   search,
   engagementError,
   loading,
+  recoveryLoading,
   outcomesLoading,
   outcomesError,
   outcomeNextCursor,
   messageLoading,
   nextCursor,
+  recoveryNextCursor,
   messageNextCursor,
   connection,
   analyticsActive,
@@ -167,6 +174,7 @@ export function TaskRail({
   onAIInteractionSelect,
   onTaskSelect,
   onLoadMore,
+  onRecoveryLoadMore,
   onMessageLoadMore,
   onOutcomeLoadMore,
 }: TaskRailProps) {
@@ -201,7 +209,10 @@ export function TaskRail({
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
   )
-  const recoveryRows = useMemo(() => aggregateRecovery(tasks), [tasks])
+  const recoveryRows = useMemo(
+    () => aggregateRecovery(recoveryTasks),
+    [recoveryTasks],
+  )
   const textRows = useMemo(() => aggregateTexts(messages), [messages])
 
   useEffect(() => {
@@ -358,9 +369,9 @@ export function TaskRail({
             showOffice={showOffice}
             onToggle={() => toggle("calls")}
             onSelect={onTaskSelect}
-            cursor={nextCursor}
-            loading={loading}
-            onLoadMore={onLoadMore}
+            cursor={recoveryNextCursor}
+            loading={recoveryLoading}
+            onLoadMore={onRecoveryLoadMore}
           />
           {outcomesError && (
             <p role="alert" className="px-6 py-1 text-[0.6875rem] text-destructive">
@@ -747,7 +758,10 @@ function RecoveryGroup({
           onSelect={() => onSelect(row.task)}
         />
       ))}
-      {count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
+      {loading && rows.length === 0 && (
+        <RailLoading inMenu label="Loading missed calls" />
+      )}
+      {!loading && count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
       <RailShowMore
         cursor={taskFolderCursor(cursor, rows.length, count)}
         loading={loading}

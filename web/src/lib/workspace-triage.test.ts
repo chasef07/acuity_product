@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   filterTasksByCategory,
+  reconcileLoadedPage,
   recoveryGroupKey,
   taskCountForCategory,
   taskFolderCursor,
@@ -51,4 +52,45 @@ test("Task folders keep pagination available until their total is loaded", () =>
   assert.equal(taskFolderCursor("next-page", 0, 3), "next-page")
   assert.equal(taskFolderCursor("next-page", 3, 3), "")
   assert.equal(taskFolderCursor("", 0, 3), "")
+})
+
+test("refresh keeps expanded rows while putting new rows first", () => {
+  const current = Array.from({ length: 100 }, (_, index) => ({
+    id: `task-${index + 1}`,
+  }))
+  const refreshed = [
+    { id: "new-task" },
+    ...current.slice(0, 49),
+  ]
+
+  const result = reconcileLoadedPage(
+    current,
+    refreshed,
+    162,
+    "after-expanded-page",
+    "after-first-page",
+  )
+
+  assert.equal(result.items[0]?.id, "new-task")
+  assert.equal(result.items.length, 101)
+  assert.equal(result.items.at(-1)?.id, "task-100")
+  assert.equal(result.cursor, "after-expanded-page")
+})
+
+test("refresh clears pagination when all rows are loaded", () => {
+  const current = [{ id: "task-1" }, { id: "task-2" }]
+  const result = reconcileLoadedPage(
+    current,
+    [{ id: "new-task" }, { id: "task-1" }],
+    3,
+    "after-expanded-page",
+    "after-first-page",
+  )
+
+  assert.deepEqual(result.items, [
+    { id: "new-task" },
+    { id: "task-1" },
+    { id: "task-2" },
+  ])
+  assert.equal(result.cursor, "")
 })

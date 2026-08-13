@@ -31,3 +31,28 @@ export function taskFolderCursor(
 ) {
   return loadedCount < totalCount ? nextCursor : ""
 }
+
+export function reconcileLoadedPage<T extends { id: string }>(
+  current: T[],
+  refreshed: T[],
+  totalCount: number,
+  currentCursor: string,
+  refreshedCursor: string,
+) {
+  const refreshedIDs = new Set(refreshed.map((item) => item.id))
+  const items = [
+    ...refreshed,
+    ...current.filter((item) => !refreshedIDs.has(item.id)),
+  ].slice(0, totalCount)
+  const keptExpandedWindow = items.length > refreshed.length
+
+  return {
+    items,
+    cursor:
+      items.length >= totalCount
+        ? ""
+        : keptExpandedWindow
+          ? currentCursor
+          : refreshedCursor,
+  }
+}

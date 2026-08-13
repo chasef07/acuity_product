@@ -77,6 +77,13 @@ const (
 	TaskOrderingRecent   TaskOrdering = "recent"
 )
 
+type TaskFolder string
+
+const (
+	TaskFolderWork        TaskFolder = "work"
+	TaskFolderMissedCalls TaskFolder = "missed_calls"
+)
+
 var (
 	ErrDenied       = errors.New("work access denied")
 	ErrInvalidInput = errors.New("invalid work input")
@@ -206,6 +213,7 @@ type QueryTasksCommand struct {
 	Search     string
 	State      TaskState
 	Ordering   TaskOrdering
+	Folder     TaskFolder
 	Cursor     string
 	Limit      int
 }
@@ -1112,6 +1120,10 @@ func (m *Module) QueryTasks(
 		strings.TrimSpace(command.PracticeID) == "" ||
 		len(command.Search) > 500 ||
 		(command.State != TaskOpen && command.State != TaskCompleted) ||
+		(command.Folder != "" &&
+			command.Folder != TaskFolderWork &&
+			command.Folder != TaskFolderMissedCalls) ||
+		(command.Folder != "" && command.State != TaskOpen) ||
 		(command.Ordering != TaskOrderingTime &&
 			command.Ordering != TaskOrderingPriority &&
 			command.Ordering != TaskOrderingRecent) {
@@ -1124,7 +1136,12 @@ func (m *Module) QueryTasks(
 	if limit < 1 || limit > 50 {
 		return TaskPage{}, ErrInvalidInput
 	}
-	cursor, err := decodeTaskCursor(command.Cursor, command.Ordering, command.State)
+	cursor, err := decodeTaskCursor(
+		command.Cursor,
+		command.Ordering,
+		command.State,
+		command.Folder,
+	)
 	if err != nil {
 		return TaskPage{}, ErrInvalidInput
 	}
@@ -1165,6 +1182,7 @@ func (m *Module) QueryTasks(
 		cursor.OrderedAt,
 		cursor.ID,
 		urgencyRank(cursor.Urgency),
+		command.Folder,
 		limit+1,
 	)
 	if err != nil {
@@ -1207,6 +1225,7 @@ func (m *Module) QueryTasks(
 		nextCursor, err = encodeTaskCursor(
 			items[len(items)-1],
 			command.Ordering,
+			command.Folder,
 		)
 		if err != nil {
 			return TaskPage{}, err
@@ -1347,6 +1366,17 @@ const taskQuerySelect = `
 				$3 = ''
 					OR strpos(lower(task.title), lower($3)) > 0
 					OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
+			)
+			AND (
+				$9::text = ''
+				OR ($9::text = 'work' AND task.origin NOT IN (
+					'MISSED_CALL_RECOVERY',
+					'VOICEMAIL_RECOVERY'
+				))
+				OR ($9::text = 'missed_calls' AND task.origin IN (
+					'MISSED_CALL_RECOVERY',
+					'VOICEMAIL_RECOVERY'
+				))
 			)`
 
 func taskQuerySQL(state TaskState, ordering TaskOrdering) string {
@@ -1378,35 +1408,35 @@ func taskQuerySQL(state TaskState, ordering TaskOrdering) string {
 			END,
 			task.created_at,
 			task.id
-		LIMIT $9`
+		LIMIT $10`
 	case state == TaskOpen && ordering == TaskOrderingTime:
 		return taskQuerySelect + `
 			AND task.state = 'OPEN'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))
 		ORDER BY task.created_at, task.id
-		LIMIT $9`
+		LIMIT $10`
 	case state == TaskOpen:
 		return taskQuerySelect + `
 			AND task.state = 'OPEN'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
 		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
+		LIMIT $10`
 	case ordering == TaskOrderingRecent:
 		return taskQuerySelect + `
 			AND task.state = 'COMPLETED'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
 		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $9`
+		LIMIT $10`
 	default:
 		return taskQuerySelect + `
 			AND task.state = 'COMPLETED'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))
 		ORDER BY task.completed_at DESC, task.id DESC
-		LIMIT $9`
+		LIMIT $10`
 	}
 }
 
@@ -1503,12 +1533,17 @@ type taskCursor struct {
 	Present   bool         `json:"-"`
 	Ordering  TaskOrdering `json:"ordering"`
 	State     TaskState    `json:"state"`
+	Folder    TaskFolder   `json:"folder,omitempty"`
 	Urgency   TaskUrgency  `json:"urgency"`
 	OrderedAt time.Time    `json:"orderedAt"`
 	ID        string       `json:"id"`
 }
 
-func encodeTaskCursor(task Task, ordering TaskOrdering) (string, error) {
+func encodeTaskCursor(
+	task Task,
+	ordering TaskOrdering,
+	folder TaskFolder,
+) (string, error) {
 	orderedAt := task.CreatedAt
 	if ordering == TaskOrderingRecent {
 		orderedAt = task.UpdatedAt
@@ -1521,6 +1556,7 @@ func encodeTaskCursor(task Task, ordering TaskOrdering) (string, error) {
 	encoded, err := json.Marshal(taskCursor{
 		Ordering:  ordering,
 		State:     task.State,
+		Folder:    folder,
 		Urgency:   task.Urgency,
 		OrderedAt: orderedAt,
 		ID:        task.ID,
@@ -1535,6 +1571,7 @@ func decodeTaskCursor(
 	encoded string,
 	ordering TaskOrdering,
 	state TaskState,
+	folder TaskFolder,
 ) (taskCursor, error) {
 	if encoded == "" {
 		return taskCursor{}, nil
@@ -1552,6 +1589,7 @@ func decodeTaskCursor(
 	}
 	if cursor.Ordering != ordering ||
 		cursor.State != state ||
+		cursor.Folder != folder ||
 		(cursor.State == TaskOpen && !validTaskUrgency(cursor.Urgency)) ||
 		cursor.OrderedAt.IsZero() ||
 		strings.TrimSpace(cursor.ID) == "" {
