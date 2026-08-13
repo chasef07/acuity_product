@@ -36,6 +36,8 @@ type WorkspaceSyncTiming = {
   pollMaximumMilliseconds: number
 }
 
+type DeferredCatchUp = "none" | "hint" | "force"
+
 const defaultTiming: WorkspaceSyncTiming = {
   retryBaseMilliseconds: 500,
   retryCapMilliseconds: 30_000,
@@ -109,27 +111,43 @@ export function createWorkspaceSync(
     let outage = false
     let outageEpoch = 0
     let degraded = false
+    let hasConnected = false
     let streamReady = false
-    let hiddenReconciliationPending = false
-    let hiddenForcePending = false
+    let deferredCatchUp: DeferredCatchUp = "none"
 
     handleVisibility = () => {
       if (
         signal.aborted ||
         options.isHidden?.() ||
-        !hiddenReconciliationPending
+        deferredCatchUp === "none"
       ) {
         return
       }
-      const force = hiddenForcePending
-      hiddenReconciliationPending = false
-      hiddenForcePending = false
       resetHintRetry()
-      if (force) {
-        queueReconciliation(true)
+      queueDeferredCatchUp()
+    }
+
+    function deferCatchUp(force = false) {
+      if (force || deferredCatchUp === "force") {
+        deferredCatchUp = "force"
       } else {
-        queueHint(highestHint)
+        deferredCatchUp = "hint"
       }
+    }
+
+    function queueDeferredCatchUp() {
+      if (
+        signal.aborted ||
+        options.isHidden?.() ||
+        reconciliation ||
+        hintedReconciliationQueued
+      ) {
+        return
+      }
+      const catchUp = deferredCatchUp
+      deferredCatchUp = "none"
+      if (catchUp === "force") queueReconciliation(true)
+      else if (catchUp === "hint") queueHint(highestHint)
     }
 
     function beginOutage() {
@@ -152,8 +170,7 @@ export function createWorkspaceSync(
           await sleep(pollingDelay, signal)
           if (signal.aborted || !outage || epoch !== outageEpoch) return
           if (options.isHidden?.()) {
-            hiddenForcePending = true
-            hiddenReconciliationPending = true
+            deferCatchUp(true)
             continue
           }
           try {
@@ -189,7 +206,8 @@ export function createWorkspaceSync(
     function restoreHealthyStream() {
       if (!streamReady) {
         resetHintRetry()
-      } else if (markHealthy()) {
+      } else if (markHealthy() || !hasConnected) {
+        hasConnected = true
         options.onStateChange("connected")
       }
     }
@@ -199,7 +217,7 @@ export function createWorkspaceSync(
       highestHint = Math.max(highestHint, version)
       if (highestHint <= appliedVersion) return
       if (options.isHidden?.()) {
-        hiddenReconciliationPending = true
+        deferCatchUp()
         return
       }
       if (reconciliation || hintRetryScheduled) {
@@ -262,7 +280,10 @@ export function createWorkspaceSync(
     async function reconcile(minimumVersion: number, force = false) {
       highestHint = Math.max(highestHint, minimumVersion)
       if (!force && highestHint <= appliedVersion) return
-      if (reconciliation) return reconciliation
+      if (reconciliation) {
+        if (force) deferCatchUp(true)
+        return reconciliation
+      }
 
       reconciliation = (async () => {
         const targetVersion = highestHint
@@ -286,8 +307,11 @@ export function createWorkspaceSync(
         succeeded = true
       } finally {
         reconciliation = undefined
-        if (succeeded && !signal.aborted && highestHint > appliedVersion) {
-          queueHint(highestHint)
+        if (!signal.aborted && !options.isHidden?.()) {
+          if (deferredCatchUp !== "none") queueDeferredCatchUp()
+          else if (succeeded && highestHint > appliedVersion) {
+            queueHint(highestHint)
+          }
         }
       }
     }
@@ -333,8 +357,7 @@ export function createWorkspaceSync(
           if (event.type !== "ready" || ready) continue
           highestHint = Math.max(highestHint, event.version)
           if (options.isHidden?.()) {
-            hiddenForcePending = true
-            hiddenReconciliationPending = true
+            deferCatchUp(true)
             ready = true
             streamReady = true
             continue
@@ -344,6 +367,7 @@ export function createWorkspaceSync(
           ready = true
           streamReady = true
           markHealthy()
+          hasConnected = true
           options.onStateChange("connected")
         }
         if (signal.aborted) return

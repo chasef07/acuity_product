@@ -35,6 +35,7 @@ test("generic revision bursts spend one selected-detail request budget", async (
       detailRefreshes += 1
     },
   })
+  budget.setDetailRefreshMounted(true)
 
   for (let revision = 1; revision <= 20; revision += 1) {
     budget.signalDetailRefresh()
@@ -42,6 +43,27 @@ test("generic revision bursts spend one selected-detail request budget", async (
   await clock.advance(499)
   assert.equal(detailRefreshes, 0)
   await clock.advance(1)
+  assert.equal(detailRefreshes, 1)
+  budget.stop()
+})
+
+test("selected details refresh only after the detail UI has mounted", async () => {
+  const clock = new ManualClock()
+  let detailRefreshes = 0
+  const budget = createWorkspaceRequestBudget({
+    clock,
+    refreshDetails: () => {
+      detailRefreshes += 1
+    },
+  })
+
+  budget.signalDetailRefresh()
+  await clock.advance(500)
+  assert.equal(detailRefreshes, 0)
+
+  budget.setDetailRefreshMounted(true)
+  budget.signalDetailRefresh()
+  await clock.advance(500)
   assert.equal(detailRefreshes, 1)
   budget.stop()
 })

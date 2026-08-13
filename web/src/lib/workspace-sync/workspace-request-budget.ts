@@ -18,6 +18,7 @@ export type WorkspaceRequestBudget = {
     scopeKey: string,
     refresh: () => Promise<void> | void,
   ) => void
+  setDetailRefreshMounted: (mounted: boolean) => void
   signalDetailRefresh: () => void
   visibilityChanged: () => void
   stop: () => void
@@ -37,6 +38,7 @@ export function createWorkspaceRequestBudget(
   let aiRefresh: (() => Promise<void> | void) | undefined
   let aiTimer: TimerID | undefined
   let detailTimer: TimerID | undefined
+  let detailRefreshMounted = false
   let aiGeneration = 0
   let hiddenAIRefreshPending = false
 
@@ -76,11 +78,15 @@ export function createWorkspaceRequestBudget(
   }
 
   function signalDetailRefresh() {
-    if (detailTimer !== undefined) return
+    if (!detailRefreshMounted || detailTimer !== undefined) return
     detailTimer = clock.setTimeout(() => {
       detailTimer = undefined
       options.refreshDetails?.()
     }, detailDelayMilliseconds)
+  }
+
+  function setDetailRefreshMounted(mounted: boolean) {
+    detailRefreshMounted = mounted
   }
 
   function stop() {
@@ -106,6 +112,7 @@ export function createWorkspaceRequestBudget(
 
   return {
     setAIRefresh,
+    setDetailRefreshMounted,
     signalDetailRefresh,
     visibilityChanged,
     stop,
