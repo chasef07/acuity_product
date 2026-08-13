@@ -15,6 +15,7 @@ type CallingWork interface {
 	ReportReceiptQueue(context.Context) error
 	ProcessNextCommand(context.Context) (bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
+	ProcessNextRecordingRetention(context.Context) (bool, error)
 	ReconcileStaleCalls(context.Context) (int, error)
 	ExpireDispositions(context.Context) (int, error)
 	RecoverInterruptedCommands(context.Context) error
@@ -320,6 +321,17 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 		failed = true
 	}
 	if ctx.Err() != nil {
+		return failed
+	}
+	if _, err := runBoolWork(
+		ctx,
+		runner.config.WorkTimeout,
+		runner.work.ProcessNextRecordingRetention,
+	); err != nil {
+		warn(ctx, "recording_retention_failed", err)
+		failed = true
+	}
+	if runner.messages == nil || ctx.Err() != nil {
 		return failed
 	}
 	if err := runWork(

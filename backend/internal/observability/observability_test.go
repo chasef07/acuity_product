@@ -81,6 +81,10 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		observability.VoicemailPlaybackRateLimited,
 		250*time.Millisecond,
 	))
+	observer.Observe(observability.CallRecordingPlayback(
+		observability.RecordingPlaybackSucceeded,
+		300*time.Millisecond,
+	))
 
 	logs := entries(t, output.String())
 	assertField(t, logs, "acuity_call_center_webhook_acknowledgement",
@@ -117,6 +121,8 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		"seconds", 1.25)
 	assertField(t, logs, "acuity_call_center_voicemail_playback",
 		"outcome", "rate_limited")
+	assertField(t, logs, "acuity_call_center_call_recording_playback",
+		"outcome", "succeeded")
 }
 
 func TestPoolTracerClassifiesBoundedAcquisitionOutcome(t *testing.T) {

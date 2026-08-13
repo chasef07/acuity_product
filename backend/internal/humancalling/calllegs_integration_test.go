@@ -91,8 +91,10 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		Environment: "test",
 		RequestedBy: "location-ring-test",
 		Practices: []access.PracticeProvision{{
-			Key:  "location-ring-practice",
-			Name: "Location Ring Practice",
+			Key:                                 "location-ring-practice",
+			Name:                                "Location Ring Practice",
+			ConnectedCallRecordingEnabled:       true,
+			ConnectedCallRecordingRetentionDays: 30,
 			Locations: []access.LocationProvision{
 				{Key: "sweetwater", Name: "Sweetwater"},
 				{Key: "north-miami-beach-optical", Name: "North Miami Beach Optical"},
@@ -271,6 +273,14 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	authorization, staff := provisionConcurrentStaff(
 		t, accessModule, now, "call-leg-fanout", 2,
 	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_practices SET
+			connected_call_recording_retention_days = 30,
+			connected_call_recording_enabled = true
+		WHERE id = $1
+	`, authorization.Practice.ID); err != nil {
+		t.Fatalf("enable inbound connected recording: %v", err)
+	}
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
 		{CallControlID: "staff-control-1", CallLegID: "staff-provider-leg-1"},
 		{CallControlID: "staff-control-2", CallLegID: "staff-provider-leg-2"},
@@ -427,8 +437,23 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	bridge := provider.last(humancalling.CommandBridge)
 	if bridge.CallLegID == "" || bridge.PeerCallLegID == "" ||
 		bridge.Payload["call_control_id"] != "caller-control" ||
-		bridge.Payload["prevent_double_bridge"] != true {
+		bridge.Payload["prevent_double_bridge"] != true ||
+		bridge.Payload["record"] != "record-from-answer" ||
+		bridge.Payload["record_channels"] != "dual" ||
+		bridge.Payload["record_format"] != "mp3" ||
+		bridge.Payload["record_track"] != "both" {
 		t.Fatalf("explicit Bridge command = %#v", bridge)
+	}
+	var callID, recordingState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs WHERE id = $1
+	`, bridge.CallLegID).Scan(&callID); err != nil {
+		t.Fatalf("read connected recording Call: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT audio_state FROM human_calling_call_recordings WHERE call_id = $1
+	`, callID).Scan(&recordingState); err != nil || recordingState != "PROCESSING" {
+		t.Fatalf("prepared connected recording = %q, err = %v", recordingState, err)
 	}
 	if provider.count(humancalling.CommandBridge) != 1 ||
 		provider.count(humancalling.CommandHangupLeg) != 1 ||
@@ -457,6 +482,21 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
 	}); err != nil {
 		t.Fatalf("confirm explicit Bridge: %v", err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "winner-recording-saved", Type: humancalling.FactRecordingSaved,
+		OccurredAt: now.Add(36 * time.Second), CallControlID: winnerControlID,
+		CallLegID: winnerProviderLegID, CallSessionID: winnerSessionID,
+		ClientState: bridgeClientState, RecordingID: "connected-recording-id",
+		RecordingStartedAt: now.Add(5 * time.Second),
+		RecordingEndedAt:   now.Add(35 * time.Second),
+	}); err != nil {
+		t.Fatalf("save connected recording: %v", err)
+	}
+	recordedCall, err := calling.ReadCall(context.Background(), staff[0], callID)
+	if err != nil || recordedCall.Recording.AudioState != humancalling.VoicemailReady ||
+		recordedCall.Recording.DurationSeconds != 30 {
+		t.Fatalf("connected recording projection = %#v, err = %v", recordedCall.Recording, err)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "caller-bridge-confirmed", Type: humancalling.FactCallBridged,
@@ -606,6 +646,14 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	authorization, staff := provisionConcurrentStaff(
 		t, accessModule, now, "call-leg-outbound", 2,
 	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_practices SET
+			connected_call_recording_retention_days = 30,
+			connected_call_recording_enabled = true
+		WHERE id = $1
+	`, authorization.Practice.ID); err != nil {
+		t.Fatalf("enable outbound connected recording: %v", err)
+	}
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
 		{CallControlID: "outbound-staff-control", CallLegID: "outbound-staff-provider-leg"},
 		{CallControlID: "destination-control", CallLegID: "destination-provider-leg"},
@@ -702,7 +750,11 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	bridge := provider.last(humancalling.CommandBridge)
 	if bridge.TargetID != "destination-control" ||
 		bridge.Payload["call_control_id"] != "outbound-staff-control" ||
-		bridge.Payload["prevent_double_bridge"] != true {
+		bridge.Payload["prevent_double_bridge"] != true ||
+		bridge.Payload["record"] != "record-from-answer" ||
+		bridge.Payload["record_channels"] != "dual" ||
+		bridge.Payload["record_format"] != "mp3" ||
+		bridge.Payload["record_track"] != "both" {
 		t.Fatalf("outbound explicit Bridge = %#v", bridge)
 	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
@@ -3536,17 +3588,125 @@ func TestFailedVoicemailGreetingCreatesMissedCallWithoutRecording(t *testing.T) 
 	}
 }
 
+func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *testing.T) {
+	pool := testdb.Open(t)
+	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	currentTime := createdAt
+	accessModule := access.New(pool, func() time.Time { return currentTime })
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "recording-retention-test",
+		PlatformOperators: []string{"operator@example.test"},
+		Practices: []access.PracticeProvision{{
+			Key:                                 "recording-retention",
+			Name:                                "Recording Retention",
+			ConnectedCallRecordingEnabled:       true,
+			ConnectedCallRecordingRetentionDays: 30,
+			Locations:                           []access.LocationProvision{{Key: "office", Name: "Office"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var practiceID, locationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.id::text, location.id::text
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'recording-retention'
+	`).Scan(&practiceID, &locationID); err != nil {
+		t.Fatal(err)
+	}
+	const callID = "10000000-0000-4000-8000-000000000001"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, practice_id, location_id, direction, entry_point,
+			terminal_outcome, ended_at, version, created_at, updated_at
+		) VALUES ($1, $2, $3, 'OUTBOUND', 'STANDALONE', 'RESOLVED', $4, 1, $4, $4)
+	`, callID, practiceID, locationID, createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_recordings (
+			call_id, practice_id, location_id, audio_state,
+			provider_recording_id, retention_days, recording_started_at,
+			recording_ended_at, content_expires_at, duration_millis,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, 'READY', 'recording-to-delete',
+			30, $4::timestamptz - interval '1 minute', $4,
+			$4::timestamptz + interval '30 days', 60000, $4, $4)
+	`, callID, practiceID, locationID, createdAt); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		provider,
+		humancalling.Config{},
+		func() time.Time { return currentTime },
+	)
+	currentTime = createdAt.Add(31 * 24 * time.Hour)
+	operator := access.Identity{
+		Subject:       "recording-retention-operator",
+		Email:         "operator@example.test",
+		EmailVerified: true,
+	}
+	expiredCall, err := calling.ReadCall(context.Background(), operator, callID)
+	if err != nil || expiredCall.Recording.AudioState != humancalling.RecordingExpired {
+		t.Fatalf("expired recording projection = %#v, %v", expiredCall.Recording, err)
+	}
+	if _, err := calling.IssueCallRecordingPlayback(
+		context.Background(), operator, callID,
+	); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("expired recording playback error = %v", err)
+	}
+	processed, err := calling.ProcessNextRecordingRetention(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process recording retention = %t, %v", processed, err)
+	}
+	provider.mu.Lock()
+	deleted := append([]string(nil), provider.deletedRecordings...)
+	provider.mu.Unlock()
+	if len(deleted) != 1 || deleted[0] != "recording-to-delete" {
+		t.Fatalf("deleted provider recordings = %#v", deleted)
+	}
+	var state, providerRecordingID string
+	var deletedAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT audio_state, provider_recording_id, content_deleted_at
+		FROM human_calling_call_recordings WHERE call_id = $1
+	`, callID).Scan(&state, &providerRecordingID, &deletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "DELETED" || providerRecordingID != "recording-to-delete" ||
+		deletedAt == nil || !deletedAt.Equal(currentTime) {
+		t.Fatalf("retained recording audit = %q %q %v", state, providerRecordingID, deletedAt)
+	}
+}
+
 type recordingProvider struct {
-	mu           sync.Mutex
-	commands     []humancalling.ProviderCommand
-	dialResults  []humancalling.ProviderResult
-	actionErrors map[humancalling.CommandAction][]error
-	observations []humancalling.ProviderCallObservation
-	recording    humancalling.ProviderRecording
-	recordingErr error
-	blockAction  humancalling.CommandAction
-	blockStarted chan struct{}
-	blockRelease chan struct{}
+	mu                sync.Mutex
+	commands          []humancalling.ProviderCommand
+	dialResults       []humancalling.ProviderResult
+	actionErrors      map[humancalling.CommandAction][]error
+	observations      []humancalling.ProviderCallObservation
+	recording         humancalling.ProviderRecording
+	recordingErr      error
+	deletedRecordings []string
+	deletionErr       error
+	blockAction       humancalling.CommandAction
+	blockStarted      chan struct{}
+	blockRelease      chan struct{}
+}
+
+func (provider *recordingProvider) DeleteRecording(
+	_ context.Context,
+	recordingID string,
+) error {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	provider.deletedRecordings = append(provider.deletedRecordings, recordingID)
+	return provider.deletionErr
 }
 
 type credentialFailureProvider struct {

@@ -75,7 +75,7 @@ func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := adapter.OpenVoicemailRecording(
+	content, err := adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"bytes=0-3",
@@ -94,6 +94,41 @@ func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
 		content.ContentRange != "bytes 0-3/13" ||
 		string(body) != "synt" {
 		t.Fatalf("voicemail recording = %#v body=%q", content, body)
+	}
+}
+
+func TestTelnyxAdapterDeletesExpiredRecordingIdempotently(t *testing.T) {
+	deleted := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodDelete ||
+			!strings.HasPrefix(request.URL.Path, "/v2/recordings/") {
+			http.NotFound(writer, request)
+			return
+		}
+		deleted <- strings.TrimPrefix(request.URL.Path, "/v2/recordings/")
+		if len(deleted) == 2 {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey: "synthetic-key", BaseURL: server.URL + "/v2", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := adapter.DeleteRecording(context.Background(), "expired-recording"); err != nil {
+			t.Fatalf("delete recording idempotently: %v", err)
+		}
+	}
+	if first, second := <-deleted, <-deleted; first != "expired-recording" || second != first {
+		t.Fatalf("deleted recordings = %q, %q", first, second)
 	}
 }
 
@@ -156,7 +191,7 @@ func TestTelnyxAdapterClassifiesVoicemailPlaybackFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = adapter.OpenVoicemailRecording(
+			_, err = adapter.OpenRecording(
 				context.Background(),
 				"provider-recording-1",
 				"",
@@ -193,7 +228,7 @@ func TestTelnyxAdapterRejectsInsecureProductionRecordingURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = adapter.OpenVoicemailRecording(
+	_, err = adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"",
@@ -240,7 +275,7 @@ func TestTelnyxAdapterRevalidatesEveryVoicemailRedirect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = adapter.OpenVoicemailRecording(
+			_, err = adapter.OpenRecording(
 				context.Background(),
 				"provider-recording-1",
 				"",
@@ -282,7 +317,7 @@ func TestTelnyxAdapterFollowsValidatedSameHostVoicemailRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := adapter.OpenVoicemailRecording(
+	content, err := adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"",
@@ -331,7 +366,7 @@ func TestTelnyxAdapterBoundsHeadersWithoutTimingOutVoicemailBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := adapter.OpenVoicemailRecording(
+	content, err := adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"",
@@ -389,7 +424,7 @@ func TestTelnyxAdapterRejectsMalformedPartialVoicemailResponse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = adapter.OpenVoicemailRecording(
+			_, err = adapter.OpenRecording(
 				context.Background(),
 				"provider-recording-1",
 				"bytes=0-3",
@@ -558,6 +593,10 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 			"call_control_id":       "caller-control",
 			"prevent_double_bridge": true,
 			"client_state":          "opaque-bridge-state",
+			"record":                "record-from-answer",
+			"record_channels":       "dual",
+			"record_format":         "mp3",
+			"record_track":          "both",
 		},
 	}); err != nil {
 		t.Fatalf("bridge selected Staff CallLeg: %v", err)
@@ -582,7 +621,11 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 	if bridgeRequest["_path"] != "/v2/calls/staff-control/actions/bridge" ||
 		bridgeRequest["command_id"] != "command-bridge-1" ||
 		bridgeRequest["call_control_id"] != "caller-control" ||
-		bridgeRequest["prevent_double_bridge"] != true {
+		bridgeRequest["prevent_double_bridge"] != true ||
+		bridgeRequest["record"] != "record-from-answer" ||
+		bridgeRequest["record_channels"] != "dual" ||
+		bridgeRequest["record_format"] != "mp3" ||
+		bridgeRequest["record_track"] != "both" {
 		t.Fatalf("Telnyx Bridge request = %#v", bridgeRequest)
 	}
 }

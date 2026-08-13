@@ -83,11 +83,13 @@ type Provisioning struct {
 }
 
 type PracticeProvision struct {
-	Key                              string
-	Name                             string
-	OutboundVoiceFallbackLocationKey string
-	Locations                        []LocationProvision
-	AccessGrants                     []AccessGrantProvision
+	Key                                 string
+	Name                                string
+	ConnectedCallRecordingEnabled       bool
+	ConnectedCallRecordingRetentionDays int
+	OutboundVoiceFallbackLocationKey    string
+	Locations                           []LocationProvision
+	AccessGrants                        []AccessGrantProvision
 }
 
 type LocationProvision struct {
@@ -306,13 +308,30 @@ func (m *Module) ProvisionInTx(
 		}
 	}
 	for _, practiceInput := range input.Practices {
+		retentionDays := practiceInput.ConnectedCallRecordingRetentionDays
+		if (practiceInput.ConnectedCallRecordingEnabled && retentionDays == 0) ||
+			retentionDays < 0 || retentionDays > 3650 {
+			return Provisioned{}, fmt.Errorf(
+				"%w: practice %q requires recording retention between 1 and 3650 days when configured",
+				ErrInvalidInput,
+				practiceInput.Key,
+			)
+		}
 		var practiceID string
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO access_practices (provisioning_key, name)
-			VALUES ($1, $2)
-			ON CONFLICT (provisioning_key) DO UPDATE SET name = EXCLUDED.name
+			INSERT INTO access_practices (
+				provisioning_key, name, connected_call_recording_enabled,
+				connected_call_recording_retention_days
+			)
+			VALUES ($1, $2, $3, NULLIF($4, 0))
+			ON CONFLICT (provisioning_key) DO UPDATE SET
+				name = EXCLUDED.name,
+				connected_call_recording_enabled = EXCLUDED.connected_call_recording_enabled,
+				connected_call_recording_retention_days = EXCLUDED.connected_call_recording_retention_days
 			RETURNING id::text
-		`, practiceInput.Key, practiceInput.Name).Scan(&practiceID); err != nil {
+		`, practiceInput.Key, practiceInput.Name,
+			practiceInput.ConnectedCallRecordingEnabled,
+			practiceInput.ConnectedCallRecordingRetentionDays).Scan(&practiceID); err != nil {
 			return Provisioned{}, fmt.Errorf("provision practice %q: %w", practiceInput.Key, err)
 		}
 		if _, err := tx.Exec(ctx, `

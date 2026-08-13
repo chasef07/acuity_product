@@ -144,7 +144,7 @@ type Config struct {
 	CredentialConnectionID string
 	FromNumber             string
 	RingbackURL            string
-	VoicemailAudioProvider VoicemailAudioProvider
+	RecordingAudioProvider RecordingAudioProvider
 	PlaybackSigningKey     []byte
 	WebhookPublicKeys      []ed25519.PublicKey
 	WebhookTolerance       time.Duration
@@ -257,6 +257,10 @@ type RecordingStateProvider interface {
 	ResolveRecording(context.Context, string, string) (ProviderRecording, error)
 }
 
+type RecordingDeletionProvider interface {
+	DeleteRecording(context.Context, string) error
+}
+
 type SoftphoneState struct {
 	SessionID            string
 	LeaseExpiresAt       time.Time
@@ -302,6 +306,7 @@ type Call struct {
 	ConnectedAt         *time.Time
 	Version             int64
 	Voicemail           Voicemail
+	Recording           CallRecording
 	RetryOfCallID       string
 	RetryAllowed        bool
 	RecoveryTask        *RecoveryTask
@@ -514,8 +519,14 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	case FactSpeakEnded:
 		return m.applyVoicemailGreetingEnded(ctx, fact)
 	case FactRecordingSaved:
+		if hasState && state.Kind == "bridge" {
+			return m.applyConnectedCallRecordingSaved(ctx, fact)
+		}
 		return m.applyVoicemailRecordingSaved(ctx, fact)
 	case FactRecordingError:
+		if hasState && state.Kind == "bridge" {
+			return m.applyConnectedCallRecordingError(ctx, fact)
+		}
 		return m.applyVoicemailRecordingError(ctx, fact)
 	default:
 		return ErrInvalidInput

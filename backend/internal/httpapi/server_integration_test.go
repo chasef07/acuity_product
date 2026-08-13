@@ -313,7 +313,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		httpCallingProvider{},
 		humancalling.Config{
 			PlaybackSigningKey:     []byte("abcdef0123456789abcdef0123456789"),
-			VoicemailAudioProvider: audio,
+			RecordingAudioProvider: audio,
 			Observer:               observer,
 		},
 		func() time.Time { return now },
@@ -2252,7 +2252,7 @@ func (audio *httpVoicemailAudio) snapshot() httpVoicemailAudioSnapshot {
 	}
 }
 
-func (audio *httpVoicemailAudio) OpenVoicemailRecording(
+func (audio *httpVoicemailAudio) OpenRecording(
 	_ context.Context,
 	_ string,
 	rangeHeader string,

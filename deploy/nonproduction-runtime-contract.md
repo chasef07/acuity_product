@@ -110,8 +110,10 @@ refetches the authoritative snapshot.
 The shared Telnyx Call Control Application and Credential Connection remain
 deployment inputs. Its webhook target must be the public `provider-ingress`
 route. Historical connected-call and voicemail rows may retain legacy object
-metadata, but no active runtime reads or writes it and Slice 6 issues no new
-connected-call recording commands. Telnyx owns voicemail audio. PostgreSQL
-keeps the durable recording ID and lifecycle evidence; `portal-api` rechecks
-current Location access, fetches a fresh provider download URL server-side,
-and streams the audio without returning that URL or the Telnyx credential.
+metadata, but no active runtime reads or writes it. For a Practice with the
+policy enabled, the application adds `record-from-answer` to the explicit
+Telnyx Bridge command; provider-profile and DID automatic recording remain
+disabled. Telnyx owns voicemail and connected-call audio. PostgreSQL keeps the
+durable recording ID and lifecycle evidence; `portal-api` rechecks current
+Location access, fetches a fresh provider download URL server-side, and streams
+the audio without returning that URL or the Telnyx credential.

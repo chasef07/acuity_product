@@ -236,7 +236,7 @@ func runAuthorizedHTTP(
 			return err
 		}
 		callingConfig := humanCallingConfig(config, observer)
-		callingConfig.VoicemailAudioProvider = provider
+		callingConfig.RecordingAudioProvider = provider
 		calling := humancalling.New(
 			database,
 			accessModule,

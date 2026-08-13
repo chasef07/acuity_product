@@ -1210,6 +1210,32 @@ func (server *Server) IssueCallingVoicemailPlayback(
 	})
 }
 
+func (server *Server) IssueCallingRecordingPlayback(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.databaseContext(r)
+	defer cancel()
+	capability, err := server.calling.IssueCallRecordingPlayback(
+		ctx,
+		identity,
+		callID.String(),
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.RecordingPlaybackCapability{
+		Token:     capability.Token,
+		ExpiresAt: capability.ExpiresAt,
+	})
+}
+
 func (server *Server) GetCallingVoicemailPlayback(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1220,26 +1246,62 @@ func (server *Server) GetCallingVoicemailPlayback(
 	if !ok {
 		return
 	}
+	server.streamCallingPlayback(
+		w, r, identity, token, stringValue(params.Range), humancalling.PlaybackVoicemail,
+		server.calling.OpenVoicemailPlayback,
+	)
+}
+
+func (server *Server) GetCallingRecordingPlayback(
+	w http.ResponseWriter,
+	r *http.Request,
+	token string,
+	params api.GetCallingRecordingPlaybackParams,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	server.streamCallingPlayback(
+		w, r, identity, token, stringValue(params.Range), humancalling.PlaybackCallRecording,
+		server.calling.OpenCallRecordingPlayback,
+	)
+}
+
+func (server *Server) streamCallingPlayback(
+	w http.ResponseWriter,
+	r *http.Request,
+	identity access.Identity,
+	token string,
+	rangeHeader string,
+	kind humancalling.PlaybackKind,
+	open func(
+		context.Context,
+		context.Context,
+		access.Identity,
+		string,
+		string,
+	) (humancalling.PlaybackContent, error),
+) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	content, err := server.calling.OpenVoicemailPlayback(
+	content, err := open(
 		ctx,
 		r.Context(),
 		identity,
 		token,
-		stringValue(params.Range),
+		rangeHeader,
 	)
 	if err != nil {
-		server.writeVoicemailPlaybackError(w, r, err)
+		server.writePlaybackError(w, r, err, kind)
 		return
 	}
-	rangeHeader := stringValue(params.Range)
 	if err := content.Validate(rangeHeader); err != nil {
 		if content.Body != nil {
 			_ = content.Body.Close()
 		}
 		content.Complete(err)
-		server.writeVoicemailPlaybackError(w, r, err)
+		server.writePlaybackError(w, r, err, kind)
 		return
 	}
 	w.Header().Set("Content-Type", safeAudioContentType(content.ContentType))
@@ -2261,44 +2323,53 @@ func (server *Server) writeCallingError(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (server *Server) writeVoicemailPlaybackError(
+func (server *Server) writePlaybackError(
 	w http.ResponseWriter,
 	r *http.Request,
 	err error,
+	kind humancalling.PlaybackKind,
 ) {
-	var unavailable *humancalling.VoicemailUnavailableError
+	var unavailable *humancalling.RecordingUnavailableError
 	if !errors.As(err, &unavailable) {
 		server.writeCallingError(w, r, err)
 		return
 	}
+	label, title, code := playbackPresentation(kind)
 	status := http.StatusServiceUnavailable
-	message := "Voicemail playback is temporarily unavailable. Try again."
+	message := title + " playback is temporarily unavailable. Try again."
 	retryable := true
 	switch unavailable.Reason {
-	case humancalling.VoicemailRecordingNotFound:
+	case humancalling.RecordingNotFound:
 		status = http.StatusNotFound
-		message = "This voicemail is no longer available."
+		message = "This " + label + " is no longer available."
 		retryable = false
-	case humancalling.VoicemailProviderAuth:
-		message = "Voicemail playback is temporarily unavailable. Contact support if this continues."
+	case humancalling.RecordingProviderAuth:
+		message = title + " playback is temporarily unavailable. Contact support if this continues."
 		retryable = false
-	case humancalling.VoicemailProviderRateLimited:
-		message = "Voicemail playback is temporarily busy. Try again shortly."
+	case humancalling.RecordingRateLimited:
+		message = title + " playback is temporarily busy. Try again shortly."
 		if unavailable.RetryAfter != "" {
 			w.Header().Set("Retry-After", unavailable.RetryAfter)
 		}
-	case humancalling.VoicemailProviderTimeout:
+	case humancalling.RecordingProviderTimeout:
 		status = http.StatusGatewayTimeout
-		message = "Voicemail playback timed out. Try again."
+		message = title + " playback timed out. Try again."
 	}
 	server.writeError(
 		w,
 		r,
 		status,
-		"VOICEMAIL_UNAVAILABLE",
+		code,
 		message,
 		retryable,
 	)
+}
+
+func playbackPresentation(kind humancalling.PlaybackKind) (string, string, string) {
+	if kind == humancalling.PlaybackCallRecording {
+		return "call recording", "Call recording", "CALL_RECORDING_UNAVAILABLE"
+	}
+	return "voicemail", "Voicemail", "VOICEMAIL_UNAVAILABLE"
 }
 
 func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err error) {
@@ -2828,6 +2899,12 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 			voicemail.AudioState = &audioState
 		}
 		response.Voicemail = &voicemail
+	}
+	if call.Recording.AudioState != "" {
+		response.Recording = &api.CallingRecording{
+			AudioState:      api.CallingRecordingAudioState(call.Recording.AudioState),
+			DurationSeconds: call.Recording.DurationSeconds,
+		}
 	}
 	return response, nil
 }

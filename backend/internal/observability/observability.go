@@ -137,19 +137,31 @@ const (
 	StaffAnswerOutbound StaffAnswerOutcome = "outbound"
 )
 
-type VoicemailPlaybackOutcome string
+type RecordingPlaybackOutcome string
 
 const (
-	VoicemailPlaybackSucceeded       VoicemailPlaybackOutcome = "succeeded"
-	VoicemailPlaybackDenied          VoicemailPlaybackOutcome = "denied"
-	VoicemailPlaybackNotFound        VoicemailPlaybackOutcome = "not_found"
-	VoicemailPlaybackProviderAuth    VoicemailPlaybackOutcome = "provider_auth"
-	VoicemailPlaybackRateLimited     VoicemailPlaybackOutcome = "rate_limited"
-	VoicemailPlaybackTimeout         VoicemailPlaybackOutcome = "timeout"
-	VoicemailPlaybackUnavailable     VoicemailPlaybackOutcome = "unavailable"
-	VoicemailPlaybackInvalidResponse VoicemailPlaybackOutcome = "invalid_response"
-	VoicemailPlaybackURLExpired      VoicemailPlaybackOutcome = "url_expired"
+	RecordingPlaybackSucceeded       RecordingPlaybackOutcome = "succeeded"
+	RecordingPlaybackDenied          RecordingPlaybackOutcome = "denied"
+	RecordingPlaybackNotFound        RecordingPlaybackOutcome = "not_found"
+	RecordingPlaybackProviderAuth    RecordingPlaybackOutcome = "provider_auth"
+	RecordingPlaybackRateLimited     RecordingPlaybackOutcome = "rate_limited"
+	RecordingPlaybackTimeout         RecordingPlaybackOutcome = "timeout"
+	RecordingPlaybackUnavailable     RecordingPlaybackOutcome = "unavailable"
+	RecordingPlaybackInvalidResponse RecordingPlaybackOutcome = "invalid_response"
+	RecordingPlaybackURLExpired      RecordingPlaybackOutcome = "url_expired"
+
+	VoicemailPlaybackSucceeded       = RecordingPlaybackSucceeded
+	VoicemailPlaybackDenied          = RecordingPlaybackDenied
+	VoicemailPlaybackNotFound        = RecordingPlaybackNotFound
+	VoicemailPlaybackProviderAuth    = RecordingPlaybackProviderAuth
+	VoicemailPlaybackRateLimited     = RecordingPlaybackRateLimited
+	VoicemailPlaybackTimeout         = RecordingPlaybackTimeout
+	VoicemailPlaybackUnavailable     = RecordingPlaybackUnavailable
+	VoicemailPlaybackInvalidResponse = RecordingPlaybackInvalidResponse
+	VoicemailPlaybackURLExpired      = RecordingPlaybackURLExpired
 )
+
+type VoicemailPlaybackOutcome = RecordingPlaybackOutcome
 
 // Event values can only be created through the fixed constructors below.
 // Their private fields cannot carry identifiers, errors, SQL, or evidence.
@@ -293,11 +305,26 @@ func CallLegBridged(answerToBridge time.Duration) Event {
 }
 
 func VoicemailPlayback(
-	outcome VoicemailPlaybackOutcome,
+	outcome RecordingPlaybackOutcome,
+	duration time.Duration,
+) Event {
+	return recordingPlayback("acuity_call_center_voicemail_playback", outcome, duration)
+}
+
+func CallRecordingPlayback(
+	outcome RecordingPlaybackOutcome,
+	duration time.Duration,
+) Event {
+	return recordingPlayback("acuity_call_center_call_recording_playback", outcome, duration)
+}
+
+func recordingPlayback(
+	signal string,
+	outcome RecordingPlaybackOutcome,
 	duration time.Duration,
 ) Event {
 	return event(
-		"acuity_call_center_voicemail_playback",
+		signal,
 		"outcome",
 		bounded(
 			string(outcome),

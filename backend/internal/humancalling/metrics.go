@@ -10,36 +10,37 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 )
 
-func (m *Module) recordVoicemailPlayback(err error, duration time.Duration) {
-	outcome := observability.VoicemailPlaybackSucceeded
+func (m *Module) recordPlayback(kind PlaybackKind, err error, duration time.Duration) {
+	outcome := observability.RecordingPlaybackSucceeded
 	if errors.Is(err, ErrDenied) {
-		outcome = observability.VoicemailPlaybackDenied
+		outcome = observability.RecordingPlaybackDenied
 	}
-	var unavailable *VoicemailUnavailableError
+	var unavailable *RecordingUnavailableError
 	if errors.As(err, &unavailable) {
 		switch unavailable.Reason {
-		case VoicemailRecordingNotFound:
-			outcome = observability.VoicemailPlaybackNotFound
-		case VoicemailProviderAuth:
-			outcome = observability.VoicemailPlaybackProviderAuth
-		case VoicemailProviderRateLimited:
-			outcome = observability.VoicemailPlaybackRateLimited
-		case VoicemailProviderTimeout:
-			outcome = observability.VoicemailPlaybackTimeout
-		case VoicemailProviderInvalid:
-			outcome = observability.VoicemailPlaybackInvalidResponse
-		case VoicemailRecordingURLExpired:
-			outcome = observability.VoicemailPlaybackURLExpired
+		case RecordingNotFound:
+			outcome = observability.RecordingPlaybackNotFound
+		case RecordingProviderAuth:
+			outcome = observability.RecordingPlaybackProviderAuth
+		case RecordingRateLimited:
+			outcome = observability.RecordingPlaybackRateLimited
+		case RecordingProviderTimeout:
+			outcome = observability.RecordingPlaybackTimeout
+		case RecordingInvalidResponse:
+			outcome = observability.RecordingPlaybackInvalidResponse
+		case RecordingURLExpired:
+			outcome = observability.RecordingPlaybackURLExpired
 		default:
-			outcome = observability.VoicemailPlaybackUnavailable
+			outcome = observability.RecordingPlaybackUnavailable
 		}
 	} else if err != nil && !errors.Is(err, ErrDenied) {
-		outcome = observability.VoicemailPlaybackUnavailable
+		outcome = observability.RecordingPlaybackUnavailable
 	}
-	observability.Record(
-		m.observer,
-		observability.VoicemailPlayback(outcome, duration),
-	)
+	event := observability.VoicemailPlayback(outcome, duration)
+	if kind == PlaybackCallRecording {
+		event = observability.CallRecordingPlayback(outcome, duration)
+	}
+	observability.Record(m.observer, event)
 }
 
 func (m *Module) ReportReceiptQueue(ctx context.Context) error {

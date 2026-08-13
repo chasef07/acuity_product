@@ -37,6 +37,23 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if migrationCount != 35 {
 		t.Fatalf("migration count = %d, want 35", migrationCount)
 	}
+	var recordingRetentionIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'human_calling_call_recordings_retention_idx'
+	`).Scan(&recordingRetentionIndex); err != nil {
+		t.Fatalf("read connected recording retention index: %v", err)
+	}
+	for _, fragment := range []string{
+		"(content_expires_at, next_deletion_attempt_at, updated_at, call_id)",
+		"audio_state = 'READY'::text",
+	} {
+		if !strings.Contains(recordingRetentionIndex, fragment) {
+			t.Errorf("connected recording retention index omits %q: %s",
+				fragment, recordingRetentionIndex)
+		}
+	}
 	var staleCommandIndex string
 	if err := pool.QueryRow(ctx, `
 		SELECT indexdef FROM pg_indexes
@@ -81,6 +98,7 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_handoffs",
 		"human_calling_calls",
 		"human_calling_call_legs",
+		"human_calling_call_recordings",
 		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
 		"human_calling_projected_facts",
