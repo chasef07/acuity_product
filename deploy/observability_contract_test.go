@@ -105,6 +105,7 @@ func TestCallCenterLogMetricDefinitionsAreBoundedAndComplete(t *testing.T) {
 	}
 	allowedLabels := []string{
 		"action",
+		"cause",
 		"metric_contract",
 		"outcome",
 		"revision",
@@ -350,6 +351,8 @@ func expectedLogMetrics() map[string]expectedMetric {
 		"acuity_call_center_provider_command_duration_seconds":    distribution("acuity_call_center_provider_command", "duration_seconds"),
 		"acuity_call_center_database_pool_acquire_count":          counter("acuity_call_center_database_pool_acquire"),
 		"acuity_call_center_database_pool_acquire_seconds":        distribution("acuity_call_center_database_pool_acquire", "seconds"),
+		"acuity_backend_database_execution_count":                 counter("acuity_backend_database_execution"),
+		"acuity_backend_database_execution_seconds":               distribution("acuity_backend_database_execution", "seconds"),
 		"acuity_call_center_database_pool_acquired":               distribution("acuity_call_center_database_pool", "acquired"),
 		"acuity_call_center_database_pool_idle":                   distribution("acuity_call_center_database_pool", "idle"),
 		"acuity_call_center_database_pool_max":                    distribution("acuity_call_center_database_pool", "max"),

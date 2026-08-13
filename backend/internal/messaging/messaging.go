@@ -23,11 +23,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Direction string
@@ -855,7 +855,7 @@ type Config struct {
 // Module owns location texting configuration, Message Threads, Messages, and
 // their durable provider commands.
 type Module struct {
-	pool     *pgxpool.Pool
+	pool     productpostgres.Database
 	access   *access.Module
 	work     *work.Module
 	provider Provider
@@ -864,7 +864,7 @@ type Module struct {
 }
 
 func New(
-	pool *pgxpool.Pool,
+	pool productpostgres.Database,
 	accessModule *access.Module,
 	workModule *work.Module,
 	provider Provider,

@@ -11,6 +11,8 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 		"DATABASE_URL":                          "postgres://database.example/acuity",
 		"DATABASE_POOL_MAX":                     "4",
 		"DATABASE_ACQUIRE_TIMEOUT_MS":           "1500",
+		"DATABASE_OPERATION_TIMEOUT_MS":         "12000",
+		"DATABASE_STATEMENT_TIMEOUT_MS":         "4000",
 		"HTTP_PORT":                             "8080",
 		"BROWSER_ORIGIN":                        "https://portal.example, https://legacy.example",
 		"BETTER_AUTH_JWKS_URL":                  "https://portal.example/api/auth/jwks",
@@ -56,6 +58,10 @@ func TestLoadConfigKeepsRuntimeRolesAndDatabasePoolsExplicit(t *testing.T) {
 	}
 	if config.AcquireTimeout != 1500*time.Millisecond {
 		t.Fatalf("acquisition timeout = %s", config.AcquireTimeout)
+	}
+	if config.OperationTimeout != 12*time.Second ||
+		config.StatementTimeout != 4*time.Second {
+		t.Fatalf("database execution deadlines = %s/%s", config.OperationTimeout, config.StatementTimeout)
 	}
 	if len(config.BrowserOrigins) != 2 ||
 		config.BrowserOrigins[0] != "https://portal.example" ||

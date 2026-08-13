@@ -14,9 +14,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type MessageKind string
@@ -523,13 +523,13 @@ func (m *Module) ReviewOutcome(
 }
 
 type Module struct {
-	pool   *pgxpool.Pool
+	pool   productpostgres.Database
 	access *access.Module
 	now    func() time.Time
 }
 
 func New(
-	pool *pgxpool.Pool,
+	pool productpostgres.Database,
 	accessModule *access.Module,
 	now func() time.Time,
 ) *Module {

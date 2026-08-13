@@ -76,6 +76,20 @@ const (
 	PoolAcquireFailed    PoolAcquireOutcome = "failed"
 )
 
+type DatabaseCause string
+
+const (
+	DatabaseSucceeded        DatabaseCause = "succeeded"
+	DatabaseAcquireTimeout   DatabaseCause = "acquire_timeout"
+	DatabaseStatementTimeout DatabaseCause = "statement_timeout"
+	DatabaseLockTimeout      DatabaseCause = "lock_timeout"
+	DatabaseSerialization    DatabaseCause = "serialization"
+	DatabaseDeadlock         DatabaseCause = "deadlock"
+	DatabaseConnection       DatabaseCause = "connection"
+	DatabaseCanceled         DatabaseCause = "canceled"
+	DatabaseOther            DatabaseCause = "other"
+)
+
 type SSECloseReason string
 
 const (
@@ -174,6 +188,18 @@ func ProviderCommandCompleted(
 func DatabasePoolAcquired(outcome PoolAcquireOutcome, duration time.Duration) Event {
 	return event("acuity_call_center_database_pool_acquire",
 		"outcome", bounded(string(outcome), "succeeded", "canceled", "timeout", "failed"),
+		"seconds", positive(duration).Seconds())
+}
+
+func DatabaseExecuted(cause DatabaseCause, duration time.Duration) Event {
+	value := string(cause)
+	if value == "" {
+		value = string(DatabaseSucceeded)
+	}
+	return event("acuity_backend_database_execution",
+		"cause", bounded(value,
+			"succeeded", "acquire_timeout", "statement_timeout", "lock_timeout",
+			"serialization", "deadlock", "connection", "canceled", "other"),
 		"seconds", positive(duration).Seconds())
 }
 

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Role string
@@ -222,11 +222,11 @@ type SignUpEligibility struct {
 // Module is the Access implementation. Its public methods are the product
 // interface; focused PostgreSQL behavior remains local to this package.
 type Module struct {
-	pool *pgxpool.Pool
+	pool productpostgres.Database
 	now  func() time.Time
 }
 
-func New(pool *pgxpool.Pool, now func() time.Time) *Module {
+func New(pool productpostgres.Database, now func() time.Time) *Module {
 	if now == nil {
 		now = time.Now
 	}

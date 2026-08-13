@@ -23,6 +23,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/worker"
@@ -66,20 +67,30 @@ func run() error {
 	}
 	defer pool.Close()
 	go reportMetrics(ctx, pool, observer)
+	database, err := productpostgres.NewExecutor(pool, productpostgres.ExecutorConfig{
+		AcquireTimeout:   config.AcquireTimeout,
+		OperationTimeout: config.OperationTimeout,
+		StatementTimeout: config.StatementTimeout,
+	}, observer)
+	if err != nil {
+		return err
+	}
 
 	slog.Info("runtime_starting",
 		"role", config.Role,
 		"pool_max", config.PoolMax,
 		"acquire_timeout_ms", config.AcquireTimeout.Milliseconds(),
+		"operation_timeout_ms", config.OperationTimeout.Milliseconds(),
+		"statement_timeout_ms", config.StatementTimeout.Milliseconds(),
 	)
 	switch config.Role {
 	case app.RoleMigrate:
 		return runMigrate(ctx, config, pool)
 	case app.RoleWorker:
-		return runWorker(ctx, config, pool, observer)
+		return runWorker(ctx, config, pool, database, observer)
 	case app.RoleProviderIngress:
 		calling := humancalling.New(
-			pool,
+			database,
 			nil,
 			nil,
 			humanCallingConfig(config, observer),
@@ -90,7 +101,7 @@ func run() error {
 			return err
 		}
 		messages := messaging.New(
-			pool,
+			database,
 			nil,
 			nil,
 			nil,
@@ -102,16 +113,17 @@ func run() error {
 			nil,
 		)
 		handler, err := httpapi.NewProviderIngressWithMessaging(httpapi.Config{
-			AllowedOrigins: config.BrowserOrigins,
-			AcquireTimeout: config.AcquireTimeout,
-			Observer:       observer,
+			AllowedOrigins:   config.BrowserOrigins,
+			AcquireTimeout:   config.AcquireTimeout,
+			OperationTimeout: config.AcquireTimeout + config.OperationTimeout,
+			Observer:         observer,
 		}, pool, calling, messages)
 		if err != nil {
 			return err
 		}
 		return serve(ctx, config, handler)
 	case app.RolePortalAPI, app.RoleRealtime:
-		return runAuthorizedHTTP(ctx, config, pool, observer)
+		return runAuthorizedHTTP(ctx, config, pool, database, observer)
 	default:
 		return fmt.Errorf("unsupported runtime role %q", config.Role)
 	}
@@ -170,9 +182,10 @@ func runAuthorizedHTTP(
 	ctx context.Context,
 	config app.Config,
 	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	observer observability.Observer,
 ) error {
-	accessModule := access.New(pool, nil)
+	accessModule := access.New(database, nil)
 	authenticator, err := authn.NewJWKSAuthenticator(authn.JWKSConfig{
 		URL:      config.JWKSURL,
 		Issuer:   config.AuthIssuer,
@@ -200,9 +213,10 @@ func runAuthorizedHTTP(
 		}
 		go hub.Run(ctx)
 		handler, err = httpapi.NewRealtime(httpapi.Config{
-			AllowedOrigins: config.BrowserOrigins,
-			AcquireTimeout: config.AcquireTimeout,
-			Observer:       observer,
+			AllowedOrigins:   config.BrowserOrigins,
+			AcquireTimeout:   config.AcquireTimeout,
+			OperationTimeout: config.AcquireTimeout + config.OperationTimeout,
+			Observer:         observer,
 		}, pool, httpapi.RealtimeDependencies{
 			Access:        accessModule,
 			Authenticator: authenticator,
@@ -223,15 +237,15 @@ func runAuthorizedHTTP(
 		callingConfig := humanCallingConfig(config, observer)
 		callingConfig.VoicemailAudioProvider = provider
 		calling := humancalling.New(
-			pool,
+			database,
 			accessModule,
 			provider,
 			callingConfig,
 			nil,
 		)
-		workModule := work.New(pool, accessModule, nil)
+		workModule := work.New(database, accessModule, nil)
 		messages := messaging.New(
-			pool,
+			database,
 			accessModule,
 			workModule,
 			nil,
@@ -270,14 +284,15 @@ func runAuthorizedHTTP(
 			return err
 		}
 		handler, err = httpapi.NewPortal(httpapi.Config{
-			AllowedOrigins: config.BrowserOrigins,
-			AcquireTimeout: config.AcquireTimeout,
-			Observer:       observer,
+			AllowedOrigins:   config.BrowserOrigins,
+			AcquireTimeout:   config.AcquireTimeout,
+			OperationTimeout: config.AcquireTimeout + config.OperationTimeout,
+			Observer:         observer,
 		}, pool, httpapi.PortalDependencies{
 			Access:               accessModule,
 			Authenticator:        authenticator,
 			Calling:              calling,
-			Interactions:         interaction.New(pool, accessModule, nil),
+			Interactions:         interaction.New(database, accessModule, nil),
 			Messaging:            messages,
 			Work:                 workModule,
 			ServiceAuthenticator: serviceAuth,
@@ -293,6 +308,7 @@ func runWorker(
 	ctx context.Context,
 	config app.Config,
 	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	observer observability.Observer,
 ) error {
 	pingContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
@@ -312,8 +328,8 @@ func runWorker(
 	}
 	callingConfig := humanCallingConfig(config, observer)
 	calling := humancalling.New(
-		pool,
-		access.New(pool, nil),
+		database,
+		access.New(database, nil),
 		provider,
 		callingConfig,
 		nil,
@@ -322,11 +338,11 @@ func runWorker(
 	if err != nil {
 		return err
 	}
-	accessModule := access.New(pool, nil)
+	accessModule := access.New(database, nil)
 	messages := messaging.New(
-		pool,
+		database,
 		accessModule,
-		work.New(pool, accessModule, nil),
+		work.New(database, accessModule, nil),
 		messagingProvider,
 		messaging.Config{
 			AttachmentStore:    attachmentStore,
@@ -338,7 +354,7 @@ func runWorker(
 	if err := calling.ReconcileCredentials(ctx); err != nil {
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
-	interactions := interaction.New(pool, accessModule, nil)
+	interactions := interaction.New(database, accessModule, nil)
 	runner, err := worker.NewWithMessagingAndInteractions(worker.Config{
 		WorkInterval:       250 * time.Millisecond,
 		WorkTimeout:        10 * time.Second,

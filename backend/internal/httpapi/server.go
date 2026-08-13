@@ -49,9 +49,10 @@ type ServiceAuthenticator interface {
 }
 
 type Config struct {
-	AllowedOrigins []string
-	AcquireTimeout time.Duration
-	Observer       observability.Observer
+	AllowedOrigins   []string
+	AcquireTimeout   time.Duration
+	OperationTimeout time.Duration
+	Observer         observability.Observer
 }
 
 type PortalDependencies struct {
@@ -172,6 +173,9 @@ func newServer(
 	if config.AcquireTimeout <= 0 {
 		return nil, fmt.Errorf("positive acquisition timeout is required")
 	}
+	if config.OperationTimeout <= 0 {
+		config.OperationTimeout = config.AcquireTimeout
+	}
 
 	server := &Server{
 		role:          role,
@@ -227,7 +231,7 @@ func (server *Server) DiscoverAccess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	discovery, err := server.access.DiscoverActor(ctx, identity)
 	if err != nil {
@@ -250,7 +254,7 @@ func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Re
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	eligibility, err := server.access.InspectSignUpEligibility(ctx, string(body.Email))
 	if err != nil {
@@ -275,7 +279,7 @@ func (server *Server) GetWorkspace(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	authorization, err := server.access.ResolveActor(
 		ctx,
@@ -311,7 +315,7 @@ func (server *Server) AddLocation(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	mutation, err := server.access.AddLocation(ctx, access.AddLocationCommand{
 		Identity:   identity,
@@ -377,7 +381,7 @@ func (server *Server) CreateHandoff(w http.ResponseWriter, r *http.Request) {
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	handoff, err := server.calling.CreateHandoff(ctx, humancalling.CreateHandoffCommand{
 		Service:        service,
@@ -472,7 +476,7 @@ func (server *Server) CreateStaffTask(w http.ResponseWriter, r *http.Request) {
 		patientDOB = stringValue(body.Patient.Dob)
 		patientName = stringValue(body.Patient.Name)
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, status, err := server.work.CreateAITask(ctx, work.CreateAITaskCommand{
 		Service:                 service,
@@ -549,7 +553,7 @@ func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request
 			CancellationResult: rawJSON(body.AppointmentOutcome.CancellationResult),
 		}
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	stored, status, err := server.interactions.Ingest(ctx, command)
 	if err != nil {
@@ -583,7 +587,7 @@ func (server *Server) GetAIInteraction(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	stored, err := server.interactions.Read(ctx, identity, interactionID.String())
 	if err != nil {
@@ -610,7 +614,7 @@ func (server *Server) GetAIInteractionEvidence(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	stored, err := server.interactions.ReadEvidence(ctx, identity, interactionID.String())
 	if err != nil {
@@ -640,7 +644,7 @@ func (server *Server) QueryAIInteractionOutcomes(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	page, err := server.interactions.QueryOutcomes(
 		ctx,
@@ -676,7 +680,7 @@ func (server *Server) ReviewAIInteractionOutcome(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	if err := server.interactions.ReviewOutcome(
 		ctx,
@@ -704,7 +708,7 @@ func (server *Server) QueryOperatorAIAnalytics(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	page, err := server.interactions.QueryAnalytics(
 		ctx,
@@ -741,7 +745,7 @@ func (server *Server) GetOperatorAIInteractionAnalytics(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	detail, err := server.interactions.ReadOperatorAnalytics(
 		ctx,
@@ -779,7 +783,7 @@ func (server *Server) ReceiveTelnyxWebhook(w http.ResponseWriter, r *http.Reques
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	receipt, err := server.calling.ReceiveWebhook(
 		ctx,
@@ -812,7 +816,7 @@ func (server *Server) AcquireSoftphone(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	state, err := server.calling.AcquireSoftphone(ctx, identity, body.SessionId, body.Takeover)
 	if err != nil {
@@ -831,7 +835,7 @@ func (server *Server) SetCallingReadiness(w http.ResponseWriter, r *http.Request
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	state, err := server.calling.SetReadiness(ctx, humancalling.ReadinessCommand{
 		Identity:        identity,
@@ -876,7 +880,7 @@ func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	state, err := server.calling.ReadCallingState(ctx, identity)
 	if err != nil {
@@ -906,7 +910,7 @@ func (server *Server) GetCallingCall(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	call, err := server.calling.ReadCall(ctx, identity, callID.String())
 	if err != nil {
@@ -931,7 +935,7 @@ func (server *Server) GetCallingEngagementHistory(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	call, err := server.calling.ReadCall(ctx, identity, callID.String())
 	if err != nil {
@@ -969,7 +973,7 @@ func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	page, err := server.messaging.QueryEngagements(
 		ctx,
@@ -1006,7 +1010,7 @@ func (server *Server) GetEngagementTimeline(
 		server.writeMessagingError(w, r, err)
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	timeline, err := server.messaging.QueryPhoneTimeline(
 		ctx,
@@ -1042,7 +1046,7 @@ func (server *Server) StartOutboundCall(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	call, err := server.calling.StartOutboundCall(
 		ctx,
@@ -1081,7 +1085,7 @@ func (server *Server) ConfirmCallingMediaReady(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	call, err := server.calling.ConfirmOutboundMedia(
 		ctx,
@@ -1113,7 +1117,7 @@ func (server *Server) GetTaskOutboundEligibility(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	eligibility, err := server.calling.TaskOutboundEligibility(
 		ctx,
@@ -1143,7 +1147,7 @@ func (server *Server) RetryOutboundCall(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	previous, err := server.calling.ReadCall(ctx, identity, callID.String())
 	if err != nil {
@@ -1189,7 +1193,7 @@ func (server *Server) IssueCallingVoicemailPlayback(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	capability, err := server.calling.IssueVoicemailPlayback(
 		ctx,
@@ -1216,7 +1220,7 @@ func (server *Server) GetCallingVoicemailPlayback(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	content, err := server.calling.OpenVoicemailPlayback(
 		ctx,
@@ -1291,7 +1295,7 @@ func (server *Server) RequestCallingHangup(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	call, err := server.calling.RequestHangup(
 		ctx,
@@ -1324,7 +1328,7 @@ func (server *Server) RecordCallingDisposition(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	result, err := server.calling.RecordDisposition(
 		ctx,
@@ -1364,7 +1368,7 @@ func (server *Server) GetCallingCallHistory(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	call, err := server.calling.ReadCall(ctx, identity, callID.String())
 	if err != nil {
@@ -1410,7 +1414,7 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	if body.State != nil {
 		state = work.TaskState(*body.State)
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	page, err := server.work.QueryTasks(ctx, work.QueryTasksCommand{
 		Identity:   identity,
@@ -1449,7 +1453,7 @@ func (server *Server) ReadTask(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, err := server.work.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
@@ -1485,7 +1489,7 @@ func (server *Server) RenameTask(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, err := server.work.RenameTask(ctx, work.RenameTaskCommand{
 		Identity:        identity,
@@ -1518,7 +1522,7 @@ func (server *Server) CompleteTask(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, err := server.work.CompleteTask(ctx, work.CompleteTaskCommand{
 		Identity:        identity,
@@ -1550,7 +1554,7 @@ func (server *Server) ReopenTask(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, err := server.work.ReopenTask(ctx, work.ReopenTaskCommand{
 		Identity:        identity,
@@ -1579,7 +1583,7 @@ func (server *Server) GetTaskCallHistory(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, err := server.work.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
@@ -1618,7 +1622,7 @@ func (server *Server) GetTaskEngagementHistory(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, err := server.work.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
@@ -1656,7 +1660,7 @@ func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	page, err := server.messaging.QueryThreads(
 		ctx,
@@ -1691,7 +1695,7 @@ func (server *Server) GetMessageThreadTimeline(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	page, err := server.messaging.QueryTimeline(
 		ctx,
@@ -1727,7 +1731,7 @@ func (server *Server) MarkMessageThreadRead(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	if err := server.messaging.MarkRead(ctx, messaging.MarkReadCommand{
 		Identity: identity,
@@ -1748,7 +1752,7 @@ func (server *Server) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	message, status, err := server.messaging.Send(ctx, messaging.SendCommand{
 		Identity:       identity,
@@ -1797,7 +1801,7 @@ func (server *Server) UploadMessageAttachment(
 		server.writeMessagingError(w, r, messaging.ErrInvalidInput)
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	attachment, err := server.messaging.UploadAttachment(
 		ctx,
@@ -1831,7 +1835,7 @@ func (server *Server) GetMessageAttachment(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	content, err := server.messaging.OpenAttachment(
 		ctx,
@@ -1858,7 +1862,7 @@ func (server *Server) RetryInboundMessageAttachment(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	attachment, err := server.messaging.RetryAttachment(
 		ctx,
@@ -1892,7 +1896,7 @@ func (server *Server) SendMessageAgain(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	message, status, err := server.messaging.SendAgain(
 		ctx,
@@ -1935,7 +1939,7 @@ func (server *Server) CreateMessageFollowUpTask(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	task, status, err := server.messaging.CreateFollowUpTask(
 		ctx,
@@ -1986,7 +1990,7 @@ func (server *Server) GetProviderMessageMedia(
 		server.writeError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested interface is not available in this runtime role.", false)
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	content, err := server.messaging.OpenProviderAttachment(
 		ctx,
@@ -2015,7 +2019,7 @@ func (server *Server) receiveMessagingWebhook(
 		server.writeError(w, r, http.StatusBadRequest, "INVALID_WEBHOOK", "The provider webhook is invalid.", false)
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	if _, err := server.messaging.ReceiveWebhook(
 		ctx,
@@ -2042,7 +2046,7 @@ func (server *Server) GetOperatorCallingTimeline(
 	if !ok {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	timeline, err := server.calling.ReadOperatorTimeline(ctx, identity, callID.String())
 	if err != nil {
@@ -2079,7 +2083,7 @@ func (server *Server) RequeueOperatorProviderReceipt(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.databaseContext(r)
+	ctx, cancel := server.operationContext(r)
 	defer cancel()
 	result, err := server.calling.RequeueQuarantinedReceipt(
 		ctx,
@@ -2173,8 +2177,8 @@ func (server *Server) authenticateService(
 	return identity, true
 }
 
-func (server *Server) databaseContext(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), server.config.AcquireTimeout)
+func (server *Server) operationContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), server.config.OperationTimeout)
 }
 
 func (server *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {

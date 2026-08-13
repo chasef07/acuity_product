@@ -14,8 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TaskState string
@@ -237,13 +237,13 @@ type TaskCategoryCounts struct {
 
 // Module owns durable Task state and lifecycle behavior.
 type Module struct {
-	pool   *pgxpool.Pool
+	pool   productpostgres.Database
 	access *access.Module
 	now    func() time.Time
 }
 
 func New(
-	pool *pgxpool.Pool,
+	pool productpostgres.Database,
 	accessModule *access.Module,
 	now func() time.Time,
 ) *Module {
