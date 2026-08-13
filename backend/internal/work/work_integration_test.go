@@ -256,6 +256,166 @@ func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
 	}
 }
 
+func TestRecoveryTasksKeepDifferentSourcedCallersSeparate(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	locationID := authorization.Locations[0].ID
+	phone := "+15555550123"
+
+	ensure := func(callerName string, occurredAt time.Time) work.Task {
+		t.Helper()
+		callID := insertCallAt(
+			t, pool, authorization, locationID, phone, callerName, occurredAt,
+		)
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin recovery Task: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		task, err := module.EnsureRecoveryTask(
+			context.Background(),
+			tx,
+			work.EnsureRecoveryTaskCommand{
+				CallID: callID, PracticeID: authorization.Practice.ID,
+				LocationID: locationID, Phone: phone, CallerName: callerName,
+				Outcome: work.RecoveryOutcomeVoicemail, OccurredAt: occurredAt,
+			},
+		)
+		if err != nil {
+			t.Fatalf("ensure recovery Task: %v", err)
+		}
+		if err := tx.Commit(context.Background()); err != nil {
+			t.Fatalf("commit recovery Task: %v", err)
+		}
+		return task
+	}
+
+	alexFirst := ensure("Alex Patient", now)
+	alexSecond := ensure("Alex Patient", now.Add(time.Minute))
+	jordan := ensure("Jordan Patient", now.Add(2*time.Minute))
+	if alexSecond.ID != alexFirst.ID || jordan.ID == alexFirst.ID {
+		t.Fatalf(
+			"caller-aware recovery Tasks = Alex %q/%q, Jordan %q",
+			alexFirst.ID,
+			alexSecond.ID,
+			jordan.ID,
+		)
+	}
+}
+
+func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 13, 11, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	phone := "+15555550124"
+
+	ensure := func(locationID string, callAt time.Time) work.Task {
+		t.Helper()
+		callID := insertCallAt(
+			t, pool, authorization, locationID, phone, "Shared caller", callAt,
+		)
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin recovery Task: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		task, err := module.EnsureRecoveryTask(
+			context.Background(),
+			tx,
+			work.EnsureRecoveryTaskCommand{
+				CallID: callID, PracticeID: authorization.Practice.ID,
+				LocationID: locationID, Phone: phone, CallerName: "Shared caller",
+				Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: callAt,
+			},
+		)
+		if err != nil {
+			t.Fatalf("ensure recovery Task: %v", err)
+		}
+		if err := tx.Commit(context.Background()); err != nil {
+			t.Fatalf("commit recovery Task: %v", err)
+		}
+		return task
+	}
+
+	first := ensure(authorization.Locations[0].ID, now)
+	second := ensure(authorization.Locations[1].ID, now.Add(time.Minute))
+	resolutionAt := now.Add(2 * time.Minute)
+
+	resolve := func(at time.Time, sourceID string) {
+		t.Helper()
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("begin recovery resolution: %v", err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if _, err := module.ResolveRecoveryTasks(
+			context.Background(),
+			tx,
+			work.ResolveRecoveryTasksCommand{
+				PracticeID: authorization.Practice.ID,
+				Phone:      phone,
+				OccurredAt: at,
+				Kind:       work.RecoveryResolutionInboundCall,
+				SourceID:   sourceID,
+			},
+		); err != nil {
+			t.Fatalf("resolve recovery Tasks: %v", err)
+		}
+		if err := tx.Commit(context.Background()); err != nil {
+			t.Fatalf("commit recovery resolution: %v", err)
+		}
+	}
+
+	resolve(resolutionAt, "connected-call")
+	resolve(resolutionAt, "connected-call")
+	for _, taskID := range []string{first.ID, second.ID} {
+		resolved, err := module.ReadTask(context.Background(), identity, taskID)
+		if err != nil || resolved.State != work.TaskCompleted ||
+			resolved.CompletedBy == nil ||
+			resolved.CompletedBy.Kind != access.ActorService {
+			t.Fatalf("resolved recovery Task = %#v, %v", resolved, err)
+		}
+	}
+
+	var activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_activities
+		WHERE task_id = $1
+			AND kind = 'TASK_AUTO_COMPLETED_INBOUND_CALL'
+	`, first.ID).Scan(&activityCount); err != nil || activityCount != 1 {
+		t.Fatalf("automatic completion Activities = %d, %v", activityCount, err)
+	}
+
+	now = resolutionAt.Add(time.Minute)
+	reopened, err := module.ReopenTask(
+		context.Background(),
+		work.ReopenTaskCommand{
+			Identity: identity, TaskID: first.ID, ExpectedVersion: 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("reopen automatically completed Task: %v", err)
+	}
+	resolve(resolutionAt, "connected-call")
+	stillOpen, err := module.ReadTask(context.Background(), identity, first.ID)
+	if err != nil || stillOpen.State != work.TaskOpen ||
+		stillOpen.Version != reopened.Version {
+		t.Fatalf("reopened recovery Task after stale replay = %#v, %v", stillOpen, err)
+	}
+	resolve(resolutionAt.Add(2*time.Minute), "new-connected-call")
+	resolvedAgain, err := module.ReadTask(context.Background(), identity, first.ID)
+	if err != nil || resolvedAgain.State != work.TaskCompleted ||
+		resolvedAgain.Version != reopened.Version+1 {
+		t.Fatalf("reopened recovery Task after new contact = %#v, %v", resolvedAgain, err)
+	}
+}
+
 func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
@@ -317,6 +477,20 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 			first.ID,
 		)
 	}
+	exactDuplicate := command
+	exactDuplicate.IdempotencyKey = "staff_task_same_need_new_key"
+	exact, exactStatus, err := module.CreateAITask(
+		context.Background(),
+		exactDuplicate,
+	)
+	if err != nil || exactStatus != work.TaskDuplicate || exact.ID != first.ID {
+		t.Fatalf(
+			"exact AI Task duplicate = %#v, status = %q, err = %v",
+			exact,
+			exactStatus,
+			err,
+		)
+	}
 
 	task, err := module.ReadTask(context.Background(), identity, first.ID)
 	if err != nil {
@@ -350,6 +524,22 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 			"immutable AI source detail leaked into Task search: %#v",
 			sourceSearch.Items,
 		)
+	}
+	for _, search := range []string{
+		"Jane Doe",
+		authorization.Locations[0].Name,
+		"documentation",
+	} {
+		page, err := module.QueryTasks(
+			context.Background(),
+			work.QueryTasksCommand{
+				Identity: identity, PracticeID: authorization.Practice.ID,
+				Search: search,
+			},
+		)
+		if err != nil || len(page.Items) != 1 || page.Items[0].ID != first.ID {
+			t.Fatalf("search %q = %#v, %v", search, page.Items, err)
+		}
 	}
 
 	var activityCount int

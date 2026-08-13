@@ -86,6 +86,11 @@ import {
 import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
+import {
+  presentTimeline,
+  recoveryFollowUpCallIDs,
+  technicalTimelineItems,
+} from "@/lib/workspace-history"
 
 const maximumMessageLength = 1_600
 const maximumAttachmentBytes = 600 * 1_024
@@ -406,6 +411,9 @@ function MessageConversation({
     (item) => item.message?.thread.locationId === locationID,
   )?.message?.thread
   const composerThreadID = conversationThread?.id ?? ""
+  const presentedItems = presentTimeline(items)
+  const technicalItems = technicalTimelineItems(items)
+  const followUpCallIDs = recoveryFollowUpCallIDs(items)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -438,7 +446,7 @@ function MessageConversation({
             </div>
           )}
           {!loading &&
-            items.map((item) => (
+            presentedItems.map((item) => (
               <TimelineEntry
                 key={`${item.type}:${item.id}`}
                 item={item}
@@ -448,9 +456,12 @@ function MessageConversation({
                 onTaskOpen={onTaskOpen}
                 onCallOpen={onCallOpen}
                 onAIInteractionOpen={onAIInteractionOpen}
+                recoveryFollowUp={
+                  item.type === "CALL" && followUpCallIDs.has(item.call?.id ?? "")
+                }
               />
             ))}
-          {!loading && items.length === 0 && (
+          {!loading && presentedItems.length === 0 && (
             <Empty className="my-10 border-0">
               <EmptyHeader>
                 <EmptyTitle>No activity yet</EmptyTitle>
@@ -459,6 +470,18 @@ function MessageConversation({
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
+          )}
+          {!loading && technicalItems.length > 0 && (
+            <details className="mx-auto w-full max-w-md px-2 py-1 text-xs text-muted-foreground">
+              <summary className="cursor-pointer">Technical details</summary>
+              <ul className="mt-2 space-y-1 pl-4">
+                {technicalItems.map((item) => (
+                  <li key={`${item.type}:${item.id}`}>
+                    {item.task?.title} · {taskActivityLabel(item.taskActivity, item.task?.state ?? "OPEN")}
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </div>
         {newActivity && (
@@ -529,6 +552,7 @@ function TimelineEntry({
   onTaskOpen,
   onCallOpen,
   onAIInteractionOpen,
+  recoveryFollowUp,
 }: {
   item: ConversationTimelineItem
   canMutate: boolean
@@ -537,6 +561,7 @@ function TimelineEntry({
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
   onAIInteractionOpen?: (interactionID: string) => void
+  recoveryFollowUp: boolean
 }) {
   if (item.type === "MESSAGE" && item.message) {
     return (
@@ -553,7 +578,7 @@ function TimelineEntry({
     return (
       <ActivityBubble
         icon={touchpoint.icon}
-        label={`${item.call.locationName} · ${touchpoint.label}`}
+        label={`${item.call.locationName} · ${touchpoint.label}${recoveryFollowUp ? " · Follow-up created" : ""}`}
         occurredAt={item.occurredAt}
         title={item.call.transferReason || touchpoint.label}
         detail={touchpoint.detail}
@@ -834,8 +859,8 @@ function ActivityBubble({
     return (
       <Button
         type="button"
-        variant="outline"
-        className="mx-auto h-auto w-full max-w-md items-start justify-start gap-2 rounded-xl px-3 py-2 text-left whitespace-normal"
+        variant="ghost"
+        className="mx-auto h-auto w-full max-w-md items-start justify-start gap-2 rounded-none border-b px-2 py-3 text-left whitespace-normal"
         onClick={onOpen}
       >
         {content}
@@ -843,7 +868,7 @@ function ActivityBubble({
     )
   }
   return (
-    <div className="mx-auto flex w-full max-w-md items-start gap-2 rounded-xl border bg-background px-3 py-2">
+    <div className="mx-auto flex w-full max-w-md items-start gap-2 border-b px-2 py-3">
       {content}
     </div>
   )
@@ -1245,38 +1270,44 @@ function taskActivityLabel(
       return "Reopened"
     case "INTERACTION_ATTACHED":
       return "New interaction attached"
+    case "TASK_AUTO_COMPLETED_INBOUND_CALL":
+      return "Resolved after staff contact"
+    case "TASK_AUTO_COMPLETED_BOOKING":
+      return "Resolved after confirmed booking"
+    case "TASK_AUTO_COMPLETED_DUPLICATE":
+      return "Duplicate resolved"
     default:
       return state === "OPEN" ? "Open" : "Completed"
   }
 }
 
 function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
-  const duration = formatDuration(call.durationSeconds)
+  const duration = call.durationSeconds > 0 ? formatDuration(call.durationSeconds) : ""
   if (call.outcome === "VOICEMAIL") {
     return {
       icon: <VoicemailIcon />,
       label: "Voicemail",
-      detail: `Recorded · ${duration}`,
+      detail: duration ? `Recorded · ${duration}` : "Recorded",
     }
   }
   if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
     return {
       icon: <PhoneMissedIcon />,
       label: call.direction === "INBOUND" ? "Missed call" : "Unanswered call",
-      detail: `${sentenceCase(call.direction)} · ${duration}`,
+      detail: [sentenceCase(call.direction), duration].filter(Boolean).join(" · "),
     }
   }
   if (call.direction === "INBOUND") {
     return {
       icon: <PhoneIncomingIcon />,
       label: "Inbound call",
-      detail: `${sentenceCase(call.outcome)} · ${duration}`,
+      detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
     }
   }
   return {
     icon: <PhoneOutgoingIcon />,
     label: "Outbound call",
-    detail: `${sentenceCase(call.outcome)} · ${duration}`,
+    detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
   }
 }
 

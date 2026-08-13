@@ -74,8 +74,8 @@ import {
   decrementOutcomeCount,
   mergeOutcomePages,
 } from "@/lib/ai-outcome-attention"
-import { normalizeUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
+import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import { reconcileLoadedPage } from "@/lib/workspace-triage"
 import {
   createWorkspaceRequestBudget,
@@ -113,7 +113,6 @@ const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
 const taskScopeStorageKey = "acuity.taskLocationScope"
 const taskOrderingStorageKey = "acuity.taskOrdering"
-const recentNumbersStorageKey = "acuity.recentNumberInboxes"
 type TaskOrdering = "recent" | "priority"
 
 export function TaskWorkspaceShell() {
@@ -127,10 +126,10 @@ export function TaskWorkspaceShell() {
   const [locationID, setLocationID] = useState("")
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
+  const [taskSearch, setTaskSearch] = useState("")
   const [ordering, setOrdering] = useState<TaskOrdering>("priority")
   const [engagementError, setEngagementError] = useState("")
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
-  const [recentInboxes, setRecentInboxes] = useState<EngagementSummary[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskCounts, setTaskCounts] = useState<TaskFolderCounts>(() =>
     emptyTaskFolderCounts(),
@@ -193,6 +192,7 @@ export function TaskWorkspaceShell() {
   const viewRef = useRef<View>("none")
   const orderingRef = useRef<TaskOrdering>("priority")
   const locationScopeRef = useRef("")
+  const taskSearchRef = useRef("")
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
@@ -216,6 +216,9 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
+  useEffect(() => {
+    taskSearchRef.current = taskSearch
+  }, [taskSearch])
   const loadTasks = useCallback(
     async (cursor = "", append = false) => {
       if (!practiceID) return
@@ -223,6 +226,7 @@ export function TaskWorkspaceShell() {
         practiceID,
         locationScopeID,
         ordering,
+        taskSearch,
       )
       const requestGeneration = ++taskQueryGenerationRef.current
       setTasksLoading(true)
@@ -240,6 +244,7 @@ export function TaskWorkspaceShell() {
           state: "OPEN",
           ordering,
           folder: "work",
+          ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -286,7 +291,7 @@ export function TaskWorkspaceShell() {
         setView("engagement")
       }
     },
-    [locationScopeID, ordering, practiceID],
+    [locationScopeID, ordering, practiceID, taskSearch],
   )
   const loadRecoveryTasks = useCallback(
     async (cursor = "", append = false) => {
@@ -294,6 +299,7 @@ export function TaskWorkspaceShell() {
       const queryKey = workspaceRecoveryTaskQueryKey(
         practiceID,
         locationScopeID,
+        taskSearch,
       )
       const requestGeneration = ++recoveryTaskQueryGenerationRef.current
       setRecoveryTasksLoading(true)
@@ -311,6 +317,7 @@ export function TaskWorkspaceShell() {
           state: "OPEN",
           ordering: "recent",
           folder: "missed_calls",
+          ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -345,7 +352,7 @@ export function TaskWorkspaceShell() {
         if (current) updateSelectedTask(current)
       }
     },
-    [locationScopeID, practiceID],
+    [locationScopeID, practiceID, taskSearch],
   )
   const loadMessageThreads = useCallback(
     async (cursor = "", append = false) => {
@@ -465,7 +472,7 @@ export function TaskWorkspaceShell() {
     setAIOutcomes(next)
     if (reviewed) {
       setAIOutcomeCounts((counts) =>
-        decrementOutcomeCount(counts, reviewed.appointmentOutcome),
+        decrementOutcomeCount(counts, reviewed.appointmentAction),
       )
     }
     return true
@@ -488,15 +495,18 @@ export function TaskWorkspaceShell() {
       const messageGeneration = ++messageQueryGenerationRef.current
       const taskLocationID = locationScopeRef.current
       const taskOrdering = orderingRef.current
+      const currentTaskSearch = taskSearchRef.current
       const selectedTaskID = selectedTaskRef.current?.id
       const taskQueryKey = workspaceTaskQueryKey(
         scope.practiceID,
         taskLocationID,
         taskOrdering,
+        currentTaskSearch,
       )
       const recoveryTaskQueryKey = workspaceRecoveryTaskQueryKey(
         scope.practiceID,
         taskLocationID,
+        currentTaskSearch,
       )
       const messageQueryKey = workspaceMessageQueryKey(
         scope.practiceID,
@@ -527,6 +537,7 @@ export function TaskWorkspaceShell() {
               state: "OPEN",
               ordering: taskOrdering,
               folder: "work",
+              ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
               limit: 50,
             },
             signal,
@@ -539,6 +550,7 @@ export function TaskWorkspaceShell() {
               state: "OPEN",
               ordering: "recent",
               folder: "missed_calls",
+              ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
               limit: 50,
             },
             signal,
@@ -765,9 +777,6 @@ export function TaskWorkspaceShell() {
     orderingRef.current = initialOrdering
     locationScopeRef.current = scope
     setOrdering(initialOrdering)
-    setRecentInboxes(
-      readRecentInboxes(result.data.actor.subject, practice.id),
-    )
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -794,6 +803,7 @@ export function TaskWorkspaceShell() {
       practiceID,
       locationScopeID,
       ordering,
+      taskSearch,
     )
     if (taskQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadTasks(), 0)
@@ -804,6 +814,7 @@ export function TaskWorkspaceShell() {
     locationScopeID,
     ordering,
     practiceID,
+    taskSearch,
   ])
 
   useEffect(() => {
@@ -811,6 +822,7 @@ export function TaskWorkspaceShell() {
     const queryKey = workspaceRecoveryTaskQueryKey(
       practiceID,
       locationScopeID,
+      taskSearch,
     )
     if (recoveryTaskQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadRecoveryTasks(), 0)
@@ -820,6 +832,7 @@ export function TaskWorkspaceShell() {
     loadState,
     locationScopeID,
     practiceID,
+    taskSearch,
   ])
 
   useEffect(() => {
@@ -1008,9 +1021,6 @@ export function TaskWorkspaceShell() {
     workspaceRef.current = undefined
     setWorkspace(undefined)
     setOrdering(nextOrdering)
-    setRecentInboxes(
-      readRecentInboxes(discovery.actor.subject, nextPractice.id),
-    )
     setPracticeID(nextPractice.id)
     setLocationID(nextLocation.id)
     setLocationScopeID(nextScope)
@@ -1043,11 +1053,6 @@ export function TaskWorkspaceShell() {
     setContextPanelOpen(false)
     updateSelectedTask(focusedTask)
     setSelectedEngagement(engagement)
-    if (discovery && practiceID) {
-      const next = rememberEngagement(recentInboxes, engagement)
-      setRecentInboxes(next)
-      writeRecentInboxes(discovery.actor.subject, practiceID, next)
-    }
     setView("engagement")
     void markEngagementRead(engagement.phone)
   }
@@ -1076,7 +1081,6 @@ export function TaskWorkspaceShell() {
   }
 
   async function markEngagementRead(phone: string) {
-    if (workspaceRef.current?.platformOperator) return
     const unreadThreadIDs = messageThreadsRef.current
       .filter((thread) => thread.externalPhone === phone && thread.unread)
       .map((thread) => thread.id)
@@ -1099,17 +1103,6 @@ export function TaskWorkspaceShell() {
     setSelectedEngagement((current) =>
       current?.phone === phone ? { ...current, unread: false } : current,
     )
-    setRecentInboxes((current) => {
-      const next = current.map((engagement) =>
-        engagement.phone === phone
-          ? { ...engagement, unread: false }
-          : engagement,
-      )
-      if (discovery && practiceID) {
-        writeRecentInboxes(discovery.actor.subject, practiceID, next)
-      }
-      return next
-    })
   }
 
   function projectThreadsRead(readThreadIDs: Set<string>) {
@@ -1128,16 +1121,21 @@ export function TaskWorkspaceShell() {
     setTasks(nextTasks)
   }
 
-  function submitPhoneSearch() {
-    const phone = normalizeUSPhone(search)
-    if (!phone || !practiceID) {
-      setEngagementError("Enter a complete US phone number.")
+  function submitSearch() {
+    if (!practiceID) return
+    const resolved = resolveWorkspaceSearch(search)
+    if (resolved.kind === "tasks") {
+      taskSearchRef.current = resolved.value
+      setTaskSearch(resolved.value)
+      setEngagementError("")
       return
     }
+    taskSearchRef.current = ""
+    setTaskSearch("")
     setEngagementError("")
     setSearch("")
     selectEngagement(
-      newNumberEngagement(phone, practice.locations, locationScopeID),
+      newNumberEngagement(resolved.value, practice.locations, locationScopeID),
     )
   }
 
@@ -1344,7 +1342,6 @@ export function TaskWorkspaceShell() {
           messages={messageThreads}
           aiOutcomes={aiOutcomes}
           outcomeCounts={aiOutcomeCounts}
-          recent={recentInboxes}
           selectedTaskID={selectedTask?.id ?? ""}
           selectedAIInteractionID={selectedAIInteractionID}
           selectedPhone={selectedEngagement?.phone ?? ""}
@@ -1365,7 +1362,7 @@ export function TaskWorkspaceShell() {
             setSearch(value)
             setEngagementError("")
           }}
-          onSearchSubmit={submitPhoneSearch}
+          onSearchSubmit={submitSearch}
           onAnalyticsSelect={() => {
             setContextPanelOpen(false)
             setView("analytics")
@@ -1530,6 +1527,7 @@ function workTaskCount(counts: TaskFolderCounts) {
 
 function emptyAIOutcomeCounts(): AiOutcomeCounts {
   return {
+    tasks: 0,
     bookings: 0,
     cancellations: 0,
     reschedules: 0,
@@ -1649,15 +1647,17 @@ function workspaceTaskQueryKey(
   practiceID: string,
   locationID: string,
   ordering: TaskOrdering,
+  search: string,
 ) {
-  return `${practiceID}:${locationID}:OPEN:${ordering}:work`
+  return `${practiceID}:${locationID}:OPEN:${ordering}:work:${search}`
 }
 
 function workspaceRecoveryTaskQueryKey(
   practiceID: string,
   locationID: string,
+  search: string,
 ) {
-  return `${practiceID}:${locationID}:OPEN:recent:missed_calls`
+  return `${practiceID}:${locationID}:OPEN:recent:missed_calls:${search}`
 }
 
 function workspaceMessageQueryKey(
@@ -1714,43 +1714,6 @@ function newNumberEngagement(
     openTaskCount: 0,
     unread: false,
   }
-}
-
-function rememberEngagement(
-  current: EngagementSummary[],
-  engagement: EngagementSummary,
-) {
-  return [
-    engagement,
-    ...current.filter((item) => item.phone !== engagement.phone),
-  ].slice(0, 7)
-}
-
-function recentInboxesKey(userSubject: string, practiceID: string) {
-  return `${recentNumbersStorageKey}.${userSubject}.${practiceID}`
-}
-
-function readRecentInboxes(userSubject: string, practiceID: string) {
-  try {
-    const value = JSON.parse(
-      window.sessionStorage.getItem(recentInboxesKey(userSubject, practiceID)) ??
-        "[]",
-    ) as EngagementSummary[]
-    return Array.isArray(value) ? value.slice(0, 7) : []
-  } catch {
-    return []
-  }
-}
-
-function writeRecentInboxes(
-  userSubject: string,
-  practiceID: string,
-  engagements: EngagementSummary[],
-) {
-  window.sessionStorage.setItem(
-    recentInboxesKey(userSubject, practiceID),
-    JSON.stringify(engagements),
-  )
 }
 
 function WorkspaceLoading() {

@@ -89,6 +89,7 @@ type ThreadSummary struct {
 	LatestDirection Direction
 	LatestDelivery  DeliveryState
 	LatestActivity  time.Time
+	OpenTaskCount   int
 	Unread          bool
 }
 
@@ -533,6 +534,7 @@ func (m *Module) QueryPhoneTimeline(
 			location.name,
 			COALESCE(membership.email, platform_operator.email, ''),
 			COALESCE(handoff.transfer_reason, ''),
+			COALESCE(handoff.source_call_id, ''),
 			CASE
 				WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
 					THEN 'FOLLOW_UP_REQUIRED'
@@ -595,6 +597,7 @@ func (m *Module) QueryPhoneTimeline(
 			&call.LocationName,
 			&call.AnsweredByEmail,
 			&call.TransferReason,
+			&call.SourceCallID,
 			&call.Outcome,
 		); err != nil {
 			callRows.Close()
@@ -2343,6 +2346,12 @@ func (m *Module) QueryThreads(
 			COALESCE(latest.direction, ''),
 			COALESCE(latest.delivery_state, ''),
 			COALESCE(activity.occurred_at, thread.updated_at),
+			(
+				SELECT count(*)
+				FROM work_tasks task
+				WHERE task.message_thread_id = thread.id
+					AND task.state = 'OPEN'
+			),
 			EXISTS (
 				SELECT 1
 				FROM messaging_thread_unreads unread
@@ -2441,6 +2450,7 @@ func (m *Module) QueryThreads(
 			&item.LatestDirection,
 			&item.LatestDelivery,
 			&item.LatestActivity,
+			&item.OpenTaskCount,
 			&item.Unread,
 		); err != nil {
 			return ThreadPage{}, fmt.Errorf("scan Message Thread: %w", err)
@@ -2610,6 +2620,7 @@ func (m *Module) QueryTimeline(
 			location.name,
 			COALESCE(membership.email, platform_operator.email, ''),
 			COALESCE(handoff.transfer_reason, ''),
+			COALESCE(handoff.source_call_id, ''),
 			CASE
 				WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
 					THEN 'FOLLOW_UP_REQUIRED'
@@ -2669,6 +2680,7 @@ func (m *Module) QueryTimeline(
 			&call.LocationName,
 			&call.AnsweredByEmail,
 			&call.TransferReason,
+			&call.SourceCallID,
 			&call.Outcome,
 		); err != nil {
 			callRows.Close()
@@ -3841,11 +3853,17 @@ func scanConversationTask(scanner conversationTaskScanner) (work.Task, error) {
 	if createdEmail != nil {
 		task.CreatedBy.Email = *createdEmail
 	}
-	if completedSubject != nil && completedEmail != nil {
+	if completedSubject != nil {
+		kind := access.ActorService
+		email := ""
+		if completedEmail != nil {
+			kind = access.ActorHuman
+			email = *completedEmail
+		}
 		task.CompletedBy = &work.ActorSnapshot{
-			Kind:    access.ActorHuman,
+			Kind:    kind,
 			Subject: *completedSubject,
-			Email:   *completedEmail,
+			Email:   email,
 		}
 	}
 	return task, nil

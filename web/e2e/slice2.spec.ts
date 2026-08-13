@@ -336,6 +336,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         locationID,
         voicemailPhone,
         `voicemail-${attempt}`,
+        "Voicemail caller",
       )
       const ring = await readSentVoiceCommand(
         database,
@@ -424,10 +425,9 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
         await recoveryFolder.click()
       }
-      const expectedCount = attempt === "first" ? 1 : 2
       await expect(
         page.getByRole("button", {
-          name: new RegExp(`\\(555\\) 555-0111.*${expectedCount} voicemail`),
+          name: /\(555\) 555-0111.*Voicemail/,
         }),
       ).toBeVisible({ timeout: 30_000 })
 
@@ -478,7 +478,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       activities: ["1:TASK_CREATED", "2:INTERACTION_ATTACHED"],
     })
     const voicemailRow = page.getByRole("button", {
-      name: /\(555\) 555-0111.*2 voicemail/,
+      name: /\(555\) 555-0111.*Voicemail/,
     })
     await voicemailRow.click()
     const taskContext = page.getByRole("complementary", {
@@ -488,13 +488,13 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     await expect(
       taskContext.getByRole("heading", { name: "Review voicemail" }),
     ).toBeVisible()
-    await expect(taskContext.getByText("2 related")).toBeVisible()
+    await expect(taskContext.getByText("1 earlier call")).toBeVisible()
     await taskContext.getByRole("button", { name: "Play" }).click()
     await expect(
       taskContext.getByLabel("Voicemail recording"),
     ).toBeVisible()
     await taskContext
-      .getByRole("button", { name: "Complete", exact: true })
+      .getByRole("button", { name: "Resolve", exact: true })
       .click()
     await expect(voicemailRow).toHaveCount(0)
 
@@ -547,7 +547,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     }
     await expect(
       page.getByRole("button", {
-        name: /\(555\) 555-0112.*1 missed/,
+        name: /\(555\) 555-0112.*Missed call/,
       }),
     ).toBeVisible({ timeout: 30_000 })
     const missedTask = await database.query<{ id: string; version: string }>(
@@ -595,8 +595,8 @@ async function startAndEndOutboundWhileVoicemail(
   database: Pool,
   destination: string,
 ) {
-  await page.getByLabel("Search phone number").fill(destination)
-  await page.getByLabel("Search phone number").press("Enter")
+  await page.getByLabel("Search tasks, names, or phone").fill(destination)
+  await page.getByLabel("Search tasks, names, or phone").press("Enter")
   const callButton = page.getByRole("button", { name: "Call", exact: true })
   await expect(callButton).toBeEnabled()
   await callButton.click()
@@ -715,6 +715,7 @@ async function startAnsweredInboundCall(
   locationID: string,
   phone: string,
   prefix: string,
+  displayName = `${prefix} caller`,
 ): Promise<InboundCaller> {
   const handoffResponse = await page.request.post(`${portalURL}/v1/handoffs`, {
     headers: { authorization: "Bearer synthetic-production-token" },
@@ -726,7 +727,7 @@ async function startAnsweredInboundCall(
       contact: {
         phone,
         phoneSource: "Abita",
-        displayName: `${prefix} caller`,
+        displayName,
         nameSource: "Abita",
         transferReason: "Needs a staff response",
         reasonSource: "Abita AI",

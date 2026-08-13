@@ -15,8 +15,8 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   await signInAs(page, "admin@abita.test", "Fixture Admin")
   await page.getByRole("button", { name: "Toggle Sidebar" }).click()
 
-  const searchInput = page.getByLabel("Search phone number")
-  const submitButton = page.getByRole("button", { name: "Open phone number" })
+  const searchInput = page.getByLabel("Search tasks, names, or phone")
+  const submitButton = page.getByRole("button", { name: "Search" })
   await expect(submitButton).toBeVisible()
   await searchInput.fill("7275550199")
   await submitButton.click()
@@ -29,7 +29,7 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   ).toBeInViewport({ ratio: 1 })
 
   await page.setViewportSize({ width: 1280, height: 720 })
-  await expect(page.locator('button[aria-label="Open phone number"]')).toBeHidden()
+  await expect(page.locator('button[aria-label="Search"]')).toBeHidden()
 })
 
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
@@ -50,7 +50,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(page.getByRole("tablist", { name: "Work state" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /^Tasks/ })).toHaveAttribute(
     "aria-expanded",
-    "true",
+    "false",
   )
   await expect(
     page.getByRole("button", { name: /^Missed Calls \d+$/ }),
@@ -59,7 +59,6 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(page.getByRole("button", { name: /^Cancellations/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Reschedules/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Texts/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Recent" })).toBeVisible()
   await expect(page.getByRole("button", { name: "New text" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Call", exact: true })).toHaveCount(0)
   await openNumberInbox(page, "7275550199")
@@ -183,13 +182,6 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
       .getByTestId("text-attention-row")
       .filter({ hasText: "(727) 555-0199" }),
   ).toHaveCount(0)
-  const recentAfterRead = page.getByRole("button", { name: "Recent", exact: true })
-  if ((await recentAfterRead.getAttribute("aria-expanded")) === "false") {
-    await recentAfterRead.click()
-  }
-  await expect(
-    page.getByRole("button", { name: /\(727\) 555-0199/ }).last(),
-  ).toBeVisible()
 
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
@@ -261,6 +253,10 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     "closed",
   )
 
+  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
+  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
+    await tasksSection.click()
+  }
   await page
     .getByRole("button", { name: /^Follow up on text \(727\)/ })
     .click()
@@ -303,14 +299,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled()
-  const recentSection = page.getByRole("button", { name: "Recent", exact: true })
-  if ((await recentSection.getAttribute("aria-expanded")) === "false") {
-    await recentSection.click()
-  }
-  await page
-    .getByRole("button", { name: /\(727\) 555-0199/ })
-    .last()
-    .click()
+  await openNumberInbox(page, "7275550199")
   const messageAfterCompletion = "The Task is complete; texting remains available."
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -349,7 +338,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     page
       .getByTestId("text-attention-row")
       .filter({ hasText: "(727) 555-0199" }),
-  ).toBeVisible()
+  ).toHaveCount(0)
 
   await sendInbound(page, "slice-5-start", "START")
   await expect(
@@ -359,6 +348,9 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     page.getByText("Outbound messaging is blocked after STOP"),
   ).not.toBeVisible()
 
+  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
+    await tasksSection.click()
+  }
   await createAIStaffTask(page, "billing", "Review billing balance")
   const taskCategory = page.getByLabel("Task category")
   await expect(taskCategory).toHaveValue("all")
@@ -379,8 +371,8 @@ async function openNumberInbox(
   page: Page,
   phone: string,
 ) {
-  await page.getByLabel("Search phone number").fill(phone)
-  await page.getByLabel("Search phone number").press("Enter")
+  await page.getByLabel("Search tasks, names, or phone").fill(phone)
+  await page.getByLabel("Search tasks, names, or phone").press("Enter")
   await expect(page.getByRole("heading", { name: /\(727\) 555-01\d\d/ })).toBeVisible()
 }
 

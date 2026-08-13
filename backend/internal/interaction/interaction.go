@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -152,8 +153,10 @@ type OutcomeItem struct {
 	EndedAt               *time.Time
 	Status                CallStatus
 	Summary               string
+	AppointmentAction     AppointmentAction
 	AppointmentOutcome    AppointmentOutcome
 	AppointmentOccurredAt *time.Time
+	AttentionOccurredAt   time.Time
 	OldAppointmentID      string
 	NewAppointmentID      string
 }
@@ -165,6 +168,7 @@ type OutcomePage struct {
 }
 
 type OutcomeCounts struct {
+	Tasks         int
 	Bookings      int
 	Cancellations int
 	Reschedules   int
@@ -282,22 +286,30 @@ func (m *Module) QueryOutcomes(
 	page := OutcomePage{Items: []OutcomeItem{}}
 	if err := tx.QueryRow(ctx, `
 		SELECT
-			count(*) FILTER (WHERE interaction.appointment_outcome = 'BOOKING'),
-			count(*) FILTER (WHERE interaction.appointment_outcome = 'CANCELLATION'),
-			count(*) FILTER (WHERE interaction.appointment_outcome = 'RESCHEDULE')
+			count(*) FILTER (WHERE interaction.appointment_action IS NULL),
+			count(*) FILTER (WHERE interaction.appointment_action = 'BOOKED'),
+			count(*) FILTER (WHERE interaction.appointment_action = 'CANCELLED'),
+			count(*) FILTER (WHERE interaction.appointment_action = 'RESCHEDULED')
 		FROM ai_interactions interaction
 		JOIN ai_interaction_attention attention
 			ON attention.interaction_id = interaction.id
 			AND attention.user_subject = $3
-			AND attention.outcome_occurred_at = interaction.appointment_occurred_at
 			AND attention.reviewed_at IS NULL
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id::text = ANY($2::text[])
-			AND interaction.status <> 'IN_PROGRESS'
-			AND interaction.appointment_outcome IN (
-				'BOOKING', 'CANCELLATION', 'RESCHEDULE'
+			AND NOT EXISTS (
+				SELECT 1
+				FROM work_tasks task
+				WHERE task.practice_id = interaction.practice_id
+					AND task.source_call_id = interaction.source_call_id
+					AND task.state = 'OPEN'
+			)
+			AND (
+				interaction.status IN ('FAILED', 'ESCALATED')
+				OR interaction.appointment_outcome = 'PARTIAL'
 			)
 	`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
+		&page.Counts.Tasks,
 		&page.Counts.Bookings,
 		&page.Counts.Cancellations,
 		&page.Counts.Reschedules,
@@ -316,31 +328,39 @@ func (m *Module) QueryOutcomes(
 			interaction.ended_at,
 			interaction.status,
 			COALESCE(interaction.summary, ''),
+			COALESCE(interaction.appointment_action, ''),
 			interaction.appointment_outcome,
 			interaction.appointment_occurred_at,
+			attention.outcome_occurred_at,
 			COALESCE(interaction.old_appointment_id, ''),
 			COALESCE(interaction.new_appointment_id, '')
 		FROM ai_interactions interaction
 		JOIN ai_interaction_attention attention
 			ON attention.interaction_id = interaction.id
 			AND attention.user_subject = $3
-			AND attention.outcome_occurred_at = interaction.appointment_occurred_at
 			AND attention.reviewed_at IS NULL
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
 			AND location.id = interaction.location_id
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id::text = ANY($2::text[])
-			AND interaction.status <> 'IN_PROGRESS'
-			AND interaction.appointment_outcome IN (
-				'BOOKING', 'CANCELLATION', 'RESCHEDULE'
+			AND NOT EXISTS (
+				SELECT 1
+				FROM work_tasks task
+				WHERE task.practice_id = interaction.practice_id
+					AND task.source_call_id = interaction.source_call_id
+					AND task.state = 'OPEN'
+			)
+			AND (
+				interaction.status IN ('FAILED', 'ESCALATED')
+				OR interaction.appointment_outcome = 'PARTIAL'
 			)
 			AND (
 				NOT $4::boolean
-				OR (interaction.appointment_occurred_at, interaction.id) <
+				OR (attention.outcome_occurred_at, interaction.id) <
 					($5::timestamptz, $6::uuid)
 			)
-		ORDER BY interaction.appointment_occurred_at DESC, interaction.id DESC
+		ORDER BY attention.outcome_occurred_at DESC, interaction.id DESC
 		LIMIT $7
 	`, command.PracticeID, locationIDs, command.Identity.Subject,
 		cursor.Present, nullableOutcomeCursorTime(cursor),
@@ -362,8 +382,10 @@ func (m *Module) QueryOutcomes(
 			&item.EndedAt,
 			&item.Status,
 			&item.Summary,
+			&item.AppointmentAction,
 			&item.AppointmentOutcome,
 			&item.AppointmentOccurredAt,
+			&item.AttentionOccurredAt,
 			&item.OldAppointmentID,
 			&item.NewAppointmentID,
 		); err != nil {
@@ -397,11 +419,15 @@ type outcomeCursor struct {
 }
 
 func encodeOutcomeCursor(item OutcomeItem) (string, error) {
-	if item.AppointmentOccurredAt == nil || uuid.Validate(item.ID) != nil {
+	occurredAt := item.AttentionOccurredAt
+	if occurredAt.IsZero() && item.AppointmentOccurredAt != nil {
+		occurredAt = *item.AppointmentOccurredAt
+	}
+	if occurredAt.IsZero() || uuid.Validate(item.ID) != nil {
 		return "", fmt.Errorf("encode AI outcome cursor: invalid outcome")
 	}
 	encoded, err := json.Marshal(outcomeCursor{
-		OccurredAt: *item.AppointmentOccurredAt,
+		OccurredAt: occurredAt,
 		ID:         item.ID,
 	})
 	if err != nil {
@@ -441,6 +467,16 @@ func nullableOutcomeCursorID(cursor outcomeCursor) any {
 	return cursor.ID
 }
 
+func outcomeAttentionAt(stored Interaction) time.Time {
+	if stored.AppointmentOccurredAt != nil {
+		return *stored.AppointmentOccurredAt
+	}
+	if stored.EndedAt != nil {
+		return *stored.EndedAt
+	}
+	return stored.StartedAt
+}
+
 func (m *Module) ReviewOutcome(
 	ctx context.Context,
 	identity access.Identity,
@@ -478,9 +514,7 @@ func (m *Module) ReviewOutcome(
 	if err != nil {
 		return ErrDenied
 	}
-	if stored.AppointmentOccurredAt == nil {
-		return ErrDenied
-	}
+	attentionAt := outcomeAttentionAt(stored)
 	reviewedAt := m.now()
 	tag, err := tx.Exec(ctx, `
 		UPDATE ai_interaction_attention
@@ -489,7 +523,7 @@ func (m *Module) ReviewOutcome(
 			AND user_subject = $2
 			AND outcome_occurred_at = $3
 			AND reviewed_at IS NULL
-	`, stored.ID, identity.Subject, stored.AppointmentOccurredAt, reviewedAt)
+	`, stored.ID, identity.Subject, attentionAt, reviewedAt)
 	if err != nil {
 		return fmt.Errorf("review AI Interaction outcome: %w", err)
 	}
@@ -525,6 +559,7 @@ func (m *Module) ReviewOutcome(
 type Module struct {
 	pool   *pgxpool.Pool
 	access *access.Module
+	work   *work.Module
 	now    func() time.Time
 }
 
@@ -536,7 +571,11 @@ func New(
 	if now == nil {
 		now = time.Now
 	}
-	return &Module{pool: pool, access: accessModule, now: now}
+	module := &Module{pool: pool, access: accessModule, now: now}
+	if pool != nil && accessModule != nil {
+		module.work = work.New(pool, accessModule, now)
+	}
+	return module
 }
 
 func (m *Module) Ingest(

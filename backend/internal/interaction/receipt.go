@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -352,11 +353,30 @@ func (m *Module) projectReceipt(
 	if err := save(ctx, tx, current, found); err != nil {
 		return Interaction{}, "", err
 	}
-	attentionSeeded, err := seedOutcomeAttention(ctx, tx, current, projectedAt)
+	attentionChanged, err := syncOutcomeAttention(ctx, tx, current, projectedAt)
 	if err != nil {
 		return Interaction{}, "", err
 	}
-	if attentionSeeded {
+	recoveryCompleted := int64(0)
+	if current.AppointmentOccurredAt != nil &&
+		current.AppointmentOutcome == OutcomeBooking &&
+		resultStatus(current.BookingResult) == "booked" {
+		recoveryCompleted, err = m.work.ResolveRecoveryTasks(
+			ctx,
+			tx,
+			work.ResolveRecoveryTasksCommand{
+				PracticeID: current.PracticeID,
+				Phone:      current.Phone,
+				OccurredAt: *current.AppointmentOccurredAt,
+				Kind:       work.RecoveryResolutionBooking,
+				SourceID:   current.ID,
+			},
+		)
+		if err != nil {
+			return Interaction{}, "", err
+		}
+	}
+	if attentionChanged || recoveryCompleted > 0 {
 		if _, err := m.access.RecordWorkspaceChange(
 			ctx,
 			tx,
@@ -382,17 +402,27 @@ func (m *Module) projectReceipt(
 	return current, status, nil
 }
 
-func seedOutcomeAttention(
+func syncOutcomeAttention(
 	ctx context.Context,
 	tx pgx.Tx,
 	interaction Interaction,
 	createdAt time.Time,
 ) (bool, error) {
-	if interaction.AppointmentOccurredAt == nil ||
-		(interaction.AppointmentOutcome != OutcomeBooking &&
-			interaction.AppointmentOutcome != OutcomeCancellation &&
-			interaction.AppointmentOutcome != OutcomeReschedule) {
-		return false, nil
+	actionable := interaction.Status == CallFailed ||
+		interaction.Status == CallEscalated ||
+		interaction.AppointmentOutcome == OutcomePartial
+	attentionAt := outcomeAttentionAt(interaction)
+	removed, err := tx.Exec(ctx, `
+		DELETE FROM ai_interaction_attention
+		WHERE interaction_id = $1
+			AND reviewed_at IS NULL
+			AND (NOT $2 OR outcome_occurred_at <> $3)
+	`, interaction.ID, actionable, attentionAt)
+	if err != nil {
+		return false, fmt.Errorf("clear obsolete AI Interaction attention: %w", err)
+	}
+	if !actionable {
+		return removed.RowsAffected() > 0, nil
 	}
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO ai_interaction_attention (
@@ -420,12 +450,12 @@ func seedOutcomeAttention(
 			)
 		ON CONFLICT (interaction_id, user_subject, outcome_occurred_at)
 		DO NOTHING
-	`, interaction.ID, interaction.AppointmentOccurredAt, createdAt,
+	`, interaction.ID, attentionAt, createdAt,
 		interaction.PracticeID, interaction.LocationID)
 	if err != nil {
 		return false, fmt.Errorf("seed AI Interaction attention: %w", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	return removed.RowsAffected() > 0 || tag.RowsAffected() > 0, nil
 }
 
 func (m *Module) quarantineReceipt(

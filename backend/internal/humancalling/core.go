@@ -321,6 +321,7 @@ type CallHistoryItem struct {
 	LocationName    string
 	AnsweredByEmail string
 	TransferReason  string
+	SourceCallID    string
 	Outcome         CallState
 	Current         bool
 	Originating     bool

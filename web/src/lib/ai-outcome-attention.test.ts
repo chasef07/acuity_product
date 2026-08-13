@@ -18,12 +18,16 @@ test("refreshing outcomes preserves loaded older pages without duplicates", () =
 })
 
 test("reviewing an outcome decrements only its authoritative folder total", () => {
-  const counts = { bookings: 2, cancellations: 1, reschedules: 1 }
+  const counts = { tasks: 2, bookings: 2, cancellations: 1, reschedules: 1 }
 
-  assert.deepEqual(decrementOutcomeCount(counts, "BOOKING"), {
+  assert.deepEqual(decrementOutcomeCount(counts, "BOOKED"), {
+    tasks: 2,
     bookings: 1,
     cancellations: 1,
     reschedules: 1,
   })
-  assert.deepEqual(decrementOutcomeCount(counts, "NONE"), counts)
+  assert.deepEqual(decrementOutcomeCount(counts), {
+    ...counts,
+    tasks: 1,
+  })
 })

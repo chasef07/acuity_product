@@ -1,4 +1,5 @@
 export type OutcomeCounts = {
+  tasks: number
   bookings: number
   cancellations: number
   reschedules: number
@@ -22,19 +23,19 @@ export function appendOutcomePage<T extends { id: string }>(
 
 export function decrementOutcomeCount(
   counts: OutcomeCounts,
-  outcome: string,
+  action?: string,
 ): OutcomeCounts {
-  switch (outcome) {
-    case "BOOKING":
+  switch (action) {
+    case "BOOKED":
       return { ...counts, bookings: Math.max(0, counts.bookings - 1) }
-    case "CANCELLATION":
+    case "CANCELLED":
       return {
         ...counts,
         cancellations: Math.max(0, counts.cancellations - 1),
       }
-    case "RESCHEDULE":
+    case "RESCHEDULED":
       return { ...counts, reschedules: Math.max(0, counts.reschedules - 1) }
     default:
-      return counts
+      return { ...counts, tasks: Math.max(0, counts.tasks - 1) }
   }
 }

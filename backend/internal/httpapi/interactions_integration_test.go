@@ -741,19 +741,57 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		Items []struct {
 			ID                 string `json:"id"`
 			SourceCallID       string `json:"sourceCallId"`
+			AppointmentAction  string `json:"appointmentAction"`
 			AppointmentOutcome string `json:"appointmentOutcome"`
 		} `json:"items"`
 	}
 	decode(t, outcomes, &attention)
-	foundReschedule, foundAfterHoursBooking := false, false
-	for _, item := range attention.Items {
-		foundReschedule = foundReschedule ||
-			(item.ID == first.InteractionID && item.AppointmentOutcome == "RESCHEDULE")
-		foundAfterHoursBooking = foundAfterHoursBooking ||
-			(item.SourceCallID == "abita-booking-63" && item.AppointmentOutcome == "BOOKING")
-	}
-	if len(attention.Items) != 3 || !foundReschedule || !foundAfterHoursBooking {
+	if len(attention.Items) != 1 ||
+		attention.Items[0].SourceCallID != "abita-partial-63" ||
+		attention.Items[0].AppointmentAction != "RESCHEDULED" ||
+		attention.Items[0].AppointmentOutcome != "PARTIAL" {
 		t.Fatalf("AI Interaction attention = %#v", attention)
+	}
+	partialInteractionID := attention.Items[0].ID
+	partialTask, _, err := workModule.CreateAITask(
+		context.Background(),
+		work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject: "attention-task-fixture", PracticeID: practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+			},
+			OfficeKey: "spring-hill", OfficePhone: "+17275919997",
+			SourceCallID: "abita-partial-63", IdempotencyKey: "partial-action-task",
+			Phone: "+17275550203", Summary: "Finish appointment change",
+			Message:  "The appointment change needs staff follow-up.",
+			Category: work.TaskCategoryAppointments, Urgency: work.TaskUrgencyNormal,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create partial outcome Task: %v", err)
+	}
+	coveredByTask := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", outcomeQueryBody,
+	)
+	var coveredAttention struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	decode(t, coveredByTask, &coveredAttention)
+	if len(coveredAttention.Items) != 0 {
+		t.Fatalf("AI outcome duplicated by open Task = %#v", coveredAttention)
+	}
+	if _, err := workModule.CompleteTask(
+		context.Background(),
+		work.CompleteTaskCommand{
+			Identity: admin, TaskID: partialTask.ID, ExpectedVersion: partialTask.Version,
+		},
+	); err != nil {
+		t.Fatalf("complete partial outcome fixture Task: %v", err)
 	}
 
 	firstPageBody, _ := json.Marshal(map[string]any{
@@ -775,51 +813,19 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 		NextCursor string `json:"nextCursor"`
 		Counts     struct {
+			Tasks         int `json:"tasks"`
 			Bookings      int `json:"bookings"`
 			Cancellations int `json:"cancellations"`
 			Reschedules   int `json:"reschedules"`
 		} `json:"counts"`
 	}
 	decode(t, firstPageResponse, &firstPage)
-	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" ||
-		firstPage.Counts.Bookings != 1 ||
-		firstPage.Counts.Cancellations != 1 ||
+	if len(firstPage.Items) != 1 || firstPage.NextCursor != "" ||
+		firstPage.Counts.Tasks != 0 ||
+		firstPage.Counts.Bookings != 0 ||
+		firstPage.Counts.Cancellations != 0 ||
 		firstPage.Counts.Reschedules != 1 {
 		t.Fatalf("first AI outcome page = %#v", firstPage)
-	}
-	secondPageBody, _ := json.Marshal(map[string]any{
-		"practiceId": practiceID,
-		"cursor":     firstPage.NextCursor,
-		"limit":      2,
-	})
-	secondPageResponse := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", secondPageBody,
-	)
-	if secondPageResponse.StatusCode != http.StatusOK {
-		t.Fatalf("query second AI outcome page status = %d, body = %s",
-			secondPageResponse.StatusCode, readBody(t, secondPageResponse))
-	}
-	var secondPage struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-		NextCursor string `json:"nextCursor"`
-		Counts     struct {
-			Bookings      int `json:"bookings"`
-			Cancellations int `json:"cancellations"`
-			Reschedules   int `json:"reschedules"`
-		} `json:"counts"`
-	}
-	decode(t, secondPageResponse, &secondPage)
-	if len(secondPage.Items) != 1 || secondPage.NextCursor != "" ||
-		secondPage.Counts.Bookings != 1 ||
-		secondPage.Counts.Cancellations != 1 ||
-		secondPage.Counts.Reschedules != 1 ||
-		secondPage.Items[0].ID == firstPage.Items[0].ID ||
-		secondPage.Items[0].ID == firstPage.Items[1].ID {
-		t.Fatalf("second AI outcome page = %#v after %#v", secondPage, firstPage)
 	}
 
 	staffOutcomes := request(
@@ -837,13 +843,13 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 	}
 	decode(t, staffOutcomes, &staffAttention)
-	if len(staffAttention.Items) != 3 {
+	if len(staffAttention.Items) != 1 {
 		t.Fatalf("staff AI Interaction attention = %#v", staffAttention)
 	}
 
 	reviewed := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/"+first.InteractionID+"/review",
+		server.URL+"/v1/ai/interactions/"+partialInteractionID+"/review",
 		"admin-token", nil,
 	)
 	if reviewed.StatusCode != http.StatusNoContent {
@@ -876,15 +882,17 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"items"`
 		Counts struct {
+			Tasks         int `json:"tasks"`
 			Bookings      int `json:"bookings"`
 			Cancellations int `json:"cancellations"`
 			Reschedules   int `json:"reschedules"`
 		} `json:"counts"`
 	}
 	decode(t, adminAfterReview, &remainingAttention)
-	if len(remainingAttention.Items) != 2 ||
-		remainingAttention.Counts.Bookings != 1 ||
-		remainingAttention.Counts.Cancellations != 1 ||
+	if len(remainingAttention.Items) != 0 ||
+		remainingAttention.Counts.Tasks != 0 ||
+		remainingAttention.Counts.Bookings != 0 ||
+		remainingAttention.Counts.Cancellations != 0 ||
 		remainingAttention.Counts.Reschedules != 0 {
 		t.Fatalf("reviewed AI Interaction attention = %#v", remainingAttention)
 	}
@@ -904,14 +912,14 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"items"`
 	}
 	decode(t, staffStillUnread, &staffAttentionAfterAdminReview)
-	if len(staffAttentionAfterAdminReview.Items) != 3 {
+	if len(staffAttentionAfterAdminReview.Items) != 1 {
 		t.Fatalf("staff attention changed after admin review = %#v",
 			staffAttentionAfterAdminReview)
 	}
 
 	deniedReview := request(
 		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/"+first.InteractionID+"/review",
+		server.URL+"/v1/ai/interactions/"+partialInteractionID+"/review",
 		"hidden-token", nil,
 	)
 	if deniedReview.StatusCode != http.StatusForbidden {

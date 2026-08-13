@@ -2869,6 +2869,8 @@ components:
           $ref: "#/components/schemas/AIInteractionCallStatus"
         summary:
           type: string
+        appointmentAction:
+          $ref: "#/components/schemas/AIAppointmentAction"
         appointmentOutcome:
           $ref: "#/components/schemas/AIAppointmentOutcome"
         appointment:
@@ -2968,6 +2970,8 @@ components:
           $ref: "#/components/schemas/AIInteractionCallStatus"
         summary:
           type: string
+        appointmentAction:
+          $ref: "#/components/schemas/AIAppointmentAction"
         appointmentOutcome:
           $ref: "#/components/schemas/AIAppointmentOutcome"
         appointmentOccurredAt:
@@ -2993,8 +2997,11 @@ components:
     AIOutcomeCounts:
       type: object
       additionalProperties: false
-      required: [bookings, cancellations, reschedules]
+      required: [tasks, bookings, cancellations, reschedules]
       properties:
+        tasks:
+          type: integer
+          minimum: 0
         bookings:
           type: integer
           minimum: 0
@@ -3448,6 +3455,7 @@ components:
             - latestDirection
             - latestDelivery
             - latestActivity
+            - openTaskCount
             - unread
           properties:
             preview:
@@ -3459,6 +3467,9 @@ components:
             latestActivity:
               type: string
               format: date-time
+            openTaskCount:
+              type: integer
+              minimum: 0
             unread:
               type: boolean
     MessageThreadPage:
@@ -3709,6 +3720,9 @@ components:
             - TASK_COMPLETED
             - TASK_REOPENED
             - INTERACTION_ATTACHED
+            - TASK_AUTO_COMPLETED_INBOUND_CALL
+            - TASK_AUTO_COMPLETED_BOOKING
+            - TASK_AUTO_COMPLETED_DUPLICATE
         message:
           $ref: "#/components/schemas/Message"
         task:
@@ -3772,6 +3786,8 @@ components:
         answeredByEmail:
           type: string
         transferReason:
+          type: string
+        sourceCallId:
           type: string
         outcome:
           type: string

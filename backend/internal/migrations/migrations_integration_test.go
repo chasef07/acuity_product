@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 34 {
-		t.Fatalf("migration count = %d, want 34", migrationCount)
+	if migrationCount != 35 {
+		t.Fatalf("migration count = %d, want 35", migrationCount)
 	}
 	var staleCommandIndex string
 	if err := pool.QueryRow(ctx, `
@@ -76,6 +76,7 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_outbound_voice_fallbacks",
 		"human_calling_voicemails",
 		"work_task_interactions",
+		"work_recovery_resolution_checkpoints",
 	} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {
@@ -533,7 +534,7 @@ func TestAIInteractionAttentionMigrationBackfillsAuthorizedOutcomes(t *testing.T
 	`).Scan(&allAttention, &selectedAttention, &partialAttention); err != nil {
 		t.Fatalf("read migrated AI Interaction attention: %v", err)
 	}
-	if allAttention != 2 || selectedAttention != 1 || partialAttention != 0 {
+	if allAttention != 1 || selectedAttention != 1 || partialAttention != 2 {
 		t.Fatalf(
 			"migrated AI Interaction attention = all:%d selected:%d partial:%d",
 			allAttention, selectedAttention, partialAttention,
