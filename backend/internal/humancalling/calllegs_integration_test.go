@@ -745,10 +745,11 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	`, call.ID).Scan(&terminal); err != nil || terminal != "ENDED" {
 		t.Fatalf("outbound reordered Bridge terminal = %s, err = %v", terminal, err)
 	}
-	if _, err := calling.RequestHangup(
+	terminalCall, err := calling.RequestHangup(
 		context.Background(), staff[1], "outbound-browser-2", call.ID,
-	); !errors.Is(err, humancalling.ErrConflict) {
-		t.Fatalf("non-owner Hangup error = %v", err)
+	)
+	if err != nil || terminalCall.State != humancalling.CallNeedsDisposition {
+		t.Fatalf("authorized terminal Hangup = %#v, %v", terminalCall, err)
 	}
 }
 

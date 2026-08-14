@@ -2,7 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  callIsSettled,
   dispositionWindowIsOpen,
+  hangupFailure,
   providerOutcomeLabel,
 } from "./outcomes.ts"
 
@@ -34,4 +36,25 @@ test("disposition popup closes at its authoritative deadline", () => {
     dispositionWindowIsOpen(deadline, Date.parse("2026-08-09T18:40:30Z")),
     false,
   )
+})
+
+test("Hang up conflicts reconcile authoritative terminal Call state", () => {
+  assert.equal(
+    hangupFailure({
+      status: 409,
+      code: "CALL_CONFLICT",
+    }),
+    "conflict",
+  )
+  assert.equal(callIsSettled("NEEDS_DISPOSITION"), true)
+  assert.equal(callIsSettled("RESOLVED"), true)
+  assert.equal(callIsSettled("CONNECTED"), false)
+})
+
+test("Hang up connection copy is limited to transport and unavailable failures", () => {
+  assert.equal(hangupFailure(undefined), "retry")
+  assert.equal(hangupFailure({ status: 503, code: "UNAVAILABLE" }), "retry")
+  assert.equal(hangupFailure({ status: 401, code: "UNAUTHORIZED" }), "authentication")
+  assert.equal(hangupFailure({ status: 403, code: "ACCESS_DENIED" }), "authentication")
+  assert.equal(hangupFailure({ status: 400, code: "INVALID_REQUEST" }), "request")
 })

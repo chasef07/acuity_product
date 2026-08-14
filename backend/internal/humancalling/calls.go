@@ -328,16 +328,39 @@ func (m *Module) RequestHangup(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var practiceID, locationID string
+	var hangupSatisfied bool
 	if err := tx.QueryRow(ctx, `
-		SELECT practice_id::text, location_id::text FROM human_calling_calls
-		WHERE id = $1 FOR UPDATE
-	`, callID).Scan(&practiceID, &locationID); err != nil {
+		SELECT call.practice_id::text, call.location_id::text,
+			call.terminal_outcome IS NOT NULL OR EXISTS (
+				SELECT 1 FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id
+					AND timeline.kind = 'call.hangup.requested'
+			) OR (
+				EXISTS (
+					SELECT 1 FROM human_calling_call_legs ending
+					WHERE ending.call_id = call.id AND ending.state = 'ENDING'
+				) AND NOT EXISTS (
+					SELECT 1 FROM human_calling_call_legs active
+					WHERE active.call_id = call.id
+						AND active.state NOT IN ('ENDING', 'ENDED', 'FAILED')
+				)
+			)
+		FROM human_calling_calls call
+		WHERE call.id = $1
+		FOR UPDATE OF call
+	`, callID).Scan(&practiceID, &locationID, &hangupSatisfied); err != nil {
 		return Call{}, ErrDenied
 	}
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
 		return Call{}, ErrDenied
+	}
+	if hangupSatisfied {
+		if err := tx.Commit(ctx); err != nil {
+			return Call{}, fmt.Errorf("commit idempotent Hangup: %w", err)
+		}
+		return m.ReadCall(ctx, identity, callID)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
