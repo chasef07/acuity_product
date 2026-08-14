@@ -168,6 +168,24 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		}
 		return tx.Commit(ctx)
 	}
+	if state, ok := parseCallLegClientState(fact.ClientState); ok &&
+		state.Role == "CALLER" {
+		var terminal bool
+		err := tx.QueryRow(ctx, `
+			SELECT call.terminal_outcome IS NOT NULL
+				OR leg.state IN ('ENDING', 'ENDED', 'FAILED')
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE call.id = $1 AND leg.id = $2 AND leg.role = 'CALLER'
+			FOR UPDATE OF call, leg
+		`, state.CallID, state.CallLegID).Scan(&terminal)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("correlate caller answer client state: %w", err)
+		}
+		if terminal {
+			return ErrConflict
+		}
+	}
 
 	var callID, callerLegID, practiceID, locationID, terminalOutcome, callerState string
 	if err := tx.QueryRow(ctx, `
