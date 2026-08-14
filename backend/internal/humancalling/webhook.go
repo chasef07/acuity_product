@@ -490,8 +490,10 @@ func (m *Module) replayProviderReceipt(
 		return ReceiptApplied, ""
 	case errors.Is(err, errRelatedFactPending):
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, errTerminalOrObsoleteProviderFact):
 		return ReceiptFailed, "TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
+	case errors.Is(err, ErrConflict):
+		return ReceiptPending, "PROJECTION_RETRY"
 	default:
 		return ReceiptPending, "PROJECTION_RETRY"
 	}

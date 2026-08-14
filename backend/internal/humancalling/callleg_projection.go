@@ -52,6 +52,33 @@ func parseCallLegClientState(value string) (callLegClientState, bool) {
 	return state, true
 }
 
+func (m *Module) terminalCleanupFailedCallLeg(
+	ctx context.Context,
+	state callLegClientState,
+) (bool, error) {
+	var obsolete bool
+	if err := m.database.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE call.id = $1
+				AND leg.id = $2
+				AND leg.role = 'CALLER'
+				AND call.terminal_outcome IS NOT NULL
+				AND leg.state = 'FAILED'
+				AND leg.error_code = 'CALL_TERMINATED_BEFORE_PROVIDER_START'
+				AND leg.provider_connection_id IS NULL
+				AND leg.provider_call_control_id IS NULL
+				AND leg.provider_call_leg_id IS NULL
+				AND leg.provider_call_session_id IS NULL
+		)
+	`, state.CallID, state.CallLegID).Scan(&obsolete); err != nil {
+		return false, fmt.Errorf("classify terminal cleanup-failed CallLeg: %w", err)
+	}
+	return obsolete, nil
+}
+
 func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 	if m.config.HandoffAdmissionClosed {
 		return ErrHandoffAdmissionClosed
@@ -1011,7 +1038,7 @@ func projectBridgeEvidence(
 			cutoff = callEndedAt
 		}
 		if cutoff == nil || occurredAt.After(*cutoff) {
-			return false, ErrConflict
+			return false, errTerminalOrObsoleteProviderFact
 		}
 	}
 	if _, err := tx.Exec(ctx, `

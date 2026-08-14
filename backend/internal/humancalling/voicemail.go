@@ -236,7 +236,7 @@ func (m *Module) applyVoicemailSpeechFact(
 		return ErrConflict
 	}
 	if terminal != "" && terminal != "VOICEMAIL" {
-		return ErrConflict
+		return errTerminalOrObsoleteProviderFact
 	}
 	if ended && fact.PlaybackStatus == "completed" {
 		if _, err := tx.Exec(ctx, `

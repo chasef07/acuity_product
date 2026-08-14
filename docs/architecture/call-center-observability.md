@@ -45,9 +45,10 @@ They must never contain a webhook `raw_body`.
 
 The receipt lane may derive observations only from bounded state plus numeric
 timing/count fields. Its currently safe inputs are `state`,
-`projection_attempts`, `last_attempt_at`, `next_attempt_at`, `quarantined_at`,
-`duplicate_count`, `event_type`, `received_at`, and whether `call_id` is set.
-Neither the actual `call_id` nor `event_type` should become a metric label.
+`projection_attempts`, `projection_error_code`, `last_attempt_at`,
+`next_attempt_at`, `quarantined_at`, `duplicate_count`, `event_type`,
+`received_at`, and whether `call_id` is set. Neither the actual `call_id`,
+`event_type`, nor `projection_error_code` should become a metric label.
 
 ## Initial alerts
 

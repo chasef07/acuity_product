@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -92,6 +93,12 @@ var (
 	ErrIneligible     = errors.New("user is not currently call eligible")
 	ErrOccupied       = errors.New("user has an occupying Call")
 	ErrInvalidHandoff = errors.New("invalid handoff")
+	// errTerminalOrObsoleteProviderFact is returned only when persisted Call
+	// evidence proves that a provider fact cannot become applicable later.
+	errTerminalOrObsoleteProviderFact = fmt.Errorf(
+		"%w: terminal or obsolete provider fact",
+		ErrConflict,
+	)
 	// errRelatedFactPending is reserved for a missing relation that an earlier
 	// out-of-order provider lifecycle receipt can still create.
 	errRelatedFactPending        = errors.New("related provider fact is pending")
@@ -470,6 +477,15 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 		}
 		if hasState && state.Role == "DESTINATION" {
 			return m.applyOutboundDestinationFact(ctx, fact, state.CallID)
+		}
+		if hasState && state.Role == "CALLER" {
+			obsolete, err := m.terminalCleanupFailedCallLeg(ctx, state)
+			if err != nil {
+				return err
+			}
+			if obsolete {
+				return errTerminalOrObsoleteProviderFact
+			}
 		}
 		return m.applyCallerAnswered(ctx, fact)
 	case FactCallBridged:
