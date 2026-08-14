@@ -22,6 +22,8 @@ type callLegClientState struct {
 	Kind      string `json:"kind,omitempty"`
 }
 
+const callLegClientStateStaffHangup = "staff_hangup"
+
 func encodeCallLegClientState(
 	callID string,
 	callLegID string,

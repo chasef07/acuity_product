@@ -1561,8 +1561,6 @@ function ActiveCallControls({
 }) {
   const [keypadOpen, setKeypadOpen] = useState(false)
   const ended = call.state === "NEEDS_DISPOSITION"
-  const terminal =
-    call.state === "RESOLVED" || call.state === "FOLLOW_UP_REQUIRED"
   const keypadEligible =
     !controlsPending &&
     owner &&
@@ -1676,7 +1674,8 @@ function ActiveCallControls({
       )}
       {showClosedState && (
         <>
-          {terminal && (
+          {(call.state === "RESOLVED" ||
+            call.state === "FOLLOW_UP_REQUIRED") && (
             <span className="text-xs text-muted-foreground">
               Disposition saved
             </span>

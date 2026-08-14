@@ -1891,7 +1891,7 @@ func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {
 	}
 }
 
-func TestCallingHangupReplaysCommittedIntentButRejectsActiveSessionMismatch(t *testing.T) {
+func TestCallingHangupReplaysCommittedCommandButRejectsMissingIntent(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 13, 0, 0, 0, time.UTC)
 	fixture := newCallingHangupHTTPFixture(
 		t,
@@ -1962,37 +1962,66 @@ func TestCallingHangupReplaysCommittedIntentButRejectsActiveSessionMismatch(t *t
 	}
 	_ = first.Body.Close()
 	commandsAfterFirst := fixture.hangupCommandCount(t, callID)
+	if commandsAfterFirst != 2 {
+		t.Fatalf("first Hangup commands = %d", commandsAfterFirst)
+	}
 	if _, err := fixture.pool.Exec(context.Background(), `
-		DELETE FROM human_calling_timeline
-		WHERE call_id = $1 AND kind = 'call.hangup.requested'
-	`, callID); err != nil {
-		t.Fatalf("remove replayed Hangup timeline fixture: %v", err)
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'PROVIDER_REJECTED', updated_at = $2
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail committed Hangup commands: %v", err)
 	}
 	second := fixture.postHangup(t, callID, fixture.sessionID)
 	if second.StatusCode != http.StatusAccepted {
 		t.Fatalf("replayed Hangup status = %d, body = %s", second.StatusCode, readBody(t, second))
 	}
 	_ = second.Body.Close()
-	var commandsAfterSecond, endingLegs, requestedEvents int
+	var commandsAfterReplay, failedCommands, endingLegs, requestedEvents int
 	if err := fixture.pool.QueryRow(context.Background(), `
 		SELECT
 			(SELECT count(*) FROM human_calling_provider_commands
 				WHERE call_id = $1 AND action = 'HANGUP_LEG'),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'HANGUP_LEG' AND state = 'FAILED'),
 			(SELECT count(*) FROM human_calling_call_legs
 				WHERE call_id = $1 AND state = 'ENDING'),
 			(SELECT count(*) FROM human_calling_timeline
 				WHERE call_id = $1 AND kind = 'call.hangup.requested')
-	`, callID).Scan(&commandsAfterSecond, &endingLegs, &requestedEvents); err != nil {
+	`, callID).Scan(
+		&commandsAfterReplay,
+		&failedCommands,
+		&endingLegs,
+		&requestedEvents,
+	); err != nil {
 		t.Fatalf("read replayed Hangup state: %v", err)
 	}
-	if commandsAfterFirst != 2 || commandsAfterSecond != commandsAfterFirst ||
-		endingLegs != 2 || requestedEvents != 0 {
+	if commandsAfterReplay != commandsAfterFirst || failedCommands != 2 ||
+		endingLegs != 2 || requestedEvents != 1 {
 		t.Fatalf(
-			"replayed Hangup = commands:%d->%d ending:%d events:%d",
+			"replayed Hangup = commands:%d->%d failed:%d ending:%d events:%d",
 			commandsAfterFirst,
-			commandsAfterSecond,
+			commandsAfterReplay,
+			failedCommands,
 			endingLegs,
 			requestedEvents,
+		)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID); err != nil {
+		t.Fatalf("remove committed Hangup command evidence: %v", err)
+	}
+	missing := fixture.postHangup(t, callID, fixture.sessionID)
+	var missingEnvelope api.ErrorEnvelope
+	decode(t, missing, &missingEnvelope)
+	if missing.StatusCode != http.StatusConflict ||
+		missingEnvelope.Error.Code != "CALL_CONFLICT" {
+		t.Fatalf(
+			"missing Hangup intent = status:%d body:%#v",
+			missing.StatusCode,
+			missingEnvelope,
 		)
 	}
 }
