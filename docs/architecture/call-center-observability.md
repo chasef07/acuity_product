@@ -23,7 +23,7 @@ numeric fields.
 | Observation | Numeric fields | Bounded fields | Owner |
 | --- | --- | --- | --- |
 | `acuity_call_center_webhook_acknowledgement` | `seconds` | `outcome` | Provider ingress |
-| `acuity_call_center_receipt_queue` | `depth`, `oldest_age_seconds`, `quarantined_depth` | None | Receipt worker |
+| `acuity_call_center_receipt_queue` | `depth`, `oldest_age_seconds`, `projection_retry_depth`, `related_fact_depth`, `quarantined_depth` | None | Receipt worker |
 | `acuity_call_center_receipt_processing` | `queue_seconds`, `processing_seconds` | `outcome` | Receipt worker |
 | `acuity_call_center_provider_command` | `queue_seconds`, `duration_seconds` | `action`, `outcome` | Command worker |
 | `acuity_call_center_database_pool_acquire` | `seconds` | `outcome` | PostgreSQL adapter |
@@ -55,6 +55,9 @@ Neither the actual `call_id` nor `event_type` should become a metric label.
   `unavailable` acknowledgement occurs.
 - Alert if oldest receipt age exceeds 30 seconds, receipt depth rises for five
   minutes, or the periodically sampled durable quarantine depth is above zero.
+  Split the sampled queue into transient `projection_retry_depth` and
+  out-of-order `related_fact_depth`; processing outcomes separately identify
+  terminal `obsolete` evidence without turning provider identifiers into labels.
   The quarantine incident remains active until audited requeue clears the
   durable state.
 - Alert if Dial queue p95 exceeds one second, provider-command ambiguity rises,

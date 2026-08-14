@@ -184,7 +184,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		&callID, &callerLegID, &practiceID, &locationID, &terminalOutcome, &callerState,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConflict
+			return errRelatedFactPending
 		}
 		return fmt.Errorf("correlate caller answer CallLeg: %w", err)
 	}
@@ -969,7 +969,10 @@ func (m *Module) correlateBridgeFact(
 	`, fact.CallControlID, fact.CallLegID, fact.CallSessionID).Scan(
 		&callID, &callLegID, &role, &direction,
 	); err != nil {
-		return ProviderFact{}, ErrConflict
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProviderFact{}, errRelatedFactPending
+		}
+		return ProviderFact{}, err
 	}
 	kind := "bridge"
 	if direction == string(CallOutbound) && role == "STAFF" {

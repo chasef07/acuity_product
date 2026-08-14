@@ -443,7 +443,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("record provider receipt projection: %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		m.recordReceiptProcessed(state, receivedAt, now, completedAt)
+		m.recordReceiptProcessed(state, errorCode, receivedAt, now, completedAt)
 	}
 	return true, nil
 }
@@ -466,6 +466,9 @@ func (m *Module) replayProviderReceipt(
 		if err == nil {
 			err = m.attachReceiptCall(ctx, eventID, fact)
 		}
+		if err == nil {
+			err = m.wakeRelatedReceipts(ctx, eventID, fact)
+		}
 	}
 	if errors.Is(err, ErrInvalidHandoff) {
 		if err := m.rememberRejectedProviderLeg(ctx, fact); err != nil {
@@ -485,11 +488,56 @@ func (m *Module) replayProviderReceipt(
 	switch {
 	case err == nil:
 		return ReceiptApplied, ""
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, errRelatedFactPending):
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
+	case errors.Is(err, ErrConflict):
+		return ReceiptFailed, "TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
 	default:
 		return ReceiptPending, "PROJECTION_RETRY"
 	}
+}
+
+// wakeRelatedReceipts brings only exact Call or provider-leg matches forward;
+// the existing retry policy still owns every unresolved receipt's 24-hour bound.
+func (m *Module) wakeRelatedReceipts(
+	ctx context.Context,
+	eventID string,
+	fact ProviderFact,
+) error {
+	_, err := m.database.Exec(ctx, `
+		WITH current_receipt AS (
+			SELECT call_id
+			FROM human_calling_provider_receipts
+			WHERE event_id = $1 AND call_id IS NOT NULL
+		)
+		UPDATE human_calling_provider_receipts related
+		SET
+			call_id = COALESCE(related.call_id, current_receipt.call_id),
+			next_attempt_at = LEAST(related.next_attempt_at, $2)
+		FROM current_receipt
+		WHERE related.state = 'PENDING'
+			AND related.projection_error_code IN (
+				'WAITING_FOR_RELATED_FACT',
+				'WAITING_FOR_RELATED_FACT_SLOW_RETRY'
+			)
+			AND (
+				related.call_id = current_receipt.call_id
+				OR (
+					related.call_id IS NULL
+					AND $3 <> '' AND $4 <> '' AND $5 <> ''
+					AND convert_from(related.raw_body, 'UTF8')::jsonb
+						#>> '{data,payload,call_control_id}' = $3
+					AND convert_from(related.raw_body, 'UTF8')::jsonb
+						#>> '{data,payload,call_leg_id}' = $4
+					AND convert_from(related.raw_body, 'UTF8')::jsonb
+						#>> '{data,payload,call_session_id}' = $5
+				)
+			)
+	`, eventID, m.now(), fact.CallControlID, fact.CallLegID, fact.CallSessionID)
+	if err != nil {
+		return fmt.Errorf("wake related provider receipts: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) rememberRejectedProviderLeg(

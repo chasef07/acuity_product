@@ -85,13 +85,16 @@ func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {
 }
 
 var (
-	ErrDenied                    = errors.New("human calling access denied")
-	ErrInvalidInput              = errors.New("invalid human calling input")
-	ErrConflict                  = errors.New("human calling transition conflict")
-	ErrExpired                   = errors.New("human calling deadline expired")
-	ErrIneligible                = errors.New("user is not currently call eligible")
-	ErrOccupied                  = errors.New("user has an occupying Call")
-	ErrInvalidHandoff            = errors.New("invalid handoff")
+	ErrDenied         = errors.New("human calling access denied")
+	ErrInvalidInput   = errors.New("invalid human calling input")
+	ErrConflict       = errors.New("human calling transition conflict")
+	ErrExpired        = errors.New("human calling deadline expired")
+	ErrIneligible     = errors.New("user is not currently call eligible")
+	ErrOccupied       = errors.New("user has an occupying Call")
+	ErrInvalidHandoff = errors.New("invalid handoff")
+	// errRelatedFactPending is reserved for a missing relation that an earlier
+	// out-of-order provider lifecycle receipt can still create.
+	errRelatedFactPending        = errors.New("related provider fact is pending")
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
 	ErrDefinitiveProviderFailure = errors.New("provider effect definitely failed")

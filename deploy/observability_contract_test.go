@@ -434,6 +434,8 @@ func expectedLogMetrics() map[string]expectedMetric {
 		"acuity_call_center_webhook_acknowledgement_seconds":      distribution("acuity_call_center_webhook_acknowledgement", "seconds"),
 		"acuity_call_center_receipt_queue_depth":                  distribution("acuity_call_center_receipt_queue", "depth"),
 		"acuity_call_center_receipt_queue_oldest_age_seconds":     distribution("acuity_call_center_receipt_queue", "oldest_age_seconds"),
+		"acuity_call_center_receipt_projection_retry_depth":       distribution("acuity_call_center_receipt_queue", "projection_retry_depth"),
+		"acuity_call_center_receipt_related_fact_depth":           distribution("acuity_call_center_receipt_queue", "related_fact_depth"),
 		"acuity_call_center_receipt_quarantine_depth":             distribution("acuity_call_center_receipt_queue", "quarantined_depth"),
 		"acuity_call_center_receipt_processing_count":             counter("acuity_call_center_receipt_processing"),
 		"acuity_call_center_receipt_queue_seconds":                distribution("acuity_call_center_receipt_processing", "queue_seconds"),
