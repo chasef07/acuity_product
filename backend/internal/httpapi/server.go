@@ -2407,7 +2407,10 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		route := availabilityRoute(r.Method, r.URL.Path)
+		route := observability.AvailabilityRoute("")
+		if server.role == "portal-api" {
+			route = availabilityRoute(r.Method, r.URL.Path)
+		}
 		if route == "" {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return

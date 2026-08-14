@@ -44,6 +44,7 @@ func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
 func TestRequestMetadataRecordsOnlyFixedCustomerJourneyRoutes(t *testing.T) {
 	var output bytes.Buffer
 	server := &Server{
+		role:   "portal-api",
 		config: Config{},
 		observer: observability.NewLogger(
 			observability.RuntimePortalAPI,
@@ -82,9 +83,34 @@ func TestRequestMetadataRecordsOnlyFixedCustomerJourneyRoutes(t *testing.T) {
 	}
 }
 
+func TestRequestMetadataDoesNotRecordPortalAvailabilityForOtherRuntimeRoles(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{
+		role: "realtime",
+		observer: observability.NewLogger(
+			observability.RuntimeRealtime,
+			"realtime-test",
+			slog.New(slog.NewJSONHandler(&output, nil)),
+		),
+	}
+	handler := server.withRequestMetadata(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	handler.ServeHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "/v1/access", nil),
+	)
+
+	if output.Len() != 0 {
+		t.Fatalf("realtime runtime emitted Portal availability: %s", output.Bytes())
+	}
+}
+
 func TestRequestMetadataRecordsCriticalRoutePanicsAsUnavailable(t *testing.T) {
 	var output bytes.Buffer
 	server := &Server{
+		role: "portal-api",
 		observer: observability.NewLogger(
 			observability.RuntimePortalAPI,
 			"portal-api-test",

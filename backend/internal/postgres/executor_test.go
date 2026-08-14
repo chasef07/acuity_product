@@ -101,9 +101,109 @@ func TestExecutorClassifiesTimeoutWhileReadingRows(t *testing.T) {
 	}
 }
 
+func TestTransactionClassifiesTimeoutWhileReadingRows(t *testing.T) {
+	var output bytes.Buffer
+	transaction := &scriptedTx{
+		query: func(ctx context.Context, _ string, _ ...any) (pgx.Rows, error) {
+			return &deadlineRows{ctx: ctx}, nil
+		},
+	}
+	pool := &scriptedPool{
+		beginTx: func(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+			return transaction, nil
+		},
+	}
+	executor, err := newExecutor(scriptedAcquirer{connection: pool}, ExecutorConfig{
+		AcquireTimeout:   10 * time.Millisecond,
+		OperationTimeout: 25 * time.Millisecond,
+		StatementTimeout: 20 * time.Millisecond,
+	}, observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"portal-api-test",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	))
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+
+	tx, err := executor.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	rows, err := tx.Query(context.Background(), "SELECT pg_sleep(1)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if rows.Next() {
+		t.Fatal("deadline rows returned a result")
+	}
+
+	entries := decodeLogEntries(t, output.Bytes())
+	if got := entries[len(entries)-1]["cause"]; got != string(CauseStatementTimeout) {
+		t.Fatalf("transaction row iteration cause = %q, want %q", got, CauseStatementTimeout)
+	}
+}
+
+func TestTransactionQueryHonorsCallerDeadline(t *testing.T) {
+	transaction := &scriptedTx{
+		query: func(ctx context.Context, _ string, _ ...any) (pgx.Rows, error) {
+			return &deadlineRows{ctx: ctx}, nil
+		},
+	}
+	pool := &scriptedPool{
+		beginTx: func(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+			return transaction, nil
+		},
+	}
+	executor, err := newExecutor(scriptedAcquirer{connection: pool}, ExecutorConfig{
+		AcquireTimeout:   10 * time.Millisecond,
+		OperationTimeout: 250 * time.Millisecond,
+		StatementTimeout: 200 * time.Millisecond,
+	}, nil)
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+	tx, err := executor.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	queryContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	rows, err := tx.Query(queryContext, "SELECT pg_sleep(1)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	started := time.Now()
+	if rows.Next() {
+		t.Fatal("deadline rows returned a result")
+	}
+	if elapsed := time.Since(started); elapsed >= 100*time.Millisecond {
+		t.Fatalf("transaction ignored caller deadline and stopped after %s", elapsed)
+	}
+	if !errors.Is(rows.Err(), context.DeadlineExceeded) {
+		t.Fatalf("rows error = %v, want deadline exceeded", rows.Err())
+	}
+}
+
+func decodeLogEntries(t *testing.T, output []byte) []map[string]any {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(output), []byte("\n"))
+	entries := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		var entry map[string]any
+		if err := json.Unmarshal(line, &entry); err != nil {
+			t.Fatalf("decode database execution metric: %v", err)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 type scriptedPool struct {
 	queryRow func(context.Context, string, ...any) pgx.Row
 	query    func(context.Context, string, ...any) (pgx.Rows, error)
+	beginTx  func(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
 
 func (pool *scriptedPool) Release() {}
@@ -129,8 +229,28 @@ func (pool *scriptedPool) QueryRow(ctx context.Context, sql string, arguments ..
 	return pool.queryRow(ctx, sql, arguments...)
 }
 
-func (pool *scriptedPool) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+func (pool *scriptedPool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
+	if pool.beginTx != nil {
+		return pool.beginTx(ctx, options)
+	}
 	return nil, errors.New("not implemented")
+}
+
+type scriptedTx struct {
+	pgx.Tx
+	query func(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func (*scriptedTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (transaction *scriptedTx) Query(
+	ctx context.Context,
+	sql string,
+	arguments ...any,
+) (pgx.Rows, error) {
+	return transaction.query(ctx, sql, arguments...)
 }
 
 type scriptedErrorRow struct{ err error }

@@ -279,7 +279,8 @@ func (executor *Executor) finishOperation(
 		return nil
 	}
 	cause := CauseOf(err)
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) && cause == CauseOther {
+	deadlineReached := errors.Is(context.Cause(ctx), context.DeadlineExceeded)
+	if deadlineReached && (cause == CauseOther || cause == CauseCanceled) {
 		cause = CauseStatementTimeout
 	}
 	executor.record(cause, time.Since(started))
@@ -336,11 +337,27 @@ type ownedTx struct {
 	finalized atomic.Bool
 }
 
-func (transaction *ownedTx) Begin(context.Context) (pgx.Tx, error) {
+func (transaction *ownedTx) operationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	bounded, cancel := context.WithCancelCause(ctx)
+	stopOwnerCancellation := context.AfterFunc(transaction.ctx, func() {
+		cancel(context.Cause(transaction.ctx))
+	})
+	return bounded, func() {
+		stopOwnerCancellation()
+		cancel(context.Canceled)
+	}
+}
+
+func (transaction *ownedTx) Begin(ctx context.Context) (pgx.Tx, error) {
+	operationContext, cancel := transaction.operationContext(ctx)
+	defer cancel()
 	started := time.Now()
-	nested, err := transaction.Tx.Begin(transaction.ctx)
+	nested, err := transaction.Tx.Begin(operationContext)
 	if err != nil {
-		return nil, transaction.executor.finishOperation(err, transaction.ctx, started)
+		return nil, transaction.executor.finishOperation(err, operationContext, started)
 	}
 	transaction.executor.record("", time.Since(started))
 	return &ownedTx{
@@ -349,89 +366,132 @@ func (transaction *ownedTx) Begin(context.Context) (pgx.Tx, error) {
 	}, nil
 }
 
-func (transaction *ownedTx) Commit(context.Context) error {
+func (transaction *ownedTx) Commit(ctx context.Context) error {
+	operationContext, cancel := transaction.operationContext(ctx)
+	defer cancel()
 	if transaction.finalized.Swap(true) {
-		return transaction.Tx.Commit(transaction.ctx)
+		return transaction.Tx.Commit(operationContext)
 	}
 	started := time.Now()
-	err := transaction.Tx.Commit(transaction.ctx)
+	err := transaction.Tx.Commit(operationContext)
+	result := transaction.executor.finishOperation(err, operationContext, started)
 	transaction.once.Do(transaction.finish)
-	return transaction.executor.finishOperation(err, transaction.ctx, started)
+	return result
 }
 
-func (transaction *ownedTx) Rollback(context.Context) error {
+func (transaction *ownedTx) Rollback(ctx context.Context) error {
+	operationContext, cancel := transaction.operationContext(ctx)
+	defer cancel()
 	if transaction.finalized.Swap(true) {
-		return transaction.Tx.Rollback(transaction.ctx)
+		return transaction.Tx.Rollback(operationContext)
 	}
 	started := time.Now()
-	err := transaction.Tx.Rollback(transaction.ctx)
+	err := transaction.Tx.Rollback(operationContext)
+	result := transaction.executor.finishOperation(err, operationContext, started)
 	transaction.once.Do(transaction.finish)
-	return transaction.executor.finishOperation(err, transaction.ctx, started)
+	return result
 }
 
 func (transaction *ownedTx) CopyFrom(
-	_ context.Context,
+	ctx context.Context,
 	tableName pgx.Identifier,
 	columnNames []string,
 	rowSource pgx.CopyFromSource,
 ) (int64, error) {
+	operationContext, cancel := transaction.operationContext(ctx)
+	defer cancel()
 	started := time.Now()
-	count, err := transaction.Tx.CopyFrom(transaction.ctx, tableName, columnNames, rowSource)
-	return count, transaction.executor.finishOperation(err, transaction.ctx, started)
+	count, err := transaction.Tx.CopyFrom(operationContext, tableName, columnNames, rowSource)
+	return count, transaction.executor.finishOperation(err, operationContext, started)
 }
 
 func (transaction *ownedTx) Prepare(
-	_ context.Context,
+	ctx context.Context,
 	name string,
 	sql string,
 ) (*pgconn.StatementDescription, error) {
+	operationContext, cancel := transaction.operationContext(ctx)
+	defer cancel()
 	started := time.Now()
-	description, err := transaction.Tx.Prepare(transaction.ctx, name, sql)
-	return description, transaction.executor.finishOperation(err, transaction.ctx, started)
+	description, err := transaction.Tx.Prepare(operationContext, name, sql)
+	return description, transaction.executor.finishOperation(err, operationContext, started)
 }
 
 func (transaction *ownedTx) Exec(
-	_ context.Context,
+	ctx context.Context,
 	sql string,
 	arguments ...any,
 ) (pgconn.CommandTag, error) {
+	operationContext, cancel := transaction.operationContext(ctx)
+	defer cancel()
 	started := time.Now()
-	tag, err := transaction.Tx.Exec(transaction.ctx, sql, arguments...)
-	return tag, transaction.executor.finishOperation(err, transaction.ctx, started)
+	tag, err := transaction.Tx.Exec(operationContext, sql, arguments...)
+	return tag, transaction.executor.finishOperation(err, operationContext, started)
 }
 
 func (transaction *ownedTx) Query(
-	_ context.Context,
+	ctx context.Context,
 	sql string,
 	arguments ...any,
 ) (pgx.Rows, error) {
+	operationContext, cancel := transaction.operationContext(ctx)
 	started := time.Now()
-	rows, err := transaction.Tx.Query(transaction.ctx, sql, arguments...)
+	rows, err := transaction.Tx.Query(operationContext, sql, arguments...)
 	if err != nil {
-		return nil, transaction.executor.finishOperation(err, transaction.ctx, started)
+		result := transaction.executor.finishOperation(err, operationContext, started)
+		cancel()
+		return nil, result
 	}
 	return &ownedRows{Rows: rows, finish: func() {
-		transaction.executor.record(CauseOf(rows.Err()), time.Since(started))
+		_ = transaction.executor.finishOperation(rows.Err(), operationContext, started)
+		cancel()
 	}}, nil
 }
 
 func (transaction *ownedTx) QueryRow(
-	_ context.Context,
+	ctx context.Context,
 	sql string,
 	arguments ...any,
 ) pgx.Row {
+	operationContext, cancel := transaction.operationContext(ctx)
 	return &ownedRow{
-		row:     transaction.Tx.QueryRow(transaction.ctx, sql, arguments...),
-		ctx:     transaction.ctx,
+		row:     transaction.Tx.QueryRow(operationContext, sql, arguments...),
+		ctx:     operationContext,
 		started: time.Now(),
 		finish: func(err error, started time.Time) error {
-			return transaction.executor.finishOperation(err, transaction.ctx, started)
+			result := transaction.executor.finishOperation(err, operationContext, started)
+			cancel()
+			return result
 		},
 	}
 }
 
-func (transaction *ownedTx) SendBatch(_ context.Context, batch *pgx.Batch) pgx.BatchResults {
-	return transaction.Tx.SendBatch(transaction.ctx, batch)
+func (transaction *ownedTx) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	operationContext, cancel := transaction.operationContext(ctx)
+	started := time.Now()
+	results := transaction.Tx.SendBatch(operationContext, batch)
+	return &ownedBatchResults{
+		BatchResults: results,
+		finish: func(err error) error {
+			result := transaction.executor.finishOperation(err, operationContext, started)
+			cancel()
+			return result
+		},
+	}
+}
+
+type ownedBatchResults struct {
+	pgx.BatchResults
+	once   sync.Once
+	finish func(error) error
+	err    error
+}
+
+func (results *ownedBatchResults) Close() error {
+	results.once.Do(func() {
+		results.err = results.finish(results.BatchResults.Close())
+	})
+	return results.err
 }
 
 var _ Database = (*Executor)(nil)

@@ -369,8 +369,10 @@ func TestBackendAvailabilitySLOAndBurnPoliciesAreExplicit(t *testing.T) {
 	good := slo.ServiceLevelIndicator.RequestBased.GoodTotalRatio.GoodServiceFilter
 	total := slo.ServiceLevelIndicator.RequestBased.GoodTotalRatio.TotalServiceFilter
 	if !strings.Contains(good, `metric.label.outcome="available"`) ||
+		!strings.Contains(good, `metric.label.runtime_role="portal-api"`) ||
 		!strings.Contains(good, "acuity_backend_availability_count") ||
 		!strings.Contains(total, "acuity_backend_availability_count") ||
+		!strings.Contains(total, `metric.label.runtime_role="portal-api"`) ||
 		strings.Contains(total, "health/ready") {
 		t.Fatalf("availability filters do not isolate the customer journey: good=%q total=%q", good, total)
 	}

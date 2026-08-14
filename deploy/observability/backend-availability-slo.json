@@ -6,8 +6,8 @@
   "serviceLevelIndicator": {
     "requestBased": {
       "goodTotalRatio": {
-        "goodServiceFilter": "metric.type=\"logging.googleapis.com/user/acuity_backend_availability_count\" AND metric.label.outcome=\"available\"",
-        "totalServiceFilter": "metric.type=\"logging.googleapis.com/user/acuity_backend_availability_count\""
+        "goodServiceFilter": "metric.type=\"logging.googleapis.com/user/acuity_backend_availability_count\" AND metric.label.runtime_role=\"portal-api\" AND metric.label.outcome=\"available\"",
+        "totalServiceFilter": "metric.type=\"logging.googleapis.com/user/acuity_backend_availability_count\" AND metric.label.runtime_role=\"portal-api\""
       }
     }
   }
