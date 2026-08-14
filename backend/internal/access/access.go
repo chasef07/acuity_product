@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Role string
@@ -222,22 +222,22 @@ type SignUpEligibility struct {
 // Module is the Access implementation. Its public methods are the product
 // interface; focused PostgreSQL behavior remains local to this package.
 type Module struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
+	database productpostgres.Database
+	now      func() time.Time
 }
 
-func New(pool *pgxpool.Pool, now func() time.Time) *Module {
+func New(database productpostgres.Database, now func() time.Time) *Module {
 	if now == nil {
 		now = time.Now
 	}
-	return &Module{pool: pool, now: now}
+	return &Module{database: database, now: now}
 }
 
 func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned, error) {
-	if m.pool == nil {
+	if m.database == nil {
 		return Provisioned{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Provisioned{}, fmt.Errorf("begin provisioning: %w", err)
 	}
@@ -494,7 +494,7 @@ func (m *Module) InspectSignUpEligibility(
 		return SignUpEligibility{}, ErrDenied
 	}
 	var grantExists bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM access_grants
@@ -509,7 +509,7 @@ func (m *Module) InspectSignUpEligibility(
 		return SignUpEligibility{Kind: SignUpEligibilityAccessGrant, Email: email}, nil
 	}
 	var operatorExists bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM access_platform_operators
@@ -538,7 +538,7 @@ func (m *Module) ResolveActor(
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" || strings.TrimSpace(practiceID) == "" {
 		return Authorization{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Authorization{}, fmt.Errorf("begin actor resolution: %w", err)
 	}
@@ -928,7 +928,7 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
 		return Discovery{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Discovery{}, fmt.Errorf("begin actor discovery: %w", err)
 	}
@@ -1156,7 +1156,7 @@ func (m *Module) RevokeAccessGrant(
 		command.PracticeID == "" || command.AccessGrantID == "" {
 		return ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Access Grant revocation: %w", err)
 	}
@@ -1223,7 +1223,7 @@ func (m *Module) RevokeMembership(
 		command.PracticeID == "" || command.MembershipID == "" {
 		return ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Membership revocation: %w", err)
 	}
@@ -1289,7 +1289,7 @@ func (m *Module) AuditTrail(
 	if !identity.EmailVerified || identity.Subject == "" || practiceID == "" {
 		return nil, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin audit trail: %w", err)
 	}
@@ -1350,7 +1350,7 @@ func (m *Module) AddLocation(
 		strings.TrimSpace(command.Name) == "" {
 		return LocationMutation{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return LocationMutation{}, fmt.Errorf("begin Location mutation: %w", err)
 	}

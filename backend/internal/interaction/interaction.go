@@ -14,9 +14,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type MessageKind string
@@ -192,13 +192,13 @@ func (m *Module) read(
 	interactionID string,
 	requireAdmin bool,
 ) (Interaction, error) {
-	if m.pool == nil || m.access == nil {
+	if m.database == nil || m.access == nil {
 		return Interaction{}, ErrInvalidInput
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(interactionID)); err != nil {
 		return Interaction{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Interaction{}, fmt.Errorf("begin AI Interaction read: %w", err)
 	}
@@ -239,7 +239,7 @@ func (m *Module) QueryOutcomes(
 ) (OutcomePage, error) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
-	if m.pool == nil || m.access == nil || command.PracticeID == "" {
+	if m.database == nil || m.access == nil || command.PracticeID == "" {
 		return OutcomePage{}, ErrInvalidInput
 	}
 	limit := command.Limit
@@ -253,7 +253,7 @@ func (m *Module) QueryOutcomes(
 	if err != nil {
 		return OutcomePage{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return OutcomePage{}, fmt.Errorf("begin AI outcome query: %w", err)
 	}
@@ -447,13 +447,13 @@ func (m *Module) ReviewOutcome(
 	interactionID string,
 ) error {
 	interactionID = strings.TrimSpace(interactionID)
-	if m.pool == nil || m.access == nil {
+	if m.database == nil || m.access == nil {
 		return ErrInvalidInput
 	}
 	if _, err := uuid.Parse(interactionID); err != nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin AI outcome review: %w", err)
 	}
@@ -523,20 +523,20 @@ func (m *Module) ReviewOutcome(
 }
 
 type Module struct {
-	pool   *pgxpool.Pool
-	access *access.Module
-	now    func() time.Time
+	database productpostgres.Database
+	access   *access.Module
+	now      func() time.Time
 }
 
 func New(
-	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	now func() time.Time,
 ) *Module {
 	if now == nil {
 		now = time.Now
 	}
-	return &Module{pool: pool, access: accessModule, now: now}
+	return &Module{database: database, access: accessModule, now: now}
 }
 
 func (m *Module) Ingest(
@@ -545,7 +545,7 @@ func (m *Module) Ingest(
 ) (Interaction, UpsertStatus, error) {
 	normalizeCommand(&command)
 	stage := messageLifecycleStage(command.Kind)
-	if m.pool == nil || m.access == nil || stage == 0 || !validCommand(command) {
+	if m.database == nil || m.access == nil || stage == 0 || !validCommand(command) {
 		return Interaction{}, "", ErrInvalidInput
 	}
 

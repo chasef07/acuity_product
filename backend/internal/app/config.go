@@ -25,6 +25,8 @@ type Config struct {
 	DatabaseURL            string
 	PoolMax                int32
 	AcquireTimeout         time.Duration
+	OperationTimeout       time.Duration
+	StatementTimeout       time.Duration
 	HTTPPort               int
 	BrowserOrigins         []string
 	JWKSURL                string
@@ -114,11 +116,32 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if poolMax > 64 {
 		return Config{}, fmt.Errorf("DATABASE_POOL_MAX must be 64 or less")
 	}
+	operationMilliseconds, err := positiveIntOrDefault(
+		getenv,
+		"DATABASE_OPERATION_TIMEOUT_MS",
+		10000,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	statementMilliseconds, err := positiveIntOrDefault(
+		getenv,
+		"DATABASE_STATEMENT_TIMEOUT_MS",
+		5000,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if statementMilliseconds > operationMilliseconds {
+		return Config{}, fmt.Errorf("DATABASE_STATEMENT_TIMEOUT_MS must not exceed DATABASE_OPERATION_TIMEOUT_MS")
+	}
 	config := Config{
 		Role:               role,
 		DatabaseURL:        databaseURL,
 		PoolMax:            int32(poolMax),
 		AcquireTimeout:     time.Duration(acquireMilliseconds) * time.Millisecond,
+		OperationTimeout:   time.Duration(operationMilliseconds) * time.Millisecond,
+		StatementTimeout:   time.Duration(statementMilliseconds) * time.Millisecond,
 		ProvisioningInput:  strings.TrimSpace(getenv("PROVISIONING_INPUT")),
 		ProvisioningOutput: strings.TrimSpace(getenv("PROVISIONING_OUTPUT")),
 	}
@@ -444,6 +467,17 @@ func positiveInt(getenv func(string) string, name string) (int, error) {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
 	}
 	return value, nil
+}
+
+func positiveIntOrDefault(
+	getenv func(string) string,
+	name string,
+	fallback int,
+) (int, error) {
+	if strings.TrimSpace(getenv(name)) == "" {
+		return fallback, nil
+	}
+	return positiveInt(getenv, name)
 }
 
 func requiredBase64Key(

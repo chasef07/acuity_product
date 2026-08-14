@@ -221,7 +221,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			workspaceVersion,
 		)
 	}
-
 	processed, err := module.ProcessNextCommand(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("process Message provider command = %t, %v", processed, err)
@@ -769,6 +768,18 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if processed, err := module.ProcessNextReceipt(context.Background()); err != nil ||
 		!processed {
 		t.Fatalf("process reordered older START = %t, %v", processed, err)
+	}
+	reorderedThreads, err := module.QueryThreads(
+		context.Background(),
+		messaging.QueryThreadsCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID,
+		},
+	)
+	if err != nil || len(reorderedThreads.Items) != 1 ||
+		reorderedThreads.Items[0].Preview != "STOP" {
+		t.Fatalf("reordered latest Message projection = %#v, %v", reorderedThreads, err)
 	}
 	rawEqualStart := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"message.received","id":"zzzz-message-event-equal-start","occurred_at":"%s","payload":{"id":"provider-inbound-equal-start","from":"+17275550199","to":"+17275550100","text":"START"}}}`,

@@ -23,11 +23,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Direction string
@@ -154,10 +154,10 @@ func (m *Module) QueryEngagements(
 ) (EngagementPage, error) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	phone, err := normalizePhone(command.Phone)
-	if m.pool == nil || m.access == nil || command.PracticeID == "" || err != nil {
+	if m.database == nil || m.access == nil || command.PracticeID == "" || err != nil {
 		return EngagementPage{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return EngagementPage{}, fmt.Errorf("begin Engagement lookup: %w", err)
 	}
@@ -357,7 +357,7 @@ func (m *Module) QueryPhoneTimeline(
 ) (TimelinePage, error) {
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.Phone = strings.TrimSpace(command.Phone)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		command.PracticeID == "" ||
 		!canonicalPhone.MatchString(command.Phone) {
@@ -374,7 +374,7 @@ func (m *Module) QueryPhoneTimeline(
 	if err != nil {
 		return TimelinePage{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("begin phone Engagement History: %w", err)
 	}
@@ -855,7 +855,7 @@ type Config struct {
 // Module owns location texting configuration, Message Threads, Messages, and
 // their durable provider commands.
 type Module struct {
-	pool     *pgxpool.Pool
+	database productpostgres.Database
 	access   *access.Module
 	work     *work.Module
 	provider Provider
@@ -864,7 +864,7 @@ type Module struct {
 }
 
 func New(
-	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	workModule *work.Module,
 	provider Provider,
@@ -884,7 +884,7 @@ func New(
 		config.HTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Module{
-		pool:     pool,
+		database: database,
 		access:   accessModule,
 		work:     workModule,
 		provider: provider,
@@ -897,10 +897,10 @@ func (m *Module) Provision(
 	ctx context.Context,
 	input []LocationProvision,
 ) error {
-	if m.pool == nil {
+	if m.database == nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Messaging provisioning: %w", err)
 	}
@@ -988,7 +988,7 @@ func (m *Module) Send(
 	command SendCommand,
 ) (Message, MessageCreateStatus, error) {
 	normalizeSendCommand(&command)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		strings.TrimSpace(command.Identity.Subject) == "" ||
 		strings.TrimSpace(command.PracticeID) == "" ||
@@ -1019,7 +1019,7 @@ func (m *Module) Send(
 		command.Destination = destination
 	}
 
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Message{}, "", fmt.Errorf("begin Message send: %w", err)
 	}
@@ -1507,7 +1507,7 @@ func (m *Module) readMessageForRetry(
 	// Match Send's idempotency -> Access -> Message lock order so a replaying
 	// browser request cannot deadlock the transaction creating its first attempt.
 	var practiceID, locationID string
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT practice_id::text, location_id::text
 		FROM messaging_messages
 		WHERE id = $1
@@ -1517,7 +1517,7 @@ func (m *Module) readMessageForRetry(
 		}
 		return Message{}, fmt.Errorf("resolve Message retry scope: %w", err)
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Message{}, fmt.Errorf("begin Message retry read: %w", err)
 	}
@@ -1561,7 +1561,7 @@ func (m *Module) loadSendAgainReplay(
 	practiceID string,
 	originalMessageID string,
 ) (Message, bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Message{}, false, fmt.Errorf("begin Message new-attempt replay: %w", err)
 	}
@@ -1605,10 +1605,10 @@ func (m *Module) loadSendAgainReplay(
 // PostgreSQL transaction. Any uncertain outcome becomes UNKNOWN and is never
 // selected for another write.
 func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
-	if m.pool == nil || m.access == nil || m.provider == nil {
+	if m.database == nil || m.access == nil || m.provider == nil {
 		return false, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin Message provider command: %w", err)
 	}
@@ -1722,7 +1722,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	}
 
 	result, providerErr := m.provider.Send(ctx, command)
-	finishTx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	finishTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return true, fmt.Errorf("begin Message provider result: %w", err)
 	}
@@ -1789,10 +1789,10 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 // write began. The command is deliberately not replayed because its external
 // effect cannot be known safely.
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
-	if m.pool == nil || m.access == nil {
+	if m.database == nil || m.access == nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Message command recovery: %w", err)
 	}
@@ -1861,10 +1861,10 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 // command that already has a provider Message identity. It never repeats the
 // original write.
 func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
-	if m.pool == nil || m.access == nil || m.provider == nil {
+	if m.database == nil || m.access == nil || m.provider == nil {
 		return false, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin Message reconciliation: %w", err)
 	}
@@ -1911,7 +1911,7 @@ func (m *Module) ReconcileNextCommand(ctx context.Context) (bool, error) {
 	}
 
 	result, providerErr := m.provider.Reconcile(ctx, providerMessageID)
-	finishTx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	finishTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return true, fmt.Errorf("begin Message reconciliation result: %w", err)
 	}
@@ -2022,7 +2022,7 @@ func (m *Module) ReceiveWebhook(
 	verifier, validVerifier := telnyxsignature.New(
 		m.config.WebhookPublicKeys, m.config.WebhookTolerance, m.now,
 	)
-	if m.pool == nil || !validVerifier ||
+	if m.database == nil || !validVerifier ||
 		m.config.WebhookTolerance <= 0 ||
 		len(rawBody) == 0 ||
 		len(rawBody) > 2*1024*1024 {
@@ -2048,7 +2048,7 @@ func (m *Module) ReceiveWebhook(
 	if err != nil {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf("begin provider receipt: %w", err)
 	}
@@ -2133,10 +2133,10 @@ func sameWebhookEventData(left []byte, right []byte) bool {
 }
 
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
-	if m.pool == nil || m.access == nil {
+	if m.database == nil || m.access == nil {
 		return false, ErrInvalidInput
 	}
-	claimTx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	claimTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin provider receipt claim: %w", err)
 	}
@@ -2242,10 +2242,10 @@ func (m *Module) ReadMessage(
 	identity access.Identity,
 	messageID string,
 ) (Message, error) {
-	if m.pool == nil || m.access == nil || strings.TrimSpace(messageID) == "" {
+	if m.database == nil || m.access == nil || strings.TrimSpace(messageID) == "" {
 		return Message{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Message{}, fmt.Errorf("begin Message read: %w", err)
 	}
@@ -2279,7 +2279,7 @@ func (m *Module) QueryThreads(
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Search = strings.TrimSpace(command.Search)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		command.PracticeID == "" {
 		return ThreadPage{}, ErrInvalidInput
@@ -2303,7 +2303,7 @@ func (m *Module) QueryThreads(
 			return ThreadPage{Items: []ThreadSummary{}}, nil
 		}
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ThreadPage{}, fmt.Errorf("begin Message Thread query: %w", err)
 	}
@@ -2327,11 +2327,104 @@ func (m *Module) QueryThreads(
 		}
 	}
 	rows, err := tx.Query(ctx, `
+		WITH candidate_threads AS MATERIALIZED (
+			SELECT
+				thread.*,
+				location.name AS location_name
+			FROM messaging_threads thread
+			JOIN access_locations location
+				ON location.practice_id = thread.practice_id
+				AND location.id = thread.location_id
+			WHERE thread.practice_id = $1
+				AND thread.location_id::text = ANY($2::text[])
+				AND ($3 = '' OR thread.external_phone = $3)
+		),
+		message_activity AS (
+			SELECT message.thread_id, max(message.created_at) AS occurred_at
+			FROM messaging_messages message
+			JOIN candidate_threads thread ON thread.id = message.thread_id
+			GROUP BY message.thread_id
+		),
+		call_activity AS (
+			SELECT
+				thread.id AS thread_id,
+				max(call.created_at) AS occurred_at
+			FROM human_calling_calls call
+			JOIN human_calling_handoffs handoff
+				ON handoff.id = call.source_handoff_id
+			JOIN messaging_threads thread
+				ON thread.practice_id = call.practice_id
+				AND thread.location_id = call.location_id
+				AND thread.external_phone = handoff.phone
+			WHERE thread.practice_id = $1
+				AND thread.location_id::text = ANY($2::text[])
+				AND ($3 = '' OR thread.external_phone = $3)
+			GROUP BY thread.id
+		),
+		linked_task_activity AS (
+			SELECT task.message_thread_id AS thread_id, max(task.created_at) AS occurred_at
+			FROM work_tasks task
+			WHERE task.practice_id = $1
+				AND task.location_id::text = ANY($2::text[])
+				AND task.message_thread_id IS NOT NULL
+			GROUP BY task.message_thread_id
+		),
+		phone_task_activity AS (
+			SELECT
+				thread.id AS thread_id,
+				max(task.created_at) AS occurred_at
+			FROM work_tasks task
+			JOIN messaging_threads thread
+				ON thread.practice_id = task.practice_id
+				AND thread.location_id = task.location_id
+				AND thread.external_phone = task.phone
+			WHERE thread.practice_id = $1
+				AND thread.location_id::text = ANY($2::text[])
+				AND ($3 = '' OR thread.external_phone = $3)
+				AND task.message_thread_id IS NULL
+			GROUP BY thread.id
+		),
+		activity AS MATERIALIZED (
+			SELECT event.thread_id, max(event.occurred_at) AS occurred_at
+			FROM (
+				SELECT message.thread_id, message.occurred_at
+				FROM message_activity message
+				UNION ALL
+				SELECT task.thread_id, task.occurred_at
+				FROM linked_task_activity task
+				UNION ALL
+				SELECT call.thread_id, call.occurred_at
+				FROM call_activity call
+				UNION ALL
+				SELECT task.thread_id, task.occurred_at
+				FROM phone_task_activity task
+			) event
+			GROUP BY event.thread_id
+		),
+		scored_threads AS (
+			SELECT
+				thread.*,
+				COALESCE(activity.occurred_at, thread.updated_at) AS latest_activity
+			FROM candidate_threads thread
+			LEFT JOIN activity ON activity.thread_id = thread.id
+		),
+		ranked_threads AS MATERIALIZED (
+			SELECT *
+			FROM scored_threads thread
+			WHERE $6::timestamptz IS NULL
+				OR thread.latest_activity < $6
+				OR (
+					thread.latest_activity = $6
+					AND thread.id < $7
+				)
+			ORDER BY latest_activity DESC, thread.id DESC
+			LIMIT $5
+		)
 		SELECT
 			thread.id::text,
 			thread.practice_id::text,
 			thread.location_id::text,
-			location.name,
+			thread.location_name,
 			thread.office_phone,
 			thread.external_phone,
 			COALESCE(thread.display_name, ''),
@@ -2339,33 +2432,31 @@ func (m *Module) QueryThreads(
 			thread.outbound_blocked,
 			thread.created_at,
 			thread.updated_at,
-			COALESCE(latest.preview, ''),
+			COALESCE(
+				latest.body,
+				CASE
+					WHEN latest.content_type = 'application/pdf' THEN 'PDF'
+					WHEN latest.attachment_id IS NOT NULL THEN 'Image'
+					ELSE ''
+				END
+			),
 			COALESCE(latest.direction, ''),
 			COALESCE(latest.delivery_state, ''),
-			COALESCE(activity.occurred_at, thread.updated_at),
+			thread.latest_activity,
 			EXISTS (
 				SELECT 1
 				FROM messaging_thread_unreads unread
 				WHERE unread.thread_id = thread.id
 					AND unread.user_subject = $4
 			)
-		FROM messaging_threads thread
-		JOIN access_locations location
-			ON location.practice_id = thread.practice_id
-			AND location.id = thread.location_id
+		FROM ranked_threads thread
 		LEFT JOIN LATERAL (
 			SELECT
-				COALESCE(
-					message.body,
-					CASE
-						WHEN attachment.content_type = 'application/pdf' THEN 'PDF'
-						WHEN attachment.id IS NOT NULL THEN 'Image'
-						ELSE ''
-					END
-				) AS preview,
+				message.body,
 				message.direction,
 				message.delivery_state,
-				message.created_at
+				attachment.id AS attachment_id,
+				attachment.content_type
 			FROM messaging_messages message
 			LEFT JOIN messaging_attachments attachment
 				ON attachment.message_id = message.id
@@ -2373,47 +2464,7 @@ func (m *Module) QueryThreads(
 			ORDER BY message.created_at DESC, message.id DESC
 			LIMIT 1
 		) latest ON true
-		LEFT JOIN LATERAL (
-			SELECT max(event.occurred_at) AS occurred_at
-			FROM (
-				SELECT latest.created_at AS occurred_at
-				UNION ALL
-				SELECT call.created_at
-				FROM human_calling_calls call
-				JOIN human_calling_handoffs handoff
-					ON handoff.id = call.source_handoff_id
-				WHERE call.practice_id = thread.practice_id
-					AND call.location_id = thread.location_id
-					AND handoff.phone = thread.external_phone
-				UNION ALL
-				SELECT task.created_at
-				FROM work_tasks task
-				WHERE task.practice_id = thread.practice_id
-					AND task.location_id = thread.location_id
-					AND (
-						task.message_thread_id = thread.id
-						OR (
-							task.message_thread_id IS NULL
-							AND task.phone = thread.external_phone
-						)
-					)
-			) event
-		) activity ON true
-		WHERE thread.practice_id = $1
-			AND thread.location_id::text = ANY($2::text[])
-			AND ($3 = '' OR thread.external_phone = $3)
-			AND (
-				$6::timestamptz IS NULL
-				OR COALESCE(activity.occurred_at, thread.updated_at) < $6
-				OR (
-					COALESCE(activity.occurred_at, thread.updated_at) = $6
-					AND thread.id < $7
-				)
-			)
-		ORDER BY
-			COALESCE(activity.occurred_at, thread.updated_at) DESC,
-			thread.id DESC
-		LIMIT $5
+		ORDER BY thread.latest_activity DESC, thread.id DESC
 	`, command.PracticeID, locationIDs, searchPhone,
 		command.Identity.Subject, limit+1, nullableCursorTime(cursor),
 		nullableCursorID(cursor),
@@ -2470,7 +2521,7 @@ func (m *Module) QueryTimeline(
 	command QueryTimelineCommand,
 ) (TimelinePage, error) {
 	command.ThreadID = strings.TrimSpace(command.ThreadID)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		command.ThreadID == "" {
 		return TimelinePage{}, ErrInvalidInput
@@ -2486,7 +2537,7 @@ func (m *Module) QueryTimeline(
 	if limit < 1 || limit > 50 {
 		return TimelinePage{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("begin conversation timeline: %w", err)
 	}
@@ -2798,10 +2849,10 @@ func (m *Module) MarkRead(
 	command MarkReadCommand,
 ) error {
 	command.ThreadID = strings.TrimSpace(command.ThreadID)
-	if m.pool == nil || m.access == nil || command.ThreadID == "" {
+	if m.database == nil || m.access == nil || command.ThreadID == "" {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Message Thread read: %w", err)
 	}
@@ -2864,10 +2915,10 @@ func (m *Module) ApplyTaskUnread(
 	identity access.Identity,
 	tasks []work.Task,
 ) error {
-	if m.pool == nil || m.access == nil {
+	if m.database == nil || m.access == nil {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Task unread projection: %w", err)
 	}
@@ -2991,14 +3042,14 @@ func (m *Module) CreateFollowUpTask(
 ) (work.Task, work.TaskCreateStatus, error) {
 	command.MessageID = strings.TrimSpace(command.MessageID)
 	command.Title = strings.TrimSpace(command.Title)
-	if m.pool == nil ||
+	if m.database == nil ||
 		m.access == nil ||
 		m.work == nil ||
 		command.MessageID == "" ||
 		len(command.Title) > 500 {
 		return work.Task{}, "", ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return work.Task{}, "", fmt.Errorf("begin Message Task creation: %w", err)
 	}
@@ -3217,7 +3268,7 @@ func (m *Module) projectOutboundReceipt(
 	if !ok {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin delivery projection: %w", err)
 	}
@@ -3353,7 +3404,7 @@ func (m *Module) projectInboundReceipt(
 		utf8.RuneCountInString(body) > 1600 {
 		return ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin inbound Message projection: %w", err)
 	}
@@ -3597,7 +3648,7 @@ func (m *Module) finishReceipt(
 	state string,
 	errorCode string,
 ) error {
-	if _, err := m.pool.Exec(ctx, `
+	if _, err := m.database.Exec(ctx, `
 		UPDATE messaging_provider_receipts
 		SET state = $2, projection_error_code = $3, projected_at = $4
 		WHERE event_id = $1

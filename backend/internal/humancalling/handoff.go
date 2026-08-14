@@ -26,7 +26,7 @@ func (m *Module) CreateHandoff(
 		(strings.TrimSpace(command.LocationID) == "") {
 		return Handoff{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Handoff{}, fmt.Errorf("begin handoff: %w", err)
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 func (m *Module) ReconcileCredentials(ctx context.Context) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin credential reconciliation: %w", err)
 	}
@@ -130,7 +130,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 	if !ok {
 		return false, nil
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin credential state reconciliation: %w", err)
 	}
@@ -166,7 +166,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 	result, found, lookupErr := provider.FindCredentialByName(
 		ctx, "acuity-"+opaqueReference(subject),
 	)
-	tx, err = m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err = m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return true, fmt.Errorf("begin credential state result: %w", err)
 	}
@@ -285,7 +285,7 @@ func (m *Module) IssueMediaJWT(
 		ID: uuid.NewString(), Action: CommandCreateJWT,
 		TargetID: credentialID, Payload: map[string]any{},
 	}
-	if _, err := m.pool.Exec(ctx, `
+	if _, err := m.database.Exec(ctx, `
 		INSERT INTO human_calling_provider_commands (
 			id, user_subject, action, target_id, payload, next_attempt_at
 		) VALUES ($1, $2, 'CREATE_JWT', $3, '{}'::jsonb, $4)
@@ -312,7 +312,7 @@ func (m *Module) authorizeMediaJWT(
 	sessionID string,
 	expectedCredentialID string,
 ) (string, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", fmt.Errorf("begin media JWT authorization: %w", err)
 	}

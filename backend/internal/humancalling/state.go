@@ -61,7 +61,7 @@ func (m *Module) ReadCallingState(
 
 	state := CallingState{Ringing: []RingingCallLeg{}}
 	var leaseVersion int64
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT session_id, lease_expires_at,
 			lease_expires_at > $2,
 			(desired_available AND registered AND microphone_ready
@@ -87,7 +87,7 @@ func (m *Module) ReadCallingState(
 		return CallingState{}, err
 	}
 
-	rows, err := m.pool.Query(ctx, `
+	rows, err := m.database.Query(ctx, `
 		SELECT call.id::text, leg.id::text, call.practice_id::text,
 			call.location_id::text, location.name,
 			COALESCE(handoff.display_name, ''),
@@ -217,7 +217,7 @@ func (m *Module) readStaffStateCall(
 		LIMIT 1
 	`
 	var result CallingStateCall
-	err := m.pool.QueryRow(ctx, query, staffSubject).Scan(
+	err := m.database.QueryRow(ctx, query, staffSubject).Scan(
 		&result.CallID, &result.CallLegID, &result.PracticeID,
 		&result.LocationID, &result.LocationName, &result.State, &result.Version,
 	)
@@ -235,7 +235,7 @@ func (m *Module) readScopedVoicemailState(
 	staffSubject string,
 ) (*CallingStateCall, error) {
 	var result CallingStateCall
-	err := m.pool.QueryRow(ctx, `
+	err := m.database.QueryRow(ctx, `
 		SELECT call.id::text, caller.id::text, call.practice_id::text,
 			call.location_id::text, location.name,
 			CASE

@@ -16,8 +16,8 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type CallState string
@@ -369,7 +369,7 @@ type DispositionResult struct {
 }
 
 type Module struct {
-	pool        *pgxpool.Pool
+	database    productpostgres.Database
 	access      *access.Module
 	work        *work.Module
 	provider    Provider
@@ -381,7 +381,7 @@ type Module struct {
 }
 
 func New(
-	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	provider Provider,
 	config Config,
@@ -419,7 +419,7 @@ func New(
 		}
 	}
 	module := &Module{
-		pool:        pool,
+		database:    database,
 		access:      accessModule,
 		provider:    provider,
 		config:      config,
@@ -431,8 +431,8 @@ func New(
 	if len(module.playbackKey) == 0 {
 		module.playbackKey = append([]byte(nil), tokenKey...)
 	}
-	if pool != nil && accessModule != nil {
-		module.work = work.New(pool, accessModule, now)
+	if database != nil && accessModule != nil {
+		module.work = work.New(database, accessModule, now)
 	}
 	return module
 }

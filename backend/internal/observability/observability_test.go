@@ -62,6 +62,16 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	observer.Observe(observability.ReceiptProcessed(
 		observability.ReceiptQuarantined, 7*time.Second, 80*time.Millisecond))
 	observer.Observe(observability.DatabasePoolState(4, 1, 4))
+	observer.Observe(observability.DatabaseExecuted(
+		observability.DatabaseDeadlock,
+		12*time.Millisecond,
+	))
+	observer.Observe(observability.BackendRequest(
+		observability.AvailabilityRoute("/v1/patients/patient-123"),
+		observability.AvailabilityOutcome("patient@example.test"),
+		observability.FailureStage("+15555550100"),
+		20*time.Millisecond,
+	))
 	observer.Observe(observability.SSEStreamOpened())
 	observer.Observe(observability.SSEStreamClosed(observability.SSEClientClosed))
 	observer.Observe(observability.SSEListenerConnected(true))
@@ -86,6 +96,14 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		"outcome", "quarantined")
 	assertField(t, logs, "acuity_call_center_database_pool",
 		"saturation_ratio", float64(1))
+	assertField(t, logs, "acuity_backend_database_execution",
+		"cause", "deadlock")
+	availability := findMetric(t, logs, "acuity_backend_availability")
+	if availability["route"] != "other" ||
+		availability["outcome"] != "other" ||
+		availability["failure_stage"] != "other" {
+		t.Fatalf("bounded availability metric = %#v", availability)
+	}
 	assertField(t, logs, "acuity_call_center_sse_stream", "active", float64(0))
 	assertField(t, logs, "acuity_call_center_sse_listener",
 		"state", "connected")

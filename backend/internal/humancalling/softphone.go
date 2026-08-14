@@ -23,7 +23,7 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, ErrDenied
 	}
 	now := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return SoftphoneState{}, fmt.Errorf("begin softphone lease acquisition: %w", err)
 	}
@@ -142,7 +142,7 @@ func (m *Module) SetReadiness(
 		return SoftphoneState{}, ErrDenied
 	}
 	now := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return SoftphoneState{}, fmt.Errorf("begin calling readiness: %w", err)
 	}
@@ -217,7 +217,7 @@ func (m *Module) loadCurrentCallCapacity(
 	subject string,
 	state *SoftphoneState,
 ) error {
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT COALESCE((
 			SELECT call.id::text
 			FROM human_calling_calls call
@@ -233,7 +233,7 @@ func (m *Module) loadCurrentCallCapacity(
 	if state.ActiveCallID != "" {
 		state.Available = false
 	}
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT COALESCE((
 			SELECT call.id::text
 			FROM human_calling_calls call

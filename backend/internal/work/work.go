@@ -14,8 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TaskState string
@@ -237,20 +237,20 @@ type TaskCategoryCounts struct {
 
 // Module owns durable Task state and lifecycle behavior.
 type Module struct {
-	pool   *pgxpool.Pool
-	access *access.Module
-	now    func() time.Time
+	database productpostgres.Database
+	access   *access.Module
+	now      func() time.Time
 }
 
 func New(
-	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	now func() time.Time,
 ) *Module {
 	if now == nil {
 		now = time.Now
 	}
-	return &Module{pool: pool, access: accessModule, now: now}
+	return &Module{database: database, access: accessModule, now: now}
 }
 
 // EnsureCallFollowUp creates the one Task linked to a Call. The caller owns the
@@ -724,14 +724,14 @@ func (m *Module) CreateAITask(
 	command CreateAITaskCommand,
 ) (Task, TaskCreateStatus, error) {
 	normalizeAITaskCommand(&command)
-	if m.pool == nil || m.access == nil || !validAITaskCommand(command) {
+	if m.database == nil || m.access == nil || !validAITaskCommand(command) {
 		return Task{}, "", ErrInvalidInput
 	}
 	fingerprint, err := aiTaskFingerprint(command)
 	if err != nil {
 		return Task{}, "", err
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, "", fmt.Errorf("begin AI Task creation: %w", err)
 	}
@@ -855,7 +855,7 @@ func (m *Module) RenameTask(
 		len(title) > 500 {
 		return Task{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task rename: %w", err)
 	}
@@ -933,7 +933,7 @@ func (m *Module) CompleteTask(
 		command.ExpectedVersion <= 0 {
 		return Task{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task completion: %w", err)
 	}
@@ -1020,7 +1020,7 @@ func (m *Module) ReopenTask(
 		command.ExpectedVersion <= 0 {
 		return Task{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task reopen: %w", err)
 	}
@@ -1129,7 +1129,7 @@ func (m *Module) QueryTasks(
 		return TaskPage{}, ErrInvalidInput
 	}
 
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return TaskPage{}, fmt.Errorf("begin Task query: %w", err)
 	}
@@ -1418,7 +1418,7 @@ func (m *Module) ReadTask(
 	if m.access == nil || strings.TrimSpace(taskID) == "" {
 		return Task{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task read: %w", err)
 	}

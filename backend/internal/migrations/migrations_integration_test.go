@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 34 {
-		t.Fatalf("migration count = %d, want 34", migrationCount)
+	if migrationCount != 35 {
+		t.Fatalf("migration count = %d, want 35", migrationCount)
 	}
 	var staleCommandIndex string
 	if err := pool.QueryRow(ctx, `
@@ -54,6 +54,20 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		if !strings.Contains(staleCommandIndex, fragment) {
 			t.Errorf("stale CallLeg command index omits %q: %s", fragment, staleCommandIndex)
 		}
+	}
+	var messageThreadActivityIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'messaging_threads_phone_activity_idx'
+	`).Scan(&messageThreadActivityIndex); err != nil {
+		t.Fatalf("read Message Thread activity index: %v", err)
+	}
+	if !strings.Contains(
+		messageThreadActivityIndex,
+		"(practice_id, location_id, external_phone, id)",
+	) {
+		t.Fatalf("Message Thread activity index = %s", messageThreadActivityIndex)
 	}
 
 	for _, relation := range []string{

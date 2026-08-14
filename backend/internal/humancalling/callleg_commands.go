@@ -21,7 +21,7 @@ func (m *Module) processCommand(
 }
 
 func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", false, fmt.Errorf("begin provider command claim: %w", err)
 	}
@@ -115,7 +115,7 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 }
 
 func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin committed provider command claim: %w", err)
 	}
@@ -167,7 +167,7 @@ func (m *Module) executeCallLegCommand(
 ) (ProviderResult, error) {
 	var command ProviderCommand
 	var encoded []byte
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT id::text, COALESCE(call_leg_id::text, ''),
 			COALESCE(peer_call_leg_id::text, ''), action,
 			COALESCE(target_id, ''), payload, created_at
@@ -234,7 +234,7 @@ func (m *Module) finishCallLegCommand(
 	result ProviderResult,
 	executeErr error,
 ) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin provider command result: %w", err)
 	}

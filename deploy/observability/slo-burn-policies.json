@@ -1,0 +1,58 @@
+[
+  {
+    "displayName": "Acuity backend fast availability burn",
+    "combiner": "AND",
+    "userLabels": {
+      "acuity_slo": "critical-read-availability",
+      "acuity_burn": "fast"
+    },
+    "conditions": [
+      {
+        "displayName": "Five-minute availability burn above 14.4x",
+        "conditionThreshold": {
+          "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/acuity-portal-backend/serviceLevelObjectives/critical-read-availability\", \"300s\")",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 14.4,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "One-hour availability burn above 14.4x",
+        "conditionThreshold": {
+          "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/acuity-portal-backend/serviceLevelObjectives/critical-read-availability\", \"3600s\")",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 14.4,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
+    "displayName": "Acuity backend slow availability burn",
+    "combiner": "AND",
+    "userLabels": {
+      "acuity_slo": "critical-read-availability",
+      "acuity_burn": "slow"
+    },
+    "conditions": [
+      {
+        "displayName": "Thirty-minute availability burn above 6x",
+        "conditionThreshold": {
+          "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/acuity-portal-backend/serviceLevelObjectives/critical-read-availability\", \"1800s\")",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 6,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Six-hour availability burn above 6x",
+        "conditionThreshold": {
+          "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/acuity-portal-backend/serviceLevelObjectives/critical-read-availability\", \"21600s\")",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 6,
+          "duration": "0s"
+        }
+      }
+    ]
+  }
+]
