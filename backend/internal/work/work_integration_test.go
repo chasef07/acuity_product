@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
@@ -947,6 +950,94 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	}
 }
 
+func TestQueryTasksLoadsRelatedInteractionCountsInOneQuery(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+
+	tasks := make([]work.Task, 3)
+	for index := range tasks {
+		tasks[index] = createTask(
+			t,
+			pool,
+			module,
+			authorization,
+			authorization.Locations[0].ID,
+			fmt.Sprintf("+1985555010%d", index),
+			fmt.Sprintf("Query count Task %d", index),
+			now.Add(time.Duration(index)*time.Minute),
+		)
+	}
+	attachTaskInteractionFixture(t, pool, tasks[0])
+
+	tracer := &workInteractionQueryTracer{}
+	tracedModule := newTracedWorkModule(t, pool, tracer, now)
+	page, err := tracedModule.QueryTasks(
+		context.Background(),
+		work.QueryTasksCommand{
+			Identity:   identity,
+			PracticeID: authorization.Practice.ID,
+			Ordering:   work.TaskOrderingTime,
+		},
+	)
+	if err != nil {
+		t.Fatalf("query Tasks with related Interaction counts: %v", err)
+	}
+	if len(page.Items) != len(tasks) {
+		t.Fatalf("queried Tasks = %d, want %d", len(page.Items), len(tasks))
+	}
+	wantCounts := map[string]int{tasks[0].ID: 1, tasks[1].ID: 0, tasks[2].ID: 0}
+	for _, task := range page.Items {
+		want, ok := wantCounts[task.ID]
+		if !ok {
+			t.Fatalf("queried unexpected Task %q", task.ID)
+		}
+		if task.RelatedInteractionCount != want {
+			t.Fatalf("Task %q related Interaction count = %d, want %d",
+				task.ID, task.RelatedInteractionCount, want)
+		}
+		delete(wantCounts, task.ID)
+	}
+	if got := tracer.interactionQueries.Load(); got != 1 {
+		t.Fatalf("QueryTasks Interaction queries = %d, want 1", got)
+	}
+}
+
+func TestReadTaskDerivesRelatedInteractionCountFromLoadedInteractions(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := createTask(
+		t,
+		pool,
+		module,
+		authorization,
+		authorization.Locations[0].ID,
+		"+19855550200",
+		"Read count Task",
+		now,
+	)
+	attachTaskInteractionFixture(t, pool, task)
+
+	tracer := &workInteractionQueryTracer{}
+	tracedModule := newTracedWorkModule(t, pool, tracer, now)
+	read, err := tracedModule.ReadTask(context.Background(), identity, task.ID)
+	if err != nil {
+		t.Fatalf("read Task with related Interactions: %v", err)
+	}
+	if read.RelatedInteractionCount != 1 || len(read.Interactions) != 1 ||
+		read.Interactions[0].CallID != task.CallID {
+		t.Fatalf("read Task related Interactions = %#v", read)
+	}
+	if got := tracer.interactionQueries.Load(); got != 1 {
+		t.Fatalf("ReadTask Interaction queries = %d, want 1", got)
+	}
+}
+
 func TestQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
@@ -1532,6 +1623,74 @@ func ensureCallFollowUp(
 		t.Fatalf("commit Task transaction: %v", err)
 	}
 	return task
+}
+
+func attachTaskInteractionFixture(
+	t *testing.T,
+	pool interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
+	task work.Task,
+) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO work_task_interactions (
+			task_id,
+			call_id,
+			practice_id,
+			location_id,
+			occurred_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+	`, task.ID, task.CallID, task.PracticeID, task.LocationID, task.CreatedAt); err != nil {
+		t.Fatalf("attach Task Interaction fixture: %v", err)
+	}
+}
+
+type workInteractionQueryTracer struct {
+	interactionQueries atomic.Int64
+}
+
+func (tracer *workInteractionQueryTracer) TraceQueryStart(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceQueryStartData,
+) context.Context {
+	if strings.Contains(data.SQL, "work_task_interactions") {
+		tracer.interactionQueries.Add(1)
+	}
+	return ctx
+}
+
+func (*workInteractionQueryTracer) TraceQueryEnd(
+	context.Context,
+	*pgx.Conn,
+	pgx.TraceQueryEndData,
+) {
+}
+
+func newTracedWorkModule(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	tracer pgx.QueryTracer,
+	now time.Time,
+) *work.Module {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("parse traced Work database config: %v", err)
+	}
+	config.ConnConfig.Tracer = tracer
+	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("open traced Work database pool: %v", err)
+	}
+	t.Cleanup(tracedPool.Close)
+	return work.New(
+		tracedPool,
+		access.New(tracedPool, func() time.Time { return now }),
+		func() time.Time { return now },
+	)
 }
 
 func provisionStaff(
