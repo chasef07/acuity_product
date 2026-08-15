@@ -284,6 +284,9 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 		return err
 	}
 
+	// Inbound fanout is intentionally narrower than the portal's
+	// CallingEnabled field: access_calling_scopes contains Staff and Platform
+	// Operators, while Admin members remain excluded.
 	rows, err := tx.Query(ctx, `
 		SELECT calling_scope.user_subject, lease.session_id, credential.provider_sip_username
 		FROM access_calling_scopes calling_scope

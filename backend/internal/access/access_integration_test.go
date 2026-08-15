@@ -3,13 +3,97 @@ package access_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type statementRecorder struct {
+	*pgxpool.Pool
+	mu         sync.Mutex
+	statements []string
+}
+
+func (database *statementRecorder) BeginTx(
+	ctx context.Context,
+	options pgx.TxOptions,
+) (pgx.Tx, error) {
+	tx, err := database.Pool.BeginTx(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return &recordingTx{Tx: tx, recorder: database}, nil
+}
+
+func (database *statementRecorder) record(statement string) {
+	database.mu.Lock()
+	defer database.mu.Unlock()
+	database.statements = append(database.statements, statement)
+}
+
+func (database *statementRecorder) reset() {
+	database.mu.Lock()
+	defer database.mu.Unlock()
+	database.statements = nil
+}
+
+func (database *statementRecorder) countContaining(fragment string) int {
+	database.mu.Lock()
+	defer database.mu.Unlock()
+	count := 0
+	for _, statement := range database.statements {
+		if strings.Contains(statement, fragment) {
+			count++
+		}
+	}
+	return count
+}
+
+func (database *statementRecorder) count() int {
+	database.mu.Lock()
+	defer database.mu.Unlock()
+	return len(database.statements)
+}
+
+type recordingTx struct {
+	pgx.Tx
+	recorder *statementRecorder
+}
+
+func (tx *recordingTx) Exec(
+	ctx context.Context,
+	statement string,
+	arguments ...any,
+) (pgconn.CommandTag, error) {
+	tx.recorder.record(statement)
+	return tx.Tx.Exec(ctx, statement, arguments...)
+}
+
+func (tx *recordingTx) Query(
+	ctx context.Context,
+	statement string,
+	arguments ...any,
+) (pgx.Rows, error) {
+	tx.recorder.record(statement)
+	return tx.Tx.Query(ctx, statement, arguments...)
+}
+
+func (tx *recordingTx) QueryRow(
+	ctx context.Context,
+	statement string,
+	arguments ...any,
+) pgx.Row {
+	tx.recorder.record(statement)
+	return tx.Tx.QueryRow(ctx, statement, arguments...)
+}
 
 func TestAccessGrantActivatesSelectedMembershipOnVerifiedEmailDiscovery(t *testing.T) {
 	pool := testdb.Open(t)
@@ -962,5 +1046,204 @@ func TestMembershipRevocationTakesEffectOnNextResolutionAndIsAudited(t *testing.
 	}
 	if !actions["membership.revoked"] {
 		t.Fatalf("audit actions = %#v", actions)
+	}
+}
+
+func TestLockedAuthorizationPreservesLocationDenialsAndMutationResolvesOperatorOnce(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	module := access.New(pool, nil)
+	if _, err := module.Provision(ctx, access.Provisioning{
+		Environment: "test", RequestedBy: "locked-authorization-regression",
+		Practices: []access.PracticeProvision{{
+			Key: "locked-authorization", Name: "Locked Authorization",
+			Locations: []access.LocationProvision{
+				{Key: "allowed", Name: "Allowed"},
+				{Key: "denied", Name: "Denied"},
+			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: "staff", Email: "locked-staff@acuity.test", Role: access.RoleStaff,
+				LocationScope:        access.LocationScopeSelected,
+				SelectedLocationKeys: []string{"allowed"},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision locked authorization fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject: "locked-staff-subject", Email: "locked-staff@acuity.test", EmailVerified: true,
+	}
+	discovery, err := module.DiscoverActor(ctx, identity)
+	if err != nil {
+		t.Fatalf("activate locked authorization fixture: %v", err)
+	}
+	practice := discovery.Practices[0]
+	allowedLocationID := practice.Locations[0].ID
+	var deniedLocationID string
+	if err := pool.QueryRow(ctx, `
+		SELECT id::text FROM access_locations
+		WHERE practice_id = $1 AND name = 'Denied'
+	`, practice.ID).Scan(&deniedLocationID); err != nil {
+		t.Fatalf("load denied Location: %v", err)
+	}
+
+	recorder := &statementRecorder{Pool: pool}
+	recordedModule := access.New(recorder, nil)
+	tx, err := recorder.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin recorded mutation authorization: %v", err)
+	}
+	authorization, err := recordedModule.LockMutationAuthorization(
+		ctx, tx, identity, practice.ID, allowedLocationID,
+	)
+	if err != nil {
+		t.Fatalf("lock valid mutation authorization: %v", err)
+	}
+	if authorization.ActiveLocation == nil || authorization.ActiveLocation.ID != allowedLocationID {
+		t.Fatalf("active Location = %#v", authorization.ActiveLocation)
+	}
+	if got := recorder.countContaining("WHERE user_subject = $1 AND email = $2"); got != 1 {
+		t.Fatalf("fast Platform Operator resolutions = %d, want 1", got)
+	}
+	if got := recorder.countContaining("WHERE user_subject = $1 OR email = $2"); got != 1 {
+		t.Fatalf("locked Platform Operator resolutions = %d, want 1", got)
+	}
+	if got := recorder.countContaining("FOR SHARE OF m"); got != 1 {
+		t.Fatalf("Membership authorization locks = %d, want 1", got)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback recorded mutation authorization: %v", err)
+	}
+
+	methods := []struct {
+		name string
+		call func(pgx.Tx, string) (access.Authorization, error)
+	}{
+		{name: "membership", call: func(tx pgx.Tx, locationID string) (access.Authorization, error) {
+			return module.LockMembershipAuthorization(ctx, tx, identity, practice.ID, locationID)
+		}},
+		{name: "mutation", call: func(tx pgx.Tx, locationID string) (access.Authorization, error) {
+			return module.LockMutationAuthorization(ctx, tx, identity, practice.ID, locationID)
+		}},
+		{name: "read", call: func(tx pgx.Tx, locationID string) (access.Authorization, error) {
+			return module.LockReadAuthorization(ctx, tx, identity, practice.ID, locationID)
+		}},
+	}
+	for _, method := range methods {
+		t.Run(method.name+" denies out-of-scope Location", func(t *testing.T) {
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err := method.call(tx, deniedLocationID); !errors.Is(err, access.ErrDenied) {
+				t.Fatalf("out-of-scope Location error = %v", err)
+			}
+		})
+	}
+	t.Run("read permits whole-Practice authorization", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := module.LockReadAuthorization(ctx, tx, identity, practice.ID, ""); err != nil {
+			t.Fatalf("whole-Practice read authorization: %v", err)
+		}
+	})
+	for _, method := range methods[:2] {
+		t.Run(method.name+" requires Location", func(t *testing.T) {
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err := method.call(tx, ""); !errors.Is(err, access.ErrDenied) {
+				t.Fatalf("missing Location error = %v", err)
+			}
+		})
+	}
+}
+
+func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	member := access.Identity{
+		Subject: "set-query-member-subject", Email: "set-query-member@acuity.test", EmailVerified: true,
+	}
+	operator := access.Identity{
+		Subject: "set-query-operator-subject", Email: "set-query-operator@acuity.test", EmailVerified: true,
+	}
+	practices := make([]access.PracticeProvision, 0, 3)
+	for index := 1; index <= 3; index++ {
+		practices = append(practices, access.PracticeProvision{
+			Key:  fmt.Sprintf("set-query-%d", index),
+			Name: fmt.Sprintf("Set Query %d", index),
+			Locations: []access.LocationProvision{
+				{Key: "first", Name: "First"},
+				{Key: "second", Name: "Second"},
+			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: fmt.Sprintf("member-%d", index), Email: member.Email,
+				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			}},
+		})
+	}
+	module := access.New(pool, nil)
+	if _, err := module.Provision(ctx, access.Provisioning{
+		Environment: "test", RequestedBy: "set-query-regression",
+		PlatformOperators: []string{operator.Email}, Practices: practices,
+	}); err != nil {
+		t.Fatalf("provision set query fixture: %v", err)
+	}
+	if _, err := module.DiscoverActor(ctx, member); err != nil {
+		t.Fatalf("activate set query member: %v", err)
+	}
+	if _, err := module.DiscoverActor(ctx, operator); err != nil {
+		t.Fatalf("bind set query operator: %v", err)
+	}
+
+	recorder := &statementRecorder{Pool: pool}
+	recordedModule := access.New(recorder, nil)
+	memberDiscovery, err := recordedModule.DiscoverActor(ctx, member)
+	if err != nil {
+		t.Fatalf("discover member with set query: %v", err)
+	}
+	if len(memberDiscovery.Practices) != 3 {
+		t.Fatalf("member Practices = %d, want 3", len(memberDiscovery.Practices))
+	}
+	for _, practice := range memberDiscovery.Practices {
+		if len(practice.Locations) != 2 {
+			t.Fatalf("member Practice %q Locations = %d, want 2", practice.Name, len(practice.Locations))
+		}
+	}
+	if got := recorder.countContaining("FROM access_memberships membership"); got != 1 {
+		t.Fatalf("member discovery set queries = %d, want 1", got)
+	}
+	if got := recorder.count(); got != 6 {
+		t.Fatalf("member discovery statements = %d, want 6 independent of Practice count", got)
+	}
+
+	recorder.reset()
+	operatorDiscovery, err := recordedModule.DiscoverActor(ctx, operator)
+	if err != nil {
+		t.Fatalf("discover operator with set queries: %v", err)
+	}
+	if len(operatorDiscovery.Practices) != 3 {
+		t.Fatalf("operator Practices = %d, want 3", len(operatorDiscovery.Practices))
+	}
+	for _, practice := range operatorDiscovery.Practices {
+		if len(practice.Locations) != 2 {
+			t.Fatalf("operator Practice %q Locations = %d, want 2", practice.Name, len(practice.Locations))
+		}
+	}
+	if got := recorder.countContaining("FROM access_practices"); got != 1 {
+		t.Fatalf("operator Practice set queries = %d, want 1", got)
+	}
+	if got := recorder.countContaining("FROM access_locations"); got != 1 {
+		t.Fatalf("operator Location set queries = %d, want 1", got)
+	}
+	if got := recorder.count(); got != 3 {
+		t.Fatalf("operator discovery statements = %d, want 3 independent of Practice count", got)
 	}
 }
