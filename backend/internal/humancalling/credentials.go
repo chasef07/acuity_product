@@ -34,7 +34,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 		UPDATE human_calling_credentials credential
 		SET state = 'DISABLING', updated_at = $1
 		WHERE credential.provider_credential_id IS NOT NULL
-			AND credential.state = 'ACTIVE'
+			AND credential.state IN ('ACTIVE', 'FAILED')
 			AND NOT EXISTS (
 				SELECT 1 FROM access_operational_users operational
 				WHERE operational.user_subject = credential.user_subject

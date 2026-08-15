@@ -1532,7 +1532,7 @@ func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
 			pool := testdb.Open(t)
 			now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
 			accessModule := access.New(pool, func() time.Time { return now })
-			_, staff := provisionConcurrentStaff(
+			authorization, staff := provisionConcurrentStaff(
 				t, accessModule, now, "expired-execution-"+strings.ToLower(string(action)), 1,
 			)
 			provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider timeout")}
@@ -1543,6 +1543,12 @@ func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
 				t.Fatal(err)
 			}
 			if action == humancalling.CommandDisableCredential {
+				if _, err := pool.Exec(context.Background(), `
+					UPDATE access_memberships SET revoked_at = $2
+					WHERE id = $1
+				`, authorization.Membership.ID, now); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := pool.Exec(context.Background(), `
 					UPDATE human_calling_credentials
 					SET state = 'DISABLING', provider_credential_id = 'expired-provider-credential',
@@ -1573,6 +1579,26 @@ func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
 				t.Fatal("expired credential execution did not claim the command")
 			}
 			assertCredentialQuarantined(t, pool, staff[0].Subject)
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var activeDisableCommands int
+			if err := pool.QueryRow(context.Background(), `
+				SELECT count(*) FROM human_calling_provider_commands
+				WHERE user_subject = $1 AND action = 'DISABLE_CREDENTIAL'
+					AND target_id = 'expired-provider-credential'
+					AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
+			`, staff[0].Subject).Scan(&activeDisableCommands); err != nil {
+				t.Fatal(err)
+			}
+			wantActiveDisableCommands := 0
+			if action == humancalling.CommandDisableCredential {
+				wantActiveDisableCommands = 1
+			}
+			if activeDisableCommands != wantActiveDisableCommands {
+				t.Fatalf("active disable cleanup commands = %d, want %d",
+					activeDisableCommands, wantActiveDisableCommands)
+			}
 		})
 	}
 }
