@@ -328,16 +328,54 @@ func (m *Module) RequestHangup(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var practiceID, locationID string
+	var terminal bool
 	if err := tx.QueryRow(ctx, `
-		SELECT practice_id::text, location_id::text FROM human_calling_calls
-		WHERE id = $1 FOR UPDATE
-	`, callID).Scan(&practiceID, &locationID); err != nil {
+		SELECT call.practice_id::text, call.location_id::text,
+			call.terminal_outcome IS NOT NULL
+		FROM human_calling_calls call
+		WHERE call.id = $1
+		FOR UPDATE OF call
+	`, callID).Scan(&practiceID, &locationID, &terminal); err != nil {
 		return Call{}, ErrDenied
 	}
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
 		return Call{}, ErrDenied
+	}
+	hangupCommitted := terminal
+	if !hangupCommitted {
+		rows, err := tx.Query(ctx, `
+			SELECT COALESCE(payload->>'client_state', '')
+			FROM human_calling_provider_commands
+			WHERE call_id = $1 AND action = 'HANGUP_LEG'
+			ORDER BY created_at, id
+		`, callID)
+		if err != nil {
+			return Call{}, fmt.Errorf("read committed Hangup commands: %w", err)
+		}
+		for rows.Next() {
+			var clientState string
+			if err := rows.Scan(&clientState); err != nil {
+				rows.Close()
+				return Call{}, fmt.Errorf("scan committed Hangup command: %w", err)
+			}
+			state, valid := parseCallLegClientState(clientState)
+			if valid && state.CallID == callID && state.Kind == callLegClientStateStaffHangup {
+				hangupCommitted = true
+				break
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return Call{}, fmt.Errorf("iterate committed Hangup commands: %w", err)
+		}
+	}
+	if hangupCommitted {
+		if err := tx.Commit(ctx); err != nil {
+			return Call{}, fmt.Errorf("commit idempotent Hangup: %w", err)
+		}
+		return m.ReadCall(ctx, identity, callID)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
@@ -392,7 +430,7 @@ func (m *Module) RequestHangup(
 		if _, err := m.insertCallLegCommand(
 			ctx, tx, callID, target.id, "", target.subject, CommandHangupLeg,
 			target.controlID, map[string]any{"client_state": encodeCallLegClientState(
-				callID, target.id, target.role, "staff_hangup",
+				callID, target.id, target.role, callLegClientStateStaffHangup,
 			)}, "",
 		); err != nil {
 			return Call{}, err

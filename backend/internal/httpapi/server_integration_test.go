@@ -1650,6 +1650,382 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 }
 
+type callingHangupHTTPFixture struct {
+	pool          *pgxpool.Pool
+	calling       *humancalling.Module
+	identity      access.Identity
+	authorization access.Authorization
+	server        *httptest.Server
+	token         string
+	sessionID     string
+}
+
+func newCallingHangupHTTPFixture(
+	t *testing.T,
+	prefix string,
+	clock func() time.Time,
+	config humancalling.Config,
+) callingHangupHTTPFixture {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, clock)
+	email := prefix + "@synthetic.test"
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: prefix + "-http-test",
+		Practices: []access.PracticeProvision{{
+			Key:  prefix + "-practice",
+			Name: prefix + " Practice",
+			Locations: []access.LocationProvision{{
+				Key:  prefix + "-location",
+				Name: prefix + " Location",
+			}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           prefix + "-staff",
+				Email:         email,
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision %s fixture: %v", prefix, err)
+	}
+	identity := access.Identity{
+		Subject:       prefix + "-subject",
+		Email:         email,
+		EmailVerified: true,
+	}
+	authorization := testaccess.Activate(t, accessModule, identity)
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		httpCallingProvider{},
+		config,
+		clock,
+	)
+	token := prefix + "-token"
+	handler, err := newPortalHandlerWithCalling(
+		t,
+		httpapi.Config{
+			AllowedOrigins: []string{"http://localhost:3000"},
+			AcquireTimeout: 500 * time.Millisecond,
+		},
+		pool,
+		accessModule,
+		staticAuthenticator{token: identity},
+		calling,
+	)
+	if err != nil {
+		t.Fatalf("new %s HTTP adapter: %v", prefix, err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return callingHangupHTTPFixture{
+		pool:          pool,
+		calling:       calling,
+		identity:      identity,
+		authorization: authorization,
+		server:        server,
+		token:         token,
+		sessionID:     prefix + "-browser",
+	}
+}
+
+func (fixture callingHangupHTTPFixture) postHangup(
+	t *testing.T,
+	callID string,
+	sessionID string,
+) *http.Response {
+	t.Helper()
+	body, _ := json.Marshal(api.CallingControlRequest{SessionId: sessionID})
+	return request(
+		t,
+		fixture.server.Client(),
+		http.MethodPost,
+		fixture.server.URL+"/v1/calling/calls/"+callID+"/hangup",
+		fixture.token,
+		body,
+	)
+}
+
+func (fixture callingHangupHTTPFixture) hangupCommandCount(t *testing.T, callID string) int {
+	t.Helper()
+	var count int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID).Scan(&count); err != nil {
+		t.Fatalf("count Hangup commands: %v", err)
+	}
+	return count
+}
+
+func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
+	currentTime := now
+	fixture := newCallingHangupHTTPFixture(
+		t,
+		"provider-first-hangup",
+		func() time.Time { return currentTime },
+		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:    "provider-first-hangup-connection",
+		},
+	)
+	_, err := fixture.calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject:    "provider-first-hangup-service",
+			PracticeID: fixture.authorization.Practice.ID,
+		},
+		LocationID:     fixture.authorization.Locations[0].ID,
+		SourceCallID:   "provider-first-hangup-source",
+		IdempotencyKey: "provider-first-hangup",
+		Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+	})
+	if err != nil {
+		t.Fatalf("create provider-first Hangup handoff: %v", err)
+	}
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "provider-first-hangup-caller-initiated",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		ConnectionID:  "provider-first-hangup-connection",
+		CallControlID: "provider-first-hangup-caller-control",
+		CallLegID:     "provider-first-hangup-caller-leg",
+		CallSessionID: "provider-first-hangup-session",
+		From:          "+15555550100",
+		To:            "+14843989071",
+	}); err != nil {
+		t.Fatalf("admit provider-first Hangup Call: %v", err)
+	}
+	var callID, callerLegID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT call.id::text, caller.id::text
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.role = 'CALLER'
+		WHERE caller.provider_call_leg_id = 'provider-first-hangup-caller-leg'
+	`).Scan(&callID, &callerLegID); err != nil {
+		t.Fatalf("read provider-first Hangup Call: %v", err)
+	}
+	connectedAt := now.Add(-time.Second)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGED', answered_at = $2, bridge_pending_at = $2,
+			bridged_at = $2, updated_at = $2
+		WHERE id = $1
+	`, callerLegID, connectedAt); err != nil {
+		t.Fatalf("connect provider-first Hangup caller: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		)
+		VALUES ($1, 'STAFF', 1, $2, 'provider-first-hangup-browser', 'BRIDGED',
+			'provider-first-hangup-staff-control', 'provider-first-hangup-staff-leg',
+			'provider-first-hangup-staff-session', $3, $3, $3, $3, $3)
+	`, callID, fixture.identity.Subject, connectedAt); err != nil {
+		t.Fatalf("connect provider-first Hangup Staff CallLeg: %v", err)
+	}
+	if lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	); err != nil || !lease.Owner {
+		t.Fatalf("acquire provider-first Hangup softphone: state=%#v err=%v", lease, err)
+	}
+
+	providerEndedAt := now
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:           "provider-first-hangup-staff-ended",
+		Type:              humancalling.FactCallHangup,
+		OccurredAt:        providerEndedAt,
+		CallControlID:     "provider-first-hangup-staff-control",
+		CallLegID:         "provider-first-hangup-staff-leg",
+		CallSessionID:     "provider-first-hangup-staff-session",
+		HangupCause:       "NORMAL_CLEARING",
+		TerminationSource: "STAFF",
+	}); err != nil {
+		t.Fatalf("project provider-first Staff Hangup: %v", err)
+	}
+	currentTime = providerEndedAt.Add(5 * time.Millisecond)
+	var terminalOutcome, staffState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, staff.state
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs staff
+			ON staff.call_id = call.id AND staff.role = 'STAFF'
+		WHERE call.id = $1
+	`, callID).Scan(&terminalOutcome, &staffState); err != nil {
+		t.Fatalf("read provider-first terminal state: %v", err)
+	}
+	if terminalOutcome != "ENDED" || staffState != "ENDED" {
+		t.Fatalf(
+			"provider-first terminal state = Call:%s Staff:%s",
+			terminalOutcome,
+			staffState,
+		)
+	}
+	hangupCommandsBefore := fixture.hangupCommandCount(t, callID)
+	response := fixture.postHangup(t, callID, fixture.sessionID)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf(
+			"provider-first Hangup status = %d, body = %s",
+			response.StatusCode,
+			readBody(t, response),
+		)
+	}
+	var current api.CallingCall
+	decode(t, response, &current)
+	if current.State != api.CallingCallStateNEEDSDISPOSITION {
+		t.Fatalf("provider-first Hangup Call state = %s", current.State)
+	}
+	hangupCommandsAfter := fixture.hangupCommandCount(t, callID)
+	if hangupCommandsBefore != 1 || hangupCommandsAfter != hangupCommandsBefore {
+		t.Fatalf(
+			"provider-first Hangup commands = before:%d after:%d",
+			hangupCommandsBefore,
+			hangupCommandsAfter,
+		)
+	}
+}
+
+func TestCallingHangupReplaysCommittedCommandButRejectsMissingIntent(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 13, 0, 0, 0, time.UTC)
+	fixture := newCallingHangupHTTPFixture(
+		t,
+		"replayed-hangup",
+		func() time.Time { return now },
+		humancalling.Config{},
+	)
+	handoffID := uuid.NewString()
+	callID := uuid.NewString()
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, phone, expires_at, consumed_at,
+			created_at
+		)
+		VALUES ($1, 'replayed-hangup-service', $2, $3,
+			'replayed-hangup-source', 'replayed-hangup-key', $4,
+			'+15555550101', $5, $6, $6)
+	`, handoffID, fixture.authorization.Practice.ID, fixture.authorization.Locations[0].ID,
+		[]byte("replayed-hangup"), now.Add(time.Minute), now); err != nil {
+		t.Fatalf("insert replayed Hangup handoff: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, source_handoff_id, practice_id, location_id, caller_phone,
+			created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, '+15555550101', $5, $5)
+	`, callID, handoffID, fixture.authorization.Practice.ID,
+		fixture.authorization.Locations[0].ID, now); err != nil {
+		t.Fatalf("insert replayed Hangup Call: %v", err)
+	}
+	connectedAt := now.Add(-time.Second)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		)
+		VALUES
+			($1, 'CALLER', 1, NULL, NULL, 'BRIDGED',
+				'replayed-hangup-caller-control', 'replayed-hangup-caller-leg',
+				'replayed-hangup-session', $3, $3, $3, $2, $3),
+			($1, 'STAFF', 1, $4, 'replayed-hangup-browser', 'BRIDGED',
+				'replayed-hangup-staff-control', 'replayed-hangup-staff-leg',
+				'replayed-hangup-session', $3, $3, $3, $2, $3)
+	`, callID, now, connectedAt, fixture.identity.Subject); err != nil {
+		t.Fatalf("insert replayed Hangup CallLegs: %v", err)
+	}
+	if lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	); err != nil || !lease.Owner {
+		t.Fatalf("acquire replayed Hangup softphone: state=%#v err=%v", lease, err)
+	}
+	mismatch := fixture.postHangup(t, callID, "another-browser")
+	var envelope api.ErrorEnvelope
+	decode(t, mismatch, &envelope)
+	if mismatch.StatusCode != http.StatusConflict || envelope.Error.Code != "CALL_CONFLICT" {
+		t.Fatalf(
+			"active session mismatch = status:%d body:%#v",
+			mismatch.StatusCode,
+			envelope,
+		)
+	}
+	first := fixture.postHangup(t, callID, fixture.sessionID)
+	if first.StatusCode != http.StatusAccepted {
+		t.Fatalf("first Hangup status = %d, body = %s", first.StatusCode, readBody(t, first))
+	}
+	_ = first.Body.Close()
+	commandsAfterFirst := fixture.hangupCommandCount(t, callID)
+	if commandsAfterFirst != 2 {
+		t.Fatalf("first Hangup commands = %d", commandsAfterFirst)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'PROVIDER_REJECTED', updated_at = $2
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail committed Hangup commands: %v", err)
+	}
+	second := fixture.postHangup(t, callID, fixture.sessionID)
+	if second.StatusCode != http.StatusAccepted {
+		t.Fatalf("replayed Hangup status = %d, body = %s", second.StatusCode, readBody(t, second))
+	}
+	_ = second.Body.Close()
+	var commandsAfterReplay, failedCommands, endingLegs, requestedEvents int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'HANGUP_LEG'),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'HANGUP_LEG' AND state = 'FAILED'),
+			(SELECT count(*) FROM human_calling_call_legs
+				WHERE call_id = $1 AND state = 'ENDING'),
+			(SELECT count(*) FROM human_calling_timeline
+				WHERE call_id = $1 AND kind = 'call.hangup.requested')
+	`, callID).Scan(
+		&commandsAfterReplay,
+		&failedCommands,
+		&endingLegs,
+		&requestedEvents,
+	); err != nil {
+		t.Fatalf("read replayed Hangup state: %v", err)
+	}
+	if commandsAfterReplay != commandsAfterFirst || failedCommands != 2 ||
+		endingLegs != 2 || requestedEvents != 1 {
+		t.Fatalf(
+			"replayed Hangup = commands:%d->%d failed:%d ending:%d events:%d",
+			commandsAfterFirst,
+			commandsAfterReplay,
+			failedCommands,
+			endingLegs,
+			requestedEvents,
+		)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID); err != nil {
+		t.Fatalf("remove committed Hangup command evidence: %v", err)
+	}
+	missing := fixture.postHangup(t, callID, fixture.sessionID)
+	var missingEnvelope api.ErrorEnvelope
+	decode(t, missing, &missingEnvelope)
+	if missing.StatusCode != http.StatusConflict ||
+		missingEnvelope.Error.Code != "CALL_CONFLICT" {
+		t.Fatalf(
+			"missing Hangup intent = status:%d body:%#v",
+			missing.StatusCode,
+			missingEnvelope,
+		)
+	}
+}
+
 func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 19, 0, 0, 0, time.UTC)

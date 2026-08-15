@@ -294,6 +294,72 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       })
       .toBeLessThan(900)
     await expect(callCenter(secondaryPage)).toHaveCount(0)
+
+    let hangupConflicts = 0
+    await selectedPage.route(
+      `${portalURL}/v1/calling/calls/${callID}/hangup`,
+      async (route) => {
+        if (route.request().method() !== "POST") {
+          await route.continue()
+          return
+        }
+        hangupConflicts += 1
+        await deliverProviderEvent(selectedPage, {
+          eventType: "call.hangup",
+          eventId: "callleg-browser-provider-first-hangup",
+          occurredAt: new Date().toISOString(),
+          payload: {
+            call_control_id: selectedLeg.control_id,
+            call_leg_id: selectedLeg.provider_leg_id,
+            call_session_id: "fixture-staff-session",
+            hangup_cause: "NORMAL_CLEARING",
+            hangup_source: "STAFF",
+          },
+        })
+        await expect
+          .poll(async () => {
+            const result = await database.query<{ terminal_outcome: string | null }>(
+              `SELECT terminal_outcome
+                 FROM human_calling_calls
+                WHERE id = $1`,
+              [callID],
+            )
+            return result.rows[0]?.terminal_outcome ?? ""
+          })
+          .toBe("ENDED")
+        await route.fulfill({
+          status: 409,
+          headers: {
+            "access-control-allow-origin": webURL,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            error: {
+              code: "CALL_CONFLICT",
+              correlationId: "provider-first-hangup",
+              message: "The Call state changed. Refresh and try again.",
+              retryable: false,
+            },
+          }),
+        })
+      },
+    )
+    await selectedPage
+      .getByRole("button", { name: "Hang up", exact: true })
+      .click()
+    await expect.poll(() => hangupConflicts).toBe(1)
+    const outcome = selectedPage.getByRole("region", { name: "Call outcome" })
+    await expect(outcome).toBeVisible()
+    await expect(
+      selectedPage.getByText("Hang up was not committed", { exact: false }),
+    ).toHaveCount(0)
+    await expect(
+      selectedPage.getByText("Calling ownership or the Call state changed", {
+        exact: false,
+      }),
+    ).toHaveCount(0)
+    await outcome.getByRole("button", { name: "Resolved", exact: true }).click()
+    await expect(outcome).toHaveCount(0)
   } finally {
     await database.end()
     await secondaryContext.close()
