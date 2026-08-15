@@ -1173,7 +1173,7 @@ func (m *Module) QueryTasks(
 	defer rows.Close()
 	items := make([]Task, 0, limit+1)
 	for rows.Next() {
-		task, err := scanTask(rows)
+		task, err := scanTask(rows, true)
 		if err != nil {
 			return TaskPage{}, fmt.Errorf("scan Task query: %w", err)
 		}
@@ -1195,12 +1195,6 @@ func (m *Module) QueryTasks(
 	if err != nil {
 		return TaskPage{}, err
 	}
-	for index := range items {
-		if err := m.loadRelatedInteractionCount(ctx, tx, &items[index]); err != nil {
-			return TaskPage{}, err
-		}
-	}
-
 	nextCursor := ""
 	if len(items) > limit {
 		items = items[:limit]
@@ -1336,7 +1330,12 @@ const taskQuerySelect = `
 			task.completed_by_email,
 			task.completed_at,
 			task.version,
-			task.updated_at
+			task.updated_at,
+			(
+				SELECT count(*)
+				FROM work_task_interactions interaction
+				WHERE interaction.task_id = task.id
+			) AS related_interaction_count
 		FROM work_tasks task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
@@ -1427,12 +1426,10 @@ func (m *Module) ReadTask(
 	if err != nil {
 		return Task{}, err
 	}
-	if err := m.loadRelatedInteractionCount(ctx, tx, &task); err != nil {
-		return Task{}, err
-	}
 	if err := m.loadTaskInteractions(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
+	task.RelatedInteractionCount = len(task.Interactions)
 	if _, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
@@ -1479,24 +1476,6 @@ func (m *Module) loadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task
 		return fmt.Errorf("iterate related Task Interactions: %w", err)
 	}
 	return nil
-}
-
-func (m *Module) loadRelatedInteractionCount(ctx context.Context, querier taskQuerier, task *Task) error {
-	if task == nil || task.ID == "" {
-		return ErrInvalidInput
-	}
-	if err := querier.QueryRow(ctx, `
-		SELECT count(*)
-		FROM work_task_interactions
-		WHERE task_id = $1
-	`, task.ID).Scan(&task.RelatedInteractionCount); err != nil {
-		return fmt.Errorf("count related Task Interactions: %w", err)
-	}
-	return nil
-}
-
-type taskQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 type taskCursor struct {
@@ -1776,10 +1755,10 @@ func insertTask(
 
 func loadTask(
 	ctx context.Context,
-	querier taskQuerier,
+	tx pgx.Tx,
 	taskID string,
 ) (Task, error) {
-	task, err := scanTask(querier.QueryRow(ctx, `
+	task, err := scanTask(tx.QueryRow(ctx, `
 		SELECT
 			task.id::text,
 			task.practice_id::text,
@@ -1812,7 +1791,7 @@ func loadTask(
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
 		WHERE task.id = $1
-	`, taskID))
+	`, taskID), false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -1861,7 +1840,7 @@ func lockTask(
 			AND location.id = task.location_id
 		WHERE task.id = $1
 		FOR UPDATE OF task
-	`, taskID))
+	`, taskID), false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -1875,12 +1854,12 @@ type taskScanner interface {
 	Scan(...any) error
 }
 
-func scanTask(scanner taskScanner) (Task, error) {
+func scanTask(scanner taskScanner, includeRelatedInteractionCount bool) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
 	var createdEmail, completedSubject, completedEmail *string
-	if err := scanner.Scan(
+	destinations := []any{
 		&task.ID,
 		&task.PracticeID,
 		&task.LocationID,
@@ -1907,7 +1886,11 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-	); err != nil {
+	}
+	if includeRelatedInteractionCount {
+		destinations = append(destinations, &task.RelatedInteractionCount)
+	}
+	if err := scanner.Scan(destinations...); err != nil {
 		return Task{}, err
 	}
 	if callID != nil {
