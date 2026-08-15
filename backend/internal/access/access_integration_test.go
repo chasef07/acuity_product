@@ -68,6 +68,45 @@ type recordingTx struct {
 	recorder *statementRecorder
 }
 
+type operatorDiscoveryInterleaver struct {
+	*pgxpool.Pool
+	once      sync.Once
+	inject    func(context.Context) error
+	injectErr error
+}
+
+func (database *operatorDiscoveryInterleaver) BeginTx(
+	ctx context.Context,
+	options pgx.TxOptions,
+) (pgx.Tx, error) {
+	tx, err := database.Pool.BeginTx(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return &operatorDiscoveryInterleavingTx{Tx: tx, database: database}, nil
+}
+
+type operatorDiscoveryInterleavingTx struct {
+	pgx.Tx
+	database *operatorDiscoveryInterleaver
+}
+
+func (tx *operatorDiscoveryInterleavingTx) Query(
+	ctx context.Context,
+	statement string,
+	arguments ...any,
+) (pgx.Rows, error) {
+	if strings.Contains(statement, "FROM access_locations") {
+		tx.database.once.Do(func() {
+			tx.database.injectErr = tx.database.inject(ctx)
+		})
+		if tx.database.injectErr != nil {
+			return nil, tx.database.injectErr
+		}
+	}
+	return tx.Tx.Query(ctx, statement, arguments...)
+}
+
 func (tx *recordingTx) Exec(
 	ctx context.Context,
 	statement string,
@@ -1245,5 +1284,62 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 	}
 	if got := recorder.count(); got != 3 {
 		t.Fatalf("operator discovery statements = %d, want 3 independent of Practice count", got)
+	}
+}
+
+func TestDiscoverActorKeepsOperatorPracticeAndLocationSnapshotConsistent(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	operator := access.Identity{
+		Subject:       "snapshot-operator-subject",
+		Email:         "snapshot-operator@acuity.test",
+		EmailVerified: true,
+	}
+	module := access.New(pool, nil)
+	if _, err := module.Provision(ctx, access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "operator-snapshot-regression",
+		PlatformOperators: []string{operator.Email},
+		Practices: []access.PracticeProvision{{
+			Key:       "snapshot-existing",
+			Name:      "Snapshot Existing",
+			Locations: []access.LocationProvision{{Key: "existing", Name: "Existing"}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision initial operator snapshot: %v", err)
+	}
+	if _, err := module.DiscoverActor(ctx, operator); err != nil {
+		t.Fatalf("bind snapshot operator: %v", err)
+	}
+
+	interleaver := &operatorDiscoveryInterleaver{
+		Pool: pool,
+		inject: func(ctx context.Context) error {
+			_, err := module.Provision(ctx, access.Provisioning{
+				Environment: "test",
+				RequestedBy: "operator-snapshot-interleave",
+				Practices: []access.PracticeProvision{{
+					Key:       "snapshot-concurrent",
+					Name:      "Snapshot Concurrent",
+					Locations: []access.LocationProvision{{Key: "concurrent", Name: "Concurrent"}},
+				}},
+			})
+			return err
+		},
+	}
+	discovery, err := access.New(interleaver, nil).DiscoverActor(ctx, operator)
+	if err != nil {
+		t.Fatalf("discover operator across concurrent provisioning: %v", err)
+	}
+	if len(discovery.Practices) != 1 || discovery.Practices[0].Name != "Snapshot Existing" {
+		t.Fatalf("interleaved operator snapshot = %#v", discovery.Practices)
+	}
+
+	refreshed, err := module.DiscoverActor(ctx, operator)
+	if err != nil {
+		t.Fatalf("refresh operator after concurrent provisioning: %v", err)
+	}
+	if len(refreshed.Practices) != 2 {
+		t.Fatalf("refreshed operator Practices = %d, want 2", len(refreshed.Practices))
 	}
 }

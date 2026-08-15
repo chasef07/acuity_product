@@ -979,15 +979,19 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return Discovery{}, fmt.Errorf("iterate discovered Practices: %w", err)
 	}
 	rows.Close()
+	practiceIDs := make([]string, 0, len(result.Practices))
 	practiceIndexes := make(map[string]int, len(result.Practices))
 	for index := range result.Practices {
-		practiceIndexes[result.Practices[index].ID] = index
+		practiceID := result.Practices[index].ID
+		practiceIDs = append(practiceIDs, practiceID)
+		practiceIndexes[practiceID] = index
 	}
 	rows, err = tx.Query(ctx, `
 		SELECT practice_id::text, id::text, name
 		FROM access_locations
+		WHERE practice_id = ANY($1::uuid[])
 		ORDER BY practice_id, name, id
-	`)
+	`, practiceIDs)
 	if err != nil {
 		return Discovery{}, fmt.Errorf("discover Practice Locations: %w", err)
 	}
