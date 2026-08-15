@@ -171,7 +171,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t.Fatalf("process HTTP Message command = %t, %v", processed, err)
 	}
 
-	ingressHandler, err := httpapi.NewProviderIngressWithMessaging(
+	ingressHandler, err := httpapi.NewProviderIngress(
 		httpapi.Config{AcquireTimeout: time.Second},
 		pool,
 		humancalling.New(

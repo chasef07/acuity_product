@@ -1373,27 +1373,14 @@ func (m *Module) ReceiveWebhook(
 		m.config.WebhookPublicKeys, m.config.WebhookTolerance, m.now,
 	)
 	if m.database == nil || !validVerifier ||
-		m.config.WebhookTolerance <= 0 ||
 		len(rawBody) == 0 ||
 		len(rawBody) > 2*1024*1024 {
-		return WebhookReceipt{}, ErrInvalidInput
-	}
-	timestamp, err := strconv.ParseInt(
-		strings.TrimSpace(signatureTimestamp),
-		10,
-		64,
-	)
-	if err != nil {
-		return WebhookReceipt{}, ErrInvalidInput
-	}
-	signedAt := time.Unix(timestamp, 0)
-	if delta := m.now().Sub(signedAt); delta < -m.config.WebhookTolerance ||
-		delta > m.config.WebhookTolerance {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
 	if !verifier.Verify(rawBody, signatureTimestamp, signature) {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
+	timestamp, _ := strconv.ParseInt(strings.TrimSpace(signatureTimestamp), 10, 64)
 	envelope, err := decodeWebhook(rawBody)
 	if err != nil {
 		return WebhookReceipt{}, ErrInvalidInput

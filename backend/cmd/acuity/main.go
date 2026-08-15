@@ -113,7 +113,7 @@ func run() error {
 			},
 			nil,
 		)
-		handler, err := httpapi.NewProviderIngressWithMessaging(httpapi.Config{
+		handler, err := httpapi.NewProviderIngress(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
 			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
@@ -328,10 +328,11 @@ func runWorker(
 	if err != nil {
 		return err
 	}
+	accessModule := access.New(database, nil)
 	callingConfig := humanCallingConfig(config, observer)
 	calling := humancalling.New(
 		database,
-		access.New(database, nil),
+		accessModule,
 		provider,
 		callingConfig,
 		nil,
@@ -340,7 +341,6 @@ func runWorker(
 	if err != nil {
 		return err
 	}
-	accessModule := access.New(database, nil)
 	messages := messaging.New(
 		database,
 		accessModule,
@@ -357,7 +357,7 @@ func runWorker(
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
 	interactions := interaction.New(database, accessModule, nil)
-	runner, err := worker.NewWithMessagingAndInteractions(worker.Config{
+	runner, err := worker.New(worker.Config{
 		WorkInterval:       250 * time.Millisecond,
 		WorkTimeout:        10 * time.Second,
 		CredentialInterval: 30 * time.Second,
@@ -553,12 +553,11 @@ func runMigrate(
 		ProvisionInTx(ctx, tx, messageLocations); err != nil {
 		return err
 	}
-	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
-		ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
+	callingModule := humancalling.New(pool, nil, nil, humancalling.Config{}, nil)
+	if err := callingModule.ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
 		return err
 	}
-	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
-		ProvisionOutboundVoiceFallbacksInTx(ctx, tx, voiceFallbacks); err != nil {
+	if err := callingModule.ProvisionOutboundVoiceFallbacksInTx(ctx, tx, voiceFallbacks); err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)

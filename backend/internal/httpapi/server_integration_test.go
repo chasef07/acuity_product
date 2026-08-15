@@ -867,7 +867,7 @@ func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testin
 	)
 	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 75 * time.Millisecond,
-	}, pool, calling)
+	}, pool, calling, messaging.New(pool, nil, nil, nil, messaging.Config{}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,7 +922,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 500 * time.Millisecond,
 		Observer:       observer,
-	}, pool, calling)
+	}, pool, calling, messaging.New(pool, nil, nil, nil, messaging.Config{}, nil))
 	if err != nil {
 		t.Fatalf("new provider-ingress HTTP adapter: %v", err)
 	}

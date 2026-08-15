@@ -22,7 +22,7 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 		commandProcessed:    make(chan struct{}, 1),
 		attachmentProcessed: make(chan struct{}, 1),
 	}
-	runner, err := NewWithMessaging(Config{
+	runner, err := New(Config{
 		WorkInterval:       time.Millisecond,
 		WorkTimeout:        time.Second,
 		CredentialInterval: time.Hour,
@@ -68,7 +68,7 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     1,
-	}, calling, messages, healthyDependency{})
+	}, calling, messages, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create messaging worker runner: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRunnerRecoversAIInteractionReceiptsInIndependentLane(t *testing.T) {
 		attachmentProcessed: make(chan struct{}, 1),
 	}
 	interactions := &controlledInteractionWork{processed: make(chan struct{}, 1)}
-	runner, err := NewWithMessagingAndInteractions(Config{
+	runner, err := New(Config{
 		WorkInterval:       time.Millisecond,
 		WorkTimeout:        time.Second,
 		CredentialInterval: time.Hour,
@@ -146,7 +146,7 @@ func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
 		ReceiptBatchSize:   3,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -366,7 +366,8 @@ func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
 			ErrorBackoffMin: 100 * time.Millisecond,
 			ErrorBackoffMax: 400 * time.Millisecond,
 		},
-		work: work,
+		work:     work,
+		messages: &controlledMessagingWork{},
 		jitter: func(delay time.Duration) time.Duration {
 			return delay - time.Millisecond
 		},
