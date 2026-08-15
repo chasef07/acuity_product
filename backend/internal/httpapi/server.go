@@ -149,18 +149,10 @@ func NewProviderIngress(
 	config Config,
 	pool *pgxpool.Pool,
 	calling *humancalling.Module,
-) (http.Handler, error) {
-	return NewProviderIngressWithMessaging(config, pool, calling, nil)
-}
-
-func NewProviderIngressWithMessaging(
-	config Config,
-	pool *pgxpool.Pool,
-	calling *humancalling.Module,
 	messagingModule *messaging.Module,
 ) (http.Handler, error) {
-	if calling == nil {
-		return nil, fmt.Errorf("provider-ingress calling module is required")
+	if calling == nil || messagingModule == nil {
+		return nil, fmt.Errorf("provider-ingress dependencies are required")
 	}
 	return newServer("provider-ingress", config, pool, serverDependencies{
 		calling:   calling,

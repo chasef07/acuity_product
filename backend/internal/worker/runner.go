@@ -65,43 +65,14 @@ type Runner struct {
 	wait         func(context.Context, time.Duration) bool
 }
 
-func New(config Config, work CallingWork, dependency Dependency) (*Runner, error) {
-	return newRunner(config, work, nil, nil, dependency)
-}
-
-func NewWithMessaging(
-	config Config,
-	work CallingWork,
-	messages MessagingWork,
-	dependency Dependency,
-) (*Runner, error) {
-	if messages == nil {
-		return nil, fmt.Errorf("messaging worker dependency is required")
-	}
-	return newRunner(config, work, messages, nil, dependency)
-}
-
-func NewWithMessagingAndInteractions(
+func New(
 	config Config,
 	work CallingWork,
 	messages MessagingWork,
 	interactions InteractionWork,
 	dependency Dependency,
 ) (*Runner, error) {
-	if messages == nil || interactions == nil {
-		return nil, fmt.Errorf("messaging and interaction worker dependencies are required")
-	}
-	return newRunner(config, work, messages, interactions, dependency)
-}
-
-func newRunner(
-	config Config,
-	work CallingWork,
-	messages MessagingWork,
-	interactions InteractionWork,
-	dependency Dependency,
-) (*Runner, error) {
-	if work == nil || dependency == nil {
+	if work == nil || messages == nil || interactions == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
 	}
 	if config.WorkInterval <= 0 ||
@@ -157,14 +128,7 @@ func newRunner(
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	laneCount := 2 + runner.config.CommandWorkers
-	if runner.messages != nil {
-		laneCount += 2
-	}
-	if runner.interactions != nil {
-		laneCount++
-	}
-	lanes.Add(laneCount)
+	lanes.Add(5 + runner.config.CommandWorkers)
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLane(
@@ -185,37 +149,33 @@ func (runner *Runner) Run(ctx context.Context) error {
 			)
 		}()
 	}
-	if runner.messages != nil {
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLane(
-				ctx,
-				runner.config.ReceiptBatchSize,
-				"messaging_receipt_processing_failed",
-				runner.messages.ProcessNextReceipt,
-			)
-		}()
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLane(
-				ctx,
-				runner.config.CommandBatchSize,
-				"messaging_command_processing_failed",
-				runner.messages.ProcessNextCommand,
-			)
-		}()
-	}
-	if runner.interactions != nil {
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLane(
-				ctx,
-				runner.config.ReceiptBatchSize,
-				"ai_interaction_receipt_processing_failed",
-				runner.interactions.ProcessNextReceipt,
-			)
-		}()
-	}
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.ReceiptBatchSize,
+			"messaging_receipt_processing_failed",
+			runner.messages.ProcessNextReceipt,
+		)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.CommandBatchSize,
+			"messaging_command_processing_failed",
+			runner.messages.ProcessNextCommand,
+		)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.ReceiptBatchSize,
+			"ai_interaction_receipt_processing_failed",
+			runner.interactions.ProcessNextReceipt,
+		)
+	}()
 	go func() {
 		defer lanes.Done()
 		runner.runMaintenanceLane(ctx)
@@ -359,7 +319,7 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 		warn(ctx, "provider_credential_reconciliation_failed", err)
 		failed = true
 	}
-	if runner.messages == nil || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return failed
 	}
 	if err := runWork(
