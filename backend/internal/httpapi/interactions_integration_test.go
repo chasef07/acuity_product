@@ -22,6 +22,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 )
 
 func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
@@ -158,6 +159,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			Interactions:         interactionModule,
 			Messaging:            messaging.New(pool, accessModule, workModule, nil, messaging.Config{}, nil),
 			Work:                 workModule,
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuth,
 		},
 	)

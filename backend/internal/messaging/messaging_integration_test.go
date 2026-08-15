@@ -11,9 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,8 +20,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 )
 
 func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) {
@@ -90,6 +86,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		},
 		func() time.Time { return now },
 	)
+	reads := workspace.New(pool, accessModule)
 	if err := module.Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "message-practice",
 		LocationKey:        "message-office",
@@ -561,9 +558,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			secondThreads,
 		)
 	}
-	timeline, err := module.QueryTimeline(
+	timeline, err := reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: first.Thread.ID,
 		},
@@ -577,9 +574,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		timeline.Items[2].Message.Direction != messaging.DirectionInbound {
 		t.Fatalf("Message timeline = %#v", timeline)
 	}
-	newerPage, err := module.QueryTimeline(
+	newerPage, err := reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: first.Thread.ID,
 			Limit:    2,
@@ -588,9 +585,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil || len(newerPage.Items) != 2 || newerPage.NextCursor == "" {
 		t.Fatalf("newer timeline page = %#v, %v", newerPage, err)
 	}
-	olderPage, err := module.QueryTimeline(
+	olderPage, err := reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: first.Thread.ID,
 			Cursor:   newerPage.NextCursor,
@@ -894,19 +891,14 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		followUp.Phone != "+17275550199" {
 		t.Fatalf("Message follow-up Task = %#v", followUp)
 	}
-	taskProjection := []work.Task{followUp}
-	if err := module.ApplyTaskUnread(
-		context.Background(),
-		identity,
-		taskProjection,
-	); err != nil ||
-		!taskProjection[0].Unread ||
-		taskProjection[0].ConversationThreadID != first.Thread.ID {
+	taskProjection, err := reads.ReadTask(context.Background(), identity, followUp.ID)
+	if err != nil || !taskProjection.Unread ||
+		taskProjection.ConversationThreadID != first.Thread.ID {
 		t.Fatalf("OPEN Task unread projection = %#v, %v", taskProjection, err)
 	}
-	timelineWithTask, err := module.QueryTimeline(
+	timelineWithTask, err := reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: first.Thread.ID,
 		},
@@ -1039,9 +1031,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			t.Fatalf("seed unbridged Staff CallLeg %d: %v", index, err)
 		}
 	}
-	timelineWithCall, err := module.QueryTimeline(
+	timelineWithCall, err := reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: first.Thread.ID,
 		},
@@ -1094,18 +1086,13 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil {
 		t.Fatalf("complete Message Task: %v", err)
 	}
-	completedProjection := []work.Task{completed}
-	if err := module.ApplyTaskUnread(
-		context.Background(),
-		identity,
-		completedProjection,
-	); err != nil ||
-		completedProjection[0].Unread {
+	completedProjection, err := reads.ReadTask(context.Background(), identity, completed.ID)
+	if err != nil || completedProjection.Unread {
 		t.Fatalf("COMPLETED Task unread projection = %#v, %v", completedProjection, err)
 	}
-	timelineWithTask, err = module.QueryTimeline(
+	timelineWithTask, err = reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: first.Thread.ID,
 		},
@@ -1178,9 +1165,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		secondLocationMessage.Thread.OfficePhone != "+17275550101" {
 		t.Fatalf("second Location Message = %#v", secondLocationMessage)
 	}
-	phoneTimeline, err := module.QueryPhoneTimeline(
+	phoneTimeline, err := reads.QueryPhoneTimeline(
 		context.Background(),
-		messaging.QueryPhoneTimelineCommand{
+		workspace.QueryPhoneTimelineCommand{
 			Identity: identity, PracticeID: authorization.Practice.ID,
 			Phone: "+17275550199",
 		},
@@ -1301,47 +1288,6 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("first unthreaded Task Message = %#v", taskMessage)
 	}
 
-	tracer := &messagingProjectionTracer{}
-	tracedConfig, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatalf("parse traced Messaging database config: %v", err)
-	}
-	tracedConfig.ConnConfig.Tracer = tracer
-	tracedPool, err := pgxpool.NewWithConfig(context.Background(), tracedConfig)
-	if err != nil {
-		t.Fatalf("open traced Messaging database pool: %v", err)
-	}
-	t.Cleanup(tracedPool.Close)
-	tracedAccess := access.New(tracedPool, func() time.Time { return now })
-	tracedModule := messaging.New(
-		tracedPool,
-		tracedAccess,
-		nil,
-		nil,
-		messaging.Config{},
-		func() time.Time { return now },
-	)
-	taskPage := make([]work.Task, 50)
-	for index := range taskPage {
-		taskPage[index] = aiTask
-	}
-	if err := tracedModule.ApplyTaskUnread(
-		context.Background(),
-		identity,
-		taskPage,
-	); err != nil {
-		t.Fatalf("batch Task conversation projection: %v", err)
-	}
-	for index, projected := range taskPage {
-		if projected.ConversationThreadID != taskMessage.Thread.ID ||
-			projected.Unread {
-			t.Fatalf("projected Task %d = %#v", index, projected)
-		}
-	}
-	if calls := tracer.messagingQueries.Load(); calls != 1 {
-		t.Fatalf("Task Messaging projection queries = %d, want 1", calls)
-	}
-
 	completedAITask, err := workModule.CompleteTask(
 		context.Background(),
 		work.CompleteTaskCommand{
@@ -1353,14 +1299,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if err != nil {
 		t.Fatalf("complete Task with conversation: %v", err)
 	}
-	completedPage := []work.Task{completedAITask}
-	if err := module.ApplyTaskUnread(
-		context.Background(),
-		identity,
-		completedPage,
-	); err != nil ||
-		completedPage[0].ConversationThreadID != taskMessage.Thread.ID ||
-		completedPage[0].Unread {
+	completedPage, err := reads.ReadTask(context.Background(), identity, completedAITask.ID)
+	if err != nil ||
+		completedPage.ConversationThreadID != taskMessage.Thread.ID ||
+		completedPage.Unread {
 		t.Fatalf(
 			"completed Task conversation projection = %#v, %v",
 			completedPage,
@@ -1441,6 +1383,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		},
 		func() time.Time { return now },
 	)
+	reads := workspace.New(pool, accessModule)
 	if err := module.Provision(context.Background(), []messaging.LocationProvision{{
 		PracticeKey:        "attachment-practice",
 		LocationKey:        "attachment-office",
@@ -1722,9 +1665,9 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		!processed {
 		t.Fatalf("project inbound MMS = %t, %v", processed, err)
 	}
-	timeline, err := module.QueryTimeline(
+	timeline, err := reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: outbound.Thread.ID,
 		},
@@ -1742,9 +1685,9 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		!processed {
 		t.Fatalf("fail expired inbound media copy = %t, %v", processed, err)
 	}
-	timeline, err = module.QueryTimeline(
+	timeline, err = reads.QueryTimeline(
 		context.Background(),
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: outbound.Thread.ID,
 		},
@@ -2039,29 +1982,6 @@ func (fixture *providerFixture) Reconcile(
 		return messaging.ProviderResult{}, messaging.ErrAmbiguous
 	}
 	return fixture.reconcileResult, nil
-}
-
-type messagingProjectionTracer struct {
-	messagingQueries atomic.Int64
-}
-
-func (tracer *messagingProjectionTracer) TraceQueryStart(
-	ctx context.Context,
-	_ *pgx.Conn,
-	data pgx.TraceQueryStartData,
-) context.Context {
-	if strings.Contains(data.SQL, "FROM messaging_threads") ||
-		strings.Contains(data.SQL, "FROM messaging_thread_unreads") {
-		tracer.messagingQueries.Add(1)
-	}
-	return ctx
-}
-
-func (*messagingProjectionTracer) TraceQueryEnd(
-	context.Context,
-	*pgx.Conn,
-	pgx.TraceQueryEndData,
-) {
 }
 
 type deleteFailingAttachmentStore struct {

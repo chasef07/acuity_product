@@ -27,10 +27,12 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1082,7 +1084,9 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 				nil,
 			),
 			Interactions:         interaction.New(pool, accessModule, func() time.Time { return now }),
+			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
 			Work:                 work.New(pool, accessModule, func() time.Time { return now }),
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -1399,7 +1403,9 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			Authenticator:        staticAuthenticator{"calling-token": identity},
 			Calling:              calling,
 			Interactions:         interaction.New(pool, accessModule, nil),
+			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
 			Work:                 work.New(pool, accessModule, nil),
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -2386,7 +2392,9 @@ func newPortalHandlerWithCalling(
 		Authenticator:        authenticator,
 		Calling:              calling,
 		Interactions:         interaction.New(pool, accessModule, nil),
+		Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
 		Work:                 work.New(pool, accessModule, nil),
+		Workspace:            workspace.New(pool, accessModule),
 		ServiceAuthenticator: serviceAuthenticator,
 	})
 }

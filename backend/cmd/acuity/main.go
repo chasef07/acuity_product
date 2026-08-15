@@ -27,6 +27,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/worker"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -295,6 +296,7 @@ func runAuthorizedHTTP(
 			Interactions:         interaction.New(database, accessModule, nil),
 			Messaging:            messages,
 			Work:                 workModule,
+			Workspace:            workspace.New(database, accessModule),
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {
