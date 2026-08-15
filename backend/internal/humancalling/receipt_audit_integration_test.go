@@ -1,13 +1,16 @@
 package humancalling_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
 
@@ -64,13 +67,23 @@ func TestProviderReceiptAuditAggregatesQuarantineWithoutIdentifiers(t *testing.T
 			 'PROJECTION_RETRY_EXHAUSTED', $3, $3, $3, $3),
 			('pending-secret-event', NULL, 'call.initiated', $5, $5, 1,
 			 '\x70656e64696e67', 'PENDING', 0,
-			 'WAITING_FOR_RELATED_FACT_SLOW_RETRY', NULL, $3, NULL, NULL)
+			 'WAITING_FOR_RELATED_FACT_SLOW_RETRY', NULL, $3, NULL, NULL),
+			('retry-secret-event', NULL, 'call.answered', $5, $5, 1,
+			 '\x7265747279', 'PENDING', 1,
+			 'PROJECTION_RETRY', $5, $3, NULL, NULL)
 	`, callID, now.Add(-2*time.Minute), now, now.Add(-5*time.Minute),
 		now.Add(-30*time.Second)); err != nil {
 		t.Fatalf("seed provider receipts: %v", err)
 	}
 
-	calling := humancalling.New(pool, nil, nil, humancalling.Config{}, func() time.Time {
+	var metrics bytes.Buffer
+	calling := humancalling.New(pool, nil, nil, humancalling.Config{
+		Observer: observability.NewLogger(
+			observability.RuntimeWorker,
+			"worker-receipt-audit-test",
+			slog.New(slog.NewJSONHandler(&metrics, nil)),
+		),
+	}, func() time.Time {
 		return now
 	})
 	audit, err := calling.AuditProviderReceipts(ctx)
@@ -78,7 +91,7 @@ func TestProviderReceiptAuditAggregatesQuarantineWithoutIdentifiers(t *testing.T
 		t.Fatalf("audit provider receipts: %v", err)
 	}
 	if len(audit.States) != 2 || audit.States[0].State != "PENDING" ||
-		audit.States[0].Receipts != 1 || audit.States[0].OldestAgeSeconds != 30 ||
+		audit.States[0].Receipts != 2 || audit.States[0].OldestAgeSeconds != 30 ||
 		audit.States[1].State != "QUARANTINED" || audit.States[1].Receipts != 2 ||
 		audit.States[1].OldestAgeSeconds != 300 {
 		t.Fatalf("receipt state audit = %#v", audit.States)
@@ -102,10 +115,24 @@ func TestProviderReceiptAuditAggregatesQuarantineWithoutIdentifiers(t *testing.T
 		"secret",
 		"private",
 		"pending",
+		"retry-secret-event",
 		callID,
 	} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("receipt audit exposed %q: %s", secret, encoded)
+		}
+	}
+	if err := calling.ReportReceiptQueue(ctx); err != nil {
+		t.Fatalf("report provider receipt queue: %v", err)
+	}
+	for _, field := range []string{
+		`"depth":2`,
+		`"projection_retry_depth":1`,
+		`"related_fact_depth":1`,
+		`"quarantined_depth":2`,
+	} {
+		if !strings.Contains(metrics.String(), field) {
+			t.Fatalf("receipt queue metric omitted %s: %s", field, metrics.String())
 		}
 	}
 }

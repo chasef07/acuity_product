@@ -140,6 +140,62 @@
     }
   },
   {
+    "name": "acuity_call_center_receipt_projection_retry_depth",
+    "description": "Distribution of durable provider receipts awaiting retry after a transient projection failure.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_queue\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.projection_retry_depth)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 16,
+        "growthFactor": 2,
+        "scale": 1
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_receipt_related_fact_depth",
+    "description": "Distribution of durable provider receipts waiting for an out-of-order related fact.",
+    "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_queue\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "1",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.related_fact_depth)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 16,
+        "growthFactor": 2,
+        "scale": 1
+      }
+    }
+  },
+  {
     "name": "acuity_call_center_receipt_queue_oldest_age_seconds",
     "description": "Distribution of oldest durable provider receipt age samples.",
     "filter": "resource.type=\"cloud_run_worker_pool\" AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_receipt_queue\"",

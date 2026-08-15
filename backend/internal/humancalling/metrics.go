@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/observability"
@@ -44,15 +45,28 @@ func (m *Module) recordVoicemailPlayback(err error, duration time.Duration) {
 func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	now := m.now()
 	var depth int64
+	var projectionRetryDepth int64
+	var relatedFactDepth int64
 	var quarantinedDepth int64
 	var oldest *time.Time
 	if err := m.database.QueryRow(ctx, `
 		SELECT
 			pending.depth,
 			pending.oldest,
+			pending.projection_retry_depth,
+			pending.related_fact_depth,
 			quarantined.depth
 		FROM (
-			SELECT count(*) AS depth, min(received_at) AS oldest
+			SELECT count(*) AS depth, min(received_at) AS oldest,
+				count(*) FILTER (
+					WHERE projection_error_code = 'PROJECTION_RETRY'
+				) AS projection_retry_depth,
+				count(*) FILTER (
+					WHERE projection_error_code IN (
+						'WAITING_FOR_RELATED_FACT',
+						'WAITING_FOR_RELATED_FACT_SLOW_RETRY'
+					)
+				) AS related_fact_depth
 			FROM human_calling_provider_receipts
 			WHERE state IN ('PENDING', 'PROCESSING')
 		) pending
@@ -61,7 +75,13 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 			FROM human_calling_provider_receipts
 			WHERE state = 'QUARANTINED'
 		) quarantined
-	`).Scan(&depth, &oldest, &quarantinedDepth); err != nil {
+	`).Scan(
+		&depth,
+		&oldest,
+		&projectionRetryDepth,
+		&relatedFactDepth,
+		&quarantinedDepth,
+	); err != nil {
 		return fmt.Errorf("read provider receipt queue: %w", err)
 	}
 	oldestAge := time.Duration(0)
@@ -70,7 +90,13 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	}
 	observability.Record(
 		m.observer,
-		observability.ReceiptQueue(depth, oldestAge, quarantinedDepth),
+		observability.ReceiptQueue(
+			depth,
+			oldestAge,
+			projectionRetryDepth,
+			relatedFactDepth,
+			quarantinedDepth,
+		),
 	)
 	var staffOccupancy, unresolvedHangups int64
 	var oldestStaffOccupancy, oldestHangup *time.Time
@@ -142,6 +168,7 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 
 func (m *Module) recordReceiptProcessed(
 	state ReceiptState,
+	errorCode string,
 	receivedAt, startedAt, completedAt time.Time,
 ) {
 	outcome := observability.ReceiptRetry
@@ -154,6 +181,12 @@ func (m *Module) recordReceiptProcessed(
 		outcome = observability.ReceiptFailed
 	case ReceiptQuarantined:
 		outcome = observability.ReceiptQuarantined
+	}
+	if state == ReceiptPending && strings.HasPrefix(errorCode, "WAITING_FOR_RELATED_FACT") {
+		outcome = observability.ReceiptRelatedFact
+	}
+	if state == ReceiptFailed && errorCode == "TERMINAL_OR_OBSOLETE_PROVIDER_FACT" {
+		outcome = observability.ReceiptObsolete
 	}
 	observability.Record(
 		m.observer,

@@ -36,6 +36,8 @@ const (
 	ReceiptUnknown     ReceiptOutcome = "unknown"
 	ReceiptFailed      ReceiptOutcome = "failed"
 	ReceiptRetry       ReceiptOutcome = "retry"
+	ReceiptRelatedFact ReceiptOutcome = "related_fact"
+	ReceiptObsolete    ReceiptOutcome = "obsolete"
 	ReceiptQuarantined ReceiptOutcome = "quarantined"
 )
 
@@ -166,11 +168,15 @@ func WebhookAcknowledged(outcome WebhookOutcome, duration time.Duration) Event {
 func ReceiptQueue(
 	depth int64,
 	oldestAge time.Duration,
+	projectionRetryDepth int64,
+	relatedFactDepth int64,
 	quarantinedDepth int64,
 ) Event {
 	return event("acuity_call_center_receipt_queue",
 		"depth", max(depth, 0),
 		"oldest_age_seconds", positive(oldestAge).Seconds(),
+		"projection_retry_depth", max(projectionRetryDepth, 0),
+		"related_fact_depth", max(relatedFactDepth, 0),
 		"quarantined_depth", max(quarantinedDepth, 0))
 }
 
@@ -189,7 +195,8 @@ func TerminalCleanup(
 
 func ReceiptProcessed(outcome ReceiptOutcome, queueAge, duration time.Duration) Event {
 	return event("acuity_call_center_receipt_processing",
-		"outcome", bounded(string(outcome), "applied", "unknown", "failed", "retry", "quarantined"),
+		"outcome", bounded(string(outcome), "applied", "unknown", "failed", "retry",
+			"related_fact", "obsolete", "quarantined"),
 		"queue_seconds", positive(queueAge).Seconds(),
 		"processing_seconds", positive(duration).Seconds())
 }

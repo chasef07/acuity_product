@@ -1,11 +1,14 @@
 package humancalling_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 )
 
@@ -215,6 +219,470 @@ func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
 	}
 }
 
+func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 14, 13, 0, 0, 0, time.UTC)
+	prefix := "child-before-parent"
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, accessModule, now, prefix, 1)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metrics bytes.Buffer
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		nil,
+		humancalling.Config{
+			HandoffSIPDomain:  "synthetic.sip.telnyx.com",
+			CallControlID:     "expected-connection",
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+			Observer: observability.NewLogger(
+				observability.RuntimeWorker,
+				"worker-related-receipt-test",
+				slog.New(slog.NewJSONHandler(&metrics, nil)),
+			),
+		},
+		func() time.Time { return now },
+	)
+	callerPhone := "+15555550100"
+	if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: prefix + "-service", PracticeID: authorization.Practice.ID,
+		},
+		LocationID: authorization.Locations[0].ID, SourceCallID: prefix + "-source",
+		IdempotencyKey: prefix, Contact: humancalling.ContactContext{Phone: callerPhone},
+	}); err != nil {
+		t.Fatalf("create valid handoff: %v", err)
+	}
+	raw := func(eventID, eventType string) []byte {
+		t.Helper()
+		return []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"%s","id":"%s","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"%s-control","call_leg_id":"%s-leg","call_session_id":"%s-session","from":"%s","to":"+14843989071"}}}`,
+			eventType, eventID, now.Format(time.RFC3339Nano), prefix, prefix, prefix,
+			callerPhone,
+		))
+	}
+	receive := func(body []byte) {
+		t.Helper()
+		timestamp := strconv.FormatInt(now.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), body...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(), body, timestamp, signature,
+		); err != nil {
+			t.Fatalf("receive provider receipt: %v", err)
+		}
+	}
+	process := func(eventType string) bool {
+		t.Helper()
+		processed, err := calling.ProcessNextReceipt(context.Background())
+		if err != nil {
+			t.Fatalf("process %s: %v", eventType, err)
+		}
+		return processed
+	}
+
+	receive(raw(prefix+"-answered", "call.answered"))
+	if !process("child call.answered") {
+		t.Fatal("child call.answered was not claimed")
+	}
+	var childState, childError string
+	var childAttempts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts WHERE event_id = $1
+	`, prefix+"-answered").Scan(&childState, &childAttempts, &childError); err != nil {
+		t.Fatal(err)
+	}
+	if childState != string(humancalling.ReceiptPending) || childAttempts != 1 ||
+		childError != "WAITING_FOR_RELATED_FACT" {
+		t.Fatalf("child before parent = state:%s attempts:%d error:%s",
+			childState, childAttempts, childError)
+	}
+	if !strings.Contains(metrics.String(), `"outcome":"related_fact"`) {
+		t.Fatalf("related-fact classification metric = %s", metrics.String())
+	}
+
+	receive(raw(prefix+"-initiated", "call.initiated"))
+	if !process("parent call.initiated") {
+		t.Fatal("parent call.initiated was not claimed")
+	}
+	if !process("woken child call.answered") {
+		t.Fatal("related child was not woken when parent attached the Call")
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts WHERE event_id = $1
+	`, prefix+"-answered").Scan(&childState, &childAttempts, &childError); err != nil {
+		t.Fatal(err)
+	}
+	if childState != string(humancalling.ReceiptApplied) || childAttempts != 2 || childError != "" {
+		t.Fatalf("child after parent = state:%s attempts:%d error:%s",
+			childState, childAttempts, childError)
+	}
+}
+
+func TestProviderProjectionConflictRemainsRetryable(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 13, 30, 0, 0, time.UTC)
+	currentTime := now
+	pool := testdb.Open(t)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		nil,
+		humancalling.Config{
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return currentTime },
+	)
+	clientState := base64.StdEncoding.EncodeToString([]byte(
+		`{"v":2,"call":"00000000-0000-0000-0000-000000000931","call_leg":"00000000-0000-0000-0000-000000000932","role":"CALLER","kind":"not_ring_window"}`,
+	))
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.playback.ended","id":"projection-conflict","occurred_at":"%s","payload":{"call_control_id":"conflict-control","call_leg_id":"conflict-leg","call_session_id":"conflict-session","client_state":"%s","status":"completed"}}}`,
+		now.Format(time.RFC3339Nano), clientState,
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), raw, timestamp, signature,
+	); err != nil {
+		t.Fatalf("receive projection conflict: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process projection conflict: processed=%t err=%v", processed, err)
+	}
+	var state, errorCode string
+	var attempts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'projection-conflict'
+	`).Scan(&state, &attempts, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(humancalling.ReceiptPending) || attempts != 1 ||
+		errorCode != "PROJECTION_RETRY" {
+		t.Fatalf("projection conflict receipt = state:%s attempts:%d error:%s",
+			state, attempts, errorCode)
+	}
+	for attempts = 2; attempts <= 10; attempts++ {
+		currentTime = currentTime.Add(time.Hour)
+		if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+			t.Fatalf("retry projection conflict attempt %d: processed=%t err=%v",
+				attempts, processed, err)
+		}
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'projection-conflict'
+	`).Scan(&state, &attempts, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(humancalling.ReceiptQuarantined) || attempts != 10 ||
+		errorCode != "PROJECTION_RETRY_EXHAUSTED" {
+		t.Fatalf("bounded projection conflict receipt = state:%s attempts:%d error:%s",
+			state, attempts, errorCode)
+	}
+}
+
+func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 13, 45, 0, 0, time.UTC)
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "terminal-late-answer", 1,
+	)
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		provider,
+		humancalling.Config{
+			StaffSIPDomain:         "sip.telnyx.com",
+			CallControlID:          "staff-call-control-connection",
+			CredentialConnectionID: "staff-credential-connection",
+			WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
+			WebhookTolerance:       5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "terminal-late-answer-browser")
+	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+		PracticeKey: "terminal-late-answer-practice",
+		LocationKey: "terminal-late-answer-location",
+		Number:      "+14843336938", Enabled: true,
+	}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	provider.actionErrors = map[humancalling.CommandAction][]error{
+		humancalling.CommandDialOutboundStaff: {
+			fmt.Errorf("%w: synthetic rejected Dial", humancalling.ErrDefinitiveProviderFailure),
+		},
+	}
+	call, err := calling.StartOutboundCall(ctx, humancalling.StartOutboundCallCommand{
+		Identity: staff[0], SessionID: "terminal-late-answer-browser-1",
+		IdempotencyKey: "terminal-late-answer",
+		PracticeID:     authorization.Practice.ID,
+		LocationID:     authorization.Locations[0].ID,
+		Destination:    "+15555550123",
+	})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(ctx); !processed || err == nil {
+		t.Fatalf("reject outbound Dial: processed=%t err=%v", processed, err)
+	}
+	var callLegID, legState, legError string
+	if err := pool.QueryRow(ctx, `
+		SELECT id::text, state, COALESCE(error_code, '')
+		FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'CALLER'
+	`, call.ID).Scan(&callLegID, &legState, &legError); err != nil {
+		t.Fatalf("read terminal caller CallLeg: %v", err)
+	}
+	if legState != "FAILED" || legError != "CALL_TERMINATED_BEFORE_PROVIDER_START" {
+		t.Fatalf("terminal caller cleanup = state:%s error:%s", legState, legError)
+	}
+	clientStateJSON := []byte(fmt.Sprintf(
+		`{"v":2,"call":"%s","call_leg":"%s","role":"CALLER","kind":"answer"}`,
+		call.ID, callLegID,
+	))
+	clientState := base64.StdEncoding.EncodeToString(clientStateJSON)
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"terminal-late-answer","occurred_at":"%s","payload":{"connection_id":"late-connection","call_control_id":"late-control","call_leg_id":"late-leg","call_session_id":"late-session","client_state":"%s"}}}`,
+		now.Format(time.RFC3339Nano), clientState,
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	if _, err := calling.ReceiveWebhook(ctx, raw, timestamp, signature); err != nil {
+		t.Fatalf("receive terminal late answer: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(ctx); err != nil || !processed {
+		t.Fatalf("process terminal late answer: processed=%t err=%v", processed, err)
+	}
+	var receiptState, errorCode string
+	var attempts int
+	if err := pool.QueryRow(ctx, `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'terminal-late-answer'
+	`).Scan(&receiptState, &attempts, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	var providerIdentityCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT state, COALESCE(error_code, ''),
+			(CASE WHEN provider_connection_id IS NOT NULL THEN 1 ELSE 0 END) +
+			(CASE WHEN provider_call_control_id IS NOT NULL THEN 1 ELSE 0 END) +
+			(CASE WHEN provider_call_leg_id IS NOT NULL THEN 1 ELSE 0 END) +
+			(CASE WHEN provider_call_session_id IS NOT NULL THEN 1 ELSE 0 END)
+		FROM human_calling_call_legs WHERE id = $1
+	`, callLegID).Scan(&legState, &legError, &providerIdentityCount); err != nil {
+		t.Fatal(err)
+	}
+	if receiptState != string(humancalling.ReceiptFailed) || attempts != 1 ||
+		errorCode != "TERMINAL_OR_OBSOLETE_PROVIDER_FACT" {
+		t.Fatalf("terminal late answer receipt = state:%s attempts:%d error:%s",
+			receiptState, attempts, errorCode)
+	}
+	if legState != "FAILED" || legError != "CALL_TERMINATED_BEFORE_PROVIDER_START" ||
+		providerIdentityCount != 0 {
+		t.Fatalf("terminal late answer revived leg = state:%s error:%s provider identities:%d",
+			legState, legError, providerIdentityCount)
+	}
+}
+
+func TestTransientProjectionFailureRetriesThenStopsAtAttemptBound(t *testing.T) {
+	baseTime := time.Date(2026, time.August, 14, 14, 0, 0, 0, time.UTC)
+	prefix := "transient-receipt-projection"
+	provider := &recordingProvider{}
+	pool, _, caller, _ := prepareInboundFanout(t, baseTime, prefix, provider, 1)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentTime := baseTime.Add(2 * time.Second)
+	calling := humancalling.New(
+		pool,
+		access.New(pool, func() time.Time { return currentTime }),
+		provider,
+		humancalling.Config{
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return currentTime },
+	)
+	if _, err := pool.Exec(context.Background(), `
+		CREATE FUNCTION fail_provider_fact_projection() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'synthetic serialization failure' USING ERRCODE = '40001';
+		END
+		$$;
+		CREATE TRIGGER fail_provider_fact_projection
+		BEFORE INSERT ON human_calling_projected_facts
+		FOR EACH ROW EXECUTE FUNCTION fail_provider_fact_projection()
+	`); err != nil {
+		t.Fatalf("install transient projection failure: %v", err)
+	}
+	dropFailure := func() {
+		t.Helper()
+		if _, err := pool.Exec(context.Background(), `
+			DROP TRIGGER IF EXISTS fail_provider_fact_projection
+				ON human_calling_projected_facts;
+			DROP FUNCTION IF EXISTS fail_provider_fact_projection()
+		`); err != nil {
+			t.Fatalf("remove transient projection failure: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `
+			DROP TRIGGER IF EXISTS fail_provider_fact_projection
+				ON human_calling_projected_facts;
+			DROP FUNCTION IF EXISTS fail_provider_fact_projection()
+		`)
+	})
+	receiveHangup := func(eventID string) []byte {
+		t.Helper()
+		body := []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"call.hangup","id":"%s","occurred_at":"%s","payload":{"call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","hangup_cause":"normal_clearing"}}}`,
+			eventID, currentTime.Format(time.RFC3339Nano), caller.CallControlID,
+			caller.CallLegID, caller.CallSessionID,
+		))
+		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), body...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(), body, timestamp, signature,
+		); err != nil {
+			t.Fatalf("receive transient provider receipt: %v", err)
+		}
+		return body
+	}
+	process := func() {
+		t.Helper()
+		processed, err := calling.ProcessNextReceipt(context.Background())
+		if err != nil || !processed {
+			t.Fatalf("process transient provider receipt: processed=%t err=%v", processed, err)
+		}
+	}
+	readReceipt := func(eventID string) (string, int, string) {
+		t.Helper()
+		var state, errorCode string
+		var attempts int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+			FROM human_calling_provider_receipts WHERE event_id = $1
+		`, eventID).Scan(&state, &attempts, &errorCode); err != nil {
+			t.Fatal(err)
+		}
+		return state, attempts, errorCode
+	}
+
+	receiveHangup(prefix + "-recovers")
+	process()
+	if state, attempts, code := readReceipt(prefix + "-recovers"); state != string(humancalling.ReceiptPending) || attempts != 1 ||
+		code != "PROJECTION_RETRY" {
+		t.Fatalf("transient receipt first attempt = state:%s attempts:%d error:%s",
+			state, attempts, code)
+	}
+	dropFailure()
+	currentTime = currentTime.Add(time.Second)
+	process()
+	if state, attempts, code := readReceipt(prefix + "-recovers"); state != string(humancalling.ReceiptApplied) || attempts != 2 || code != "" {
+		t.Fatalf("recovered transient receipt = state:%s attempts:%d error:%s",
+			state, attempts, code)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		CREATE FUNCTION fail_provider_fact_projection() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'synthetic serialization failure' USING ERRCODE = '40001';
+		END
+		$$;
+		CREATE TRIGGER fail_provider_fact_projection
+		BEFORE INSERT ON human_calling_projected_facts
+		FOR EACH ROW EXECUTE FUNCTION fail_provider_fact_projection()
+	`); err != nil {
+		t.Fatalf("restore transient projection failure: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_receipts (
+			event_id, event_type, occurred_at, received_at,
+			signature_timestamp, raw_body, state, projection_attempts,
+			projection_error_code, last_attempt_at, next_attempt_at,
+			projected_at, quarantined_at
+		) VALUES ($1, 'call.speak.ended', $2, $2, 1, $3,
+			'QUARANTINED', 10, 'PROJECTION_RETRY_EXHAUSTED', $2, $2, $2, $2)
+	`, prefix+"-historical", currentTime, []byte("historical-raw-evidence")); err != nil {
+		t.Fatalf("seed historical quarantine: %v", err)
+	}
+	boundedRaw := receiveHangup(prefix + "-bounded")
+	for attempt := 1; attempt <= 10; attempt++ {
+		process()
+		if attempt < 10 {
+			currentTime = currentTime.Add(2 * time.Minute)
+		}
+	}
+	if state, attempts, code := readReceipt(prefix + "-bounded"); state != string(humancalling.ReceiptQuarantined) || attempts != 10 ||
+		code != "PROJECTION_RETRY_EXHAUSTED" {
+		t.Fatalf("bounded transient receipt = state:%s attempts:%d error:%s",
+			state, attempts, code)
+	}
+	var historicalState, historicalCode string
+	var historicalAttempts int
+	var historicalRaw, boundedStoredRaw []byte
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, projection_error_code, raw_body
+		FROM human_calling_provider_receipts WHERE event_id = $1
+	`, prefix+"-historical").Scan(
+		&historicalState, &historicalAttempts, &historicalCode, &historicalRaw,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT raw_body FROM human_calling_provider_receipts WHERE event_id = $1
+	`, prefix+"-bounded").Scan(&boundedStoredRaw); err != nil {
+		t.Fatal(err)
+	}
+	if historicalState != string(humancalling.ReceiptQuarantined) ||
+		historicalAttempts != 10 || historicalCode != "PROJECTION_RETRY_EXHAUSTED" ||
+		string(historicalRaw) != "historical-raw-evidence" {
+		t.Fatalf("historical quarantine changed = state:%s attempts:%d error:%s raw:%q",
+			historicalState, historicalAttempts, historicalCode, historicalRaw)
+	}
+	if string(boundedStoredRaw) != string(boundedRaw) {
+		t.Fatal("bounded transient quarantine did not preserve raw receipt evidence")
+	}
+}
+
 func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 11, 13, 0, 0, 0, time.UTC)
@@ -288,6 +756,257 @@ func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 	now = now.Add(time.Second)
 	if receipt := receiveAndProcess("quick-hangup", "call.hangup"); receipt.State != humancalling.ReceiptApplied {
 		t.Fatalf("valid quick hangup receipt state = %s, want APPLIED", receipt.State)
+	}
+}
+
+func TestTerminalCallSpeakEndedReceiptStopsWithoutSlowRetry(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
+	prefix := "terminal-before-speak-ended"
+	provider := &recordingProvider{}
+	pool, setupCalling, caller, _ := prepareInboundFanout(
+		t, now, prefix, provider, 1,
+	)
+	processAllCommands(t, setupCalling)
+	ring := provider.last(humancalling.CommandStartRingWindow)
+	ringState, _ := ring.Payload["client_state"].(string)
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-ring-ended", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatalf("complete ring window: %v", err)
+	}
+	processAllCommands(t, setupCalling)
+	speak := provider.last(humancalling.CommandSpeakVoicemail)
+	speakState, _ := speak.Payload["client_state"].(string)
+	if speakState == "" {
+		t.Fatal("voicemail Speak command omitted client state")
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentTime := now.Add(21 * time.Second)
+	var metrics bytes.Buffer
+	calling := humancalling.New(
+		pool,
+		access.New(pool, func() time.Time { return currentTime }),
+		provider,
+		humancalling.Config{
+			CallControlID:     "staff-call-control-connection",
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+			Observer: observability.NewLogger(
+				observability.RuntimeWorker,
+				"worker-terminal-receipt-test",
+				slog.New(slog.NewJSONHandler(&metrics, nil)),
+			),
+		},
+		func() time.Time { return currentTime },
+	)
+	receive := func(raw []byte) humancalling.WebhookReceipt {
+		t.Helper()
+		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		receipt, err := calling.ReceiveWebhook(
+			context.Background(), raw, timestamp, signature,
+		)
+		if err != nil {
+			t.Fatalf("receive provider receipt: %v", err)
+		}
+		return receipt
+	}
+	process := func(eventType string) {
+		t.Helper()
+		processed, err := calling.ProcessNextReceipt(context.Background())
+		if err != nil || !processed {
+			t.Fatalf("process %s: processed=%t err=%v", eventType, processed, err)
+		}
+	}
+
+	hangup := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.hangup","id":"%s","occurred_at":"%s","payload":{"connection_id":"staff-call-control-connection","call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","hangup_cause":"normal_clearing"}}}`,
+		prefix+"-hangup", currentTime.Format(time.RFC3339Nano),
+		caller.CallControlID, caller.CallLegID, caller.CallSessionID,
+	))
+	receive(hangup)
+	process("call.hangup")
+
+	currentTime = currentTime.Add(time.Second)
+	speakEnded := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.speak.ended","id":"%s","occurred_at":"%s","payload":{"connection_id":"staff-call-control-connection","call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","client_state":"%s","status":"completed"}}}`,
+		prefix+"-speak-ended", currentTime.Format(time.RFC3339Nano),
+		caller.CallControlID, caller.CallLegID, caller.CallSessionID, speakState,
+	))
+	receive(speakEnded)
+	process("call.speak.ended")
+
+	var state, errorCode string
+	var attempts int
+	var rawBody []byte
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, ''), raw_body
+		FROM human_calling_provider_receipts
+		WHERE event_id = $1
+	`, prefix+"-speak-ended").Scan(&state, &attempts, &errorCode, &rawBody); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(humancalling.ReceiptFailed) || attempts != 1 ||
+		errorCode != "TERMINAL_OR_OBSOLETE_PROVIDER_FACT" {
+		t.Fatalf("terminal Speak receipt = state:%s attempts:%d error:%s",
+			state, attempts, errorCode)
+	}
+	if string(rawBody) != string(speakEnded) {
+		t.Fatal("terminal Speak classification did not preserve raw receipt evidence")
+	}
+	if !strings.Contains(metrics.String(), `"outcome":"obsolete"`) {
+		t.Fatalf("terminal Speak classification metric = %s", metrics.String())
+	}
+	if duplicate := receive(speakEnded); duplicate.State != humancalling.ReceiptFailed ||
+		!duplicate.Duplicate || duplicate.DuplicateCount != 1 {
+		t.Fatalf("terminal Speak duplicate = %#v", duplicate)
+	}
+}
+
+func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 15, 0, 0, 0, time.UTC)
+	prefix := "terminal-before-recording"
+	provider := &recordingProvider{}
+	pool, setupCalling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	processAllCommands(t, setupCalling)
+	ringState, _ := provider.last(humancalling.CommandStartRingWindow).
+		Payload["client_state"].(string)
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-ring-ended", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatalf("complete ring window: %v", err)
+	}
+	processAllCommands(t, setupCalling)
+	speakState, _ := provider.last(humancalling.CommandSpeakVoicemail).
+		Payload["client_state"].(string)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentTime := now.Add(21 * time.Second)
+	calling := humancalling.New(
+		pool,
+		access.New(pool, func() time.Time { return currentTime }),
+		provider,
+		humancalling.Config{
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return currentTime },
+	)
+	receiveAndProcess := func(eventID, eventType string, payload map[string]any) {
+		t.Helper()
+		envelope := map[string]any{"data": map[string]any{
+			"record_type": "event", "event_type": eventType, "id": eventID,
+			"occurred_at": currentTime.Format(time.RFC3339Nano), "payload": payload,
+		}}
+		body, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), body...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(), body, timestamp, signature,
+		); err != nil {
+			t.Fatalf("receive %s: %v", eventType, err)
+		}
+		processed, err := calling.ProcessNextReceipt(context.Background())
+		if err != nil || !processed {
+			t.Fatalf("process %s: processed=%t err=%v", eventType, processed, err)
+		}
+	}
+	identity := func(clientState, sessionID string) map[string]any {
+		return map[string]any{
+			"call_control_id": caller.CallControlID,
+			"call_leg_id":     caller.CallLegID,
+			"call_session_id": sessionID,
+			"client_state":    clientState,
+		}
+	}
+	read := func(eventID string) (string, int, string) {
+		t.Helper()
+		var state, code string
+		var attempts int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+			FROM human_calling_provider_receipts WHERE event_id = $1
+		`, eventID).Scan(&state, &attempts, &code); err != nil {
+			t.Fatal(err)
+		}
+		return state, attempts, code
+	}
+
+	speakPayload := identity(speakState, caller.CallSessionID)
+	speakPayload["status"] = "completed"
+	receiveAndProcess(prefix+"-speak-ended", "call.speak.ended", speakPayload)
+	processAllCommands(t, calling)
+	recordState, _ := provider.last(humancalling.CommandStartVoicemailRecording).
+		Payload["client_state"].(string)
+	currentTime = currentTime.Add(time.Second)
+	hangupPayload := identity("", caller.CallSessionID)
+	hangupPayload["hangup_cause"] = "normal_clearing"
+	receiveAndProcess(prefix+"-hangup", "call.hangup", hangupPayload)
+
+	currentTime = currentTime.Add(time.Second)
+	receiveAndProcess(
+		prefix+"-recording-wrong-session",
+		"call.recording.error",
+		identity(recordState, "wrong-session"),
+	)
+	if state, attempts, code := read(prefix + "-recording-wrong-session"); state != string(humancalling.ReceiptPending) || attempts != 1 ||
+		code != "PROJECTION_RETRY" {
+		t.Fatalf("conflicting recording receipt = state:%s attempts:%d error:%s",
+			state, attempts, code)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_receipts
+		SET next_attempt_at = $2
+		WHERE event_id = $1
+	`, prefix+"-recording-wrong-session", currentTime.Add(time.Hour)); err != nil {
+		t.Fatalf("defer conflicting recording receipt retry: %v", err)
+	}
+
+	currentTime = currentTime.Add(time.Second)
+	recordingPayload := identity(recordState, caller.CallSessionID)
+	recordingPayload["recording_id"] = prefix + "-recording"
+	recordingPayload["recording_started_at"] = now.Add(21 * time.Second).Format(time.RFC3339Nano)
+	recordingPayload["recording_ended_at"] = currentTime.Format(time.RFC3339Nano)
+	receiveAndProcess(prefix+"-recording-saved", "call.recording.saved", recordingPayload)
+	if state, attempts, code := read(prefix + "-recording-saved"); state != string(humancalling.ReceiptApplied) || attempts != 1 || code != "" {
+		t.Fatalf("late recording evidence = state:%s attempts:%d error:%s",
+			state, attempts, code)
+	}
+	var terminalOutcome, audioState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, voicemail.audio_state
+		FROM human_calling_calls call
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		WHERE call.id = (
+			SELECT call_id FROM human_calling_provider_receipts WHERE event_id = $1
+		)
+	`, prefix+"-recording-saved").Scan(&terminalOutcome, &audioState); err != nil {
+		t.Fatal(err)
+	}
+	if terminalOutcome != "VOICEMAIL" || audioState != "READY" {
+		t.Fatalf("late recording evidence outcome = terminal:%s audio:%s",
+			terminalOutcome, audioState)
 	}
 }
 

@@ -125,6 +125,11 @@ availability SLO:
 Load evidence must replace the receipt-depth and Staff-answer-contention hypotheses
 with measured baselines before the production gate is complete.
 
+The receipt queue sample also exposes `projection_retry_depth` and
+`related_fact_depth`. The bounded receipt-processing outcomes distinguish
+`retry`, `related_fact`, `obsolete`, and `quarantined`; no event type or provider
+identity is used as a metric label.
+
 ## Live gates
 
 - Apply into the real project and verify every metric descriptor is accepted.
