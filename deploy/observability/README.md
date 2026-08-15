@@ -81,6 +81,18 @@ MONITORING_NOTIFICATION_CHANNELS=projects/your-project/notificationChannels/123 
   node deploy/observability/apply.mjs --apply
 ```
 
+If no approved notification channel exists yet, apply only the checked log
+metrics without weakening the alert-policy channel gate:
+
+```sh
+GCP_PROJECT=your-project \
+  node deploy/observability/apply.mjs --apply --metrics-only
+```
+
+`--metrics-only` never lists, creates, or updates alert policies. A later full
+apply still requires `MONITORING_NOTIFICATION_CHANNELS` and preserves existing
+policy and condition resource names.
+
 Metric updates are idempotent by metric name. Policy updates resolve exactly one
 existing policy by its immutable `acuity_policy` label and fail closed if
 duplicates exist. Existing policy and condition resource names are preserved,

@@ -14,6 +14,7 @@ import {
 } from "./policy-identity.mjs"
 
 const apply = process.argv.includes("--apply")
+const metricsOnly = process.argv.includes("--metrics-only")
 const project = process.env.GCP_PROJECT
 if (!project) {
   throw new Error("GCP_PROJECT is required")
@@ -22,7 +23,7 @@ const notificationChannels = (process.env.MONITORING_NOTIFICATION_CHANNELS ?? ""
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean)
-if (apply && notificationChannels.length === 0) {
+if (apply && !metricsOnly && notificationChannels.length === 0) {
   throw new Error("MONITORING_NOTIFICATION_CHANNELS is required with --apply")
 }
 
@@ -63,7 +64,26 @@ const run = (args, capture = false) => {
   return capture ? result.stdout.trim() : ""
 }
 
-const existingPoliciesJSON = run(
+const existingMetricsJSON = run(
+  [
+    "logging",
+    "metrics",
+    "list",
+    "--format=json",
+    "--project",
+    project,
+  ],
+  apply,
+)
+const existingMetrics = apply ? JSON.parse(existingMetricsJSON) : []
+if (!Array.isArray(existingMetrics)) {
+  throw new Error("Google Cloud returned an invalid log metric list")
+}
+const existingMetricNames = new Set(existingMetrics.map((metric) =>
+  String(metric.name ?? "").split("/").at(-1),
+))
+
+const existingPoliciesJSON = metricsOnly ? "[]" : run(
   [
     "monitoring",
     "policies",
@@ -74,7 +94,9 @@ const existingPoliciesJSON = run(
   ],
   apply,
 )
-const existingPolicies = apply ? JSON.parse(existingPoliciesJSON) : []
+const existingPolicies = apply && !metricsOnly
+  ? JSON.parse(existingPoliciesJSON)
+  : []
 if (!Array.isArray(existingPolicies)) {
   throw new Error("Google Cloud returned an invalid alert policy list")
 }
@@ -84,10 +106,13 @@ try {
   for (const metric of metrics) {
     const path = join(temporaryDirectory, `${metric.name}.json`)
     writeFileSync(path, `${JSON.stringify(metric, null, 2)}\n`)
+    const metricAction = existingMetricNames.has(metric.name)
+      ? "update"
+      : "create"
     run([
       "logging",
       "metrics",
-      "update",
+      metricAction,
       metric.name,
       "--config-from-file",
       path,
@@ -95,9 +120,22 @@ try {
       project,
       "--quiet",
     ])
+    if (!apply) {
+      run([
+        "logging",
+        "metrics",
+        "update",
+        metric.name,
+        "--config-from-file",
+        path,
+        "--project",
+        project,
+        "--quiet",
+      ])
+    }
   }
 
-  for (const policy of policies) {
+  for (const policy of metricsOnly ? [] : policies) {
     const policyKey = policy.userLabels.acuity_policy
     const { existing, rendered: renderedPolicy } = preparePolicy(
       policy,
