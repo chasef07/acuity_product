@@ -73,6 +73,10 @@ const (
 
 const safeProviderRetryWindow = 55 * time.Second
 
+const credentialRetryLifetime = 5 * time.Minute
+
+const credentialRetryExhaustedCode = "CREDENTIAL_RETRY_EXHAUSTED"
+
 var telnyxWebhookRetryMilliseconds = []int{1000, 2000, 5000, 15000, 30000}
 
 func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {

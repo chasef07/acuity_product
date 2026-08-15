@@ -34,7 +34,7 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 		UPDATE human_calling_credentials credential
 		SET state = 'DISABLING', updated_at = $1
 		WHERE credential.provider_credential_id IS NOT NULL
-			AND credential.state IN ('ACTIVE', 'FAILED')
+			AND credential.state = 'ACTIVE'
 			AND NOT EXISTS (
 				SELECT 1 FROM access_operational_users operational
 				WHERE operational.user_subject = credential.user_subject
@@ -137,20 +137,44 @@ func (m *Module) ProcessNextCredentialReconciliation(
 	defer func() { _ = tx.Rollback(ctx) }()
 	var command ProviderCommand
 	var subject string
+	var createdAt time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT id::text, user_subject, action, COALESCE(target_id, '')
+		SELECT id::text, user_subject, action, COALESCE(target_id, ''), created_at
 		FROM human_calling_provider_commands
 		WHERE state = 'AMBIGUOUS'
 			AND action IN ('CREATE_CREDENTIAL', 'DISABLE_CREDENTIAL')
 			AND next_attempt_at <= $1
 		ORDER BY updated_at, id
 		FOR UPDATE SKIP LOCKED LIMIT 1
-	`, m.now()).Scan(&command.ID, &subject, &command.Action, &command.TargetID)
+	`, m.now()).Scan(
+		&command.ID, &subject, &command.Action, &command.TargetID, &createdAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
 	}
 	if err != nil {
 		return false, fmt.Errorf("claim credential reconciliation: %w", err)
+	}
+	if !createdAt.After(m.now().Add(-credentialRetryLifetime)) {
+		now := m.now()
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_provider_commands
+			SET state = 'FAILED', last_error_code = $2, updated_at = $3
+			WHERE id = $1 AND state = 'AMBIGUOUS'
+		`, command.ID, credentialRetryExhaustedCode, now); err != nil {
+			return true, fmt.Errorf("quarantine exhausted credential command: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_credentials
+			SET state = 'FAILED', last_error_code = $2, updated_at = $3
+			WHERE user_subject = $1
+		`, subject, credentialRetryExhaustedCode, now); err != nil {
+			return true, fmt.Errorf("quarantine exhausted Staff credential: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return true, fmt.Errorf("commit exhausted credential quarantine: %w", err)
+		}
+		return true, nil
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
@@ -175,7 +199,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_provider_commands
 			SET state = 'AMBIGUOUS', last_error_code = 'PROVIDER_STATE_UNAVAILABLE',
-				next_attempt_at = $2 + interval '5 seconds', updated_at = $2
+				next_attempt_at = $2::timestamptz + interval '5 seconds', updated_at = $2
 			WHERE id = $1
 		`, command.ID, m.now()); err != nil {
 			return true, err

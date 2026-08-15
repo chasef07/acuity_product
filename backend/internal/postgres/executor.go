@@ -278,6 +278,10 @@ func (executor *Executor) finishOperation(
 		executor.record("", time.Since(started))
 		return nil
 	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		executor.record("", time.Since(started))
+		return err
+	}
 	cause := CauseOf(err)
 	deadlineReached := errors.Is(context.Cause(ctx), context.DeadlineExceeded)
 	if deadlineReached && (cause == CauseOther || cause == CauseCanceled) {
