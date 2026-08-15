@@ -1870,6 +1870,11 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
+	answer := provider.last(humancalling.CommandAnswerCaller)
+	answerClientState, _ := answer.Payload["client_state"].(string)
+	if answerClientState == "" {
+		t.Fatalf("caller Answer client state = %#v", answer.Payload)
+	}
 	caller.EventID = "hangup-before-answer-hangup"
 	caller.Type = humancalling.FactCallHangup
 	caller.OccurredAt = now.Add(2 * time.Second)
@@ -1881,25 +1886,29 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	caller.EventID = "hangup-before-answer-late-answer"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
+	caller.ClientState = answerClientState
 	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	var terminal string
+	var terminal, answerCommandState string
 	var staffLegs, recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT terminal_outcome,
 			(SELECT count(*) FROM human_calling_call_legs WHERE role = 'STAFF'),
-			(SELECT count(*) FROM work_tasks)
+			(SELECT count(*) FROM work_tasks),
+			(SELECT state FROM human_calling_provider_commands
+			 WHERE action = 'ANSWER_CALLER' LIMIT 1)
 		FROM human_calling_calls
-	`).Scan(&terminal, &staffLegs, &recoveryTasks); err != nil {
+	`).Scan(&terminal, &staffLegs, &recoveryTasks, &answerCommandState); err != nil {
 		t.Fatal(err)
 	}
 	if terminal != "ABANDONED" || staffLegs != 0 || recoveryTasks != 0 ||
+		answerCommandState != "RECONCILED" ||
 		provider.count(humancalling.CommandStartRingWindow) != 0 ||
 		provider.count(humancalling.CommandDialStaff) != 0 {
-		t.Fatalf("late caller answer revived terminal Call: terminal=%s legs=%d tasks=%d commands=%#v",
-			terminal, staffLegs, recoveryTasks, provider.commands)
+		t.Fatalf("late caller answer convergence: terminal=%s legs=%d tasks=%d answer=%s commands=%#v",
+			terminal, staffLegs, recoveryTasks, answerCommandState, provider.commands)
 	}
 }
 
