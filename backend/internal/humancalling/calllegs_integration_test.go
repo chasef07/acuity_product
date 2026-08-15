@@ -83,7 +83,7 @@ func TestProvisionedGoogleUserReceivesManagedCallingCredential(t *testing.T) {
 	}
 }
 
-func TestInboundTransferRingsOnlyAvailableStaffForItsLocation(t *testing.T) {
+func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -121,6 +121,9 @@ func TestInboundTransferRingsOnlyAvailableStaffForItsLocation(t *testing.T) {
 		if index == 0 {
 			practiceID = discovery.Practices[0].ID
 			sweetwater = discovery.Practices[0].Locations[0]
+		}
+		if !discovery.Practices[0].CallingEnabled {
+			t.Fatalf("portal CallingEnabled for %q = false", identity.Email)
 		}
 	}
 
