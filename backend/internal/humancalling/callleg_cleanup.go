@@ -143,7 +143,11 @@ func (m *Module) endCallLegs(
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT id::text, role, COALESCE(staff_subject, ''),
-			COALESCE(provider_call_control_id, '')
+			COALESCE(provider_call_control_id, ''),
+			provider_connection_id IS NULL
+				AND provider_call_control_id IS NULL
+				AND provider_call_leg_id IS NULL
+				AND provider_call_session_id IS NULL
 		FROM human_calling_call_legs
 		WHERE call_id = $1 AND ($2 OR role <> 'CALLER')
 			AND state NOT IN ('ENDED', 'FAILED', 'ENDING')
@@ -152,11 +156,16 @@ func (m *Module) endCallLegs(
 	if err != nil {
 		return fmt.Errorf("lock remaining CallLegs: %w", err)
 	}
-	type remainingLeg struct{ id, role, subject, controlID string }
+	type remainingLeg struct {
+		id, role, subject, controlID string
+		identityless                 bool
+	}
 	remaining := []remainingLeg{}
 	for rows.Next() {
 		var leg remainingLeg
-		if err := rows.Scan(&leg.id, &leg.role, &leg.subject, &leg.controlID); err != nil {
+		if err := rows.Scan(
+			&leg.id, &leg.role, &leg.subject, &leg.controlID, &leg.identityless,
+		); err != nil {
 			rows.Close()
 			return err
 		}
@@ -172,6 +181,10 @@ func (m *Module) endCallLegs(
 			return fmt.Errorf("cancel unsent CallLeg commands: %w", err)
 		}
 		if leg.controlID == "" {
+			errorCode := "CALL_TERMINATED"
+			if leg.role == "CALLER" && leg.identityless {
+				errorCode = "CALL_TERMINATED_BEFORE_PROVIDER_START"
+			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE human_calling_call_legs
 				SET state = 'FAILED',
@@ -183,9 +196,9 @@ func (m *Module) endCallLegs(
 						ended_at,
 						GREATEST($2, COALESCE(answered_at, $2), COALESCE(ending_at, $2))
 					),
-					error_code = COALESCE(error_code, 'CALL_TERMINATED'), updated_at = $2
+					error_code = COALESCE(error_code, $3), updated_at = $2
 				WHERE id = $1
-			`, leg.id, m.now()); err != nil {
+			`, leg.id, m.now(), errorCode); err != nil {
 				return fmt.Errorf("fail undialed CallLeg: %w", err)
 			}
 			continue

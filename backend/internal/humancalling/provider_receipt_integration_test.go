@@ -404,60 +404,71 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 13, 45, 0, 0, time.UTC)
 	pool := testdb.Open(t)
 	ctx := context.Background()
-	const (
-		practiceID = "00000000-0000-0000-0000-000000000941"
-		locationID = "00000000-0000-0000-0000-000000000942"
-		callID     = "00000000-0000-0000-0000-000000000943"
-		callLegID  = "00000000-0000-0000-0000-000000000944"
-	)
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO access_practices (id, provisioning_key, name)
-		VALUES ($1, 'terminal-late-answer', 'Terminal late answer')
-	`, practiceID); err != nil {
-		t.Fatalf("seed Practice: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
-		VALUES ($2, $1, 'main', 'Main')
-	`, practiceID, locationID); err != nil {
-		t.Fatalf("seed Location: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO human_calling_calls (
-			id, practice_id, location_id, direction, entry_point,
-			terminal_outcome, ended_at, created_at, updated_at
-		) VALUES ($1, $2, $3, 'OUTBOUND', 'STANDALONE', 'UNANSWERED', $4, $4, $4)
-	`, callID, practiceID, locationID, now); err != nil {
-		t.Fatalf("seed terminal Call: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO human_calling_call_legs (
-			id, call_id, role, sequence, state, error_code,
-			ended_at, created_at, updated_at
-		) VALUES ($1, $2, 'CALLER', 1, 'FAILED',
-			'CALL_TERMINATED_BEFORE_PROVIDER_START', $3, $3, $3)
-	`, callLegID, callID, now); err != nil {
-		t.Fatalf("seed cleanup-failed CallLeg: %v", err)
-	}
-	clientStateJSON := []byte(fmt.Sprintf(
-		`{"v":2,"call":"%s","call_leg":"%s","role":"CALLER","kind":"answer"}`,
-		callID, callLegID,
-	))
-	clientState := base64.StdEncoding.EncodeToString(clientStateJSON)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "terminal-late-answer", 1,
+	)
+	provider := &recordingProvider{}
 	calling := humancalling.New(
 		pool,
-		nil,
-		nil,
+		accessModule,
+		provider,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			StaffSIPDomain:         "sip.telnyx.com",
+			CallControlID:          "staff-call-control-connection",
+			CredentialConnectionID: "staff-credential-connection",
+			WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
+			WebhookTolerance:       5 * time.Minute,
 		},
 		func() time.Time { return now },
 	)
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "terminal-late-answer-browser")
+	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+		PracticeKey: "terminal-late-answer-practice",
+		LocationKey: "terminal-late-answer-location",
+		Number:      "+14843336938", Enabled: true,
+	}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	provider.actionErrors = map[humancalling.CommandAction][]error{
+		humancalling.CommandDialOutboundStaff: {
+			fmt.Errorf("%w: synthetic rejected Dial", humancalling.ErrDefinitiveProviderFailure),
+		},
+	}
+	call, err := calling.StartOutboundCall(ctx, humancalling.StartOutboundCallCommand{
+		Identity: staff[0], SessionID: "terminal-late-answer-browser-1",
+		IdempotencyKey: "terminal-late-answer",
+		PracticeID:     authorization.Practice.ID,
+		LocationID:     authorization.Locations[0].ID,
+		Destination:    "+15555550123",
+	})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(ctx); !processed || err == nil {
+		t.Fatalf("reject outbound Dial: processed=%t err=%v", processed, err)
+	}
+	var callLegID, legState, legError string
+	if err := pool.QueryRow(ctx, `
+		SELECT id::text, state, COALESCE(error_code, '')
+		FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'CALLER'
+	`, call.ID).Scan(&callLegID, &legState, &legError); err != nil {
+		t.Fatalf("read terminal caller CallLeg: %v", err)
+	}
+	if legState != "FAILED" || legError != "CALL_TERMINATED_BEFORE_PROVIDER_START" {
+		t.Fatalf("terminal caller cleanup = state:%s error:%s", legState, legError)
+	}
+	clientStateJSON := []byte(fmt.Sprintf(
+		`{"v":2,"call":"%s","call_leg":"%s","role":"CALLER","kind":"answer"}`,
+		call.ID, callLegID,
+	))
+	clientState := base64.StdEncoding.EncodeToString(clientStateJSON)
 	raw := []byte(fmt.Sprintf(
 		`{"data":{"record_type":"event","event_type":"call.answered","id":"terminal-late-answer","occurred_at":"%s","payload":{"connection_id":"late-connection","call_control_id":"late-control","call_leg_id":"late-leg","call_session_id":"late-session","client_state":"%s"}}}`,
 		now.Format(time.RFC3339Nano), clientState,
@@ -473,7 +484,7 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 	if processed, err := calling.ProcessNextReceipt(ctx); err != nil || !processed {
 		t.Fatalf("process terminal late answer: processed=%t err=%v", processed, err)
 	}
-	var receiptState, errorCode, legState, legError string
+	var receiptState, errorCode string
 	var attempts int
 	if err := pool.QueryRow(ctx, `
 		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
