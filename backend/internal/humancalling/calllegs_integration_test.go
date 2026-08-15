@@ -3,6 +3,7 @@ package humancalling_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -780,6 +781,197 @@ func TestTerminalStaffHangupReconciliationReleasesSoftphone(t *testing.T) {
 		t.Fatalf("terminal Staff cleanup = leg=%s command=%s softphone=%#v err=%v observations=%d",
 			legState, commandState, after.Softphone, err, len(provider.observations))
 	}
+}
+
+func TestTerminalNeverStartedCallerReconciliationFailsOnce(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	pool, calling, terminalCallID, terminalLegID, activeLegID :=
+		prepareTerminalNeverStartedCaller(
+			t, now, "terminal-never-started-caller", provider,
+		)
+
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile terminal never-started caller = %d, %v", reconciled, err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("repeat terminal never-started caller = %d, %v", reconciled, err)
+	}
+
+	var terminalOutcome, terminalLegState, terminalError, activeLegState string
+	var terminalEndingAt, terminalEndedAt *time.Time
+	var evidenceCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, terminal_leg.state,
+			COALESCE(terminal_leg.error_code, ''),
+			terminal_leg.ending_at, terminal_leg.ended_at,
+			active_leg.state,
+			(SELECT count(*) FROM human_calling_timeline timeline
+			 WHERE timeline.call_id = call.id
+				AND timeline.kind = 'call_leg.failed'
+				AND timeline.error_code = 'CALL_TERMINATED_BEFORE_PROVIDER_START')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs terminal_leg
+			ON terminal_leg.id = $2 AND terminal_leg.call_id = call.id
+		JOIN human_calling_call_legs active_leg ON active_leg.id = $3
+		WHERE call.id = $1
+	`, terminalCallID, terminalLegID, activeLegID).Scan(
+		&terminalOutcome, &terminalLegState, &terminalError,
+		&terminalEndingAt, &terminalEndedAt, &activeLegState, &evidenceCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if terminalOutcome != "UNANSWERED" || terminalLegState != "FAILED" ||
+		terminalError != "CALL_TERMINATED_BEFORE_PROVIDER_START" ||
+		terminalEndingAt == nil || terminalEndedAt == nil || evidenceCount != 1 ||
+		activeLegState != "PENDING" || len(provider.observations) != 0 {
+		t.Fatalf("terminal caller cleanup = Call:%s leg:%s/%s times:%v/%v evidence:%d active:%s observations:%d",
+			terminalOutcome, terminalLegState, terminalError,
+			terminalEndingAt, terminalEndedAt, evidenceCount,
+			activeLegState, len(provider.observations))
+	}
+
+	lateCallerState := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(
+		`{"v":2,"call":%q,"call_leg":%q,"role":"CALLER","kind":"answer"}`,
+		terminalCallID,
+		terminalLegID,
+	)))
+	err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "late-terminal-caller-answer", Type: humancalling.FactCallAnswered,
+		OccurredAt: now.Add(time.Second), ConnectionID: "late-connection",
+		CallControlID: "late-control", CallLegID: "late-provider-leg",
+		CallSessionID: "late-session", ClientState: lateCallerState,
+	})
+	if !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("correlated terminal caller fact classification = %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, leg.state
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg ON leg.call_id = call.id
+		WHERE call.id = $1 AND leg.id = $2
+	`, terminalCallID, terminalLegID).Scan(
+		&terminalOutcome, &terminalLegState,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if terminalOutcome != "UNANSWERED" || terminalLegState != "FAILED" {
+		t.Fatalf("late caller fact revived terminal state = Call:%s leg:%s",
+			terminalOutcome, terminalLegState)
+	}
+}
+
+func TestTerminalNeverStartedCallerCleanupDoesNotRequireProviderObservation(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 11, 0, 0, 0, time.UTC)
+	pool, calling, terminalCallID, terminalLegID, activeLegID :=
+		prepareTerminalNeverStartedCaller(
+			t, now, "terminal-cleanup-without-observation", commandOnlyProvider{},
+		)
+
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("cleanup without provider observation = %d, %v", reconciled, err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("repeat cleanup without provider observation = %d, %v", reconciled, err)
+	}
+
+	var terminalLegState, terminalError, activeLegState string
+	var evidenceCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_leg.state, COALESCE(terminal_leg.error_code, ''),
+			active_leg.state,
+			(SELECT count(*) FROM human_calling_timeline timeline
+			 WHERE timeline.call_id = $1
+				AND timeline.kind = 'call_leg.failed'
+				AND timeline.error_code = 'CALL_TERMINATED_BEFORE_PROVIDER_START')
+		FROM human_calling_call_legs terminal_leg
+		JOIN human_calling_call_legs active_leg ON active_leg.id = $3
+		WHERE terminal_leg.call_id = $1 AND terminal_leg.id = $2
+	`, terminalCallID, terminalLegID, activeLegID).Scan(
+		&terminalLegState, &terminalError, &activeLegState, &evidenceCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if terminalLegState != "FAILED" ||
+		terminalError != "CALL_TERMINATED_BEFORE_PROVIDER_START" ||
+		evidenceCount != 1 || activeLegState != "PENDING" {
+		t.Fatalf("cleanup without observation = terminal:%s/%s evidence:%d active:%s",
+			terminalLegState, terminalError, evidenceCount, activeLegState)
+	}
+}
+
+func prepareTerminalNeverStartedCaller(
+	t *testing.T,
+	now time.Time,
+	prefix string,
+	provider humancalling.Provider,
+) (*pgxpool.Pool, *humancalling.Module, string, string, string) {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, accessModule, now, prefix, 1)
+	calling := humancalling.New(
+		pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now },
+	)
+
+	var terminalCallID, terminalLegID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point,
+			terminal_outcome, ended_at, created_at, updated_at
+		) VALUES (
+			$1, $2, 'OUTBOUND', 'STANDALONE', 'UNANSWERED',
+			$3::timestamptz - interval '2 minutes',
+			$3::timestamptz - interval '2 minutes',
+			$3::timestamptz - interval '2 minutes'
+		)
+		RETURNING id::text
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now).Scan(
+		&terminalCallID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, state, created_at, updated_at
+		) VALUES (
+			$1, 'CALLER', 1, 'PENDING',
+			$2::timestamptz - interval '2 minutes',
+			$2::timestamptz - interval '2 minutes'
+		)
+		RETURNING id::text
+	`, terminalCallID, now).Scan(&terminalLegID); err != nil {
+		t.Fatal(err)
+	}
+
+	var activeCallID, activeLegID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point, created_at, updated_at
+		) VALUES (
+			$1, $2, 'OUTBOUND', 'STANDALONE',
+			$3::timestamptz - interval '2 minutes',
+			$3::timestamptz - interval '2 minutes'
+		)
+		RETURNING id::text
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now).Scan(
+		&activeCallID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, state, created_at, updated_at
+		) VALUES (
+			$1, 'CALLER', 1, 'PENDING',
+			$2::timestamptz - interval '2 minutes',
+			$2::timestamptz - interval '2 minutes'
+		)
+		RETURNING id::text
+	`, activeCallID, now).Scan(&activeLegID); err != nil {
+		t.Fatal(err)
+	}
+	return pool, calling, terminalCallID, terminalLegID, activeLegID
 }
 
 func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
@@ -1679,6 +1871,11 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
+	answer := provider.last(humancalling.CommandAnswerCaller)
+	answerClientState, _ := answer.Payload["client_state"].(string)
+	if answerClientState == "" {
+		t.Fatalf("caller Answer client state = %#v", answer.Payload)
+	}
 	caller.EventID = "hangup-before-answer-hangup"
 	caller.Type = humancalling.FactCallHangup
 	caller.OccurredAt = now.Add(2 * time.Second)
@@ -1690,25 +1887,29 @@ func TestCallerHangupBeforeAnswerDoesNotReviveFanout(t *testing.T) {
 	caller.EventID = "hangup-before-answer-late-answer"
 	caller.Type = humancalling.FactCallAnswered
 	caller.OccurredAt = now.Add(time.Second)
+	caller.ClientState = answerClientState
 	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
 		t.Fatal(err)
 	}
 	processAllCommands(t, calling)
-	var terminal string
+	var terminal, answerCommandState string
 	var staffLegs, recoveryTasks int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT terminal_outcome,
 			(SELECT count(*) FROM human_calling_call_legs WHERE role = 'STAFF'),
-			(SELECT count(*) FROM work_tasks)
+			(SELECT count(*) FROM work_tasks),
+			(SELECT state FROM human_calling_provider_commands
+			 WHERE action = 'ANSWER_CALLER' LIMIT 1)
 		FROM human_calling_calls
-	`).Scan(&terminal, &staffLegs, &recoveryTasks); err != nil {
+	`).Scan(&terminal, &staffLegs, &recoveryTasks, &answerCommandState); err != nil {
 		t.Fatal(err)
 	}
 	if terminal != "ABANDONED" || staffLegs != 0 || recoveryTasks != 0 ||
+		answerCommandState != "RECONCILED" ||
 		provider.count(humancalling.CommandStartRingWindow) != 0 ||
 		provider.count(humancalling.CommandDialStaff) != 0 {
-		t.Fatalf("late caller answer revived terminal Call: terminal=%s legs=%d tasks=%d commands=%#v",
-			terminal, staffLegs, recoveryTasks, provider.commands)
+		t.Fatalf("late caller answer convergence: terminal=%s legs=%d tasks=%d answer=%s commands=%#v",
+			terminal, staffLegs, recoveryTasks, answerCommandState, provider.commands)
 	}
 }
 
@@ -3056,6 +3257,15 @@ type recordingProvider struct {
 	blockAction  humancalling.CommandAction
 	blockStarted chan struct{}
 	blockRelease chan struct{}
+}
+
+type commandOnlyProvider struct{}
+
+func (commandOnlyProvider) Execute(
+	context.Context,
+	humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	return humancalling.ProviderResult{}, nil
 }
 
 func (provider *recordingProvider) ResolveRecording(

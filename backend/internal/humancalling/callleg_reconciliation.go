@@ -10,6 +10,30 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const terminalNeverStartedErrorCode = "CALL_TERMINATED_BEFORE_PROVIDER_START"
+
+const terminalNeverStartedCallLegQuery = `
+	SELECT call.id::text, call.practice_id::text, leg.id::text
+	FROM human_calling_calls call
+	JOIN human_calling_call_legs leg ON leg.call_id = call.id
+	WHERE call.terminal_outcome IS NOT NULL
+		AND leg.state = 'PENDING'
+		AND leg.provider_connection_id IS NULL
+		AND leg.provider_call_control_id IS NULL
+		AND leg.provider_call_leg_id IS NULL
+		AND leg.provider_call_session_id IS NULL
+		AND NOT EXISTS (
+			SELECT 1
+			FROM human_calling_provider_commands active
+			WHERE active.call_leg_id = leg.id
+				AND active.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+		)
+		AND leg.updated_at <= $1::timestamptz - interval '60 seconds'
+	ORDER BY leg.updated_at, leg.id
+	FOR UPDATE OF call, leg SKIP LOCKED
+	LIMIT 1
+`
+
 const staleCallLegCandidateQuery = `
 	SELECT call.id::text, call.practice_id::text, leg.id::text,
 		leg.role, call.direction, leg.state,
@@ -93,12 +117,84 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	return nil
 }
 
+func (m *Module) reconcileNeverStartedTerminalCallLeg(
+	ctx context.Context,
+) (bool, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin terminal never-started CallLeg cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var callID, practiceID, legID string
+	if err := tx.QueryRow(ctx, terminalNeverStartedCallLegQuery, m.now()).Scan(
+		&callID, &practiceID, &legID,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	} else if err != nil {
+		return false, fmt.Errorf("claim terminal never-started CallLeg: %w", err)
+	}
+
+	cleanedAt := m.now()
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'FAILED', ending_at = COALESCE(ending_at, $2),
+			ended_at = COALESCE(ended_at, $2), error_code = $3, updated_at = $2
+		WHERE id = $1
+	`, legID, cleanedAt, terminalNeverStartedErrorCode); err != nil {
+		return false, fmt.Errorf("fail terminal never-started CallLeg: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = $2, updated_at = $3
+		WHERE call_leg_id = $1 AND state = 'PENDING'
+	`, legID, terminalNeverStartedErrorCode, cleanedAt); err != nil {
+		return false, fmt.Errorf("cancel terminal never-started CallLeg commands: %w", err)
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		callID,
+		practiceID,
+		"call_leg.failed",
+		"",
+		"",
+		"",
+		opaqueReference(legID),
+		terminalNeverStartedErrorCode,
+		cleanedAt,
+	); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_calls
+		SET version = version + 1, updated_at = $2
+		WHERE id = $1
+	`, callID, cleanedAt); err != nil {
+		return false, fmt.Errorf("advance terminal Call cleanup version: %w", err)
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit terminal never-started CallLeg cleanup: %w", err)
+	}
+	return true, nil
+}
+
 func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	expired, err := m.expireUnconfirmedOutboundMedia(ctx)
 	if err != nil {
 		return 0, err
 	}
 	if expired {
+		return 1, nil
+	}
+	cleaned, err := m.reconcileNeverStartedTerminalCallLeg(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if cleaned {
 		return 1, nil
 	}
 	provider, ok := m.provider.(CallStateProvider)
