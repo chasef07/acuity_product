@@ -23,6 +23,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 )
 
@@ -128,6 +129,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			Interactions:         interaction.New(pool, accessModule, nil),
 			Messaging:            messageModule,
 			Work:                 workModule,
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -285,6 +287,45 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		task.State != api.TaskStateOPEN {
 		t.Fatalf("HTTP Message Task = %#v", task)
 	}
+	taskQueryBody, _ := json.Marshal(api.TaskQueryRequest{
+		PracticeId: parsedUUID(t, authorization.Practice.ID),
+	})
+	taskQueryResponse := request(
+		t,
+		portal.Client(),
+		http.MethodPost,
+		portal.URL+"/v1/tasks/query",
+		"message-token",
+		taskQueryBody,
+	)
+	if taskQueryResponse.StatusCode != http.StatusOK {
+		t.Fatalf("query projected Task status = %d, body = %s", taskQueryResponse.StatusCode, readBody(t, taskQueryResponse))
+	}
+	var taskPage api.TaskPage
+	decode(t, taskQueryResponse, &taskPage)
+	if len(taskPage.Items) != 1 || taskPage.Items[0].Id != task.Id ||
+		taskPage.Items[0].ConversationThreadId == nil ||
+		*taskPage.Items[0].ConversationThreadId != threads.Items[0].Id ||
+		!taskPage.Items[0].Unread {
+		t.Fatalf("HTTP Queue conversation projection = %#v", taskPage)
+	}
+	readTaskResponse := request(
+		t,
+		portal.Client(),
+		http.MethodGet,
+		portal.URL+"/v1/tasks/"+task.Id.String(),
+		"message-token",
+		nil,
+	)
+	if readTaskResponse.StatusCode != http.StatusOK {
+		t.Fatalf("read projected Task status = %d, body = %s", readTaskResponse.StatusCode, readBody(t, readTaskResponse))
+	}
+	var readTask api.Task
+	decode(t, readTaskResponse, &readTask)
+	if readTask.ConversationThreadId == nil ||
+		*readTask.ConversationThreadId != threads.Items[0].Id || !readTask.Unread {
+		t.Fatalf("HTTP Task conversation projection = %#v", readTask)
+	}
 	var engagementCallID string
 	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO human_calling_calls (
@@ -373,9 +414,9 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		PracticeId: parsedUUID(t, authorization.Practice.ID),
 		Phone:      "(727) 555-0199",
 	})
-	if _, err := messageModule.QueryEngagements(
+	if _, err := workspace.New(pool, accessModule).QueryEngagements(
 		context.Background(),
-		messaging.QueryEngagementsCommand{
+		workspace.QueryEngagementsCommand{
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Phone:      "(727) 555-0199",

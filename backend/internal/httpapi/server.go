@@ -24,6 +24,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -62,6 +63,7 @@ type PortalDependencies struct {
 	Interactions         *interaction.Module
 	Messaging            *messaging.Module
 	Work                 *work.Module
+	Workspace            *workspace.Module
 	ServiceAuthenticator ServiceAuthenticator
 }
 
@@ -82,6 +84,7 @@ type Server struct {
 	interactions  *interaction.Module
 	messaging     *messaging.Module
 	work          *work.Module
+	workspace     *workspace.Module
 	serviceAuth   ServiceAuthenticator
 	observer      observability.Observer
 }
@@ -94,6 +97,7 @@ type serverDependencies struct {
 	interactions  *interaction.Module
 	messaging     *messaging.Module
 	work          *work.Module
+	workspace     *workspace.Module
 	serviceAuth   ServiceAuthenticator
 }
 
@@ -106,7 +110,9 @@ func NewPortal(
 		dependencies.Authenticator == nil ||
 		dependencies.Calling == nil ||
 		dependencies.Interactions == nil ||
+		dependencies.Messaging == nil ||
 		dependencies.Work == nil ||
+		dependencies.Workspace == nil ||
 		dependencies.ServiceAuthenticator == nil {
 		return nil, fmt.Errorf("portal dependencies are required")
 	}
@@ -117,6 +123,7 @@ func NewPortal(
 		interactions:  dependencies.Interactions,
 		messaging:     dependencies.Messaging,
 		work:          dependencies.Work,
+		workspace:     dependencies.Workspace,
 		serviceAuth:   dependencies.ServiceAuthenticator,
 	})
 }
@@ -188,6 +195,7 @@ func newServer(
 		interactions:  dependencies.interactions,
 		messaging:     dependencies.messaging,
 		work:          dependencies.work,
+		workspace:     dependencies.workspace,
 		serviceAuth:   dependencies.serviceAuth,
 		observer:      config.Observer,
 	}
@@ -942,9 +950,9 @@ func (server *Server) GetCallingEngagementHistory(
 		server.writeCallingError(w, r, err)
 		return
 	}
-	timeline, err := server.messaging.QueryPhoneTimeline(
+	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
-		messaging.QueryPhoneTimelineCommand{
+		workspace.QueryPhoneTimelineCommand{
 			Identity:   identity,
 			PracticeID: call.PracticeID,
 			Phone:      call.Phone,
@@ -953,7 +961,7 @@ func (server *Server) GetCallingEngagementHistory(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	response, err := conversationTimelineResponse(timeline)
@@ -975,21 +983,21 @@ func (server *Server) QueryEngagements(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	page, err := server.messaging.QueryEngagements(
+	page, err := server.workspace.QueryEngagements(
 		ctx,
-		messaging.QueryEngagementsCommand{
+		workspace.QueryEngagementsCommand{
 			Identity:   identity,
 			PracticeID: body.PracticeId.String(),
 			Phone:      body.Phone,
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	response, err := engagementPageResponse(page)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1012,9 +1020,9 @@ func (server *Server) GetEngagementTimeline(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	timeline, err := server.messaging.QueryPhoneTimeline(
+	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
-		messaging.QueryPhoneTimelineCommand{
+		workspace.QueryPhoneTimelineCommand{
 			Identity:   identity,
 			PracticeID: params.PracticeId.String(),
 			Phone:      normalized,
@@ -1023,12 +1031,12 @@ func (server *Server) GetEngagementTimeline(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	response, err := conversationTimelineResponse(timeline)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1416,7 +1424,7 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	page, err := server.work.QueryTasks(ctx, work.QueryTasksCommand{
+	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
 		Identity:   identity,
 		PracticeID: body.PracticeId.String(),
 		LocationID: uuidString(body.LocationId),
@@ -1427,14 +1435,8 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		Limit:      intValue(body.Limit),
 	})
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
-	}
-	if server.messaging != nil {
-		if err := server.messaging.ApplyTaskUnread(ctx, identity, page.Items); err != nil {
-			server.writeMessagingError(w, r, err)
-			return
-		}
 	}
 	response, err := taskPageResponse(page)
 	if err != nil {
@@ -1455,18 +1457,10 @@ func (server *Server) ReadTask(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	task, err := server.work.ReadTask(ctx, identity, taskID.String())
+	task, err := server.workspace.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
-	}
-	if server.messaging != nil {
-		projected := []work.Task{task}
-		if err := server.messaging.ApplyTaskUnread(ctx, identity, projected); err != nil {
-			server.writeMessagingError(w, r, err)
-			return
-		}
-		task = projected[0]
 	}
 	response, err := taskResponse(task)
 	if err != nil {
@@ -1585,9 +1579,9 @@ func (server *Server) GetTaskCallHistory(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	task, err := server.work.ReadTask(ctx, identity, taskID.String())
+	task, err := server.workspace.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	history, err := server.calling.QueryCallHistory(
@@ -1624,14 +1618,14 @@ func (server *Server) GetTaskEngagementHistory(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	task, err := server.work.ReadTask(ctx, identity, taskID.String())
+	task, err := server.workspace.ReadTask(ctx, identity, taskID.String())
 	if err != nil {
-		server.writeWorkError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
-	timeline, err := server.messaging.QueryPhoneTimeline(
+	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
-		messaging.QueryPhoneTimelineCommand{
+		workspace.QueryPhoneTimelineCommand{
 			Identity:   identity,
 			PracticeID: task.PracticeID,
 			Phone:      task.Phone,
@@ -1640,12 +1634,12 @@ func (server *Server) GetTaskEngagementHistory(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	response, err := conversationTimelineResponse(timeline)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -1697,9 +1691,9 @@ func (server *Server) GetMessageThreadTimeline(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	page, err := server.messaging.QueryTimeline(
+	page, err := server.workspace.QueryTimeline(
 		ctx,
-		messaging.QueryTimelineCommand{
+		workspace.QueryTimelineCommand{
 			Identity: identity,
 			ThreadID: threadID.String(),
 			Cursor:   stringValue(params.Cursor),
@@ -1707,12 +1701,12 @@ func (server *Server) GetMessageThreadTimeline(
 		},
 	)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	response, err := conversationTimelineResponse(page)
 	if err != nil {
-		server.writeMessagingError(w, r, err)
+		server.writeWorkspaceError(w, r, err)
 		return
 	}
 	server.writeJSON(w, http.StatusOK, response)
@@ -2323,6 +2317,17 @@ func (server *Server) writeWorkError(w http.ResponseWriter, r *http.Request, err
 		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	case errors.Is(err, work.ErrConflict):
 		server.writeError(w, r, http.StatusConflict, "TASK_CONFLICT", "The Task state changed. Refresh and try again.", false)
+	default:
+		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
+	}
+}
+
+func (server *Server) writeWorkspaceError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, workspace.ErrInvalidInput):
+		server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
+	case errors.Is(err, workspace.ErrDenied):
+		server.writeError(w, r, http.StatusForbidden, "ACCESS_DENIED", "The requested access is not available.", false)
 	default:
 		server.writeError(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "A required dependency is unavailable.", true)
 	}
@@ -3011,7 +3016,7 @@ func messageThreadPageResponse(
 }
 
 func engagementPageResponse(
-	page messaging.EngagementPage,
+	page workspace.EngagementPage,
 ) (api.EngagementPage, error) {
 	response := api.EngagementPage{
 		Items: make([]api.EngagementSummary, 0, len(page.Items)),
@@ -3136,7 +3141,7 @@ func visibleAttachmentState(
 }
 
 func conversationTimelineResponse(
-	page messaging.TimelinePage,
+	page workspace.TimelinePage,
 ) (api.ConversationTimelinePage, error) {
 	response := api.ConversationTimelinePage{
 		Items:      make([]api.ConversationTimelineItem, 0, len(page.Items)),

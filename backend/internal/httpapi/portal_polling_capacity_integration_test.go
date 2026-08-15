@@ -24,6 +24,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -246,6 +247,7 @@ func TestMessageThreadQueryAggregatesActivityBeforeRanking(t *testing.T) {
 			Interactions:         interaction.New(database, accessModule, nil),
 			Messaging:            messaging.New(database, accessModule, workModule, nil, messaging.Config{}, nil),
 			Work:                 workModule,
+			Workspace:            workspace.New(database, accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
