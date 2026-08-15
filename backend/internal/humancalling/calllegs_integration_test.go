@@ -1523,6 +1523,224 @@ func TestCommandWorkerPreservesGlobalOrderAcrossCallAndCredentialWork(t *testing
 	}
 }
 
+func TestCredentialCommandExecutionExpiresInFailedQuarantine(t *testing.T) {
+	for _, action := range []humancalling.CommandAction{
+		humancalling.CommandCreateCredential,
+		humancalling.CommandDisableCredential,
+	} {
+		t.Run(string(action), func(t *testing.T) {
+			pool := testdb.Open(t)
+			now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
+			accessModule := access.New(pool, func() time.Time { return now })
+			authorization, staff := provisionConcurrentStaff(
+				t, accessModule, now, "expired-execution-"+strings.ToLower(string(action)), 1,
+			)
+			provider := &credentialFailureProvider{executeErr: errors.New("synthetic provider timeout")}
+			calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+				CredentialConnectionID: "staff-credential-connection",
+			}, func() time.Time { return now })
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if action == humancalling.CommandDisableCredential {
+				if _, err := pool.Exec(context.Background(), `
+					UPDATE access_memberships SET revoked_at = $2
+					WHERE id = $1
+				`, authorization.Membership.ID, now); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(context.Background(), `
+					UPDATE human_calling_credentials
+					SET state = 'DISABLING', provider_credential_id = 'expired-provider-credential',
+						provider_sip_username = 'expired-sip-user'
+					WHERE user_subject = $1
+				`, staff[0].Subject); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(context.Background(), `
+					UPDATE human_calling_provider_commands
+					SET action = 'DISABLE_CREDENTIAL', target_id = 'expired-provider-credential',
+						payload = '{}'::jsonb
+					WHERE user_subject = $1
+				`, staff[0].Subject); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := pool.Exec(context.Background(), `
+				UPDATE human_calling_provider_commands
+				SET created_at = $2, updated_at = $2
+				WHERE user_subject = $1
+			`, staff[0].Subject, now.Add(-6*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+
+			processed, _ := calling.ProcessNextCommand(context.Background())
+			if !processed {
+				t.Fatal("expired credential execution did not claim the command")
+			}
+			assertCredentialQuarantined(t, pool, staff[0].Subject)
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var activeDisableCommands int
+			if err := pool.QueryRow(context.Background(), `
+				SELECT count(*) FROM human_calling_provider_commands
+				WHERE user_subject = $1 AND action = 'DISABLE_CREDENTIAL'
+					AND target_id = 'expired-provider-credential'
+					AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
+			`, staff[0].Subject).Scan(&activeDisableCommands); err != nil {
+				t.Fatal(err)
+			}
+			wantActiveDisableCommands := 0
+			if action == humancalling.CommandDisableCredential {
+				wantActiveDisableCommands = 1
+			}
+			if activeDisableCommands != wantActiveDisableCommands {
+				t.Fatalf("active disable cleanup commands = %d, want %d",
+					activeDisableCommands, wantActiveDisableCommands)
+			}
+		})
+	}
+}
+
+func TestCredentialReconciliationExpiresWithoutProviderLookup(t *testing.T) {
+	for _, action := range []humancalling.CommandAction{
+		humancalling.CommandCreateCredential,
+		humancalling.CommandDisableCredential,
+	} {
+		t.Run(string(action), func(t *testing.T) {
+			pool := testdb.Open(t)
+			now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
+			accessModule := access.New(pool, func() time.Time { return now })
+			_, staff := provisionConcurrentStaff(
+				t, accessModule, now, "expired-reconciliation-"+strings.ToLower(string(action)), 1,
+			)
+			provider := &credentialFailureProvider{lookupErr: errors.New("synthetic provider timeout")}
+			calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+				CredentialConnectionID: "staff-credential-connection",
+			}, func() time.Time { return now })
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			credentialState := "PENDING"
+			providerID := ""
+			providerUsername := ""
+			if action == humancalling.CommandDisableCredential {
+				credentialState = "DISABLING"
+				providerID = "expired-provider-credential"
+				providerUsername = "expired-sip-user"
+			}
+			if _, err := pool.Exec(context.Background(), `
+				UPDATE human_calling_credentials
+				SET state = $2, provider_credential_id = NULLIF($3, ''),
+					provider_sip_username = NULLIF($4, '')
+				WHERE user_subject = $1
+			`, staff[0].Subject, credentialState, providerID, providerUsername); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(context.Background(), `
+				UPDATE human_calling_provider_commands
+				SET action = $2, target_id = NULLIF($3, ''), state = 'AMBIGUOUS',
+					created_at = $4, updated_at = $4, next_attempt_at = $5
+				WHERE user_subject = $1
+			`, staff[0].Subject, action, providerID,
+				now.Add(-6*time.Minute), now); err != nil {
+				t.Fatal(err)
+			}
+
+			processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+			if !processed || err != nil {
+				t.Fatalf("expired credential reconciliation = processed:%t err:%v", processed, err)
+			}
+			if provider.lookupCalls != 0 {
+				t.Fatalf("expired credential reconciliation made %d provider lookups", provider.lookupCalls)
+			}
+			assertCredentialQuarantined(t, pool, staff[0].Subject)
+			if err := calling.ReconcileCredentials(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var activeCommands int
+			if err := pool.QueryRow(context.Background(), `
+				SELECT count(*) FROM human_calling_provider_commands
+				WHERE user_subject = $1 AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
+			`, staff[0].Subject).Scan(&activeCommands); err != nil {
+				t.Fatal(err)
+			}
+			if activeCommands != 0 {
+				t.Fatalf("credential quarantine created %d active commands", activeCommands)
+			}
+		})
+	}
+}
+
+func TestCredentialReconciliationRetriesLookupFailureBeforeDeadline(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(
+		t, accessModule, now, "credential-lookup-retry", 1,
+	)
+	providerErr := errors.New("synthetic provider timeout")
+	provider := &credentialFailureProvider{lookupErr: providerErr}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'AMBIGUOUS', created_at = $2, updated_at = $2,
+			next_attempt_at = $3
+		WHERE user_subject = $1
+	`, staff[0].Subject, now.Add(-time.Minute), now); err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if !processed || !errors.Is(err, providerErr) {
+		t.Fatalf("credential lookup retry = processed:%t err:%v", processed, err)
+	}
+	var state, code string
+	var nextAttemptAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, COALESCE(last_error_code, ''), next_attempt_at
+		FROM human_calling_provider_commands
+		WHERE user_subject = $1
+	`, staff[0].Subject).Scan(&state, &code, &nextAttemptAt); err != nil {
+		t.Fatal(err)
+	}
+	if provider.lookupCalls != 1 || state != "AMBIGUOUS" ||
+		code != "PROVIDER_STATE_UNAVAILABLE" || !nextAttemptAt.Equal(now.Add(5*time.Second)) {
+		t.Fatalf("credential lookup retry = calls:%d state:%s/%s next:%s",
+			provider.lookupCalls, state, code, nextAttemptAt)
+	}
+}
+
+func assertCredentialQuarantined(t *testing.T, pool *pgxpool.Pool, subject string) {
+	t.Helper()
+	var commandState, commandCode, credentialState, credentialCode string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT command.state, COALESCE(command.last_error_code, ''),
+			credential.state, COALESCE(credential.last_error_code, '')
+		FROM human_calling_provider_commands command
+		JOIN human_calling_credentials credential
+			ON credential.user_subject = command.user_subject
+		WHERE command.user_subject = $1
+		ORDER BY command.created_at, command.id
+		LIMIT 1
+	`, subject).Scan(
+		&commandState, &commandCode, &credentialState, &credentialCode,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "FAILED" || commandCode != "CREDENTIAL_RETRY_EXHAUSTED" ||
+		credentialState != "FAILED" || credentialCode != "CREDENTIAL_RETRY_EXHAUSTED" {
+		t.Fatalf("credential quarantine = command:%s/%s credential:%s/%s",
+			commandState, commandCode, credentialState, credentialCode)
+	}
+}
+
 func prepareTerminalStaffHangup(
 	t *testing.T,
 	providerActive bool,
@@ -2688,7 +2906,7 @@ func TestBridgeFailureAfterRingCompletionStartsVoicemailOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	processed, err := calling.ProcessNextCommand(context.Background())
-	if !processed || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
+	if !processed || err != nil {
 		t.Fatalf("rejected Bridge processing = %t, %v", processed, err)
 	}
 	processAllCommands(t, calling)
@@ -2877,7 +3095,7 @@ func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T
 		t.Fatal(err)
 	}
 	processed, err = calling.ProcessNextCommand(context.Background())
-	if !processed || !errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
+	if !processed || err != nil {
 		t.Fatalf("Stop processing = %t, %v", processed, err)
 	}
 	var degraded int
@@ -2941,20 +3159,14 @@ func TestRingWindowFailureDoesNotBlockStaffDial(t *testing.T) {
 	pool, calling, _, _ := prepareInboundFanout(
 		t, now, "call-leg-routing-failure", provider, 1,
 	)
-	sawRingFailure := false
 	for {
 		processed, err := calling.ProcessNextCommand(context.Background())
-		if errors.Is(err, humancalling.ErrDefinitiveProviderFailure) {
-			sawRingFailure = true
-		} else if err != nil {
+		if err != nil {
 			t.Fatal(err)
 		}
 		if !processed {
 			break
 		}
-	}
-	if !sawRingFailure {
-		t.Fatal("ring-window rejection was not observed")
 	}
 	var terminal *string
 	var staffState, ringState, dialState string
@@ -2982,6 +3194,81 @@ func TestRingWindowFailureDoesNotBlockStaffDial(t *testing.T) {
 		provider.count(humancalling.CommandDialStaff) != 1 {
 		t.Fatalf("ring-window degradation = terminal:%v Staff:%s ring:%s dial:%s timeline:%d commands:%#v",
 			terminal, staffState, ringState, dialState, degraded, provider.commands)
+	}
+}
+
+func TestStaleCallReconciliationQuarantinesContradictoryProviderObservation(t *testing.T) {
+	now := time.Date(2026, time.August, 15, 13, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "reconciliation-conflict-staff-control",
+		CallLegID:     "reconciliation-conflict-staff-leg",
+	}}}
+	pool, calling, _, _ := prepareInboundFanout(
+		t, now, "reconciliation-conflict", provider, 1,
+	)
+	processAllCommands(t, calling)
+	var callID, staffLegID, commandID, providerControlID, providerLegID, clientState string
+	if err := pool.QueryRow(context.Background(), `
+			SELECT call.id::text, leg.id::text, command.id::text,
+				leg.provider_call_control_id, leg.provider_call_leg_id,
+				command.payload->>'client_state'
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg
+				ON leg.call_id = call.id AND leg.role = 'STAFF'
+			JOIN human_calling_provider_commands command
+				ON command.call_leg_id = leg.id AND command.action = 'DIAL_STAFF'
+		`).Scan(
+		&callID, &staffLegID, &commandID, &providerControlID, &providerLegID, &clientState,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+			UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		`, staffLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active:        true,
+		CallControlID: providerControlID,
+		CallLegID:     providerLegID,
+		CallSessionID: "reconciliation-conflict-session",
+		Events: []humancalling.ProviderFact{{
+			EventID:       "reconciliation-conflict-answer",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    now,
+			CallControlID: providerControlID,
+			CallLegID:     "contradictory-provider-leg",
+			CallSessionID: "reconciliation-conflict-session",
+			ClientState:   clientState,
+		}},
+	})
+	provider.mu.Unlock()
+
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("quarantine contradictory stale observation = %d, %v", reconciled, err)
+	}
+	var terminalOutcome, legState, legCode, commandState, commandCode string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, leg.state, COALESCE(leg.error_code, ''),
+			command.state, COALESCE(command.last_error_code, '')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg ON leg.id = $2 AND leg.call_id = call.id
+		JOIN human_calling_provider_commands command ON command.id = $3
+		WHERE call.id = $1
+	`, callID, staffLegID, commandID).Scan(
+		&terminalOutcome, &legState, &legCode, &commandState, &commandCode,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if terminalOutcome != "ROUTING_FAILED" || legState != "FAILED" ||
+		legCode != "PROVIDER_OBSERVATION_CONFLICT" || commandState != "FAILED" ||
+		commandCode != "PROVIDER_OBSERVATION_CONFLICT" {
+		t.Fatalf("stale observation quarantine = Call:%s leg:%s/%s command:%s/%s",
+			terminalOutcome, legState, legCode, commandState, commandCode)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
+		t.Fatalf("repeat contradictory stale observation = %d, %v", reconciled, err)
 	}
 }
 
@@ -3257,6 +3544,27 @@ type recordingProvider struct {
 	blockAction  humancalling.CommandAction
 	blockStarted chan struct{}
 	blockRelease chan struct{}
+}
+
+type credentialFailureProvider struct {
+	executeErr  error
+	lookupErr   error
+	lookupCalls int
+}
+
+func (provider *credentialFailureProvider) Execute(
+	context.Context,
+	humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	return humancalling.ProviderResult{}, provider.executeErr
+}
+
+func (provider *credentialFailureProvider) FindCredentialByName(
+	context.Context,
+	string,
+) (humancalling.ProviderResult, bool, error) {
+	provider.lookupCalls++
+	return humancalling.ProviderResult{}, false, provider.lookupErr
 }
 
 type commandOnlyProvider struct{}

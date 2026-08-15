@@ -450,7 +450,7 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start outbound Call: %v", err)
 	}
-	if processed, err := calling.ProcessNextCommand(ctx); !processed || err == nil {
+	if processed, err := calling.ProcessNextCommand(ctx); !processed || err != nil {
 		t.Fatalf("reject outbound Dial: processed=%t err=%v", processed, err)
 	}
 	var callLegID, legState, legError string

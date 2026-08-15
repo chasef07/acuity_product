@@ -204,6 +204,9 @@ func (m *Module) executeCallLegCommand(
 			m.now().Sub(claimedAt),
 		)
 	}
+	if executeErr != nil && (state == "FAILED" || state == "SENT") {
+		return result, nil
+	}
 	return result, executeErr
 }
 
@@ -221,6 +224,10 @@ func (m *Module) providerCommandResult(
 	if errors.Is(executeErr, ErrDefinitiveProviderFailure) ||
 		errors.Is(executeErr, ErrProviderTargetAbsent) {
 		return "FAILED", errorCode
+	}
+	if isCredentialCommand(command.Action) &&
+		!command.createdAt.After(m.now().Add(-credentialRetryLifetime)) {
+		return "FAILED", credentialRetryExhaustedCode
 	}
 	if m.now().Sub(command.createdAt) < safeProviderRetryWindow {
 		return "PENDING", errorCode
@@ -271,6 +278,17 @@ func (m *Module) finishCallLegCommand(
 			)
 		`, command.ID, m.now()); err != nil {
 			return fmt.Errorf("disable Staff credential: %w", err)
+		}
+	}
+	if isCredentialCommand(command.Action) && state == "FAILED" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_credentials
+			SET state = 'FAILED', last_error_code = $2, updated_at = $3
+			WHERE user_subject = (
+				SELECT user_subject FROM human_calling_provider_commands WHERE id = $1
+			)
+		`, command.ID, errorCode, m.now()); err != nil {
+			return fmt.Errorf("quarantine failed Staff credential command: %w", err)
 		}
 	}
 	if command.CallLegID != "" && executeErr == nil &&
@@ -360,6 +378,10 @@ func (m *Module) finishCallLegCommand(
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func isCredentialCommand(action CommandAction) bool {
+	return action == CommandCreateCredential || action == CommandDisableCredential
 }
 
 func (m *Module) failDialCallLeg(

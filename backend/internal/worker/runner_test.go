@@ -310,6 +310,51 @@ func TestQueueLaneBacksOffConsecutiveErrorsAndResetsAfterProgress(t *testing.T) 
 	}
 }
 
+func TestQueueLaneBacksOffConsecutiveEmptyClaimsAndResetsAfterProgress(t *testing.T) {
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval:   10 * time.Millisecond,
+			WorkTimeout:    time.Second,
+			IdleBackoffMax: 80 * time.Millisecond,
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return len(delays) < 7
+		},
+	}
+	results := []bool{false, false, false, false, false, true, false}
+	next := 0
+	runner.runQueueLane(
+		context.Background(),
+		1,
+		"test_failure",
+		func(context.Context) (bool, error) {
+			processed := results[next]
+			next++
+			return processed, nil
+		},
+	)
+
+	want := []time.Duration{
+		10 * time.Millisecond,
+		20 * time.Millisecond,
+		40 * time.Millisecond,
+		80 * time.Millisecond,
+		80 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("empty-claim delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("empty-claim delays = %v, want %v", delays, want)
+		}
+	}
+}
+
 func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
 	work := &credentialReconciliationFailureWork{
 		controlledWork: newControlledWork(),

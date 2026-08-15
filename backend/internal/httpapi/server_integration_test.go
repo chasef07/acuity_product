@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -170,7 +171,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 3, 12, 0, 0, 0, time.UTC)
-	var metrics bytes.Buffer
+	var metrics synchronizedBuffer
 	observer := observability.NewLogger(
 		observability.RuntimePortalAPI,
 		"voicemail-playback-test",
@@ -358,11 +359,12 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		t.Fatalf("request cross-Location voicemail playback: %v", err)
 	}
 	_ = deniedResponse.Body.Close()
-	if deniedResponse.StatusCode != http.StatusForbidden || audio.calls != 0 {
+	deniedAudio := audio.snapshot()
+	if deniedResponse.StatusCode != http.StatusForbidden || deniedAudio.calls != 0 {
 		t.Fatalf(
 			"cross-Location playback = status:%d provider-calls:%d",
 			deniedResponse.StatusCode,
-			audio.calls,
+			deniedAudio.calls,
 		)
 	}
 	playbackRequest, err := http.NewRequest(
@@ -384,20 +386,24 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read voicemail playback response: %v", err)
 	}
+	playbackAudio := audio.snapshot()
 	if playbackResponse.StatusCode != http.StatusPartialContent ||
 		playbackResponse.Header.Get("Accept-Ranges") != "bytes" ||
 		playbackResponse.Header.Get("Content-Range") != "bytes 0-3/13" ||
 		playbackResponse.Header.Get("Content-Length") != "4" ||
 		playbackResponse.Header.Get("Content-Type") != "audio/mpeg" ||
 		string(body) != "synt" ||
-		audio.rangeHeader != "bytes=0-3" {
+		playbackAudio.rangeHeader != "bytes=0-3" {
 		t.Fatalf("voicemail playback response = status:%d headers:%v body:%q fixture:%#v",
-			playbackResponse.StatusCode, playbackResponse.Header, body, audio)
+			playbackResponse.StatusCode, playbackResponse.Header, body, playbackAudio)
 	}
 
+	waitForLog(t, &metrics, `"outcome":"succeeded"`)
 	metrics.Reset()
 	malformedRange := "items 0-3/13"
-	audio.contentRange = &malformedRange
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.contentRange = &malformedRange
+	})
 	malformedRequest, err := http.NewRequest(
 		http.MethodGet,
 		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
@@ -414,6 +420,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	var malformedEnvelope api.ErrorEnvelope
 	decode(t, malformedResponse, &malformedEnvelope)
+	waitForLog(t, &metrics, `"outcome":"invalid_response"`)
 	if malformedResponse.StatusCode != http.StatusServiceUnavailable ||
 		malformedResponse.Header.Get("Content-Range") != "" ||
 		malformedEnvelope.Error.Code != "VOICEMAIL_UNAVAILABLE" ||
@@ -425,9 +432,11 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 
 	metrics.Reset()
-	audio.contentRange = nil
-	audio.contentLength = "invalid"
-	audio.failStream = true
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.contentRange = nil
+		audio.contentLength = "invalid"
+		audio.failStream = true
+	})
 	failedStreamRequest, err := http.NewRequest(
 		http.MethodGet,
 		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
@@ -444,13 +453,16 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		_, readErr = io.ReadAll(failedStreamResponse.Body)
 		_ = failedStreamResponse.Body.Close()
 	}
+	waitForLog(t, &metrics, `"outcome":"unavailable"`)
 	if (requestErr == nil && readErr == nil) ||
 		!strings.Contains(metrics.String(), `"outcome":"unavailable"`) ||
 		strings.Contains(metrics.String(), `"outcome":"succeeded"`) {
 		t.Fatalf("failed voicemail stream = request-err:%v read-err:%v metrics:%s",
 			requestErr, readErr, metrics.String())
 	}
-	audio.failStream = false
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.failStream = false
+	})
 
 	failures := []struct {
 		name       string
@@ -468,10 +480,12 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	for _, failure := range failures {
 		t.Run(failure.name, func(t *testing.T) {
-			audio.err = &humancalling.VoicemailUnavailableError{
-				Reason:     failure.reason,
-				RetryAfter: failure.retryAfter,
-			}
+			audio.update(func(audio *httpVoicemailAudio) {
+				audio.err = &humancalling.VoicemailUnavailableError{
+					Reason:     failure.reason,
+					RetryAfter: failure.retryAfter,
+				}
+			})
 			request, err := http.NewRequest(
 				http.MethodGet,
 				server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
@@ -2203,6 +2217,7 @@ func (httpCallingProvider) Execute(
 }
 
 type httpVoicemailAudio struct {
+	mu            sync.Mutex
 	calls         int
 	rangeHeader   string
 	contentLength string
@@ -2211,16 +2226,35 @@ type httpVoicemailAudio struct {
 	err           error
 }
 
+type httpVoicemailAudioSnapshot struct {
+	calls       int
+	rangeHeader string
+}
+
+func (audio *httpVoicemailAudio) update(update func(*httpVoicemailAudio)) {
+	audio.mu.Lock()
+	defer audio.mu.Unlock()
+	update(audio)
+}
+
+func (audio *httpVoicemailAudio) snapshot() httpVoicemailAudioSnapshot {
+	audio.mu.Lock()
+	defer audio.mu.Unlock()
+	return httpVoicemailAudioSnapshot{
+		calls:       audio.calls,
+		rangeHeader: audio.rangeHeader,
+	}
+}
+
 func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 	_ context.Context,
 	_ string,
 	rangeHeader string,
 ) (humancalling.PlaybackContent, error) {
+	audio.mu.Lock()
 	audio.calls++
 	audio.rangeHeader = rangeHeader
-	if audio.err != nil {
-		return humancalling.PlaybackContent{}, audio.err
-	}
+	providerErr := audio.err
 	contentRange := "bytes 0-3/13"
 	if audio.contentRange != nil {
 		contentRange = *audio.contentRange
@@ -2229,8 +2263,13 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 	if contentLength == "" {
 		contentLength = "4"
 	}
+	failStream := audio.failStream
+	audio.mu.Unlock()
+	if providerErr != nil {
+		return humancalling.PlaybackContent{}, providerErr
+	}
 	var body io.ReadCloser = io.NopCloser(strings.NewReader("synt"))
-	if audio.failStream {
+	if failStream {
 		body = &failingVoicemailBody{}
 	}
 	return humancalling.PlaybackContent{
@@ -2240,6 +2279,40 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 		ContentRange:  contentRange,
 		Body:          body,
 	}, nil
+}
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (buffer *synchronizedBuffer) Write(payload []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.Write(payload)
+}
+
+func (buffer *synchronizedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.String()
+}
+
+func (buffer *synchronizedBuffer) Reset() {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	buffer.Buffer.Reset()
+}
+
+func waitForLog(t *testing.T, buffer *synchronizedBuffer, marker string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(buffer.String(), marker) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for log marker %q: %s", marker, buffer.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 type failingVoicemailBody struct {

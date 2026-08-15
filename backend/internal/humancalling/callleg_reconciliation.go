@@ -12,6 +12,8 @@ import (
 
 const terminalNeverStartedErrorCode = "CALL_TERMINATED_BEFORE_PROVIDER_START"
 
+const providerObservationConflictErrorCode = "PROVIDER_OBSERVATION_CONFLICT"
+
 const terminalNeverStartedCallLegQuery = `
 	SELECT call.id::text, call.practice_id::text, leg.id::text
 	FROM human_calling_calls call
@@ -325,6 +327,14 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			fact.TerminationSource = "RECONCILER"
 		}
 		if err := m.ApplyProviderFact(ctx, fact); err != nil {
+			if errors.Is(err, ErrConflict) {
+				if quarantineErr := m.quarantineStaleCallLeg(
+					ctx, callID, practiceID, legID, commandID,
+				); quarantineErr != nil {
+					return 1, quarantineErr
+				}
+				return 1, nil
+			}
 			return 1, err
 		}
 	}
@@ -419,6 +429,79 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		return 1, err
 	}
 	return 1, nil
+}
+
+func (m *Module) quarantineStaleCallLeg(
+	ctx context.Context,
+	callID string,
+	practiceID string,
+	callLegID string,
+	commandID string,
+) error {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin stale CallLeg quarantine: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var terminal bool
+	if err := tx.QueryRow(ctx, `
+		SELECT terminal_outcome IS NOT NULL
+		FROM human_calling_calls
+		WHERE id = $1
+		FOR UPDATE
+	`, callID).Scan(&terminal); err != nil {
+		return fmt.Errorf("lock stale Call quarantine: %w", err)
+	}
+	quarantinedAt := m.now()
+	if !terminal {
+		if err := m.failRoutingCall(
+			ctx, tx, callID, providerObservationConflictErrorCode,
+		); err != nil {
+			return fmt.Errorf("fail contradictory stale Call: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'FAILED',
+			ending_at = COALESCE(ending_at, $2),
+			ended_at = COALESCE(ended_at, $2),
+			error_code = $3, updated_at = $2
+		WHERE id = $1 AND call_id = $4
+	`, callLegID, quarantinedAt, providerObservationConflictErrorCode, callID); err != nil {
+		return fmt.Errorf("quarantine contradictory stale CallLeg: %w", err)
+	}
+	if commandID != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_provider_commands
+			SET state = 'FAILED', last_error_code = $2, updated_at = $3
+			WHERE id = $1 AND call_leg_id = $4
+				AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+		`, commandID, providerObservationConflictErrorCode, quarantinedAt, callLegID); err != nil {
+			return fmt.Errorf("quarantine contradictory stale command: %w", err)
+		}
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		callID,
+		practiceID,
+		"call_leg.reconciliation_quarantined",
+		"",
+		"",
+		commandID,
+		opaqueReference(callLegID),
+		providerObservationConflictErrorCode,
+		quarantinedAt,
+	); err != nil {
+		return err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit stale CallLeg quarantine: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) terminalizeStopRingWindow(

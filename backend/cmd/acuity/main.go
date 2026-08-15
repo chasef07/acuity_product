@@ -367,6 +367,7 @@ func runWorker(
 		ReceiptBatchSize:   8,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
+		IdleBackoffMax:     2 * time.Second,
 		ErrorBackoffMin:    250 * time.Millisecond,
 		ErrorBackoffMax:    10 * time.Second,
 	}, calling, messages, interactions, pool)

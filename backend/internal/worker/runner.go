@@ -50,6 +50,7 @@ type Config struct {
 	ReceiptBatchSize   int
 	CommandBatchSize   int
 	CommandWorkers     int
+	IdleBackoffMax     time.Duration
 	ErrorBackoffMin    time.Duration
 	ErrorBackoffMax    time.Duration
 }
@@ -117,6 +118,12 @@ func newRunner(
 	if config.ErrorBackoffMin == 0 {
 		config.ErrorBackoffMin = config.WorkInterval
 	}
+	if config.IdleBackoffMax == 0 {
+		config.IdleBackoffMax = 2 * time.Second
+		if config.WorkInterval > config.IdleBackoffMax {
+			config.IdleBackoffMax = config.WorkInterval
+		}
+	}
 	if config.ErrorBackoffMax == 0 {
 		config.ErrorBackoffMax = 10 * time.Second
 		if config.ErrorBackoffMin > config.ErrorBackoffMax {
@@ -129,9 +136,10 @@ func newRunner(
 	if config.MetricTimeout == 0 {
 		config.MetricTimeout = config.HealthTimeout
 	}
-	if config.ErrorBackoffMin < 0 ||
+	if config.IdleBackoffMax < config.WorkInterval ||
+		config.ErrorBackoffMin < 0 ||
 		config.ErrorBackoffMax < config.ErrorBackoffMin {
-		return nil, fmt.Errorf("valid worker error backoff bounds are required")
+		return nil, fmt.Errorf("valid worker backoff bounds are required")
 	}
 	if config.MetricInterval < 0 || config.MetricTimeout < 0 {
 		return nil, fmt.Errorf("positive worker metric limits are required")
@@ -226,8 +234,14 @@ func (runner *Runner) runQueueLane(
 		runner.config.ErrorBackoffMin,
 		runner.config.ErrorBackoffMax,
 	)
+	idleMaximum := runner.config.IdleBackoffMax
+	if idleMaximum < runner.config.WorkInterval {
+		idleMaximum = runner.config.WorkInterval
+	}
+	idleBackoff := newFailureBackoff(runner.config.WorkInterval, idleMaximum)
 	for ctx.Err() == nil {
 		failed := false
+		progressed := false
 		for range batchSize {
 			processed, err := runBoolWork(
 				ctx,
@@ -243,10 +257,16 @@ func (runner *Runner) runQueueLane(
 			if !processed {
 				break
 			}
+			progressed = true
 		}
 		delay := runner.config.WorkInterval
 		if failed {
+			idleBackoff.reset()
 			delay = backoff.fail(runner.jitter)
+		} else if progressed {
+			idleBackoff.reset()
+		} else {
+			delay = idleBackoff.step()
 		}
 		if !runner.wait(ctx, delay) {
 			return
@@ -472,6 +492,10 @@ func newFailureBackoff(minimum, maximum time.Duration) *failureBackoff {
 func (backoff *failureBackoff) fail(
 	jitter func(time.Duration) time.Duration,
 ) time.Duration {
+	return jitter(backoff.step())
+}
+
+func (backoff *failureBackoff) step() time.Duration {
 	delay := backoff.next
 	if backoff.next < backoff.max {
 		if backoff.next > backoff.max/2 {
@@ -480,7 +504,7 @@ func (backoff *failureBackoff) fail(
 			backoff.next *= 2
 		}
 	}
-	return jitter(delay)
+	return delay
 }
 
 func (backoff *failureBackoff) reset() {

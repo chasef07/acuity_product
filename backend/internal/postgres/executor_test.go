@@ -61,6 +61,36 @@ func TestExecutorClassifiesOnlySupportedPostgresCauses(t *testing.T) {
 	}
 }
 
+func TestExecutorRecordsExpectedNoRowsAsSuccessfulTelemetry(t *testing.T) {
+	var output bytes.Buffer
+	pool := &scriptedPool{
+		queryRow: func(context.Context, string, ...any) pgx.Row {
+			return scriptedErrorRow{err: pgx.ErrNoRows}
+		},
+	}
+	executor, err := newExecutor(scriptedAcquirer{connection: pool}, ExecutorConfig{
+		AcquireTimeout:   10 * time.Millisecond,
+		OperationTimeout: 100 * time.Millisecond,
+		StatementTimeout: 25 * time.Millisecond,
+	}, observability.NewLogger(
+		observability.RuntimeWorker,
+		"worker-test",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	))
+	if err != nil {
+		t.Fatalf("new executor: %v", err)
+	}
+
+	err = executor.QueryRow(context.Background(), "SELECT empty_queue_claim").Scan(new(string))
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("empty claim error = %v, want pgx.ErrNoRows", err)
+	}
+	entries := decodeLogEntries(t, output.Bytes())
+	if got := entries[len(entries)-1]["cause"]; got != "succeeded" {
+		t.Fatalf("empty claim telemetry cause = %q, want succeeded", got)
+	}
+}
+
 func TestExecutorClassifiesTimeoutWhileReadingRows(t *testing.T) {
 	var output bytes.Buffer
 	pool := &scriptedPool{
