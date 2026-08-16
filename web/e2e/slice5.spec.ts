@@ -396,19 +396,174 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     await tasksSection.click()
   }
   await createAIStaffTask(page, "billing", "Review billing balance")
-  const taskCategory = page.getByLabel("Task category")
-  await expect(taskCategory).toHaveValue("all")
-  await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review billing balance \(/ }),
+  ).toBeVisible()
+  const taskCountsResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${portalURL}/v1/tasks/query` &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  )
   await createAIStaffTask(page, "medication", "Review medication refill")
-  await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
-  await taskCategory.selectOption("billing")
-  await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: /Review medication refill/ })).toHaveCount(0)
+  const counts = ((await (await taskCountsResponse).json()) as {
+    counts: {
+      tasks: number
+      categories: Record<
+        | "billing"
+        | "appointments"
+        | "documentation"
+        | "optical"
+        | "medication"
+        | "referrals"
+        | "other",
+        number
+      >
+    }
+  }).counts
+  await expect(
+    page.getByRole("button", { name: /^Review medication refill \(/ }),
+  ).toBeVisible()
+
+  const taskFilter = page.getByRole("button", {
+    name: "Filter Tasks: All types",
+  })
+  await taskFilter.click()
+  for (const [label, count] of [
+    ["All types", counts.tasks],
+    ["Billing", counts.categories.billing],
+    ["Appointments", counts.categories.appointments],
+    ["Documentation", counts.categories.documentation],
+    ["Optical", counts.categories.optical],
+    ["Medication", counts.categories.medication],
+    ["Referrals", counts.categories.referrals],
+    ["Other", counts.categories.other],
+  ] as const) {
+    await expect(
+      page.getByRole("menuitemradio", { name: `${label} ${count}` }),
+    ).toBeVisible()
+  }
+  await page.getByRole("menuitemradio", { name: /^Billing / }).click()
+  await expect(
+    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review billing balance \(/ }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review medication refill \(/ }),
+  ).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: /^Missed Calls \d+$/ }),
   ).toBeVisible()
-  await taskCategory.selectOption("all")
-  await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
+
+  await page.reload()
+  const restoredTasksSection = page.getByRole("button", { name: /^Tasks/ })
+  if ((await restoredTasksSection.getAttribute("aria-expanded")) === "false") {
+    await restoredTasksSection.click()
+  }
+  await expect(
+    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review billing balance \(/ }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review medication refill \(/ }),
+  ).toHaveCount(0)
+
+  const contextClose = page.getByRole("button", { name: "Close context panel" })
+  if (await contextClose.isVisible()) await contextClose.click()
+  const taskItem = page
+    .getByTestId("task-row")
+    .filter({ hasText: "Review billing balance" })
+  const taskRow = taskItem.getByRole("button", {
+    name: /^Review billing balance/,
+  })
+  const completeTask = taskItem.getByRole("button", {
+    name: "Complete Task: Review billing balance",
+  })
+  const relativeTime = taskItem.locator("time")
+  await expect(completeTask).toHaveCSS("opacity", "0")
+  const beforeHover = await taskRow.boundingBox()
+  await taskRow.hover()
+  await expect(completeTask).toHaveCSS("opacity", "1")
+  await expect(relativeTime).toHaveCSS("opacity", "0")
+  expect(await taskRow.boundingBox()).toEqual(beforeHover)
+
+  await taskRow.focus()
+  await expect(completeTask).toHaveCSS("opacity", "1")
+  await page.keyboard.press("Tab")
+  await expect(completeTask).toBeFocused()
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await expect(completeTask).toHaveCSS("transition-duration", "0s")
+  await expect(relativeTime).toHaveCSS("transition-duration", "0s")
+
+  let completionAttempt = 0
+  let releaseSuccess = () => {}
+  const successGate = new Promise<void>((resolve) => {
+    releaseSuccess = resolve
+  })
+  await page.route(/\/v1\/tasks\/[^/]+\/complete$/, async (route) => {
+    completionAttempt += 1
+    if (completionAttempt === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "TASK_CONFLICT",
+            message: "The Task state changed. Refresh and try again.",
+            correlationId: "sidebar-conflict",
+            retryable: false,
+          },
+        }),
+      })
+      return
+    }
+    if (completionAttempt === 2) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "DEPENDENCY_UNAVAILABLE",
+            message: "Task storage is unavailable.",
+            correlationId: "sidebar-failure",
+            retryable: true,
+          },
+        }),
+      })
+      return
+    }
+    await successGate
+    await route.continue()
+  })
+
+  await completeTask.click()
+  await expect(taskItem).toBeVisible()
+  await expect(page.getByTestId("context-panel")).toHaveAttribute(
+    "data-state",
+    "closed",
+  )
+  await expect(
+    taskItem.getByRole("alert").filter({ hasText: "changed elsewhere" }),
+  ).toBeVisible()
+
+  await taskRow.hover()
+  await completeTask.click()
+  await expect(taskItem).toBeVisible()
+  await expect(
+    taskItem.getByRole("alert").filter({ hasText: "could not be completed" }),
+  ).toBeVisible()
+
+  await taskRow.hover()
+  await completeTask.click()
+  await expect(completeTask).toHaveAttribute("aria-busy", "true")
+  await expect(completeTask.getByRole("status", { name: "Loading" })).toBeVisible()
+  await expect(taskItem).toBeVisible()
+  releaseSuccess()
+  await expect(taskItem).toHaveCount(0)
 })
 
 async function openNumberInbox(

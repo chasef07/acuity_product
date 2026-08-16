@@ -13,10 +13,12 @@ import { useRouter } from "next/navigation"
 import {
   ArrowRightIcon,
   ChartNoAxesCombinedIcon,
+  CheckIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
   FolderIcon,
   FolderOpenIcon,
+  ListFilterIcon,
   LogOutIcon,
   MoonIcon,
   SearchIcon,
@@ -24,6 +26,14 @@ import {
 } from "lucide-react"
 
 import { AcuityMark } from "@/components/acuity-mark"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   InputGroup,
   InputGroupAddon,
@@ -43,9 +53,12 @@ import {
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select"
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { portalClient } from "@/lib/api/client"
+import { completeTask } from "@/lib/api/generated/sdk.gen"
 import type {
   AccessDiscovery,
   AiOutcomeCounts,
@@ -58,7 +71,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { aiCallCompletionLabel } from "@/lib/ai-interactions"
 import { categorizeAIOutcomes } from "@/lib/ai-outcome-attention"
-import { authClient } from "@/lib/auth-client"
+import { authClient, getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
@@ -128,6 +141,7 @@ type TaskRailProps = {
   onEngagementSelect: (engagement: EngagementSummary) => void
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onTaskSelect: (task: Task) => void
+  onTaskUpdated: (task: Task) => void
   onLoadMore: () => void
   onRecoveryLoadMore: () => void
   onMessageLoadMore: () => void
@@ -168,6 +182,7 @@ export function TaskRail({
   onEngagementSelect,
   onAIInteractionSelect,
   onTaskSelect,
+  onTaskUpdated,
   onLoadMore,
   onRecoveryLoadMore,
   onMessageLoadMore,
@@ -187,8 +202,20 @@ export function TaskRail({
     appointmentExpansion?.stateKey === stateKey
       ? appointmentExpansion.section
       : undefined
-  const [taskCategory, setTaskCategory] =
-    useState<TaskCategoryFilter>("all")
+  const [taskCategoryState, setTaskCategoryState] = useState<{
+    stateKey: string
+    value: TaskCategoryFilter
+  }>()
+  const taskCategory =
+    taskCategoryState?.stateKey === stateKey
+      ? taskCategoryState.value
+      : "all"
+  const [pendingTaskID, setPendingTaskID] = useState("")
+  const [completionError, setCompletionError] = useState<{
+    taskID: string
+    message: string
+  }>()
+  const currentStateKey = useRef(stateKey)
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
@@ -256,10 +283,18 @@ export function TaskRail({
   }, [])
 
   useEffect(() => {
+    currentStateKey.current = stateKey
     const restored = readSidebarState(stateKey)
-    window.requestAnimationFrame(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setTaskCategoryState({
+        stateKey,
+        value: restored?.taskCategory ?? "all",
+      })
+      setPendingTaskID("")
+      setCompletionError(undefined)
       scrollContainer.current?.scrollTo({ top: restored?.scrollTop ?? 0 })
     })
+    return () => window.cancelAnimationFrame(frame)
   }, [stateKey])
 
   function toggle(section: AttentionSection) {
@@ -281,6 +316,50 @@ export function TaskRail({
   function rememberScroll() {
     writeSidebarState(stateKey, {
       scrollTop: scrollContainer.current?.scrollTop ?? 0,
+      taskCategory,
+    })
+  }
+
+  function selectTaskCategory(value: TaskCategoryFilter) {
+    setTaskCategoryState({ stateKey, value })
+    writeSidebarState(stateKey, {
+      scrollTop: scrollContainer.current?.scrollTop ?? 0,
+      taskCategory: value,
+    })
+  }
+
+  async function complete(task: Task) {
+    if (pendingTaskID) return
+    const requestStateKey = stateKey
+    setPendingTaskID(task.id)
+    setCompletionError(undefined)
+    const token = await getAccessToken()
+    if (currentStateKey.current !== requestStateKey) return
+    if (!token) {
+      setPendingTaskID("")
+      setCompletionError({
+        taskID: task.id,
+        message: "Your session expired. Sign in again, then retry.",
+      })
+      return
+    }
+    const result = await completeTask({
+      client: portalClient(token),
+      path: { taskId: task.id },
+      body: { expectedVersion: task.version },
+    }).catch(() => undefined)
+    if (currentStateKey.current !== requestStateKey) return
+    setPendingTaskID("")
+    if (result?.data) {
+      onTaskUpdated(result.data)
+      return
+    }
+    setCompletionError({
+      taskID: task.id,
+      message:
+        result?.response?.status === 409
+          ? "This Task changed elsewhere. Open it to review the latest state, then retry."
+          : "This Task could not be completed. Retry from the row or open its details.",
     })
   }
 
@@ -347,23 +426,14 @@ export function TaskRail({
             count={selectedTaskCount}
             expanded={expanded === "tasks"}
             onToggle={() => toggle("tasks")}
-          >
-            <SidebarMenuItem className="px-1 py-1">
-              <NativeSelect
-                aria-label="Task category"
-                size="sm"
+            action={
+              <TaskCategoryMenu
                 value={taskCategory}
-                onChange={(event) =>
-                  setTaskCategory(event.target.value as TaskCategoryFilter)
-                }
-              >
-                {taskCategoryOptions.map((option) => (
-                  <NativeSelectOption key={option.value} value={option.value}>
-                    {option.label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </SidebarMenuItem>
+                counts={taskCounts}
+                onChange={selectTaskCategory}
+              />
+            }
+          >
             {filteredTasks.map((task) => (
               <TaskRow
                 key={task.id}
@@ -371,6 +441,14 @@ export function TaskRail({
                 active={task.id === selectedTaskID}
                 showOffice={showOffice}
                 onSelect={() => onTaskSelect(task)}
+                completionDisabled={Boolean(pendingTaskID)}
+                completionPending={pendingTaskID === task.id}
+                completionError={
+                  completionError?.taskID === task.id
+                    ? completionError.message
+                    : ""
+                }
+                onComplete={() => void complete(task)}
               />
             ))}
             {loading && filteredTasks.length === 0 && (
@@ -436,6 +514,9 @@ export function TaskRail({
                 cursor={nextCursor}
                 onToggle={() => toggleAppointment(folder.key)}
                 onTaskSelect={onTaskSelect}
+                pendingTaskID={pendingTaskID}
+                completionError={completionError}
+                onTaskComplete={complete}
                 onAIInteractionSelect={onAIInteractionSelect}
                 onLoadMore={onLoadMore}
               />
@@ -533,49 +614,102 @@ function AttentionGroup({
   count,
   expanded,
   onToggle,
+  action,
   children,
 }: {
   title: string
   count?: number
   expanded: boolean
   onToggle: () => void
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   const contentID = useId()
   return (
     <SidebarGroup className="p-0">
-      <button
-        type="button"
-        aria-controls={contentID}
-        aria-expanded={expanded}
-        className="group/disclosure flex h-9 w-full shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-sidebar-foreground/72 outline-hidden transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-        onClick={onToggle}
-      >
-        {expanded ? (
-          <FolderOpenIcon className="mr-2 size-4 shrink-0 stroke-[1.65]" />
-        ) : (
-          <FolderIcon className="mr-2 size-4 shrink-0 stroke-[1.65]" />
-        )}
-        <span className="truncate">{title}</span>
-        {count !== undefined && (
-          <span className="ml-auto text-[0.6875rem] tabular-nums text-sidebar-foreground/40">
-            {count}
-          </span>
-        )}
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn(
-            "ml-1 size-3.5 shrink-0 stroke-[1.5] text-sidebar-foreground/35 transition-transform motion-reduce:transition-none",
-            expanded && "rotate-90",
+      <div className="flex min-w-0 items-center gap-0.5">
+        <button
+          type="button"
+          aria-controls={contentID}
+          aria-expanded={expanded}
+          className="group/disclosure flex h-9 min-w-0 flex-1 shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-sidebar-foreground/72 outline-hidden transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          onClick={onToggle}
+        >
+          {expanded ? (
+            <FolderOpenIcon className="mr-2 size-4 shrink-0 stroke-[1.65]" />
+          ) : (
+            <FolderIcon className="mr-2 size-4 shrink-0 stroke-[1.65]" />
           )}
-        />
-      </button>
+          <span className="truncate">{title}</span>
+          {count !== undefined && (
+            <span className="ml-auto text-[0.6875rem] tabular-nums text-sidebar-foreground/40">
+              {count}
+            </span>
+          )}
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn(
+              "ml-1 size-3.5 shrink-0 stroke-[1.5] text-sidebar-foreground/35 transition-transform motion-reduce:transition-none",
+              expanded && "rotate-90",
+            )}
+          />
+        </button>
+        {action}
+      </div>
       <SidebarGroupContent id={contentID} hidden={!expanded}>
         <SidebarMenu className="mx-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2">
           {children}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  )
+}
+
+function TaskCategoryMenu({
+  value,
+  counts,
+  onChange,
+}: {
+  value: TaskCategoryFilter
+  counts: TaskFolderCounts
+  onChange: (value: TaskCategoryFilter) => void
+}) {
+  const activeLabel =
+    taskCategoryOptions.find((option) => option.value === value)?.label ??
+    "All types"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Filter Tasks: ${activeLabel}`}
+            className="flex h-8 max-w-24 shrink-0 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-medium text-sidebar-foreground/58 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-foreground"
+          />
+        }
+      >
+        <ListFilterIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="truncate">{activeLabel}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(nextValue) =>
+            onChange(nextValue as TaskCategoryFilter)
+          }
+        >
+          <DropdownMenuLabel>Task type</DropdownMenuLabel>
+          {taskCategoryOptions.map((option) => (
+            <DropdownMenuRadioItem key={option.value} value={option.value}>
+              <span className="flex-1">{option.label}</span>
+              <span className="mr-5 tabular-nums text-muted-foreground">
+                {taskCountForCategory(counts, option.value)}
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -594,6 +728,9 @@ function AppointmentFolder({
   cursor,
   onToggle,
   onTaskSelect,
+  pendingTaskID,
+  completionError,
+  onTaskComplete,
   onAIInteractionSelect,
   onLoadMore,
 }: {
@@ -611,6 +748,9 @@ function AppointmentFolder({
   cursor: string
   onToggle: () => void
   onTaskSelect: (task: Task) => void
+  pendingTaskID: string
+  completionError?: { taskID: string; message: string }
+  onTaskComplete: (task: Task) => Promise<void>
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onLoadMore: () => void
 }) {
@@ -657,6 +797,14 @@ function AppointmentFolder({
             active={task.id === selectedTaskID}
             showOffice={showOffice}
             onSelect={() => onTaskSelect(task)}
+            completionDisabled={Boolean(pendingTaskID)}
+            completionPending={pendingTaskID === task.id}
+            completionError={
+              completionError?.taskID === task.id
+                ? completionError.message
+                : ""
+            }
+            onComplete={() => void onTaskComplete(task)}
           />
         ))}
         {loading && tasks.length === 0 && outcomes.length === 0 && (
@@ -780,17 +928,28 @@ function TaskRow({
   active,
   showOffice,
   onSelect,
+  completionDisabled,
+  completionPending,
+  completionError,
+  onComplete,
 }: {
   task: Task
   active: boolean
   showOffice: boolean
   onSelect: () => void
+  completionDisabled: boolean
+  completionPending: boolean
+  completionError: string
+  onComplete: () => void
 }) {
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem
+      data-testid="task-row"
+      className="group/task relative"
+    >
       <SidebarMenuButton
         isActive={active}
-        className="h-auto min-h-11 rounded-lg px-3 py-2"
+        className="h-auto min-h-11 rounded-lg py-2 pr-11 pl-3"
         tooltip={task.title}
         onClick={onSelect}
       >
@@ -814,13 +973,49 @@ function TaskRow({
             )}
           </span>
         </span>
+      </SidebarMenuButton>
+      <span className="pointer-events-none absolute top-2 right-2 size-7">
         <time
-          className="ml-2 shrink-0 self-start pt-0.5 text-[0.6875rem] tabular-nums text-muted-foreground"
+          className="absolute inset-0 flex items-center justify-center text-[0.6875rem] tabular-nums text-muted-foreground transition-opacity duration-150 group-hover/task:opacity-0 group-focus-within/task:opacity-0 motion-reduce:duration-0 motion-reduce:transition-none"
           dateTime={taskRelativeAt(task)}
         >
           {relativeTime(taskRelativeAt(task))}
         </time>
-      </SidebarMenuButton>
+        {task.state === "OPEN" && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`Complete Task: ${task.title}`}
+                  aria-busy={completionPending || undefined}
+                  disabled={completionDisabled}
+                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md text-sidebar-foreground/62 opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-success/12 hover:text-success focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onComplete()
+                  }}
+                />
+              }
+            >
+              {completionPending ? (
+                <Spinner className="size-3.5" />
+              ) : (
+                <CheckIcon aria-hidden="true" className="size-4" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="right">Complete Task</TooltipContent>
+          </Tooltip>
+        )}
+      </span>
+      {completionError && (
+        <p
+          role="alert"
+          className="px-3 pt-1 pb-1.5 text-[0.6875rem] leading-snug text-destructive"
+        >
+          {completionError}
+        </p>
+      )}
     </SidebarMenuItem>
   )
 }
@@ -1088,6 +1283,7 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
 
 type SidebarState = {
   scrollTop: number
+  taskCategory?: TaskCategoryFilter
 }
 
 function sidebarStateKey(userSubject: string, practiceID: string) {
@@ -1098,10 +1294,20 @@ function readSidebarState(key: string): SidebarState | undefined {
   if (typeof window === "undefined") return undefined
   try {
     const value = JSON.parse(window.localStorage.getItem(key) ?? "") as SidebarState
-    return Number.isFinite(value?.scrollTop) ? value : undefined
+    if (!Number.isFinite(value?.scrollTop)) return undefined
+    return {
+      scrollTop: value.scrollTop,
+      ...(isTaskCategoryFilter(value.taskCategory)
+        ? { taskCategory: value.taskCategory }
+        : {}),
+    }
   } catch {
     return undefined
   }
+}
+
+function isTaskCategoryFilter(value: unknown): value is TaskCategoryFilter {
+  return taskCategoryOptions.some((option) => option.value === value)
 }
 
 function writeSidebarState(key: string, value: SidebarState) {

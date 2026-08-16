@@ -1341,6 +1341,13 @@ export function TaskWorkspaceShell() {
           }}
           onEngagementSelect={selectEngagement}
           onTaskSelect={selectTask}
+          onTaskUpdated={(task) => {
+            updateTaskProjection(task, false)
+            if (selectedTaskRef.current?.id === task.id) {
+              updateSelectedTask(task)
+            }
+            void loadTasks()
+          }}
           onAIInteractionSelect={selectAIInteraction}
           onLoadMore={() => void loadTasks(nextCursor, true)}
           onRecoveryLoadMore={() =>
