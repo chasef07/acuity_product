@@ -18,6 +18,21 @@ export function appointmentFolderForAction(action?: string) {
   }
 }
 
+export function categorizeAIOutcomes<
+  T extends { appointmentAction?: string },
+>(outcomes: T[]) {
+  const categorized = {
+    bookings: [] as T[],
+    cancellations: [] as T[],
+    reschedules: [] as T[],
+  }
+  for (const outcome of outcomes) {
+    const folder = appointmentFolderForAction(outcome.appointmentAction)
+    if (folder) categorized[folder].push(outcome)
+  }
+  return categorized
+}
+
 export function mergeOutcomePages<T extends { id: string }>(
   loaded: T[],
   refreshed: T[],

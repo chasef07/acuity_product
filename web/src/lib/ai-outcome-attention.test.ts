@@ -3,9 +3,25 @@ import test from "node:test"
 
 import {
   appointmentFolderForAction,
+  categorizeAIOutcomes,
   decrementOutcomeCount,
   mergeOutcomePages,
 } from "./ai-outcome-attention.ts"
+
+test("AI call outcomes are not classified as Tasks", () => {
+  const booked = { id: "booked", appointmentAction: "BOOKED" }
+  const transferred = { id: "transferred", appointmentAction: undefined }
+  const failed = { id: "failed", appointmentAction: undefined }
+
+  assert.deepEqual(
+    categorizeAIOutcomes([booked, transferred, failed]),
+    {
+      bookings: [booked],
+      cancellations: [],
+      reschedules: [],
+    },
+  )
+})
 
 test("appointment actions have one authoritative review folder", () => {
   assert.equal(appointmentFolderForAction("BOOKED"), "bookings")
