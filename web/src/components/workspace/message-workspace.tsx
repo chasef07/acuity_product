@@ -69,6 +69,14 @@ import {
   MessageContent,
   MessageFooter,
 } from "@/components/ui/message"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
@@ -414,17 +422,11 @@ function MessageConversation({
       setLoadingOlder(false)
       return
     }
-    const container = scroller.current
-    const previousHeight = container?.scrollHeight ?? 0
     const result = await loadPage(token, cursor)
     setLoadingOlder(false)
     if (!result?.data) return
     setItems((current) => [...result.data.items, ...current])
     setCursor(result.data.nextCursor)
-    window.requestAnimationFrame(() => {
-      if (container)
-        container.scrollTop += container.scrollHeight - previousHeight
-    })
   }
 
   const conversationThread = items.find(
@@ -436,109 +438,142 @@ function MessageConversation({
   const followUpCallIDs = recoveryFollowUpCallIDs(items)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        ref={scroller}
-        data-testid="message-timeline"
-        className="relative min-h-0 flex-1 overflow-y-auto bg-background px-3 py-4 sm:px-4"
-        onScroll={(event) => {
-          const element = event.currentTarget
-          atLatest.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight < 72
-        }}
+      <MessageScrollerProvider
+        autoScroll
+        defaultScrollPosition="end"
+        scrollEdgeThreshold={72}
       >
-        <div className="mx-auto flex max-w-2xl flex-col gap-2">
-          {cursor && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="mx-auto bg-background"
-              disabled={loadingOlder}
-              onClick={() => void loadOlder()}
-            >
-              {loadingOlder ? <Spinner /> : <RefreshCwIcon />}
-              Earlier activity
-            </Button>
-          )}
-          {loading && (
-            <div
-              aria-label="Loading conversation"
-              className="flex flex-col gap-3 py-8"
-              role="status"
-            >
-              <Skeleton className="ml-auto h-12 w-2/3 rounded-lg" />
-              <Skeleton className="h-14 w-3/4 rounded-lg" />
-              <Skeleton className="mx-auto h-16 w-full max-w-xl rounded-md" />
-              <span className="sr-only">Loading conversation</span>
-            </div>
-          )}
-          {!loading &&
-            presentedItems.map((item, index) => (
-              <Fragment key={`${item.type}:${item.id}`}>
-                {(index === 0 ||
-                  !sameConversationDate(
-                    presentedItems[index - 1]!.occurredAt,
-                    item.occurredAt,
-                  )) && (
-                  <Marker variant="separator" className="my-2">
-                    <MarkerContent>
-                      {conversationDateLabel(item.occurredAt)}
-                    </MarkerContent>
-                  </Marker>
-                )}
-                <TimelineEntry
-                  item={item}
-                  contextLocationID={locationID}
-                  canMutate={canMutate}
-                  onChanged={() => void loadLatest(true)}
-                  onTaskCreated={onTaskCreated}
-                  onTaskOpen={onTaskOpen}
-                  onCallOpen={onCallOpen}
-                  onAIInteractionOpen={onAIInteractionOpen}
-                  recoveryFollowUp={
-                    item.type === "CALL" &&
-                    followUpCallIDs.has(item.call?.id ?? "")
-                  }
-                />
-              </Fragment>
-            ))}
-          {!loading && presentedItems.length === 0 && (
-            <Empty className="my-10 border-0">
-              <EmptyHeader>
-                <EmptyTitle>No activity yet</EmptyTitle>
-                <EmptyDescription>
-                  Calls, texts, and Tasks for this number will appear here.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-          {!loading && technicalItems.length > 0 && (
-            <details className="mx-auto w-full max-w-md px-2 py-1 text-xs text-muted-foreground">
-              <summary className="cursor-pointer">Technical details</summary>
-              <ul className="mt-2 flex flex-col gap-1 pl-4">
-                {technicalItems.map((item) => (
-                  <li key={`${item.type}:${item.id}`}>
-                    {item.task?.title} · {taskActivityLabel(item.taskActivity, item.task?.state ?? "OPEN")}
-                  </li>
+        <MessageScroller className="min-h-0 flex-1 bg-background">
+          <MessageScrollerViewport
+            ref={scroller}
+            aria-label="Conversation activity"
+            data-testid="message-timeline"
+            preserveScrollOnPrepend
+            className="px-3 py-4 sm:px-4"
+            onScroll={(event) => {
+              const element = event.currentTarget
+              atLatest.current =
+                element.scrollHeight - element.scrollTop - element.clientHeight <
+                72
+            }}
+          >
+            <MessageScrollerContent className="mx-auto max-w-2xl gap-2">
+              {cursor && (
+                <MessageScrollerItem
+                  messageId="earlier-activity"
+                  className="flex justify-center"
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="bg-background"
+                    disabled={loadingOlder}
+                    onClick={() => void loadOlder()}
+                  >
+                    {loadingOlder ? <Spinner /> : <RefreshCwIcon />}
+                    Earlier activity
+                  </Button>
+                </MessageScrollerItem>
+              )}
+              {loading && (
+                <MessageScrollerItem messageId="loading-conversation">
+                  <div
+                    aria-label="Loading conversation"
+                    className="flex flex-col gap-3 py-8"
+                    role="status"
+                  >
+                    <Skeleton className="ml-auto h-12 w-2/3 rounded-lg" />
+                    <Skeleton className="h-14 w-3/4 rounded-lg" />
+                    <Skeleton className="mx-auto h-16 w-full max-w-xl rounded-md" />
+                    <span className="sr-only">Loading conversation</span>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {!loading &&
+                presentedItems.map((item, index) => (
+                  <MessageScrollerItem
+                    key={`${item.type}:${item.id}`}
+                    messageId={`${item.type}:${item.id}`}
+                  >
+                    <Fragment>
+                      {(index === 0 ||
+                        !sameConversationDate(
+                          presentedItems[index - 1]!.occurredAt,
+                          item.occurredAt,
+                        )) && (
+                        <Marker variant="separator" className="my-2">
+                          <MarkerContent>
+                            {conversationDateLabel(item.occurredAt)}
+                          </MarkerContent>
+                        </Marker>
+                      )}
+                      <TimelineEntry
+                        item={item}
+                        contextLocationID={locationID}
+                        canMutate={canMutate}
+                        onChanged={() => void loadLatest(true)}
+                        onTaskCreated={onTaskCreated}
+                        onTaskOpen={onTaskOpen}
+                        onCallOpen={onCallOpen}
+                        onAIInteractionOpen={onAIInteractionOpen}
+                        recoveryFollowUp={
+                          item.type === "CALL" &&
+                          followUpCallIDs.has(item.call?.id ?? "")
+                        }
+                      />
+                    </Fragment>
+                  </MessageScrollerItem>
                 ))}
-              </ul>
-            </details>
+              {!loading && presentedItems.length === 0 && (
+                <MessageScrollerItem messageId="empty-conversation">
+                  <Empty className="my-10 border-0">
+                    <EmptyHeader>
+                      <EmptyTitle>No activity yet</EmptyTitle>
+                      <EmptyDescription>
+                        Calls, texts, and Tasks for this number will appear here.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                </MessageScrollerItem>
+              )}
+              {!loading && technicalItems.length > 0 && (
+                <MessageScrollerItem messageId="technical-details">
+                  <details className="mx-auto w-full max-w-md px-2 py-1 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">Technical details</summary>
+                    <ul className="mt-2 flex flex-col gap-1 pl-4">
+                      {technicalItems.map((item) => (
+                        <li key={`${item.type}:${item.id}`}>
+                          {item.task?.title} ·{" "}
+                          {taskActivityLabel(
+                            item.taskActivity,
+                            item.task?.state ?? "OPEN",
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </MessageScrollerItem>
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          {newActivity ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+              <Button
+                size="sm"
+                className="pointer-events-auto shadow-lg"
+                onClick={() => {
+                  atLatest.current = true
+                  void loadLatest(true)
+                }}
+              >
+                New activity
+              </Button>
+            </div>
+          ) : (
+            <MessageScrollerButton direction="end" />
           )}
-        </div>
-        {newActivity && (
-          <div className="sticky bottom-3 flex justify-center">
-            <Button
-              size="sm"
-              className="shadow-lg"
-              onClick={() => {
-                atLatest.current = true
-                void loadLatest(true)
-              }}
-            >
-              New activity
-            </Button>
-          </div>
-        )}
-      </div>
+        </MessageScroller>
+      </MessageScrollerProvider>
       {error && (
         <Alert variant="destructive" className="rounded-none border-x-0">
           <AlertTitle>Conversation unavailable</AlertTitle>

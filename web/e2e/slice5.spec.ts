@@ -358,9 +358,15 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   const headerTop = await inboxHeading.evaluate(
     (element) => element.closest("header")?.getBoundingClientRect().top,
   )
-  await timeline.evaluate((element) => {
-    element.scrollTop = element.scrollHeight
-  })
+  const latestScrollTop = await timeline.evaluate((element) => element.scrollTop)
+  await timeline.hover()
+  await page.mouse.wheel(0, -1_000)
+  await expect
+    .poll(() => timeline.evaluate((element) => element.scrollTop))
+    .toBeLessThan(latestScrollTop)
+  const scrollToLatest = page.getByRole("button", { name: "Scroll to end" })
+  await expect(scrollToLatest).toBeVisible()
+  await scrollToLatest.click({ timeout: 10_000 })
   await expect
     .poll(() => timeline.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0)
