@@ -459,6 +459,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         name: "Active call controls",
       })
       await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
+      await expect(callCenter(page)).toHaveCount(0, { timeout: 30_000 })
       await expect(
         page.getByRole("switch", { name: "Availability" }),
       ).toBeChecked()
@@ -695,7 +696,14 @@ async function startAndEndOutboundWhileVoicemail(
   await page.getByLabel("Search phone number").press("Enter")
   const callButton = page.getByRole("button", { name: "Call", exact: true })
   await expect(callButton).toBeEnabled()
-  await callButton.click()
+  const [commitResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url() === `${portalURL}/v1/calling/outbound-calls` &&
+      response.request().method() === "POST",
+    ),
+    callButton.click(),
+  ])
+  expect(commitResponse.status()).toBe(201)
 
   await expect
     .poll(async () => {
