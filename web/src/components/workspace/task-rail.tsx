@@ -75,10 +75,10 @@ import { authClient, getAccessTokenResult } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
-import { oldestFirst } from "@/lib/workspace-ordering"
 import {
   filterTasksByCategory,
   filterTaskQueue,
+  sortRecoveryQueue,
   taskCountForCategory,
   taskFolderCursor,
   type TaskCategoryFilter,
@@ -726,7 +726,6 @@ function AppointmentFolder({
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
 }) {
   const contentID = useId()
-  const rows = oldestFirst(outcomes, aiOutcomeOccurredAt)
   return (
     <SidebarMenuItem>
       <button
@@ -753,7 +752,7 @@ function AppointmentFolder({
         hidden={!expanded}
         className="ml-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2"
       >
-        {rows.map((interaction) => (
+        {outcomes.map((interaction) => (
           <AIOutcomeRow
             key={interaction.id}
             interaction={interaction}
@@ -1059,27 +1058,24 @@ function TextRow({
 }
 
 function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
-  return oldestFirst(
-    tasks
-      .filter(
-        (task) =>
-          task.origin === "MISSED_CALL_RECOVERY" ||
-          task.origin === "VOICEMAIL_RECOVERY",
-      )
-      .map((task) => {
-        const related = Math.max(1, task.relatedInteractionCount)
-        return {
-          phone: task.phone,
-          locationID: task.locationId,
-          locationName: task.locationName,
-          task,
-          voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
-          missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
-          latestAt: task.updatedAt,
-        }
-      }),
-    (row) => row.latestAt,
-  )
+  return sortRecoveryQueue(
+    tasks.filter(
+      (task) =>
+        task.origin === "MISSED_CALL_RECOVERY" ||
+        task.origin === "VOICEMAIL_RECOVERY",
+    ),
+  ).map((task) => {
+    const related = Math.max(1, task.relatedInteractionCount)
+    return {
+      phone: task.phone,
+      locationID: task.locationId,
+      locationName: task.locationName,
+      task,
+      voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
+      missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
+      latestAt: task.createdAt,
+    }
+  })
 }
 
 function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {

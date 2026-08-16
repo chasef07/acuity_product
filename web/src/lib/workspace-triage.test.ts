@@ -6,6 +6,7 @@ import {
   filterTaskQueue,
   projectTaskUpdate,
   refreshTaskWindowTarget,
+  sortRecoveryQueue,
   taskCountForCategory,
   taskFolderCursor,
 } from "./workspace-triage.ts"
@@ -60,6 +61,21 @@ test("Task folders keep pagination available until their total is loaded", () =>
   assert.equal(taskFolderCursor("next-page", 0, 3), "next-page")
   assert.equal(taskFolderCursor("next-page", 3, 3), "")
   assert.equal(taskFolderCursor("", 0, 3), "")
+})
+
+test("Missed Calls keep the stable creation-time order across pages", () => {
+  const oldest = {
+    id: "oldest",
+    createdAt: "2026-08-16T08:00:00Z",
+    updatedAt: "2026-08-16T12:00:00Z",
+  }
+  const newer = {
+    id: "newer",
+    createdAt: "2026-08-16T10:00:00Z",
+    updatedAt: "2026-08-16T10:00:00Z",
+  }
+
+  assert.deepEqual(sortRecoveryQueue([newer, oldest]), [oldest, newer])
 })
 
 test("live refresh refetches the expanded window plus one authoritative page", () => {

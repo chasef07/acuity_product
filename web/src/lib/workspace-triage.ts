@@ -33,6 +33,12 @@ export function filterTaskQueue<
   )
 }
 
+export function sortRecoveryQueue<T extends { createdAt: string }>(tasks: T[]) {
+  return [...tasks].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  )
+}
+
 export function filterTasksByCategory<
   T extends { category?: StaffTaskCategory },
 >(tasks: T[], category: TaskCategoryFilter) {
