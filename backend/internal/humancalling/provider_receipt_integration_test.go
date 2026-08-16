@@ -1010,6 +1010,194 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 	}
 }
 
+func TestOutboundRecordingSavedAfterStaffHangupAppliesImmediately(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 16, 12, 0, 0, 0, time.UTC)
+	currentTime := now
+	accessModule := access.New(pool, func() time.Time { return currentTime })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "outbound-recording-after-hangup", 1,
+	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_practices SET
+			connected_call_recording_retention_days = 30,
+			connected_call_recording_enabled = true
+		WHERE id = $1
+	`, authorization.Practice.ID); err != nil {
+		t.Fatalf("enable outbound connected recording: %v", err)
+	}
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{CallControlID: "outbound-recording-staff-control", CallLegID: "outbound-recording-staff-leg"},
+		{CallControlID: "outbound-recording-destination-control", CallLegID: "outbound-recording-destination-leg"},
+	}}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
+		WebhookTolerance:       5 * time.Minute,
+	}, func() time.Time { return currentTime })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "outbound-recording-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "outbound-recording-after-hangup-practice",
+			LocationKey: "outbound-recording-after-hangup-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: "outbound-recording-browser-1",
+			IdempotencyKey: "outbound-recording-call",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
+	staffClientState, _ := staffDial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: "outbound-recording-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "outbound-recording-staff-control", CallLegID: "outbound-recording-staff-leg",
+		CallSessionID: "outbound-recording-staff-session", ClientState: staffClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	staffFact.EventID = "outbound-recording-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(2 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff answer: %v", err)
+	}
+	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(callingState.Ringing) != 1 {
+		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[0], SessionID: "outbound-recording-browser-1", CallID: call.ID,
+			MediaToken: callingState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm outbound Staff media: %v", err)
+	}
+	processAllCommands(t, calling)
+	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
+	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
+	destinationFact := humancalling.ProviderFact{
+		EventID: "outbound-recording-destination-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(3 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "outbound-recording-destination-control", CallLegID: "outbound-recording-destination-leg",
+		CallSessionID: "outbound-recording-destination-session", ClientState: destinationClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination initiation: %v", err)
+	}
+	destinationFact.EventID = "outbound-recording-destination-answered"
+	destinationFact.Type = humancalling.FactCallAnswered
+	destinationFact.OccurredAt = now.Add(4 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination answer: %v", err)
+	}
+	processAllCommands(t, calling)
+	for _, fact := range []humancalling.ProviderFact{
+		{
+			EventID: "outbound-recording-destination-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: destinationFact.CallControlID,
+			CallLegID: destinationFact.CallLegID, CallSessionID: destinationFact.CallSessionID,
+		},
+		{
+			EventID: "outbound-recording-staff-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: staffFact.CallControlID,
+			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+		},
+	} {
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project outbound Bridge: %v", err)
+		}
+	}
+	currentTime = now.Add(6 * time.Second)
+	if _, err := calling.RequestHangup(
+		context.Background(), staff[0], "outbound-recording-browser-1", call.ID,
+	); err != nil {
+		t.Fatalf("request outbound Hangup: %v", err)
+	}
+	processAllCommands(t, calling)
+	var recordingClientState string
+	for _, command := range provider.all(humancalling.CommandHangupLeg) {
+		if command.TargetID == destinationFact.CallControlID {
+			recordingClientState, _ = command.Payload["client_state"].(string)
+		}
+	}
+	if recordingClientState == "" {
+		t.Fatal("destination Hangup omitted client_state")
+	}
+
+	recordingStartedAt := now.Add(5 * time.Second)
+	recordingEndedAt := now.Add(17 * time.Second)
+	envelope := map[string]any{"data": map[string]any{
+		"record_type": "event", "event_type": "call.recording.saved",
+		"id":          "outbound-recording-saved-after-hangup",
+		"occurred_at": recordingEndedAt.Format(time.RFC3339Nano),
+		"payload": map[string]any{
+			"connection_id":        "staff-call-control-connection",
+			"call_control_id":      destinationFact.CallControlID,
+			"call_leg_id":          destinationFact.CallLegID,
+			"call_session_id":      destinationFact.CallSessionID,
+			"client_state":         recordingClientState,
+			"recording_id":         "outbound-recording-id",
+			"recording_started_at": recordingStartedAt.Format(time.RFC3339Nano),
+			"recording_ended_at":   recordingEndedAt.Format(time.RFC3339Nano),
+		},
+	}}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentTime = recordingEndedAt
+	timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), body...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), body, timestamp, signature,
+	); err != nil {
+		t.Fatalf("receive outbound recording webhook: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process outbound recording webhook: processed=%t err=%v", processed, err)
+	}
+	receipt, err := calling.ReceiveWebhook(context.Background(), body, timestamp, signature)
+	if err != nil {
+		t.Fatalf("read outbound recording receipt: %v", err)
+	}
+	if receipt.State != humancalling.ReceiptApplied {
+		t.Fatalf("outbound recording receipt state = %s, want APPLIED", receipt.State)
+	}
+	projected, err := calling.ReadCall(context.Background(), staff[0], call.ID)
+	if err != nil {
+		t.Fatalf("read outbound Call: %v", err)
+	}
+	if projected.Recording.AudioState != humancalling.RecordingReady ||
+		projected.Recording.DurationSeconds != 12 {
+		t.Fatalf("outbound recording = %#v, want READY for 12 seconds", projected.Recording)
+	}
+}
+
 func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T) {
 	now := time.Date(2026, time.August, 11, 14, 0, 0, 0, time.UTC)
 	prefix := "delayed-hangup-after-local-ending"

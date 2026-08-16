@@ -533,12 +533,12 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	case FactSpeakEnded:
 		return m.applyVoicemailGreetingEnded(ctx, fact)
 	case FactRecordingSaved:
-		if hasState && state.Kind == "bridge" {
+		if _, connected := connectedRecordingState(fact); connected {
 			return m.applyConnectedCallRecordingSaved(ctx, fact)
 		}
 		return m.applyVoicemailRecordingSaved(ctx, fact)
 	case FactRecordingError:
-		if hasState && state.Kind == "bridge" {
+		if _, connected := connectedRecordingState(fact); connected {
 			return m.applyConnectedCallRecordingError(ctx, fact)
 		}
 		return m.applyVoicemailRecordingError(ctx, fact)
