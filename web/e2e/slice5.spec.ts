@@ -474,6 +474,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("button", {
       name: /Open task: Follow up on text/,
     })
+    .last()
     .click()
   const completedTaskContext = page.getByRole("complementary", {
     name: "Task context",
