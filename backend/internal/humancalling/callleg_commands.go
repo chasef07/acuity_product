@@ -21,7 +21,7 @@ func (m *Module) processCommand(
 }
 
 func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", false, fmt.Errorf("begin provider command claim: %w", err)
 	}
@@ -115,7 +115,7 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 }
 
 func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin committed provider command claim: %w", err)
 	}
@@ -167,7 +167,7 @@ func (m *Module) executeCallLegCommand(
 ) (ProviderResult, error) {
 	var command ProviderCommand
 	var encoded []byte
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT id::text, COALESCE(call_leg_id::text, ''),
 			COALESCE(peer_call_leg_id::text, ''), action,
 			COALESCE(target_id, ''), payload, created_at
@@ -204,6 +204,9 @@ func (m *Module) executeCallLegCommand(
 			m.now().Sub(claimedAt),
 		)
 	}
+	if executeErr != nil && (state == "FAILED" || state == "SENT") {
+		return result, nil
+	}
 	return result, executeErr
 }
 
@@ -222,6 +225,10 @@ func (m *Module) providerCommandResult(
 		errors.Is(executeErr, ErrProviderTargetAbsent) {
 		return "FAILED", errorCode
 	}
+	if isCredentialCommand(command.Action) &&
+		!command.createdAt.After(m.now().Add(-credentialRetryLifetime)) {
+		return "FAILED", credentialRetryExhaustedCode
+	}
 	if m.now().Sub(command.createdAt) < safeProviderRetryWindow {
 		return "PENDING", errorCode
 	}
@@ -234,7 +241,7 @@ func (m *Module) finishCallLegCommand(
 	result ProviderResult,
 	executeErr error,
 ) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin provider command result: %w", err)
 	}
@@ -271,6 +278,17 @@ func (m *Module) finishCallLegCommand(
 			)
 		`, command.ID, m.now()); err != nil {
 			return fmt.Errorf("disable Staff credential: %w", err)
+		}
+	}
+	if isCredentialCommand(command.Action) && state == "FAILED" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_credentials
+			SET state = 'FAILED', last_error_code = $2, updated_at = $3
+			WHERE user_subject = (
+				SELECT user_subject FROM human_calling_provider_commands WHERE id = $1
+			)
+		`, command.ID, errorCode, m.now()); err != nil {
+			return fmt.Errorf("quarantine failed Staff credential command: %w", err)
 		}
 	}
 	if command.CallLegID != "" && executeErr == nil &&
@@ -360,6 +378,10 @@ func (m *Module) finishCallLegCommand(
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func isCredentialCommand(action CommandAction) bool {
+	return action == CommandCreateCredential || action == CommandDisableCredential
 }
 
 func (m *Module) failDialCallLeg(

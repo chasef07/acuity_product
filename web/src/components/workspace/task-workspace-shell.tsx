@@ -76,7 +76,10 @@ import {
 } from "@/lib/ai-outcome-attention"
 import { cn } from "@/lib/utils"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
-import { reconcileLoadedPage } from "@/lib/workspace-triage"
+import {
+  projectTaskUpdate,
+  refreshTaskWindowTarget,
+} from "@/lib/workspace-triage"
 import {
   createWorkspaceRequestBudget,
   type WorkspaceRequestBudget,
@@ -503,6 +506,54 @@ export function TaskWorkspaceShell() {
         taskLocationID,
       )
       const client = portalClient(token)
+      const loadTaskWindow = async (
+        folder: "work" | "missed_calls",
+        ordering: "priority" | "recent",
+        loadedCount: number,
+      ) => {
+        const target = refreshTaskWindowTarget(loadedCount)
+        const items: Task[] = []
+        const seen = new Set<string>()
+        let cursor = ""
+        let result: Awaited<ReturnType<typeof queryTasks>> | undefined
+        do {
+          result = await queryTasks({
+            client,
+            body: {
+              practiceId: scope.practiceID,
+              ...(taskLocationID ? { locationId: taskLocationID } : {}),
+              state: "OPEN",
+              ordering,
+              folder,
+              ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
+              ...(cursor ? { cursor } : {}),
+              limit: 50,
+            },
+            signal,
+          }).catch(() => undefined)
+          if (!result?.data) return result
+          for (const task of result.data.items) {
+            if (seen.has(task.id)) continue
+            seen.add(task.id)
+            items.push(task)
+          }
+          cursor = result.data.nextCursor
+        } while (cursor && items.length < target)
+        return {
+          ...result,
+          data: {
+            ...result.data,
+            items,
+            nextCursor: cursor,
+          },
+        }
+      }
+      const taskLoadedCount =
+        taskQueryKeyRef.current === taskQueryKey ? tasksRef.current.length : 0
+      const recoveryLoadedCount =
+        recoveryTaskQueryKeyRef.current === recoveryTaskQueryKey
+          ? recoveryTasksRef.current.length
+          : 0
       const [
         snapshotResult,
         taskResult,
@@ -519,32 +570,8 @@ export function TaskWorkspaceShell() {
             },
             signal,
           }).catch(() => undefined),
-          queryTasks({
-            client,
-            body: {
-              practiceId: scope.practiceID,
-              ...(taskLocationID ? { locationId: taskLocationID } : {}),
-              state: "OPEN",
-              ordering: "priority",
-              folder: "work",
-              ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
-              limit: 50,
-            },
-            signal,
-          }).catch(() => undefined),
-          queryTasks({
-            client,
-            body: {
-              practiceId: scope.practiceID,
-              ...(taskLocationID ? { locationId: taskLocationID } : {}),
-              state: "OPEN",
-              ordering: "recent",
-              folder: "missed_calls",
-              ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
-              limit: 50,
-            },
-            signal,
-          }).catch(() => undefined),
+          loadTaskWindow("work", "priority", taskLoadedCount),
+          loadTaskWindow("missed_calls", "recent", recoveryLoadedCount),
           queryMessageThreads({
             client,
             body: {
@@ -607,7 +634,6 @@ export function TaskWorkspaceShell() {
             setTasksLoading(false)
             const firstLoad = !hasLoadedTasksRef.current
             hasLoadedTasksRef.current = true
-            const sameTaskWindow = taskQueryKeyRef.current === taskQueryKey
             taskQueryKeyRef.current = taskQueryKey
             const refreshed = selectedResult?.data
             const tasksWithSelection = refreshed
@@ -615,25 +641,10 @@ export function TaskWorkspaceShell() {
                   task.id === refreshed.id ? refreshed : task,
                 )
               : nextTasks
-            const currentTasks = refreshed
-              ? refreshed.state === "OPEN"
-                ? tasksRef.current.map((task) =>
-                    task.id === refreshed.id ? refreshed : task,
-                  )
-                : tasksRef.current.filter((task) => task.id !== refreshed.id)
-              : tasksRef.current
-            const taskWindow = sameTaskWindow
-              ? reconcileLoadedPage(
-                  currentTasks,
-                  tasksWithSelection,
-                  workTaskCount(taskResult.data.counts),
-                  nextCursorRef.current,
-                  taskResult.data.nextCursor,
-                )
-              : {
-                  items: tasksWithSelection,
-                  cursor: taskResult.data.nextCursor,
-                }
+            const taskWindow = {
+              items: tasksWithSelection,
+              cursor: taskResult.data.nextCursor,
+            }
             tasksRef.current = taskWindow.items
             setTasks(taskWindow.items)
             nextCursorRef.current = taskWindow.cursor
@@ -672,31 +683,11 @@ export function TaskWorkspaceShell() {
             recoveryTaskGeneration === recoveryTaskQueryGenerationRef.current
           ) {
             setRecoveryTasksLoading(false)
-            const sameRecoveryWindow =
-              recoveryTaskQueryKeyRef.current === recoveryTaskQueryKey
             recoveryTaskQueryKeyRef.current = recoveryTaskQueryKey
-            const refreshed = selectedResult?.data
-            const currentRecoveryTasks = refreshed
-              ? refreshed.state === "OPEN"
-                ? recoveryTasksRef.current.map((task) =>
-                    task.id === refreshed.id ? refreshed : task,
-                  )
-                : recoveryTasksRef.current.filter(
-                    (task) => task.id !== refreshed.id,
-                  )
-              : recoveryTasksRef.current
-            const recoveryWindow = sameRecoveryWindow
-              ? reconcileLoadedPage(
-                  currentRecoveryTasks,
-                  nextRecoveryTasks,
-                  recoveryTaskResult.data.counts.missedCalls,
-                  recoveryNextCursorRef.current,
-                  recoveryTaskResult.data.nextCursor,
-                )
-              : {
-                  items: nextRecoveryTasks,
-                  cursor: recoveryTaskResult.data.nextCursor,
-                }
+            const recoveryWindow = {
+              items: nextRecoveryTasks,
+              cursor: recoveryTaskResult.data.nextCursor,
+            }
             recoveryTasksRef.current = recoveryWindow.items
             setRecoveryTasks(recoveryWindow.items)
             recoveryNextCursorRef.current = recoveryWindow.cursor
@@ -1116,14 +1107,18 @@ export function TaskWorkspaceShell() {
   }
 
   function updateTaskProjection(task: Task, select = true) {
-    const exists = tasksRef.current.some((current) => current.id === task.id)
-    const next = exists
-      ? tasksRef.current.map((current) =>
-          current.id === task.id ? task : current,
-        )
-      : [task, ...tasksRef.current]
-    tasksRef.current = next
-    setTasks(next)
+    const recovery =
+      task.origin === "MISSED_CALL_RECOVERY" ||
+      task.origin === "VOICEMAIL_RECOVERY"
+    if (recovery) {
+      const next = projectTaskUpdate(recoveryTasksRef.current, task)
+      recoveryTasksRef.current = next
+      setRecoveryTasks(next)
+    } else {
+      const next = projectTaskUpdate(tasksRef.current, task)
+      tasksRef.current = next
+      setTasks(next)
+    }
     if (select) {
       selectTask(task)
     }
@@ -1441,11 +1436,14 @@ export function TaskWorkspaceShell() {
                       taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}
                       onTaskUpdated={(task) => {
+                        const recovery =
+                          task.origin === "MISSED_CALL_RECOVERY" ||
+                          task.origin === "VOICEMAIL_RECOVERY"
                         updateTaskProjection(task, false)
                         updateSelectedTask(task)
                         setContextView("task")
                         setContextPanelOpen(true)
-                        void loadTasks()
+                        void (recovery ? loadRecoveryTasks() : loadTasks())
                       }}
                       onStartTaskCall={(task) => {
                         setTaskCallError("")
@@ -1490,15 +1488,6 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
       other: 0,
     },
   }
-}
-
-function workTaskCount(counts: TaskFolderCounts) {
-  return (
-    counts.tasks +
-    counts.bookings +
-    counts.cancellations +
-    counts.reschedules
-  )
 }
 
 function emptyAIOutcomeCounts(): AiOutcomeCounts {

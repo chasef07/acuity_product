@@ -51,7 +51,7 @@
       "billingMode": "request-based",
       "vCPUs": 1,
       "memoryMiB": 512,
-      "concurrency": 20,
+      "concurrency": 8,
       "minimumInstances": 1,
       "maximumInstances": 3,
       "poolMaximum": 4,

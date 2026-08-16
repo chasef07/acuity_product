@@ -4,8 +4,8 @@ import test from "node:test"
 import {
   appointmentFolderForTask,
   filterTasksByCategory,
-  reconcileLoadedPage,
-  recoveryGroupKey,
+  projectTaskUpdate,
+  refreshTaskWindowTarget,
   taskCountForCategory,
   taskFolderCursor,
 } from "./workspace-triage.ts"
@@ -45,13 +45,6 @@ test("Task categories filter only the supplied Task rows", () => {
   assert.deepEqual(filterTasksByCategory(tasks, "billing"), [tasks[0]])
 })
 
-test("recovery groups distinguish the same phone at different Locations", () => {
-  assert.notEqual(
-    recoveryGroupKey("location-1", "+17275550199"),
-    recoveryGroupKey("location-2", "+17275550199"),
-  )
-})
-
 test("Task category totals do not depend on the loaded page", () => {
   const counts = {
     tasks: 11,
@@ -80,43 +73,22 @@ test("Task folders keep pagination available until their total is loaded", () =>
   assert.equal(taskFolderCursor("", 0, 3), "")
 })
 
-test("refresh keeps expanded rows while putting new rows first", () => {
-  const current = Array.from({ length: 100 }, (_, index) => ({
-    id: `task-${index + 1}`,
-  }))
-  const refreshed = [
-    { id: "new-task" },
-    ...current.slice(0, 49),
-  ]
-
-  const result = reconcileLoadedPage(
-    current,
-    refreshed,
-    162,
-    "after-expanded-page",
-    "after-first-page",
-  )
-
-  assert.equal(result.items[0]?.id, "new-task")
-  assert.equal(result.items.length, 101)
-  assert.equal(result.items.at(-1)?.id, "task-100")
-  assert.equal(result.cursor, "after-expanded-page")
+test("live refresh refetches the expanded window plus one authoritative page", () => {
+  assert.equal(refreshTaskWindowTarget(0), 50)
+  assert.equal(refreshTaskWindowTarget(50), 50)
+  assert.equal(refreshTaskWindowTarget(100), 150)
 })
 
-test("refresh clears pagination when all rows are loaded", () => {
-  const current = [{ id: "task-1" }, { id: "task-2" }]
-  const result = reconcileLoadedPage(
-    current,
-    [{ id: "new-task" }, { id: "task-1" }],
-    3,
-    "after-expanded-page",
-    "after-first-page",
-  )
+test("Task updates replace open rows and remove completed rows", () => {
+  type Row = {
+    id: string
+    state: "OPEN" | "COMPLETED"
+    version: number
+  }
+  const open: Row = { id: "task-1", state: "OPEN", version: 1 }
+  const updated = { ...open, version: 2 }
+  const completed: Row = { ...updated, state: "COMPLETED" }
 
-  assert.deepEqual(result.items, [
-    { id: "new-task" },
-    { id: "task-1" },
-    { id: "task-2" },
-  ])
-  assert.equal(result.cursor, "")
+  assert.deepEqual(projectTaskUpdate([open], updated), [updated])
+  assert.deepEqual(projectTaskUpdate([updated], completed), [])
 })

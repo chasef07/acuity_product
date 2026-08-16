@@ -323,6 +323,7 @@ GRANT SELECT ON TABLE
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_interactions,
+	public.work_recovery_reconciliation_queue,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_worker;
@@ -426,7 +427,9 @@ GRANT UPDATE ON TABLE
     public.work_tasks
 TO acuity_worker;
 
-GRANT DELETE ON TABLE public.ai_interaction_attention
+GRANT DELETE ON TABLE
+	public.ai_interaction_attention,
+	public.work_recovery_reconciliation_queue
 TO acuity_worker;
 
 GRANT UPDATE (
@@ -458,7 +461,12 @@ GRANT UPDATE (updated_at)
 ON TABLE public.messaging_location_configurations
 TO acuity_worker;
 
-GRANT UPDATE (outbound_blocked, opt_out_evidence_at, opt_out_evidence_event_id, updated_at)
+GRANT UPDATE (
+    outbound_blocked,
+    opt_out_evidence_at,
+    opt_out_evidence_event_id,
+    updated_at
+)
 ON TABLE public.messaging_threads
 TO acuity_worker;
 

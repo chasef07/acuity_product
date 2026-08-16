@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -16,8 +17,8 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type CallState string
@@ -72,6 +73,10 @@ const (
 
 const safeProviderRetryWindow = 55 * time.Second
 
+const credentialRetryLifetime = 5 * time.Minute
+
+const credentialRetryExhaustedCode = "CREDENTIAL_RETRY_EXHAUSTED"
+
 var telnyxWebhookRetryMilliseconds = []int{1000, 2000, 5000, 15000, 30000}
 
 func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {
@@ -85,13 +90,22 @@ func telnyxWebhookRetryPolicies(events ...FactType) map[string]any {
 }
 
 var (
-	ErrDenied                    = errors.New("human calling access denied")
-	ErrInvalidInput              = errors.New("invalid human calling input")
-	ErrConflict                  = errors.New("human calling transition conflict")
-	ErrExpired                   = errors.New("human calling deadline expired")
-	ErrIneligible                = errors.New("user is not currently call eligible")
-	ErrOccupied                  = errors.New("user has an occupying Call")
-	ErrInvalidHandoff            = errors.New("invalid handoff")
+	ErrDenied         = errors.New("human calling access denied")
+	ErrInvalidInput   = errors.New("invalid human calling input")
+	ErrConflict       = errors.New("human calling transition conflict")
+	ErrExpired        = errors.New("human calling deadline expired")
+	ErrIneligible     = errors.New("user is not currently call eligible")
+	ErrOccupied       = errors.New("user has an occupying Call")
+	ErrInvalidHandoff = errors.New("invalid handoff")
+	// errTerminalOrObsoleteProviderFact is returned only when persisted Call
+	// evidence proves that a provider fact cannot become applicable later.
+	errTerminalOrObsoleteProviderFact = fmt.Errorf(
+		"%w: terminal or obsolete provider fact",
+		ErrConflict,
+	)
+	// errRelatedFactPending is reserved for a missing relation that an earlier
+	// out-of-order provider lifecycle receipt can still create.
+	errRelatedFactPending        = errors.New("related provider fact is pending")
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
 	ErrDefinitiveProviderFailure = errors.New("provider effect definitely failed")
@@ -370,7 +384,7 @@ type DispositionResult struct {
 }
 
 type Module struct {
-	pool        *pgxpool.Pool
+	database    productpostgres.Database
 	access      *access.Module
 	work        *work.Module
 	provider    Provider
@@ -382,7 +396,7 @@ type Module struct {
 }
 
 func New(
-	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	provider Provider,
 	config Config,
@@ -420,7 +434,7 @@ func New(
 		}
 	}
 	module := &Module{
-		pool:        pool,
+		database:    database,
 		access:      accessModule,
 		provider:    provider,
 		config:      config,
@@ -432,8 +446,8 @@ func New(
 	if len(module.playbackKey) == 0 {
 		module.playbackKey = append([]byte(nil), tokenKey...)
 	}
-	if pool != nil && accessModule != nil {
-		module.work = work.New(pool, accessModule, now)
+	if database != nil && accessModule != nil {
+		module.work = work.New(database, accessModule, now)
 	}
 	return module
 }
@@ -469,6 +483,15 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 		if hasState && state.Role == "DESTINATION" {
 			return m.applyOutboundDestinationFact(ctx, fact, state.CallID)
 		}
+		if hasState && state.Role == "CALLER" {
+			obsolete, err := m.terminalCleanupFailedCallLeg(ctx, state)
+			if err != nil {
+				return err
+			}
+			if obsolete {
+				return errTerminalOrObsoleteProviderFact
+			}
+		}
 		return m.applyCallerAnswered(ctx, fact)
 	case FactCallBridged:
 		if hasState && state.Role == "DESTINATION" {
@@ -498,6 +521,17 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	default:
 		return ErrInvalidInput
 	}
+}
+
+// ProcessNextRecoveryReconciliation exposes Work's bounded rollout lane to the
+// shared worker without adding another owner for HumanCalling dependencies.
+func (m *Module) ProcessNextRecoveryReconciliation(
+	ctx context.Context,
+) (bool, error) {
+	if m.work == nil {
+		return false, ErrInvalidInput
+	}
+	return m.work.ProcessNextRecoveryReconciliation(ctx)
 }
 
 func (m *Module) staffMediaToken(callID string, callLegID string) string {

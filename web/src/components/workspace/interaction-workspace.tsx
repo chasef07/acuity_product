@@ -475,21 +475,27 @@ function RecoveryTaskSource({
   }, [revision, task.callId, task.id, task.version])
 
   const selected = newestRecoveryInteraction(interactions)
-  const earlier = [...interactions]
+  const otherInteractions = [...interactions]
     .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
     .filter((interaction) => interaction.callId !== selected?.callId)
+  const otherCallOrder = otherInteractions.every(
+    (interaction) => interaction.occurredAt < (selected?.occurredAt ?? ""),
+  )
+    ? "earlier"
+    : "other"
 
   return (
     <section aria-label="Call recovery source" className="mt-4">
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       {call?.voicemail && <VoicemailSource call={call} compact />}
-      {earlier.length > 0 && (
+      {otherInteractions.length > 0 && (
         <details className="mt-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer">
-            {earlier.length} earlier {earlier.length === 1 ? "call" : "calls"}
+            {otherInteractions.length} {otherCallOrder}{" "}
+            {otherInteractions.length === 1 ? "call" : "calls"}
           </summary>
           <ul className="mt-2 space-y-1 pl-4">
-            {earlier.map((interaction) => (
+            {otherInteractions.map((interaction) => (
               <li key={interaction.callId}>
                 {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
                 {" · "}

@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,10 +27,12 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -170,7 +173,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 3, 12, 0, 0, 0, time.UTC)
-	var metrics bytes.Buffer
+	var metrics synchronizedBuffer
 	observer := observability.NewLogger(
 		observability.RuntimePortalAPI,
 		"voicemail-playback-test",
@@ -358,11 +361,12 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		t.Fatalf("request cross-Location voicemail playback: %v", err)
 	}
 	_ = deniedResponse.Body.Close()
-	if deniedResponse.StatusCode != http.StatusForbidden || audio.calls != 0 {
+	deniedAudio := audio.snapshot()
+	if deniedResponse.StatusCode != http.StatusForbidden || deniedAudio.calls != 0 {
 		t.Fatalf(
 			"cross-Location playback = status:%d provider-calls:%d",
 			deniedResponse.StatusCode,
-			audio.calls,
+			deniedAudio.calls,
 		)
 	}
 	playbackRequest, err := http.NewRequest(
@@ -384,20 +388,24 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read voicemail playback response: %v", err)
 	}
+	playbackAudio := audio.snapshot()
 	if playbackResponse.StatusCode != http.StatusPartialContent ||
 		playbackResponse.Header.Get("Accept-Ranges") != "bytes" ||
 		playbackResponse.Header.Get("Content-Range") != "bytes 0-3/13" ||
 		playbackResponse.Header.Get("Content-Length") != "4" ||
 		playbackResponse.Header.Get("Content-Type") != "audio/mpeg" ||
 		string(body) != "synt" ||
-		audio.rangeHeader != "bytes=0-3" {
+		playbackAudio.rangeHeader != "bytes=0-3" {
 		t.Fatalf("voicemail playback response = status:%d headers:%v body:%q fixture:%#v",
-			playbackResponse.StatusCode, playbackResponse.Header, body, audio)
+			playbackResponse.StatusCode, playbackResponse.Header, body, playbackAudio)
 	}
 
+	waitForLog(t, &metrics, `"outcome":"succeeded"`)
 	metrics.Reset()
 	malformedRange := "items 0-3/13"
-	audio.contentRange = &malformedRange
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.contentRange = &malformedRange
+	})
 	malformedRequest, err := http.NewRequest(
 		http.MethodGet,
 		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
@@ -414,6 +422,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	var malformedEnvelope api.ErrorEnvelope
 	decode(t, malformedResponse, &malformedEnvelope)
+	waitForLog(t, &metrics, `"outcome":"invalid_response"`)
 	if malformedResponse.StatusCode != http.StatusServiceUnavailable ||
 		malformedResponse.Header.Get("Content-Range") != "" ||
 		malformedEnvelope.Error.Code != "VOICEMAIL_UNAVAILABLE" ||
@@ -425,9 +434,11 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 
 	metrics.Reset()
-	audio.contentRange = nil
-	audio.contentLength = "invalid"
-	audio.failStream = true
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.contentRange = nil
+		audio.contentLength = "invalid"
+		audio.failStream = true
+	})
 	failedStreamRequest, err := http.NewRequest(
 		http.MethodGet,
 		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
@@ -444,13 +455,16 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		_, readErr = io.ReadAll(failedStreamResponse.Body)
 		_ = failedStreamResponse.Body.Close()
 	}
+	waitForLog(t, &metrics, `"outcome":"unavailable"`)
 	if (requestErr == nil && readErr == nil) ||
 		!strings.Contains(metrics.String(), `"outcome":"unavailable"`) ||
 		strings.Contains(metrics.String(), `"outcome":"succeeded"`) {
 		t.Fatalf("failed voicemail stream = request-err:%v read-err:%v metrics:%s",
 			requestErr, readErr, metrics.String())
 	}
-	audio.failStream = false
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.failStream = false
+	})
 
 	failures := []struct {
 		name       string
@@ -468,10 +482,12 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	for _, failure := range failures {
 		t.Run(failure.name, func(t *testing.T) {
-			audio.err = &humancalling.VoicemailUnavailableError{
-				Reason:     failure.reason,
-				RetryAfter: failure.retryAfter,
-			}
+			audio.update(func(audio *httpVoicemailAudio) {
+				audio.err = &humancalling.VoicemailUnavailableError{
+					Reason:     failure.reason,
+					RetryAfter: failure.retryAfter,
+				}
+			})
 			request, err := http.NewRequest(
 				http.MethodGet,
 				server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
@@ -851,7 +867,7 @@ func TestReadinessReportsRetryableUnavailableWhenPostgresCannotConnect(t *testin
 	)
 	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 75 * time.Millisecond,
-	}, pool, calling)
+	}, pool, calling, messaging.New(pool, nil, nil, nil, messaging.Config{}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -906,7 +922,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 	handler, err := httpapi.NewProviderIngress(httpapi.Config{
 		AcquireTimeout: 500 * time.Millisecond,
 		Observer:       observer,
-	}, pool, calling)
+	}, pool, calling, messaging.New(pool, nil, nil, nil, messaging.Config{}, nil))
 	if err != nil {
 		t.Fatalf("new provider-ingress HTTP adapter: %v", err)
 	}
@@ -1068,7 +1084,9 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 				nil,
 			),
 			Interactions:         interaction.New(pool, accessModule, func() time.Time { return now }),
+			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
 			Work:                 work.New(pool, accessModule, func() time.Time { return now }),
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -1385,7 +1403,9 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 			Authenticator:        staticAuthenticator{"calling-token": identity},
 			Calling:              calling,
 			Interactions:         interaction.New(pool, accessModule, nil),
+			Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
 			Work:                 work.New(pool, accessModule, nil),
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuthenticator,
 		},
 	)
@@ -1650,6 +1670,382 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	}
 }
 
+type callingHangupHTTPFixture struct {
+	pool          *pgxpool.Pool
+	calling       *humancalling.Module
+	identity      access.Identity
+	authorization access.Authorization
+	server        *httptest.Server
+	token         string
+	sessionID     string
+}
+
+func newCallingHangupHTTPFixture(
+	t *testing.T,
+	prefix string,
+	clock func() time.Time,
+	config humancalling.Config,
+) callingHangupHTTPFixture {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, clock)
+	email := prefix + "@synthetic.test"
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: prefix + "-http-test",
+		Practices: []access.PracticeProvision{{
+			Key:  prefix + "-practice",
+			Name: prefix + " Practice",
+			Locations: []access.LocationProvision{{
+				Key:  prefix + "-location",
+				Name: prefix + " Location",
+			}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           prefix + "-staff",
+				Email:         email,
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("provision %s fixture: %v", prefix, err)
+	}
+	identity := access.Identity{
+		Subject:       prefix + "-subject",
+		Email:         email,
+		EmailVerified: true,
+	}
+	authorization := testaccess.Activate(t, accessModule, identity)
+	calling := humancalling.New(
+		pool,
+		accessModule,
+		httpCallingProvider{},
+		config,
+		clock,
+	)
+	token := prefix + "-token"
+	handler, err := newPortalHandlerWithCalling(
+		t,
+		httpapi.Config{
+			AllowedOrigins: []string{"http://localhost:3000"},
+			AcquireTimeout: 500 * time.Millisecond,
+		},
+		pool,
+		accessModule,
+		staticAuthenticator{token: identity},
+		calling,
+	)
+	if err != nil {
+		t.Fatalf("new %s HTTP adapter: %v", prefix, err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return callingHangupHTTPFixture{
+		pool:          pool,
+		calling:       calling,
+		identity:      identity,
+		authorization: authorization,
+		server:        server,
+		token:         token,
+		sessionID:     prefix + "-browser",
+	}
+}
+
+func (fixture callingHangupHTTPFixture) postHangup(
+	t *testing.T,
+	callID string,
+	sessionID string,
+) *http.Response {
+	t.Helper()
+	body, _ := json.Marshal(api.CallingControlRequest{SessionId: sessionID})
+	return request(
+		t,
+		fixture.server.Client(),
+		http.MethodPost,
+		fixture.server.URL+"/v1/calling/calls/"+callID+"/hangup",
+		fixture.token,
+		body,
+	)
+}
+
+func (fixture callingHangupHTTPFixture) hangupCommandCount(t *testing.T, callID string) int {
+	t.Helper()
+	var count int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID).Scan(&count); err != nil {
+		t.Fatalf("count Hangup commands: %v", err)
+	}
+	return count
+}
+
+func TestCallingHangupReturnsTerminalCallWhenProviderWinsRace(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
+	currentTime := now
+	fixture := newCallingHangupHTTPFixture(
+		t,
+		"provider-first-hangup",
+		func() time.Time { return currentTime },
+		humancalling.Config{
+			HandoffSIPDomain: "synthetic.sip.telnyx.com",
+			HandoffTokenKey:  []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:    "provider-first-hangup-connection",
+		},
+	)
+	_, err := fixture.calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject:    "provider-first-hangup-service",
+			PracticeID: fixture.authorization.Practice.ID,
+		},
+		LocationID:     fixture.authorization.Locations[0].ID,
+		SourceCallID:   "provider-first-hangup-source",
+		IdempotencyKey: "provider-first-hangup",
+		Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+	})
+	if err != nil {
+		t.Fatalf("create provider-first Hangup handoff: %v", err)
+	}
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "provider-first-hangup-caller-initiated",
+		Type:          humancalling.FactCallInitiated,
+		OccurredAt:    now,
+		ConnectionID:  "provider-first-hangup-connection",
+		CallControlID: "provider-first-hangup-caller-control",
+		CallLegID:     "provider-first-hangup-caller-leg",
+		CallSessionID: "provider-first-hangup-session",
+		From:          "+15555550100",
+		To:            "+14843989071",
+	}); err != nil {
+		t.Fatalf("admit provider-first Hangup Call: %v", err)
+	}
+	var callID, callerLegID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT call.id::text, caller.id::text
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs caller
+			ON caller.call_id = call.id AND caller.role = 'CALLER'
+		WHERE caller.provider_call_leg_id = 'provider-first-hangup-caller-leg'
+	`).Scan(&callID, &callerLegID); err != nil {
+		t.Fatalf("read provider-first Hangup Call: %v", err)
+	}
+	connectedAt := now.Add(-time.Second)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGED', answered_at = $2, bridge_pending_at = $2,
+			bridged_at = $2, updated_at = $2
+		WHERE id = $1
+	`, callerLegID, connectedAt); err != nil {
+		t.Fatalf("connect provider-first Hangup caller: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		)
+		VALUES ($1, 'STAFF', 1, $2, 'provider-first-hangup-browser', 'BRIDGED',
+			'provider-first-hangup-staff-control', 'provider-first-hangup-staff-leg',
+			'provider-first-hangup-staff-session', $3, $3, $3, $3, $3)
+	`, callID, fixture.identity.Subject, connectedAt); err != nil {
+		t.Fatalf("connect provider-first Hangup Staff CallLeg: %v", err)
+	}
+	if lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	); err != nil || !lease.Owner {
+		t.Fatalf("acquire provider-first Hangup softphone: state=%#v err=%v", lease, err)
+	}
+
+	providerEndedAt := now
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:           "provider-first-hangup-staff-ended",
+		Type:              humancalling.FactCallHangup,
+		OccurredAt:        providerEndedAt,
+		CallControlID:     "provider-first-hangup-staff-control",
+		CallLegID:         "provider-first-hangup-staff-leg",
+		CallSessionID:     "provider-first-hangup-staff-session",
+		HangupCause:       "NORMAL_CLEARING",
+		TerminationSource: "STAFF",
+	}); err != nil {
+		t.Fatalf("project provider-first Staff Hangup: %v", err)
+	}
+	currentTime = providerEndedAt.Add(5 * time.Millisecond)
+	var terminalOutcome, staffState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, staff.state
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs staff
+			ON staff.call_id = call.id AND staff.role = 'STAFF'
+		WHERE call.id = $1
+	`, callID).Scan(&terminalOutcome, &staffState); err != nil {
+		t.Fatalf("read provider-first terminal state: %v", err)
+	}
+	if terminalOutcome != "ENDED" || staffState != "ENDED" {
+		t.Fatalf(
+			"provider-first terminal state = Call:%s Staff:%s",
+			terminalOutcome,
+			staffState,
+		)
+	}
+	hangupCommandsBefore := fixture.hangupCommandCount(t, callID)
+	response := fixture.postHangup(t, callID, fixture.sessionID)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf(
+			"provider-first Hangup status = %d, body = %s",
+			response.StatusCode,
+			readBody(t, response),
+		)
+	}
+	var current api.CallingCall
+	decode(t, response, &current)
+	if current.State != api.CallingCallStateNEEDSDISPOSITION {
+		t.Fatalf("provider-first Hangup Call state = %s", current.State)
+	}
+	hangupCommandsAfter := fixture.hangupCommandCount(t, callID)
+	if hangupCommandsBefore != 1 || hangupCommandsAfter != hangupCommandsBefore {
+		t.Fatalf(
+			"provider-first Hangup commands = before:%d after:%d",
+			hangupCommandsBefore,
+			hangupCommandsAfter,
+		)
+	}
+}
+
+func TestCallingHangupReplaysCommittedCommandButRejectsMissingIntent(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 13, 0, 0, 0, time.UTC)
+	fixture := newCallingHangupHTTPFixture(
+		t,
+		"replayed-hangup",
+		func() time.Time { return now },
+		humancalling.Config{},
+	)
+	handoffID := uuid.NewString()
+	callID := uuid.NewString()
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, phone, expires_at, consumed_at,
+			created_at
+		)
+		VALUES ($1, 'replayed-hangup-service', $2, $3,
+			'replayed-hangup-source', 'replayed-hangup-key', $4,
+			'+15555550101', $5, $6, $6)
+	`, handoffID, fixture.authorization.Practice.ID, fixture.authorization.Locations[0].ID,
+		[]byte("replayed-hangup"), now.Add(time.Minute), now); err != nil {
+		t.Fatalf("insert replayed Hangup handoff: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			id, source_handoff_id, practice_id, location_id, caller_phone,
+			created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, '+15555550101', $5, $5)
+	`, callID, handoffID, fixture.authorization.Practice.ID,
+		fixture.authorization.Locations[0].ID, now); err != nil {
+		t.Fatalf("insert replayed Hangup Call: %v", err)
+	}
+	connectedAt := now.Add(-time.Second)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, staff_subject, staff_session_id, state,
+			provider_call_control_id, provider_call_leg_id, provider_call_session_id,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		)
+		VALUES
+			($1, 'CALLER', 1, NULL, NULL, 'BRIDGED',
+				'replayed-hangup-caller-control', 'replayed-hangup-caller-leg',
+				'replayed-hangup-session', $3, $3, $3, $2, $3),
+			($1, 'STAFF', 1, $4, 'replayed-hangup-browser', 'BRIDGED',
+				'replayed-hangup-staff-control', 'replayed-hangup-staff-leg',
+				'replayed-hangup-session', $3, $3, $3, $2, $3)
+	`, callID, now, connectedAt, fixture.identity.Subject); err != nil {
+		t.Fatalf("insert replayed Hangup CallLegs: %v", err)
+	}
+	if lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	); err != nil || !lease.Owner {
+		t.Fatalf("acquire replayed Hangup softphone: state=%#v err=%v", lease, err)
+	}
+	mismatch := fixture.postHangup(t, callID, "another-browser")
+	var envelope api.ErrorEnvelope
+	decode(t, mismatch, &envelope)
+	if mismatch.StatusCode != http.StatusConflict || envelope.Error.Code != "CALL_CONFLICT" {
+		t.Fatalf(
+			"active session mismatch = status:%d body:%#v",
+			mismatch.StatusCode,
+			envelope,
+		)
+	}
+	first := fixture.postHangup(t, callID, fixture.sessionID)
+	if first.StatusCode != http.StatusAccepted {
+		t.Fatalf("first Hangup status = %d, body = %s", first.StatusCode, readBody(t, first))
+	}
+	_ = first.Body.Close()
+	commandsAfterFirst := fixture.hangupCommandCount(t, callID)
+	if commandsAfterFirst != 2 {
+		t.Fatalf("first Hangup commands = %d", commandsAfterFirst)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'PROVIDER_REJECTED', updated_at = $2
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail committed Hangup commands: %v", err)
+	}
+	second := fixture.postHangup(t, callID, fixture.sessionID)
+	if second.StatusCode != http.StatusAccepted {
+		t.Fatalf("replayed Hangup status = %d, body = %s", second.StatusCode, readBody(t, second))
+	}
+	_ = second.Body.Close()
+	var commandsAfterReplay, failedCommands, endingLegs, requestedEvents int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'HANGUP_LEG'),
+			(SELECT count(*) FROM human_calling_provider_commands
+				WHERE call_id = $1 AND action = 'HANGUP_LEG' AND state = 'FAILED'),
+			(SELECT count(*) FROM human_calling_call_legs
+				WHERE call_id = $1 AND state = 'ENDING'),
+			(SELECT count(*) FROM human_calling_timeline
+				WHERE call_id = $1 AND kind = 'call.hangup.requested')
+	`, callID).Scan(
+		&commandsAfterReplay,
+		&failedCommands,
+		&endingLegs,
+		&requestedEvents,
+	); err != nil {
+		t.Fatalf("read replayed Hangup state: %v", err)
+	}
+	if commandsAfterReplay != commandsAfterFirst || failedCommands != 2 ||
+		endingLegs != 2 || requestedEvents != 1 {
+		t.Fatalf(
+			"replayed Hangup = commands:%d->%d failed:%d ending:%d events:%d",
+			commandsAfterFirst,
+			commandsAfterReplay,
+			failedCommands,
+			endingLegs,
+			requestedEvents,
+		)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'HANGUP_LEG'
+	`, callID); err != nil {
+		t.Fatalf("remove committed Hangup command evidence: %v", err)
+	}
+	missing := fixture.postHangup(t, callID, fixture.sessionID)
+	var missingEnvelope api.ErrorEnvelope
+	decode(t, missing, &missingEnvelope)
+	if missing.StatusCode != http.StatusConflict ||
+		missingEnvelope.Error.Code != "CALL_CONFLICT" {
+		t.Fatalf(
+			"missing Hangup intent = status:%d body:%#v",
+			missing.StatusCode,
+			missingEnvelope,
+		)
+	}
+}
+
 func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 19, 0, 0, 0, time.UTC)
@@ -1827,6 +2223,7 @@ func (httpCallingProvider) Execute(
 }
 
 type httpVoicemailAudio struct {
+	mu            sync.Mutex
 	calls         int
 	rangeHeader   string
 	contentLength string
@@ -1835,16 +2232,35 @@ type httpVoicemailAudio struct {
 	err           error
 }
 
+type httpVoicemailAudioSnapshot struct {
+	calls       int
+	rangeHeader string
+}
+
+func (audio *httpVoicemailAudio) update(update func(*httpVoicemailAudio)) {
+	audio.mu.Lock()
+	defer audio.mu.Unlock()
+	update(audio)
+}
+
+func (audio *httpVoicemailAudio) snapshot() httpVoicemailAudioSnapshot {
+	audio.mu.Lock()
+	defer audio.mu.Unlock()
+	return httpVoicemailAudioSnapshot{
+		calls:       audio.calls,
+		rangeHeader: audio.rangeHeader,
+	}
+}
+
 func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 	_ context.Context,
 	_ string,
 	rangeHeader string,
 ) (humancalling.PlaybackContent, error) {
+	audio.mu.Lock()
 	audio.calls++
 	audio.rangeHeader = rangeHeader
-	if audio.err != nil {
-		return humancalling.PlaybackContent{}, audio.err
-	}
+	providerErr := audio.err
 	contentRange := "bytes 0-3/13"
 	if audio.contentRange != nil {
 		contentRange = *audio.contentRange
@@ -1853,8 +2269,13 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 	if contentLength == "" {
 		contentLength = "4"
 	}
+	failStream := audio.failStream
+	audio.mu.Unlock()
+	if providerErr != nil {
+		return humancalling.PlaybackContent{}, providerErr
+	}
 	var body io.ReadCloser = io.NopCloser(strings.NewReader("synt"))
-	if audio.failStream {
+	if failStream {
 		body = &failingVoicemailBody{}
 	}
 	return humancalling.PlaybackContent{
@@ -1864,6 +2285,40 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 		ContentRange:  contentRange,
 		Body:          body,
 	}, nil
+}
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (buffer *synchronizedBuffer) Write(payload []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.Write(payload)
+}
+
+func (buffer *synchronizedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.String()
+}
+
+func (buffer *synchronizedBuffer) Reset() {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	buffer.Buffer.Reset()
+}
+
+func waitForLog(t *testing.T, buffer *synchronizedBuffer, marker string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(buffer.String(), marker) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for log marker %q: %s", marker, buffer.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 type failingVoicemailBody struct {
@@ -1937,7 +2392,9 @@ func newPortalHandlerWithCalling(
 		Authenticator:        authenticator,
 		Calling:              calling,
 		Interactions:         interaction.New(pool, accessModule, nil),
+		Messaging:            messaging.New(pool, accessModule, work.New(pool, accessModule, nil), nil, messaging.Config{}, nil),
 		Work:                 work.New(pool, accessModule, nil),
+		Workspace:            workspace.New(pool, accessModule),
 		ServiceAuthenticator: serviceAuthenticator,
 	})
 }

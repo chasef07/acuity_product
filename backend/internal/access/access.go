@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Role string
@@ -159,9 +159,11 @@ type Discovery struct {
 	Practices        []PracticeAccess `json:"practices"`
 }
 
-// CallingEnabled is the shared capability rule for human calling. Platform
-// Operators are operational in every Practice; other humans need a Membership.
-func CallingEnabled(platformOperator bool, membership *Membership) bool {
+// portalCallingEnabled preserves the portal's broad CallingEnabled behavior:
+// every Practice member and every Platform Operator may use calling features.
+// Inbound fanout is narrower and remains Staff-or-operator only through
+// access_calling_scopes.
+func portalCallingEnabled(platformOperator bool, membership *Membership) bool {
 	return platformOperator || membership != nil
 }
 
@@ -222,22 +224,22 @@ type SignUpEligibility struct {
 // Module is the Access implementation. Its public methods are the product
 // interface; focused PostgreSQL behavior remains local to this package.
 type Module struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
+	database productpostgres.Database
+	now      func() time.Time
 }
 
-func New(pool *pgxpool.Pool, now func() time.Time) *Module {
+func New(database productpostgres.Database, now func() time.Time) *Module {
 	if now == nil {
 		now = time.Now
 	}
-	return &Module{pool: pool, now: now}
+	return &Module{database: database, now: now}
 }
 
 func (m *Module) Provision(ctx context.Context, input Provisioning) (Provisioned, error) {
-	if m.pool == nil {
+	if m.database == nil {
 		return Provisioned{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Provisioned{}, fmt.Errorf("begin provisioning: %w", err)
 	}
@@ -494,7 +496,7 @@ func (m *Module) InspectSignUpEligibility(
 		return SignUpEligibility{}, ErrDenied
 	}
 	var grantExists bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM access_grants
@@ -509,7 +511,7 @@ func (m *Module) InspectSignUpEligibility(
 		return SignUpEligibility{Kind: SignUpEligibilityAccessGrant, Email: email}, nil
 	}
 	var operatorExists bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM access_platform_operators
@@ -538,7 +540,7 @@ func (m *Module) ResolveActor(
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" || strings.TrimSpace(practiceID) == "" {
 		return Authorization{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Authorization{}, fmt.Errorf("begin actor resolution: %w", err)
 	}
@@ -562,7 +564,7 @@ func (m *Module) ResolveActor(
 		return authorized, nil
 	}
 
-	authorized, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
+	authorized, err := loadMembershipAuthorization(ctx, tx, identity, practiceID, false)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -585,56 +587,7 @@ func (m *Module) LockMembershipAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	if tx == nil ||
-		!identity.EmailVerified ||
-		strings.TrimSpace(identity.Subject) == "" ||
-		strings.TrimSpace(practiceID) == "" ||
-		strings.TrimSpace(locationID) == "" {
-		return Authorization{}, ErrDenied
-	}
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
-	if err != nil {
-		return Authorization{}, err
-	}
-	if isOperator {
-		authorization, err := loadOperatorAuthorization(ctx, tx, identity, practiceID)
-		if err != nil {
-			return Authorization{}, err
-		}
-		if err := selectRequestedLocation(&authorization, locationID); err != nil {
-			return Authorization{}, err
-		}
-		return authorization, nil
-	}
-	var membershipID string
-	var role Role
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text, role
-		FROM access_memberships
-		WHERE user_subject = $1
-			AND practice_id = $2
-			AND revoked_at IS NULL
-		FOR SHARE
-	`, identity.Subject, practiceID).Scan(&membershipID, &role); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Authorization{}, ErrDenied
-		}
-		return Authorization{}, fmt.Errorf("lock Membership authorization: %w", err)
-	}
-	if !CallingEnabled(false, &Membership{Role: role}) {
-		return Authorization{}, ErrDenied
-	}
-	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
-	if err != nil {
-		return Authorization{}, err
-	}
-	if authorization.Membership.ID != membershipID {
-		return Authorization{}, ErrDenied
-	}
-	if err := selectRequestedLocation(&authorization, locationID); err != nil {
-		return Authorization{}, err
-	}
-	return authorization, nil
+	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, true)
 }
 
 // LockMutationAuthorization resolves current customer-data mutation authority
@@ -647,39 +600,7 @@ func (m *Module) LockMutationAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
-	if tx == nil ||
-		!identity.EmailVerified ||
-		strings.TrimSpace(identity.Subject) == "" ||
-		strings.TrimSpace(practiceID) == "" ||
-		strings.TrimSpace(locationID) == "" {
-		return Authorization{}, ErrDenied
-	}
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
-	if err != nil {
-		return Authorization{}, err
-	}
-	if !isOperator {
-		return m.LockMembershipAuthorization(
-			ctx,
-			tx,
-			identity,
-			practiceID,
-			locationID,
-		)
-	}
-	authorization, err := loadOperatorAuthorization(
-		ctx,
-		tx,
-		identity,
-		practiceID,
-	)
-	if err != nil {
-		return Authorization{}, err
-	}
-	if err := selectRequestedLocation(&authorization, locationID); err != nil {
-		return Authorization{}, err
-	}
-	return authorization, nil
+	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, true)
 }
 
 // LockReadAuthorization resolves current read authority inside a caller-owned
@@ -691,10 +612,22 @@ func (m *Module) LockReadAuthorization(
 	practiceID string,
 	locationID string,
 ) (Authorization, error) {
+	return m.lockAuthorization(ctx, tx, identity, practiceID, locationID, false)
+}
+
+func (m *Module) lockAuthorization(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+	practiceID string,
+	locationID string,
+	requireLocation bool,
+) (Authorization, error) {
 	if tx == nil ||
 		!identity.EmailVerified ||
 		strings.TrimSpace(identity.Subject) == "" ||
-		strings.TrimSpace(practiceID) == "" {
+		strings.TrimSpace(practiceID) == "" ||
+		(requireLocation && strings.TrimSpace(locationID) == "") {
 		return Authorization{}, ErrDenied
 	}
 	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
@@ -717,26 +650,9 @@ func (m *Module) LockReadAuthorization(
 		return authorization, nil
 	}
 
-	var membershipID string
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text
-		FROM access_memberships
-		WHERE user_subject = $1
-			AND practice_id = $2
-			AND revoked_at IS NULL
-		FOR SHARE
-	`, identity.Subject, practiceID).Scan(&membershipID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Authorization{}, ErrDenied
-		}
-		return Authorization{}, fmt.Errorf("lock Membership read authorization: %w", err)
-	}
-	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
+	authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID, true)
 	if err != nil {
 		return Authorization{}, err
-	}
-	if authorization.Membership.ID != membershipID {
-		return Authorization{}, ErrDenied
 	}
 	if err := selectRequestedLocation(&authorization, locationID); err != nil {
 		return Authorization{}, err
@@ -891,7 +807,7 @@ func (m *Module) LockOperationalActor(
 		return practiceIDs, nil
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT practice_id::text, role
+		SELECT practice_id::text
 		FROM access_memberships
 		WHERE user_subject = $1
 			AND revoked_at IS NULL
@@ -905,12 +821,8 @@ func (m *Module) LockOperationalActor(
 	practiceIDs := []string{}
 	for rows.Next() {
 		var practiceID string
-		var role Role
-		if err := rows.Scan(&practiceID, &role); err != nil {
+		if err := rows.Scan(&practiceID); err != nil {
 			return nil, fmt.Errorf("scan operational Practice: %w", err)
-		}
-		if !CallingEnabled(false, &Membership{Role: role}) {
-			continue
 		}
 		practiceIDs = append(practiceIDs, practiceID)
 	}
@@ -928,7 +840,7 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	if !identity.EmailVerified || strings.TrimSpace(identity.Subject) == "" {
 		return Discovery{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Discovery{}, fmt.Errorf("begin actor discovery: %w", err)
 	}
@@ -949,30 +861,36 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 	}
 	if !isOperator {
 		rows, err := tx.Query(ctx, `
-			SELECT practice_id::text
-			FROM access_memberships
-			WHERE user_subject = $1 AND revoked_at IS NULL
-			ORDER BY practice_id
+			SELECT
+				membership.id::text,
+				membership.role,
+				membership.location_scope,
+				practice.id::text,
+				practice.name,
+				practice.workspace_version,
+				COALESCE(location.id::text, ''),
+				COALESCE(location.name, '')
+			FROM access_memberships membership
+			JOIN access_practices practice
+				ON practice.id = membership.practice_id
+			LEFT JOIN access_locations location
+				ON location.practice_id = membership.practice_id
+				AND (
+					membership.location_scope = 'ALL'
+					OR EXISTS (
+						SELECT 1
+						FROM access_membership_locations allowed
+						WHERE allowed.membership_id = membership.id
+							AND allowed.practice_id = membership.practice_id
+							AND allowed.location_id = location.id
+					)
+				)
+			WHERE membership.user_subject = $1
+				AND membership.revoked_at IS NULL
+			ORDER BY practice.name, practice.id, location.name, location.id
 		`, identity.Subject)
 		if err != nil {
 			return Discovery{}, fmt.Errorf("discover Memberships: %w", err)
-		}
-		practiceIDs := []string{}
-		for rows.Next() {
-			var practiceID string
-			if err := rows.Scan(&practiceID); err != nil {
-				rows.Close()
-				return Discovery{}, fmt.Errorf("scan discovered Membership: %w", err)
-			}
-			practiceIDs = append(practiceIDs, practiceID)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return Discovery{}, fmt.Errorf("iterate discovered Memberships: %w", err)
-		}
-		rows.Close()
-		if len(practiceIDs) == 0 {
-			return Discovery{}, ErrDenied
 		}
 		result := Discovery{
 			Actor: Actor{
@@ -982,25 +900,48 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 			},
 			Practices: []PracticeAccess{},
 		}
-		for _, practiceID := range practiceIDs {
-			authorization, err := loadMembershipAuthorization(ctx, tx, identity, practiceID)
-			if err != nil {
-				return Discovery{}, err
+		for rows.Next() {
+			var membership Membership
+			var practice Practice
+			var location Location
+			if err := rows.Scan(
+				&membership.ID,
+				&membership.Role,
+				&membership.LocationScope,
+				&practice.ID,
+				&practice.Name,
+				&practice.Version,
+				&location.ID,
+				&location.Name,
+			); err != nil {
+				rows.Close()
+				return Discovery{}, fmt.Errorf("scan discovered Membership: %w", err)
 			}
-			membership := authorization.Membership
-			result.Practices = append(result.Practices, PracticeAccess{
-				Practice:       authorization.Practice,
-				Membership:     &membership,
-				Locations:      authorization.Locations,
-				CallingEnabled: CallingEnabled(false, &membership),
-			})
+			if len(result.Practices) == 0 ||
+				result.Practices[len(result.Practices)-1].ID != practice.ID {
+				result.Practices = append(result.Practices, PracticeAccess{
+					Practice:       practice,
+					Membership:     &membership,
+					Locations:      []Location{},
+					CallingEnabled: portalCallingEnabled(false, &membership),
+				})
+			}
+			if location.ID != "" {
+				index := len(result.Practices) - 1
+				result.Practices[index].Locations = append(
+					result.Practices[index].Locations,
+					location,
+				)
+			}
 		}
-		sort.Slice(result.Practices, func(i, j int) bool {
-			if result.Practices[i].Name == result.Practices[j].Name {
-				return result.Practices[i].ID < result.Practices[j].ID
-			}
-			return result.Practices[i].Name < result.Practices[j].Name
-		})
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return Discovery{}, fmt.Errorf("iterate discovered Memberships: %w", err)
+		}
+		rows.Close()
+		if len(result.Practices) == 0 {
+			return Discovery{}, ErrDenied
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Discovery{}, fmt.Errorf("commit member discovery: %w", err)
 		}
@@ -1029,6 +970,8 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 			rows.Close()
 			return Discovery{}, fmt.Errorf("scan discovered Practice: %w", err)
 		}
+		practice.CallingEnabled = portalCallingEnabled(true, nil)
+		practice.Locations = []Location{}
 		result.Practices = append(result.Practices, practice)
 	}
 	if err := rows.Err(); err != nil {
@@ -1036,13 +979,41 @@ func (m *Module) DiscoverActor(ctx context.Context, identity Identity) (Discover
 		return Discovery{}, fmt.Errorf("iterate discovered Practices: %w", err)
 	}
 	rows.Close()
+	practiceIDs := make([]string, 0, len(result.Practices))
+	practiceIndexes := make(map[string]int, len(result.Practices))
 	for index := range result.Practices {
-		result.Practices[index].CallingEnabled = CallingEnabled(true, nil)
-		result.Practices[index].Locations, err = loadLocations(ctx, tx, result.Practices[index].ID)
-		if err != nil {
-			return Discovery{}, err
-		}
+		practiceID := result.Practices[index].ID
+		practiceIDs = append(practiceIDs, practiceID)
+		practiceIndexes[practiceID] = index
 	}
+	rows, err = tx.Query(ctx, `
+		SELECT practice_id::text, id::text, name
+		FROM access_locations
+		WHERE practice_id = ANY($1::uuid[])
+		ORDER BY practice_id, name, id
+	`, practiceIDs)
+	if err != nil {
+		return Discovery{}, fmt.Errorf("discover Practice Locations: %w", err)
+	}
+	for rows.Next() {
+		var practiceID string
+		var location Location
+		if err := rows.Scan(&practiceID, &location.ID, &location.Name); err != nil {
+			rows.Close()
+			return Discovery{}, fmt.Errorf("scan discovered Practice Location: %w", err)
+		}
+		index, ok := practiceIndexes[practiceID]
+		if !ok {
+			rows.Close()
+			return Discovery{}, ErrDenied
+		}
+		result.Practices[index].Locations = append(result.Practices[index].Locations, location)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Discovery{}, fmt.Errorf("iterate discovered Practice Locations: %w", err)
+	}
+	rows.Close()
 	if err := tx.Commit(ctx); err != nil {
 		return Discovery{}, fmt.Errorf("commit actor discovery: %w", err)
 	}
@@ -1156,7 +1127,7 @@ func (m *Module) RevokeAccessGrant(
 		command.PracticeID == "" || command.AccessGrantID == "" {
 		return ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Access Grant revocation: %w", err)
 	}
@@ -1223,7 +1194,7 @@ func (m *Module) RevokeMembership(
 		command.PracticeID == "" || command.MembershipID == "" {
 		return ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin Membership revocation: %w", err)
 	}
@@ -1289,7 +1260,7 @@ func (m *Module) AuditTrail(
 	if !identity.EmailVerified || identity.Subject == "" || practiceID == "" {
 		return nil, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin audit trail: %w", err)
 	}
@@ -1350,7 +1321,7 @@ func (m *Module) AddLocation(
 		strings.TrimSpace(command.Name) == "" {
 		return LocationMutation{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return LocationMutation{}, fmt.Errorf("begin Location mutation: %w", err)
 	}
@@ -1699,6 +1670,7 @@ func loadMembershipAuthorization(
 	tx pgx.Tx,
 	identity Identity,
 	practiceID string,
+	lockMembership bool,
 ) (Authorization, error) {
 	var result Authorization
 	result.Actor = Actor{
@@ -1706,7 +1678,7 @@ func loadMembershipAuthorization(
 		Email:   normalizeEmail(identity.Email),
 		Type:    "HUMAN",
 	}
-	if err := tx.QueryRow(ctx, `
+	membershipQuery := `
 		SELECT
 			m.id::text,
 			m.role,
@@ -1720,7 +1692,11 @@ func loadMembershipAuthorization(
 			m.user_subject = $1
 			AND m.practice_id = $2
 			AND m.revoked_at IS NULL
-	`, identity.Subject, practiceID).Scan(
+	`
+	if lockMembership {
+		membershipQuery += `FOR SHARE OF m`
+	}
+	if err := tx.QueryRow(ctx, membershipQuery, identity.Subject, practiceID).Scan(
 		&result.Membership.ID,
 		&result.Membership.Role,
 		&result.Membership.LocationScope,

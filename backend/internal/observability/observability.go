@@ -36,6 +36,8 @@ const (
 	ReceiptUnknown     ReceiptOutcome = "unknown"
 	ReceiptFailed      ReceiptOutcome = "failed"
 	ReceiptRetry       ReceiptOutcome = "retry"
+	ReceiptRelatedFact ReceiptOutcome = "related_fact"
+	ReceiptObsolete    ReceiptOutcome = "obsolete"
 	ReceiptQuarantined ReceiptOutcome = "quarantined"
 )
 
@@ -74,6 +76,44 @@ const (
 	PoolAcquireCanceled  PoolAcquireOutcome = "canceled"
 	PoolAcquireTimeout   PoolAcquireOutcome = "timeout"
 	PoolAcquireFailed    PoolAcquireOutcome = "failed"
+)
+
+type DatabaseCause string
+
+const (
+	DatabaseSucceeded        DatabaseCause = "succeeded"
+	DatabaseAcquireTimeout   DatabaseCause = "acquire_timeout"
+	DatabaseStatementTimeout DatabaseCause = "statement_timeout"
+	DatabaseLockTimeout      DatabaseCause = "lock_timeout"
+	DatabaseSerialization    DatabaseCause = "serialization"
+	DatabaseDeadlock         DatabaseCause = "deadlock"
+	DatabaseConnection       DatabaseCause = "connection"
+	DatabaseCanceled         DatabaseCause = "canceled"
+	DatabaseOther            DatabaseCause = "other"
+)
+
+type AvailabilityRoute string
+
+const (
+	AvailabilityAccess       AvailabilityRoute = "/v1/access"
+	AvailabilityCallingState AvailabilityRoute = "/v1/calling/state"
+)
+
+type AvailabilityOutcome string
+
+const (
+	AvailabilityAvailable   AvailabilityOutcome = "available"
+	AvailabilityUnavailable AvailabilityOutcome = "unavailable"
+)
+
+type FailureStage string
+
+const (
+	FailureNone           FailureStage = "none"
+	FailureAuthentication FailureStage = "authentication"
+	FailureAuthorization  FailureStage = "authorization"
+	FailureDependency     FailureStage = "dependency"
+	FailureHandler        FailureStage = "handler"
 )
 
 type SSECloseReason string
@@ -128,11 +168,15 @@ func WebhookAcknowledged(outcome WebhookOutcome, duration time.Duration) Event {
 func ReceiptQueue(
 	depth int64,
 	oldestAge time.Duration,
+	projectionRetryDepth int64,
+	relatedFactDepth int64,
 	quarantinedDepth int64,
 ) Event {
 	return event("acuity_call_center_receipt_queue",
 		"depth", max(depth, 0),
 		"oldest_age_seconds", positive(oldestAge).Seconds(),
+		"projection_retry_depth", max(projectionRetryDepth, 0),
+		"related_fact_depth", max(relatedFactDepth, 0),
 		"quarantined_depth", max(quarantinedDepth, 0))
 }
 
@@ -151,7 +195,8 @@ func TerminalCleanup(
 
 func ReceiptProcessed(outcome ReceiptOutcome, queueAge, duration time.Duration) Event {
 	return event("acuity_call_center_receipt_processing",
-		"outcome", bounded(string(outcome), "applied", "unknown", "failed", "retry", "quarantined"),
+		"outcome", bounded(string(outcome), "applied", "unknown", "failed", "retry",
+			"related_fact", "obsolete", "quarantined"),
 		"queue_seconds", positive(queueAge).Seconds(),
 		"processing_seconds", positive(duration).Seconds())
 }
@@ -174,6 +219,32 @@ func ProviderCommandCompleted(
 func DatabasePoolAcquired(outcome PoolAcquireOutcome, duration time.Duration) Event {
 	return event("acuity_call_center_database_pool_acquire",
 		"outcome", bounded(string(outcome), "succeeded", "canceled", "timeout", "failed"),
+		"seconds", positive(duration).Seconds())
+}
+
+func DatabaseExecuted(cause DatabaseCause, duration time.Duration) Event {
+	value := string(cause)
+	if value == "" {
+		value = string(DatabaseSucceeded)
+	}
+	return event("acuity_backend_database_execution",
+		"cause", bounded(value,
+			"succeeded", "acquire_timeout", "statement_timeout", "lock_timeout",
+			"serialization", "deadlock", "connection", "canceled", "other"),
+		"seconds", positive(duration).Seconds())
+}
+
+func BackendRequest(
+	route AvailabilityRoute,
+	outcome AvailabilityOutcome,
+	failureStage FailureStage,
+	duration time.Duration,
+) Event {
+	return event("acuity_backend_availability",
+		"route", bounded(string(route), "/v1/access", "/v1/calling/state"),
+		"outcome", bounded(string(outcome), "available", "unavailable"),
+		"failure_stage", bounded(string(failureStage),
+			"none", "authentication", "authorization", "dependency", "handler"),
 		"seconds", positive(duration).Seconds())
 }
 

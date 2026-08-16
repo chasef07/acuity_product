@@ -10,6 +10,32 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const terminalNeverStartedErrorCode = "CALL_TERMINATED_BEFORE_PROVIDER_START"
+
+const providerObservationConflictErrorCode = "PROVIDER_OBSERVATION_CONFLICT"
+
+const terminalNeverStartedCallLegQuery = `
+	SELECT call.id::text, call.practice_id::text, leg.id::text
+	FROM human_calling_calls call
+	JOIN human_calling_call_legs leg ON leg.call_id = call.id
+	WHERE call.terminal_outcome IS NOT NULL
+		AND leg.state = 'PENDING'
+		AND leg.provider_connection_id IS NULL
+		AND leg.provider_call_control_id IS NULL
+		AND leg.provider_call_leg_id IS NULL
+		AND leg.provider_call_session_id IS NULL
+		AND NOT EXISTS (
+			SELECT 1
+			FROM human_calling_provider_commands active
+			WHERE active.call_leg_id = leg.id
+				AND active.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+		)
+		AND leg.updated_at <= $1::timestamptz - interval '60 seconds'
+	ORDER BY leg.updated_at, leg.id
+	FOR UPDATE OF call, leg SKIP LOCKED
+	LIMIT 1
+`
+
 const staleCallLegCandidateQuery = `
 	SELECT call.id::text, call.practice_id::text, leg.id::text,
 		leg.role, call.direction, leg.state,
@@ -75,7 +101,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	now := m.now()
-	if _, err := m.pool.Exec(ctx, `
+	if _, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = CASE
 				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'PENDING'
@@ -93,6 +119,71 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	return nil
 }
 
+func (m *Module) reconcileNeverStartedTerminalCallLeg(
+	ctx context.Context,
+) (bool, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin terminal never-started CallLeg cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var callID, practiceID, legID string
+	if err := tx.QueryRow(ctx, terminalNeverStartedCallLegQuery, m.now()).Scan(
+		&callID, &practiceID, &legID,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	} else if err != nil {
+		return false, fmt.Errorf("claim terminal never-started CallLeg: %w", err)
+	}
+
+	cleanedAt := m.now()
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'FAILED', ending_at = COALESCE(ending_at, $2),
+			ended_at = COALESCE(ended_at, $2), error_code = $3, updated_at = $2
+		WHERE id = $1
+	`, legID, cleanedAt, terminalNeverStartedErrorCode); err != nil {
+		return false, fmt.Errorf("fail terminal never-started CallLeg: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = $2, updated_at = $3
+		WHERE call_leg_id = $1 AND state = 'PENDING'
+	`, legID, terminalNeverStartedErrorCode, cleanedAt); err != nil {
+		return false, fmt.Errorf("cancel terminal never-started CallLeg commands: %w", err)
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		callID,
+		practiceID,
+		"call_leg.failed",
+		"",
+		"",
+		"",
+		opaqueReference(legID),
+		terminalNeverStartedErrorCode,
+		cleanedAt,
+	); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_calls
+		SET version = version + 1, updated_at = $2
+		WHERE id = $1
+	`, callID, cleanedAt); err != nil {
+		return false, fmt.Errorf("advance terminal Call cleanup version: %w", err)
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit terminal never-started CallLeg cleanup: %w", err)
+	}
+	return true, nil
+}
+
 func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	expired, err := m.expireUnconfirmedOutboundMedia(ctx)
 	if err != nil {
@@ -101,11 +192,18 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	if expired {
 		return 1, nil
 	}
+	cleaned, err := m.reconcileNeverStartedTerminalCallLeg(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if cleaned {
+		return 1, nil
+	}
 	provider, ok := m.provider.(CallStateProvider)
 	if !ok {
 		return 0, nil
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
 	}
@@ -229,12 +327,20 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			fact.TerminationSource = "RECONCILER"
 		}
 		if err := m.ApplyProviderFact(ctx, fact); err != nil {
+			if errors.Is(err, ErrConflict) {
+				if quarantineErr := m.quarantineStaleCallLeg(
+					ctx, callID, practiceID, legID, commandID,
+				); quarantineErr != nil {
+					return 1, quarantineErr
+				}
+				return 1, nil
+			}
 			return 1, err
 		}
 	}
 	if commandID != "" {
 		var unresolved bool
-		if err := m.pool.QueryRow(ctx, `
+		if err := m.database.QueryRow(ctx, `
 			SELECT state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 			FROM human_calling_provider_commands WHERE id = $1
 		`, commandID).Scan(&unresolved); err != nil {
@@ -325,6 +431,79 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	return 1, nil
 }
 
+func (m *Module) quarantineStaleCallLeg(
+	ctx context.Context,
+	callID string,
+	practiceID string,
+	callLegID string,
+	commandID string,
+) error {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin stale CallLeg quarantine: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var terminal bool
+	if err := tx.QueryRow(ctx, `
+		SELECT terminal_outcome IS NOT NULL
+		FROM human_calling_calls
+		WHERE id = $1
+		FOR UPDATE
+	`, callID).Scan(&terminal); err != nil {
+		return fmt.Errorf("lock stale Call quarantine: %w", err)
+	}
+	quarantinedAt := m.now()
+	if !terminal {
+		if err := m.failRoutingCall(
+			ctx, tx, callID, providerObservationConflictErrorCode,
+		); err != nil {
+			return fmt.Errorf("fail contradictory stale Call: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'FAILED',
+			ending_at = COALESCE(ending_at, $2),
+			ended_at = COALESCE(ended_at, $2),
+			error_code = $3, updated_at = $2
+		WHERE id = $1 AND call_id = $4
+	`, callLegID, quarantinedAt, providerObservationConflictErrorCode, callID); err != nil {
+		return fmt.Errorf("quarantine contradictory stale CallLeg: %w", err)
+	}
+	if commandID != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_provider_commands
+			SET state = 'FAILED', last_error_code = $2, updated_at = $3
+			WHERE id = $1 AND call_leg_id = $4
+				AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+		`, commandID, providerObservationConflictErrorCode, quarantinedAt, callLegID); err != nil {
+			return fmt.Errorf("quarantine contradictory stale command: %w", err)
+		}
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		callID,
+		practiceID,
+		"call_leg.reconciliation_quarantined",
+		"",
+		"",
+		commandID,
+		opaqueReference(callLegID),
+		providerObservationConflictErrorCode,
+		quarantinedAt,
+	); err != nil {
+		return err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit stale CallLeg quarantine: %w", err)
+	}
+	return nil
+}
+
 func (m *Module) terminalizeStopRingWindow(
 	ctx context.Context,
 	commandID string,
@@ -335,7 +514,7 @@ func (m *Module) terminalizeStopRingWindow(
 	terminalAt time.Time,
 	providerClientState string,
 ) (bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin terminal ring-window reconciliation: %w", err)
 	}
@@ -420,7 +599,7 @@ func (m *Module) terminalizeStopRingWindow(
 }
 
 func (m *Module) expireUnconfirmedOutboundMedia(ctx context.Context) (bool, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin outbound media expiry: %w", err)
 	}
@@ -495,7 +674,7 @@ func (m *Module) markUnobservedCommandAmbiguous(
 	commandCreatedAt time.Time,
 	observedAt time.Time,
 ) error {
-	tag, err := m.pool.Exec(ctx, `
+	tag, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
 		WHERE id = $1 AND state IN ('SENDING', 'SENT')
@@ -523,7 +702,7 @@ func (m *Module) rejectUnobservedCommand(
 	errorCode string,
 ) error {
 	observedAt := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin provider observation result: %w", err)
 	}

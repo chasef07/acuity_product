@@ -23,9 +23,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/worker"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -66,20 +68,30 @@ func run() error {
 	}
 	defer pool.Close()
 	go reportMetrics(ctx, pool, observer)
+	database, err := productpostgres.NewExecutor(pool, productpostgres.ExecutorConfig{
+		AcquireTimeout:   config.AcquireTimeout,
+		OperationTimeout: config.OperationTimeout,
+		StatementTimeout: config.StatementTimeout,
+	}, observer)
+	if err != nil {
+		return err
+	}
 
 	slog.Info("runtime_starting",
 		"role", config.Role,
 		"pool_max", config.PoolMax,
 		"acquire_timeout_ms", config.AcquireTimeout.Milliseconds(),
+		"operation_timeout_ms", config.OperationTimeout.Milliseconds(),
+		"statement_timeout_ms", config.StatementTimeout.Milliseconds(),
 	)
 	switch config.Role {
 	case app.RoleMigrate:
 		return runMigrate(ctx, config, pool)
 	case app.RoleWorker:
-		return runWorker(ctx, config, pool, observer)
+		return runWorker(ctx, config, pool, database, observer)
 	case app.RoleProviderIngress:
 		calling := humancalling.New(
-			pool,
+			database,
 			nil,
 			nil,
 			humanCallingConfig(config, observer),
@@ -90,7 +102,7 @@ func run() error {
 			return err
 		}
 		messages := messaging.New(
-			pool,
+			database,
 			nil,
 			nil,
 			nil,
@@ -101,9 +113,10 @@ func run() error {
 			},
 			nil,
 		)
-		handler, err := httpapi.NewProviderIngressWithMessaging(httpapi.Config{
+		handler, err := httpapi.NewProviderIngress(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
+			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
 			Observer:       observer,
 		}, pool, calling, messages)
 		if err != nil {
@@ -111,7 +124,7 @@ func run() error {
 		}
 		return serve(ctx, config, handler)
 	case app.RolePortalAPI, app.RoleRealtime:
-		return runAuthorizedHTTP(ctx, config, pool, observer)
+		return runAuthorizedHTTP(ctx, config, pool, database, observer)
 	default:
 		return fmt.Errorf("unsupported runtime role %q", config.Role)
 	}
@@ -170,9 +183,10 @@ func runAuthorizedHTTP(
 	ctx context.Context,
 	config app.Config,
 	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	observer observability.Observer,
 ) error {
-	accessModule := access.New(pool, nil)
+	accessModule := access.New(database, nil)
 	authenticator, err := authn.NewJWKSAuthenticator(authn.JWKSConfig{
 		URL:      config.JWKSURL,
 		Issuer:   config.AuthIssuer,
@@ -202,6 +216,7 @@ func runAuthorizedHTTP(
 		handler, err = httpapi.NewRealtime(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
+			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
 			Observer:       observer,
 		}, pool, httpapi.RealtimeDependencies{
 			Access:        accessModule,
@@ -223,15 +238,15 @@ func runAuthorizedHTTP(
 		callingConfig := humanCallingConfig(config, observer)
 		callingConfig.VoicemailAudioProvider = provider
 		calling := humancalling.New(
-			pool,
+			database,
 			accessModule,
 			provider,
 			callingConfig,
 			nil,
 		)
-		workModule := work.New(pool, accessModule, nil)
+		workModule := work.New(database, accessModule, nil)
 		messages := messaging.New(
-			pool,
+			database,
 			accessModule,
 			workModule,
 			nil,
@@ -272,14 +287,16 @@ func runAuthorizedHTTP(
 		handler, err = httpapi.NewPortal(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
 			AcquireTimeout: config.AcquireTimeout,
+			RequestTimeout: config.AcquireTimeout + config.OperationTimeout,
 			Observer:       observer,
 		}, pool, httpapi.PortalDependencies{
 			Access:               accessModule,
 			Authenticator:        authenticator,
 			Calling:              calling,
-			Interactions:         interaction.New(pool, accessModule, nil),
+			Interactions:         interaction.New(database, accessModule, nil),
 			Messaging:            messages,
 			Work:                 workModule,
+			Workspace:            workspace.New(database, accessModule),
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {
@@ -293,6 +310,7 @@ func runWorker(
 	ctx context.Context,
 	config app.Config,
 	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	observer observability.Observer,
 ) error {
 	pingContext, cancel := context.WithTimeout(ctx, config.AcquireTimeout)
@@ -310,10 +328,11 @@ func runWorker(
 	if err != nil {
 		return err
 	}
+	accessModule := access.New(database, nil)
 	callingConfig := humanCallingConfig(config, observer)
 	calling := humancalling.New(
-		pool,
-		access.New(pool, nil),
+		database,
+		accessModule,
 		provider,
 		callingConfig,
 		nil,
@@ -322,11 +341,10 @@ func runWorker(
 	if err != nil {
 		return err
 	}
-	accessModule := access.New(pool, nil)
 	messages := messaging.New(
-		pool,
+		database,
 		accessModule,
-		work.New(pool, accessModule, nil),
+		work.New(database, accessModule, nil),
 		messagingProvider,
 		messaging.Config{
 			AttachmentStore:    attachmentStore,
@@ -338,8 +356,8 @@ func runWorker(
 	if err := calling.ReconcileCredentials(ctx); err != nil {
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
-	interactions := interaction.New(pool, accessModule, nil)
-	runner, err := worker.NewWithMessagingAndInteractions(worker.Config{
+	interactions := interaction.New(database, accessModule, nil)
+	runner, err := worker.New(worker.Config{
 		WorkInterval:       250 * time.Millisecond,
 		WorkTimeout:        10 * time.Second,
 		CredentialInterval: 30 * time.Second,
@@ -351,6 +369,7 @@ func runWorker(
 		ReceiptBatchSize:   8,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
+		IdleBackoffMax:     2 * time.Second,
 		ErrorBackoffMin:    250 * time.Millisecond,
 		ErrorBackoffMax:    10 * time.Second,
 	}, calling, messages, interactions, pool)
@@ -534,12 +553,11 @@ func runMigrate(
 		ProvisionInTx(ctx, tx, messageLocations); err != nil {
 		return err
 	}
-	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
-		ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
+	callingModule := humancalling.New(pool, nil, nil, humancalling.Config{}, nil)
+	if err := callingModule.ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
 		return err
 	}
-	if err := humancalling.New(pool, nil, nil, humancalling.Config{}, nil).
-		ProvisionOutboundVoiceFallbacksInTx(ctx, tx, voiceFallbacks); err != nil {
+	if err := callingModule.ProvisionOutboundVoiceFallbacksInTx(ctx, tx, voiceFallbacks); err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)

@@ -204,7 +204,7 @@ func (m *Module) applyVoicemailSpeechFact(
 	state callLegClientState,
 	ended bool,
 ) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin voicemail speech projection: %w", err)
 	}
@@ -236,7 +236,7 @@ func (m *Module) applyVoicemailSpeechFact(
 		return ErrConflict
 	}
 	if terminal != "" && terminal != "VOICEMAIL" {
-		return ErrConflict
+		return errTerminalOrObsoleteProviderFact
 	}
 	if ended && fact.PlaybackStatus == "completed" {
 		if _, err := tx.Exec(ctx, `
@@ -301,7 +301,7 @@ func (m *Module) applyVoicemailRecordingSaved(
 	}
 	if fact.RecordingID == "" {
 		var alreadyApplied bool
-		if err := m.pool.QueryRow(ctx, `
+		if err := m.database.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM human_calling_projected_facts WHERE event_id = $1
 			)
@@ -324,7 +324,7 @@ func (m *Module) applyVoicemailRecordingSaved(
 		fact.RecordingStartedAt = recording.StartedAt
 		fact.RecordingEndedAt = recording.EndedAt
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin voicemail recording save: %w", err)
 	}
@@ -377,7 +377,7 @@ func (m *Module) applyVoicemailRecordingError(
 	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_recording" {
 		return ErrConflict
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin voicemail recording failure: %w", err)
 	}
@@ -603,7 +603,7 @@ func (m *Module) OpenVoicemailPlayback(
 	if err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(authorizationContext, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(authorizationContext, pgx.TxOptions{})
 	if err != nil {
 		return PlaybackContent{}, fmt.Errorf("begin voicemail playback: %w", err)
 	}

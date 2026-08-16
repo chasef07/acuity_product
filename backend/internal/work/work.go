@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +13,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TaskState string
@@ -221,18 +220,6 @@ type ReopenTaskCommand struct {
 	ExpectedVersion int64
 }
 
-type QueryTasksCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Search     string
-	State      TaskState
-	Ordering   TaskOrdering
-	Folder     TaskFolder
-	Cursor     string
-	Limit      int
-}
-
 type TaskPage struct {
 	Items      []Task
 	NextCursor string
@@ -260,20 +247,20 @@ type TaskCategoryCounts struct {
 
 // Module owns durable Task state and lifecycle behavior.
 type Module struct {
-	pool   *pgxpool.Pool
-	access *access.Module
-	now    func() time.Time
+	database productpostgres.Database
+	access   *access.Module
+	now      func() time.Time
 }
 
 func New(
-	pool *pgxpool.Pool,
+	database productpostgres.Database,
 	accessModule *access.Module,
 	now func() time.Time,
 ) *Module {
 	if now == nil {
 		now = time.Now
 	}
-	return &Module{pool: pool, access: accessModule, now: now}
+	return &Module{database: database, access: accessModule, now: now}
 }
 
 // EnsureCallFollowUp creates the one Task linked to a Call. The caller owns the
@@ -405,13 +392,14 @@ func (m *Module) EnsureMessageFollowUp(
 					AND caller_name IS NULL
 					AND source_call_id IS NULL
 					AND source_message IS NULL
+					AND message_thread_id = $6
 					AND state = 'OPEN'
 				)
 			ORDER BY (source_message_id = $1) DESC, created_at, id
 			LIMIT 1
 			FOR SHARE
 		`, command.MessageID, command.PracticeID, command.LocationID,
-			command.Phone, title).Scan(&taskID); err != nil {
+			command.Phone, title, command.ThreadID).Scan(&taskID); err != nil {
 			return Task{}, "", fmt.Errorf("load replayed Message Task: %w", err)
 		}
 	} else if err != nil {
@@ -819,6 +807,105 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 	return completed, nil
 }
 
+// ProcessNextRecoveryReconciliation converges one queued Practice and phone
+// key in a short, restartable transaction. It returns false when rollout
+// reconciliation is complete.
+func (m *Module) ProcessNextRecoveryReconciliation(
+	ctx context.Context,
+) (bool, error) {
+	if m.database == nil || m.access == nil {
+		return false, ErrInvalidInput
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin recovery reconciliation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var practiceID, phone string
+	if err := tx.QueryRow(ctx, `
+		SELECT practice_id::text, phone
+		FROM work_recovery_reconciliation_queue
+		ORDER BY practice_id, phone
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`).Scan(&practiceID, &phone); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("claim recovery reconciliation: %w", err)
+	}
+
+	var resolution ResolveRecoveryTasksCommand
+	resolution.PracticeID = practiceID
+	resolution.Phone = phone
+	if err := tx.QueryRow(ctx, `
+		SELECT resolved_at, kind, source_id
+		FROM (
+			SELECT
+				staff.bridged_at AS resolved_at,
+				'INBOUND_CALL'::text AS kind,
+				call.id::text AS source_id
+			FROM human_calling_calls call
+			LEFT JOIN human_calling_handoffs handoff
+				ON handoff.id = call.source_handoff_id
+			JOIN human_calling_call_legs staff
+				ON staff.call_id = call.id
+				AND staff.role = 'STAFF'
+				AND staff.bridged_at IS NOT NULL
+			WHERE call.practice_id = $1
+				AND call.direction = 'INBOUND'
+				AND COALESCE(handoff.phone, call.caller_phone) = $2
+
+			UNION ALL
+
+			SELECT
+				interaction.appointment_occurred_at,
+				'BOOKING'::text,
+				interaction.id::text
+			FROM ai_interactions interaction
+			WHERE interaction.practice_id = $1
+				AND interaction.phone = $2
+				AND interaction.appointment_outcome = 'BOOKING'
+				AND lower(COALESCE(
+					interaction.booking_result ->> 'status',
+					''
+				)) = 'booked'
+				AND interaction.appointment_occurred_at IS NOT NULL
+		) resolution
+		ORDER BY resolved_at DESC, source_id DESC, kind DESC
+		LIMIT 1
+	`, practiceID, phone).Scan(
+		&resolution.OccurredAt,
+		&resolution.Kind,
+		&resolution.SourceID,
+	); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("load recovery reconciliation evidence: %w", err)
+	}
+
+	var completed int64
+	if !resolution.OccurredAt.IsZero() {
+		completed, err = m.ResolveRecoveryTasks(ctx, tx, resolution)
+		if err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM work_recovery_reconciliation_queue
+		WHERE practice_id = $1 AND phone = $2
+	`, practiceID, phone); err != nil {
+		return false, fmt.Errorf("finish recovery reconciliation: %w", err)
+	}
+	if completed > 0 {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit recovery reconciliation: %w", err)
+	}
+	return true, nil
+}
+
 // LockOpenMessageTask validates the exact destination exposed by a Task
 // composer while serializing against completion. Messaging owns the provider
 // effect; Work owns whether the Task can currently originate it.
@@ -946,14 +1033,14 @@ func (m *Module) CreateAITask(
 	command CreateAITaskCommand,
 ) (Task, TaskCreateStatus, error) {
 	normalizeAITaskCommand(&command)
-	if m.pool == nil || m.access == nil || !validAITaskCommand(command) {
+	if m.database == nil || m.access == nil || !validAITaskCommand(command) {
 		return Task{}, "", ErrInvalidInput
 	}
 	fingerprint, err := aiTaskFingerprint(command)
 	if err != nil {
 		return Task{}, "", err
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, "", fmt.Errorf("begin AI Task creation: %w", err)
 	}
@@ -1110,7 +1197,7 @@ func (m *Module) RenameTask(
 		len(title) > 500 {
 		return Task{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task rename: %w", err)
 	}
@@ -1188,7 +1275,7 @@ func (m *Module) CompleteTask(
 		command.ExpectedVersion <= 0 {
 		return Task{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task completion: %w", err)
 	}
@@ -1276,7 +1363,7 @@ func (m *Module) ReopenTask(
 		command.ExpectedVersion <= 0 {
 		return Task{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task reopen: %w", err)
 	}
@@ -1354,350 +1441,6 @@ func (m *Module) ReopenTask(
 	return task, nil
 }
 
-func (m *Module) QueryTasks(
-	ctx context.Context,
-	command QueryTasksCommand,
-) (TaskPage, error) {
-	command.Search = strings.TrimSpace(command.Search)
-	if command.State == "" {
-		command.State = TaskOpen
-	}
-	if command.Ordering == "" {
-		command.Ordering = TaskOrderingPriority
-	}
-	if m.access == nil ||
-		strings.TrimSpace(command.PracticeID) == "" ||
-		len(command.Search) > 500 ||
-		(command.State != TaskOpen && command.State != TaskCompleted) ||
-		(command.Folder != "" &&
-			command.Folder != TaskFolderWork &&
-			command.Folder != TaskFolderMissedCalls) ||
-		(command.Folder != "" && command.State != TaskOpen) ||
-		(command.Ordering != TaskOrderingTime &&
-			command.Ordering != TaskOrderingPriority &&
-			command.Ordering != TaskOrderingRecent) {
-		return TaskPage{}, ErrInvalidInput
-	}
-	limit := command.Limit
-	if limit == 0 {
-		limit = 50
-	}
-	if limit < 1 || limit > 50 {
-		return TaskPage{}, ErrInvalidInput
-	}
-	cursor, err := decodeTaskCursor(
-		command.Cursor,
-		command.Ordering,
-		command.State,
-		command.Folder,
-	)
-	if err != nil {
-		return TaskPage{}, ErrInvalidInput
-	}
-
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return TaskPage{}, fmt.Errorf("begin Task query: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	authorization, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.LocationID,
-	)
-	if err != nil {
-		return TaskPage{}, ErrDenied
-	}
-	locationIDs := make([]string, 0, len(authorization.Locations))
-	if command.LocationID != "" {
-		locationIDs = append(locationIDs, command.LocationID)
-	} else {
-		for _, location := range authorization.Locations {
-			locationIDs = append(locationIDs, location.ID)
-		}
-	}
-	if len(locationIDs) == 0 {
-		return TaskPage{}, ErrDenied
-	}
-
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering),
-		command.PracticeID,
-		locationIDs,
-		command.Search,
-		normalizedDigits(command.Search),
-		cursor.Present,
-		cursor.OrderedAt,
-		cursor.ID,
-		urgencyRank(cursor.Urgency),
-		command.Folder,
-		limit+1,
-	)
-	if err != nil {
-		return TaskPage{}, fmt.Errorf("query Tasks: %w", err)
-	}
-	defer rows.Close()
-	items := make([]Task, 0, limit+1)
-	for rows.Next() {
-		task, err := scanTask(rows)
-		if err != nil {
-			return TaskPage{}, fmt.Errorf("scan Task query: %w", err)
-		}
-		items = append(items, task)
-	}
-	if err := rows.Err(); err != nil {
-		return TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
-	}
-	rows.Close()
-	counts, err := queryTaskFolderCounts(
-		ctx,
-		tx,
-		command.PracticeID,
-		locationIDs,
-		command.Search,
-		normalizedDigits(command.Search),
-		command.State,
-	)
-	if err != nil {
-		return TaskPage{}, err
-	}
-	for index := range items {
-		if err := m.loadRelatedInteractionCount(ctx, tx, &items[index]); err != nil {
-			return TaskPage{}, err
-		}
-	}
-
-	nextCursor := ""
-	if len(items) > limit {
-		items = items[:limit]
-		nextCursor, err = encodeTaskCursor(
-			items[len(items)-1],
-			command.Ordering,
-			command.Folder,
-		)
-		if err != nil {
-			return TaskPage{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return TaskPage{}, fmt.Errorf("commit Task query: %w", err)
-	}
-	return TaskPage{Items: items, NextCursor: nextCursor, Counts: counts}, nil
-}
-
-func queryTaskFolderCounts(
-	ctx context.Context,
-	tx pgx.Tx,
-	practiceID string,
-	locationIDs []string,
-	search string,
-	phoneDigits string,
-	state TaskState,
-) (TaskFolderCounts, error) {
-	var counts TaskFolderCounts
-	err := tx.QueryRow(ctx, `
-		WITH scoped AS (
-			SELECT
-				task.origin,
-				task.category,
-				lower(task.title || ' ' || COALESCE(task.source_message, '')) AS task_text
-			FROM work_tasks task
-			JOIN access_locations location
-				ON location.practice_id = task.practice_id
-				AND location.id = task.location_id
-			WHERE task.practice_id = $1
-				AND task.location_id::text = ANY($2::text[])
-				AND (
-					$3 = ''
-						OR strpos(lower(task.title), lower($3)) > 0
-						OR strpos(lower(COALESCE(task.caller_name, '')), lower($3)) > 0
-						OR strpos(lower(location.name), lower($3)) > 0
-						OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
-						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
-				)
-				AND task.state = $5
-		), classified AS (
-			SELECT
-				category,
-				origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AS recovery,
-				COALESCE(
-					category = 'appointments'
-						AND task_text ~ '\m(cancel|cancellation)\M',
-					false
-				) AS cancellation,
-				COALESCE(
-					category = 'appointments'
-						AND task_text ~ '\m(reschedule|rescheduling|move appointment|change appointment)\M',
-					false
-				) AS reschedule,
-				COALESCE(
-					category = 'appointments'
-						AND task_text ~ '\m(book|booking|schedule|new appointment|appointment request)\M',
-					false
-				) AS booking
-			FROM scoped
-		), foldered AS (
-			SELECT
-				category,
-				CASE
-					WHEN recovery THEN 'missed_calls'
-					WHEN cancellation THEN 'cancellations'
-					WHEN reschedule THEN 'reschedules'
-					WHEN booking THEN 'bookings'
-					ELSE 'tasks'
-				END AS folder
-			FROM classified
-		)
-		SELECT
-			count(*) FILTER (WHERE folder = 'tasks'),
-			count(*) FILTER (WHERE folder = 'missed_calls'),
-			count(*) FILTER (WHERE folder = 'bookings'),
-			count(*) FILTER (WHERE folder = 'cancellations'),
-			count(*) FILTER (WHERE folder = 'reschedules'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'optical'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'medication'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'referrals'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other')
-		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
-		&counts.Tasks,
-		&counts.MissedCalls,
-		&counts.Bookings,
-		&counts.Cancellations,
-		&counts.Reschedules,
-		&counts.Categories.Billing,
-		&counts.Categories.Appointments,
-		&counts.Categories.Documentation,
-		&counts.Categories.Optical,
-		&counts.Categories.Medication,
-		&counts.Categories.Referrals,
-		&counts.Categories.Other,
-	)
-	if err != nil {
-		return TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
-	}
-	return counts, nil
-}
-
-const taskQuerySelect = `
-		SELECT
-			task.id::text,
-			task.practice_id::text,
-			task.location_id::text,
-			location.name,
-			task.call_id::text,
-			task.phone,
-			task.title,
-			task.state,
-			task.origin,
-			task.urgency,
-			task.category,
-			task.caller_name,
-			task.source_call_id,
-			task.source_message,
-			task.source_message_id::text,
-			task.message_thread_id::text,
-			task.recovery_outcome,
-			task.created_by_kind,
-			task.created_by_subject,
-			task.created_by_email,
-			task.created_at,
-			task.completed_by_subject,
-			task.completed_by_email,
-			task.completed_at,
-			task.version,
-			task.updated_at
-		FROM work_tasks task
-		JOIN access_locations location
-			ON location.practice_id = task.practice_id
-			AND location.id = task.location_id
-		WHERE task.practice_id = $1
-			AND task.location_id::text = ANY($2::text[])
-			AND (
-				$3 = ''
-					OR strpos(lower(task.title), lower($3)) > 0
-					OR strpos(lower(COALESCE(task.caller_name, '')), lower($3)) > 0
-					OR strpos(lower(location.name), lower($3)) > 0
-					OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
-					OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
-			)
-			AND (
-				$9::text = ''
-				OR ($9::text = 'work' AND task.origin NOT IN (
-					'MISSED_CALL_RECOVERY',
-					'VOICEMAIL_RECOVERY'
-				))
-				OR ($9::text = 'missed_calls' AND task.origin IN (
-					'MISSED_CALL_RECOVERY',
-					'VOICEMAIL_RECOVERY'
-				))
-			)`
-
-func taskQuerySQL(state TaskState, ordering TaskOrdering) string {
-	switch {
-	case state == TaskOpen && ordering == TaskOrderingPriority:
-		return taskQuerySelect + `
-			AND task.state = 'OPEN'
-			AND (
-				NOT $5
-				OR CASE task.urgency
-					WHEN 'high_priority' THEN 0
-					WHEN 'normal' THEN 1
-					ELSE 2
-				END > $8
-				OR (
-					CASE task.urgency
-						WHEN 'high_priority' THEN 0
-						WHEN 'normal' THEN 1
-						ELSE 2
-					END = $8
-					AND (task.created_at, task.id::text) > ($6, $7)
-				)
-			)
-		ORDER BY
-			CASE task.urgency
-				WHEN 'high_priority' THEN 0
-				WHEN 'normal' THEN 1
-				ELSE 2
-			END,
-			task.created_at,
-			task.id
-		LIMIT $10`
-	case state == TaskOpen && ordering == TaskOrderingTime:
-		return taskQuerySelect + `
-			AND task.state = 'OPEN'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))
-		ORDER BY task.created_at, task.id
-		LIMIT $10`
-	case state == TaskOpen:
-		return taskQuerySelect + `
-			AND task.state = 'OPEN'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $10`
-	case ordering == TaskOrderingRecent:
-		return taskQuerySelect + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
-		ORDER BY task.updated_at DESC, task.id DESC
-		LIMIT $10`
-	default:
-		return taskQuerySelect + `
-			AND task.state = 'COMPLETED'
-			AND $8::int >= 0
-			AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))
-		ORDER BY task.completed_at DESC, task.id DESC
-		LIMIT $10`
-	}
-}
-
 func (m *Module) ReadTask(
 	ctx context.Context,
 	identity access.Identity,
@@ -1706,7 +1449,7 @@ func (m *Module) ReadTask(
 	if m.access == nil || strings.TrimSpace(taskID) == "" {
 		return Task{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Task{}, fmt.Errorf("begin Task read: %w", err)
 	}
@@ -1715,12 +1458,10 @@ func (m *Module) ReadTask(
 	if err != nil {
 		return Task{}, err
 	}
-	if err := m.loadRelatedInteractionCount(ctx, tx, &task); err != nil {
-		return Task{}, err
-	}
 	if err := m.loadTaskInteractions(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
+	task.RelatedInteractionCount = len(task.Interactions)
 	if _, err := m.access.LockReadAuthorization(
 		ctx,
 		tx,
@@ -1767,115 +1508,6 @@ func (m *Module) loadTaskInteractions(ctx context.Context, tx pgx.Tx, task *Task
 		return fmt.Errorf("iterate related Task Interactions: %w", err)
 	}
 	return nil
-}
-
-func (m *Module) loadRelatedInteractionCount(ctx context.Context, querier taskQuerier, task *Task) error {
-	if task == nil || task.ID == "" {
-		return ErrInvalidInput
-	}
-	if err := querier.QueryRow(ctx, `
-		SELECT count(*)
-		FROM work_task_interactions
-		WHERE task_id = $1
-	`, task.ID).Scan(&task.RelatedInteractionCount); err != nil {
-		return fmt.Errorf("count related Task Interactions: %w", err)
-	}
-	return nil
-}
-
-type taskQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-type taskCursor struct {
-	Present   bool         `json:"-"`
-	Ordering  TaskOrdering `json:"ordering"`
-	State     TaskState    `json:"state"`
-	Folder    TaskFolder   `json:"folder,omitempty"`
-	Urgency   TaskUrgency  `json:"urgency"`
-	OrderedAt time.Time    `json:"orderedAt"`
-	ID        string       `json:"id"`
-}
-
-func encodeTaskCursor(
-	task Task,
-	ordering TaskOrdering,
-	folder TaskFolder,
-) (string, error) {
-	orderedAt := task.CreatedAt
-	if ordering == TaskOrderingRecent {
-		orderedAt = task.UpdatedAt
-	} else if task.State == TaskCompleted {
-		if task.CompletedAt == nil {
-			return "", fmt.Errorf("encode Task cursor: completed Task has no completion time")
-		}
-		orderedAt = *task.CompletedAt
-	}
-	encoded, err := json.Marshal(taskCursor{
-		Ordering:  ordering,
-		State:     task.State,
-		Folder:    folder,
-		Urgency:   task.Urgency,
-		OrderedAt: orderedAt,
-		ID:        task.ID,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode Task cursor: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(encoded), nil
-}
-
-func decodeTaskCursor(
-	encoded string,
-	ordering TaskOrdering,
-	state TaskState,
-	folder TaskFolder,
-) (taskCursor, error) {
-	if encoded == "" {
-		return taskCursor{}, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return taskCursor{}, err
-	}
-	var cursor taskCursor
-	if err := json.Unmarshal(raw, &cursor); err != nil {
-		return taskCursor{}, err
-	}
-	if cursor.Urgency == "" {
-		cursor.Urgency = TaskUrgencyNormal
-	}
-	if cursor.Ordering != ordering ||
-		cursor.State != state ||
-		cursor.Folder != folder ||
-		(cursor.State == TaskOpen && !validTaskUrgency(cursor.Urgency)) ||
-		cursor.OrderedAt.IsZero() ||
-		strings.TrimSpace(cursor.ID) == "" {
-		return taskCursor{}, ErrInvalidInput
-	}
-	cursor.Present = true
-	return cursor, nil
-}
-
-func urgencyRank(urgency TaskUrgency) int {
-	switch urgency {
-	case TaskUrgencyHighPriority:
-		return 0
-	case TaskUrgencyNormal:
-		return 1
-	default:
-		return 2
-	}
-}
-
-func normalizedDigits(value string) string {
-	var digits strings.Builder
-	for _, character := range value {
-		if character >= '0' && character <= '9' {
-			digits.WriteRune(character)
-		}
-	}
-	return digits.String()
 }
 
 func (m *Module) authorizeMutation(
@@ -2094,10 +1726,10 @@ func insertTask(
 
 func loadTask(
 	ctx context.Context,
-	querier taskQuerier,
+	tx pgx.Tx,
 	taskID string,
 ) (Task, error) {
-	task, err := scanTask(querier.QueryRow(ctx, `
+	task, err := scanTask(tx.QueryRow(ctx, `
 		SELECT
 			task.id::text,
 			task.practice_id::text,
@@ -2130,7 +1762,7 @@ func loadTask(
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
 		WHERE task.id = $1
-	`, taskID))
+	`, taskID), false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -2179,7 +1811,7 @@ func lockTask(
 			AND location.id = task.location_id
 		WHERE task.id = $1
 		FOR UPDATE OF task
-	`, taskID))
+	`, taskID), false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
@@ -2193,12 +1825,12 @@ type taskScanner interface {
 	Scan(...any) error
 }
 
-func scanTask(scanner taskScanner) (Task, error) {
+func scanTask(scanner taskScanner, includeRelatedInteractionCount bool) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
 	var createdEmail, completedSubject, completedEmail *string
-	if err := scanner.Scan(
+	destinations := []any{
 		&task.ID,
 		&task.PracticeID,
 		&task.LocationID,
@@ -2225,7 +1857,11 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-	); err != nil {
+	}
+	if includeRelatedInteractionCount {
+		destinations = append(destinations, &task.RelatedInteractionCount)
+	}
+	if err := scanner.Scan(destinations...); err != nil {
 		return Task{}, err
 	}
 	if callID != nil {

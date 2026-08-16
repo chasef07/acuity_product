@@ -44,7 +44,7 @@ capacity while the warm floor and local pools reflect the measured pilot load.
 | Runtime | Kind | Billing | Concurrency | Min | Max | Pool max | Direct |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | web / Better Auth | service | request | 40 | 1 | 2 | 1 | 0 |
-| `portal-api` | service | request | 20 | 1 | 3 | 4 | 0 |
+| `portal-api` | service | request | 8 | 1 | 3 | 4 | 0 |
 | `provider-ingress` | service | request | 20 | 1 | 2 | 1 | 0 |
 | `realtime` | service | request | 50 | 1 | 2 | 1 | 1 `LISTEN` |
 | `worker` | worker pool | instance | n/a | 1 fixed | 1 fixed | 2 | 0 |
@@ -61,6 +61,11 @@ also keep one instance warm. The worker keeps one fixed instance. The runtime
 roles remain separate because their failure owners remain separate; saving a
 few dollars is not a reason to couple ingress acknowledgement or durable
 recovery to portal traffic.
+
+The portal accepts at most eight concurrent requests per instance so Cloud Run
+queues bursts before they can overwhelm its four-connection database pool.
+Production verification with twenty simultaneous authenticated workspaces
+completed without a 5xx response or database acquisition timeout.
 
 ## Exact PostgreSQL reservation
 

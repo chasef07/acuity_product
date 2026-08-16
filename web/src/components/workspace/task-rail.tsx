@@ -459,15 +459,15 @@ export function TaskRail({
                 onLoadMore={onLoadMore}
               />
             ))}
-            {outcomeFolderExpanded && (
-              <RailLoadSentinel
-                label="Loading older appointment updates"
-                cursor={outcomeNextCursor}
-                loading={outcomesLoading}
-                onLoadMore={onOutcomeLoadMore}
-              />
-            )}
           </AttentionGroup>
+          {outcomeFolderExpanded && (
+            <RailLoadSentinel
+              label="Loading older appointment updates"
+              cursor={outcomeNextCursor}
+              loading={outcomesLoading}
+              onLoadMore={onOutcomeLoadMore}
+            />
+          )}
           <AttentionGroup
             title="Texts"
             count={textRows.length}

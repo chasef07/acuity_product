@@ -71,7 +71,9 @@ import {
   type CallingOwnerLoop,
 } from "@/lib/calling/owner-loop"
 import {
+  callIsSettled,
   dispositionWindowIsOpen,
+  hangupFailure,
   providerOutcomeLabel,
 } from "@/lib/calling/outcomes"
 import {
@@ -709,16 +711,22 @@ export function CallingDock({
     return poll
   }, [readinessWriter])
 
-  const refreshCall = useCallback(async () => {
-    const callID = expectedCallRef.current
+  const refreshCall = useCallback(async (requestedCallID?: string) => {
+    const callID = requestedCallID ?? expectedCallRef.current
     if (!callID) return
     const token = await getAccessToken()
-    if (!token) return
+    if (!token) return { status: 401 }
     const result = await getCallingCall({
       client: portalClient(token),
       path: { callId: callID },
     }).catch(() => undefined)
-    if (expectedCallRef.current !== callID) return
+    if (
+      requestedCallID
+        ? expectedCallRef.current && expectedCallRef.current !== callID
+        : expectedCallRef.current !== callID
+    ) {
+      return
+    }
     const releaseCallControl = () => {
       applyActiveCall()
       expectedCallRef.current = ""
@@ -742,33 +750,31 @@ export function CallingDock({
         result.data.state === "VOICEMAIL_RECORDING"
       ) {
         releaseCallControl()
-        return
+        return { call: result.data, status: result.response?.status }
       }
       if (result.data.state === "NEEDS_DISPOSITION") {
         setPendingOutcome(result.data)
         releaseCallControl()
-        return
+        return { call: result.data, status: result.response?.status }
       }
-      if (!applyActiveCall(result.data)) return
-      if (
-        result.data.state === "UNANSWERED" ||
-        result.data.state === "MISSED" ||
-        result.data.state === "VOICEMAIL" ||
-        result.data.state === "RESOLVED" ||
-        result.data.state === "FOLLOW_UP_REQUIRED"
-      ) {
+      if (!applyActiveCall(result.data)) {
+        return { call: result.data, status: result.response?.status }
+      }
+      if (callIsSettled(result.data.state)) {
         setMediaAttached(false)
         mediaLegRef.current = null
       }
       if (result.data.state === "UNANSWERED") {
         releaseCallControl()
       }
+      return { call: result.data, status: result.response?.status }
     } else if (
       result?.response?.status === 403 ||
       result?.response?.status === 409
     ) {
       releaseCallControl()
     }
+    return { status: result?.response?.status }
   }, [applyActiveCall, updateReadiness])
 
   const releaseCallingOwnership = useCallback(
@@ -1121,9 +1127,47 @@ export function CallingDock({
     }).catch(() => undefined)
     if (!result?.data) {
       setEndingCallID((current) => (current === callID ? "" : current))
-      setError(
-        "Hang up was not committed. Check your connection and try again.",
-      )
+      const failure = hangupFailure({
+        status: result?.response?.status,
+        code: result?.error?.error.code,
+      })
+      if (failure === "conflict") {
+        const refreshed = await refreshCall(callID)
+        if (refreshed?.call && callIsSettled(refreshed.call.state)) {
+          setError("")
+          return
+        }
+        const reconciliationFailure = hangupFailure({
+          status: refreshed?.status,
+        })
+        if (reconciliationFailure === "authentication") {
+          setError(
+            "Your authentication or Call access needs to be refreshed before you try Hang up again.",
+          )
+          return
+        }
+        if (reconciliationFailure === "retry") {
+          setError(
+            "Hang up status could not be refreshed. Check your connection and try again.",
+          )
+          return
+        }
+        setError("Calling ownership or the Call state changed before Hang up.")
+        return
+      }
+      if (failure === "authentication") {
+        setError(
+          "Your authentication or Call access needs to be refreshed before you try Hang up again.",
+        )
+        return
+      }
+      if (failure === "retry") {
+        setError(
+          "Hang up was not committed. Check your connection and try again.",
+        )
+        return
+      }
+      setError("Hang up is not available for the current Call.")
       return
     }
     if (result.data.state === "NEEDS_DISPOSITION") {
@@ -1517,12 +1561,6 @@ function ActiveCallControls({
 }) {
   const [keypadOpen, setKeypadOpen] = useState(false)
   const ended = call.state === "NEEDS_DISPOSITION"
-  const terminal =
-    call.state === "RESOLVED" || call.state === "FOLLOW_UP_REQUIRED"
-  const closedWithoutDisposition =
-    call.state === "UNANSWERED" ||
-    call.state === "VOICEMAIL" ||
-    call.state === "MISSED"
   const keypadEligible =
     !controlsPending &&
     owner &&
@@ -1537,7 +1575,7 @@ function ActiveCallControls({
   const showKeypad = owner && call.state === "CONNECTED"
   const showDisposition = owner && ended
   const showRetry = call.retryAllowed
-  const showClosedState = terminal || closedWithoutDisposition
+  const showClosedState = callIsSettled(call.state) && !ended
   if (
     !showCallDetails &&
     !showMute &&
@@ -1636,7 +1674,8 @@ function ActiveCallControls({
       )}
       {showClosedState && (
         <>
-          {terminal && (
+          {(call.state === "RESOLVED" ||
+            call.state === "FOLLOW_UP_REQUIRED") && (
             <span className="text-xs text-muted-foreground">
               Disposition saved
             </span>

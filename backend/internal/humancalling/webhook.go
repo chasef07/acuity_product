@@ -96,7 +96,7 @@ func (m *Module) ReceiveWebhook(
 		return WebhookReceipt{}, ErrInvalidWebhook
 	}
 
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf("begin provider receipt: %w", err)
 	}
@@ -175,7 +175,7 @@ func (m *Module) RequeueQuarantinedReceipt(
 		(eventID == "") == (receiptReference == "") {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf(
 			"begin quarantined provider receipt requeue: %w",
@@ -349,7 +349,7 @@ func (m *Module) resolveQuarantinedReceiptReference(
 
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 	now := m.now()
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin provider receipt claim: %w", err)
 	}
@@ -420,7 +420,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			nextAttemptAt = completedAt.Add(receiptRetryDelay(projectionAttempts))
 		}
 	}
-	tag, err := m.pool.Exec(ctx, `
+	tag, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_receipts
 		SET
 			state = $2,
@@ -443,7 +443,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("record provider receipt projection: %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		m.recordReceiptProcessed(state, receivedAt, now, completedAt)
+		m.recordReceiptProcessed(state, errorCode, receivedAt, now, completedAt)
 	}
 	return true, nil
 }
@@ -466,6 +466,9 @@ func (m *Module) replayProviderReceipt(
 		if err == nil {
 			err = m.attachReceiptCall(ctx, eventID, fact)
 		}
+		if err == nil {
+			err = m.wakeRelatedReceipts(ctx, eventID, fact)
+		}
 	}
 	if errors.Is(err, ErrInvalidHandoff) {
 		if err := m.rememberRejectedProviderLeg(ctx, fact); err != nil {
@@ -485,11 +488,58 @@ func (m *Module) replayProviderReceipt(
 	switch {
 	case err == nil:
 		return ReceiptApplied, ""
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, errRelatedFactPending):
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
+	case errors.Is(err, errTerminalOrObsoleteProviderFact):
+		return ReceiptFailed, "TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
+	case errors.Is(err, ErrConflict):
+		return ReceiptPending, "PROJECTION_RETRY"
 	default:
 		return ReceiptPending, "PROJECTION_RETRY"
 	}
+}
+
+// wakeRelatedReceipts brings only exact Call or provider-leg matches forward;
+// the existing retry policy still owns every unresolved receipt's 24-hour bound.
+func (m *Module) wakeRelatedReceipts(
+	ctx context.Context,
+	eventID string,
+	fact ProviderFact,
+) error {
+	_, err := m.database.Exec(ctx, `
+		WITH current_receipt AS (
+			SELECT call_id
+			FROM human_calling_provider_receipts
+			WHERE event_id = $1 AND call_id IS NOT NULL
+		)
+		UPDATE human_calling_provider_receipts related
+		SET
+			call_id = COALESCE(related.call_id, current_receipt.call_id),
+			next_attempt_at = LEAST(related.next_attempt_at, $2)
+		FROM current_receipt
+		WHERE related.state = 'PENDING'
+			AND related.projection_error_code IN (
+				'WAITING_FOR_RELATED_FACT',
+				'WAITING_FOR_RELATED_FACT_SLOW_RETRY'
+			)
+			AND (
+				related.call_id = current_receipt.call_id
+				OR (
+					related.call_id IS NULL
+					AND $3 <> '' AND $4 <> '' AND $5 <> ''
+					AND convert_from(related.raw_body, 'UTF8')::jsonb
+						#>> '{data,payload,call_control_id}' = $3
+					AND convert_from(related.raw_body, 'UTF8')::jsonb
+						#>> '{data,payload,call_leg_id}' = $4
+					AND convert_from(related.raw_body, 'UTF8')::jsonb
+						#>> '{data,payload,call_session_id}' = $5
+				)
+			)
+	`, eventID, m.now(), fact.CallControlID, fact.CallLegID, fact.CallSessionID)
+	if err != nil {
+		return fmt.Errorf("wake related provider receipts: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) rememberRejectedProviderLeg(
@@ -499,7 +549,7 @@ func (m *Module) rememberRejectedProviderLeg(
 	if fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
 		return nil
 	}
-	_, err := m.pool.Exec(ctx, `
+	_, err := m.database.Exec(ctx, `
 		INSERT INTO human_calling_rejected_provider_legs (
 			call_control_id,
 			call_leg_id,
@@ -524,7 +574,7 @@ func (m *Module) providerLegWasRejected(
 		return false, nil
 	}
 	var rejected bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM human_calling_rejected_provider_legs
@@ -546,7 +596,7 @@ func (m *Module) restoreRejectedProviderLeg(
 	fact ProviderFact,
 ) (bool, error) {
 	var rejected bool
-	if err := m.pool.QueryRow(ctx, `
+	if err := m.database.QueryRow(ctx, `
 		WITH historical_rejection AS (
 			SELECT
 				receipt.event_id,
@@ -614,7 +664,7 @@ func (m *Module) attachReceiptCall(
 	fact ProviderFact,
 ) error {
 	if clientState, ok := parseCallLegClientState(fact.ClientState); ok {
-		tag, err := m.pool.Exec(ctx, `
+		tag, err := m.database.Exec(ctx, `
 			UPDATE human_calling_provider_receipts receipt
 			SET call_id = call.id
 			FROM human_calling_calls call
@@ -632,7 +682,7 @@ func (m *Module) attachReceiptCall(
 	if fact.CallControlID == "" || fact.CallLegID == "" {
 		return nil
 	}
-	if _, err := m.pool.Exec(ctx, `
+	if _, err := m.database.Exec(ctx, `
 		UPDATE human_calling_provider_receipts receipt
 		SET call_id = leg.call_id
 		FROM human_calling_call_legs leg

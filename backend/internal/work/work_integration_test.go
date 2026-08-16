@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,9 +14,11 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
@@ -416,6 +420,79 @@ func TestResolveRecoveryTasksConvergesAcrossLocationsAndRespectsLaterWork(t *tes
 	}
 }
 
+func TestRecoveryReconciliationProcessesOneQueuedKeyAndIsRestartable(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 16, 11, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	phone := "+15555550125"
+	locationID := authorization.Locations[0].ID
+	recoveryCallID := insertCallAt(
+		t, pool, authorization, locationID, phone, "Recovery caller", now,
+	)
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin recovery Task: %v", err)
+	}
+	task, err := module.EnsureRecoveryTask(
+		context.Background(), tx, work.EnsureRecoveryTaskCommand{
+			CallID: recoveryCallID, PracticeID: authorization.Practice.ID,
+			LocationID: locationID, Phone: phone,
+			Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ensure recovery Task: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit recovery Task: %v", err)
+	}
+
+	connectedAt := now.Add(10 * time.Minute)
+	connectedCallID := insertCallAt(
+		t, pool, authorization, locationID, phone, "Connected caller", connectedAt,
+	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET direction = 'INBOUND'
+		WHERE id = $1
+	`, connectedCallID); err != nil {
+		t.Fatalf("mark connected Call inbound: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO work_recovery_reconciliation_queue (
+			practice_id, phone, enqueued_at
+		) VALUES ($1, $2, $3)
+	`, authorization.Practice.ID, phone, now); err != nil {
+		t.Fatalf("queue recovery reconciliation: %v", err)
+	}
+
+	processed, err := module.ProcessNextRecoveryReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process recovery reconciliation = %v, %v", processed, err)
+	}
+	resolved, err := module.ReadTask(context.Background(), identity, task.ID)
+	if err != nil || resolved.State != work.TaskCompleted ||
+		resolved.CompletedBy == nil ||
+		resolved.CompletedBy.Kind != access.ActorService {
+		t.Fatalf("reconciled recovery Task = %#v, %v", resolved, err)
+	}
+	processed, err = module.ProcessNextRecoveryReconciliation(context.Background())
+	if err != nil || processed {
+		t.Fatalf("replayed recovery reconciliation = %v, %v; want idle", processed, err)
+	}
+	var activityCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_activities
+		WHERE task_id = $1
+			AND kind = 'TASK_AUTO_COMPLETED_INBOUND_CALL'
+	`, task.ID).Scan(&activityCount); err != nil || activityCount != 1 {
+		t.Fatalf("reconciliation Activity count = %d, %v", activityCount, err)
+	}
+}
+
 func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
@@ -508,9 +585,9 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		task.CreatedBy.Email != "" {
 		t.Fatalf("created AI Task = %#v", task)
 	}
-	sourceSearch, err := module.QueryTasks(
+	sourceSearch, err := workspace.New(pool, accessModule).QueryTasks(
 		context.Background(),
-		work.QueryTasksCommand{
+		workspace.QueryTasksCommand{
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
 			Search:     "specialist",
@@ -530,9 +607,9 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		authorization.Locations[0].Name,
 		"documentation",
 	} {
-		page, err := module.QueryTasks(
+		page, err := workspace.New(pool, accessModule).QueryTasks(
 			context.Background(),
-			work.QueryTasksCommand{
+			workspace.QueryTasksCommand{
 				Identity: identity, PracticeID: authorization.Practice.ID,
 				Search: search,
 			},
@@ -998,61 +1075,50 @@ func TestTaskLifecycleRejectsStaleRenameAndKeepsCompletionRecoverable(t *testing
 	}
 }
 
-func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
+func TestWorkspaceQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
 	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	writes := work.New(pool, accessModule, func() time.Time { return now })
+	reads := workspace.New(pool, accessModule)
 
 	openOld := createTask(
-		t, pool, module, authorization, authorization.Locations[0].ID,
+		t, pool, writes, authorization, authorization.Locations[0].ID,
 		"+19851230001", "Verify referral", now,
 	)
 	now = now.Add(time.Minute)
 	openNew := createTask(
-		t, pool, module, authorization, authorization.Locations[1].ID,
+		t, pool, writes, authorization, authorization.Locations[1].ID,
 		"+19851230002", "Confirm surgery instructions", now,
 	)
 	now = now.Add(time.Minute)
 	completedOld := createTask(
-		t, pool, module, authorization, authorization.Locations[0].ID,
+		t, pool, writes, authorization, authorization.Locations[0].ID,
 		"+19851230003", "Send records", now,
 	)
 	now = now.Add(time.Minute)
-	completedOld, err := module.CompleteTask(
-		context.Background(),
-		work.CompleteTaskCommand{
-			Identity:        identity,
-			TaskID:          completedOld.ID,
-			ExpectedVersion: completedOld.Version,
-		},
-	)
+	completedOld, err := writes.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Identity: identity, TaskID: completedOld.ID, ExpectedVersion: completedOld.Version,
+	})
 	if err != nil {
 		t.Fatalf("complete older Task: %v", err)
 	}
 	now = now.Add(time.Minute)
 	completedNew := createTask(
-		t, pool, module, authorization, authorization.Locations[1].ID,
+		t, pool, writes, authorization, authorization.Locations[1].ID,
 		"+19851230004", "Confirm pharmacy", now,
 	)
 	now = now.Add(time.Minute)
-	completedNew, err = module.CompleteTask(
-		context.Background(),
-		work.CompleteTaskCommand{
-			Identity:        identity,
-			TaskID:          completedNew.ID,
-			ExpectedVersion: completedNew.Version,
-		},
-	)
+	completedNew, err = writes.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Identity: identity, TaskID: completedNew.ID, ExpectedVersion: completedNew.Version,
+	})
 	if err != nil {
 		t.Fatalf("complete newer Task: %v", err)
 	}
 
-	firstPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Limit:      2,
+	firstPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID, Limit: 2,
 	})
 	if err != nil {
 		t.Fatalf("query first Task page: %v", err)
@@ -1061,39 +1127,31 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	if firstPage.NextCursor != "" {
 		t.Fatalf("last open Task page cursor = %q, want empty", firstPage.NextCursor)
 	}
-	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		State:      work.TaskCompleted,
-		Limit:      2,
+	completedPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		State: work.TaskCompleted, Limit: 2,
 	})
 	if err != nil {
-		t.Fatalf("query second Task page: %v", err)
+		t.Fatalf("query completed Task page: %v", err)
 	}
-	assertTaskIDs(t, secondPage.Items, completedNew.ID, completedOld.ID)
-	if secondPage.NextCursor != "" {
-		t.Fatalf("last Task page cursor = %q, want empty", secondPage.NextCursor)
+	assertTaskIDs(t, completedPage.Items, completedNew.ID, completedOld.ID)
+	if completedPage.NextCursor != "" {
+		t.Fatalf("last completed Task page cursor = %q, want empty", completedPage.NextCursor)
 	}
 
-	locationPage, err := module.QueryTasks(
-		context.Background(),
-		work.QueryTasksCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-		},
-	)
+	locationPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		LocationID: authorization.Locations[0].ID,
+	})
 	if err != nil {
 		t.Fatalf("query Location Tasks: %v", err)
 	}
 	assertTaskIDs(t, locationPage.Items, openOld.ID)
-	completedLocationPage, err := module.QueryTasks(
+	completedLocationPage, err := reads.QueryTasks(
 		context.Background(),
-		work.QueryTasksCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			LocationID: authorization.Locations[0].ID,
-			State:      work.TaskCompleted,
+		workspace.QueryTasksCommand{
+			Identity: identity, PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID, State: work.TaskCompleted,
 		},
 	)
 	if err != nil {
@@ -1101,35 +1159,24 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	}
 	assertTaskIDs(t, completedLocationPage.Items, completedOld.ID)
 
-	titlePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Search:     "SURGERY",
+	titlePage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID, Search: "SURGERY",
 	})
 	if err != nil {
 		t.Fatalf("search Task title: %v", err)
 	}
 	assertTaskIDs(t, titlePage.Items, openNew.ID)
-
-	phonePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Search:     "(985) 123-0002",
+	phonePage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID, Search: "(985) 123-0002",
 	})
 	if err != nil {
 		t.Fatalf("search Task phone: %v", err)
 	}
 	assertTaskIDs(t, phonePage.Items, openNew.ID)
-
 	for _, literal := range []string{"%", "_"} {
-		literalPage, err := module.QueryTasks(
-			context.Background(),
-			work.QueryTasksCommand{
-				Identity:   identity,
-				PracticeID: authorization.Practice.ID,
-				Search:     literal,
-			},
-		)
+		literalPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+			Identity: identity, PracticeID: authorization.Practice.ID, Search: literal,
+		})
 		if err != nil {
 			t.Fatalf("search literal %q: %v", literal, err)
 		}
@@ -1137,366 +1184,181 @@ func TestQueryTasksPreservesScopedQueueOrderingSearchAndCursor(t *testing.T) {
 	}
 }
 
-func TestQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testing.T) {
+func TestWorkspaceQueryTasksLoadsRelatedInteractionCountsInOneQuery(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	writes := work.New(pool, accessModule, func() time.Time { return now })
+
+	tasks := make([]work.Task, 3)
+	for index := range tasks {
+		tasks[index] = createTask(
+			t, pool, writes, authorization, authorization.Locations[0].ID,
+			fmt.Sprintf("+1985555010%d", index),
+			fmt.Sprintf("Query count Task %d", index),
+			now.Add(time.Duration(index)*time.Minute),
+		)
+	}
+	attachTaskInteractionFixture(t, pool, tasks[0])
+
+	tracer := &workInteractionQueryTracer{}
+	reads := newTracedWorkspaceModule(t, pool, tracer, now)
+	page, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		Ordering: work.TaskOrderingTime,
+	})
+	if err != nil {
+		t.Fatalf("query Tasks with related Interaction counts: %v", err)
+	}
+	if len(page.Items) != len(tasks) {
+		t.Fatalf("queried Tasks = %d, want %d", len(page.Items), len(tasks))
+	}
+	wantCounts := map[string]int{tasks[0].ID: 1, tasks[1].ID: 0, tasks[2].ID: 0}
+	for _, task := range page.Items {
+		want, ok := wantCounts[task.ID]
+		if !ok {
+			t.Fatalf("queried unexpected Task %q", task.ID)
+		}
+		if task.RelatedInteractionCount != want {
+			t.Fatalf("Task %q related Interaction count = %d, want %d",
+				task.ID, task.RelatedInteractionCount, want)
+		}
+		delete(wantCounts, task.ID)
+	}
+	if got := tracer.interactionQueries.Load(); got != 1 {
+		t.Fatalf("Workspace QueryTasks Interaction queries = %d, want 1", got)
+	}
+}
+
+func TestWorkspaceQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
 	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	writes := work.New(pool, accessModule, func() time.Time { return now })
+	reads := workspace.New(pool, accessModule)
 	service := access.ServiceIdentity{
-		Subject:       "abita-counts",
-		PracticeID:    authorization.Practice.ID,
+		Subject: "abita-counts", PracticeID: authorization.Practice.ID,
 		LocationScope: access.LocationScopeAll,
 		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
 	}
 	for index := range 55 {
 		key := fmt.Sprintf("count-%02d", index)
-		if _, _, err := module.CreateAITask(
-			context.Background(),
-			work.CreateAITaskCommand{
-				Service:        service,
-				OfficeKey:      "spring-hill",
-				OfficePhone:    "+17275919997",
-				SourceCallID:   "source-" + key,
-				IdempotencyKey: "staff_task_" + key,
-				Phone:          "+17275551212",
-				Summary:        "Review request " + key,
-				Message:        "Caller supplied a complete request for " + key + ".",
-				Category:       work.TaskCategoryOther,
-				Urgency:        work.TaskUrgencyNormal,
-			},
-		); err != nil {
+		if _, _, err := writes.CreateAITask(context.Background(), work.CreateAITaskCommand{
+			Service: service, OfficeKey: "spring-hill", OfficePhone: "+17275919997",
+			SourceCallID: "source-" + key, IdempotencyKey: "staff_task_" + key,
+			Phone: "+17275551212", Summary: "Review request " + key,
+			Message:  "Caller supplied a complete request for " + key + ".",
+			Category: work.TaskCategoryOther, Urgency: work.TaskUrgencyNormal,
+		}); err != nil {
 			t.Fatalf("create Task %d: %v", index, err)
 		}
 		now = now.Add(time.Second)
 	}
 	for index, title := range []string{
-		"Book annual exam",
-		"Cancel annual exam",
-		"Reschedule annual exam",
+		"Book annual exam", "Cancel annual exam", "Reschedule annual exam",
 	} {
 		key := fmt.Sprintf("appointment-count-%d", index)
-		if _, _, err := module.CreateAITask(
-			context.Background(),
-			work.CreateAITaskCommand{
-				Service:        service,
-				OfficeKey:      "spring-hill",
-				OfficePhone:    "+17275919997",
-				SourceCallID:   "source-" + key,
-				IdempotencyKey: "staff_task_" + key,
-				Phone:          "+17275551212",
-				Summary:        title,
-				Message:        "Caller requested: " + title + ".",
-				Category:       work.TaskCategoryAppointments,
-				Urgency:        work.TaskUrgencyNormal,
-			},
-		); err != nil {
+		if _, _, err := writes.CreateAITask(context.Background(), work.CreateAITaskCommand{
+			Service: service, OfficeKey: "spring-hill", OfficePhone: "+17275919997",
+			SourceCallID: "source-" + key, IdempotencyKey: "staff_task_" + key,
+			Phone: "+17275551212", Summary: title,
+			Message:  "Caller requested: " + title + ".",
+			Category: work.TaskCategoryAppointments, Urgency: work.TaskUrgencyNormal,
+		}); err != nil {
 			t.Fatalf("create appointment Task %d: %v", index, err)
 		}
 		now = now.Add(time.Second)
 	}
 
-	firstPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Limit:      50,
+	firstPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID, Limit: 50,
 	})
 	if err != nil {
 		t.Fatalf("query first Task page: %v", err)
 	}
 	if len(firstPage.Items) != 50 || firstPage.NextCursor == "" {
-		t.Fatalf(
-			"first Task page = %d items, cursor %q; want 50 items and another page",
-			len(firstPage.Items),
-			firstPage.NextCursor,
-		)
+		t.Fatalf("first Task page = %d items, cursor %q; want 50 items and another page",
+			len(firstPage.Items), firstPage.NextCursor)
 	}
 	wantCounts := work.TaskFolderCounts{
-		Tasks:         55,
-		Bookings:      1,
-		Cancellations: 1,
-		Reschedules:   1,
-		Categories: work.TaskCategoryCounts{
-			Other: 55,
-		},
+		Tasks: 55, Bookings: 1, Cancellations: 1, Reschedules: 1,
+		Categories: work.TaskCategoryCounts{Other: 55},
 	}
 	if firstPage.Counts != wantCounts {
 		t.Fatalf("first Task page counts = %#v, want %#v", firstPage.Counts, wantCounts)
 	}
-
-	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Cursor:     firstPage.NextCursor,
-		Limit:      50,
+	secondPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		Cursor: firstPage.NextCursor, Limit: 50,
 	})
 	if err != nil {
 		t.Fatalf("query second Task page: %v", err)
 	}
 	if len(secondPage.Items) != 8 || secondPage.NextCursor != "" {
-		t.Fatalf(
-			"second Task page = %d items, cursor %q; want 8 items and no cursor",
-			len(secondPage.Items),
-			secondPage.NextCursor,
-		)
+		t.Fatalf("second Task page = %d items, cursor %q; want 8 items and no cursor",
+			len(secondPage.Items), secondPage.NextCursor)
 	}
 	if secondPage.Counts != wantCounts {
 		t.Fatalf("second Task page counts = %#v, want %#v", secondPage.Counts, wantCounts)
 	}
 }
 
-func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Date(2026, time.August, 13, 13, 0, 0, 0, time.UTC)
-	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
-	locationID := authorization.Locations[0].ID
-
-	ensureRecovery := func(phone string, occurredAt time.Time) work.Task {
-		t.Helper()
-		callID := insertCallAt(
-			t,
-			pool,
-			authorization,
-			locationID,
-			phone,
-			"Recovery caller",
-			occurredAt,
-		)
-		tx, err := pool.Begin(context.Background())
-		if err != nil {
-			t.Fatalf("begin recovery Task transaction: %v", err)
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		task, err := module.EnsureRecoveryTask(
-			context.Background(),
-			tx,
-			work.EnsureRecoveryTaskCommand{
-				CallID:     callID,
-				PracticeID: authorization.Practice.ID,
-				LocationID: locationID,
-				Phone:      phone,
-				Outcome:    work.RecoveryOutcomeMissedCall,
-				OccurredAt: occurredAt,
-			},
-		)
-		if err != nil {
-			t.Fatalf("ensure recovery Task: %v", err)
-		}
-		if err := tx.Commit(context.Background()); err != nil {
-			t.Fatalf("commit recovery Task: %v", err)
-		}
-		return task
-	}
-
-	older := ensureRecovery("+15555550101", now)
-	now = now.Add(time.Minute)
-	newest := ensureRecovery("+15555550102", now)
-
-	service := access.ServiceIdentity{
-		Subject:       "abita-folder-pagination",
-		PracticeID:    authorization.Practice.ID,
-		LocationScope: access.LocationScopeAll,
-		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-	}
-	for index := range 3 {
-		now = now.Add(time.Minute)
-		key := fmt.Sprintf("newer-general-%d", index)
-		if _, _, err := module.CreateAITask(
-			context.Background(),
-			work.CreateAITaskCommand{
-				Service:        service,
-				OfficeKey:      "spring-hill",
-				OfficePhone:    "+17275919997",
-				SourceCallID:   "source-" + key,
-				IdempotencyKey: "staff_task_" + key,
-				Phone:          "+17275551212",
-				Summary:        "Review request " + key,
-				Message:        "Caller supplied a complete request.",
-				Category:       work.TaskCategoryOther,
-				Urgency:        work.TaskUrgencyNormal,
-			},
-		); err != nil {
-			t.Fatalf("create newer general Task %d: %v", index, err)
-		}
-	}
-
-	unfiltered, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Ordering:   work.TaskOrderingRecent,
-		Limit:      1,
-	})
-	if err != nil {
-		t.Fatalf("query unfiltered Tasks: %v", err)
-	}
-	if len(unfiltered.Items) != 1 || unfiltered.Items[0].ID == newest.ID {
-		t.Fatalf(
-			"unfiltered first row = %#v, want a newer unrelated Task before recovery %q",
-			unfiltered.Items,
-			newest.ID,
-		)
-	}
-	tasksPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Ordering:   work.TaskOrderingRecent,
-		Folder:     work.TaskFolderWork,
-		Limit:      50,
-	})
-	if err != nil {
-		t.Fatalf("query Tasks folder: %v", err)
-	}
-	if len(tasksPage.Items) != 3 {
-		t.Fatalf("Tasks folder = %#v, want only the 3 unrelated Tasks", tasksPage.Items)
-	}
-	for _, task := range tasksPage.Items {
-		if task.Origin == work.TaskOriginMissedCall ||
-			task.Origin == work.TaskOriginVoicemail {
-			t.Fatalf("Tasks folder contains recovery Task %#v", task)
-		}
-	}
-
-	page, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Ordering:   work.TaskOrderingRecent,
-		Folder:     work.TaskFolderMissedCalls,
-		Limit:      1,
-	})
-	if err != nil {
-		t.Fatalf("query Missed Calls folder: %v", err)
-	}
-	if len(page.Items) != 1 || page.Items[0].ID != newest.ID {
-		t.Fatalf(
-			"first Missed Calls row = %#v, want newest recovery Task %q (older %q)",
-			page.Items,
-			newest.ID,
-			older.ID,
-		)
-	}
-	if page.NextCursor == "" {
-		t.Fatal("first Missed Calls page has no cursor; want the older recovery page")
-	}
-	secondPage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Ordering:   work.TaskOrderingRecent,
-		Folder:     work.TaskFolderMissedCalls,
-		Cursor:     page.NextCursor,
-		Limit:      1,
-	})
-	if err != nil {
-		t.Fatalf("query second Missed Calls page: %v", err)
-	}
-	if len(secondPage.Items) != 1 || secondPage.Items[0].ID != older.ID ||
-		secondPage.NextCursor != "" {
-		t.Fatalf(
-			"second Missed Calls page = %#v with cursor %q, want older recovery Task %q and no cursor",
-			secondPage.Items,
-			secondPage.NextCursor,
-			older.ID,
-		)
-	}
-}
-
-func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
+func TestWorkspaceQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
 	authorization, identity := provisionStaff(t, accessModule, now)
-	module := work.New(pool, accessModule, func() time.Time { return now })
+	writes := work.New(pool, accessModule, func() time.Time { return now })
+	reads := workspace.New(pool, accessModule)
 	service := access.ServiceIdentity{
-		Subject:       "abita-priority",
-		PracticeID:    authorization.Practice.ID,
+		Subject: "abita-priority", PracticeID: authorization.Practice.ID,
 		LocationScope: access.LocationScopeAll,
 		Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
 	}
-	createAI := func(
-		key string,
-		title string,
-		urgency work.TaskUrgency,
-	) work.Task {
+	createAI := func(key, title string, urgency work.TaskUrgency) work.Task {
 		t.Helper()
-		task, _, err := module.CreateAITask(
-			context.Background(),
-			work.CreateAITaskCommand{
-				Service:        service,
-				OfficeKey:      "spring-hill",
-				OfficePhone:    "+17275919997",
-				SourceCallID:   "source-" + key,
-				IdempotencyKey: "staff_task_" + key,
-				Phone:          "+17275551212",
-				Summary:        title,
-				Message:        "Caller supplied the complete request for " + title + ".",
-				Category:       work.TaskCategoryOther,
-				Urgency:        urgency,
-			},
-		)
+		task, _, err := writes.CreateAITask(context.Background(), work.CreateAITaskCommand{
+			Service: service, OfficeKey: "spring-hill", OfficePhone: "+17275919997",
+			SourceCallID: "source-" + key, IdempotencyKey: "staff_task_" + key,
+			Phone: "+17275551212", Summary: title,
+			Message:  "Caller supplied the complete request for " + title + ".",
+			Category: work.TaskCategoryOther, Urgency: urgency,
+		})
 		if err != nil {
 			t.Fatalf("create %s AI Task: %v", key, err)
 		}
 		return task
 	}
-
 	normalOld := createAI("normal-old", "Normal old", work.TaskUrgencyNormal)
 	now = now.Add(time.Minute)
-	nonUrgent := createAI(
-		"non-urgent",
-		"Non-urgent",
-		work.TaskUrgencyNonUrgent,
-	)
+	nonUrgent := createAI("non-urgent", "Non-urgent", work.TaskUrgencyNonUrgent)
 	now = now.Add(time.Minute)
 	high := createAI("high", "High priority", work.TaskUrgencyHighPriority)
 	now = now.Add(time.Minute)
 	normalNew := createAI("normal-new", "Normal new", work.TaskUrgencyNormal)
 
-	timePage, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: authorization.Practice.ID,
-		Ordering:   work.TaskOrderingTime,
+	timePage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		Ordering: work.TaskOrderingTime,
 	})
 	if err != nil {
 		t.Fatalf("query time-ordered Tasks: %v", err)
 	}
-	assertTaskIDs(
-		t,
-		timePage.Items,
-		normalOld.ID,
-		nonUrgent.ID,
-		high.ID,
-		normalNew.ID,
-	)
-
-	priorityPage, err := module.QueryTasks(
-		context.Background(),
-		work.QueryTasksCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			Ordering:   work.TaskOrderingPriority,
-		},
-	)
+	assertTaskIDs(t, timePage.Items, normalOld.ID, nonUrgent.ID, high.ID, normalNew.ID)
+	priorityPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		Ordering: work.TaskOrderingPriority,
+	})
 	if err != nil {
 		t.Fatalf("query priority-ordered Tasks: %v", err)
 	}
-	assertTaskIDs(
-		t,
-		priorityPage.Items,
-		high.ID,
-		normalOld.ID,
-		normalNew.ID,
-		nonUrgent.ID,
-	)
-	firstPriorityPage, err := module.QueryTasks(
-		context.Background(),
-		work.QueryTasksCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			Ordering:   work.TaskOrderingPriority,
-			Limit:      2,
-		},
-	)
+	assertTaskIDs(t, priorityPage.Items, high.ID, normalOld.ID, normalNew.ID, nonUrgent.ID)
+	firstPriorityPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		Ordering: work.TaskOrderingPriority, Limit: 2,
+	})
 	if err != nil {
 		t.Fatalf("query first priority cursor page: %v", err)
 	}
@@ -1504,20 +1366,48 @@ func TestQueryTasksOrdersOpenWorkByPriorityOnlyWhenRequested(t *testing.T) {
 	if firstPriorityPage.NextCursor == "" {
 		t.Fatal("first priority cursor page has no next cursor")
 	}
-	secondPriorityPage, err := module.QueryTasks(
-		context.Background(),
-		work.QueryTasksCommand{
-			Identity:   identity,
-			PracticeID: authorization.Practice.ID,
-			Ordering:   work.TaskOrderingPriority,
-			Cursor:     firstPriorityPage.NextCursor,
-			Limit:      2,
-		},
-	)
+	secondPriorityPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
+		Identity: identity, PracticeID: authorization.Practice.ID,
+		Ordering: work.TaskOrderingPriority,
+		Cursor:   firstPriorityPage.NextCursor, Limit: 2,
+	})
 	if err != nil {
 		t.Fatalf("query second priority cursor page: %v", err)
 	}
 	assertTaskIDs(t, secondPriorityPage.Items, normalNew.ID, nonUrgent.ID)
+}
+
+func TestReadTaskDerivesRelatedInteractionCountFromLoadedInteractions(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, identity := provisionStaff(t, accessModule, now)
+	module := work.New(pool, accessModule, func() time.Time { return now })
+	task := createTask(
+		t,
+		pool,
+		module,
+		authorization,
+		authorization.Locations[0].ID,
+		"+19855550200",
+		"Read count Task",
+		now,
+	)
+	attachTaskInteractionFixture(t, pool, task)
+
+	tracer := &workInteractionQueryTracer{}
+	tracedModule := newTracedWorkModule(t, pool, tracer, now)
+	read, err := tracedModule.ReadTask(context.Background(), identity, task.ID)
+	if err != nil {
+		t.Fatalf("read Task with related Interactions: %v", err)
+	}
+	if read.RelatedInteractionCount != 1 || len(read.Interactions) != 1 ||
+		read.Interactions[0].CallID != task.CallID {
+		t.Fatalf("read Task related Interactions = %#v", read)
+	}
+	if got := tracer.interactionQueries.Load(); got != 1 {
+		t.Fatalf("ReadTask Interaction queries = %d, want 1", got)
+	}
 }
 
 func TestConcurrentCompletionAndReopenCommitOneActivityPerTransition(t *testing.T) {
@@ -1674,7 +1564,7 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 		EmailVerified: true,
 	}
 
-	page, err := module.QueryTasks(context.Background(), work.QueryTasksCommand{
+	page, err := workspace.New(pool, accessModule).QueryTasks(context.Background(), workspace.QueryTasksCommand{
 		Identity:   operator,
 		PracticeID: staff.Practice.ID,
 	})
@@ -1878,6 +1768,97 @@ func ensureCallFollowUp(
 		t.Fatalf("commit Task transaction: %v", err)
 	}
 	return task
+}
+
+func attachTaskInteractionFixture(
+	t *testing.T,
+	pool interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
+	task work.Task,
+) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO work_task_interactions (
+			task_id,
+			call_id,
+			practice_id,
+			location_id,
+			occurred_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+	`, task.ID, task.CallID, task.PracticeID, task.LocationID, task.CreatedAt); err != nil {
+		t.Fatalf("attach Task Interaction fixture: %v", err)
+	}
+}
+
+type workInteractionQueryTracer struct {
+	interactionQueries atomic.Int64
+}
+
+func (tracer *workInteractionQueryTracer) TraceQueryStart(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceQueryStartData,
+) context.Context {
+	if strings.Contains(data.SQL, "work_task_interactions") {
+		tracer.interactionQueries.Add(1)
+	}
+	return ctx
+}
+
+func (*workInteractionQueryTracer) TraceQueryEnd(
+	context.Context,
+	*pgx.Conn,
+	pgx.TraceQueryEndData,
+) {
+}
+
+func newTracedWorkModule(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	tracer pgx.QueryTracer,
+	now time.Time,
+) *work.Module {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("parse traced Work database config: %v", err)
+	}
+	config.ConnConfig.Tracer = tracer
+	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("open traced Work database pool: %v", err)
+	}
+	t.Cleanup(tracedPool.Close)
+	return work.New(
+		tracedPool,
+		access.New(tracedPool, func() time.Time { return now }),
+		func() time.Time { return now },
+	)
+}
+
+func newTracedWorkspaceModule(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	tracer pgx.QueryTracer,
+	now time.Time,
+) *workspace.Module {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("parse traced Workspace database config: %v", err)
+	}
+	config.ConnConfig.Tracer = tracer
+	tracedPool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("open traced Workspace database pool: %v", err)
+	}
+	t.Cleanup(tracedPool.Close)
+	return workspace.New(
+		tracedPool,
+		access.New(tracedPool, func() time.Time { return now }),
+	)
 }
 
 func provisionStaff(

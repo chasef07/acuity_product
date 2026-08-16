@@ -57,11 +57,21 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 
 	observer.Observe(observability.WebhookAcknowledged(
 		observability.WebhookDuplicate, 18*time.Millisecond))
-	observer.Observe(observability.ReceiptQueue(12, 7*time.Second, 1))
+	observer.Observe(observability.ReceiptQueue(12, 7*time.Second, 4, 3, 1))
 	observer.Observe(observability.TerminalCleanup(2, 90*time.Second, 3, 2*time.Minute))
 	observer.Observe(observability.ReceiptProcessed(
-		observability.ReceiptQuarantined, 7*time.Second, 80*time.Millisecond))
+		observability.ReceiptObsolete, 7*time.Second, 80*time.Millisecond))
 	observer.Observe(observability.DatabasePoolState(4, 1, 4))
+	observer.Observe(observability.DatabaseExecuted(
+		observability.DatabaseDeadlock,
+		12*time.Millisecond,
+	))
+	observer.Observe(observability.BackendRequest(
+		observability.AvailabilityRoute("/v1/patients/patient-123"),
+		observability.AvailabilityOutcome("patient@example.test"),
+		observability.FailureStage("+15555550100"),
+		20*time.Millisecond,
+	))
 	observer.Observe(observability.SSEStreamOpened())
 	observer.Observe(observability.SSEStreamClosed(observability.SSEClientClosed))
 	observer.Observe(observability.SSEListenerConnected(true))
@@ -78,14 +88,26 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 	assertField(t, logs, "acuity_call_center_receipt_queue", "depth", float64(12))
 	assertField(t, logs, "acuity_call_center_receipt_queue",
 		"quarantined_depth", float64(1))
+	assertField(t, logs, "acuity_call_center_receipt_queue",
+		"projection_retry_depth", float64(4))
+	assertField(t, logs, "acuity_call_center_receipt_queue",
+		"related_fact_depth", float64(3))
 	assertField(t, logs, "acuity_call_center_terminal_cleanup",
 		"staff_occupancy", float64(2))
 	assertField(t, logs, "acuity_call_center_terminal_cleanup",
 		"unresolved_hangups", float64(3))
 	assertField(t, logs, "acuity_call_center_receipt_processing",
-		"outcome", "quarantined")
+		"outcome", "obsolete")
 	assertField(t, logs, "acuity_call_center_database_pool",
 		"saturation_ratio", float64(1))
+	assertField(t, logs, "acuity_backend_database_execution",
+		"cause", "deadlock")
+	availability := findMetric(t, logs, "acuity_backend_availability")
+	if availability["route"] != "other" ||
+		availability["outcome"] != "other" ||
+		availability["failure_stage"] != "other" {
+		t.Fatalf("bounded availability metric = %#v", availability)
+	}
 	assertField(t, logs, "acuity_call_center_sse_stream", "active", float64(0))
 	assertField(t, logs, "acuity_call_center_sse_listener",
 		"state", "connected")

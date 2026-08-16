@@ -52,7 +52,7 @@ type storedReceiptPayload struct {
 // ProcessNextReceipt projects one durable receipt left pending by an interrupted
 // or transiently failed HTTP ingestion attempt.
 func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
-	if m.pool == nil {
+	if m.database == nil {
 		return false, ErrInvalidInput
 	}
 	var (
@@ -60,7 +60,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		payload storedReceiptPayload
 		raw     []byte
 	)
-	err := m.pool.QueryRow(ctx, `
+	err := m.database.QueryRow(ctx, `
 		SELECT
 			id::text,
 			service_subject,
@@ -157,7 +157,7 @@ func (m *Module) acceptReceipt(
 	fingerprint [32]byte,
 	receivedAt time.Time,
 ) (acceptedReceipt, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return acceptedReceipt{}, fmt.Errorf("begin AI Interaction receipt: %w", err)
 	}
@@ -275,7 +275,7 @@ func (m *Module) projectReceipt(
 	stage LifecycleStage,
 	projectedAt time.Time,
 ) (Interaction, UpsertStatus, error) {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Interaction{}, "", fmt.Errorf("begin AI Interaction projection: %w", err)
 	}
@@ -485,7 +485,7 @@ func (m *Module) quarantinePendingReceipt(
 	receiptID string,
 	errorCode string,
 ) error {
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin invalid AI Interaction receipt quarantine: %w", err)
 	}

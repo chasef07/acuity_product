@@ -150,7 +150,7 @@ func (m *Module) QueryAnalytics(
 ) (AnalyticsPage, error) {
 	normalizeAnalyticsCommand(&command)
 	duration, ok := analyticsRangeDuration(command.Range)
-	if m.pool == nil || m.access == nil || !ok ||
+	if m.database == nil || m.access == nil || !ok ||
 		!validUUID(command.PracticeID) ||
 		(command.LocationID != "" && !validUUID(command.LocationID)) ||
 		command.Limit < 1 || command.Limit > 100 {
@@ -163,7 +163,7 @@ func (m *Module) QueryAnalytics(
 
 	to := m.now().UTC().Truncate(time.Microsecond)
 	from := to.Add(-duration)
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return AnalyticsPage{}, fmt.Errorf("begin operator AI analytics query: %w", err)
 	}
@@ -406,10 +406,10 @@ func (m *Module) ReadOperatorAnalytics(
 	identity access.Identity,
 	interactionID string,
 ) (OperatorAnalyticsDetail, error) {
-	if m.pool == nil || m.access == nil || !validUUID(strings.TrimSpace(interactionID)) {
+	if m.database == nil || m.access == nil || !validUUID(strings.TrimSpace(interactionID)) {
 		return OperatorAnalyticsDetail{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return OperatorAnalyticsDetail{}, fmt.Errorf("begin operator AI analytics detail: %w", err)
 	}

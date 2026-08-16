@@ -34,8 +34,15 @@ export function filterTasksByCategory<
     : tasks.filter((task) => task.category === category)
 }
 
-export function recoveryGroupKey(locationID: string, phone: string) {
-  return `${locationID}:${phone}`
+export function projectTaskUpdate<
+  T extends { id: string; state: "OPEN" | "COMPLETED" },
+>(tasks: T[], task: T) {
+  if (task.state !== "OPEN") {
+    return tasks.filter((current) => current.id !== task.id)
+  }
+  return tasks.some((current) => current.id === task.id)
+    ? tasks.map((current) => (current.id === task.id ? task : current))
+    : [task, ...tasks]
 }
 
 export function taskCountForCategory(
@@ -53,27 +60,6 @@ export function taskFolderCursor(
   return loadedCount < totalCount ? nextCursor : ""
 }
 
-export function reconcileLoadedPage<T extends { id: string }>(
-  current: T[],
-  refreshed: T[],
-  totalCount: number,
-  currentCursor: string,
-  refreshedCursor: string,
-) {
-  const refreshedIDs = new Set(refreshed.map((item) => item.id))
-  const items = [
-    ...refreshed,
-    ...current.filter((item) => !refreshedIDs.has(item.id)),
-  ].slice(0, totalCount)
-  const keptExpandedWindow = items.length > refreshed.length
-
-  return {
-    items,
-    cursor:
-      items.length >= totalCount
-        ? ""
-        : keptExpandedWindow
-          ? currentCursor
-          : refreshedCursor,
-  }
+export function refreshTaskWindowTarget(loadedCount: number) {
+  return loadedCount > 50 ? loadedCount + 50 : 50
 }

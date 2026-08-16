@@ -22,6 +22,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
+	"github.com/chasef07/acuity_product/backend/internal/workspace"
 )
 
 func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
@@ -158,6 +159,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			Interactions:         interactionModule,
 			Messaging:            messaging.New(pool, accessModule, workModule, nil, messaging.Config{}, nil),
 			Work:                 workModule,
+			Workspace:            workspace.New(pool, accessModule),
 			ServiceAuthenticator: serviceAuth,
 		},
 	)
@@ -578,6 +580,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	var stored struct {
 		Status              string          `json:"status"`
 		Summary             string          `json:"summary"`
+		AppointmentAction   string          `json:"appointmentAction"`
 		AppointmentOutcome  string          `json:"appointmentOutcome"`
 		Appointment         map[string]any  `json:"appointment"`
 		PreviousAppointment map[string]any  `json:"previousAppointment"`
@@ -588,6 +591,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	decode(t, detail, &stored)
 	if stored.Status != "COMPLETED" ||
 		stored.Summary != "Caller successfully rescheduled an appointment." ||
+		stored.AppointmentAction != "RESCHEDULED" ||
 		stored.AppointmentOutcome != "RESCHEDULE" ||
 		stored.Appointment["patientName"] != "Jane Doe" ||
 		stored.Appointment["appointmentDate"] != "2026-08-20" ||

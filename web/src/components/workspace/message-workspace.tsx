@@ -1272,9 +1272,9 @@ function taskActivityLabel(
     case "INTERACTION_ATTACHED":
       return "New interaction attached"
     case "TASK_AUTO_COMPLETED_INBOUND_CALL":
-      return "Resolved after staff contact"
+      return "Auto-completed after connected inbound call"
     case "TASK_AUTO_COMPLETED_BOOKING":
-      return "Resolved after confirmed booking"
+      return "Auto-completed after successful booking"
     case "TASK_AUTO_COMPLETED_DUPLICATE":
       return "Duplicate resolved"
     default:

@@ -15,6 +15,7 @@ type CallingWork interface {
 	ReportReceiptQueue(context.Context) error
 	ProcessNextCommand(context.Context) (bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
+	ProcessNextRecoveryReconciliation(context.Context) (bool, error)
 	ReconcileStaleCalls(context.Context) (int, error)
 	ExpireDispositions(context.Context) (int, error)
 	RecoverInterruptedCommands(context.Context) error
@@ -50,6 +51,7 @@ type Config struct {
 	ReceiptBatchSize   int
 	CommandBatchSize   int
 	CommandWorkers     int
+	IdleBackoffMax     time.Duration
 	ErrorBackoffMin    time.Duration
 	ErrorBackoffMax    time.Duration
 }
@@ -64,43 +66,14 @@ type Runner struct {
 	wait         func(context.Context, time.Duration) bool
 }
 
-func New(config Config, work CallingWork, dependency Dependency) (*Runner, error) {
-	return newRunner(config, work, nil, nil, dependency)
-}
-
-func NewWithMessaging(
-	config Config,
-	work CallingWork,
-	messages MessagingWork,
-	dependency Dependency,
-) (*Runner, error) {
-	if messages == nil {
-		return nil, fmt.Errorf("messaging worker dependency is required")
-	}
-	return newRunner(config, work, messages, nil, dependency)
-}
-
-func NewWithMessagingAndInteractions(
+func New(
 	config Config,
 	work CallingWork,
 	messages MessagingWork,
 	interactions InteractionWork,
 	dependency Dependency,
 ) (*Runner, error) {
-	if messages == nil || interactions == nil {
-		return nil, fmt.Errorf("messaging and interaction worker dependencies are required")
-	}
-	return newRunner(config, work, messages, interactions, dependency)
-}
-
-func newRunner(
-	config Config,
-	work CallingWork,
-	messages MessagingWork,
-	interactions InteractionWork,
-	dependency Dependency,
-) (*Runner, error) {
-	if work == nil || dependency == nil {
+	if work == nil || messages == nil || interactions == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
 	}
 	if config.WorkInterval <= 0 ||
@@ -117,6 +90,12 @@ func newRunner(
 	if config.ErrorBackoffMin == 0 {
 		config.ErrorBackoffMin = config.WorkInterval
 	}
+	if config.IdleBackoffMax == 0 {
+		config.IdleBackoffMax = 2 * time.Second
+		if config.WorkInterval > config.IdleBackoffMax {
+			config.IdleBackoffMax = config.WorkInterval
+		}
+	}
 	if config.ErrorBackoffMax == 0 {
 		config.ErrorBackoffMax = 10 * time.Second
 		if config.ErrorBackoffMin > config.ErrorBackoffMax {
@@ -129,9 +108,10 @@ func newRunner(
 	if config.MetricTimeout == 0 {
 		config.MetricTimeout = config.HealthTimeout
 	}
-	if config.ErrorBackoffMin < 0 ||
+	if config.IdleBackoffMax < config.WorkInterval ||
+		config.ErrorBackoffMin < 0 ||
 		config.ErrorBackoffMax < config.ErrorBackoffMin {
-		return nil, fmt.Errorf("valid worker error backoff bounds are required")
+		return nil, fmt.Errorf("valid worker backoff bounds are required")
 	}
 	if config.MetricInterval < 0 || config.MetricTimeout < 0 {
 		return nil, fmt.Errorf("positive worker metric limits are required")
@@ -149,14 +129,7 @@ func newRunner(
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	laneCount := 2 + runner.config.CommandWorkers
-	if runner.messages != nil {
-		laneCount += 2
-	}
-	if runner.interactions != nil {
-		laneCount++
-	}
-	lanes.Add(laneCount)
+	lanes.Add(6 + runner.config.CommandWorkers)
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLane(
@@ -177,37 +150,42 @@ func (runner *Runner) Run(ctx context.Context) error {
 			)
 		}()
 	}
-	if runner.messages != nil {
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLane(
-				ctx,
-				runner.config.ReceiptBatchSize,
-				"messaging_receipt_processing_failed",
-				runner.messages.ProcessNextReceipt,
-			)
-		}()
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLane(
-				ctx,
-				runner.config.CommandBatchSize,
-				"messaging_command_processing_failed",
-				runner.messages.ProcessNextCommand,
-			)
-		}()
-	}
-	if runner.interactions != nil {
-		go func() {
-			defer lanes.Done()
-			runner.runQueueLane(
-				ctx,
-				runner.config.ReceiptBatchSize,
-				"ai_interaction_receipt_processing_failed",
-				runner.interactions.ProcessNextReceipt,
-			)
-		}()
-	}
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.ReceiptBatchSize,
+			"messaging_receipt_processing_failed",
+			runner.messages.ProcessNextReceipt,
+		)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.CommandBatchSize,
+			"work_recovery_reconciliation_failed",
+			runner.work.ProcessNextRecoveryReconciliation,
+		)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.CommandBatchSize,
+			"messaging_command_processing_failed",
+			runner.messages.ProcessNextCommand,
+		)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.ReceiptBatchSize,
+			"ai_interaction_receipt_processing_failed",
+			runner.interactions.ProcessNextReceipt,
+		)
+	}()
 	go func() {
 		defer lanes.Done()
 		runner.runMaintenanceLane(ctx)
@@ -226,8 +204,14 @@ func (runner *Runner) runQueueLane(
 		runner.config.ErrorBackoffMin,
 		runner.config.ErrorBackoffMax,
 	)
+	idleMaximum := runner.config.IdleBackoffMax
+	if idleMaximum < runner.config.WorkInterval {
+		idleMaximum = runner.config.WorkInterval
+	}
+	idleBackoff := newFailureBackoff(runner.config.WorkInterval, idleMaximum)
 	for ctx.Err() == nil {
 		failed := false
+		progressed := false
 		for range batchSize {
 			processed, err := runBoolWork(
 				ctx,
@@ -243,10 +227,16 @@ func (runner *Runner) runQueueLane(
 			if !processed {
 				break
 			}
+			progressed = true
 		}
 		delay := runner.config.WorkInterval
 		if failed {
+			idleBackoff.reset()
 			delay = backoff.fail(runner.jitter)
+		} else if progressed {
+			idleBackoff.reset()
+		} else {
+			delay = idleBackoff.step()
 		}
 		if !runner.wait(ctx, delay) {
 			return
@@ -339,7 +329,7 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 		warn(ctx, "provider_credential_reconciliation_failed", err)
 		failed = true
 	}
-	if runner.messages == nil || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return failed
 	}
 	if err := runWork(
@@ -472,6 +462,10 @@ func newFailureBackoff(minimum, maximum time.Duration) *failureBackoff {
 func (backoff *failureBackoff) fail(
 	jitter func(time.Duration) time.Duration,
 ) time.Duration {
+	return jitter(backoff.step())
+}
+
+func (backoff *failureBackoff) step() time.Duration {
 	delay := backoff.next
 	if backoff.next < backoff.max {
 		if backoff.next > backoff.max/2 {
@@ -480,7 +474,7 @@ func (backoff *failureBackoff) fail(
 			backoff.next *= 2
 		}
 	}
-	return jitter(delay)
+	return delay
 }
 
 func (backoff *failureBackoff) reset() {

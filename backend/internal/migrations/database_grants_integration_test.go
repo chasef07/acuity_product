@@ -637,6 +637,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_threads",
 		"work_task_activities",
 		"work_task_interactions",
+		"work_recovery_reconciliation_queue",
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
@@ -670,7 +671,13 @@ func expectedTablePrivileges() map[string]bool {
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
-	grant("acuity_worker", "DELETE", "ai_interaction_attention", "messaging_attachments")
+	grant(
+		"acuity_worker",
+		"DELETE",
+		"ai_interaction_attention",
+		"messaging_attachments",
+		"work_recovery_reconciliation_queue",
+	)
 
 	for _, relation := range []string{"user", "session", "account", "verification", "jwks"} {
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {

@@ -37,9 +37,12 @@ lane. Its two-connection pool remains the hard database-concurrency bound.
 Command claims lock a Call only while committing one command as `SENDING`;
 provider I/O happens after commit. Commands for another Call and receipt
 projection can therefore use the remaining capacity, while commands for the
-same Call remain serialized. Queue and maintenance failures use independent
-equal-jitter exponential backoff from 250 milliseconds to 10 seconds and reset
-to the normal cadence after a successful or no-work iteration.
+same Call remain serialized. Queue lanes poll at 250 milliseconds while work is
+moving, then back off empty claims deterministically through 500 milliseconds
+and one second to a two-second ceiling; any progress resets them immediately.
+This cuts steady empty polling by 8x while bounding idle wake-up latency at two
+seconds. Queue and maintenance failures use independent equal-jitter exponential
+backoff from 250 milliseconds to 10 seconds and reset after successful work.
 
 Each runtime gets a distinct service account. Only `migrate` receives schema
 DDL authority and provisioning-file access.

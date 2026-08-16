@@ -31,7 +31,7 @@ func (m *Module) ReadCall(
 	if m.access == nil || callID == "" {
 		return Call{}, ErrDenied
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Call{}, fmt.Errorf("begin Call read: %w", err)
 	}
@@ -227,7 +227,7 @@ func (m *Module) QueryCallHistory(
 			return CallHistoryPage{}, ErrInvalidInput
 		}
 	}
-	rows, err := m.pool.Query(ctx, `
+	rows, err := m.database.Query(ctx, `
 		SELECT call.id::text, call.direction, call.created_at, call.ended_at,
 			GREATEST(0, EXTRACT(EPOCH FROM (
 				COALESCE(call.ended_at, $6) - call.created_at
@@ -322,22 +322,60 @@ func (m *Module) RequestHangup(
 	if sessionID == "" || callID == "" {
 		return Call{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Call{}, fmt.Errorf("begin exact-leg Hangup: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var practiceID, locationID string
+	var terminal bool
 	if err := tx.QueryRow(ctx, `
-		SELECT practice_id::text, location_id::text FROM human_calling_calls
-		WHERE id = $1 FOR UPDATE
-	`, callID).Scan(&practiceID, &locationID); err != nil {
+		SELECT call.practice_id::text, call.location_id::text,
+			call.terminal_outcome IS NOT NULL
+		FROM human_calling_calls call
+		WHERE call.id = $1
+		FOR UPDATE OF call
+	`, callID).Scan(&practiceID, &locationID, &terminal); err != nil {
 		return Call{}, ErrDenied
 	}
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
 		return Call{}, ErrDenied
+	}
+	hangupCommitted := terminal
+	if !hangupCommitted {
+		rows, err := tx.Query(ctx, `
+			SELECT COALESCE(payload->>'client_state', '')
+			FROM human_calling_provider_commands
+			WHERE call_id = $1 AND action = 'HANGUP_LEG'
+			ORDER BY created_at, id
+		`, callID)
+		if err != nil {
+			return Call{}, fmt.Errorf("read committed Hangup commands: %w", err)
+		}
+		for rows.Next() {
+			var clientState string
+			if err := rows.Scan(&clientState); err != nil {
+				rows.Close()
+				return Call{}, fmt.Errorf("scan committed Hangup command: %w", err)
+			}
+			state, valid := parseCallLegClientState(clientState)
+			if valid && state.CallID == callID && state.Kind == callLegClientStateStaffHangup {
+				hangupCommitted = true
+				break
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return Call{}, fmt.Errorf("iterate committed Hangup commands: %w", err)
+		}
+	}
+	if hangupCommitted {
+		if err := tx.Commit(ctx); err != nil {
+			return Call{}, fmt.Errorf("commit idempotent Hangup: %w", err)
+		}
+		return m.ReadCall(ctx, identity, callID)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
@@ -392,7 +430,7 @@ func (m *Module) RequestHangup(
 		if _, err := m.insertCallLegCommand(
 			ctx, tx, callID, target.id, "", target.subject, CommandHangupLeg,
 			target.controlID, map[string]any{"client_state": encodeCallLegClientState(
-				callID, target.id, target.role, "staff_hangup",
+				callID, target.id, target.role, callLegClientStateStaffHangup,
 			)}, "",
 		); err != nil {
 			return Call{}, err
@@ -423,7 +461,7 @@ func (m *Module) RecordDisposition(
 	if sessionID == "" || m.work == nil || !validDisposition(disposition) {
 		return DispositionResult{}, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return DispositionResult{}, fmt.Errorf("begin Call disposition: %w", err)
 	}
@@ -538,7 +576,7 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 	if m.work == nil {
 		return 0, ErrInvalidInput
 	}
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("begin disposition expiry: %w", err)
 	}
@@ -682,7 +720,7 @@ func (m *Module) ReadOperatorTimeline(
 	if err != nil || !discovery.PlatformOperator {
 		return OperatorTimeline{}, ErrDenied
 	}
-	projection, err := m.loadCallProjection(ctx, m.pool, callID)
+	projection, err := m.loadCallProjection(ctx, m.database, callID)
 	if err != nil {
 		return OperatorTimeline{}, ErrDenied
 	}
@@ -691,7 +729,7 @@ func (m *Module) ReadOperatorTimeline(
 		State: projection.call.State, Version: projection.call.Version,
 		Entries: []TimelineEntry{},
 	}
-	rows, err := m.pool.Query(ctx, `
+	rows, err := m.database.Query(ctx, `
 		WITH entries AS (
 			SELECT timeline.kind, COALESCE(timeline.opaque_reference, '') AS opaque_reference,
 				COALESCE(timeline.error_code, command.last_error_code,

@@ -22,7 +22,7 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 		commandProcessed:    make(chan struct{}, 1),
 		attachmentProcessed: make(chan struct{}, 1),
 	}
-	runner, err := NewWithMessaging(Config{
+	runner, err := New(Config{
 		WorkInterval:       time.Millisecond,
 		WorkTimeout:        time.Second,
 		CredentialInterval: time.Hour,
@@ -68,7 +68,7 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     1,
-	}, calling, messages, healthyDependency{})
+	}, calling, messages, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create messaging worker runner: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRunnerRecoversAIInteractionReceiptsInIndependentLane(t *testing.T) {
 		attachmentProcessed: make(chan struct{}, 1),
 	}
 	interactions := &controlledInteractionWork{processed: make(chan struct{}, 1)}
-	runner, err := NewWithMessagingAndInteractions(Config{
+	runner, err := New(Config{
 		WorkInterval:       time.Millisecond,
 		WorkTimeout:        time.Second,
 		CredentialInterval: time.Hour,
@@ -146,7 +146,7 @@ func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
 		ReceiptBatchSize:   3,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 		ReceiptBatchSize:   1,
 		CommandBatchSize:   1,
 		CommandWorkers:     2,
-	}, work, healthyDependency{})
+	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
 	}
@@ -310,6 +310,51 @@ func TestQueueLaneBacksOffConsecutiveErrorsAndResetsAfterProgress(t *testing.T) 
 	}
 }
 
+func TestQueueLaneBacksOffConsecutiveEmptyClaimsAndResetsAfterProgress(t *testing.T) {
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval:   10 * time.Millisecond,
+			WorkTimeout:    time.Second,
+			IdleBackoffMax: 80 * time.Millisecond,
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return len(delays) < 7
+		},
+	}
+	results := []bool{false, false, false, false, false, true, false}
+	next := 0
+	runner.runQueueLane(
+		context.Background(),
+		1,
+		"test_failure",
+		func(context.Context) (bool, error) {
+			processed := results[next]
+			next++
+			return processed, nil
+		},
+	)
+
+	want := []time.Duration{
+		10 * time.Millisecond,
+		20 * time.Millisecond,
+		40 * time.Millisecond,
+		80 * time.Millisecond,
+		80 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("empty-claim delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("empty-claim delays = %v, want %v", delays, want)
+		}
+	}
+}
+
 func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
 	work := &credentialReconciliationFailureWork{
 		controlledWork: newControlledWork(),
@@ -321,7 +366,8 @@ func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
 			ErrorBackoffMin: 100 * time.Millisecond,
 			ErrorBackoffMax: 400 * time.Millisecond,
 		},
-		work: work,
+		work:     work,
+		messages: &controlledMessagingWork{},
 		jitter: func(delay time.Duration) time.Duration {
 			return delay - time.Millisecond
 		},
@@ -440,6 +486,10 @@ func (work *controlledWork) ProcessNextCommand(ctx context.Context) (bool, error
 }
 
 func (*controlledWork) ProcessNextCredentialReconciliation(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (*controlledWork) ProcessNextRecoveryReconciliation(context.Context) (bool, error) {
 	return false, nil
 }
 

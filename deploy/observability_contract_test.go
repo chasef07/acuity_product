@@ -105,9 +105,12 @@ func TestCallCenterLogMetricDefinitionsAreBoundedAndComplete(t *testing.T) {
 	}
 	allowedLabels := []string{
 		"action",
+		"cause",
 		"metric_contract",
 		"outcome",
+		"failure_stage",
 		"revision",
+		"route",
 		"runtime_role",
 	}
 	seen := make(map[string]bool, len(metrics))
@@ -325,6 +328,94 @@ func TestProductionDeployProfileConsumesCheckedContract(t *testing.T) {
 	}
 }
 
+func TestBackendAvailabilitySLOAndBurnPoliciesAreExplicit(t *testing.T) {
+	directory := deployDirectory(t)
+	type serviceDefinition struct {
+		ID          string         `json:"id"`
+		DisplayName string         `json:"displayName"`
+		Custom      map[string]any `json:"custom"`
+	}
+	service := decodeStrict[serviceDefinition](
+		t,
+		filepath.Join(directory, "observability", "backend-service.json"),
+	)
+	if service.ID != "acuity-portal-backend" ||
+		service.DisplayName == "" || service.Custom == nil {
+		t.Fatalf("backend service definition = %#v", service)
+	}
+	type sloIndicator struct {
+		RequestBased struct {
+			GoodTotalRatio struct {
+				GoodServiceFilter  string `json:"goodServiceFilter"`
+				TotalServiceFilter string `json:"totalServiceFilter"`
+			} `json:"goodTotalRatio"`
+		} `json:"requestBased"`
+	}
+	type sloDefinition struct {
+		ID                    string       `json:"id"`
+		DisplayName           string       `json:"displayName"`
+		Goal                  float64      `json:"goal"`
+		RollingPeriod         string       `json:"rollingPeriod"`
+		ServiceLevelIndicator sloIndicator `json:"serviceLevelIndicator"`
+	}
+	slo := decodeStrict[sloDefinition](
+		t,
+		filepath.Join(directory, "observability", "backend-availability-slo.json"),
+	)
+	if slo.ID != "critical-read-availability" || slo.Goal != 0.999 ||
+		slo.RollingPeriod != "2419200s" {
+		t.Fatalf("backend availability SLO = %#v", slo)
+	}
+	good := slo.ServiceLevelIndicator.RequestBased.GoodTotalRatio.GoodServiceFilter
+	total := slo.ServiceLevelIndicator.RequestBased.GoodTotalRatio.TotalServiceFilter
+	if !strings.Contains(good, `metric.label.outcome="available"`) ||
+		!strings.Contains(good, `metric.label.runtime_role="portal-api"`) ||
+		!strings.Contains(good, "acuity_backend_availability_count") ||
+		!strings.Contains(total, "acuity_backend_availability_count") ||
+		!strings.Contains(total, `metric.label.runtime_role="portal-api"`) ||
+		strings.Contains(total, "health/ready") {
+		t.Fatalf("availability filters do not isolate the customer journey: good=%q total=%q", good, total)
+	}
+
+	type burnCondition struct {
+		DisplayName        string `json:"displayName"`
+		ConditionThreshold struct {
+			Filter         string  `json:"filter"`
+			Comparison     string  `json:"comparison"`
+			ThresholdValue float64 `json:"thresholdValue"`
+			Duration       string  `json:"duration"`
+		} `json:"conditionThreshold"`
+	}
+	type burnPolicy struct {
+		DisplayName string            `json:"displayName"`
+		Combiner    string            `json:"combiner"`
+		UserLabels  map[string]string `json:"userLabels"`
+		Conditions  []burnCondition   `json:"conditions"`
+	}
+	policies := decodeStrict[[]burnPolicy](
+		t,
+		filepath.Join(directory, "observability", "slo-burn-policies.json"),
+	)
+	if len(policies) != 2 {
+		t.Fatalf("SLO burn policy count = %d, want 2", len(policies))
+	}
+	for _, policy := range policies {
+		if policy.Combiner != "AND" || len(policy.Conditions) != 2 ||
+			policy.UserLabels["acuity_slo"] != slo.ID {
+			t.Errorf("invalid multi-window burn policy: %#v", policy)
+		}
+		for _, condition := range policy.Conditions {
+			threshold := condition.ConditionThreshold
+			if !strings.Contains(threshold.Filter, "select_slo_burn_rate") ||
+				!strings.Contains(threshold.Filter, slo.ID) ||
+				threshold.Comparison != "COMPARISON_GT" ||
+				threshold.ThresholdValue <= 1 || threshold.Duration == "" {
+				t.Errorf("invalid burn condition: %#v", condition)
+			}
+		}
+	}
+}
+
 func expectedLogMetrics() map[string]expectedMetric {
 	counter := func(signal string) expectedMetric {
 		return expectedMetric{signal: signal, valueType: "INT64"}
@@ -337,10 +428,14 @@ func expectedLogMetrics() map[string]expectedMetric {
 		}
 	}
 	return map[string]expectedMetric{
+		"acuity_backend_availability_count":                       counter("acuity_backend_availability"),
+		"acuity_backend_availability_seconds":                     distribution("acuity_backend_availability", "seconds"),
 		"acuity_call_center_webhook_acknowledgement_count":        counter("acuity_call_center_webhook_acknowledgement"),
 		"acuity_call_center_webhook_acknowledgement_seconds":      distribution("acuity_call_center_webhook_acknowledgement", "seconds"),
 		"acuity_call_center_receipt_queue_depth":                  distribution("acuity_call_center_receipt_queue", "depth"),
 		"acuity_call_center_receipt_queue_oldest_age_seconds":     distribution("acuity_call_center_receipt_queue", "oldest_age_seconds"),
+		"acuity_call_center_receipt_projection_retry_depth":       distribution("acuity_call_center_receipt_queue", "projection_retry_depth"),
+		"acuity_call_center_receipt_related_fact_depth":           distribution("acuity_call_center_receipt_queue", "related_fact_depth"),
 		"acuity_call_center_receipt_quarantine_depth":             distribution("acuity_call_center_receipt_queue", "quarantined_depth"),
 		"acuity_call_center_receipt_processing_count":             counter("acuity_call_center_receipt_processing"),
 		"acuity_call_center_receipt_queue_seconds":                distribution("acuity_call_center_receipt_processing", "queue_seconds"),
@@ -350,6 +445,8 @@ func expectedLogMetrics() map[string]expectedMetric {
 		"acuity_call_center_provider_command_duration_seconds":    distribution("acuity_call_center_provider_command", "duration_seconds"),
 		"acuity_call_center_database_pool_acquire_count":          counter("acuity_call_center_database_pool_acquire"),
 		"acuity_call_center_database_pool_acquire_seconds":        distribution("acuity_call_center_database_pool_acquire", "seconds"),
+		"acuity_backend_database_execution_count":                 counter("acuity_backend_database_execution"),
+		"acuity_backend_database_execution_seconds":               distribution("acuity_backend_database_execution", "seconds"),
 		"acuity_call_center_database_pool_acquired":               distribution("acuity_call_center_database_pool", "acquired"),
 		"acuity_call_center_database_pool_idle":                   distribution("acuity_call_center_database_pool", "idle"),
 		"acuity_call_center_database_pool_max":                    distribution("acuity_call_center_database_pool", "max"),

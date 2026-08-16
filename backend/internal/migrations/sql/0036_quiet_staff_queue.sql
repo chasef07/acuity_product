@@ -109,6 +109,7 @@ WITH ranked AS (
                 COALESCE(task.category, ''),
                 COALESCE(lower(task.caller_name), ''),
                 COALESCE(task.source_call_id, ''),
+                COALESCE(task.message_thread_id::text, ''),
                 COALESCE(task.source_message, '')
             ORDER BY task.created_at, task.id
         ) AS duplicate_number
@@ -169,131 +170,32 @@ CREATE UNIQUE INDEX work_tasks_one_exact_open_need_idx
         COALESCE(category, ''),
         digest(COALESCE(lower(caller_name), ''), 'sha256'),
         COALESCE(source_call_id, ''),
+        COALESCE(message_thread_id::text, ''),
         digest(COALESCE(source_message, ''), 'sha256')
     )
     WHERE state = 'OPEN'
         AND origin NOT IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY');
 
--- Seed the latest authoritative resolution for each Practice and phone.
-WITH resolutions AS (
-    SELECT
-        call.practice_id,
-        COALESCE(handoff.phone, call.caller_phone) AS phone,
-        staff.bridged_at AS resolved_at,
-        'INBOUND_CALL'::text AS kind,
-        call.id::text AS source_id
-    FROM human_calling_calls call
-    LEFT JOIN human_calling_handoffs handoff
-        ON handoff.id = call.source_handoff_id
-    JOIN human_calling_call_legs staff
-        ON staff.call_id = call.id
-        AND staff.role = 'STAFF'
-        AND staff.bridged_at IS NOT NULL
-    WHERE call.direction = 'INBOUND'
+-- Queue only the Practice and phone keys that can have stale recovery work.
+-- The worker reconciles one deterministic key per short transaction so the
+-- rollout is restartable and never scans or locks all historical evidence in
+-- the schema migration transaction.
+CREATE TABLE work_recovery_reconciliation_queue (
+    practice_id uuid NOT NULL REFERENCES access_practices(id),
+    phone text NOT NULL CHECK (phone ~ '^\+[1-9][0-9]{7,14}$'),
+    enqueued_at timestamptz NOT NULL,
+    PRIMARY KEY (practice_id, phone)
+);
 
-    UNION ALL
-
-    SELECT
-        interaction.practice_id,
-        interaction.phone,
-        interaction.appointment_occurred_at,
-        'BOOKING'::text,
-        interaction.id::text
-    FROM ai_interactions interaction
-    WHERE interaction.appointment_outcome = 'BOOKING'
-        AND lower(COALESCE(interaction.booking_result ->> 'status', '')) = 'booked'
-        AND interaction.appointment_occurred_at IS NOT NULL
-), latest AS (
-    SELECT DISTINCT ON (practice_id, phone)
-        practice_id,
-        phone,
-        resolved_at,
-        kind,
-        source_id
-    FROM resolutions
-    WHERE phone ~ '^\+[1-9][0-9]{7,14}$'
-    ORDER BY practice_id, phone, resolved_at DESC, source_id DESC
-)
-INSERT INTO work_recovery_resolution_checkpoints (
+INSERT INTO work_recovery_reconciliation_queue (
     practice_id,
     phone,
-    resolved_at,
-    kind,
-    source_id,
-    updated_at
+    enqueued_at
 )
-SELECT practice_id, phone, resolved_at, kind, source_id, now()
-FROM latest;
-
-WITH eligible AS (
-    SELECT
-        task.id,
-        checkpoint.kind,
-        checkpoint.resolved_at
-    FROM work_tasks task
-    JOIN work_recovery_resolution_checkpoints checkpoint
-        ON checkpoint.practice_id = task.practice_id
-        AND checkpoint.phone = task.phone
-    WHERE task.state = 'OPEN'
-        AND task.origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY')
-        AND checkpoint.resolved_at > (
-            SELECT max(interaction.occurred_at)
-            FROM work_task_interactions interaction
-            WHERE interaction.task_id = task.id
-        )
-        AND checkpoint.resolved_at > COALESCE(
-            (
-                SELECT max(activity.occurred_at)
-                FROM work_task_activities activity
-                WHERE activity.task_id = task.id
-                    AND activity.kind = 'TASK_REOPENED'
-            ),
-            '-infinity'::timestamptz
-        )
-), completed AS (
-    UPDATE work_tasks task
-    SET
-        state = 'COMPLETED',
-        completed_by_kind = 'SERVICE',
-        completed_by_subject = 'work-recovery-resolution',
-        completed_by_email = NULL,
-        completed_at = eligible.resolved_at,
-        version = task.version + 1,
-        updated_at = GREATEST(task.updated_at, eligible.resolved_at)
-    FROM eligible
-    WHERE task.id = eligible.id
-    RETURNING task.id, task.practice_id, task.version, task.completed_at, eligible.kind
-), activities AS (
-    INSERT INTO work_task_activities (
-        task_id,
-        task_version,
-        kind,
-        actor_kind,
-        actor_subject,
-        actor_email,
-        occurred_at
-    )
-    SELECT
-        completed.id,
-        completed.version,
-        CASE completed.kind
-            WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
-            ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
-        END,
-        'SERVICE',
-        'work-recovery-resolution',
-        NULL,
-        completed.completed_at
-    FROM completed
-    RETURNING task_id
-)
-UPDATE access_practices practice
-SET workspace_version = workspace_version + 1
-WHERE practice.id IN (
-    SELECT DISTINCT task.practice_id
-    FROM work_tasks task
-    JOIN activities ON activities.task_id = task.id
-);
+SELECT DISTINCT practice_id, phone, now()
+FROM work_tasks
+WHERE state = 'OPEN'
+    AND origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY');
 
 -- Every appointment change is a concise review item. Failed, escalated, and
 -- partial calls without a completed appointment action remain reviewable too.
