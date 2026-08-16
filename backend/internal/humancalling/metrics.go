@@ -43,6 +43,17 @@ func (m *Module) recordPlayback(kind PlaybackKind, err error, duration time.Dura
 	observability.Record(m.observer, event)
 }
 
+func (m *Module) recordRecordingMaintenance(
+	operation observability.RecordingMaintenanceOperation,
+	outcome observability.RecordingMaintenanceOutcome,
+	attempt int,
+) {
+	observability.Record(
+		m.observer,
+		observability.RecordingMaintenance(operation, outcome, attempt),
+	)
+}
+
 func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 	now := m.now()
 	var depth int64
@@ -162,6 +173,72 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 			oldestStaffOccupancyAge,
 			unresolvedHangups,
 			oldestHangupAge,
+		),
+	)
+	var reconciliationDepth, reconciliationRetryDepth int64
+	var retentionDepth, retentionRetryDepth, unavailableDepth int64
+	var oldestReconciliation, oldestRetention *time.Time
+	if err := m.database.QueryRow(ctx, `
+		SELECT
+			reconciliation.depth,
+			reconciliation.oldest,
+			reconciliation.retry_depth,
+			retention.depth,
+			retention.oldest,
+			retention.retry_depth,
+			unavailable.depth
+		FROM (
+			SELECT count(*) AS depth, min(call.ended_at) AS oldest,
+				count(*) FILTER (
+					WHERE recording.reconciliation_attempts > 0
+				) AS retry_depth
+			FROM human_calling_call_recordings recording
+			JOIN human_calling_calls call ON call.id = recording.call_id
+			WHERE recording.audio_state = 'PROCESSING'
+				AND call.ended_at IS NOT NULL
+		) reconciliation
+		CROSS JOIN (
+			SELECT count(*) AS depth, min(content_expires_at) AS oldest,
+				count(*) FILTER (
+					WHERE deletion_attempts > 0
+				) AS retry_depth
+			FROM human_calling_call_recordings
+			WHERE audio_state = 'READY' AND content_expires_at <= $1
+		) retention
+		CROSS JOIN (
+			SELECT count(*) AS depth
+			FROM human_calling_call_recordings
+			WHERE audio_state = 'UNAVAILABLE'
+		) unavailable
+	`, now).Scan(
+		&reconciliationDepth,
+		&oldestReconciliation,
+		&reconciliationRetryDepth,
+		&retentionDepth,
+		&oldestRetention,
+		&retentionRetryDepth,
+		&unavailableDepth,
+	); err != nil {
+		return fmt.Errorf("read recording maintenance queue: %w", err)
+	}
+	oldestReconciliationAge := time.Duration(0)
+	if oldestReconciliation != nil {
+		oldestReconciliationAge = now.Sub(*oldestReconciliation)
+	}
+	oldestRetentionAge := time.Duration(0)
+	if oldestRetention != nil {
+		oldestRetentionAge = now.Sub(*oldestRetention)
+	}
+	observability.Record(
+		m.observer,
+		observability.RecordingQueue(
+			reconciliationDepth,
+			oldestReconciliationAge,
+			reconciliationRetryDepth,
+			retentionDepth,
+			oldestRetentionAge,
+			retentionRetryDepth,
+			unavailableDepth,
 		),
 	)
 	return nil

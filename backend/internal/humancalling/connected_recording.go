@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -17,6 +18,11 @@ const (
 	RecordingUnavailable RecordingAudioState = "UNAVAILABLE"
 	RecordingExpired     RecordingAudioState = "EXPIRED"
 	RecordingDeleted     RecordingAudioState = "DELETED"
+)
+
+const (
+	recordingReconciliationMaximumAttempts = 10
+	recordingReconciliationExhaustedCode   = "RECONCILIATION_RETRY_EXHAUSTED"
 )
 
 type CallRecording struct {
@@ -282,6 +288,11 @@ func (m *Module) ProcessNextRecordingReconciliation(
 					ctx, callID, now, attempts, applyErr,
 				)
 			}
+			m.recordRecordingMaintenance(
+				observability.RecordingReconciliation,
+				observability.RecordingMaintenanceUnavailable,
+				attempts,
+			)
 			return true, nil
 		}
 		return m.failRecordingReconciliation(ctx, callID, now, attempts, err)
@@ -298,6 +309,11 @@ func (m *Module) ProcessNextRecordingReconciliation(
 	if err := m.applyConnectedCallRecordingSaved(ctx, fact); err != nil {
 		return m.failRecordingReconciliation(ctx, callID, now, attempts, err)
 	}
+	m.recordRecordingMaintenance(
+		observability.RecordingReconciliation,
+		observability.RecordingMaintenanceSucceeded,
+		attempts,
+	)
 	return true, nil
 }
 
@@ -308,6 +324,19 @@ func (m *Module) failRecordingReconciliation(
 	attempts int,
 	reconciliationErr error,
 ) (bool, error) {
+	if attempts >= recordingReconciliationMaximumAttempts {
+		processed, err := m.exhaustRecordingReconciliation(ctx, callID, claimedAt)
+		outcome := observability.RecordingMaintenanceExhausted
+		if err != nil {
+			outcome = observability.RecordingMaintenanceFailed
+		}
+		m.recordRecordingMaintenance(
+			observability.RecordingReconciliation,
+			outcome,
+			attempts,
+		)
+		return processed, err
+	}
 	retryAt := claimedAt.Add(recordingMaintenanceBackoff(attempts))
 	result, err := m.database.Exec(ctx, `
 		UPDATE human_calling_call_recordings
@@ -318,12 +347,81 @@ func (m *Module) failRecordingReconciliation(
 			AND reconciliation_claimed_at = $2
 	`, callID, claimedAt, retryAt, safeProviderErrorCode(reconciliationErr))
 	if err != nil {
+		m.recordRecordingMaintenance(
+			observability.RecordingReconciliation,
+			observability.RecordingMaintenanceFailed,
+			attempts,
+		)
 		return true, fmt.Errorf("record recording reconciliation failure: %w", err)
 	}
 	if result.RowsAffected() == 0 {
 		return true, nil
 	}
+	m.recordRecordingMaintenance(
+		observability.RecordingReconciliation,
+		observability.RecordingMaintenanceRetry,
+		attempts,
+	)
 	return true, fmt.Errorf("reconcile provider recording: %w", reconciliationErr)
+}
+
+func (m *Module) exhaustRecordingReconciliation(
+	ctx context.Context,
+	callID string,
+	claimedAt time.Time,
+) (bool, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return true, fmt.Errorf("begin recording reconciliation exhaustion: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var practiceID string
+	err = tx.QueryRow(ctx, `
+		UPDATE human_calling_call_recordings SET
+			audio_state = 'UNAVAILABLE', provider_recording_id = NULL,
+			recording_started_at = NULL, recording_ended_at = NULL,
+			content_expires_at = NULL, duration_millis = NULL,
+			last_error_code = $3, reconciliation_claimed_at = NULL,
+			next_reconciliation_attempt_at = NULL,
+			reconciliation_error_code = NULL, updated_at = $2
+		WHERE call_id = $1 AND audio_state = 'PROCESSING'
+			AND reconciliation_claimed_at = $2
+		RETURNING practice_id::text
+	`, callID, claimedAt, recordingReconciliationExhaustedCode).Scan(&practiceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, tx.Commit(ctx)
+	}
+	if err != nil {
+		return true, fmt.Errorf("exhaust recording reconciliation: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_calls SET version = version + 1, updated_at = $2
+		WHERE id = $1
+	`, callID, claimedAt); err != nil {
+		return true, err
+	}
+	if err := appendTimeline(
+		ctx,
+		tx,
+		callID,
+		practiceID,
+		"call.recording.unavailable",
+		"",
+		"",
+		"",
+		opaqueReference(callID),
+		recordingReconciliationExhaustedCode,
+		claimedAt,
+	); err != nil {
+		return true, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return true, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return true, fmt.Errorf("commit recording reconciliation exhaustion: %w", err)
+	}
+	return true, nil
 }
 
 func (m *Module) ProcessNextRecordingRetention(
@@ -387,8 +485,18 @@ func (m *Module) ProcessNextRecordingRetention(
 				deletion_error_code = $4, updated_at = $2
 			WHERE call_id = $1 AND deletion_claimed_at = $2
 		`, callID, now, retryAt, safeProviderErrorCode(err)); updateErr != nil {
+			m.recordRecordingMaintenance(
+				observability.RecordingRetention,
+				observability.RecordingMaintenanceFailed,
+				attempts,
+			)
 			return true, fmt.Errorf("record recording deletion failure: %w", updateErr)
 		}
+		m.recordRecordingMaintenance(
+			observability.RecordingRetention,
+			observability.RecordingMaintenanceRetry,
+			attempts,
+		)
 		return true, fmt.Errorf("delete expired provider recording: %w", err)
 	}
 
@@ -425,7 +533,20 @@ func (m *Module) ProcessNextRecordingRetention(
 	if _, err := m.access.RecordWorkspaceChange(ctx, completion, practiceID); err != nil {
 		return true, err
 	}
-	return true, completion.Commit(ctx)
+	if err := completion.Commit(ctx); err != nil {
+		m.recordRecordingMaintenance(
+			observability.RecordingRetention,
+			observability.RecordingMaintenanceFailed,
+			attempts,
+		)
+		return true, err
+	}
+	m.recordRecordingMaintenance(
+		observability.RecordingRetention,
+		observability.RecordingMaintenanceSucceeded,
+		attempts,
+	)
+	return true, nil
 }
 
 func recordingMaintenanceBackoff(attempts int) time.Duration {

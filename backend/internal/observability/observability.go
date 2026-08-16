@@ -163,6 +163,23 @@ const (
 
 type VoicemailPlaybackOutcome = RecordingPlaybackOutcome
 
+type RecordingMaintenanceOperation string
+
+const (
+	RecordingReconciliation RecordingMaintenanceOperation = "reconciliation"
+	RecordingRetention      RecordingMaintenanceOperation = "retention"
+)
+
+type RecordingMaintenanceOutcome string
+
+const (
+	RecordingMaintenanceSucceeded   RecordingMaintenanceOutcome = "succeeded"
+	RecordingMaintenanceRetry       RecordingMaintenanceOutcome = "retry"
+	RecordingMaintenanceUnavailable RecordingMaintenanceOutcome = "unavailable"
+	RecordingMaintenanceExhausted   RecordingMaintenanceOutcome = "exhausted"
+	RecordingMaintenanceFailed      RecordingMaintenanceOutcome = "failed"
+)
+
 // Event values can only be created through the fixed constructors below.
 // Their private fields cannot carry identifiers, errors, SQL, or evidence.
 type Event struct {
@@ -190,6 +207,25 @@ func ReceiptQueue(
 		"projection_retry_depth", max(projectionRetryDepth, 0),
 		"related_fact_depth", max(relatedFactDepth, 0),
 		"quarantined_depth", max(quarantinedDepth, 0))
+}
+
+func RecordingQueue(
+	reconciliationDepth int64,
+	oldestReconciliationAge time.Duration,
+	reconciliationRetryDepth int64,
+	retentionDepth int64,
+	oldestRetentionAge time.Duration,
+	retentionRetryDepth int64,
+	unavailableDepth int64,
+) Event {
+	return event("acuity_call_center_recording_queue",
+		"reconciliation_depth", max(reconciliationDepth, 0),
+		"oldest_reconciliation_age_seconds", positive(oldestReconciliationAge).Seconds(),
+		"reconciliation_retry_depth", max(reconciliationRetryDepth, 0),
+		"retention_depth", max(retentionDepth, 0),
+		"oldest_retention_age_seconds", positive(oldestRetentionAge).Seconds(),
+		"retention_retry_depth", max(retentionRetryDepth, 0),
+		"unavailable_depth", max(unavailableDepth, 0))
 }
 
 func TerminalCleanup(
@@ -316,6 +352,20 @@ func CallRecordingPlayback(
 	duration time.Duration,
 ) Event {
 	return recordingPlayback("acuity_call_center_call_recording_playback", outcome, duration)
+}
+
+func RecordingMaintenance(
+	operation RecordingMaintenanceOperation,
+	outcome RecordingMaintenanceOutcome,
+	attempt int,
+) Event {
+	return event(
+		"acuity_call_center_recording_maintenance",
+		"operation", bounded(string(operation), "reconciliation", "retention"),
+		"outcome", bounded(string(outcome),
+			"succeeded", "retry", "unavailable", "exhausted", "failed"),
+		"attempt", max(attempt, 0),
+	)
 }
 
 func recordingPlayback(

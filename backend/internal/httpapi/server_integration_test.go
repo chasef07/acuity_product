@@ -305,6 +305,18 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err := tx.Commit(context.Background()); err != nil {
 		t.Fatalf("commit voicemail HTTP fixture: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_recordings (
+			call_id, practice_id, location_id, audio_state,
+			provider_recording_id, retention_days, recording_started_at,
+			recording_ended_at, content_expires_at, duration_millis,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, 'READY', 'call-http-recording', 90,
+			$4, $5, $6, 12000, $4, $5)
+	`, callID, authorization.Practice.ID, voicemailLocationID,
+		now, now.Add(12*time.Second), now.Add(90*24*time.Hour)); err != nil {
+		t.Fatalf("insert call recording HTTP evidence: %v", err)
+	}
 
 	audio := &httpVoicemailAudio{}
 	calling := humancalling.New(
@@ -413,6 +425,65 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		t.Fatalf("voicemail playback response = status:%d headers:%v body:%q fixture:%#v",
 			playbackResponse.StatusCode, playbackResponse.Header, body, playbackAudio)
 	}
+	recordingCapabilityResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/calls/"+callID+"/recording-playback",
+		"voicemail-http-token",
+		nil,
+	)
+	if recordingCapabilityResponse.StatusCode != http.StatusOK {
+		t.Fatalf("recording capability status = %d, body = %s",
+			recordingCapabilityResponse.StatusCode, readBody(t, recordingCapabilityResponse))
+	}
+	var recordingCapability api.RecordingPlaybackCapability
+	decode(t, recordingCapabilityResponse, &recordingCapability)
+	contentExpiresAt := time.Now().Add(500 * time.Millisecond)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_recordings
+		SET content_expires_at = $2
+		WHERE call_id = $1
+	`, callID, contentExpiresAt); err != nil {
+		t.Fatalf("set imminent recording expiry: %v", err)
+	}
+	providerContextDone := make(chan time.Time, 1)
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.streamUntilContextDone = true
+		audio.contextDone = providerContextDone
+	})
+	recordingRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/recording-playback/"+url.PathEscape(recordingCapability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordingClient := *server.Client()
+	recordingClient.Timeout = 2 * time.Second
+	recordingResponse, requestErr := recordingClient.Do(recordingRequest)
+	if recordingResponse != nil {
+		_, _ = io.ReadAll(recordingResponse.Body)
+		_ = recordingResponse.Body.Close()
+	}
+	if requestErr == nil && recordingResponse == nil {
+		t.Fatal("recording playback returned neither a response nor an error")
+	}
+	select {
+	case canceledAt := <-providerContextDone:
+		if canceledAt.Before(contentExpiresAt.Add(-50*time.Millisecond)) ||
+			canceledAt.After(contentExpiresAt.Add(300*time.Millisecond)) {
+			t.Fatalf("recording provider context canceled at %v; content expired at %v",
+				canceledAt, contentExpiresAt)
+		}
+	case <-time.After(2500 * time.Millisecond):
+		t.Fatal("recording provider context was not canceled at content expiry")
+	}
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.streamUntilContextDone = false
+		audio.contextDone = nil
+	})
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE access_memberships SET revoked_at = $2
 		WHERE user_subject = $1
@@ -432,7 +503,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		t.Fatalf("request revoked voicemail playback: %v", err)
 	}
 	_ = revokedResponse.Body.Close()
-	if revokedResponse.StatusCode != http.StatusForbidden || audio.calls != 1 {
+	if revokedResponse.StatusCode != http.StatusForbidden || audio.calls != 2 {
 		t.Fatalf("revoked playback = status:%d provider-calls:%d",
 			revokedResponse.StatusCode, audio.calls)
 	}
@@ -2266,13 +2337,15 @@ func (httpCallingProvider) Execute(
 }
 
 type httpVoicemailAudio struct {
-	mu            sync.Mutex
-	calls         int
-	rangeHeader   string
-	contentLength string
-	contentRange  *string
-	failStream    bool
-	err           error
+	mu                     sync.Mutex
+	calls                  int
+	rangeHeader            string
+	contentLength          string
+	contentRange           *string
+	failStream             bool
+	streamUntilContextDone bool
+	contextDone            chan time.Time
+	err                    error
 }
 
 type httpVoicemailAudioSnapshot struct {
@@ -2296,7 +2369,7 @@ func (audio *httpVoicemailAudio) snapshot() httpVoicemailAudioSnapshot {
 }
 
 func (audio *httpVoicemailAudio) OpenRecording(
-	_ context.Context,
+	ctx context.Context,
 	_ string,
 	rangeHeader string,
 ) (humancalling.PlaybackContent, error) {
@@ -2313,6 +2386,8 @@ func (audio *httpVoicemailAudio) OpenRecording(
 		contentLength = "4"
 	}
 	failStream := audio.failStream
+	streamUntilContextDone := audio.streamUntilContextDone
+	contextDone := audio.contextDone
 	audio.mu.Unlock()
 	if providerErr != nil {
 		return humancalling.PlaybackContent{}, providerErr
@@ -2320,6 +2395,16 @@ func (audio *httpVoicemailAudio) OpenRecording(
 	var body io.ReadCloser = io.NopCloser(strings.NewReader("synt"))
 	if failStream {
 		body = &failingVoicemailBody{}
+	}
+	if streamUntilContextDone {
+		return humancalling.PlaybackContent{
+			StatusCode:  http.StatusOK,
+			ContentType: "audio/mpeg",
+			Body: &contextBoundPlaybackBody{
+				ctx:  ctx,
+				done: contextDone,
+			},
+		}, nil
 	}
 	return humancalling.PlaybackContent{
 		StatusCode:    http.StatusPartialContent,
@@ -2329,6 +2414,28 @@ func (audio *httpVoicemailAudio) OpenRecording(
 		Body:          body,
 	}, nil
 }
+
+type contextBoundPlaybackBody struct {
+	ctx  context.Context
+	done chan time.Time
+	sent bool
+}
+
+func (body *contextBoundPlaybackBody) Read(target []byte) (int, error) {
+	if !body.sent {
+		body.sent = true
+		payload := bytes.Repeat([]byte("x"), 32*1024)
+		return copy(target, payload), nil
+	}
+	<-body.ctx.Done()
+	select {
+	case body.done <- time.Now():
+	default:
+	}
+	return 0, body.ctx.Err()
+}
+
+func (*contextBoundPlaybackBody) Close() error { return nil }
 
 type synchronizedBuffer struct {
 	mu sync.Mutex

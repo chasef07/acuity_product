@@ -3592,6 +3592,12 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	pool := testdb.Open(t)
 	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
 	currentTime := createdAt
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"recording-retention-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	accessModule := access.New(pool, func() time.Time { return currentTime })
 	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
@@ -3637,12 +3643,12 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	`, callID, practiceID, locationID, createdAt); err != nil {
 		t.Fatal(err)
 	}
-	provider := &recordingProvider{}
+	provider := &recordingProvider{deletionErr: humancalling.ErrAmbiguousEffect}
 	calling := humancalling.New(
 		pool,
 		accessModule,
 		provider,
-		humancalling.Config{},
+		humancalling.Config{Observer: observer},
 		func() time.Time { return currentTime },
 	)
 	currentTime = createdAt.Add(31 * 24 * time.Hour)
@@ -3660,14 +3666,50 @@ func TestExpiredConnectedRecordingIsDeletedFromTelnyxAndRetainsAuditMetadata(t *
 	); !errors.Is(err, humancalling.ErrConflict) {
 		t.Fatalf("expired recording playback error = %v", err)
 	}
+	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+		t.Fatalf("report recording retention queue: %v", err)
+	}
+	for _, fragment := range []string{
+		`"metric":"acuity_call_center_recording_queue"`,
+		`"retention_depth":1`,
+		`"oldest_retention_age_seconds":86400`,
+	} {
+		if !strings.Contains(metrics.String(), fragment) {
+			t.Fatalf("recording retention queue metric omitted %s: %s",
+				fragment, metrics.String())
+		}
+	}
 	processed, err := calling.ProcessNextRecordingRetention(context.Background())
+	if !errors.Is(err, humancalling.ErrAmbiguousEffect) || !processed {
+		t.Fatalf("failed recording retention = %t, %v", processed, err)
+	}
+	if !strings.Contains(metrics.String(), `"operation":"retention"`) ||
+		!strings.Contains(metrics.String(), `"outcome":"retry"`) {
+		t.Fatalf("recording retention retry metric missing: %s", metrics.String())
+	}
+	var nextDeletionAttempt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT next_deletion_attempt_at
+		FROM human_calling_call_recordings WHERE call_id = $1
+	`, callID).Scan(&nextDeletionAttempt); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.deletionErr = nil
+	provider.mu.Unlock()
+	currentTime = nextDeletionAttempt
+	processed, err = calling.ProcessNextRecordingRetention(context.Background())
 	if err != nil || !processed {
-		t.Fatalf("process recording retention = %t, %v", processed, err)
+		t.Fatalf("retry recording retention = %t, %v", processed, err)
+	}
+	if !strings.Contains(metrics.String(), `"outcome":"succeeded"`) {
+		t.Fatalf("recording retention success metric missing: %s", metrics.String())
 	}
 	provider.mu.Lock()
 	deleted := append([]string(nil), provider.deletedRecordings...)
 	provider.mu.Unlock()
-	if len(deleted) != 1 || deleted[0] != "recording-to-delete" {
+	if len(deleted) != 2 || deleted[0] != "recording-to-delete" ||
+		deleted[1] != "recording-to-delete" {
 		t.Fatalf("deleted provider recordings = %#v", deleted)
 	}
 	var state, providerRecordingID string
@@ -3688,6 +3730,12 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 	pool := testdb.Open(t)
 	endedAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
 	currentTime := endedAt.Add(3 * time.Minute)
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"recording-reconciliation-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
 	accessModule := access.New(pool, func() time.Time { return currentTime })
 	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
@@ -3762,9 +3810,22 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 		pool,
 		accessModule,
 		provider,
-		humancalling.Config{},
+		humancalling.Config{Observer: observer},
 		func() time.Time { return currentTime },
 	)
+	if err := calling.ReportReceiptQueue(context.Background()); err != nil {
+		t.Fatalf("report recording reconciliation queue: %v", err)
+	}
+	for _, fragment := range []string{
+		`"metric":"acuity_call_center_recording_queue"`,
+		`"reconciliation_depth":1`,
+		`"oldest_reconciliation_age_seconds":180`,
+	} {
+		if !strings.Contains(metrics.String(), fragment) {
+			t.Fatalf("recording reconciliation queue metric omitted %s: %s",
+				fragment, metrics.String())
+		}
+	}
 	processed, err := calling.ProcessNextRecordingReconciliation(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("failed recording reconciliation = %t, %v", processed, err)
@@ -3776,6 +3837,11 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 	}, callID)
 	if err != nil || failedCall.Recording.AudioState != humancalling.RecordingUnavailable {
 		t.Fatalf("failed recording projection = %#v, %v", failedCall.Recording, err)
+	}
+	if !strings.Contains(metrics.String(),
+		`"metric":"acuity_call_center_recording_maintenance"`) ||
+		!strings.Contains(metrics.String(), `"outcome":"unavailable"`) {
+		t.Fatalf("recording failure metric missing: %s", metrics.String())
 	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_call_recordings SET
@@ -3811,16 +3877,79 @@ func TestStaleConnectedRecordingReconcilesLostTerminalWebhooks(t *testing.T) {
 		t.Fatalf("recording reconciliation retry = %d %v %v %q",
 			attempts, claimedAt, nextAttempt, reconciliationError)
 	}
+	if !strings.Contains(metrics.String(), `"outcome":"retry"`) {
+		t.Fatalf("recording retry metric missing: %s", metrics.String())
+	}
 	if processed, err := calling.ProcessNextRecordingReconciliation(context.Background()); err != nil || processed {
 		t.Fatalf("early recording reconciliation retry = %t, %v", processed, err)
 	}
-	provider.mu.Lock()
-	provider.recordingErr = nil
-	provider.mu.Unlock()
-	currentTime = nextAttempt
-	processed, err = calling.ProcessNextRecordingReconciliation(context.Background())
-	if err != nil || !processed {
-		t.Fatalf("successful recording reconciliation = %t, %v", processed, err)
+	for expectedAttempts := 2; expectedAttempts <= 10; expectedAttempts++ {
+		currentTime = nextAttempt
+		processed, err = calling.ProcessNextRecordingReconciliation(context.Background())
+		if !processed {
+			t.Fatalf("recording reconciliation attempt %d was not processed", expectedAttempts)
+		}
+		if expectedAttempts < 10 && !errors.Is(err, humancalling.ErrAmbiguousEffect) {
+			t.Fatalf("recording reconciliation attempt %d error = %v",
+				expectedAttempts, err)
+		}
+		if expectedAttempts == 10 && err != nil {
+			t.Fatalf("terminal recording reconciliation attempt error = %v", err)
+		}
+		var state string
+		var lastError string
+		if err := pool.QueryRow(context.Background(), `
+			SELECT audio_state, reconciliation_attempts,
+				COALESCE(next_reconciliation_attempt_at, $2),
+				COALESCE(last_error_code, '')
+			FROM human_calling_call_recordings WHERE call_id = $1
+		`, callID, currentTime).Scan(
+			&state, &attempts, &nextAttempt, &lastError,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if attempts != expectedAttempts {
+			t.Fatalf("recording reconciliation attempts = %d, want %d",
+				attempts, expectedAttempts)
+		}
+		if expectedAttempts < 10 && state != "PROCESSING" {
+			t.Fatalf("recording state after retry %d = %q", expectedAttempts, state)
+		}
+		if expectedAttempts == 10 && (state != "UNAVAILABLE" ||
+			lastError != "RECONCILIATION_RETRY_EXHAUSTED") {
+			t.Fatalf("recording after retry exhaustion = state:%q error:%q",
+				state, lastError)
+		}
+	}
+	exhaustedCall, err := calling.ReadCall(context.Background(), access.Identity{
+		Subject:       "recording-operator",
+		Email:         "recording-operator@example.test",
+		EmailVerified: true,
+	}, callID)
+	if err != nil || exhaustedCall.Recording.AudioState != humancalling.RecordingUnavailable {
+		t.Fatalf("exhausted recording projection = %#v, %v", exhaustedCall.Recording, err)
+	}
+	if !strings.Contains(metrics.String(), `"outcome":"exhausted"`) ||
+		!strings.Contains(metrics.String(), `"attempt":10`) {
+		t.Fatalf("recording exhaustion metric missing: %s", metrics.String())
+	}
+	bridgeClientState := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(
+		`{"v":2,"call":%q,"call_leg":%q,"role":"DESTINATION","kind":"bridge"}`,
+		callID, callLegID,
+	)))
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:            "late-recording-saved-after-reconciliation-exhaustion",
+		Type:               humancalling.FactRecordingSaved,
+		OccurredAt:         currentTime,
+		CallControlID:      "recording-control",
+		CallLegID:          "recording-leg",
+		CallSessionID:      "recording-session",
+		ClientState:        bridgeClientState,
+		RecordingID:        "reconciled-recording",
+		RecordingStartedAt: endedAt.Add(-time.Minute),
+		RecordingEndedAt:   endedAt,
+	}); err != nil {
+		t.Fatalf("apply late saved recording webhook: %v", err)
 	}
 	var state, providerRecordingID string
 	var contentExpiresAt time.Time

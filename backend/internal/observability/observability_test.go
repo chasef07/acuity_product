@@ -85,6 +85,20 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		observability.RecordingPlaybackSucceeded,
 		300*time.Millisecond,
 	))
+	observer.Observe(observability.RecordingMaintenance(
+		observability.RecordingReconciliation,
+		observability.RecordingMaintenanceExhausted,
+		10,
+	))
+	observer.Observe(observability.RecordingQueue(
+		4,
+		3*time.Minute,
+		2,
+		7,
+		26*time.Hour,
+		3,
+		1,
+	))
 
 	logs := entries(t, output.String())
 	assertField(t, logs, "acuity_call_center_webhook_acknowledgement",
@@ -123,6 +137,26 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		"outcome", "rate_limited")
 	assertField(t, logs, "acuity_call_center_call_recording_playback",
 		"outcome", "succeeded")
+	assertField(t, logs, "acuity_call_center_recording_maintenance",
+		"operation", "reconciliation")
+	assertField(t, logs, "acuity_call_center_recording_maintenance",
+		"outcome", "exhausted")
+	assertField(t, logs, "acuity_call_center_recording_maintenance",
+		"attempt", float64(10))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"reconciliation_depth", float64(4))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"oldest_reconciliation_age_seconds", float64(180))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"reconciliation_retry_depth", float64(2))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"retention_depth", float64(7))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"oldest_retention_age_seconds", float64(93600))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"retention_retry_depth", float64(3))
+	assertField(t, logs, "acuity_call_center_recording_queue",
+		"unavailable_depth", float64(1))
 }
 
 func TestPoolTracerClassifiesBoundedAcquisitionOutcome(t *testing.T) {

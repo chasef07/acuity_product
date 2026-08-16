@@ -680,12 +680,13 @@ func (m *Module) openPlayback(
 	}
 	defer func() { _ = tx.Rollback(authorizationContext) }()
 	var practiceID, locationID, recordingID string
+	var contentExpiresAt *time.Time
 	timelineKind := "voicemail.playback_authorized"
 	var row pgx.Row
 	if kind == PlaybackCallRecording {
 		row = tx.QueryRow(authorizationContext, `
 			SELECT recording.practice_id::text, recording.location_id::text,
-				recording.provider_recording_id
+				recording.provider_recording_id, recording.content_expires_at
 			FROM human_calling_call_recordings recording
 			WHERE recording.call_id = $1 AND recording.audio_state = 'READY'
 				AND recording.provider_recording_id IS NOT NULL
@@ -694,14 +695,15 @@ func (m *Module) openPlayback(
 		timelineKind = "call.recording.playback_authorized"
 	} else {
 		row = tx.QueryRow(authorizationContext, `
-			SELECT practice_id::text, location_id::text, provider_recording_id
+			SELECT practice_id::text, location_id::text, provider_recording_id,
+				NULL::timestamptz
 			FROM human_calling_voicemails
 			WHERE call_id = $1 AND outcome = 'VOICEMAIL'
 				AND audio_state = 'READY' AND provider_recording_id IS NOT NULL
 		`, claims.CallID)
 	}
 	if err := row.Scan(
-		&practiceID, &locationID, &recordingID,
+		&practiceID, &locationID, &recordingID, &contentExpiresAt,
 	); err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
@@ -720,9 +722,27 @@ func (m *Module) openPlayback(
 	if m.config.RecordingAudioProvider == nil {
 		return PlaybackContent{}, ErrConflict
 	}
-	content, resultErr = m.config.RecordingAudioProvider.OpenRecording(
-		streamContext, recordingID, rangeHeader,
-	)
+	if contentExpiresAt == nil {
+		content, resultErr = m.config.RecordingAudioProvider.OpenRecording(
+			streamContext, recordingID, rangeHeader,
+		)
+	} else {
+		providerContext, cancelProviderContext := context.WithDeadline(
+			streamContext,
+			*contentExpiresAt,
+		)
+		content, resultErr = m.config.RecordingAudioProvider.OpenRecording(
+			providerContext, recordingID, rangeHeader,
+		)
+		if resultErr != nil || content.Body == nil {
+			cancelProviderContext()
+		} else {
+			content.Body = &cancelingReadCloser{
+				ReadCloser: content.Body,
+				cancel:     cancelProviderContext,
+			}
+		}
+	}
 	if resultErr != nil {
 		return PlaybackContent{}, resultErr
 	}
