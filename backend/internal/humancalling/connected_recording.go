@@ -186,7 +186,9 @@ func (m *Module) applyConnectedCallRecordingError(
 
 func connectedRecordingState(fact ProviderFact) (callLegClientState, bool) {
 	state, ok := parseCallLegClientState(fact.ClientState)
-	return state, ok && state.Kind == "bridge" &&
+	connectedKind := state.Kind == "bridge" ||
+		state.Kind == callLegClientStateStaffHangup
+	return state, ok && connectedKind &&
 		(state.Role == "STAFF" || state.Role == "DESTINATION")
 }
 
