@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type Route } from "@playwright/test"
 
 import { signInAs } from "./support"
 
@@ -85,6 +85,35 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
 }) => {
   test.setTimeout(180_000)
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  const stalePracticeID = "00000000-0000-0000-0000-000000000091"
+  const staleLocationID = "00000000-0000-0000-0000-000000000092"
+  let sourcePracticeID = ""
+  await page.route(`${portalURL}/v1/access`, async (route) => {
+    const response = await route.fetch()
+    const discovery = (await response.json()) as {
+      practices: Array<{ id: string }>
+      [key: string]: unknown
+    }
+    sourcePracticeID = discovery.practices[0]?.id ?? ""
+    await route.fulfill({
+      response,
+      json: {
+        ...discovery,
+        practices: [
+          ...discovery.practices,
+          {
+            id: stalePracticeID,
+            name: "Stale Callback Practice",
+            version: 1,
+            locations: [
+              { id: staleLocationID, name: "Stale Callback Location" },
+            ],
+            callingEnabled: false,
+          },
+        ],
+      },
+    })
+  })
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
@@ -499,12 +528,38 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(completeTask).toHaveCSS("transition-duration", "0s")
   await expect(relativeTime).toHaveCSS("transition-duration", "0s")
 
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("acuity-auth-token")
+    channel.postMessage("clear-access-token")
+    channel.close()
+  })
+  await page.route("**/api/auth/token", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "temporarily unavailable" }),
+    }),
+  )
+  await completeTask.click()
+  await expect(
+    taskItem
+      .getByRole("alert")
+      .filter({ hasText: "Task completion is temporarily unavailable" }),
+  ).toBeVisible()
+  await expect(taskItem.getByRole("alert")).not.toContainText("session expired")
+  await page.unroute("**/api/auth/token")
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("acuity-auth-token")
+    channel.postMessage("clear-access-token")
+    channel.close()
+  })
+
   let completionAttempt = 0
   let releaseSuccess = () => {}
   const successGate = new Promise<void>((resolve) => {
     releaseSuccess = resolve
   })
-  await page.route(/\/v1\/tasks\/[^/]+\/complete$/, async (route) => {
+  const completionRoute = async (route: Route) => {
     completionAttempt += 1
     if (completionAttempt === 1) {
       await route.fulfill({
@@ -538,7 +593,8 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     }
     await successGate
     await route.continue()
-  })
+  }
+  await page.route(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
   await completeTask.click()
   await expect(taskItem).toBeVisible()
@@ -564,6 +620,59 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(taskItem).toBeVisible()
   releaseSuccess()
   await expect(taskItem).toHaveCount(0)
+  await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
+
+  await page.getByRole("button", { name: "Filter Tasks: Billing" }).click()
+  await page.getByRole("menuitemradio", { name: /^Medication / }).click()
+  await page.keyboard.press("Escape")
+  const medicationItem = page
+    .getByTestId("task-row")
+    .filter({ hasText: "Review medication refill" })
+  const completeMedication = medicationItem.getByRole("button", {
+    name: "Complete Task: Review medication refill",
+  })
+  let releaseStaleCompletion = () => {}
+  const staleCompletionGate = new Promise<void>((resolve) => {
+    releaseStaleCompletion = resolve
+  })
+  let finishStaleCompletion = (status: number) => {
+    void status
+  }
+  const staleCompletionHandled = new Promise<number>((resolve) => {
+    finishStaleCompletion = resolve
+  })
+  const staleCompletionRoute = async (route: Route) => {
+    await staleCompletionGate
+    const response = await route.fetch()
+    await route.fulfill({ response })
+    finishStaleCompletion(response.status())
+  }
+  let sourceTaskQueries = 0
+  const taskQueryRoute = async (route: Route) => {
+    const body = route.request().postDataJSON() as { practiceId?: string }
+    if (body.practiceId === sourcePracticeID) sourceTaskQueries += 1
+    await route.continue()
+  }
+  await page.route(/\/v1\/tasks\/query$/, taskQueryRoute)
+  await page.route(
+    /\/v1\/tasks\/[^/]+\/complete$/,
+    staleCompletionRoute,
+  )
+
+  await expect(medicationItem).toBeVisible()
+  await medicationItem.hover()
+  await completeMedication.click()
+  await expect(completeMedication).toHaveAttribute("aria-busy", "true")
+  await page.getByRole("button", { name: "Workspace selector" }).click()
+  await page
+    .getByRole("button", { name: "Stale Callback Location", exact: true })
+    .click()
+  await expect(page.getByTestId("task-row")).toHaveCount(0)
+  sourceTaskQueries = 0
+  releaseStaleCompletion()
+  expect(await staleCompletionHandled).toBe(200)
+  await page.waitForTimeout(500)
+  expect(sourceTaskQueries).toBe(0)
 })
 
 async function openNumberInbox(

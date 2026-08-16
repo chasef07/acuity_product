@@ -71,7 +71,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { aiCallCompletionLabel } from "@/lib/ai-interactions"
 import { categorizeAIOutcomes } from "@/lib/ai-outcome-attention"
-import { authClient, getAccessToken } from "@/lib/auth-client"
+import { authClient, getAccessTokenResult } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
@@ -294,7 +294,10 @@ export function TaskRail({
       setCompletionError(undefined)
       scrollContainer.current?.scrollTo({ top: restored?.scrollTop ?? 0 })
     })
-    return () => window.cancelAnimationFrame(frame)
+    return () => {
+      if (currentStateKey.current === stateKey) currentStateKey.current = ""
+      window.cancelAnimationFrame(frame)
+    }
   }, [stateKey])
 
   function toggle(section: AttentionSection) {
@@ -333,18 +336,21 @@ export function TaskRail({
     const requestStateKey = stateKey
     setPendingTaskID(task.id)
     setCompletionError(undefined)
-    const token = await getAccessToken()
+    const authentication = await getAccessTokenResult()
     if (currentStateKey.current !== requestStateKey) return
-    if (!token) {
+    if (authentication.status !== "authenticated") {
       setPendingTaskID("")
       setCompletionError({
         taskID: task.id,
-        message: "Your session expired. Sign in again, then retry.",
+        message:
+          authentication.status === "unauthenticated"
+            ? "Your session expired. Sign in again, then retry."
+            : "Task completion is temporarily unavailable. Retry in a moment.",
       })
       return
     }
     const result = await completeTask({
-      client: portalClient(token),
+      client: portalClient(authentication.token),
       path: { taskId: task.id },
       body: { expectedVersion: task.version },
     }).catch(() => undefined)
