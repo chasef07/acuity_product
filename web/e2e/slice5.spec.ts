@@ -215,7 +215,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("button", { name: /\(727\) 555-0199/ })
     .first()
   await expect(page.getByText("Correspondence ledger", { exact: true })).toHaveCount(0)
-  await expect(firstThread.getByLabel("Unread message")).toBeVisible()
+  await expect(firstThread.getByLabel("Unread message")).toHaveCount(0)
   await firstThread.click()
   const inbound = page
     .getByRole("article")

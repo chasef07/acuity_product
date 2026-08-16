@@ -219,7 +219,11 @@ export function EngagementWorkspace({
           )}
           <Button
             className="order-first md:order-last"
-            size="sm"
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Call"
+            title={`Call ${formatUSPhone(engagement.phone)}`}
             disabled={
               !canMutate ||
               !callingEnabled ||
@@ -235,8 +239,7 @@ export function EngagementWorkspace({
               )
             }}
           >
-            {outboundPending ? <Spinner /> : <PhoneCallIcon data-icon="inline-start" />}
-            Call
+            {outboundPending ? <Spinner /> : <PhoneCallIcon />}
           </Button>
         </div>
         {callError && (
@@ -1155,7 +1158,7 @@ function MessageComposer({
             aria-label="Message"
             rows={1}
             maxLength={maximumMessageLength}
-            placeholder="Message this number"
+            placeholder="Message"
             className="max-h-40 min-h-12 px-3 py-2 text-base"
             value={body}
             disabled={disabled || pending}

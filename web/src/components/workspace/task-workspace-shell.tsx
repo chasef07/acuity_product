@@ -1306,6 +1306,7 @@ export function TaskWorkspaceShell() {
               onSelect={selectWorkspaceScope}
             />
           }
+          availabilityControl={<CallingAvailabilityControl />}
           locationScopeID={locationScopeID}
           tasks={tasks}
           recoveryTasks={recoveryTasks}
@@ -1361,7 +1362,6 @@ export function TaskWorkspaceShell() {
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
               <SidebarTrigger />
               <div className="flex-1" />
-              <CallingAvailabilityControl />
             </header>
           )}
           {view === "analytics" ? (
@@ -1379,7 +1379,6 @@ export function TaskWorkspaceShell() {
                   canMutate
                   revision={workspaceRevision}
                   headerLeading={<SidebarTrigger />}
-                  headerTrailing={<CallingAvailabilityControl />}
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}

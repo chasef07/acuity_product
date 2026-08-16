@@ -12,7 +12,6 @@ import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import {
   ArrowRightIcon,
-  BotIcon,
   ChartNoAxesCombinedIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
@@ -25,7 +24,6 @@ import {
 } from "lucide-react"
 
 import { AcuityMark } from "@/components/acuity-mark"
-import { Badge } from "@/components/ui/badge"
 import {
   InputGroup,
   InputGroupAddon,
@@ -58,11 +56,8 @@ import type {
   Task,
   TaskFolderCounts,
 } from "@/lib/api/generated/types.gen"
-import {
-  aiCallCompletionLabel,
-  appointmentOutcomeLabel,
-} from "@/lib/ai-interactions"
-import { appointmentFolderForAction } from "@/lib/ai-outcome-attention"
+import { aiCallCompletionLabel } from "@/lib/ai-interactions"
+import { categorizeAIOutcomes } from "@/lib/ai-outcome-attention"
 import { authClient } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
@@ -103,6 +98,7 @@ type TaskRailProps = {
   discovery: AccessDiscovery
   practice: PracticeAccess
   workspaceControl: ReactNode
+  availabilityControl: ReactNode
   locationScopeID: string
   tasks: Task[]
   recoveryTasks: Task[]
@@ -142,6 +138,7 @@ export function TaskRail({
   discovery,
   practice,
   workspaceControl,
+  availabilityControl,
   locationScopeID,
   tasks,
   recoveryTasks,
@@ -244,8 +241,7 @@ export function TaskRail({
   )
   const textRows = useMemo(() => aggregateTexts(messages), [messages])
   const outcomeFolderExpanded =
-    (expanded === "tasks" && taskCategory === "all") ||
-    (expanded === "appointments" && Boolean(expandedAppointment))
+    expanded === "appointments" && Boolean(expandedAppointment)
 
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -317,7 +313,7 @@ export function TaskRail({
                 aria-invalid={Boolean(engagementError)}
                 autoComplete="off"
                 enterKeyHint="go"
-                placeholder="Search tasks, names, or phone"
+                placeholder="Search"
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
               />
@@ -348,10 +344,7 @@ export function TaskRail({
         >
           <AttentionGroup
             title="Tasks"
-            count={
-              selectedTaskCount +
-              (taskCategory === "all" ? outcomeCounts.tasks : 0)
-            }
+            count={selectedTaskCount}
             expanded={expanded === "tasks"}
             onToggle={() => toggle("tasks")}
           >
@@ -371,16 +364,6 @@ export function TaskRail({
                 ))}
               </NativeSelect>
             </SidebarMenuItem>
-            {taskCategory === "all" &&
-              categorizedAIOutcomes.tasks.map((interaction) => (
-                <AIOutcomeRow
-                  key={interaction.id}
-                  interaction={interaction}
-                  active={interaction.id === selectedAIInteractionID}
-                  showOffice={showOffice}
-                  onSelect={() => onAIInteractionSelect(interaction)}
-                />
-              ))}
             {filteredTasks.map((task) => (
               <TaskRow
                 key={task.id}
@@ -393,9 +376,7 @@ export function TaskRail({
             {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
-            {!loading &&
-              selectedTaskCount === 0 &&
-              (taskCategory !== "all" || outcomeCounts.tasks === 0) && (
+            {!loading && selectedTaskCount === 0 && (
               <RailEmpty inMenu>
                 {taskCategory === "all"
                   ? "No open Tasks"
@@ -499,6 +480,11 @@ export function TaskRail({
           </AttentionGroup>
         </SidebarContent>
         <SidebarFooter className="p-2">
+          {availabilityControl && (
+            <div className="mb-1 border-b border-sidebar-border/70 px-2 py-2">
+              {availabilityControl}
+            </div>
+          )}
           <SidebarMenu>
             {discovery.platformOperator && (
               <SidebarMenuItem>
@@ -713,31 +699,21 @@ function AIOutcomeRow({
         onClick={onSelect}
       >
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium tabular-nums">
-              {formatUSPhone(interaction.phone)}
+          <span className="truncate text-sm font-medium tabular-nums">
+            {formatUSPhone(interaction.phone)}
+          </span>
+          {showOffice && (
+            <span className="truncate text-[0.6875rem] text-muted-foreground">
+              {interaction.locationName}
             </span>
-            <Badge variant="outline" className="h-4 gap-1 px-1 text-[0.6875rem]">
-              <BotIcon className="size-2.5" aria-hidden="true" />
-              AI
-            </Badge>
-          </span>
-          <span className="flex min-w-0 items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
-            <span>{appointmentOutcomeLabel(interaction.appointmentOutcome)}</span>
-            <span aria-hidden="true">·</span>
-            <span>{aiCallCompletionLabel(interaction.status)}</span>
-            <span aria-hidden="true">·</span>
-            <time className="tabular-nums" dateTime={occurredAt}>
-              {relativeTime(occurredAt)}
-            </time>
-            {showOffice && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="truncate">{interaction.locationName}</span>
-              </>
-            )}
-          </span>
+          )}
         </span>
+        <time
+          className="ml-2 shrink-0 self-start pt-0.5 text-[0.6875rem] tabular-nums text-muted-foreground"
+          dateTime={occurredAt}
+        >
+          {relativeTime(occurredAt)}
+        </time>
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
@@ -827,17 +803,9 @@ function TaskRow({
               <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
             )}
             <span className="truncate text-sm font-medium">{task.title}</span>
-            {task.origin === "ABITA_AI" && (
-              <Badge variant="outline" className="h-4 gap-1 px-1 text-[0.6875rem]">
-                <BotIcon className="size-2.5" aria-hidden="true" />
-                AI
-              </Badge>
-            )}
           </span>
           <span className="flex min-w-0 items-center gap-1.5 text-[0.6875rem] tabular-nums text-muted-foreground">
             <span>{formatUSPhone(task.phone)}</span>
-            <span aria-hidden="true">·</span>
-            <time dateTime={taskRelativeAt(task)}>{relativeTime(taskRelativeAt(task))}</time>
             {showOffice && (
               <>
                 <span aria-hidden="true">·</span>
@@ -846,6 +814,12 @@ function TaskRow({
             )}
           </span>
         </span>
+        <time
+          className="ml-2 shrink-0 self-start pt-0.5 text-[0.6875rem] tabular-nums text-muted-foreground"
+          dateTime={taskRelativeAt(task)}
+        >
+          {relativeTime(taskRelativeAt(task))}
+        </time>
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
@@ -889,6 +863,12 @@ function RecoveryRow({
             {showOffice ? ` · ${row.locationName}` : ""}
           </span>
         </span>
+        <time
+          className="ml-2 shrink-0 self-start pt-0.5 text-[0.6875rem] tabular-nums text-muted-foreground"
+          dateTime={row.latestAt}
+        >
+          {relativeTime(row.latestAt)}
+        </time>
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
@@ -918,19 +898,17 @@ function TextRow({
         onClick={onSelect}
       >
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-center gap-2">
-            {row.engagement.unread && (
-              <span aria-label="Unread message" className="size-1.5 rounded-full bg-warning" />
-            )}
-            <span className="truncate text-sm font-medium tabular-nums">
-              {formatUSPhone(row.engagement.phone)}
-            </span>
+          <span className="truncate text-sm font-medium tabular-nums">
+            {formatUSPhone(row.engagement.phone)}
           </span>
           <span className="truncate text-[0.6875rem] text-muted-foreground">
             {row.previewThread.preview || "Attachment"}
           </span>
         </span>
-        <time className="text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={row.engagement.latestActivity}>
+        <time
+          className="ml-2 shrink-0 self-start pt-0.5 text-[0.6875rem] tabular-nums text-muted-foreground"
+          dateTime={row.engagement.latestActivity}
+        >
           {relativeTime(row.engagement.latestActivity)}
         </time>
       </SidebarMenuButton>
@@ -955,21 +933,6 @@ function categorizeTasks(tasks: Task[]) {
     const intent = appointmentFolderForTask(task)
     if (intent) categorized[intent].push(task)
     else categorized.general.push(task)
-  }
-  return categorized
-}
-
-function categorizeAIOutcomes(outcomes: AiOutcomeItem[]) {
-  const categorized = {
-    tasks: [] as AiOutcomeItem[],
-    bookings: [] as AiOutcomeItem[],
-    cancellations: [] as AiOutcomeItem[],
-    reschedules: [] as AiOutcomeItem[],
-  }
-  for (const outcome of outcomes) {
-    const folder = appointmentFolderForAction(outcome.appointmentAction)
-    if (folder) categorized[folder].push(outcome)
-    else categorized.tasks.push(outcome)
   }
   return categorized
 }
