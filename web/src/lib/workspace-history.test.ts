@@ -3,6 +3,7 @@ import test from "node:test"
 
 import type { ConversationTimelineItem } from "./api/generated/types.gen.ts"
 import {
+  conversationDateLabel,
   presentTimeline,
   recoveryFollowUpCallIDs,
   technicalTimelineItems,
@@ -96,6 +97,32 @@ test("history keeps a meaningful AI outcome beside the inbound staff call", () =
     "item",
     "staff-call",
   ])
+})
+
+test("history presents activity oldest to newest without mutating the API page", () => {
+  const items = [
+    { ...base, id: "newest", occurredAt: "2026-08-16T12:00:00Z" },
+    { ...base, id: "oldest", occurredAt: "2026-08-14T08:00:00Z" },
+    { ...base, id: "middle", occurredAt: "2026-08-15T10:00:00Z" },
+  ] as ConversationTimelineItem[]
+
+  assert.deepEqual(presentTimeline(items).map((item) => item.id), [
+    "oldest",
+    "middle",
+    "newest",
+  ])
+  assert.deepEqual(items.map((item) => item.id), ["newest", "oldest", "middle"])
+})
+
+test("conversation date labels keep recent boundaries subtle and readable", () => {
+  const now = new Date("2026-08-16T12:00:00")
+
+  assert.equal(conversationDateLabel("2026-08-16T08:00:00", now), "Today")
+  assert.equal(conversationDateLabel("2026-08-15T08:00:00", now), "Yesterday")
+  assert.match(
+    conversationDateLabel("2026-08-13T08:00:00", now),
+    /Aug 13/,
+  )
 })
 
 test("history combines recovery bookkeeping with its call and keeps the evidence available", () => {
