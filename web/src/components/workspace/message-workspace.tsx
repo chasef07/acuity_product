@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  Fragment,
   type ChangeEvent,
   type FormEvent,
   type ReactNode,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -53,7 +55,30 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group"
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item"
+import { Marker, MarkerContent } from "@/components/ui/marker"
+import {
+  Message as MessageRow,
+  MessageContent,
+  MessageFooter,
+} from "@/components/ui/message"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
@@ -87,8 +112,10 @@ import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import {
+  conversationDateLabel,
   presentTimeline,
   recoveryFollowUpCallIDs,
+  sameConversationDate,
   technicalTimelineItems,
 } from "@/lib/workspace-history"
 import { appointmentIntentForTask } from "@/lib/workspace-triage"
@@ -395,17 +422,11 @@ function MessageConversation({
       setLoadingOlder(false)
       return
     }
-    const container = scroller.current
-    const previousHeight = container?.scrollHeight ?? 0
     const result = await loadPage(token, cursor)
     setLoadingOlder(false)
     if (!result?.data) return
     setItems((current) => [...result.data.items, ...current])
     setCursor(result.data.nextCursor)
-    window.requestAnimationFrame(() => {
-      if (container)
-        container.scrollTop += container.scrollHeight - previousHeight
-    })
   }
 
   const conversationThread = items.find(
@@ -417,89 +438,142 @@ function MessageConversation({
   const followUpCallIDs = recoveryFollowUpCallIDs(items)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        ref={scroller}
-        data-testid="message-timeline"
-        className="relative min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5"
-        onScroll={(event) => {
-          const element = event.currentTarget
-          atLatest.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight < 72
-        }}
+      <MessageScrollerProvider
+        autoScroll
+        defaultScrollPosition="end"
+        scrollEdgeThreshold={72}
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-2">
-          {cursor && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="mx-auto bg-background"
-              disabled={loadingOlder}
-              onClick={() => void loadOlder()}
-            >
-              {loadingOlder ? <Spinner /> : <RefreshCwIcon />}
-              Earlier activity
-            </Button>
-          )}
-          {loading && (
-            <div className="flex justify-center py-10 text-muted-foreground">
-              <Spinner />
-              <span className="sr-only">Loading conversation</span>
-            </div>
-          )}
-          {!loading &&
-            presentedItems.map((item) => (
-              <TimelineEntry
-                key={`${item.type}:${item.id}`}
-                item={item}
-                canMutate={canMutate}
-                onChanged={() => void loadLatest(true)}
-                onTaskCreated={onTaskCreated}
-                onTaskOpen={onTaskOpen}
-                onCallOpen={onCallOpen}
-                onAIInteractionOpen={onAIInteractionOpen}
-                recoveryFollowUp={
-                  item.type === "CALL" && followUpCallIDs.has(item.call?.id ?? "")
-                }
-              />
-            ))}
-          {!loading && presentedItems.length === 0 && (
-            <Empty className="my-10 border-0">
-              <EmptyHeader>
-                <EmptyTitle>No activity yet</EmptyTitle>
-                <EmptyDescription>
-                  Calls, texts, and Tasks for this number will appear here.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-          {!loading && technicalItems.length > 0 && (
-            <details className="mx-auto w-full max-w-md px-2 py-1 text-xs text-muted-foreground">
-              <summary className="cursor-pointer">Technical details</summary>
-              <ul className="mt-2 space-y-1 pl-4">
-                {technicalItems.map((item) => (
-                  <li key={`${item.type}:${item.id}`}>
-                    {item.task?.title} · {taskActivityLabel(item.taskActivity, item.task?.state ?? "OPEN")}
-                  </li>
+        <MessageScroller className="min-h-0 flex-1 bg-background">
+          <MessageScrollerViewport
+            ref={scroller}
+            aria-label="Conversation activity"
+            data-testid="message-timeline"
+            preserveScrollOnPrepend
+            className="px-3 py-4 sm:px-4"
+            onScroll={(event) => {
+              const element = event.currentTarget
+              atLatest.current =
+                element.scrollHeight - element.scrollTop - element.clientHeight <
+                72
+            }}
+          >
+            <MessageScrollerContent className="mx-auto max-w-2xl gap-2">
+              {cursor && (
+                <MessageScrollerItem
+                  messageId="earlier-activity"
+                  className="flex justify-center"
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="bg-background"
+                    disabled={loadingOlder}
+                    onClick={() => void loadOlder()}
+                  >
+                    {loadingOlder ? <Spinner /> : <RefreshCwIcon />}
+                    Earlier activity
+                  </Button>
+                </MessageScrollerItem>
+              )}
+              {loading && (
+                <MessageScrollerItem messageId="loading-conversation">
+                  <div
+                    aria-label="Loading conversation"
+                    className="flex flex-col gap-3 py-8"
+                    role="status"
+                  >
+                    <Skeleton className="ml-auto h-12 w-2/3 rounded-lg" />
+                    <Skeleton className="h-14 w-3/4 rounded-lg" />
+                    <Skeleton className="mx-auto h-16 w-full max-w-xl rounded-md" />
+                    <span className="sr-only">Loading conversation</span>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {!loading &&
+                presentedItems.map((item, index) => (
+                  <MessageScrollerItem
+                    key={`${item.type}:${item.id}`}
+                    messageId={`${item.type}:${item.id}`}
+                  >
+                    <Fragment>
+                      {(index === 0 ||
+                        !sameConversationDate(
+                          presentedItems[index - 1]!.occurredAt,
+                          item.occurredAt,
+                        )) && (
+                        <Marker variant="separator" className="my-2">
+                          <MarkerContent>
+                            {conversationDateLabel(item.occurredAt)}
+                          </MarkerContent>
+                        </Marker>
+                      )}
+                      <TimelineEntry
+                        item={item}
+                        contextLocationID={locationID}
+                        canMutate={canMutate}
+                        onChanged={() => void loadLatest(true)}
+                        onTaskCreated={onTaskCreated}
+                        onTaskOpen={onTaskOpen}
+                        onCallOpen={onCallOpen}
+                        onAIInteractionOpen={onAIInteractionOpen}
+                        recoveryFollowUp={
+                          item.type === "CALL" &&
+                          followUpCallIDs.has(item.call?.id ?? "")
+                        }
+                      />
+                    </Fragment>
+                  </MessageScrollerItem>
                 ))}
-              </ul>
-            </details>
+              {!loading && presentedItems.length === 0 && (
+                <MessageScrollerItem messageId="empty-conversation">
+                  <Empty className="my-10 border-0">
+                    <EmptyHeader>
+                      <EmptyTitle>No activity yet</EmptyTitle>
+                      <EmptyDescription>
+                        Calls, texts, and Tasks for this number will appear here.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                </MessageScrollerItem>
+              )}
+              {!loading && technicalItems.length > 0 && (
+                <MessageScrollerItem messageId="technical-details">
+                  <details className="mx-auto w-full max-w-md px-2 py-1 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">Technical details</summary>
+                    <ul className="mt-2 flex flex-col gap-1 pl-4">
+                      {technicalItems.map((item) => (
+                        <li key={`${item.type}:${item.id}`}>
+                          {item.task?.title} ·{" "}
+                          {taskActivityLabel(
+                            item.taskActivity,
+                            item.task?.state ?? "OPEN",
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </MessageScrollerItem>
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          {newActivity ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+              <Button
+                size="sm"
+                className="pointer-events-auto shadow-lg"
+                onClick={() => {
+                  atLatest.current = true
+                  void loadLatest(true)
+                }}
+              >
+                New activity
+              </Button>
+            </div>
+          ) : (
+            <MessageScrollerButton direction="end" />
           )}
-        </div>
-        {newActivity && (
-          <div className="sticky bottom-3 flex justify-center">
-            <Button
-              size="sm"
-              className="shadow-lg"
-              onClick={() => {
-                atLatest.current = true
-                void loadLatest(true)
-              }}
-            >
-              New activity
-            </Button>
-          </div>
-        )}
-      </div>
+        </MessageScroller>
+      </MessageScrollerProvider>
       {error && (
         <Alert variant="destructive" className="rounded-none border-x-0">
           <AlertTitle>Conversation unavailable</AlertTitle>
@@ -547,6 +621,7 @@ function MessageConversation({
 
 function TimelineEntry({
   item,
+  contextLocationID,
   canMutate,
   onChanged,
   onTaskCreated,
@@ -556,6 +631,7 @@ function TimelineEntry({
   recoveryFollowUp,
 }: {
   item: ConversationTimelineItem
+  contextLocationID: string
   canMutate: boolean
   onChanged: () => void
   onTaskCreated: (task: Task) => void
@@ -568,6 +644,7 @@ function TimelineEntry({
     return (
       <MessageEntry
         message={item.message}
+        showLocation={item.message.thread.locationId !== contextLocationID}
         canMutate={canMutate}
         onChanged={onChanged}
         onTaskCreated={onTaskCreated}
@@ -577,12 +654,20 @@ function TimelineEntry({
   if (item.type === "CALL" && item.call) {
     const touchpoint = callTouchpoint(item.call)
     return (
-      <ActivityBubble
+      <ActivityItem
         icon={touchpoint.icon}
-        label={`${item.call.locationName} · ${touchpoint.label}${recoveryFollowUp ? " · Follow-up created" : ""}`}
+        label={`${touchpoint.label}${recoveryFollowUp ? " · Follow-up created" : ""}`}
         occurredAt={item.occurredAt}
         title={item.call.transferReason || touchpoint.label}
         detail={touchpoint.detail}
+        location={
+          item.call.locationId !== contextLocationID
+            ? item.call.locationName
+            : ""
+        }
+        actionLabel={
+          item.call.outcome === "VOICEMAIL" ? "Open voicemail" : "Open call"
+        }
         onOpen={onCallOpen ? () => onCallOpen(item.call!.id) : undefined}
       />
     )
@@ -590,12 +675,18 @@ function TimelineEntry({
   if (item.type === "AI_INTERACTION" && item.aiInteraction) {
     const interaction = item.aiInteraction
     return (
-      <ActivityBubble
-        icon={<BotIcon className="size-4" aria-hidden="true" />}
-        label={`${interaction.locationName} · AI call · ${appointmentOutcomeLabel(interaction.appointmentOutcome)}`}
+      <ActivityItem
+        icon={<BotIcon aria-hidden="true" />}
+        label={`AI call · ${appointmentOutcomeLabel(interaction.appointmentOutcome)}`}
         occurredAt={item.occurredAt}
         title={appointmentOutcomeTitle(interaction.appointmentOutcome)}
         detail={aiCallCompletionLabel(interaction.status)}
+        location={
+          interaction.locationId !== contextLocationID
+            ? interaction.locationName
+            : ""
+        }
+        actionLabel="Open appointment"
         onOpen={
           onAIInteractionOpen
             ? () => onAIInteractionOpen(interaction.id)
@@ -608,12 +699,16 @@ function TimelineEntry({
     const task = item.task
     const touchpoint = taskTouchpoint(task)
     return (
-      <ActivityBubble
+      <ActivityItem
         icon={touchpoint.icon}
-        label={`${task.locationName} · ${touchpoint.label} · ${taskActivityLabel(item.taskActivity, task.state)}`}
+        label={`${touchpoint.label} · ${taskActivityLabel(item.taskActivity, task.state)}`}
         occurredAt={item.occurredAt}
         title={task.title}
         detail={`Created by ${task.createdBy.email || task.createdBy.subject}`}
+        location={
+          task.locationId !== contextLocationID ? task.locationName : ""
+        }
+        actionLabel="Open task"
         onOpen={onTaskOpen ? () => onTaskOpen(task) : undefined}
       />
     )
@@ -632,17 +727,23 @@ function messageTimelineItem(message: Message): ConversationTimelineItem {
 
 function MessageEntry({
   message,
+  showLocation,
   canMutate,
   onChanged,
   onTaskCreated,
 }: {
   message: Message
+  showLocation: boolean
   canMutate: boolean
   onChanged: () => void
   onTaskCreated: (task: Task) => void
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  )
+  const [selected, setSelected] = useState(false)
   const sendAgainAttemptKey = useRef("")
   const outbound = message.direction === "OUTBOUND"
 
@@ -703,45 +804,56 @@ function MessageEntry({
     onChanged()
   }
 
+  function copyMessage() {
+    setCopyState("idle")
+    void navigator.clipboard.writeText(message.body).then(
+      () => setCopyState("copied"),
+      () => setCopyState("failed"),
+    )
+  }
+
+  const actionClassName = cn(
+    "sm:opacity-0 sm:group-focus-within/message:opacity-100 sm:group-hover/message:opacity-100",
+    selected && "sm:opacity-100",
+  )
+
   return (
-    <article
-      className={cn(
-        "group/message flex w-full items-start",
-        outbound ? "justify-end pl-8" : "justify-start pr-8",
-      )}
+    <MessageRow
+      role="article"
+      tabIndex={0}
+      align={outbound ? "end" : "start"}
+      className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+      onPointerUp={() => setSelected(Boolean(window.getSelection()?.toString()))}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setSelected(false)
+      }}
     >
-      <div
-        className={cn(
-          "max-w-[82%] rounded-2xl px-3 py-2 sm:max-w-[32rem]",
-          outbound
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted",
-        )}
-      >
-        {message.body && (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">
-            {message.body}
-          </p>
-        )}
-        {message.attachment && (
-          <AttachmentCard
-            attachment={message.attachment}
-            canMutate={canMutate}
-            onChanged={onChanged}
-            inverse={outbound}
-          />
-        )}
-        <div
-          className={cn(
-            "mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums",
-            outbound ? "text-primary-foreground/75" : "text-muted-foreground",
-          )}
-        >
+      <MessageContent>
+        <Bubble variant={outbound ? "default" : "muted"}>
+          <BubbleContent>
+            {message.body && (
+              <p className="whitespace-pre-wrap">{message.body}</p>
+            )}
+            {message.attachment && (
+              <AttachmentCard
+                attachment={message.attachment}
+                canMutate={canMutate}
+                onChanged={onChanged}
+                inverse={outbound}
+              />
+            )}
+          </BubbleContent>
+        </Bubble>
+        <MessageFooter className="flex-wrap gap-x-2 gap-y-1 tabular-nums">
           <time dateTime={message.createdAt}>
-            {formatDateTime(message.createdAt)}
+            {formatTime(message.createdAt)}
           </time>
-          <span aria-hidden="true">·</span>
-          <span>{message.thread.locationName}</span>
+          {showLocation && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{message.thread.locationName}</span>
+            </>
+          )}
           {outbound && (
             <>
               <span aria-hidden="true">·</span>
@@ -754,80 +866,101 @@ function MessageEntry({
               <span>{message.safeFailureCode}</span>
             </>
           )}
-        </div>
-        {canMutate &&
-          outbound &&
-          (message.delivery === "Failed" ||
-            message.delivery === "Status unknown") && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1 text-primary-foreground">
-              <Button
-                size="sm"
-                variant="secondary"
-                className="h-6 px-2 text-xs"
-                disabled={pending}
-                onClick={() => void sendAgain()}
-              >
-                {message.delivery === "Status unknown" && (
-                  <AlertTriangleIcon data-icon="inline-start" />
-                )}
-                Send again
-              </Button>
-              {pending && <Spinner />}
-            </div>
+          {error && (
+            <p role="alert" className="basis-full text-destructive">
+              {error}
+            </p>
           )}
-        {error && (
-          <p
-            role="alert"
-            className={cn(
-              "mt-2 text-xs",
-              outbound ? "text-primary-foreground" : "text-destructive",
+          <span className="basis-full" aria-hidden="true" />
+          {message.body && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className={actionClassName}
+              onClick={copyMessage}
+            >
+              {copyState === "copied" ? (
+                <CheckIcon data-icon="inline-start" />
+              ) : (
+                <CopyIcon data-icon="inline-start" />
+              )}
+              Copy message
+            </Button>
+          )}
+          {canMutate && !message.taskId && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className={actionClassName}
+              disabled={pending}
+              onClick={() => void createTask()}
+            >
+              <CheckSquareIcon data-icon="inline-start" />
+              Create task
+            </Button>
+          )}
+          {canMutate &&
+            outbound &&
+            (message.delivery === "Failed" ||
+              message.delivery === "Status unknown") && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label="More message actions"
+                      className={actionClassName}
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align={outbound ? "end" : "start"}>
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      disabled={pending}
+                      onClick={() => void sendAgain()}
+                    >
+                      {message.delivery === "Status unknown" ? (
+                        <AlertTriangleIcon />
+                      ) : (
+                        <RefreshCwIcon />
+                      )}
+                      Send again
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
+          {pending && <Spinner />}
+          <span
+            role="status"
+            className="sr-only"
           >
-            {error}
-          </p>
-        )}
-      </div>
-      {canMutate && !message.taskId && (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Message actions"
-                className={cn(
-                  "mt-1 sm:opacity-0 sm:group-focus-within/message:opacity-100 sm:group-hover/message:opacity-100",
-                  outbound ? "order-first mr-1" : "ml-1",
-                )}
-              />
-            }
-          >
-            <EllipsisIcon />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align={outbound ? "end" : "start"}>
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                disabled={pending}
-                onClick={() => void createTask()}
-              >
-                <CheckSquareIcon />
-                Create task
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </article>
+            {copyState === "copied"
+              ? "Message copied"
+              : copyState === "failed"
+                ? "Message could not be copied"
+                : ""}
+          </span>
+        </MessageFooter>
+      </MessageContent>
+    </MessageRow>
   )
 }
 
-function ActivityBubble({
+function ActivityItem({
   icon,
   label,
   occurredAt,
   title,
   detail,
+  location,
+  actionLabel,
   onOpen,
 }: {
   icon: React.ReactNode
@@ -835,43 +968,35 @@ function ActivityBubble({
   occurredAt: string
   title: string
   detail: string
+  location: string
+  actionLabel: string
   onOpen?: () => void
 }) {
-  const content = (
-    <>
-      <span className="mt-0.5 text-muted-foreground">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span className="truncate">{label}</span>
-          <time className="ml-auto shrink-0 tabular-nums" dateTime={occurredAt}>
-            {formatDateTime(occurredAt)}
-          </time>
-        </span>
-        <span className="mt-1 block truncate text-sm font-medium text-foreground">
-          {title}
-        </span>
-        <span className="mt-0.5 block text-xs text-muted-foreground">
-          {detail}
-        </span>
-      </span>
-    </>
-  )
-  if (onOpen) {
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        className="mx-auto h-auto w-full max-w-md items-start justify-start gap-2 rounded-none border-b px-2 py-3 text-left whitespace-normal"
-        onClick={onOpen}
-      >
-        {content}
-      </Button>
-    )
-  }
   return (
-    <div className="mx-auto flex w-full max-w-md items-start gap-2 border-b px-2 py-3">
-      {content}
-    </div>
+    <Item size="sm" className="mx-auto max-w-xl">
+      <ItemMedia variant="icon">{icon}</ItemMedia>
+      <ItemContent>
+        <ItemTitle>{title}</ItemTitle>
+        <ItemDescription>
+          {[label, detail, location, formatTime(occurredAt)]
+            .filter(Boolean)
+            .join(" · ")}
+        </ItemDescription>
+      </ItemContent>
+      {onOpen && (
+        <ItemActions>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-label={`${actionLabel}: ${title}`}
+            onClick={onOpen}
+          >
+            {actionLabel}
+          </Button>
+        </ItemActions>
+      )}
+    </Item>
   )
 }
 
@@ -1036,6 +1161,7 @@ function MessageComposer({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const fileInput = useRef<HTMLInputElement>(null)
+  const textarea = useRef<HTMLTextAreaElement>(null)
   const draftAttempt = useRef<
     | {
         signature: string
@@ -1044,6 +1170,13 @@ function MessageComposer({
       }
     | undefined
   >(undefined)
+
+  useEffect(() => {
+    const element = textarea.current
+    if (!element) return
+    element.style.height = "0px"
+    element.style.height = `${Math.min(element.scrollHeight, 160)}px`
+  }, [body])
 
   function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     const selected = event.target.files?.[0]
@@ -1146,17 +1279,30 @@ function MessageComposer({
   return (
     <form
       aria-label="Message composer"
-      className="bg-background px-4 pb-4 pt-2"
+      className="bg-background px-3 pb-3 pt-2 sm:px-4"
       onSubmit={(event) => void submit(event)}
     >
-      <div className="mx-auto max-w-4xl">
-        <InputGroup className="h-auto min-h-20 rounded-3xl bg-card p-2 shadow-sm">
+      <div className="mx-auto max-w-2xl">
+        <InputGroup className="h-auto min-h-14 rounded-2xl bg-card px-1 shadow-sm">
+          <InputGroupAddon align="inline-start">
+            <InputGroupButton
+              type="button"
+              size="icon-sm"
+              aria-label="Attach one file"
+              disabled={disabled || pending}
+              onClick={() => fileInput.current?.click()}
+            >
+              <PaperclipIcon />
+            </InputGroupButton>
+          </InputGroupAddon>
           <InputGroupTextarea
+            ref={textarea}
             aria-label="Message"
+            aria-invalid={Boolean(error)}
             rows={1}
             maxLength={maximumMessageLength}
             placeholder="Message"
-            className="max-h-40 min-h-12 px-3 py-2 text-base"
+            className="max-h-40 min-h-10 py-2.5 text-sm"
             value={body}
             disabled={disabled || pending}
             onChange={(event) => setBody(event.target.value)}
@@ -1167,20 +1313,11 @@ function MessageComposer({
               }
             }}
           />
-          <InputGroupAddon align="block-end" className="px-2 pb-1">
+          <InputGroupAddon align="inline-end">
             <InputGroupButton
-              type="button"
-              size="icon-sm"
-              aria-label="Attach one file"
-              disabled={disabled || pending}
-              onClick={() => fileInput.current?.click()}
-            >
-              <PaperclipIcon />
-            </InputGroupButton>
-            <Button
               type="submit"
-              size="icon-lg"
-              className="ml-auto rounded-full"
+              size="icon-sm"
+              variant="default"
               aria-label="Send message"
               disabled={
                 disabled ||
@@ -1190,7 +1327,7 @@ function MessageComposer({
               }
             >
               {pending ? <Spinner /> : <ArrowUpIcon />}
-            </Button>
+            </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
         <input
@@ -1333,10 +1470,8 @@ function taskTouchpoint(task: Task) {
   return { icon: <CheckSquareIcon />, label: "Task" }
 }
 
-function formatDateTime(value: string) {
+function formatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value))

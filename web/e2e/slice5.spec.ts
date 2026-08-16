@@ -15,6 +15,16 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   await signInAs(page, "admin@abita.test", "Fixture Admin")
   await page.getByRole("button", { name: "Toggle Sidebar" }).click()
 
+  let releaseTimeline = () => {}
+  const timelineGate = new Promise<void>((resolve) => {
+    releaseTimeline = resolve
+  })
+  const delayedTimeline = async (route: Route) => {
+    await timelineGate
+    await route.continue()
+  }
+  await page.route(/\/v1\/engagements\/[^/]+\/timeline/, delayedTimeline)
+
   const searchInput = page.getByLabel("Search tasks, names, or phone")
   const submitButton = page.getByRole("button", { name: "Search" })
   await expect(submitButton).toBeVisible()
@@ -23,6 +33,12 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   await page.keyboard.press("Escape")
 
   await expect(page.getByRole("heading", { name: "(727) 555-0199" })).toBeVisible()
+  await expect(
+    page.getByRole("status", { name: "Loading conversation" }),
+  ).toBeVisible()
+  releaseTimeline()
+  await expect(page.getByText("No activity yet", { exact: true })).toBeVisible()
+  await page.unroute(/\/v1\/engagements\/[^/]+\/timeline/, delayedTimeline)
   await expect(page.getByLabel("Sender office")).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Call", exact: true }),
@@ -143,6 +159,46 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe("+17275550199")
 
+  const retryDraft = "Retry this exact message safely."
+  const retryKeys: string[] = []
+  let sendAttempt = 0
+  const retryRoute = async (route: Route) => {
+    sendAttempt += 1
+    retryKeys.push(
+      (route.request().postDataJSON() as { idempotencyKey: string })
+        .idempotencyKey,
+    )
+    if (sendAttempt === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "DEPENDENCY_UNAVAILABLE",
+            message: "Messaging is temporarily unavailable.",
+            correlationId: "message-retry",
+            retryable: true,
+          },
+        }),
+      })
+      return
+    }
+    await route.continue()
+  }
+  await page.route(`${portalURL}/v1/messages`, retryRoute)
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill(retryDraft)
+  await page.getByRole("button", { name: "Send message" }).click()
+  await expect(
+    page.getByText("The message was not queued. Nothing was sent."),
+  ).toBeVisible()
+  await page.getByRole("button", { name: "Send message" }).click()
+  await expect(page.getByRole("article").filter({ hasText: retryDraft })).toBeVisible()
+  expect(retryKeys).toHaveLength(2)
+  expect(retryKeys[1]).toBe(retryKeys[0])
+  await page.unroute(`${portalURL}/v1/messages`, retryRoute)
+
   const outgoingText = "Your records are ready for pickup."
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -250,6 +306,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("article")
     .filter({ hasText: inboundText })
   await expect(inbound).toBeVisible()
+  await expect(page.getByText("Today", { exact: true }).first()).toBeVisible()
   await expect(
     page
       .getByTestId("text-attention-row")
@@ -259,9 +316,31 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
   ).toHaveCount(0)
-  await expect(
-    inbound.getByRole("button", { name: "Create Task" }),
-  ).toHaveCount(0)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileCopy = inbound.getByRole("button", { name: "Copy message" })
+  const mobileCreateTask = inbound.getByRole("button", { name: "Create task" })
+  await expect(mobileCopy).toHaveCSS("opacity", "1")
+  await expect(mobileCreateTask).toHaveCSS("opacity", "1")
+  const composerSurface = page
+    .getByRole("form", { name: "Message composer" })
+    .locator('[data-slot="input-group"]')
+  const restingComposerHeight = await composerSurface.evaluate(
+    (element) => element.getBoundingClientRect().height,
+  )
+  expect(restingComposerHeight).toBeGreaterThanOrEqual(52)
+  expect(restingComposerHeight).toBeLessThanOrEqual(64)
+  const messageInput = page.getByRole("textbox", {
+    name: "Message",
+    exact: true,
+  })
+  await messageInput.fill("First line\nSecond line\nThird line")
+  await expect
+    .poll(() =>
+      composerSurface.evaluate((element) => element.getBoundingClientRect().height),
+    )
+    .toBeGreaterThan(restingComposerHeight)
+  await messageInput.fill("")
 
   await page.setViewportSize({ width: 1280, height: 320 })
   const timeline = page.getByTestId("message-timeline")
@@ -279,9 +358,15 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   const headerTop = await inboxHeading.evaluate(
     (element) => element.closest("header")?.getBoundingClientRect().top,
   )
-  await timeline.evaluate((element) => {
-    element.scrollTop = element.scrollHeight
-  })
+  const latestScrollTop = await timeline.evaluate((element) => element.scrollTop)
+  await timeline.hover()
+  await page.mouse.wheel(0, -1_000)
+  await expect
+    .poll(() => timeline.evaluate((element) => element.scrollTop))
+    .toBeLessThan(latestScrollTop)
+  const scrollToLatest = page.getByRole("button", { name: "Scroll to end" })
+  await expect(scrollToLatest).toBeVisible()
+  await scrollToLatest.click({ timeout: 10_000 })
   await expect
     .poll(() => timeline.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0)
@@ -295,11 +380,19 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
   await page.setViewportSize({ width: 1280, height: 720 })
 
+  const copyMessage = inbound.getByRole("button", { name: "Copy message" })
+  const createTask = inbound.getByRole("button", { name: "Create task" })
+  await expect(copyMessage).toHaveCSS("opacity", "0")
   await inbound.hover()
-  await inbound.getByRole("button", { name: "Message actions" }).click()
-  await page.getByRole("menuitem", { name: "Create task" }).click()
+  await expect(copyMessage).toHaveCSS("opacity", "1")
+  await expect(createTask).toHaveCSS("opacity", "1")
+  await copyMessage.click()
+  await expect(inbound.getByRole("status")).toContainText("Message copied")
+  await inbound.focus()
+  await expect(createTask).toHaveCSS("opacity", "1")
+  await createTask.click()
   const taskTouchpoint = page.getByRole("button", {
-    name: /Fixture Location 1 · Task · Created.*Follow up on text/,
+    name: /Open task: Follow up on text/,
   })
   await expect(taskTouchpoint).toBeVisible()
   await taskTouchpoint.click()
@@ -385,8 +478,9 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   ).toBeVisible()
   await page
     .getByRole("button", {
-      name: /Fixture Location 1 · Task · Completed.*Follow up on text/,
+      name: /Open task: Follow up on text/,
     })
+    .last()
     .click()
   const completedTaskContext = page.getByRole("complementary", {
     name: "Task context",

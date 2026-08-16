@@ -1,4 +1,5 @@
 import type { ConversationTimelineItem } from "@/lib/api/generated/types.gen"
+import { oldestFirst } from "./workspace-ordering.ts"
 
 export function presentTimeline(items: ConversationTimelineItem[]) {
   const inboundSourceCallIDs = new Set(
@@ -12,17 +13,39 @@ export function presentTimeline(items: ConversationTimelineItem[]) {
       .map((item) => item.call!.sourceCallId!),
   )
 
-  return items.filter((item) => {
-    if (
-      item.type === "AI_INTERACTION" &&
-      item.aiInteraction?.status === "ESCALATED" &&
-      item.aiInteraction.appointmentOutcome === "INDETERMINATE" &&
-      inboundSourceCallIDs.has(item.aiInteraction.sourceCallId)
-    ) {
-      return false
-    }
-    return !isRecoveryTechnicalEvent(item)
-  })
+  return oldestFirst(
+    items.filter((item) => {
+      if (
+        item.type === "AI_INTERACTION" &&
+        item.aiInteraction?.status === "ESCALATED" &&
+        item.aiInteraction.appointmentOutcome === "INDETERMINATE" &&
+        inboundSourceCallIDs.has(item.aiInteraction.sourceCallId)
+      ) {
+        return false
+      }
+      return !isRecoveryTechnicalEvent(item)
+    }),
+    (item) => item.occurredAt,
+  )
+}
+
+export function conversationDateLabel(value: string, now = new Date()) {
+  const date = new Date(value)
+  if (sameLocalDate(date, now)) return "Today"
+
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (sameLocalDate(date, yesterday)) return "Yesterday"
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date)
+}
+
+export function sameConversationDate(left: string, right: string) {
+  return sameLocalDate(new Date(left), new Date(right))
 }
 
 export function technicalTimelineItems(items: ConversationTimelineItem[]) {
@@ -48,5 +71,13 @@ function isRecoveryTechnicalEvent(item: ConversationTimelineItem) {
       item.task?.origin === "VOICEMAIL_RECOVERY") &&
     (item.taskActivity === "TASK_CREATED" ||
       item.taskActivity === "INTERACTION_ATTACHED")
+  )
+}
+
+function sameLocalDate(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
   )
 }
