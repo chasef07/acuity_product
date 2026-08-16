@@ -111,14 +111,22 @@ func (m *Module) loadCallProjection(
 			), ''),
 			COALESCE(voicemail.outcome, ''), COALESCE(voicemail.audio_state, ''),
 			COALESCE(voicemail.task_id::text, ''),
-			COALESCE(voicemail.duration_millis / 1000, 0)
+			COALESCE(voicemail.duration_millis / 1000, 0),
+			COALESCE(CASE
+				WHEN recording.audio_state = 'READY'
+					AND recording.content_expires_at <= $2
+				THEN 'EXPIRED'
+				ELSE recording.audio_state
+			END, ''),
+			COALESCE(recording.duration_millis / 1000, 0)
 		FROM human_calling_calls call
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id AND location.id = call.location_id
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 		LEFT JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		LEFT JOIN human_calling_call_recordings recording ON recording.call_id = call.id
 		WHERE call.id = $1
-	`, callID).Scan(
+	`, callID, m.now()).Scan(
 		&result.call.ID, &result.call.PracticeID, &result.call.LocationID,
 		&result.call.LocationName, &result.call.Direction, &result.call.EntryPoint,
 		&result.call.TaskID, &result.call.Phone, &result.call.CallerID,
@@ -131,6 +139,7 @@ func (m *Module) loadCallProjection(
 		&result.voicemailPhase,
 		&result.call.Voicemail.Outcome, &result.call.Voicemail.AudioState,
 		&result.call.Voicemail.TaskID, &result.call.Voicemail.DurationSeconds,
+		&result.call.Recording.AudioState, &result.call.Recording.DurationSeconds,
 	)
 	if err != nil {
 		return callProjection{}, fmt.Errorf("read Call projection: %w", err)

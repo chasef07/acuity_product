@@ -109,9 +109,22 @@ var (
 	ErrHandoffAdmissionClosed    = errors.New("human calling handoff admission is closed")
 	ErrAmbiguousEffect           = errors.New("provider effect is ambiguous")
 	ErrDefinitiveProviderFailure = errors.New("provider effect definitely failed")
+	ErrProviderRecordingFailed   = errors.New("provider recording failed")
 	ErrProviderTargetAbsent      = errors.New("provider target is absent")
 	ErrInvalidWebhook            = errors.New("invalid provider webhook")
 )
+
+type providerRecordingFailure struct {
+	OccurredAt time.Time
+}
+
+func (failure *providerRecordingFailure) Error() string {
+	return ErrProviderRecordingFailed.Error()
+}
+
+func (failure *providerRecordingFailure) Is(target error) bool {
+	return target == ErrProviderRecordingFailed
+}
 
 var canonicalE164 = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
 
@@ -144,7 +157,7 @@ type Config struct {
 	CredentialConnectionID string
 	FromNumber             string
 	RingbackURL            string
-	VoicemailAudioProvider VoicemailAudioProvider
+	RecordingAudioProvider RecordingAudioProvider
 	PlaybackSigningKey     []byte
 	WebhookPublicKeys      []ed25519.PublicKey
 	WebhookTolerance       time.Duration
@@ -257,6 +270,10 @@ type RecordingStateProvider interface {
 	ResolveRecording(context.Context, string, string) (ProviderRecording, error)
 }
 
+type RecordingDeletionProvider interface {
+	DeleteRecording(context.Context, string) error
+}
+
 type SoftphoneState struct {
 	SessionID            string
 	LeaseExpiresAt       time.Time
@@ -302,6 +319,7 @@ type Call struct {
 	ConnectedAt         *time.Time
 	Version             int64
 	Voicemail           Voicemail
+	Recording           CallRecording
 	RetryOfCallID       string
 	RetryAllowed        bool
 	RecoveryTask        *RecoveryTask
@@ -515,8 +533,14 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	case FactSpeakEnded:
 		return m.applyVoicemailGreetingEnded(ctx, fact)
 	case FactRecordingSaved:
+		if hasState && state.Kind == "bridge" {
+			return m.applyConnectedCallRecordingSaved(ctx, fact)
+		}
 		return m.applyVoicemailRecordingSaved(ctx, fact)
 	case FactRecordingError:
+		if hasState && state.Kind == "bridge" {
+			return m.applyConnectedCallRecordingError(ctx, fact)
+		}
 		return m.applyVoicemailRecordingError(ctx, fact)
 	default:
 		return ErrInvalidInput

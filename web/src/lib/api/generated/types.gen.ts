@@ -251,7 +251,17 @@ export type CallingVoicemail = {
     durationSeconds: number;
 };
 
+export type CallingRecording = {
+    audioState: 'PROCESSING' | 'READY' | 'UNAVAILABLE' | 'EXPIRED' | 'DELETED';
+    durationSeconds: number;
+};
+
 export type VoicemailPlaybackCapability = {
+    token: string;
+    expiresAt: string;
+};
+
+export type RecordingPlaybackCapability = {
     token: string;
     expiresAt: string;
 };
@@ -279,6 +289,7 @@ export type CallingCall = {
     connectedAt?: string;
     version: number;
     voicemail?: CallingVoicemail;
+    recording?: CallingRecording;
     recoveryTask?: CallingRecoveryTask;
 };
 
@@ -1734,10 +1745,6 @@ export type GetCallingVoicemailPlaybackData = {
 
 export type GetCallingVoicemailPlaybackErrors = {
     /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
      * Current identity lacks the requested authority.
      */
     403: ErrorEnvelope;
@@ -1769,6 +1776,94 @@ export type GetCallingVoicemailPlaybackResponses = {
 };
 
 export type GetCallingVoicemailPlaybackResponse = GetCallingVoicemailPlaybackResponses[keyof GetCallingVoicemailPlaybackResponses];
+
+export type IssueCallingRecordingPlaybackData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/recording-playback';
+};
+
+export type IssueCallingRecordingPlaybackErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type IssueCallingRecordingPlaybackError = IssueCallingRecordingPlaybackErrors[keyof IssueCallingRecordingPlaybackErrors];
+
+export type IssueCallingRecordingPlaybackResponses = {
+    /**
+     * Short-lived authorized playback capability.
+     */
+    200: RecordingPlaybackCapability;
+};
+
+export type IssueCallingRecordingPlaybackResponse = IssueCallingRecordingPlaybackResponses[keyof IssueCallingRecordingPlaybackResponses];
+
+export type GetCallingRecordingPlaybackData = {
+    body?: never;
+    headers?: {
+        /**
+         * Optional single byte range forwarded to the provider audio request.
+         */
+        Range?: string;
+    };
+    path: {
+        token: string;
+    };
+    query?: never;
+    url: '/v1/calling/recording-playback/{token}';
+};
+
+export type GetCallingRecordingPlaybackErrors = {
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The Telnyx recording is no longer available.
+     */
+    404: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+    /**
+     * Telnyx recording retrieval timed out.
+     */
+    504: ErrorEnvelope;
+};
+
+export type GetCallingRecordingPlaybackError = GetCallingRecordingPlaybackErrors[keyof GetCallingRecordingPlaybackErrors];
+
+export type GetCallingRecordingPlaybackResponses = {
+    /**
+     * Authorized complete connected-call audio.
+     */
+    200: Blob | File;
+    /**
+     * Authorized partial connected-call audio.
+     */
+    206: Blob | File;
+};
+
+export type GetCallingRecordingPlaybackResponse = GetCallingRecordingPlaybackResponses[keyof GetCallingRecordingPlaybackResponses];
 
 export type QueryEngagementsData = {
     body: EngagementQueryRequest;

@@ -34,8 +34,42 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 36 {
-		t.Fatalf("migration count = %d, want 36", migrationCount)
+	if migrationCount != 37 {
+		t.Fatalf("migration count = %d, want 37", migrationCount)
+	}
+	var recordingRetentionIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'human_calling_call_recordings_retention_idx'
+	`).Scan(&recordingRetentionIndex); err != nil {
+		t.Fatalf("read connected recording retention index: %v", err)
+	}
+	for _, fragment := range []string{
+		"(content_expires_at, next_deletion_attempt_at, updated_at, call_id)",
+		"audio_state = 'READY'::text",
+	} {
+		if !strings.Contains(recordingRetentionIndex, fragment) {
+			t.Errorf("connected recording retention index omits %q: %s",
+				fragment, recordingRetentionIndex)
+		}
+	}
+	var recordingReconciliationIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'human_calling_call_recordings_reconciliation_idx'
+	`).Scan(&recordingReconciliationIndex); err != nil {
+		t.Fatalf("read connected recording reconciliation index: %v", err)
+	}
+	for _, fragment := range []string{
+		"(next_reconciliation_attempt_at, updated_at, call_id)",
+		"audio_state = 'PROCESSING'::text",
+	} {
+		if !strings.Contains(recordingReconciliationIndex, fragment) {
+			t.Errorf("connected recording reconciliation index omits %q: %s",
+				fragment, recordingReconciliationIndex)
+		}
 	}
 	var staleCommandIndex string
 	if err := pool.QueryRow(ctx, `
@@ -81,6 +115,7 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_handoffs",
 		"human_calling_calls",
 		"human_calling_call_legs",
+		"human_calling_call_recordings",
 		"human_calling_provider_commands",
 		"human_calling_provider_receipts",
 		"human_calling_projected_facts",

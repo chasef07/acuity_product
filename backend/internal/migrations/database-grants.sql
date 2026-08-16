@@ -51,6 +51,18 @@ GRANT SELECT ON TABLE
 TO acuity_portal;
 
 GRANT SELECT (
+    call_id,
+    practice_id,
+    location_id,
+    audio_state,
+    provider_recording_id,
+    content_expires_at,
+    duration_millis
+)
+ON TABLE public.human_calling_call_recordings
+TO acuity_portal;
+
+GRANT SELECT (
     event_id,
     event_type,
     occurred_at,
@@ -305,6 +317,7 @@ GRANT SELECT ON TABLE
 	public.ai_interaction_attention,
 	public.ai_interactions,
 	public.human_calling_call_legs,
+    public.human_calling_call_recordings,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_handoffs,
@@ -347,6 +360,7 @@ GRANT INSERT ON TABLE
 	public.ai_interaction_attention,
 	public.ai_interactions,
 	public.human_calling_call_legs,
+    public.human_calling_call_recordings,
     public.human_calling_calls,
     public.human_calling_credentials,
     public.human_calling_projected_facts,
@@ -441,6 +455,28 @@ GRANT UPDATE (
     updated_at
 )
 ON TABLE public.human_calling_provider_commands
+TO acuity_worker;
+
+GRANT UPDATE (
+    audio_state,
+    provider_recording_id,
+    recording_started_at,
+    recording_ended_at,
+    content_expires_at,
+    duration_millis,
+    last_error_code,
+    reconciliation_attempts,
+    reconciliation_claimed_at,
+    next_reconciliation_attempt_at,
+    reconciliation_error_code,
+    content_deleted_at,
+    deletion_attempts,
+    deletion_claimed_at,
+    next_deletion_attempt_at,
+    deletion_error_code,
+    updated_at
+)
+ON TABLE public.human_calling_call_recordings
 TO acuity_worker;
 
 GRANT UPDATE (

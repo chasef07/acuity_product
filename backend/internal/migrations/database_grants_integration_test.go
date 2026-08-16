@@ -619,6 +619,7 @@ func expectedTablePrivileges() map[string]bool {
 		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
+		"human_calling_call_recordings",
 		"human_calling_calls",
 		"human_calling_credentials",
 		"human_calling_handoffs",
@@ -645,6 +646,7 @@ func expectedTablePrivileges() map[string]bool {
 		"ai_interaction_attention",
 		"ai_interactions",
 		"human_calling_call_legs",
+		"human_calling_call_recordings",
 		"human_calling_calls",
 		"human_calling_credentials",
 		"human_calling_projected_facts",
@@ -694,6 +696,18 @@ func expectedColumnPrivileges() map[string]bool {
 			result[columnPrivilegeKey(role, relation, column, privilege)] = true
 		}
 	}
+	grant(
+		"acuity_portal",
+		"public.human_calling_call_recordings",
+		"SELECT",
+		"call_id",
+		"practice_id",
+		"location_id",
+		"audio_state",
+		"provider_recording_id",
+		"content_expires_at",
+		"duration_millis",
+	)
 	grant(
 		"acuity_worker",
 		"public.human_calling_rejected_provider_legs",
@@ -830,6 +844,28 @@ func expectedColumnPrivileges() map[string]bool {
 		"sent_at",
 		"next_attempt_at",
 		"last_error_code",
+		"updated_at",
+	)
+	grant(
+		"acuity_worker",
+		"public.human_calling_call_recordings",
+		"UPDATE",
+		"audio_state",
+		"provider_recording_id",
+		"recording_started_at",
+		"recording_ended_at",
+		"content_expires_at",
+		"duration_millis",
+		"last_error_code",
+		"reconciliation_attempts",
+		"reconciliation_claimed_at",
+		"next_reconciliation_attempt_at",
+		"reconciliation_error_code",
+		"content_deleted_at",
+		"deletion_attempts",
+		"deletion_claimed_at",
+		"next_deletion_attempt_at",
+		"deletion_error_code",
 		"updated_at",
 	)
 	grant(

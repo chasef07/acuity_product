@@ -55,6 +55,51 @@ func parseCallLegClientState(value string) (callLegClientState, bool) {
 	return state, true
 }
 
+func (m *Module) prepareConnectedBridgeCommand(
+	ctx context.Context,
+	tx pgx.Tx,
+	callID string,
+	peerCallControlID string,
+	clientState string,
+) (map[string]any, error) {
+	payload := map[string]any{
+		"call_control_id":       peerCallControlID,
+		"prevent_double_bridge": true,
+		"client_state":          clientState,
+	}
+	var practiceID, locationID string
+	var recordingEnabled bool
+	var retentionDays int
+	if err := tx.QueryRow(ctx, `
+		SELECT call.practice_id::text, call.location_id::text,
+			practice.connected_call_recording_enabled,
+			COALESCE(practice.connected_call_recording_retention_days, 0)
+		FROM human_calling_calls call
+		JOIN access_practices practice ON practice.id = call.practice_id
+		WHERE call.id = $1
+		FOR SHARE OF call, practice
+	`, callID).Scan(&practiceID, &locationID, &recordingEnabled, &retentionDays); err != nil {
+		return nil, fmt.Errorf("read connected Call recording policy: %w", err)
+	}
+	if !recordingEnabled {
+		return payload, nil
+	}
+	payload["record"] = "record-from-answer"
+	payload["record_channels"] = "dual"
+	payload["record_format"] = "mp3"
+	payload["record_track"] = "both"
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO human_calling_call_recordings (
+			call_id, practice_id, location_id, audio_state, retention_days,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, 'PROCESSING', $4, $5, $5)
+		ON CONFLICT (call_id) DO NOTHING
+	`, callID, practiceID, locationID, retentionDays, m.now()); err != nil {
+		return nil, fmt.Errorf("prepare connected Call recording: %w", err)
+	}
+	return payload, nil
+}
+
 func (m *Module) terminalCleanupFailedCallLeg(
 	ctx context.Context,
 	state callLegClientState,
@@ -623,16 +668,19 @@ func (m *Module) applyStaffInitiated(
 				`, staffSubject, staffSessionID, m.now()); err != nil {
 					return fmt.Errorf("reserve inbound softphone: %w", err)
 				}
+				bridgePayload, err := m.prepareConnectedBridgeCommand(
+					ctx, tx, callID, callerControlID,
+					encodeCallLegClientState(
+						callID, state.CallLegID, "STAFF", "bridge",
+					),
+				)
+				if err != nil {
+					return err
+				}
 				if _, err := m.insertCallLegCommand(
 					ctx, tx, callID, state.CallLegID, callerLegID, staffSubject,
 					CommandBridge, fact.CallControlID,
-					map[string]any{
-						"call_control_id":       callerControlID,
-						"prevent_double_bridge": true,
-						"client_state": encodeCallLegClientState(
-							callID, state.CallLegID, "STAFF", "bridge",
-						),
-					},
+					bridgePayload,
 					"",
 				); err != nil {
 					return err

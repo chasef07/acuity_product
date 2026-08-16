@@ -137,18 +137,47 @@ const (
 	StaffAnswerOutbound StaffAnswerOutcome = "outbound"
 )
 
-type VoicemailPlaybackOutcome string
+type RecordingPlaybackOutcome string
 
 const (
-	VoicemailPlaybackSucceeded       VoicemailPlaybackOutcome = "succeeded"
-	VoicemailPlaybackDenied          VoicemailPlaybackOutcome = "denied"
-	VoicemailPlaybackNotFound        VoicemailPlaybackOutcome = "not_found"
-	VoicemailPlaybackProviderAuth    VoicemailPlaybackOutcome = "provider_auth"
-	VoicemailPlaybackRateLimited     VoicemailPlaybackOutcome = "rate_limited"
-	VoicemailPlaybackTimeout         VoicemailPlaybackOutcome = "timeout"
-	VoicemailPlaybackUnavailable     VoicemailPlaybackOutcome = "unavailable"
-	VoicemailPlaybackInvalidResponse VoicemailPlaybackOutcome = "invalid_response"
-	VoicemailPlaybackURLExpired      VoicemailPlaybackOutcome = "url_expired"
+	RecordingPlaybackSucceeded       RecordingPlaybackOutcome = "succeeded"
+	RecordingPlaybackDenied          RecordingPlaybackOutcome = "denied"
+	RecordingPlaybackNotFound        RecordingPlaybackOutcome = "not_found"
+	RecordingPlaybackProviderAuth    RecordingPlaybackOutcome = "provider_auth"
+	RecordingPlaybackRateLimited     RecordingPlaybackOutcome = "rate_limited"
+	RecordingPlaybackTimeout         RecordingPlaybackOutcome = "timeout"
+	RecordingPlaybackUnavailable     RecordingPlaybackOutcome = "unavailable"
+	RecordingPlaybackInvalidResponse RecordingPlaybackOutcome = "invalid_response"
+	RecordingPlaybackURLExpired      RecordingPlaybackOutcome = "url_expired"
+
+	VoicemailPlaybackSucceeded       = RecordingPlaybackSucceeded
+	VoicemailPlaybackDenied          = RecordingPlaybackDenied
+	VoicemailPlaybackNotFound        = RecordingPlaybackNotFound
+	VoicemailPlaybackProviderAuth    = RecordingPlaybackProviderAuth
+	VoicemailPlaybackRateLimited     = RecordingPlaybackRateLimited
+	VoicemailPlaybackTimeout         = RecordingPlaybackTimeout
+	VoicemailPlaybackUnavailable     = RecordingPlaybackUnavailable
+	VoicemailPlaybackInvalidResponse = RecordingPlaybackInvalidResponse
+	VoicemailPlaybackURLExpired      = RecordingPlaybackURLExpired
+)
+
+type VoicemailPlaybackOutcome = RecordingPlaybackOutcome
+
+type RecordingMaintenanceOperation string
+
+const (
+	RecordingReconciliation RecordingMaintenanceOperation = "reconciliation"
+	RecordingRetention      RecordingMaintenanceOperation = "retention"
+)
+
+type RecordingMaintenanceOutcome string
+
+const (
+	RecordingMaintenanceSucceeded   RecordingMaintenanceOutcome = "succeeded"
+	RecordingMaintenanceRetry       RecordingMaintenanceOutcome = "retry"
+	RecordingMaintenanceUnavailable RecordingMaintenanceOutcome = "unavailable"
+	RecordingMaintenanceExhausted   RecordingMaintenanceOutcome = "exhausted"
+	RecordingMaintenanceFailed      RecordingMaintenanceOutcome = "failed"
 )
 
 // Event values can only be created through the fixed constructors below.
@@ -178,6 +207,25 @@ func ReceiptQueue(
 		"projection_retry_depth", max(projectionRetryDepth, 0),
 		"related_fact_depth", max(relatedFactDepth, 0),
 		"quarantined_depth", max(quarantinedDepth, 0))
+}
+
+func RecordingQueue(
+	reconciliationDepth int64,
+	oldestReconciliationAge time.Duration,
+	reconciliationRetryDepth int64,
+	retentionDepth int64,
+	oldestRetentionAge time.Duration,
+	retentionRetryDepth int64,
+	unavailableDepth int64,
+) Event {
+	return event("acuity_call_center_recording_queue",
+		"reconciliation_depth", max(reconciliationDepth, 0),
+		"oldest_reconciliation_age_seconds", positive(oldestReconciliationAge).Seconds(),
+		"reconciliation_retry_depth", max(reconciliationRetryDepth, 0),
+		"retention_depth", max(retentionDepth, 0),
+		"oldest_retention_age_seconds", positive(oldestRetentionAge).Seconds(),
+		"retention_retry_depth", max(retentionRetryDepth, 0),
+		"unavailable_depth", max(unavailableDepth, 0))
 }
 
 func TerminalCleanup(
@@ -293,11 +341,40 @@ func CallLegBridged(answerToBridge time.Duration) Event {
 }
 
 func VoicemailPlayback(
-	outcome VoicemailPlaybackOutcome,
+	outcome RecordingPlaybackOutcome,
+	duration time.Duration,
+) Event {
+	return recordingPlayback("acuity_call_center_voicemail_playback", outcome, duration)
+}
+
+func CallRecordingPlayback(
+	outcome RecordingPlaybackOutcome,
+	duration time.Duration,
+) Event {
+	return recordingPlayback("acuity_call_center_call_recording_playback", outcome, duration)
+}
+
+func RecordingMaintenance(
+	operation RecordingMaintenanceOperation,
+	outcome RecordingMaintenanceOutcome,
+	attempt int,
+) Event {
+	return event(
+		"acuity_call_center_recording_maintenance",
+		"operation", bounded(string(operation), "reconciliation", "retention"),
+		"outcome", bounded(string(outcome),
+			"succeeded", "retry", "unavailable", "exhausted", "failed"),
+		"attempt", max(attempt, 0),
+	)
+}
+
+func recordingPlayback(
+	signal string,
+	outcome RecordingPlaybackOutcome,
 	duration time.Duration,
 ) Event {
 	return event(
-		"acuity_call_center_voicemail_playback",
+		signal,
 		"outcome",
 		bounded(
 			string(outcome),

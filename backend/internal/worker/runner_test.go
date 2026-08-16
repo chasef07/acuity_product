@@ -493,6 +493,14 @@ func (*controlledWork) ProcessNextRecoveryReconciliation(context.Context) (bool,
 	return false, nil
 }
 
+func (*controlledWork) ProcessNextRecordingReconciliation(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (*controlledWork) ProcessNextRecordingRetention(context.Context) (bool, error) {
+	return false, nil
+}
+
 func (work *controlledWork) ReconcileStaleCalls(ctx context.Context) (int, error) {
 	if work.staleReconciliationStarted != nil {
 		work.staleReconciliationStarted <- struct{}{}

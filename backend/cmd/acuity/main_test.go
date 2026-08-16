@@ -482,6 +482,19 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 	if practiceCount != 2 {
 		t.Fatalf("reconciled Practices = %d, want 2", practiceCount)
 	}
+	var recordingEnabled bool
+	var recordingRetentionDays int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT connected_call_recording_enabled,
+			connected_call_recording_retention_days
+		FROM access_practices
+		WHERE provisioning_key = 'abita-eye-group'
+	`).Scan(&recordingEnabled, &recordingRetentionDays); err != nil {
+		t.Fatalf("read reconciled recording policy: %v", err)
+	}
+	if !recordingEnabled || recordingRetentionDays != 90 {
+		t.Fatalf("reconciled recording policy = %t, %d", recordingEnabled, recordingRetentionDays)
+	}
 	var grantCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM access_grants
