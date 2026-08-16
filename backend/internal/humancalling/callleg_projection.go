@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -889,6 +890,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		return tx.Commit(ctx)
 	}
 	var practiceID, winnerSubject, callerLegID, callerControlID, callerState string
+	var direction, phone string
 	var winnerControlID, winnerProviderLegID, winnerSessionID string
 	var answeredAt time.Time
 	if err := tx.QueryRow(ctx, `
@@ -896,8 +898,12 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 			caller.id::text, caller.provider_call_control_id, caller.state,
 			winner.answered_at,
 			winner.provider_call_control_id, winner.provider_call_leg_id,
-			COALESCE(winner.provider_call_session_id, '')
+			COALESCE(winner.provider_call_session_id, ''),
+			call.direction,
+			COALESCE(handoff.phone, call.caller_phone, '')
 		FROM human_calling_calls call
+		LEFT JOIN human_calling_handoffs handoff
+			ON handoff.id = call.source_handoff_id
 		JOIN human_calling_call_legs winner
 			ON winner.call_id = call.id AND winner.id = $2
 		JOIN human_calling_call_legs caller
@@ -908,6 +914,7 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		&practiceID, &winnerSubject, &callerLegID, &callerControlID, &callerState,
 		&answeredAt,
 		&winnerControlID, &winnerProviderLegID, &winnerSessionID,
+		&direction, &phone,
 	); err != nil {
 		return fmt.Errorf("lock bridged CallLegs: %w", err)
 	}
@@ -1043,6 +1050,21 @@ func (m *Module) applyBridge(ctx context.Context, fact ProviderFact) error {
 		if err := appendTimeline(ctx, tx, state.CallID, practiceID, "call.connected",
 			winnerSubject, fact.EventID, "", opaqueReference(fact.CallLegID), "",
 			fact.OccurredAt); err != nil {
+			return err
+		}
+	}
+	if direction == string(CallInbound) && phone != "" {
+		if _, err := m.work.ResolveRecoveryTasks(
+			ctx,
+			tx,
+			work.ResolveRecoveryTasksCommand{
+				PracticeID: practiceID,
+				Phone:      phone,
+				OccurredAt: fact.OccurredAt,
+				Kind:       work.RecoveryResolutionInboundCall,
+				SourceID:   state.CallID,
+			},
+		); err != nil {
 			return err
 		}
 	}

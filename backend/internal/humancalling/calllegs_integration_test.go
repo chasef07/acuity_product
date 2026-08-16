@@ -490,6 +490,31 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("confirm explicit Bridge: %v", err)
 	}
+	var resolvedPhone, resolutionKind, resolutionSource string
+	var resolvedAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT phone, resolved_at, kind, source_id
+		FROM work_recovery_resolution_checkpoints
+		WHERE practice_id = $1
+	`, authorization.Practice.ID).Scan(
+		&resolvedPhone,
+		&resolvedAt,
+		&resolutionKind,
+		&resolutionSource,
+	); err != nil ||
+		resolvedPhone != "+15555550100" ||
+		!resolvedAt.Equal(now.Add(5*time.Second)) ||
+		resolutionKind != "INBOUND_CALL" ||
+		resolutionSource == "" {
+		t.Fatalf(
+			"inbound Bridge recovery checkpoint = (%q, %s, %q, %q), %v",
+			resolvedPhone,
+			resolvedAt,
+			resolutionKind,
+			resolutionSource,
+			err,
+		)
+	}
 	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID: "winner-recording-saved", Type: humancalling.FactRecordingSaved,
 		OccurredAt: now.Add(36 * time.Second), CallControlID: winnerControlID,

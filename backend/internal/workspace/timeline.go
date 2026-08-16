@@ -321,6 +321,7 @@ const callProjectionSQL = `
 		location.name,
 		COALESCE(membership.email, platform_operator.email, ''),
 		COALESCE(handoff.transfer_reason, ''),
+		COALESCE(handoff.source_call_id, ''),
 		CASE
 			WHEN call.disposition_outcome IN ('FOLLOW_UP_REQUIRED', 'CREATE_TASK')
 				THEN 'FOLLOW_UP_REQUIRED'
@@ -400,6 +401,7 @@ func queryTimelineCalls(
 			&call.LocationName,
 			&call.AnsweredByEmail,
 			&call.TransferReason,
+			&call.SourceCallID,
 			&call.Outcome,
 		); err != nil {
 			return nil, fmt.Errorf("scan Call: %w", err)

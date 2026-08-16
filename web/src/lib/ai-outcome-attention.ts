@@ -1,7 +1,21 @@
 export type OutcomeCounts = {
+  tasks: number
   bookings: number
   cancellations: number
   reschedules: number
+}
+
+export function appointmentFolderForAction(action?: string) {
+  switch (action) {
+    case "BOOKED":
+      return "bookings" as const
+    case "CANCELLED":
+      return "cancellations" as const
+    case "RESCHEDULED":
+      return "reschedules" as const
+    default:
+      return undefined
+  }
 }
 
 export function mergeOutcomePages<T extends { id: string }>(
@@ -22,19 +36,11 @@ export function appendOutcomePage<T extends { id: string }>(
 
 export function decrementOutcomeCount(
   counts: OutcomeCounts,
-  outcome: string,
+  action?: string,
 ): OutcomeCounts {
-  switch (outcome) {
-    case "BOOKING":
-      return { ...counts, bookings: Math.max(0, counts.bookings - 1) }
-    case "CANCELLATION":
-      return {
-        ...counts,
-        cancellations: Math.max(0, counts.cancellations - 1),
-      }
-    case "RESCHEDULE":
-      return { ...counts, reschedules: Math.max(0, counts.reschedules - 1) }
-    default:
-      return counts
+  const folder = appointmentFolderForAction(action)
+  if (!folder) {
+    return { ...counts, tasks: Math.max(0, counts.tasks - 1) }
   }
+  return { ...counts, [folder]: Math.max(0, counts[folder] - 1) }
 }

@@ -554,6 +554,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_threads",
 		"work_task_activities",
 		"work_task_interactions",
+		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	}
 	grant("acuity_portal", "SELECT", portalReads...)
@@ -578,6 +579,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_threads",
 		"work_task_activities",
 		"work_task_interactions",
+		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
 	grant("acuity_portal", "UPDATE",
@@ -590,9 +592,10 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_softphone_leases",
+		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
-	grant("acuity_portal", "DELETE", "messaging_thread_unreads")
+	grant("acuity_portal", "DELETE", "ai_interaction_attention", "messaging_thread_unreads")
 
 	grant("acuity_provider", "SELECT", "messaging_attachments")
 
@@ -635,6 +638,8 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_threads",
 		"work_task_activities",
 		"work_task_interactions",
+		"work_recovery_reconciliation_queue",
+		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
 	grant("acuity_worker", "INSERT",
@@ -654,6 +659,7 @@ func expectedTablePrivileges() map[string]bool {
 		"messaging_threads",
 		"work_task_activities",
 		"work_task_interactions",
+		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
 	grant("acuity_worker", "UPDATE",
@@ -664,9 +670,16 @@ func expectedTablePrivileges() map[string]bool {
 		"human_calling_handoffs",
 		"human_calling_provider_receipts",
 		"human_calling_softphone_leases",
+		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	)
-	grant("acuity_worker", "DELETE", "messaging_attachments")
+	grant(
+		"acuity_worker",
+		"DELETE",
+		"ai_interaction_attention",
+		"messaging_attachments",
+		"work_recovery_reconciliation_queue",
+	)
 
 	for _, relation := range []string{"user", "session", "account", "verification", "jwks"} {
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {

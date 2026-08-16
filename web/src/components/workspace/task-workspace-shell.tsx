@@ -74,8 +74,12 @@ import {
   decrementOutcomeCount,
   mergeOutcomePages,
 } from "@/lib/ai-outcome-attention"
-import { normalizeUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
+import { resolveWorkspaceSearch } from "@/lib/workspace-search"
+import {
+  projectTaskUpdate,
+  refreshTaskWindowTarget,
+} from "@/lib/workspace-triage"
 import {
   createWorkspaceRequestBudget,
   type WorkspaceRequestBudget,
@@ -111,9 +115,6 @@ type ContextView = "task" | "call" | "appointment"
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
 const taskScopeStorageKey = "acuity.taskLocationScope"
-const taskOrderingStorageKey = "acuity.taskOrdering"
-const recentNumbersStorageKey = "acuity.recentNumberInboxes"
-type TaskOrdering = "recent" | "priority"
 
 export function TaskWorkspaceShell() {
   const router = useRouter()
@@ -126,16 +127,18 @@ export function TaskWorkspaceShell() {
   const [locationID, setLocationID] = useState("")
   const [locationScopeID, setLocationScopeID] = useState("")
   const [search, setSearch] = useState("")
-  const [ordering, setOrdering] = useState<TaskOrdering>("priority")
+  const [taskSearch, setTaskSearch] = useState("")
   const [engagementError, setEngagementError] = useState("")
   const [selectedEngagement, setSelectedEngagement] = useState<EngagementSummary>()
-  const [recentInboxes, setRecentInboxes] = useState<EngagementSummary[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskCounts, setTaskCounts] = useState<TaskFolderCounts>(() =>
     emptyTaskFolderCounts(),
   )
   const [nextCursor, setNextCursor] = useState("")
   const [tasksLoading, setTasksLoading] = useState(false)
+  const [recoveryTasks, setRecoveryTasks] = useState<Task[]>([])
+  const [recoveryNextCursor, setRecoveryNextCursor] = useState("")
+  const [recoveryTasksLoading, setRecoveryTasksLoading] = useState(false)
   const [messageThreads, setMessageThreads] = useState<MessageThreadSummary[]>(
     [],
   )
@@ -170,20 +173,25 @@ export function TaskWorkspaceShell() {
   const selectedTaskRef = useRef<Task | undefined>(undefined)
   const workspaceRef = useRef<WorkspaceSnapshot | undefined>(undefined)
   const tasksRef = useRef<Task[]>([])
+  const recoveryTasksRef = useRef<Task[]>([])
+  const nextCursorRef = useRef("")
+  const recoveryNextCursorRef = useRef("")
   const messageThreadsRef = useRef<MessageThreadSummary[]>([])
   const aiOutcomesRef = useRef<AiOutcomeItem[]>([])
   const hasLoadedTasksRef = useRef(false)
   const hasLoadedThreadsRef = useRef(false)
   const taskQueryGenerationRef = useRef(0)
+  const recoveryTaskQueryGenerationRef = useRef(0)
   const messageQueryGenerationRef = useRef(0)
   const aiOutcomeQueryGenerationRef = useRef(0)
   const taskQueryKeyRef = useRef("")
+  const recoveryTaskQueryKeyRef = useRef("")
   const messageQueryKeyRef = useRef("")
   const snapshotGenerationRef = useRef(0)
   const snapshotScopeRef = useRef("")
   const viewRef = useRef<View>("none")
-  const orderingRef = useRef<TaskOrdering>("priority")
   const locationScopeRef = useRef("")
+  const taskSearchRef = useRef("")
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
@@ -202,18 +210,18 @@ export function TaskWorkspaceShell() {
     )
   }, [requestBudget, selectedEngagement, view])
   useEffect(() => {
-    orderingRef.current = ordering
-  }, [ordering])
-  useEffect(() => {
     locationScopeRef.current = locationScopeID
   }, [locationScopeID])
+  useEffect(() => {
+    taskSearchRef.current = taskSearch
+  }, [taskSearch])
   const loadTasks = useCallback(
     async (cursor = "", append = false) => {
       if (!practiceID) return
       const queryKey = workspaceTaskQueryKey(
         practiceID,
         locationScopeID,
-        ordering,
+        taskSearch,
       )
       const requestGeneration = ++taskQueryGenerationRef.current
       setTasksLoading(true)
@@ -229,7 +237,9 @@ export function TaskWorkspaceShell() {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
           state: "OPEN",
-          ordering,
+          ordering: "priority",
+          folder: "work",
+          ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -243,6 +253,8 @@ export function TaskWorkspaceShell() {
         ) {
           tasksRef.current = []
           setTasks([])
+          nextCursorRef.current = ""
+          setNextCursor("")
           updateSelectedTask(undefined)
           setView("none")
           setLoadState("unauthorized")
@@ -257,6 +269,7 @@ export function TaskWorkspaceShell() {
         : result.data.items
       tasksRef.current = next
       setTasks(next)
+      nextCursorRef.current = result.data.nextCursor
       setNextCursor(result.data.nextCursor)
       setTaskCounts(result.data.counts)
 
@@ -273,7 +286,68 @@ export function TaskWorkspaceShell() {
         setView("engagement")
       }
     },
-    [locationScopeID, ordering, practiceID],
+    [locationScopeID, practiceID, taskSearch],
+  )
+  const loadRecoveryTasks = useCallback(
+    async (cursor = "", append = false) => {
+      if (!practiceID) return
+      const queryKey = workspaceRecoveryTaskQueryKey(
+        practiceID,
+        locationScopeID,
+        taskSearch,
+      )
+      const requestGeneration = ++recoveryTaskQueryGenerationRef.current
+      setRecoveryTasksLoading(true)
+      const token = await getAccessToken()
+      if (!token) {
+        setRecoveryTasksLoading(false)
+        setLoadState("unauthorized")
+        return
+      }
+      const result = await queryTasks({
+        client: portalClient(token),
+        body: {
+          practiceId: practiceID,
+          ...(locationScopeID ? { locationId: locationScopeID } : {}),
+          state: "OPEN",
+          ordering: "recent",
+          folder: "missed_calls",
+          ...(taskSearch ? { search: taskSearch } : {}),
+          ...(cursor ? { cursor } : {}),
+          limit: 50,
+        },
+      }).catch(() => undefined)
+      if (requestGeneration !== recoveryTaskQueryGenerationRef.current) return
+      setRecoveryTasksLoading(false)
+      if (!result?.data) {
+        if (
+          result?.response?.status === 401 ||
+          result?.response?.status === 403
+        ) {
+          recoveryTasksRef.current = []
+          setRecoveryTasks([])
+          recoveryNextCursorRef.current = ""
+          setRecoveryNextCursor("")
+          setLoadState("unauthorized")
+        }
+        return
+      }
+      recoveryTaskQueryKeyRef.current = queryKey
+      const next = append
+        ? [...recoveryTasksRef.current, ...result.data.items]
+        : result.data.items
+      recoveryTasksRef.current = next
+      setRecoveryTasks(next)
+      recoveryNextCursorRef.current = result.data.nextCursor
+      setRecoveryNextCursor(result.data.nextCursor)
+
+      const selected = selectedTaskRef.current
+      if (selected) {
+        const current = next.find((task) => task.id === selected.id)
+        if (current) updateSelectedTask(current)
+      }
+    },
+    [locationScopeID, practiceID, taskSearch],
   )
   const loadMessageThreads = useCallback(
     async (cursor = "", append = false) => {
@@ -393,7 +467,7 @@ export function TaskWorkspaceShell() {
     setAIOutcomes(next)
     if (reviewed) {
       setAIOutcomeCounts((counts) =>
-        decrementOutcomeCount(counts, reviewed.appointmentOutcome),
+        decrementOutcomeCount(counts, reviewed.appointmentAction),
       )
     }
     return true
@@ -411,21 +485,82 @@ export function TaskWorkspaceShell() {
       minimumVersion: number
     }) => {
       const taskGeneration = ++taskQueryGenerationRef.current
+      const recoveryTaskGeneration =
+        ++recoveryTaskQueryGenerationRef.current
       const messageGeneration = ++messageQueryGenerationRef.current
       const taskLocationID = locationScopeRef.current
-      const taskOrdering = orderingRef.current
+      const currentTaskSearch = taskSearchRef.current
       const selectedTaskID = selectedTaskRef.current?.id
       const taskQueryKey = workspaceTaskQueryKey(
         scope.practiceID,
         taskLocationID,
-        taskOrdering,
+        currentTaskSearch,
+      )
+      const recoveryTaskQueryKey = workspaceRecoveryTaskQueryKey(
+        scope.practiceID,
+        taskLocationID,
+        currentTaskSearch,
       )
       const messageQueryKey = workspaceMessageQueryKey(
         scope.practiceID,
         taskLocationID,
       )
       const client = portalClient(token)
-      const [snapshotResult, taskResult, messageResult, selectedResult] =
+      const loadTaskWindow = async (
+        folder: "work" | "missed_calls",
+        ordering: "priority" | "recent",
+        loadedCount: number,
+      ) => {
+        const target = refreshTaskWindowTarget(loadedCount)
+        const items: Task[] = []
+        const seen = new Set<string>()
+        let cursor = ""
+        let result: Awaited<ReturnType<typeof queryTasks>> | undefined
+        do {
+          result = await queryTasks({
+            client,
+            body: {
+              practiceId: scope.practiceID,
+              ...(taskLocationID ? { locationId: taskLocationID } : {}),
+              state: "OPEN",
+              ordering,
+              folder,
+              ...(currentTaskSearch ? { search: currentTaskSearch } : {}),
+              ...(cursor ? { cursor } : {}),
+              limit: 50,
+            },
+            signal,
+          }).catch(() => undefined)
+          if (!result?.data) return result
+          for (const task of result.data.items) {
+            if (seen.has(task.id)) continue
+            seen.add(task.id)
+            items.push(task)
+          }
+          cursor = result.data.nextCursor
+        } while (cursor && items.length < target)
+        return {
+          ...result,
+          data: {
+            ...result.data,
+            items,
+            nextCursor: cursor,
+          },
+        }
+      }
+      const taskLoadedCount =
+        taskQueryKeyRef.current === taskQueryKey ? tasksRef.current.length : 0
+      const recoveryLoadedCount =
+        recoveryTaskQueryKeyRef.current === recoveryTaskQueryKey
+          ? recoveryTasksRef.current.length
+          : 0
+      const [
+        snapshotResult,
+        taskResult,
+        recoveryTaskResult,
+        messageResult,
+        selectedResult,
+      ] =
         await Promise.all([
           getWorkspace({
             client,
@@ -435,17 +570,8 @@ export function TaskWorkspaceShell() {
             },
             signal,
           }).catch(() => undefined),
-          queryTasks({
-            client,
-            body: {
-              practiceId: scope.practiceID,
-              ...(taskLocationID ? { locationId: taskLocationID } : {}),
-              state: "OPEN",
-              ordering: taskOrdering,
-              limit: 50,
-            },
-            signal,
-          }).catch(() => undefined),
+          loadTaskWindow("work", "priority", taskLoadedCount),
+          loadTaskWindow("missed_calls", "recent", recoveryLoadedCount),
           queryMessageThreads({
             client,
             body: {
@@ -464,7 +590,7 @@ export function TaskWorkspaceShell() {
             : Promise.resolve(undefined),
         ])
       if (
-        [snapshotResult, taskResult, messageResult].some(
+        [snapshotResult, taskResult, recoveryTaskResult, messageResult].some(
           (result) =>
             result?.response?.status === 401 ||
             result?.response?.status === 403,
@@ -472,7 +598,12 @@ export function TaskWorkspaceShell() {
       ) {
         throw new WorkspaceSyncUnauthorizedError()
       }
-      if (!snapshotResult?.data || !taskResult?.data || !messageResult?.data) {
+      if (
+        !snapshotResult?.data ||
+        !taskResult?.data ||
+        !recoveryTaskResult?.data ||
+        !messageResult?.data
+      ) {
         throw new Error("workspace authority is unavailable")
       }
       if (snapshotResult.data.version < minimumVersion) {
@@ -481,6 +612,7 @@ export function TaskWorkspaceShell() {
 
       const snapshot = snapshotResult.data
       const nextTasks = taskResult.data.items
+      const nextRecoveryTasks = recoveryTaskResult.data.items
       const nextMessages = messageResult.data.items
       return {
         version: snapshot.version,
@@ -509,16 +641,21 @@ export function TaskWorkspaceShell() {
                   task.id === refreshed.id ? refreshed : task,
                 )
               : nextTasks
-            tasksRef.current = tasksWithSelection
-            setTasks(tasksWithSelection)
-            setNextCursor(taskResult.data.nextCursor)
+            const taskWindow = {
+              items: tasksWithSelection,
+              cursor: taskResult.data.nextCursor,
+            }
+            tasksRef.current = taskWindow.items
+            setTasks(taskWindow.items)
+            nextCursorRef.current = taskWindow.cursor
+            setNextCursor(taskWindow.cursor)
             setTaskCounts(taskResult.data.counts)
             const selected = selectedTaskRef.current
             if (selected) {
               const current =
                 refreshed?.id === selected.id
                   ? refreshed
-                  : tasksWithSelection.find((task) => task.id === selected.id)
+                  : taskWindow.items.find((task) => task.id === selected.id)
               if (current) updateSelectedTask(current)
               else if (
                 selectedTaskID === selected.id &&
@@ -530,16 +667,31 @@ export function TaskWorkspaceShell() {
               }
             } else if (
               firstLoad &&
-              tasksWithSelection[0] &&
+              taskWindow.items[0] &&
               viewRef.current === "none"
             ) {
-              const engagement = taskEngagement(tasksWithSelection[0])
-              updateSelectedTask(tasksWithSelection[0])
+              const engagement = taskEngagement(taskWindow.items[0])
+              updateSelectedTask(taskWindow.items[0])
               setSelectedEngagement(engagement)
               setContextView("task")
               setContextPanelOpen(true)
               setView("engagement")
             }
+          }
+
+          if (
+            recoveryTaskGeneration === recoveryTaskQueryGenerationRef.current
+          ) {
+            setRecoveryTasksLoading(false)
+            recoveryTaskQueryKeyRef.current = recoveryTaskQueryKey
+            const recoveryWindow = {
+              items: nextRecoveryTasks,
+              cursor: recoveryTaskResult.data.nextCursor,
+            }
+            recoveryTasksRef.current = recoveryWindow.items
+            setRecoveryTasks(recoveryWindow.items)
+            recoveryNextCursorRef.current = recoveryWindow.cursor
+            setRecoveryNextCursor(recoveryWindow.cursor)
           }
 
           if (messageGeneration === messageQueryGenerationRef.current) {
@@ -599,16 +751,7 @@ export function TaskWorkspaceShell() {
         : practice.locations.some((item) => item.id === storedScope)
           ? (storedScope ?? "")
           : ""
-    const initialOrdering = readTaskOrdering(
-      result.data.actor.subject,
-      practice.id,
-    )
-    orderingRef.current = initialOrdering
     locationScopeRef.current = scope
-    setOrdering(initialOrdering)
-    setRecentInboxes(
-      readRecentInboxes(result.data.actor.subject, practice.id),
-    )
     setDiscovery(result.data)
     snapshotScopeRef.current = `${practice.id}:${location.id}`
     setPracticeID(practice.id)
@@ -634,7 +777,7 @@ export function TaskWorkspaceShell() {
     const queryKey = workspaceTaskQueryKey(
       practiceID,
       locationScopeID,
-      ordering,
+      taskSearch,
     )
     if (taskQueryKeyRef.current === queryKey) return
     const timeout = window.setTimeout(() => void loadTasks(), 0)
@@ -643,8 +786,26 @@ export function TaskWorkspaceShell() {
     loadState,
     loadTasks,
     locationScopeID,
-    ordering,
     practiceID,
+    taskSearch,
+  ])
+
+  useEffect(() => {
+    if (!practiceID || loadState !== "ready") return
+    const queryKey = workspaceRecoveryTaskQueryKey(
+      practiceID,
+      locationScopeID,
+      taskSearch,
+    )
+    if (recoveryTaskQueryKeyRef.current === queryKey) return
+    const timeout = window.setTimeout(() => void loadRecoveryTasks(), 0)
+    return () => window.clearTimeout(timeout)
+  }, [
+    loadRecoveryTasks,
+    loadState,
+    locationScopeID,
+    practiceID,
+    taskSearch,
   ])
 
   useEffect(() => {
@@ -726,16 +887,24 @@ export function TaskWorkspaceShell() {
   function selectLocationScope(nextLocationID: string) {
     callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
+    recoveryTaskQueryGenerationRef.current += 1
     messageQueryGenerationRef.current += 1
     aiOutcomeQueryGenerationRef.current += 1
     hasLoadedTasksRef.current = false
     hasLoadedThreadsRef.current = false
     taskQueryKeyRef.current = ""
+    recoveryTaskQueryKeyRef.current = ""
     messageQueryKeyRef.current = ""
     tasksRef.current = []
+    recoveryTasksRef.current = []
+    nextCursorRef.current = ""
+    recoveryNextCursorRef.current = ""
     messageThreadsRef.current = []
     aiOutcomesRef.current = []
     setTasks([])
+    setRecoveryTasks([])
+    setNextCursor("")
+    setRecoveryNextCursor("")
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
@@ -784,17 +953,25 @@ export function TaskWorkspaceShell() {
 
     callDetailGenerationRef.current += 1
     taskQueryGenerationRef.current += 1
+    recoveryTaskQueryGenerationRef.current += 1
     messageQueryGenerationRef.current += 1
     aiOutcomeQueryGenerationRef.current += 1
     snapshotGenerationRef.current += 1
     hasLoadedTasksRef.current = false
     hasLoadedThreadsRef.current = false
     taskQueryKeyRef.current = ""
+    recoveryTaskQueryKeyRef.current = ""
     messageQueryKeyRef.current = ""
     tasksRef.current = []
+    recoveryTasksRef.current = []
+    nextCursorRef.current = ""
+    recoveryNextCursorRef.current = ""
     messageThreadsRef.current = []
     aiOutcomesRef.current = []
     setTasks([])
+    setRecoveryTasks([])
+    setNextCursor("")
+    setRecoveryNextCursor("")
     setTaskCounts(emptyTaskFolderCounts())
     setMessageThreads([])
     setAIOutcomes([])
@@ -807,19 +984,10 @@ export function TaskWorkspaceShell() {
     setContextPanelOpen(false)
     setView("none")
 
-    const nextOrdering = readTaskOrdering(
-      discovery.actor.subject,
-      nextPractice.id,
-    )
     const nextScope = nextLocationScopeID
-    orderingRef.current = nextOrdering
     locationScopeRef.current = nextScope
     workspaceRef.current = undefined
     setWorkspace(undefined)
-    setOrdering(nextOrdering)
-    setRecentInboxes(
-      readRecentInboxes(discovery.actor.subject, nextPractice.id),
-    )
     setPracticeID(nextPractice.id)
     setLocationID(nextLocation.id)
     setLocationScopeID(nextScope)
@@ -852,11 +1020,6 @@ export function TaskWorkspaceShell() {
     setContextPanelOpen(false)
     updateSelectedTask(focusedTask)
     setSelectedEngagement(engagement)
-    if (discovery && practiceID) {
-      const next = rememberEngagement(recentInboxes, engagement)
-      setRecentInboxes(next)
-      writeRecentInboxes(discovery.actor.subject, practiceID, next)
-    }
     setView("engagement")
     void markEngagementRead(engagement.phone)
   }
@@ -885,7 +1048,6 @@ export function TaskWorkspaceShell() {
   }
 
   async function markEngagementRead(phone: string) {
-    if (workspaceRef.current?.platformOperator) return
     const unreadThreadIDs = messageThreadsRef.current
       .filter((thread) => thread.externalPhone === phone && thread.unread)
       .map((thread) => thread.id)
@@ -908,17 +1070,6 @@ export function TaskWorkspaceShell() {
     setSelectedEngagement((current) =>
       current?.phone === phone ? { ...current, unread: false } : current,
     )
-    setRecentInboxes((current) => {
-      const next = current.map((engagement) =>
-        engagement.phone === phone
-          ? { ...engagement, unread: false }
-          : engagement,
-      )
-      if (discovery && practiceID) {
-        writeRecentInboxes(discovery.actor.subject, practiceID, next)
-      }
-      return next
-    })
   }
 
   function projectThreadsRead(readThreadIDs: Set<string>) {
@@ -937,28 +1088,37 @@ export function TaskWorkspaceShell() {
     setTasks(nextTasks)
   }
 
-  function submitPhoneSearch() {
-    const phone = normalizeUSPhone(search)
-    if (!phone || !practiceID) {
-      setEngagementError("Enter a complete US phone number.")
+  function submitSearch() {
+    if (!practiceID) return
+    const resolved = resolveWorkspaceSearch(search)
+    if (resolved.kind === "tasks") {
+      taskSearchRef.current = resolved.value
+      setTaskSearch(resolved.value)
+      setEngagementError("")
       return
     }
+    taskSearchRef.current = ""
+    setTaskSearch("")
     setEngagementError("")
     setSearch("")
     selectEngagement(
-      newNumberEngagement(phone, practice.locations, locationScopeID),
+      newNumberEngagement(resolved.value, practice.locations, locationScopeID),
     )
   }
 
   function updateTaskProjection(task: Task, select = true) {
-    const exists = tasksRef.current.some((current) => current.id === task.id)
-    const next = exists
-      ? tasksRef.current.map((current) =>
-          current.id === task.id ? task : current,
-        )
-      : [task, ...tasksRef.current]
-    tasksRef.current = next
-    setTasks(next)
+    const recovery =
+      task.origin === "MISSED_CALL_RECOVERY" ||
+      task.origin === "VOICEMAIL_RECOVERY"
+    if (recovery) {
+      const next = projectTaskUpdate(recoveryTasksRef.current, task)
+      recoveryTasksRef.current = next
+      setRecoveryTasks(next)
+    } else {
+      const next = projectTaskUpdate(tasksRef.current, task)
+      tasksRef.current = next
+      setTasks(next)
+    }
     if (select) {
       selectTask(task)
     }
@@ -1148,22 +1308,24 @@ export function TaskWorkspaceShell() {
           }
           locationScopeID={locationScopeID}
           tasks={tasks}
+          recoveryTasks={recoveryTasks}
           taskCounts={taskCounts}
           messages={messageThreads}
           aiOutcomes={aiOutcomes}
           outcomeCounts={aiOutcomeCounts}
-          recent={recentInboxes}
           selectedTaskID={selectedTask?.id ?? ""}
           selectedAIInteractionID={selectedAIInteractionID}
           selectedPhone={selectedEngagement?.phone ?? ""}
           search={search}
           engagementError={engagementError}
           loading={tasksLoading}
+          recoveryLoading={recoveryTasksLoading}
           messageLoading={messagesLoading}
           outcomesLoading={aiOutcomesLoading}
           outcomesError={aiOutcomesError}
           outcomeNextCursor={aiOutcomeNextCursor}
           nextCursor={nextCursor}
+          recoveryNextCursor={recoveryNextCursor}
           messageNextCursor={messageNextCursor}
           connection={connection}
           analyticsActive={view === "analytics"}
@@ -1171,7 +1333,7 @@ export function TaskWorkspaceShell() {
             setSearch(value)
             setEngagementError("")
           }}
-          onSearchSubmit={submitPhoneSearch}
+          onSearchSubmit={submitSearch}
           onAnalyticsSelect={() => {
             setContextPanelOpen(false)
             setView("analytics")
@@ -1180,6 +1342,9 @@ export function TaskWorkspaceShell() {
           onTaskSelect={selectTask}
           onAIInteractionSelect={selectAIInteraction}
           onLoadMore={() => void loadTasks(nextCursor, true)}
+          onRecoveryLoadMore={() =>
+            void loadRecoveryTasks(recoveryNextCursor, true)
+          }
           onMessageLoadMore={() =>
             void loadMessageThreads(messageNextCursor, true)
           }
@@ -1271,11 +1436,14 @@ export function TaskWorkspaceShell() {
                       taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}
                       onTaskUpdated={(task) => {
+                        const recovery =
+                          task.origin === "MISSED_CALL_RECOVERY" ||
+                          task.origin === "VOICEMAIL_RECOVERY"
                         updateTaskProjection(task, false)
                         updateSelectedTask(task)
                         setContextView("task")
                         setContextPanelOpen(true)
-                        void loadTasks()
+                        void (recovery ? loadRecoveryTasks() : loadTasks())
                       }}
                       onStartTaskCall={(task) => {
                         setTaskCallError("")
@@ -1324,6 +1492,7 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
 
 function emptyAIOutcomeCounts(): AiOutcomeCounts {
   return {
+    tasks: 0,
     bookings: 0,
     cancellations: 0,
     reschedules: 0,
@@ -1435,16 +1604,20 @@ function WorkspaceSelector({
   )
 }
 
-function taskOrderingKey(userSubject: string, practiceID: string) {
-  return `${taskOrderingStorageKey}.${userSubject}.${practiceID}`
-}
-
 function workspaceTaskQueryKey(
   practiceID: string,
   locationID: string,
-  ordering: TaskOrdering,
+  search: string,
 ) {
-  return `${practiceID}:${locationID}:OPEN:${ordering}`
+  return `${practiceID}:${locationID}:OPEN:priority:work:${search}`
+}
+
+function workspaceRecoveryTaskQueryKey(
+  practiceID: string,
+  locationID: string,
+  search: string,
+) {
+  return `${practiceID}:${locationID}:OPEN:recent:missed_calls:${search}`
 }
 
 function workspaceMessageQueryKey(
@@ -1452,16 +1625,6 @@ function workspaceMessageQueryKey(
   locationID: string,
 ) {
   return `${practiceID}:${locationID}`
-}
-
-function readTaskOrdering(
-  userSubject: string,
-  practiceID: string,
-): TaskOrdering {
-  const stored = window.localStorage.getItem(
-    taskOrderingKey(userSubject, practiceID),
-  )
-  return stored === "recent" ? "recent" : "priority"
 }
 
 function taskEngagement(task: Task): EngagementSummary {
@@ -1501,43 +1664,6 @@ function newNumberEngagement(
     openTaskCount: 0,
     unread: false,
   }
-}
-
-function rememberEngagement(
-  current: EngagementSummary[],
-  engagement: EngagementSummary,
-) {
-  return [
-    engagement,
-    ...current.filter((item) => item.phone !== engagement.phone),
-  ].slice(0, 7)
-}
-
-function recentInboxesKey(userSubject: string, practiceID: string) {
-  return `${recentNumbersStorageKey}.${userSubject}.${practiceID}`
-}
-
-function readRecentInboxes(userSubject: string, practiceID: string) {
-  try {
-    const value = JSON.parse(
-      window.sessionStorage.getItem(recentInboxesKey(userSubject, practiceID)) ??
-        "[]",
-    ) as EngagementSummary[]
-    return Array.isArray(value) ? value.slice(0, 7) : []
-  } catch {
-    return []
-  }
-}
-
-function writeRecentInboxes(
-  userSubject: string,
-  practiceID: string,
-  engagements: EngagementSummary[],
-) {
-  window.sessionStorage.setItem(
-    recentInboxesKey(userSubject, practiceID),
-    JSON.stringify(engagements),
-  )
 }
 
 function WorkspaceLoading() {

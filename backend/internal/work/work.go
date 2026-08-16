@@ -41,6 +41,13 @@ const (
 	RecoveryOutcomeMissedCall RecoveryOutcome = "MISSED_CALL"
 )
 
+type RecoveryResolutionKind string
+
+const (
+	RecoveryResolutionInboundCall RecoveryResolutionKind = "INBOUND_CALL"
+	RecoveryResolutionBooking     RecoveryResolutionKind = "BOOKING"
+)
+
 type TaskUrgency string
 
 const (
@@ -74,6 +81,13 @@ const (
 	TaskOrderingTime     TaskOrdering = "time"
 	TaskOrderingPriority TaskOrdering = "priority"
 	TaskOrderingRecent   TaskOrdering = "recent"
+)
+
+type TaskFolder string
+
+const (
+	TaskFolderWork        TaskFolder = "work"
+	TaskFolderMissedCalls TaskFolder = "missed_calls"
 )
 
 var (
@@ -177,6 +191,14 @@ type EnsureRecoveryTaskCommand struct {
 	CallerName string
 	Outcome    RecoveryOutcome
 	OccurredAt time.Time
+}
+
+type ResolveRecoveryTasksCommand struct {
+	PracticeID string
+	Phone      string
+	OccurredAt time.Time
+	Kind       RecoveryResolutionKind
+	SourceID   string
 }
 
 type RenameTaskCommand struct {
@@ -346,9 +368,7 @@ func (m *Module) EnsureMessageFollowUp(
 			$1, $2, NULL, $3, $4, 'OPEN', 'STAFF_MESSAGE_FOLLOW_UP',
 			'normal', 'HUMAN', $5, $6, $7, $8, $9, $7
 		)
-		ON CONFLICT (source_message_id)
-			WHERE source_message_id IS NOT NULL
-		DO NOTHING
+		ON CONFLICT DO NOTHING
 		RETURNING id::text
 	`, command.PracticeID, command.LocationID, command.Phone, title,
 		command.Creator.Subject, command.Creator.Email, createdAt,
@@ -361,8 +381,25 @@ func (m *Module) EnsureMessageFollowUp(
 			SELECT id::text
 			FROM work_tasks
 			WHERE source_message_id = $1
+				OR (
+					practice_id = $2
+					AND location_id = $3
+					AND phone = $4
+					AND title = $5
+					AND origin = 'STAFF_MESSAGE_FOLLOW_UP'
+					AND urgency = 'normal'
+					AND category IS NULL
+					AND caller_name IS NULL
+					AND source_call_id IS NULL
+					AND source_message IS NULL
+					AND message_thread_id = $6
+					AND state = 'OPEN'
+				)
+			ORDER BY (source_message_id = $1) DESC, created_at, id
+			LIMIT 1
 			FOR SHARE
-		`, command.MessageID).Scan(&taskID); err != nil {
+		`, command.MessageID, command.PracticeID, command.LocationID,
+			command.Phone, title, command.ThreadID).Scan(&taskID); err != nil {
 			return Task{}, "", fmt.Errorf("load replayed Message Task: %w", err)
 		}
 	} else if err != nil {
@@ -438,6 +475,14 @@ func (m *Module) EnsureRecoveryTask(
 		!textLengthBetween(command.CallerName, 0, 200) {
 		return Task{}, ErrInvalidInput
 	}
+	if err := lockRecoveryPhone(
+		ctx,
+		tx,
+		command.PracticeID,
+		command.Phone,
+	); err != nil {
+		return Task{}, err
+	}
 
 	var taskID string
 	err := tx.QueryRow(ctx, `
@@ -475,6 +520,7 @@ func (m *Module) EnsureRecoveryTask(
 			WHERE task.practice_id = $1
 				AND task.location_id = $2
 				AND task.phone = $3
+				AND COALESCE(lower(task.caller_name), '') = lower($4)
 				AND task.state = 'OPEN'
 				AND task.origin IN (
 					'VOICEMAIL_RECOVERY',
@@ -483,7 +529,8 @@ func (m *Module) EnsureRecoveryTask(
 			ORDER BY task.created_at, task.id
 			LIMIT 1
 			FOR UPDATE
-		`, command.PracticeID, command.LocationID, command.Phone).Scan(&taskID); err != nil {
+		`, command.PracticeID, command.LocationID, command.Phone,
+			command.CallerName).Scan(&taskID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Task{}, ErrConflict
 			}
@@ -574,7 +621,22 @@ func (m *Module) EnsureRecoveryTask(
 			return Task{}, err
 		}
 	}
-	if taskChanged || interactionInserted {
+	automaticallyCompleted, err := m.completeRecoveryTasksFromCheckpoint(
+		ctx,
+		tx,
+		command.PracticeID,
+		command.Phone,
+	)
+	if err != nil {
+		return Task{}, err
+	}
+	if automaticallyCompleted > 0 {
+		task, err = loadTask(ctx, tx, taskID)
+		if err != nil {
+			return Task{}, err
+		}
+	}
+	if taskChanged || interactionInserted || automaticallyCompleted > 0 {
 		if _, err := m.access.RecordWorkspaceChange(
 			ctx,
 			tx,
@@ -584,6 +646,264 @@ func (m *Module) EnsureRecoveryTask(
 		}
 	}
 	return task, nil
+}
+
+// ResolveRecoveryTasks records one authoritative restored-contact fact and
+// completes every older open recovery Task for the Practice and phone. The
+// caller owns the surrounding provider or AI projection transaction.
+func (m *Module) ResolveRecoveryTasks(
+	ctx context.Context,
+	tx pgx.Tx,
+	command ResolveRecoveryTasksCommand,
+) (int64, error) {
+	command.PracticeID = strings.TrimSpace(command.PracticeID)
+	command.Phone = strings.TrimSpace(command.Phone)
+	command.SourceID = strings.TrimSpace(command.SourceID)
+	if tx == nil ||
+		m.access == nil ||
+		command.PracticeID == "" ||
+		!canonicalPhone.MatchString(command.Phone) ||
+		command.OccurredAt.IsZero() ||
+		(command.Kind != RecoveryResolutionInboundCall &&
+			command.Kind != RecoveryResolutionBooking) ||
+		!textLengthBetween(command.SourceID, 1, 255) {
+		return 0, ErrInvalidInput
+	}
+	if err := lockRecoveryPhone(
+		ctx,
+		tx,
+		command.PracticeID,
+		command.Phone,
+	); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO work_recovery_resolution_checkpoints (
+			practice_id,
+			phone,
+			resolved_at,
+			kind,
+			source_id,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (practice_id, phone) DO UPDATE
+		SET
+			resolved_at = EXCLUDED.resolved_at,
+			kind = EXCLUDED.kind,
+			source_id = EXCLUDED.source_id,
+			updated_at = EXCLUDED.updated_at
+		WHERE EXCLUDED.resolved_at >
+			work_recovery_resolution_checkpoints.resolved_at
+	`, command.PracticeID, command.Phone, command.OccurredAt, command.Kind,
+		command.SourceID, m.now()); err != nil {
+		return 0, fmt.Errorf("record recovery resolution: %w", err)
+	}
+	completed, err := m.completeRecoveryTasksFromCheckpoint(
+		ctx,
+		tx,
+		command.PracticeID,
+		command.Phone,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return completed, nil
+}
+
+func lockRecoveryPhone(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	phone string,
+) error {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))
+	`, practiceID, phone); err != nil {
+		return fmt.Errorf("lock recovery phone: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) completeRecoveryTasksFromCheckpoint(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	phone string,
+) (int64, error) {
+	var completed int64
+	if err := tx.QueryRow(ctx, `
+		WITH checkpoint AS (
+			SELECT resolved_at, kind
+			FROM work_recovery_resolution_checkpoints
+			WHERE practice_id = $1 AND phone = $2
+		), eligible AS (
+			SELECT task.id, checkpoint.resolved_at, checkpoint.kind
+			FROM work_tasks task
+			CROSS JOIN checkpoint
+			WHERE task.practice_id = $1
+				AND task.phone = $2
+				AND task.state = 'OPEN'
+				AND task.origin IN (
+					'MISSED_CALL_RECOVERY',
+					'VOICEMAIL_RECOVERY'
+				)
+				AND checkpoint.resolved_at > (
+					SELECT max(interaction.occurred_at)
+					FROM work_task_interactions interaction
+					WHERE interaction.task_id = task.id
+				)
+				AND checkpoint.resolved_at > COALESCE(
+					(
+						SELECT max(activity.occurred_at)
+						FROM work_task_activities activity
+						WHERE activity.task_id = task.id
+							AND activity.kind = 'TASK_REOPENED'
+					),
+					'-infinity'::timestamptz
+				)
+			FOR UPDATE OF task
+		), updated AS (
+			UPDATE work_tasks task
+			SET
+				state = 'COMPLETED',
+				completed_by_kind = 'SERVICE',
+				completed_by_subject = 'work-recovery-resolution',
+				completed_by_email = NULL,
+				completed_at = eligible.resolved_at,
+				version = task.version + 1,
+				updated_at = GREATEST(task.updated_at, eligible.resolved_at)
+			FROM eligible
+			WHERE task.id = eligible.id
+			RETURNING task.id, task.version, task.completed_at, eligible.kind
+		), activities AS (
+			INSERT INTO work_task_activities (
+				task_id,
+				task_version,
+				kind,
+				actor_kind,
+				actor_subject,
+				actor_email,
+				occurred_at
+			)
+			SELECT
+				updated.id,
+				updated.version,
+				CASE updated.kind
+					WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
+					ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
+				END,
+				'SERVICE',
+				'work-recovery-resolution',
+				NULL,
+				updated.completed_at
+			FROM updated
+			RETURNING task_id
+		)
+		SELECT count(*) FROM activities
+	`, practiceID, phone).Scan(&completed); err != nil {
+		return 0, fmt.Errorf("complete recovery Tasks: %w", err)
+	}
+	return completed, nil
+}
+
+// ProcessNextRecoveryReconciliation converges one queued Practice and phone
+// key in a short, restartable transaction. It returns false when rollout
+// reconciliation is complete.
+func (m *Module) ProcessNextRecoveryReconciliation(
+	ctx context.Context,
+) (bool, error) {
+	if m.database == nil || m.access == nil {
+		return false, ErrInvalidInput
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin recovery reconciliation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var practiceID, phone string
+	if err := tx.QueryRow(ctx, `
+		SELECT practice_id::text, phone
+		FROM work_recovery_reconciliation_queue
+		ORDER BY practice_id, phone
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`).Scan(&practiceID, &phone); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("claim recovery reconciliation: %w", err)
+	}
+
+	var resolution ResolveRecoveryTasksCommand
+	resolution.PracticeID = practiceID
+	resolution.Phone = phone
+	if err := tx.QueryRow(ctx, `
+		SELECT resolved_at, kind, source_id
+		FROM (
+			SELECT
+				staff.bridged_at AS resolved_at,
+				'INBOUND_CALL'::text AS kind,
+				call.id::text AS source_id
+			FROM human_calling_calls call
+			LEFT JOIN human_calling_handoffs handoff
+				ON handoff.id = call.source_handoff_id
+			JOIN human_calling_call_legs staff
+				ON staff.call_id = call.id
+				AND staff.role = 'STAFF'
+				AND staff.bridged_at IS NOT NULL
+			WHERE call.practice_id = $1
+				AND call.direction = 'INBOUND'
+				AND COALESCE(handoff.phone, call.caller_phone) = $2
+
+			UNION ALL
+
+			SELECT
+				interaction.appointment_occurred_at,
+				'BOOKING'::text,
+				interaction.id::text
+			FROM ai_interactions interaction
+			WHERE interaction.practice_id = $1
+				AND interaction.phone = $2
+				AND interaction.appointment_outcome = 'BOOKING'
+				AND lower(COALESCE(
+					interaction.booking_result ->> 'status',
+					''
+				)) = 'booked'
+				AND interaction.appointment_occurred_at IS NOT NULL
+		) resolution
+		ORDER BY resolved_at DESC, source_id DESC, kind DESC
+		LIMIT 1
+	`, practiceID, phone).Scan(
+		&resolution.OccurredAt,
+		&resolution.Kind,
+		&resolution.SourceID,
+	); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("load recovery reconciliation evidence: %w", err)
+	}
+
+	var completed int64
+	if !resolution.OccurredAt.IsZero() {
+		completed, err = m.ResolveRecoveryTasks(ctx, tx, resolution)
+		if err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM work_recovery_reconciliation_queue
+		WHERE practice_id = $1 AND phone = $2
+	`, practiceID, phone); err != nil {
+		return false, fmt.Errorf("finish recovery reconciliation: %w", err)
+	}
+	if completed > 0 {
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit recovery reconciliation: %w", err)
+	}
+	return true, nil
 }
 
 // LockOpenMessageTask validates the exact destination exposed by a Task
@@ -669,6 +989,7 @@ func (m *Module) ApplyCallTaskDisposition(
 		UPDATE work_tasks
 		SET
 			state = 'COMPLETED',
+			completed_by_kind = 'HUMAN',
 			completed_by_subject = $2,
 			completed_by_email = $3,
 			completed_at = $4,
@@ -766,9 +1087,7 @@ func (m *Module) CreateAITask(
 			$1, $2, NULL, $3, $4, 'OPEN', 'ABITA_AI', $5, $6, $7, $8,
 			$9, 'SERVICE', $10, NULL, $11, $12, $13, $11
 		)
-		ON CONFLICT (created_by_subject, ai_idempotency_key)
-			WHERE origin = 'ABITA_AI'
-		DO NOTHING
+		ON CONFLICT DO NOTHING
 		RETURNING id::text
 	`,
 		authorization.PracticeID,
@@ -787,7 +1106,7 @@ func (m *Module) CreateAITask(
 	).Scan(&taskID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existingFingerprint []byte
-		if err := tx.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			SELECT id::text, ai_input_fingerprint
 			FROM work_tasks
 			WHERE origin = 'ABITA_AI'
@@ -797,7 +1116,42 @@ func (m *Module) CreateAITask(
 		`, command.Service.Subject, command.IdempotencyKey).Scan(
 			&taskID,
 			&existingFingerprint,
-		); err != nil {
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `
+				SELECT id::text
+				FROM work_tasks
+				WHERE practice_id = $1
+					AND location_id = $2
+					AND phone = $3
+					AND origin = 'ABITA_AI'
+					AND title = $4
+					AND urgency = $5
+					AND category = $6
+					AND COALESCE(caller_name, '') = $7
+					AND source_call_id = $8
+					AND source_message = $9
+					AND state = 'OPEN'
+				ORDER BY created_at, id
+				LIMIT 1
+				FOR SHARE
+			`, authorization.PracticeID, authorization.LocationID, command.Phone,
+				command.Summary, command.Urgency, command.Category,
+				command.CallerName, command.SourceCallID, command.Message,
+			).Scan(&taskID)
+			if err != nil {
+				return Task{}, "", fmt.Errorf("load duplicate AI Task: %w", err)
+			}
+			task, err := loadTask(ctx, tx, taskID)
+			if err != nil {
+				return Task{}, "", err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return Task{}, "", fmt.Errorf("commit duplicate AI Task: %w", err)
+			}
+			return task, TaskDuplicate, nil
+		}
+		if err != nil {
 			return Task{}, "", fmt.Errorf("load replayed AI Task: %w", err)
 		}
 		if !bytes.Equal(existingFingerprint, fingerprint[:]) {
@@ -955,6 +1309,7 @@ func (m *Module) CompleteTask(
 		UPDATE work_tasks
 		SET
 			state = 'COMPLETED',
+			completed_by_kind = 'HUMAN',
 			completed_by_subject = $2,
 			completed_by_email = $3,
 			completed_at = $4,
@@ -1042,6 +1397,7 @@ func (m *Module) ReopenTask(
 		UPDATE work_tasks
 		SET
 			state = 'OPEN',
+			completed_by_kind = NULL,
 			completed_by_subject = NULL,
 			completed_by_email = NULL,
 			completed_at = NULL,
@@ -1255,7 +1611,7 @@ func insertTask(
 				$1, $2, $3, $4, $5, 'OPEN', 'HUMAN_CALL_FOLLOW_UP',
 				'normal', 'HUMAN', $6, $7, $8, $8
 			)
-			ON CONFLICT (call_id) DO NOTHING
+			ON CONFLICT DO NOTHING
 			RETURNING *
 		)
 		SELECT
@@ -1289,10 +1645,32 @@ func insertTask(
 		FROM (
 			SELECT * FROM inserted
 			UNION ALL
-			SELECT existing.*
-			FROM work_tasks existing
-			WHERE existing.call_id = $3
-				AND NOT EXISTS (SELECT 1 FROM inserted)
+			SELECT candidate.*
+			FROM (
+				SELECT existing.*
+				FROM work_tasks existing
+				WHERE (
+					existing.call_id = $3
+					OR (
+						existing.practice_id = $1
+						AND existing.location_id = $2
+						AND existing.phone = $4
+						AND existing.title = $5
+						AND existing.origin = 'HUMAN_CALL_FOLLOW_UP'
+						AND existing.urgency = 'normal'
+						AND existing.category IS NULL
+						AND existing.caller_name IS NULL
+						AND existing.source_call_id IS NULL
+						AND existing.source_message IS NULL
+						AND existing.state = 'OPEN'
+					)
+				)
+				ORDER BY (existing.call_id = $3) DESC,
+					existing.created_at,
+					existing.id
+				LIMIT 1
+			) candidate
+			WHERE NOT EXISTS (SELECT 1 FROM inserted)
 		) task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
@@ -1546,13 +1924,19 @@ func setCompletionActor(
 	subject *string,
 	email *string,
 ) {
-	if subject == nil || email == nil {
+	if subject == nil {
 		return
 	}
+	kind := access.ActorService
+	actorEmail := ""
+	if email != nil {
+		kind = access.ActorHuman
+		actorEmail = *email
+	}
 	task.CompletedBy = &ActorSnapshot{
-		Kind:    access.ActorHuman,
+		Kind:    kind,
 		Subject: *subject,
-		Email:   *email,
+		Email:   actorEmail,
 	}
 }
 

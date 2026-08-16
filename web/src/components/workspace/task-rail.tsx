@@ -60,15 +60,16 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import {
   aiCallCompletionLabel,
-  appointmentFolder,
   appointmentOutcomeLabel,
 } from "@/lib/ai-interactions"
+import { appointmentFolderForAction } from "@/lib/ai-outcome-attention"
 import { authClient } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
+import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import {
+  appointmentFolderForTask,
   filterTasksByCategory,
-  recoveryGroupKey,
   taskCountForCategory,
   taskFolderCursor,
   type TaskCategoryFilter,
@@ -79,11 +80,10 @@ export type ConnectionState = "connecting" | "connected" | "degraded"
 type AttentionSection =
   | "tasks"
   | "calls"
-  | "bookings"
-  | "cancellations"
-  | "reschedules"
+  | "appointments"
   | "texts"
-  | "recent"
+
+type AppointmentSection = "bookings" | "cancellations" | "reschedules"
 
 const taskCategoryOptions: Array<{
   value: TaskCategoryFilter
@@ -105,22 +105,24 @@ type TaskRailProps = {
   workspaceControl: ReactNode
   locationScopeID: string
   tasks: Task[]
+  recoveryTasks: Task[]
   taskCounts: TaskFolderCounts
   aiOutcomes: AiOutcomeItem[]
   outcomeCounts: AiOutcomeCounts
   messages: MessageThreadSummary[]
-  recent: EngagementSummary[]
   selectedTaskID: string
   selectedAIInteractionID: string
   selectedPhone: string
   search: string
   engagementError: string
   loading: boolean
+  recoveryLoading: boolean
   outcomesLoading: boolean
   outcomesError: string
   outcomeNextCursor: string
   messageLoading: boolean
   nextCursor: string
+  recoveryNextCursor: string
   messageNextCursor: string
   connection: ConnectionState
   analyticsActive: boolean
@@ -131,6 +133,7 @@ type TaskRailProps = {
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onTaskSelect: (task: Task) => void
   onLoadMore: () => void
+  onRecoveryLoadMore: () => void
   onMessageLoadMore: () => void
   onOutcomeLoadMore: () => void
 }
@@ -141,22 +144,24 @@ export function TaskRail({
   workspaceControl,
   locationScopeID,
   tasks,
+  recoveryTasks,
   taskCounts,
   aiOutcomes,
   outcomeCounts,
   messages,
-  recent,
   selectedTaskID,
   selectedAIInteractionID,
   selectedPhone,
   search,
   engagementError,
   loading,
+  recoveryLoading,
   outcomesLoading,
   outcomesError,
   outcomeNextCursor,
   messageLoading,
   nextCursor,
+  recoveryNextCursor,
   messageNextCursor,
   connection,
   analyticsActive,
@@ -167,22 +172,24 @@ export function TaskRail({
   onAIInteractionSelect,
   onTaskSelect,
   onLoadMore,
+  onRecoveryLoadMore,
   onMessageLoadMore,
   onOutcomeLoadMore,
 }: TaskRailProps) {
   const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
-  const [expanded, setExpanded] = useState<Record<AttentionSection, boolean>>(
-    () => ({
-      tasks: true,
-      calls: false,
-      bookings: false,
-      cancellations: false,
-      reschedules: false,
-      texts: false,
-      recent: false,
-      ...readSidebarState(stateKey)?.expanded,
-    }),
-  )
+  const [expansion, setExpansion] = useState<{
+    stateKey: string
+    section: AttentionSection
+  }>()
+  const expanded = expansion?.stateKey === stateKey ? expansion.section : undefined
+  const [appointmentExpansion, setAppointmentExpansion] = useState<{
+    stateKey: string
+    section: AppointmentSection
+  }>()
+  const expandedAppointment =
+    appointmentExpansion?.stateKey === stateKey
+      ? appointmentExpansion.section
+      : undefined
   const [taskCategory, setTaskCategory] =
     useState<TaskCategoryFilter>("all")
   const scrollContainer = useRef<HTMLDivElement | null>(null)
@@ -201,8 +208,44 @@ export function TaskRail({
     () => categorizeAIOutcomes(aiOutcomes),
     [aiOutcomes],
   )
-  const recoveryRows = useMemo(() => aggregateRecovery(tasks), [tasks])
+  const appointmentFolders = [
+    {
+      key: "bookings" as const,
+      title: "Bookings",
+      tasks: categorizedTasks.bookings,
+      outcomes: categorizedAIOutcomes.bookings,
+      taskCount: taskCounts.bookings,
+      count: taskCounts.bookings + outcomeCounts.bookings,
+    },
+    {
+      key: "cancellations" as const,
+      title: "Cancellations",
+      tasks: categorizedTasks.cancellations,
+      outcomes: categorizedAIOutcomes.cancellations,
+      taskCount: taskCounts.cancellations,
+      count: taskCounts.cancellations + outcomeCounts.cancellations,
+    },
+    {
+      key: "reschedules" as const,
+      title: "Reschedules",
+      tasks: categorizedTasks.reschedules,
+      outcomes: categorizedAIOutcomes.reschedules,
+      taskCount: taskCounts.reschedules,
+      count: taskCounts.reschedules + outcomeCounts.reschedules,
+    },
+  ]
+  const appointmentCount = appointmentFolders.reduce(
+    (total, folder) => total + folder.count,
+    0,
+  )
+  const recoveryRows = useMemo(
+    () => aggregateRecovery(recoveryTasks),
+    [recoveryTasks],
+  )
   const textRows = useMemo(() => aggregateTexts(messages), [messages])
+  const outcomeFolderExpanded =
+    (expanded === "tasks" && taskCategory === "all") ||
+    (expanded === "appointments" && Boolean(expandedAppointment))
 
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -223,20 +266,24 @@ export function TaskRail({
     })
   }, [stateKey])
 
-  useEffect(() => {
-    writeSidebarState(stateKey, {
-      expanded,
-      scrollTop: scrollContainer.current?.scrollTop ?? 0,
-    })
-  }, [expanded, stateKey])
-
   function toggle(section: AttentionSection) {
-    setExpanded((current) => ({ ...current, [section]: !current[section] }))
+    const closing = expanded === section
+    setExpansion(closing ? undefined : { stateKey, section })
+    if (section === "appointments" || expanded === "appointments") {
+      setAppointmentExpansion(undefined)
+    }
+  }
+
+  function toggleAppointment(section: AppointmentSection) {
+    setAppointmentExpansion((current) =>
+      current?.stateKey === stateKey && current.section === section
+        ? undefined
+        : { stateKey, section },
+    )
   }
 
   function rememberScroll() {
     writeSidebarState(stateKey, {
-      expanded,
       scrollTop: scrollContainer.current?.scrollTop ?? 0,
     })
   }
@@ -253,6 +300,10 @@ export function TaskRail({
           <form
             onSubmit={(event) => {
               event.preventDefault()
+              if (resolveWorkspaceSearch(search).kind === "tasks") {
+                setExpansion({ stateKey, section: "tasks" })
+                setAppointmentExpansion(undefined)
+              }
               onSearchSubmit()
             }}
           >
@@ -262,12 +313,11 @@ export function TaskRail({
               </InputGroupAddon>
               <InputGroupInput
                 ref={searchInput}
-                aria-label="Search phone number"
+                aria-label="Search tasks, names, or phone"
                 aria-invalid={Boolean(engagementError)}
                 autoComplete="off"
                 enterKeyHint="go"
-                inputMode="tel"
-                placeholder="Search phone number"
+                placeholder="Search tasks, names, or phone"
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
               />
@@ -278,7 +328,7 @@ export function TaskRail({
                 <InputGroupButton
                   type="submit"
                   size="icon-xs"
-                  aria-label="Open phone number"
+                  aria-label="Search"
                 >
                   <ArrowRightIcon />
                 </InputGroupButton>
@@ -298,8 +348,11 @@ export function TaskRail({
         >
           <AttentionGroup
             title="Tasks"
-            count={selectedTaskCount}
-            expanded={expanded.tasks}
+            count={
+              selectedTaskCount +
+              (taskCategory === "all" ? outcomeCounts.tasks : 0)
+            }
+            expanded={expanded === "tasks"}
             onToggle={() => toggle("tasks")}
           >
             <SidebarMenuItem className="px-1 py-1">
@@ -318,6 +371,16 @@ export function TaskRail({
                 ))}
               </NativeSelect>
             </SidebarMenuItem>
+            {taskCategory === "all" &&
+              categorizedAIOutcomes.tasks.map((interaction) => (
+                <AIOutcomeRow
+                  key={interaction.id}
+                  interaction={interaction}
+                  active={interaction.id === selectedAIInteractionID}
+                  showOffice={showOffice}
+                  onSelect={() => onAIInteractionSelect(interaction)}
+                />
+              ))}
             {filteredTasks.map((task) => (
               <TaskRow
                 key={task.id}
@@ -330,7 +393,9 @@ export function TaskRail({
             {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
-            {!loading && selectedTaskCount === 0 && (
+            {!loading &&
+              selectedTaskCount === 0 &&
+              (taskCategory !== "all" || outcomeCounts.tasks === 0) && (
               <RailEmpty inMenu>
                 {taskCategory === "all"
                   ? "No open Tasks"
@@ -353,79 +418,49 @@ export function TaskRail({
             empty="No missed calls"
             rows={recoveryRows}
             count={taskCounts.missedCalls}
-            expanded={expanded.calls}
+            expanded={expanded === "calls"}
             selectedTaskID={selectedTaskID}
             showOffice={showOffice}
             onToggle={() => toggle("calls")}
             onSelect={onTaskSelect}
-            cursor={nextCursor}
-            loading={loading}
-            onLoadMore={onLoadMore}
+            cursor={recoveryNextCursor}
+            loading={recoveryLoading}
+            onLoadMore={onRecoveryLoadMore}
           />
           {outcomesError && (
             <p role="alert" className="px-6 py-1 text-[0.6875rem] text-destructive">
               AI appointment updates are unavailable.
             </p>
           )}
-          <AppointmentGroup
-            title="Bookings"
-            tasks={categorizedTasks.bookings}
-            outcomes={categorizedAIOutcomes.bookings}
-            count={taskCounts.bookings + outcomeCounts.bookings}
-            taskCount={taskCounts.bookings}
-            expanded={expanded.bookings}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            pageLoading={loading}
-            cursor={nextCursor}
-            onToggle={() => toggle("bookings")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-            onLoadMore={onLoadMore}
-          />
-          <AppointmentGroup
-            title="Cancellations"
-            tasks={categorizedTasks.cancellations}
-            outcomes={categorizedAIOutcomes.cancellations}
-            count={
-              taskCounts.cancellations + outcomeCounts.cancellations
-            }
-            taskCount={taskCounts.cancellations}
-            expanded={expanded.cancellations}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            pageLoading={loading}
-            cursor={nextCursor}
-            onToggle={() => toggle("cancellations")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-            onLoadMore={onLoadMore}
-          />
-          <AppointmentGroup
-            title="Reschedules"
-            tasks={categorizedTasks.reschedules}
-            outcomes={categorizedAIOutcomes.reschedules}
-            count={
-              taskCounts.reschedules + outcomeCounts.reschedules
-            }
-            taskCount={taskCounts.reschedules}
-            expanded={expanded.reschedules}
-            selectedTaskID={selectedTaskID}
-            selectedAIInteractionID={selectedAIInteractionID}
-            showOffice={showOffice}
-            loading={outcomesLoading}
-            pageLoading={loading}
-            cursor={nextCursor}
-            onToggle={() => toggle("reschedules")}
-            onTaskSelect={onTaskSelect}
-            onAIInteractionSelect={onAIInteractionSelect}
-            onLoadMore={onLoadMore}
-          />
-          {(expanded.bookings || expanded.cancellations || expanded.reschedules) && (
+          <AttentionGroup
+            title="Appointments"
+            count={appointmentCount}
+            expanded={expanded === "appointments"}
+            onToggle={() => toggle("appointments")}
+          >
+            {appointmentFolders.map((folder) => (
+              <AppointmentFolder
+                key={folder.key}
+                title={folder.title}
+                tasks={folder.tasks}
+                outcomes={folder.outcomes}
+                count={folder.count}
+                taskCount={folder.taskCount}
+                expanded={expandedAppointment === folder.key}
+                selectedTaskID={selectedTaskID}
+                selectedAIInteractionID={selectedAIInteractionID}
+                showOffice={showOffice}
+                loading={outcomesLoading}
+                pageLoading={loading}
+                cursor={nextCursor}
+                onToggle={() => toggleAppointment(folder.key)}
+                onTaskSelect={onTaskSelect}
+                onAIInteractionSelect={onAIInteractionSelect}
+                onLoadMore={onLoadMore}
+              />
+            ))}
+          </AttentionGroup>
+          {outcomeFolderExpanded && (
             <RailLoadSentinel
               label="Loading older appointment updates"
               cursor={outcomeNextCursor}
@@ -436,7 +471,7 @@ export function TaskRail({
           <AttentionGroup
             title="Texts"
             count={textRows.length}
-            expanded={expanded.texts}
+            expanded={expanded === "texts"}
             onToggle={() => toggle("texts")}
           >
             {textRows.map((row) => (
@@ -453,30 +488,13 @@ export function TaskRail({
             {!messageLoading && textRows.length === 0 && (
               <RailEmpty inMenu>No unread Texts</RailEmpty>
             )}
-            {expanded.texts && (
+            {expanded === "texts" && (
               <RailLoadSentinel
                 label="Loading more Texts"
                 cursor={messageNextCursor}
                 loading={messageLoading}
                 onLoadMore={onMessageLoadMore}
               />
-            )}
-          </AttentionGroup>
-          <AttentionGroup
-            title="Recent"
-            expanded={expanded.recent}
-            onToggle={() => toggle("recent")}
-          >
-            {recent.map((engagement) => (
-              <RecentRow
-                key={engagement.phone}
-                engagement={engagement}
-                active={engagement.phone === selectedPhone}
-                onSelect={() => onEngagementSelect(engagement)}
-              />
-            ))}
-            {recent.length === 0 && (
-              <RailEmpty inMenu>No recent number inboxes</RailEmpty>
             )}
           </AttentionGroup>
         </SidebarContent>
@@ -575,7 +593,7 @@ function AttentionGroup({
   )
 }
 
-function AppointmentGroup({
+function AppointmentFolder({
   title,
   tasks,
   outcomes,
@@ -610,43 +628,64 @@ function AppointmentGroup({
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onLoadMore: () => void
 }) {
+  const contentID = useId()
   return (
-    <AttentionGroup
-      title={title}
-      count={count}
-      expanded={expanded}
-      onToggle={onToggle}
-    >
-      {outcomes.map((interaction) => (
-        <AIOutcomeRow
-          key={interaction.id}
-          interaction={interaction}
-          active={interaction.id === selectedAIInteractionID}
-          showOffice={showOffice}
-          onSelect={() => onAIInteractionSelect(interaction)}
+    <SidebarMenuItem>
+      <button
+        type="button"
+        aria-controls={contentID}
+        aria-expanded={expanded}
+        className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground/70 outline-hidden transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        onClick={onToggle}
+      >
+        <ChevronRightIcon
+          aria-hidden="true"
+          className={cn(
+            "mr-1.5 size-3.5 shrink-0 stroke-[1.5] transition-transform motion-reduce:transition-none",
+            expanded && "rotate-90",
+          )}
         />
-      ))}
-      {tasks.map((task) => (
-        <TaskRow
-          key={task.id}
-          task={task}
-          active={task.id === selectedTaskID}
-          showOffice={showOffice}
-          onSelect={() => onTaskSelect(task)}
+        <span className="truncate">{title}</span>
+        <span className="ml-auto text-[0.6875rem] tabular-nums text-sidebar-foreground/40">
+          {count}
+        </span>
+      </button>
+      <SidebarMenu
+        id={contentID}
+        hidden={!expanded}
+        className="ml-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2"
+      >
+        {outcomes.map((interaction) => (
+          <AIOutcomeRow
+            key={interaction.id}
+            interaction={interaction}
+            active={interaction.id === selectedAIInteractionID}
+            showOffice={showOffice}
+            onSelect={() => onAIInteractionSelect(interaction)}
+          />
+        ))}
+        {tasks.map((task) => (
+          <TaskRow
+            key={task.id}
+            task={task}
+            active={task.id === selectedTaskID}
+            showOffice={showOffice}
+            onSelect={() => onTaskSelect(task)}
+          />
+        ))}
+        {loading && tasks.length === 0 && outcomes.length === 0 && (
+          <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
+        )}
+        {!loading && count === 0 && (
+          <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
+        )}
+        <RailShowMore
+          cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
+          loading={pageLoading}
+          onLoadMore={onLoadMore}
         />
-      ))}
-      {loading && tasks.length === 0 && outcomes.length === 0 && (
-        <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
-      )}
-      {!loading && count === 0 && (
-        <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
-      )}
-      <RailShowMore
-        cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
-        loading={pageLoading}
-        onLoadMore={onLoadMore}
-      />
-    </AttentionGroup>
+      </SidebarMenu>
+    </SidebarMenuItem>
   )
 }
 
@@ -740,14 +779,17 @@ function RecoveryGroup({
     >
       {rows.map((row) => (
         <RecoveryRow
-          key={recoveryGroupKey(row.locationID, row.phone)}
+          key={row.task.id}
           row={row}
           active={row.task.id === selectedTaskID}
           showOffice={showOffice}
           onSelect={() => onSelect(row.task)}
         />
       ))}
-      {count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
+      {loading && rows.length === 0 && (
+        <RailLoading inMenu label="Loading missed calls" />
+      )}
+      {!loading && count === 0 && <RailEmpty inMenu>{empty}</RailEmpty>}
       <RailShowMore
         cursor={taskFolderCursor(cursor, rows.length, count)}
         loading={loading}
@@ -843,15 +885,10 @@ function RecoveryRow({
             {formatUSPhone(row.phone)}
           </span>
           <span className="truncate text-[0.6875rem] text-muted-foreground">
-            {row.missedCount > 0 ? `${row.missedCount} missed` : ""}
-            {row.missedCount > 0 && row.voicemailCount > 0 ? " · " : ""}
-            {row.voicemailCount > 0 ? `${row.voicemailCount} voicemail` : ""}
+            {row.voicemailCount > 0 ? "Voicemail" : "Missed call"}
             {showOffice ? ` · ${row.locationName}` : ""}
           </span>
         </span>
-        <time className="text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={row.latestAt}>
-          {relativeTime(row.latestAt)}
-        </time>
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
@@ -901,34 +938,6 @@ function TextRow({
   )
 }
 
-function RecentRow({
-  engagement,
-  active,
-  onSelect,
-}: {
-  engagement: EngagementSummary
-  active: boolean
-  onSelect: () => void
-}) {
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        isActive={active}
-        className="h-8 rounded-lg px-3"
-        tooltip={engagement.phone}
-        onClick={onSelect}
-      >
-        <span className="truncate text-sm font-medium tabular-nums">
-          {formatUSPhone(engagement.phone)}
-        </span>
-        <time className="ml-auto text-[0.6875rem] tabular-nums text-muted-foreground" dateTime={engagement.latestActivity}>
-          {relativeTime(engagement.latestActivity)}
-        </time>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  )
-}
-
 function categorizeTasks(tasks: Task[]) {
   const categorized = {
     general: [] as Task[],
@@ -943,7 +952,7 @@ function categorizeTasks(tasks: Task[]) {
     ) {
       continue
     }
-    const intent = appointmentIntent(task)
+    const intent = appointmentFolderForTask(task)
     if (intent) categorized[intent].push(task)
     else categorized.general.push(task)
   }
@@ -952,30 +961,17 @@ function categorizeTasks(tasks: Task[]) {
 
 function categorizeAIOutcomes(outcomes: AiOutcomeItem[]) {
   const categorized = {
+    tasks: [] as AiOutcomeItem[],
     bookings: [] as AiOutcomeItem[],
     cancellations: [] as AiOutcomeItem[],
     reschedules: [] as AiOutcomeItem[],
   }
   for (const outcome of outcomes) {
-    const folder = appointmentFolder(outcome.appointmentOutcome)
+    const folder = appointmentFolderForAction(outcome.appointmentAction)
     if (folder) categorized[folder].push(outcome)
+    else categorized.tasks.push(outcome)
   }
   return categorized
-}
-
-function appointmentIntent(
-  task: Task,
-): "bookings" | "cancellations" | "reschedules" | undefined {
-  if (task.category !== "appointments") return undefined
-  const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
-  if (/\b(cancel|cancellation)\b/.test(text)) return "cancellations"
-  if (/\b(reschedule|rescheduling|move appointment|change appointment)\b/.test(text)) {
-    return "reschedules"
-  }
-  if (/\b(book|booking|schedule|new appointment|appointment request)\b/.test(text)) {
-    return "bookings"
-  }
-  return undefined
 }
 
 function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
@@ -1003,7 +999,7 @@ function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
 function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {
   const byPhone = new Map<string, MessageThreadSummary[]>()
   for (const thread of messages) {
-    if (!thread.unread) continue
+    if (!thread.unread || thread.openTaskCount > 0) continue
     byPhone.set(thread.externalPhone, [...(byPhone.get(thread.externalPhone) ?? []), thread])
   }
   return [...byPhone.entries()]
@@ -1128,7 +1124,6 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
 }
 
 type SidebarState = {
-  expanded: Partial<Record<AttentionSection, boolean>>
   scrollTop: number
 }
 
@@ -1140,7 +1135,7 @@ function readSidebarState(key: string): SidebarState | undefined {
   if (typeof window === "undefined") return undefined
   try {
     const value = JSON.parse(window.localStorage.getItem(key) ?? "") as SidebarState
-    return value?.expanded ? value : undefined
+    return Number.isFinite(value?.scrollTop) ? value : undefined
   } catch {
     return undefined
   }

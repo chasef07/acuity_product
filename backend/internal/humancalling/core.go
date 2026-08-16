@@ -353,6 +353,7 @@ type CallHistoryItem struct {
 	LocationName    string
 	AnsweredByEmail string
 	TransferReason  string
+	SourceCallID    string
 	Outcome         CallState
 	Current         bool
 	Originating     bool
@@ -544,6 +545,17 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	default:
 		return ErrInvalidInput
 	}
+}
+
+// ProcessNextRecoveryReconciliation exposes Work's bounded rollout lane to the
+// shared worker without adding another owner for HumanCalling dependencies.
+func (m *Module) ProcessNextRecoveryReconciliation(
+	ctx context.Context,
+) (bool, error) {
+	if m.work == nil {
+		return false, ErrInvalidInput
+	}
+	return m.work.ProcessNextRecoveryReconciliation(ctx)
 }
 
 func (m *Module) staffMediaToken(callID string, callLegID string) string {

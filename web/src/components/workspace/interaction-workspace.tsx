@@ -245,25 +245,17 @@ function TaskWorkspace({
     }
     setError(`The Task could not be ${action === "complete" ? "completed" : "reopened"}.`)
   }
+  const recovery =
+    task.origin === "VOICEMAIL_RECOVERY" ||
+    task.origin === "MISSED_CALL_RECOVERY"
 
   return (
     <section
       aria-label="Focused Task"
       className="h-full min-h-0 flex-1 overflow-y-auto bg-transparent px-4 py-4"
     >
-      <div className="flex items-center gap-2">
-        <Badge
-          variant={task.state === "OPEN" ? "secondary" : "outline"}
-          className={task.state === "COMPLETED" ? "text-success" : undefined}
-        >
-          {task.state === "OPEN" ? "Open" : "Completed"}
-        </Badge>
-        <span className="text-xs text-muted-foreground">
-          Task · v{task.version}
-        </span>
-      </div>
       {editing && task.state === "OPEN" ? (
-        <div className="mt-3 flex items-center gap-1">
+        <div className="flex items-center gap-1">
           <Input
             aria-label="Task title"
             autoFocus
@@ -297,7 +289,7 @@ function TaskWorkspace({
           </Button>
         </div>
       ) : (
-        <div className="mt-3 flex items-start gap-1">
+        <div className="flex items-start gap-1">
           <h2 className="min-w-0 flex-1 text-lg font-semibold leading-snug">
             {task.title}
           </h2>
@@ -330,14 +322,14 @@ function TaskWorkspace({
                 title={taskCallingEligible ? "Call this Task" : taskCallingReason}
                 onClick={() => onStartTaskCall(task)}
               >
-                <PhoneCallIcon /> {taskCallPending ? "Preparing…" : "Call"}
+                <PhoneCallIcon /> {taskCallPending ? "Preparing…" : recovery ? "Call back" : "Call"}
               </Button>
             )}
             <Button
               onClick={() => void transition("complete")}
               disabled={pending}
             >
-              {pending ? <Spinner /> : <CheckCircle2Icon />} Complete
+              {pending ? <Spinner /> : <CheckCircle2Icon />} {recovery ? "Resolve" : "Complete"}
             </Button>
           </>
         ) : (
@@ -361,14 +353,13 @@ function TaskWorkspace({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {(task.origin === "VOICEMAIL_RECOVERY" ||
-        task.origin === "MISSED_CALL_RECOVERY") && (
+      {recovery && (
         <RecoveryTaskSource task={task} revision={historyHint} />
       )}
       <Separator className="my-4" />
       <details className="group rounded-md border px-3 py-2">
         <summary className="cursor-pointer text-sm font-medium">
-          More context
+          Details
         </summary>
         <div className="mt-3 space-y-3">
           <p className="text-xs text-muted-foreground">
@@ -378,21 +369,19 @@ function TaskWorkspace({
           {task.sourceCallId && task.origin !== "ABITA_AI" && (
             <Metadata label="Source call" value={task.sourceCallId} />
           )}
+          <Metadata
+            label="Created"
+            value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
+          />
+          <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
+          <Metadata
+            label="Completed"
+            value={
+              task.completedAt ? formatDateTime(task.completedAt) : "Not completed"
+            }
+          />
         </div>
       </details>
-      <div className="grid gap-3 text-xs text-muted-foreground">
-        <Metadata
-          label="Created"
-          value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
-        />
-        <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
-        <Metadata
-          label="Completed"
-          value={
-            task.completedAt ? formatDateTime(task.completedAt) : "Not completed"
-          }
-        />
-      </div>
     </section>
   )
 }
@@ -465,10 +454,8 @@ function RecoveryTaskSource({
       }
       const linkedInteractions = detail.data.interactions
       setInteractions(linkedInteractions)
-      const voicemail = linkedInteractions.find(
-        (interaction) => interaction.type === "VOICEMAIL",
-      )
-      const callID = voicemail?.callId ?? task.callId
+      const selected = newestRecoveryInteraction(linkedInteractions)
+      const callID = selected?.callId ?? task.callId
       if (!callID) return
       const result = await getCallingCall({
         client,
@@ -488,33 +475,48 @@ function RecoveryTaskSource({
     }
   }, [revision, task.callId, task.id, task.version])
 
+  const selected = newestRecoveryInteraction(interactions)
+  const otherInteractions = [...interactions]
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+    .filter((interaction) => interaction.callId !== selected?.callId)
+  const otherCallOrder = otherInteractions.every(
+    (interaction) => interaction.occurredAt < (selected?.occurredAt ?? ""),
+  )
+    ? "earlier"
+    : "other"
+
   return (
-    <section aria-label="Call recovery source">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className="gap-1.5">
-          <AudioLinesIcon className="size-3.5" aria-hidden="true" />
-          {task.recoveryOutcome === "VOICEMAIL" ? "Voicemail" : "Missed call"}
-        </Badge>
-		{task.relatedInteractionCount > 0 && (
-			<span className="text-xs text-muted-foreground">
-				{task.relatedInteractionCount} related
-			</span>
-		)}
-      </div>
-      {interactions.length > 0 && (
-        <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-          {interactions.map((interaction) => (
-            <li key={interaction.callId}>
-              {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
-              {" · "}
-              {formatDateTime(interaction.occurredAt)}
-            </li>
-          ))}
-        </ul>
-      )}
+    <section aria-label="Call recovery source" className="mt-4">
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       {call?.voicemail && <VoicemailSource call={call} compact />}
+      {otherInteractions.length > 0 && (
+        <details className="mt-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer">
+            {otherInteractions.length} {otherCallOrder}{" "}
+            {otherInteractions.length === 1 ? "call" : "calls"}
+          </summary>
+          <ul className="mt-2 space-y-1 pl-4">
+            {otherInteractions.map((interaction) => (
+              <li key={interaction.callId}>
+                {interaction.type === "VOICEMAIL" ? "Voicemail" : "Missed call"}
+                {" · "}
+                {formatDateTime(interaction.occurredAt)}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
+  )
+}
+
+function newestRecoveryInteraction(interactions: Task["interactions"]) {
+  const newestFirst = [...interactions].sort((left, right) =>
+    right.occurredAt.localeCompare(left.occurredAt),
+  )
+  return (
+    newestFirst.find((interaction) => interaction.type === "VOICEMAIL") ??
+    newestFirst[0]
   )
 }
 
@@ -733,11 +735,7 @@ function CallWorkspace({
             </p>
 			{call.recoveryTask && (
 				<div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-					<Badge variant="outline">{call.recoveryTask.state}</Badge>
 					<span className="font-medium">{call.recoveryTask.title}</span>
-					<span className="text-xs text-muted-foreground">
-						{call.recoveryTask.relatedInteractionCount} related
-					</span>
 					<Button size="sm" variant="outline" onClick={() => onOpenRecoveryTask(call.recoveryTask!.id)}>
 						Open Task
 					</Button>

@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 36 {
-		t.Fatalf("migration count = %d, want 36", migrationCount)
+	if migrationCount != 37 {
+		t.Fatalf("migration count = %d, want 37", migrationCount)
 	}
 	var recordingRetentionIndex string
 	if err := pool.QueryRow(ctx, `
@@ -125,6 +125,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		"human_calling_outbound_voice_fallbacks",
 		"human_calling_voicemails",
 		"work_task_interactions",
+		"work_recovery_reconciliation_queue",
+		"work_recovery_resolution_checkpoints",
 	} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, relation).Scan(&exists); err != nil {
@@ -185,6 +187,87 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 	if legacyVoicemailColumns != 0 {
 		t.Fatalf("legacy voicemail copy columns = %d, want 0", legacyVoicemailColumns)
+	}
+}
+
+func TestQuietQueueMigrationQueuesOnlyExistingOpenRecoveryKeys(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0034_ai_interaction_attention.sql")
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 16, 9, 0, 0, 0, time.UTC)
+	const (
+		queuePracticeID = "00000000-0000-0000-0000-000000000401"
+		queueLocationID = "00000000-0000-0000-0000-000000000402"
+		queueHandoffID  = "00000000-0000-0000-0000-000000000403"
+		queueCallID     = "00000000-0000-0000-0000-000000000404"
+		queuePhone      = "+15555550404"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'quiet-queue-migration', 'Quiet Queue Migration')
+	`, queuePracticeID); err != nil {
+		t.Fatalf("seed pre-migration Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES ($2, $1, 'office', 'Office')
+	`, queuePracticeID, queueLocationID); err != nil {
+		t.Fatalf("seed pre-migration Location: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_handoffs (
+			id, service_subject, practice_id, location_id, source_call_id,
+			idempotency_key, input_fingerprint, phone, phone_source,
+			display_name, name_source, transfer_reason, reason_source,
+			expires_at, consumed_at, created_at
+		) VALUES (
+			$3, 'migration-service', $1, $2, 'source-call', 'source-attempt',
+			'fingerprint'::bytea, $4, 'Abita', 'Migration caller', 'Abita',
+			'Missed call', 'Abita AI', $5, $5, $5
+		)
+	`, queuePracticeID, queueLocationID, queueHandoffID,
+		queuePhone, now); err != nil {
+		t.Fatalf("seed pre-migration Handoff: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_calls (
+			id, source_handoff_id, practice_id, location_id, disposition_at,
+			disposition_actor_subject, disposition_outcome, terminal_outcome,
+			caller_phone, ended_at, created_at, updated_at
+		) VALUES (
+			$4, $3, $1, $2, $6, 'migration-service', 'FOLLOW_UP_REQUIRED',
+			'FOLLOW_UP_REQUIRED', $5, $6, $6, $6
+		)
+	`, queuePracticeID, queueLocationID, queueHandoffID, queueCallID,
+		queuePhone, now); err != nil {
+		t.Fatalf("seed pre-migration Call: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO work_tasks (
+			practice_id, location_id, call_id, phone, title, state, origin,
+			urgency, created_by_kind, created_by_subject, created_at,
+			recovery_outcome, updated_at
+		) VALUES (
+			$1, $2, $3, $4, 'Return missed call', 'OPEN',
+			'MISSED_CALL_RECOVERY', 'normal', 'SERVICE', 'human-calling',
+			$5, 'MISSED_CALL', $5
+		)
+	`, queuePracticeID, queueLocationID, queueCallID, queuePhone, now); err != nil {
+		t.Fatalf("seed pre-migration recovery Task: %v", err)
+	}
+
+	if err := migrations.ApplyThrough(ctx, pool, "0036_quiet_staff_queue.sql"); err != nil {
+		t.Fatalf("apply quiet Queue migration: %v", err)
+	}
+	var queued int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM work_recovery_reconciliation_queue
+		WHERE practice_id = $1 AND phone = $2
+	`, queuePracticeID, queuePhone).Scan(&queued); err != nil {
+		t.Fatalf("read queued recovery key: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued recovery keys = %d, want 1", queued)
 	}
 }
 
@@ -582,7 +665,7 @@ func TestAIInteractionAttentionMigrationBackfillsAuthorizedOutcomes(t *testing.T
 	`).Scan(&allAttention, &selectedAttention, &partialAttention); err != nil {
 		t.Fatalf("read migrated AI Interaction attention: %v", err)
 	}
-	if allAttention != 2 || selectedAttention != 1 || partialAttention != 0 {
+	if allAttention != 1 || selectedAttention != 1 || partialAttention != 2 {
 		t.Fatalf(
 			"migrated AI Interaction attention = all:%d selected:%d partial:%d",
 			allAttention, selectedAttention, partialAttention,

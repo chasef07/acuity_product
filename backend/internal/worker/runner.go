@@ -15,6 +15,7 @@ type CallingWork interface {
 	ReportReceiptQueue(context.Context) error
 	ProcessNextCommand(context.Context) (bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
+	ProcessNextRecoveryReconciliation(context.Context) (bool, error)
 	ProcessNextRecordingReconciliation(context.Context) (bool, error)
 	ProcessNextRecordingRetention(context.Context) (bool, error)
 	ReconcileStaleCalls(context.Context) (int, error)
@@ -130,7 +131,7 @@ func New(
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	lanes.Add(5 + runner.config.CommandWorkers)
+	lanes.Add(6 + runner.config.CommandWorkers)
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLane(
@@ -158,6 +159,15 @@ func (runner *Runner) Run(ctx context.Context) error {
 			runner.config.ReceiptBatchSize,
 			"messaging_receipt_processing_failed",
 			runner.messages.ProcessNextReceipt,
+		)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(
+			ctx,
+			runner.config.CommandBatchSize,
+			"work_recovery_reconciliation_failed",
+			runner.work.ProcessNextRecoveryReconciliation,
 		)
 	}()
 	go func() {

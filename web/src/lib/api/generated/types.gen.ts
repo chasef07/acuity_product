@@ -513,6 +513,7 @@ export type AiInteractionDetail = {
     endedAt?: string;
     status: AiInteractionCallStatus;
     summary?: string;
+    appointmentAction?: AiAppointmentAction;
     appointmentOutcome: AiAppointmentOutcome;
     appointment: AiAppointmentFacts;
     previousAppointment?: AiAppointmentFacts;
@@ -559,6 +560,7 @@ export type AiOutcomeItem = {
     endedAt?: string;
     status: AiInteractionCallStatus;
     summary?: string;
+    appointmentAction?: AiAppointmentAction;
     appointmentOutcome: AiAppointmentOutcome;
     appointmentOccurredAt?: string;
     oldAppointmentId?: string;
@@ -572,6 +574,7 @@ export type AiOutcomePage = {
 };
 
 export type AiOutcomeCounts = {
+    tasks: number;
     bookings: number;
     cancellations: number;
     reschedules: number;
@@ -705,6 +708,7 @@ export type TaskQueryRequest = {
     search?: string;
     state?: 'OPEN' | 'COMPLETED';
     ordering?: 'priority' | 'recent';
+    folder?: 'work' | 'missed_calls';
     cursor?: string;
     limit?: number;
 };
@@ -741,6 +745,7 @@ export type MessageThreadSummary = MessageThread & {
     latestDirection: MessageDirection;
     latestDelivery: MessageDeliveryState;
     latestActivity: string;
+    openTaskCount: number;
     unread: boolean;
 };
 
@@ -832,7 +837,7 @@ export type ConversationTimelineItem = {
     type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK';
     id: string;
     occurredAt: string;
-    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED';
+    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
@@ -855,6 +860,7 @@ export type CallHistoryItem = {
     locationName: string;
     answeredByEmail: string;
     transferReason: string;
+    sourceCallId?: string;
     outcome: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
     current: boolean;
     originating: boolean;

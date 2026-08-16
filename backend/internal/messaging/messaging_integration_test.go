@@ -21,7 +21,85 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
+	"github.com/google/uuid"
 )
+
+func TestCreateFollowUpTaskKeepsDistinctMessageThreadsSeparate(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 16, 11, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "message-thread-task-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "message-thread-task-practice",
+			Name: "Message Thread Task Practice",
+			Locations: []access.LocationProvision{{
+				Key: "main", Name: "Main",
+			}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key: "staff", Email: "staff@message-thread-task.test",
+				Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision Message Thread Task fixture: %v", err)
+	}
+	identity := access.Identity{
+		Subject: "message-thread-task-staff", Email: "staff@message-thread-task.test",
+		EmailVerified: true,
+	}
+	authorization := testaccess.Activate(t, accessModule, identity)
+	workModule := work.New(pool, accessModule, func() time.Time { return now })
+	module := messaging.New(
+		pool, accessModule, workModule, nil, messaging.Config{}, func() time.Time { return now },
+	)
+
+	messageIDs := make([]string, 0, 2)
+	for index, officePhone := range []string{"+17275550100", "+17275550101"} {
+		threadID := uuid.NewString()
+		messageID := uuid.NewString()
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO messaging_threads (
+				id, practice_id, location_id, office_phone, external_phone,
+				created_at, updated_at
+			) VALUES ($1, $2, $3, $4, '+17275550199', $5, $5)
+		`, threadID, authorization.Practice.ID, authorization.Locations[0].ID,
+			officePhone, now.Add(time.Duration(index)*time.Minute)); err != nil {
+			t.Fatalf("insert Message Thread %d: %v", index, err)
+		}
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO messaging_messages (
+				id, thread_id, practice_id, location_id, direction, body,
+				sender, destination, delivery_state, created_by_subject,
+				created_at, updated_at
+			) VALUES ($1, $2, $3, $4, 'OUTBOUND', 'Please follow up',
+				$5, '+17275550199', 'SENT', $6, $7, $7)
+		`, messageID, threadID, authorization.Practice.ID,
+			authorization.Locations[0].ID, officePhone, identity.Subject,
+			now.Add(time.Duration(index)*time.Minute)); err != nil {
+			t.Fatalf("insert Message %d: %v", index, err)
+		}
+		messageIDs = append(messageIDs, messageID)
+	}
+
+	created := make([]work.Task, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		task, status, err := module.CreateFollowUpTask(
+			context.Background(),
+			messaging.CreateFollowUpTaskCommand{Identity: identity, MessageID: messageID},
+		)
+		if err != nil || status != work.TaskCreated {
+			t.Fatalf("create Message follow-up for %q = %#v, %q, %v", messageID, task, status, err)
+		}
+		created = append(created, task)
+	}
+	if created[0].ID == created[1].ID ||
+		created[0].MessageThreadID == created[1].MessageThreadID {
+		t.Fatalf("distinct Message Threads shared follow-up Tasks: %#v", created)
+	}
+}
 
 func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) {
 	pool := testdb.Open(t)

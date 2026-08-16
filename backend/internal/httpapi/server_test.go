@@ -8,9 +8,37 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	"github.com/google/uuid"
 )
+
+func TestAIInteractionDetailResponseIncludesAppointmentAction(t *testing.T) {
+	now := time.Date(2026, time.August, 16, 10, 0, 0, 0, time.UTC)
+	response, err := aiInteractionDetailResponse(interaction.Interaction{
+		ID:                 uuid.NewString(),
+		PracticeID:         uuid.NewString(),
+		LocationID:         uuid.NewString(),
+		SourceCallID:       "source-call",
+		Phone:              "+15555550100",
+		OfficePhone:        "+15555550101",
+		StartedAt:          now,
+		Status:             interaction.CallCompleted,
+		AppointmentAction:  interaction.AppointmentRescheduled,
+		AppointmentOutcome: interaction.OutcomeReschedule,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	})
+	if err != nil {
+		t.Fatalf("map AI Interaction detail: %v", err)
+	}
+	if response.AppointmentAction == nil ||
+		*response.AppointmentAction != "RESCHEDULED" {
+		t.Fatalf("appointment action = %#v, want RESCHEDULED", response.AppointmentAction)
+	}
+}
 
 func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
 	server := &Server{config: Config{AllowedOrigins: []string{

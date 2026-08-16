@@ -1472,6 +1472,10 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	if body.State != nil {
 		state = work.TaskState(*body.State)
 	}
+	folder := work.TaskFolder("")
+	if body.Folder != nil {
+		folder = work.TaskFolder(*body.Folder)
+	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
@@ -1481,6 +1485,7 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 		Search:     stringValue(body.Search),
 		State:      state,
 		Ordering:   ordering,
+		Folder:     folder,
 		Cursor:     stringValue(body.Cursor),
 		Limit:      intValue(body.Limit),
 	})
@@ -3073,6 +3078,7 @@ func messageThreadPageResponse(
 			LatestDirection: api.MessageDirection(item.LatestDirection),
 			LatestDelivery:  visibleDelivery(item.LatestDelivery),
 			LatestActivity:  item.LatestActivity,
+			OpenTaskCount:   item.OpenTaskCount,
 			Unread:          item.Unread,
 		}
 		response.Items = append(response.Items, summary)
@@ -3331,7 +3337,7 @@ func callHistoryItemResponse(
 	if err != nil {
 		return api.CallHistoryItem{}, err
 	}
-	return api.CallHistoryItem{
+	response := api.CallHistoryItem{
 		Id:              id,
 		Type:            api.CallHistoryItemType(item.Type),
 		Direction:       api.CallHistoryItemDirection(item.Direction),
@@ -3345,7 +3351,11 @@ func callHistoryItemResponse(
 		Outcome:         api.CallHistoryItemOutcome(item.Outcome),
 		Current:         item.Current,
 		Originating:     item.Originating,
-	}, nil
+	}
+	if item.SourceCallID != "" {
+		response.SourceCallId = &item.SourceCallID
+	}
+	return response, nil
 }
 
 func operatorTimelineResponse(
@@ -3454,6 +3464,10 @@ func aiInteractionDetailResponse(
 		previous := aiAppointmentFactsResponse(*appointment.PreviousAppointment)
 		response.PreviousAppointment = &previous
 	}
+	if stored.AppointmentAction != "" {
+		action := api.AIAppointmentAction(stored.AppointmentAction)
+		response.AppointmentAction = &action
+	}
 	return response, nil
 }
 
@@ -3496,6 +3510,7 @@ func aiOutcomePageResponse(
 		Items:      make([]api.AIOutcomeItem, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
 		Counts: api.AIOutcomeCounts{
+			Tasks:         page.Counts.Tasks,
 			Bookings:      page.Counts.Bookings,
 			Cancellations: page.Counts.Cancellations,
 			Reschedules:   page.Counts.Reschedules,
@@ -3522,7 +3537,7 @@ func aiOutcomeItemResponse(
 	if err != nil {
 		return api.AIOutcomeItem{}, err
 	}
-	return api.AIOutcomeItem{
+	response := api.AIOutcomeItem{
 		Id:                    id,
 		LocationId:            locationID,
 		LocationName:          item.LocationName,
@@ -3537,7 +3552,12 @@ func aiOutcomeItemResponse(
 		AppointmentOccurredAt: item.AppointmentOccurredAt,
 		OldAppointmentId:      stringPointer(item.OldAppointmentID),
 		NewAppointmentId:      stringPointer(item.NewAppointmentID),
-	}, nil
+	}
+	if item.AppointmentAction != "" {
+		action := api.AIAppointmentAction(item.AppointmentAction)
+		response.AppointmentAction = &action
+	}
+	return response, nil
 }
 
 func operatorAIAnalyticsPageResponse(

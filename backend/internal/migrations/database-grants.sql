@@ -44,9 +44,10 @@ GRANT SELECT ON TABLE
     public.messaging_messages,
     public.messaging_thread_unreads,
     public.messaging_threads,
-    public.work_task_activities,
-    public.work_task_interactions,
-    public.work_tasks
+	public.work_task_activities,
+	public.work_task_interactions,
+	public.work_recovery_resolution_checkpoints,
+	public.work_tasks
 TO acuity_portal;
 
 GRANT SELECT (
@@ -125,6 +126,7 @@ GRANT INSERT ON TABLE
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_interactions,
+	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_portal;
 
@@ -149,6 +151,7 @@ GRANT UPDATE ON TABLE
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_softphone_leases,
+	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_portal;
 
@@ -211,7 +214,9 @@ GRANT UPDATE (
 ON TABLE public.messaging_attachments
 TO acuity_portal;
 
-GRANT DELETE ON TABLE public.messaging_thread_unreads
+GRANT DELETE ON TABLE
+	public.ai_interaction_attention,
+	public.messaging_thread_unreads
 TO acuity_portal;
 
 GRANT SELECT (
@@ -331,6 +336,8 @@ GRANT SELECT ON TABLE
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_interactions,
+	public.work_recovery_reconciliation_queue,
+	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_worker;
 
@@ -366,6 +373,7 @@ GRANT INSERT ON TABLE
     public.messaging_threads,
     public.work_task_activities,
     public.work_task_interactions,
+	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_worker;
 
@@ -429,7 +437,13 @@ GRANT UPDATE ON TABLE
     public.human_calling_handoffs,
     public.human_calling_provider_receipts,
     public.human_calling_softphone_leases,
+	public.work_recovery_resolution_checkpoints,
     public.work_tasks
+TO acuity_worker;
+
+GRANT DELETE ON TABLE
+	public.ai_interaction_attention,
+	public.work_recovery_reconciliation_queue
 TO acuity_worker;
 
 GRANT UPDATE (

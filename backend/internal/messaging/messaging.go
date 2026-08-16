@@ -86,6 +86,7 @@ type ThreadSummary struct {
 	LatestDirection Direction
 	LatestDelivery  DeliveryState
 	LatestActivity  time.Time
+	OpenTaskCount   int
 	Unread          bool
 }
 
@@ -1698,8 +1699,11 @@ func (m *Module) QueryThreads(
 				AND ($3 = '' OR thread.external_phone = $3)
 			GROUP BY thread.id
 		),
-		linked_task_activity AS (
-			SELECT task.message_thread_id AS thread_id, max(task.created_at) AS occurred_at
+		linked_task_activity AS MATERIALIZED (
+			SELECT
+				task.message_thread_id AS thread_id,
+				max(task.created_at) AS occurred_at,
+				count(*) FILTER (WHERE task.state = 'OPEN') AS open_task_count
 			FROM work_tasks task
 			WHERE task.practice_id = $1
 				AND task.location_id::text = ANY($2::text[])
@@ -1741,9 +1745,12 @@ func (m *Module) QueryThreads(
 		scored_threads AS (
 			SELECT
 				thread.*,
-				COALESCE(activity.occurred_at, thread.updated_at) AS latest_activity
+				COALESCE(activity.occurred_at, thread.updated_at) AS latest_activity,
+				COALESCE(linked_task.open_task_count, 0) AS open_task_count
 			FROM candidate_threads thread
 			LEFT JOIN activity ON activity.thread_id = thread.id
+			LEFT JOIN linked_task_activity linked_task
+				ON linked_task.thread_id = thread.id
 		),
 		ranked_threads AS MATERIALIZED (
 			SELECT *
@@ -1780,6 +1787,7 @@ func (m *Module) QueryThreads(
 			COALESCE(latest.direction, ''),
 			COALESCE(latest.delivery_state, ''),
 			thread.latest_activity,
+			thread.open_task_count,
 			EXISTS (
 				SELECT 1
 				FROM messaging_thread_unreads unread
@@ -1829,6 +1837,7 @@ func (m *Module) QueryThreads(
 			&item.LatestDirection,
 			&item.LatestDelivery,
 			&item.LatestActivity,
+			&item.OpenTaskCount,
 			&item.Unread,
 		); err != nil {
 			return ThreadPage{}, fmt.Errorf("scan Message Thread: %w", err)
