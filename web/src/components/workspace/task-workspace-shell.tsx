@@ -310,7 +310,7 @@ export function TaskWorkspaceShell() {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
           state: "OPEN",
-          ordering: "recent",
+          ordering: "time",
           folder: "missed_calls",
           ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
@@ -508,7 +508,7 @@ export function TaskWorkspaceShell() {
       const client = portalClient(token)
       const loadTaskWindow = async (
         folder: "work" | "missed_calls",
-        ordering: "priority" | "recent",
+        ordering: "priority" | "recent" | "time",
         loadedCount: number,
       ) => {
         const target = refreshTaskWindowTarget(loadedCount)
@@ -571,7 +571,7 @@ export function TaskWorkspaceShell() {
             signal,
           }).catch(() => undefined),
           loadTaskWindow("work", "priority", taskLoadedCount),
-          loadTaskWindow("missed_calls", "recent", recoveryLoadedCount),
+          loadTaskWindow("missed_calls", "time", recoveryLoadedCount),
           queryMessageThreads({
             client,
             body: {
@@ -1481,9 +1481,6 @@ function emptyTaskFolderCounts(): TaskFolderCounts {
   return {
     tasks: 0,
     missedCalls: 0,
-    bookings: 0,
-    cancellations: 0,
-    reschedules: 0,
     categories: {
       billing: 0,
       appointments: 0,

@@ -3283,11 +3283,8 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 		Items:      make([]api.Task, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
 		Counts: api.TaskFolderCounts{
-			Tasks:         page.Counts.Tasks,
-			MissedCalls:   page.Counts.MissedCalls,
-			Bookings:      page.Counts.Bookings,
-			Cancellations: page.Counts.Cancellations,
-			Reschedules:   page.Counts.Reschedules,
+			Tasks:       page.Counts.Tasks,
+			MissedCalls: page.Counts.MissedCalls,
 			Categories: api.TaskCategoryCounts{
 				Billing:       page.Counts.Categories.Billing,
 				Appointments:  page.Counts.Categories.Appointments,

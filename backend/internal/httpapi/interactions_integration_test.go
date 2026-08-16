@@ -830,9 +830,10 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("query first AI outcome page status = %d, body = %s",
 			firstPageResponse.StatusCode, readBody(t, firstPageResponse))
 	}
-	var firstPage struct {
+	type outcomePageResponse struct {
 		Items []struct {
-			ID string `json:"id"`
+			ID           string `json:"id"`
+			SourceCallID string `json:"sourceCallId"`
 		} `json:"items"`
 		NextCursor string `json:"nextCursor"`
 		Counts     struct {
@@ -842,13 +843,39 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			Reschedules   int `json:"reschedules"`
 		} `json:"counts"`
 	}
+	var firstPage outcomePageResponse
 	decode(t, firstPageResponse, &firstPage)
 	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" ||
+		firstPage.Items[0].SourceCallID != "abita-booking-63" ||
 		firstPage.Counts.Tasks != 0 ||
 		firstPage.Counts.Bookings != 1 ||
 		firstPage.Counts.Cancellations != 1 ||
 		firstPage.Counts.Reschedules != 2 {
 		t.Fatalf("first AI outcome page = %#v", firstPage)
+	}
+	secondPageBody, _ := json.Marshal(map[string]any{
+		"practiceId": practiceID,
+		"cursor":     firstPage.NextCursor,
+		"limit":      2,
+	})
+	secondPageResponse := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", secondPageBody,
+	)
+	if secondPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("query second AI outcome page status = %d, body = %s",
+			secondPageResponse.StatusCode, readBody(t, secondPageResponse))
+	}
+	var secondPage outcomePageResponse
+	decode(t, secondPageResponse, &secondPage)
+	seenOutcomeIDs := make(map[string]struct{}, 4)
+	for _, item := range append(firstPage.Items, secondPage.Items...) {
+		seenOutcomeIDs[item.ID] = struct{}{}
+	}
+	if len(secondPage.Items) != 2 || secondPage.NextCursor != "" ||
+		len(seenOutcomeIDs) != 4 || secondPage.Counts != firstPage.Counts {
+		t.Fatalf("second AI outcome page = %#v after %#v", secondPage, firstPage)
 	}
 
 	staffOutcomes := request(

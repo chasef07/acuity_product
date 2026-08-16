@@ -367,10 +367,10 @@ func (m *Module) QueryOutcomes(
 			)
 			AND (
 				NOT $4::boolean
-				OR (attention.outcome_occurred_at, interaction.id) <
+				OR (attention.outcome_occurred_at, interaction.id) >
 					($5::timestamptz, $6::uuid)
 			)
-		ORDER BY attention.outcome_occurred_at DESC, interaction.id DESC
+		ORDER BY attention.outcome_occurred_at, interaction.id
 		LIMIT $7
 	`, command.PracticeID, locationIDs, command.Identity.Subject,
 		cursor.Present, nullableOutcomeCursorTime(cursor),

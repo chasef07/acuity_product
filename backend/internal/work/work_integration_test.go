@@ -1283,8 +1283,8 @@ func TestWorkspaceQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testi
 			len(firstPage.Items), firstPage.NextCursor)
 	}
 	wantCounts := work.TaskFolderCounts{
-		Tasks: 55, Bookings: 1, Cancellations: 1, Reschedules: 1,
-		Categories: work.TaskCategoryCounts{Other: 55},
+		Tasks:      58,
+		Categories: work.TaskCategoryCounts{Appointments: 3, Other: 55},
 	}
 	if firstPage.Counts != wantCounts {
 		t.Fatalf("first Task page counts = %#v, want %#v", firstPage.Counts, wantCounts)

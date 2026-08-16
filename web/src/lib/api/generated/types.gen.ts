@@ -397,9 +397,6 @@ export type TaskPage = {
 export type TaskFolderCounts = {
     tasks: number;
     missedCalls: number;
-    bookings: number;
-    cancellations: number;
-    reschedules: number;
     categories: TaskCategoryCounts;
 };
 
@@ -707,7 +704,7 @@ export type TaskQueryRequest = {
     locationId?: string;
     search?: string;
     state?: 'OPEN' | 'COMPLETED';
-    ordering?: 'priority' | 'recent';
+    ordering?: 'priority' | 'recent' | 'time';
     folder?: 'work' | 'missed_calls';
     cursor?: string;
     limit?: number;

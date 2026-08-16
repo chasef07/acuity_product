@@ -2,37 +2,30 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
-  appointmentFolderForTask,
   filterTasksByCategory,
+  filterTaskQueue,
   projectTaskUpdate,
   refreshTaskWindowTarget,
+  sortRecoveryQueue,
   taskCountForCategory,
   taskFolderCursor,
 } from "./workspace-triage.ts"
 
-test("appointment Tasks use one folder classification in rail and history", () => {
-  assert.equal(
-    appointmentFolderForTask({
-      category: "appointments",
-      title: "Review request",
-      sourceMessage: "Please move appointment to Friday",
-    }),
-    "reschedules",
-  )
-  assert.equal(
-    appointmentFolderForTask({
-      category: "appointments",
-      title: "Schedule new appointment",
-    }),
-    "bookings",
-  )
-  assert.equal(
-    appointmentFolderForTask({
-      category: "billing",
-      title: "Cancel balance reminder",
-    }),
-    undefined,
-  )
+test("Tasks keep appointment work while recovery calls stay in Missed Calls", () => {
+  const appointmentTask = {
+    id: "appointment-task",
+    origin: "ABITA_AI" as const,
+    category: "appointments" as const,
+  }
+  const missedCall = {
+    id: "missed-call",
+    origin: "MISSED_CALL_RECOVERY" as const,
+    category: "other" as const,
+  }
+
+  assert.deepEqual(filterTaskQueue([appointmentTask, missedCall]), [
+    appointmentTask,
+  ])
 })
 
 test("Task categories filter only the supplied Task rows", () => {
@@ -49,9 +42,6 @@ test("Task category totals do not depend on the loaded page", () => {
   const counts = {
     tasks: 11,
     missedCalls: 39,
-    bookings: 2,
-    cancellations: 1,
-    reschedules: 0,
     categories: {
       billing: 3,
       appointments: 2,
@@ -71,6 +61,21 @@ test("Task folders keep pagination available until their total is loaded", () =>
   assert.equal(taskFolderCursor("next-page", 0, 3), "next-page")
   assert.equal(taskFolderCursor("next-page", 3, 3), "")
   assert.equal(taskFolderCursor("", 0, 3), "")
+})
+
+test("Missed Calls keep the stable creation-time order across pages", () => {
+  const oldest = {
+    id: "oldest",
+    createdAt: "2026-08-16T08:00:00Z",
+    updatedAt: "2026-08-16T12:00:00Z",
+  }
+  const newer = {
+    id: "newer",
+    createdAt: "2026-08-16T10:00:00Z",
+    updatedAt: "2026-08-16T10:00:00Z",
+  }
+
+  assert.deepEqual(sortRecoveryQueue([newer, oldest]), [oldest, newer])
 })
 
 test("live refresh refetches the expanded window plus one authoritative page", () => {
