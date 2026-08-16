@@ -227,12 +227,9 @@ type TaskPage struct {
 }
 
 type TaskFolderCounts struct {
-	Tasks         int
-	MissedCalls   int
-	Bookings      int
-	Cancellations int
-	Reschedules   int
-	Categories    TaskCategoryCounts
+	Tasks       int
+	MissedCalls int
+	Categories  TaskCategoryCounts
 }
 
 type TaskCategoryCounts struct {

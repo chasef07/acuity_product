@@ -504,8 +504,7 @@ func queryTaskFolderCounts(
 		WITH scoped AS (
 			SELECT
 				task.origin,
-				task.category,
-				lower(task.title || ' ' || COALESCE(task.source_message, '')) AS task_text
+				task.category
 			FROM work_tasks task
 			JOIN access_locations location
 				ON location.practice_id = task.practice_id
@@ -521,35 +520,19 @@ func queryTaskFolderCounts(
 						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
 				)
 				AND task.state = $5
-		), classified AS (
-			SELECT
-				category,
-				origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AS recovery,
-				COALESCE(category = 'appointments'
-					AND task_text ~ '\m(cancel|cancellation)\M', false) AS cancellation,
-				COALESCE(category = 'appointments'
-					AND task_text ~ '\m(reschedule|rescheduling|move appointment|change appointment)\M', false) AS reschedule,
-				COALESCE(category = 'appointments'
-					AND task_text ~ '\m(book|booking|schedule|new appointment|appointment request)\M', false) AS booking
-			FROM scoped
 		), foldered AS (
 			SELECT
 				category,
 				CASE
-					WHEN recovery THEN 'missed_calls'
-					WHEN cancellation THEN 'cancellations'
-					WHEN reschedule THEN 'reschedules'
-					WHEN booking THEN 'bookings'
+					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY')
+						THEN 'missed_calls'
 					ELSE 'tasks'
 				END AS folder
-			FROM classified
+			FROM scoped
 		)
 		SELECT
 			count(*) FILTER (WHERE folder = 'tasks'),
 			count(*) FILTER (WHERE folder = 'missed_calls'),
-			count(*) FILTER (WHERE folder = 'bookings'),
-			count(*) FILTER (WHERE folder = 'cancellations'),
-			count(*) FILTER (WHERE folder = 'reschedules'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
@@ -561,9 +544,6 @@ func queryTaskFolderCounts(
 	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
-		&counts.Bookings,
-		&counts.Cancellations,
-		&counts.Reschedules,
 		&counts.Categories.Billing,
 		&counts.Categories.Appointments,
 		&counts.Categories.Documentation,

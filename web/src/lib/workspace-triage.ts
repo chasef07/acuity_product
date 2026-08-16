@@ -4,16 +4,13 @@ import type {
 } from "./api/generated/types.gen.ts"
 
 export type TaskCategoryFilter = "all" | StaffTaskCategory
-export type AppointmentFolder =
-  | "bookings"
-  | "cancellations"
-  | "reschedules"
+export type AppointmentIntent = "bookings" | "cancellations" | "reschedules"
 
-export function appointmentFolderForTask(task: {
+export function appointmentIntentForTask(task: {
   category?: StaffTaskCategory
   title: string
   sourceMessage?: string
-}): AppointmentFolder | undefined {
+}): AppointmentIntent | undefined {
   if (task.category !== "appointments") return undefined
   const text = `${task.title} ${task.sourceMessage ?? ""}`.toLowerCase()
   if (/\b(cancel|cancellation)\b/.test(text)) return "cancellations"
@@ -24,6 +21,16 @@ export function appointmentFolderForTask(task: {
     return "bookings"
   }
   return undefined
+}
+
+export function filterTaskQueue<
+  T extends { origin: string },
+>(tasks: T[]) {
+  return tasks.filter(
+    (task) =>
+      task.origin !== "MISSED_CALL_RECOVERY" &&
+      task.origin !== "VOICEMAIL_RECOVERY",
+  )
 }
 
 export function filterTasksByCategory<

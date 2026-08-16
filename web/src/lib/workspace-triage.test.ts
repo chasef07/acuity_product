@@ -2,37 +2,29 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
-  appointmentFolderForTask,
   filterTasksByCategory,
+  filterTaskQueue,
   projectTaskUpdate,
   refreshTaskWindowTarget,
   taskCountForCategory,
   taskFolderCursor,
 } from "./workspace-triage.ts"
 
-test("appointment Tasks use one folder classification in rail and history", () => {
-  assert.equal(
-    appointmentFolderForTask({
-      category: "appointments",
-      title: "Review request",
-      sourceMessage: "Please move appointment to Friday",
-    }),
-    "reschedules",
-  )
-  assert.equal(
-    appointmentFolderForTask({
-      category: "appointments",
-      title: "Schedule new appointment",
-    }),
-    "bookings",
-  )
-  assert.equal(
-    appointmentFolderForTask({
-      category: "billing",
-      title: "Cancel balance reminder",
-    }),
-    undefined,
-  )
+test("Tasks keep appointment work while recovery calls stay in Missed Calls", () => {
+  const appointmentTask = {
+    id: "appointment-task",
+    origin: "ABITA_AI" as const,
+    category: "appointments" as const,
+  }
+  const missedCall = {
+    id: "missed-call",
+    origin: "MISSED_CALL_RECOVERY" as const,
+    category: "other" as const,
+  }
+
+  assert.deepEqual(filterTaskQueue([appointmentTask, missedCall]), [
+    appointmentTask,
+  ])
 })
 
 test("Task categories filter only the supplied Task rows", () => {
@@ -49,9 +41,6 @@ test("Task category totals do not depend on the loaded page", () => {
   const counts = {
     tasks: 11,
     missedCalls: 39,
-    bookings: 2,
-    cancellations: 1,
-    reschedules: 0,
     categories: {
       billing: 3,
       appointments: 2,

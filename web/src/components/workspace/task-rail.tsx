@@ -75,9 +75,10 @@ import { authClient, getAccessTokenResult } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
+import { oldestFirst } from "@/lib/workspace-ordering"
 import {
-  appointmentFolderForTask,
   filterTasksByCategory,
+  filterTaskQueue,
   taskCountForCategory,
   taskFolderCursor,
   type TaskCategoryFilter,
@@ -221,11 +222,11 @@ export function TaskRail({
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
   const showOffice = practice.locations.length > 1 && !locationScopeID
-  const categorizedTasks = useMemo(() => categorizeTasks(tasks), [tasks])
+  const taskRows = useMemo(() => filterTaskQueue(tasks), [tasks])
   const filteredTasks = useMemo(
     () =>
-      filterTasksByCategory(categorizedTasks.general, taskCategory),
-    [categorizedTasks.general, taskCategory],
+      filterTasksByCategory(taskRows, taskCategory),
+    [taskRows, taskCategory],
   )
   const selectedTaskCount = taskCountForCategory(taskCounts, taskCategory)
   const categorizedAIOutcomes = useMemo(
@@ -236,26 +237,20 @@ export function TaskRail({
     {
       key: "bookings" as const,
       title: "Bookings",
-      tasks: categorizedTasks.bookings,
       outcomes: categorizedAIOutcomes.bookings,
-      taskCount: taskCounts.bookings,
-      count: taskCounts.bookings + outcomeCounts.bookings,
+      count: outcomeCounts.bookings,
     },
     {
       key: "cancellations" as const,
       title: "Cancellations",
-      tasks: categorizedTasks.cancellations,
       outcomes: categorizedAIOutcomes.cancellations,
-      taskCount: taskCounts.cancellations,
-      count: taskCounts.cancellations + outcomeCounts.cancellations,
+      count: outcomeCounts.cancellations,
     },
     {
       key: "reschedules" as const,
       title: "Reschedules",
-      tasks: categorizedTasks.reschedules,
       outcomes: categorizedAIOutcomes.reschedules,
-      taskCount: taskCounts.reschedules,
-      count: taskCounts.reschedules + outcomeCounts.reschedules,
+      count: outcomeCounts.reschedules,
     },
   ]
   const appointmentCount = appointmentFolders.reduce(
@@ -507,24 +502,14 @@ export function TaskRail({
               <AppointmentFolder
                 key={folder.key}
                 title={folder.title}
-                tasks={folder.tasks}
                 outcomes={folder.outcomes}
                 count={folder.count}
-                taskCount={folder.taskCount}
                 expanded={expandedAppointment === folder.key}
-                selectedTaskID={selectedTaskID}
                 selectedAIInteractionID={selectedAIInteractionID}
                 showOffice={showOffice}
                 loading={outcomesLoading}
-                pageLoading={loading}
-                cursor={nextCursor}
                 onToggle={() => toggleAppointment(folder.key)}
-                onTaskSelect={onTaskSelect}
-                pendingTaskID={pendingTaskID}
-                completionError={completionError}
-                onTaskComplete={complete}
                 onAIInteractionSelect={onAIInteractionSelect}
-                onLoadMore={onLoadMore}
               />
             ))}
           </AttentionGroup>
@@ -721,46 +706,27 @@ function TaskCategoryMenu({
 
 function AppointmentFolder({
   title,
-  tasks,
   outcomes,
   count,
-  taskCount,
   expanded,
-  selectedTaskID,
   selectedAIInteractionID,
   showOffice,
   loading,
-  pageLoading,
-  cursor,
   onToggle,
-  onTaskSelect,
-  pendingTaskID,
-  completionError,
-  onTaskComplete,
   onAIInteractionSelect,
-  onLoadMore,
 }: {
   title: string
-  tasks: Task[]
   outcomes: AiOutcomeItem[]
   count: number
-  taskCount: number
   expanded: boolean
-  selectedTaskID: string
   selectedAIInteractionID: string
   showOffice: boolean
   loading: boolean
-  pageLoading: boolean
-  cursor: string
   onToggle: () => void
-  onTaskSelect: (task: Task) => void
-  pendingTaskID: string
-  completionError?: { taskID: string; message: string }
-  onTaskComplete: (task: Task) => Promise<void>
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
-  onLoadMore: () => void
 }) {
   const contentID = useId()
+  const rows = oldestFirst(outcomes, aiOutcomeOccurredAt)
   return (
     <SidebarMenuItem>
       <button
@@ -787,7 +753,7 @@ function AppointmentFolder({
         hidden={!expanded}
         className="ml-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2"
       >
-        {outcomes.map((interaction) => (
+        {rows.map((interaction) => (
           <AIOutcomeRow
             key={interaction.id}
             interaction={interaction}
@@ -796,34 +762,12 @@ function AppointmentFolder({
             onSelect={() => onAIInteractionSelect(interaction)}
           />
         ))}
-        {tasks.map((task) => (
-          <TaskRow
-            key={task.id}
-            task={task}
-            active={task.id === selectedTaskID}
-            showOffice={showOffice}
-            onSelect={() => onTaskSelect(task)}
-            completionDisabled={Boolean(pendingTaskID)}
-            completionPending={pendingTaskID === task.id}
-            completionError={
-              completionError?.taskID === task.id
-                ? completionError.message
-                : ""
-            }
-            onComplete={() => void onTaskComplete(task)}
-          />
-        ))}
-        {loading && tasks.length === 0 && outcomes.length === 0 && (
+        {loading && outcomes.length === 0 && (
           <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
         )}
         {!loading && count === 0 && (
           <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
         )}
-        <RailShowMore
-          cursor={taskFolderCursor(cursor, tasks.length, taskCount)}
-          loading={pageLoading}
-          onLoadMore={onLoadMore}
-        />
       </SidebarMenu>
     </SidebarMenuItem>
   )
@@ -840,10 +784,7 @@ function AIOutcomeRow({
   showOffice: boolean
   onSelect: () => void
 }) {
-  const occurredAt =
-    interaction.appointmentOccurredAt ??
-    interaction.endedAt ??
-    interaction.startedAt
+  const occurredAt = aiOutcomeOccurredAt(interaction)
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
@@ -1117,47 +1058,28 @@ function TextRow({
   )
 }
 
-function categorizeTasks(tasks: Task[]) {
-  const categorized = {
-    general: [] as Task[],
-    bookings: [] as Task[],
-    cancellations: [] as Task[],
-    reschedules: [] as Task[],
-  }
-  for (const task of tasks) {
-    if (
-      task.origin === "MISSED_CALL_RECOVERY" ||
-      task.origin === "VOICEMAIL_RECOVERY"
-    ) {
-      continue
-    }
-    const intent = appointmentFolderForTask(task)
-    if (intent) categorized[intent].push(task)
-    else categorized.general.push(task)
-  }
-  return categorized
-}
-
 function aggregateRecovery(tasks: Task[]): RecoveryRowValue[] {
-  return tasks
-    .filter(
-      (task) =>
-        task.origin === "MISSED_CALL_RECOVERY" ||
-        task.origin === "VOICEMAIL_RECOVERY",
-    )
-    .map((task) => {
-      const related = Math.max(1, task.relatedInteractionCount)
-      return {
-        phone: task.phone,
-        locationID: task.locationId,
-        locationName: task.locationName,
-        task,
-        voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
-        missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
-        latestAt: task.updatedAt,
-      }
-    })
-    .sort((left, right) => right.latestAt.localeCompare(left.latestAt))
+  return oldestFirst(
+    tasks
+      .filter(
+        (task) =>
+          task.origin === "MISSED_CALL_RECOVERY" ||
+          task.origin === "VOICEMAIL_RECOVERY",
+      )
+      .map((task) => {
+        const related = Math.max(1, task.relatedInteractionCount)
+        return {
+          phone: task.phone,
+          locationID: task.locationId,
+          locationName: task.locationName,
+          task,
+          voicemailCount: task.origin === "VOICEMAIL_RECOVERY" ? related : 0,
+          missedCount: task.origin === "MISSED_CALL_RECOVERY" ? related : 0,
+          latestAt: task.updatedAt,
+        }
+      }),
+    (row) => row.latestAt,
+  )
 }
 
 function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {
@@ -1332,4 +1254,12 @@ function relativeTime(value: string) {
 
 function taskRelativeAt(task: Task) {
   return task.state === "OPEN" ? task.createdAt : (task.completedAt ?? task.updatedAt)
+}
+
+function aiOutcomeOccurredAt(interaction: AiOutcomeItem) {
+  return (
+    interaction.appointmentOccurredAt ??
+    interaction.endedAt ??
+    interaction.startedAt
+  )
 }

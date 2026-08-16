@@ -2687,21 +2687,12 @@ components:
     TaskFolderCounts:
       type: object
       additionalProperties: false
-      required: [tasks, missedCalls, bookings, cancellations, reschedules, categories]
+      required: [tasks, missedCalls, categories]
       properties:
         tasks:
           type: integer
           minimum: 0
         missedCalls:
-          type: integer
-          minimum: 0
-        bookings:
-          type: integer
-          minimum: 0
-        cancellations:
-          type: integer
-          minimum: 0
-        reschedules:
           type: integer
           minimum: 0
         categories:
@@ -3464,7 +3455,7 @@ components:
           enum: [OPEN, COMPLETED]
         ordering:
           type: string
-          enum: [priority, recent]
+          enum: [priority, recent, time]
         folder:
           type: string
           enum: [work, missed_calls]
