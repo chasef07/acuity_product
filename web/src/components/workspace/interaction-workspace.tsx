@@ -24,6 +24,7 @@ import {
   completeTask,
   getCallingCall,
   getTaskOutboundEligibility,
+  issueCallingRecordingPlayback,
   issueCallingVoicemailPlayback,
   readTask,
   renameTask,
@@ -524,30 +525,84 @@ function VoicemailSource({
   call: CallingCall
   compact?: boolean
 }) {
+  const voicemail = call.voicemail
+  if (!voicemail) return null
+  return (
+    <RecordingSource
+      call={call}
+      audioState={voicemail.audioState}
+      durationSeconds={voicemail.durationSeconds}
+      kind="voicemail"
+      compact={compact}
+      unavailable={voicemail.outcome === "MISSED_CALL"}
+    />
+  )
+}
+
+function CallRecordingSource({ call }: { call: CallingCall }) {
+  if (!call.recording) return null
+  return (
+    <RecordingSource
+      call={call}
+      audioState={call.recording.audioState}
+      durationSeconds={call.recording.durationSeconds}
+      kind="call"
+    />
+  )
+}
+
+type RecordingKind = "voicemail" | "call"
+
+const recordingPresentation = {
+  voicemail: {
+    title: "Voicemail source",
+    label: "voicemail",
+    audioLabel: "Voicemail recording",
+    playbackPath: "voicemail-playback",
+    issuePlayback: issueCallingVoicemailPlayback,
+  },
+  call: {
+    title: "Call recording",
+    label: "call recording",
+    audioLabel: "Call recording",
+    playbackPath: "recording-playback",
+    issuePlayback: issueCallingRecordingPlayback,
+  },
+} as const
+
+function RecordingSource({
+  call,
+  audioState,
+  durationSeconds,
+  kind,
+  compact = false,
+  unavailable = false,
+}: {
+  call: CallingCall
+  audioState: "PROCESSING" | "READY" | "UNAVAILABLE" | "EXPIRED" | "DELETED" | undefined
+  durationSeconds: number
+  kind: RecordingKind
+  compact?: boolean
+  unavailable?: boolean
+}) {
   const [audioURL, setAudioURL] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-	const audioRef = useRef<HTMLAudioElement>(null)
-  const voicemail = call.voicemail
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const presentation = recordingPresentation[kind]
 
-  useEffect(
-    () => () => {
-      if (audioURL) URL.revokeObjectURL(audioURL)
-    },
-    [audioURL],
-  )
+  useEffect(() => {
+    if (audioURL) void audioRef.current?.play().catch(() => undefined)
+  }, [audioURL])
 
-	useEffect(() => {
-		if (audioURL) void audioRef.current?.play().catch(() => undefined)
-	}, [audioURL])
-
-  if (!voicemail) return null
   const stateLabel =
-    voicemail.outcome === "MISSED_CALL"
+    unavailable
       ? "No recording was produced."
-      : voicemail.audioState === "READY"
+      : audioState === "READY"
         ? "Ready"
-        : voicemail.audioState === "UNAVAILABLE"
+        : audioState === "EXPIRED" || audioState === "DELETED"
+          ? "Recording expired"
+        : audioState === "UNAVAILABLE"
           ? "Recording unavailable"
           : "Processing"
 
@@ -556,7 +611,7 @@ function VoicemailSource({
     if (!token) return
     setLoading(true)
     setError("")
-    const issued = await issueCallingVoicemailPlayback({
+    const issued = await presentation.issuePlayback({
       client: portalClient(token),
       path: { callId: call.id },
     }).catch(() => undefined)
@@ -565,26 +620,12 @@ function VoicemailSource({
       setError("Playback authorization is unavailable.")
       return
     }
-    const response = await fetch(
+    setAudioURL(
       new URL(
-        `/v1/calling/voicemail-playback/${encodeURIComponent(issued.data.token)}`,
+        `/v1/calling/${presentation.playbackPath}/${encodeURIComponent(issued.data.token)}`,
         portalAPIURL(),
-      ),
-      {
-        headers: { authorization: `Bearer ${token}` },
-        cache: "no-store",
-      },
-    ).catch(() => undefined)
-    if (!response?.ok) {
-      setLoading(false)
-      setError("The voicemail could not be opened.")
-      return
-    }
-    const objectURL = URL.createObjectURL(await response.blob())
-    setAudioURL((current) => {
-      if (current) URL.revokeObjectURL(current)
-      return objectURL
-    })
+      ).toString(),
+    )
     setLoading(false)
   }
 
@@ -593,17 +634,17 @@ function VoicemailSource({
       {!compact && (
         <div className="mb-2 flex items-center gap-2">
           <AudioLinesIcon className="size-4" />
-          <h2 className="text-sm font-semibold">Voicemail source</h2>
+          <h2 className="text-sm font-semibold">{presentation.title}</h2>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary">{stateLabel}</Badge>
-        {voicemail.durationSeconds > 0 && (
+        {durationSeconds > 0 && (
           <span className="text-xs text-muted-foreground">
-            {formatDuration(voicemail.durationSeconds)}
+            {formatDuration(durationSeconds)}
           </span>
         )}
-        {voicemail.audioState === "READY" && !audioURL && (
+        {audioState === "READY" && !audioURL && (
           <Button
             size="sm"
             variant="outline"
@@ -615,12 +656,13 @@ function VoicemailSource({
         )}
         {audioURL && (
           <audio
-			ref={audioRef}
-            aria-label="Voicemail recording"
+            ref={audioRef}
+            aria-label={presentation.audioLabel}
             controls
             controlsList="nodownload"
             preload="metadata"
             src={audioURL}
+            onError={() => setError(`The ${presentation.label} could not be opened.`)}
             className="h-9 max-w-full"
           />
         )}
@@ -729,6 +771,7 @@ function CallWorkspace({
         </div>
       </header>
       {call.voicemail && <VoicemailSource call={call} />}
+      {call.recording && <CallRecordingSource call={call} />}
     </section>
   )
 }

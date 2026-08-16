@@ -228,6 +228,10 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     expect(bridge.peer_call_leg_id).toBeTruthy()
     expect(bridge.prevent_double_bridge).toBe(true)
     expect(bridge.caller_control_id).toBe("fixture-caller-control")
+    expect(bridge.record).toBe("record-from-answer")
+    expect(bridge.record_channels).toBe("dual")
+    expect(bridge.record_format).toBe("mp3")
+    expect(bridge.record_track).toBe("both")
 
     await deliverProviderEvent(selectedPage, {
       eventType: "call.bridged",
@@ -277,6 +281,32 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         exact: true,
       }),
     ).toBeVisible()
+    const recordingEndedAt = new Date()
+    const recordingStartedAt = new Date(recordingEndedAt.getTime() - 30_000)
+    await deliverProviderEvent(selectedPage, {
+      eventType: "call.recording.saved",
+      eventId: "callleg-browser-recording-saved",
+      occurredAt: recordingEndedAt.toISOString(),
+      payload: {
+        call_control_id: selectedLeg.control_id,
+        call_leg_id: selectedLeg.provider_leg_id,
+        call_session_id: "fixture-staff-session",
+        client_state: bridge.client_state,
+        recording_id: "callleg-browser-recording",
+        recording_started_at: recordingStartedAt.toISOString(),
+        recording_ended_at: recordingEndedAt.toISOString(),
+      },
+    })
+    await expect(
+      selectedPage.getByRole("heading", { name: "Call recording" }),
+    ).toBeVisible({ timeout: 20_000 })
+    await selectedPage.getByRole("button", { name: "Play" }).click()
+    const callRecording = selectedPage.getByLabel("Call recording")
+    await expect(callRecording).toBeVisible()
+    await expect(callRecording).toHaveAttribute(
+      "src",
+      /\/v1\/calling\/recording-playback\//,
+    )
     const contextPanel = selectedPage.getByRole("complementary", {
       name: "Call context",
     })
@@ -939,11 +969,19 @@ async function readBridgeCommand(database: Pool, callID: string) {
     caller_control_id: string
     caller_client_state: string
     client_state: string
+    record: string
+    record_channels: string
+    record_format: string
+    record_track: string
   }>(
     `SELECT target_id, peer_call_leg_id::text,
             (payload->>'prevent_double_bridge')::boolean AS prevent_double_bridge,
             payload->>'call_control_id' AS caller_control_id,
             payload->>'client_state' AS client_state,
+            payload->>'record' AS record,
+            payload->>'record_channels' AS record_channels,
+            payload->>'record_format' AS record_format,
+            payload->>'record_track' AS record_track,
             (
               SELECT ring.payload->>'client_state'
               FROM human_calling_provider_commands ring

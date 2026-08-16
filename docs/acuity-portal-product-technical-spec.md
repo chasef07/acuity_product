@@ -77,8 +77,8 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 36. As a practice staff member, I want abandoned or spam calls without meaningful caller context to remain in the call log rather than creating tasks, so that the queue stays useful.
 37. As a staff member, I want to answer, mute, use the keypad, hold, transfer, and end a human call from the engagement workspace, so that calling does not require a separate product.
 38. As a staff member, I want the active human call to remain mounted while I inspect SMS and call history, so that navigating the workspace cannot accidentally destroy the call.
-39. As a staff member, I want provider-confirmed human inbound call outcomes and quality facts captured after I connect, so that the resulting work has evidence without recording the conversation.
-40. As a staff member, I want staff-initiated outbound calls recorded and transcribed, so that follow-up conversations are captured.
+39. As a staff member, I want connected inbound calls recorded automatically for an enabled Practice, so that the resulting work has durable conversation evidence.
+40. As a staff member, I want connected outbound calls recorded automatically for an enabled Practice, so that follow-up conversations are captured.
 41. As a staff member, I want an outbound call started from a task linked automatically to the task with its contact snapshot, so that I perform no filing work.
 42. As a staff member, I want to place a standalone outbound call from the Call Center, so that I can contact a patient before a task exists.
 43. As a staff member, I want a standalone outbound call to create a call record but not an automatic task, so that completed conversations do not pollute the queue.
@@ -94,7 +94,7 @@ Every task is visible in a shared queue. Assignment changes accountability, not 
 53. As an operator, I want duplicate AI requests and provider webhooks to produce one durable result, so that retries do not duplicate work.
 54. As an operator, I want task updates to appear promptly in other staff browsers, so that the shared queue remains coordinated.
 55. As an operator, I want the portal to recover from a lost realtime connection by loading a fresh authoritative snapshot, so that stale sockets cannot lose state.
-56. As an operator, I want searchable human call history and a protected voicemail archive, so that communication evidence remains accessible without recording connected calls.
+56. As an operator, I want searchable human call history and protected voicemail and connected-call playback, so that communication evidence remains accessible only to authorized staff.
 57. As an operator, I want short-lived protected access to recordings rather than public URLs, so that sensitive audio is not exposed.
 58. As a product owner, I want every critical journey exercised against production-like Telnyx, SMS, Better Auth, and database dependencies before launch, so that August 6 is a production release rather than a demo.
 59. As a provisioned user, I want my verified Google identity to activate my assigned access automatically, so that no separate Acuity password or verification email is required.
@@ -243,7 +243,8 @@ Visual system:
 - `Create follow-up task` creates one prefilled task linked to the call, assigned to the winner, and initially `IN_PROGRESS`.
 - Human call state is not considered connected solely because a browser clicked Answer.
 - Telnyx provider events confirm ringing, answered legs, bridging, recording, and termination.
-- Connected human calls are never recorded. Only voicemail uses Telnyx recording commands.
+- A Practice-level policy may record every portal-controlled connected inbound and outbound human call automatically. Recording starts on the explicit Telnyx Bridge command with dual channels, both tracks, and MP3 output; it has no browser control.
+- Abita Eye Group has connected-call recording enabled by default with a 90-day content-retention period. Other Practices remain disabled unless explicitly provisioned with a retention period.
 - AI-only receptionist audio is outside the portal recording archive.
 - Browser calling uses one TelnyxRTC client per tab. The Telnyx SDK owns its signaling WebSocket and WebRTC media.
 
@@ -291,8 +292,7 @@ Go product runtime — one codebase, binary, and image
     ├── Work
     ├── HumanCalling
     ├── Messaging
-    ├── EvidenceArchive
-    └── runtime adapters
+	└── runtime adapters
         ├── portal-api
         ├── provider-ingress
         ├── realtime
@@ -305,12 +305,11 @@ PostgreSQL
 
 - `Access` owns human and service principals, Access Grants, Memberships, roles, location scope, and authorization decisions.
 - `Work` owns task creation, assignment, priority, status, completion, reopening, task activity, and queue projections.
-- `HumanCalling` owns availability, Call and CallLeg state, provider-confirmed answer arbitration, explicit Bridge commands, disposition, canonical voicemail lifecycle, recording identity, authorization metadata, and playback audit. Telnyx decides voice outcomes; PostgreSQL records requested commands and observed facts.
+- `HumanCalling` owns availability, Call and CallLeg state, provider-confirmed answer arbitration, explicit Bridge commands, disposition, canonical voicemail lifecycle, connected-call recording metadata, protected playback, access audit, retention, and provider content deletion. Telnyx decides voice outcomes and owns audio bytes; PostgreSQL records requested commands, observed facts, durable recording identity, and non-content deletion evidence.
 - `Messaging` owns Location-scoped conversations, inbound correlation, durable
   send intent, delivery evidence, attachment state, per-user unread state, and
   explicit send-again attempts. It asks `Work` to create a Task only after an
   authorized human explicitly chooses a source Message.
-- `EvidenceArchive` owns protected recording/transcript metadata, access grants, audit, retention, and deletion. Telnyx owns recording audio; authenticated backend retrieval never exposes provider credentials or raw signed URLs.
 - `ContactContext` is a small value object used by tasks and interactions, not an independent identity service.
 - The modules expose behavior-oriented interfaces. HTTP handlers, SQL, Telnyx, Better Auth/JWKS, object storage, SSE, and durable jobs remain replaceable adapters around them.
 - The browser calls `portal-api` directly. Next.js does not proxy ordinary product commands.
@@ -389,6 +388,7 @@ all Go roles ── bounded connections ──> PostgreSQL
 - **Call** with logical identity, direction, terminal outcome, disposition, and human-segment timing
 - **CallLeg** with role, provider identity, Staff lease snapshot, monotonic lifecycle timestamps, bridge evidence, and termination evidence
 - **Voicemail** with provider recording identity, timing, availability, protected playback, and recovery Task
+- **CallRecording** with connected Call identity, provider recording identity, timing, availability, and protected playback
 - **Message** with provider message identity, direction, delivery state, contact-context snapshot, and optional task
 - **ProviderEvent** with provider, unique event identity, receipt state, processing state, and normalized linkage
 - **ProviderCommand** with stable command identity, target, action, requested state, attempt state, and provider-event reconciliation
@@ -473,7 +473,7 @@ The AI task tool is for asynchronous follow-up only. A live human transfer must 
 - Store secrets in Secret Manager.
 - Generate internal application credentials through approved tooling or deployment automation. Do not commit them, paste them into product configuration, or ask an operator to invent them manually.
 - Keep recording audio in Telnyx. Store canonical lifecycle, authorization metadata, durable provider recording identity, timestamps, and audit evidence in PostgreSQL; stream audio through short-lived, location-authorized backend access.
-- Require an approved recording/transcript retention period in each practice's production configuration. Apply content deletion through the provider while retaining canonical non-content audit metadata.
+- Require an approved connected-call audio retention period in each enabled practice's production configuration. Abita Eye Group's approved default is 90 days. Reconcile stale processing recordings by durable CallLeg and session identity when a terminal provider webhook is lost. Stream authorized playback with native byte-range requests instead of browser buffering. Deny playback at expiry, delete content through the provider with durable retry state, and retain canonical non-content audit metadata. Voicemail audio, transcript content, backups, and legal holds require separately approved lifecycle policies and must not be represented as covered by the connected-call cleanup path.
 - Use one public product domain with path routing to the web and API services.
 - Publish immutable frontend and backend images by digest. Deploy backend roles from the same tested backend digest.
 - Deploy request-role revisions with no traffic and smoke-test startup, run `migrate` once, exercise the tagged revisions against the expanded schema, deploy the compatible worker and realtime revisions, then shift traffic gradually.
@@ -570,7 +570,7 @@ The August 6 release does not ship until all conditions are proven:
 6. Available staff can receive an AI transfer and exactly one person wins the call.
 7. An answered transfer creates no task until staff records `Resolved on call` or `Create follow-up task`; undisposed calls cannot disappear.
 8. Unanswered transfers fall back after 20 seconds and create the correct voicemail or missed-call task.
-9. Human inbound and outbound calls record and transcribe successfully under the configured retention policy.
+9. Portal-controlled connected human inbound and outbound calls record successfully under the configured retention policy.
 10. Outbound calls started from a task attach to that task and preserve its contact snapshot.
 11. Staff can receive and send SMS/MMS from a Location-scoped conversation or
     linked `OPEN` Task, see provider-backed delivery state, and explicitly
@@ -610,7 +610,7 @@ The August 6 release does not ship until all conditions are proven:
 | Wed Jul 29 | Location-scoped SMS/MMS conversations work | `Messaging`, signed webhooks, durable send/reconciliation, delivery and attachment state | Message rail, mixed timeline, composer, explicit Message-derived Task | Exact Location/sender/phone thread; inbound creates no Task; explicit Task link; no blind retry |
 | Thu Jul 30 | No-answer and call-disposition recovery work | 20-second fallback, voicemail, missed call, durable `NEEDS_DISPOSITION` | Recovery UI, post-call outcomes, prefilled follow-up task | Timeout falls back; browser loss preserves disposition; both outcome paths pass |
 | Fri Jul 31 | Outbound calling and call controls work | Task-originated and standalone outbound commands and linkage | Dialer, mute, keypad, hold, transfer, end, persistent active-call workspace | Task call links to task; standalone resolved call creates no task |
-| Sat Aug 1 | Human evidence archive works | `EvidenceArchive`, protected grants, retention/deletion jobs | Call history, voicemail playback, transcript, failure states | Human-call facts and voicemail evidence appear and unauthorized access fails |
+| Sat Aug 1 | Human call evidence works | `HumanCalling`, protected grants, retention/deletion jobs | Call history, voicemail and connected-call playback, failure states | Human-call facts and recording evidence appear, expired provider content is deleted, and unauthorized access fails |
 | Sun Aug 2 | Administration and complete access boundaries work | Access Grants, Memberships, service scope, authorization audit | Staff/location settings and access-denied states | Verified Google email activates exact scope; cross-location reads/writes/streams fail |
 | Mon Aug 3 | Feature complete; scope closes | Failure recovery, durable jobs, audit, tenant authorization | Empty/error/reconnect states, accessibility, full journey cleanup | All release-bar journeys pass in simulation |
 | Tue Aug 4 | Production hardening complete | Load/concurrency, connection ceiling, Cloud SQL outage/restore, backups/PITR, rollback, alerts, PHI-log audit | Cross-browser Playwright, SSE/runtime termination, performance, operator runbook | Peak load, role isolation, restore, replay, backup, rollback, and observability gates pass |

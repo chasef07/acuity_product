@@ -31,11 +31,12 @@ const (
 type VoicemailAudioState string
 
 const (
-	VoicemailProcessing       VoicemailAudioState = "PROCESSING"
-	VoicemailReady            VoicemailAudioState = "READY"
-	VoicemailUnavailable      VoicemailAudioState = "UNAVAILABLE"
-	voicemailRecordingMaximum                     = 120 * time.Second
-	defaultVoicemailGreeting                      = "Please leave a message after the beep."
+	VoicemailProcessing  VoicemailAudioState = "PROCESSING"
+	VoicemailReady       VoicemailAudioState = "READY"
+	VoicemailUnavailable VoicemailAudioState = "UNAVAILABLE"
+
+	voicemailRecordingMaximum = 120 * time.Second
+	defaultVoicemailGreeting  = "Please leave a message after the beep."
 )
 
 type Voicemail struct {
@@ -49,6 +50,13 @@ type PlaybackCapability struct {
 	Token     string
 	ExpiresAt time.Time
 }
+
+type PlaybackKind string
+
+const (
+	PlaybackVoicemail     PlaybackKind = "voicemail"
+	PlaybackCallRecording PlaybackKind = "call_recording"
+)
 
 type PlaybackContent struct {
 	StatusCode    int
@@ -73,15 +81,15 @@ func (content PlaybackContent) Complete(err error) {
 func (content PlaybackContent) Validate(rangeHeader string) error {
 	requested, hasRange := parseSingleByteRange(rangeHeader)
 	if strings.TrimSpace(rangeHeader) != "" && !hasRange {
-		return voicemailUnavailable(VoicemailProviderInvalid, "")
+		return recordingUnavailable(RecordingInvalidResponse, "")
 	}
 	if content.Body == nil || (content.StatusCode != http.StatusOK &&
 		content.StatusCode != http.StatusPartialContent) {
-		return voicemailUnavailable(VoicemailProviderInvalid, "")
+		return recordingUnavailable(RecordingInvalidResponse, "")
 	}
 	if content.StatusCode == http.StatusPartialContent &&
 		(!hasRange || !matchesContentRange(requested, content.ContentRange)) {
-		return voicemailUnavailable(VoicemailProviderInvalid, "")
+		return recordingUnavailable(RecordingInvalidResponse, "")
 	}
 	return nil
 }
@@ -147,33 +155,35 @@ func matchesContentRange(requested byteRange, value string) bool {
 	return requested.hasEnd && end == length-1 && end-start+1 <= requested.end
 }
 
-type VoicemailAudioProvider interface {
-	OpenVoicemailRecording(context.Context, string, string) (PlaybackContent, error)
+type RecordingAudioProvider interface {
+	OpenRecording(context.Context, string, string) (PlaybackContent, error)
 }
 
-type VoicemailUnavailableReason string
+type RecordingUnavailableReason string
 
 const (
-	VoicemailRecordingNotFound   VoicemailUnavailableReason = "recording_not_found"
-	VoicemailProviderAuth        VoicemailUnavailableReason = "provider_auth"
-	VoicemailProviderRateLimited VoicemailUnavailableReason = "provider_rate_limited"
-	VoicemailProviderTimeout     VoicemailUnavailableReason = "provider_timeout"
-	VoicemailProviderUnavailable VoicemailUnavailableReason = "provider_unavailable"
-	VoicemailProviderInvalid     VoicemailUnavailableReason = "provider_invalid_response"
-	VoicemailRecordingURLExpired VoicemailUnavailableReason = "recording_url_expired"
+	RecordingNotFound        RecordingUnavailableReason = "recording_not_found"
+	RecordingProviderAuth    RecordingUnavailableReason = "provider_auth"
+	RecordingRateLimited     RecordingUnavailableReason = "provider_rate_limited"
+	RecordingProviderTimeout RecordingUnavailableReason = "provider_timeout"
+	RecordingProviderFailure RecordingUnavailableReason = "provider_unavailable"
+	RecordingInvalidResponse RecordingUnavailableReason = "provider_invalid_response"
+	RecordingURLExpired      RecordingUnavailableReason = "recording_url_expired"
 )
 
-type VoicemailUnavailableError struct {
-	Reason     VoicemailUnavailableReason
+type RecordingUnavailableError struct {
+	Reason     RecordingUnavailableReason
 	RetryAfter string
 }
 
-func (err *VoicemailUnavailableError) Error() string { return "voicemail is unavailable" }
+func (err *RecordingUnavailableError) Error() string { return "recording is unavailable" }
 
 type playbackClaims struct {
-	CallID    string `json:"callId"`
-	ExpiresAt int64  `json:"expiresAt"`
-	Nonce     string `json:"nonce"`
+	CallID    string       `json:"callId"`
+	Kind      PlaybackKind `json:"kind"`
+	Subject   string       `json:"subject"`
+	ExpiresAt int64        `json:"expiresAt"`
+	Nonce     string       `json:"nonce"`
 }
 
 func (m *Module) applyVoicemailGreetingStarted(
@@ -572,9 +582,47 @@ func (m *Module) IssueVoicemailPlayback(
 	if call.Voicemail.AudioState != VoicemailReady {
 		return PlaybackCapability{}, ErrConflict
 	}
-	expiresAt := m.now().Add(5 * time.Minute)
+	return m.issuePlaybackCapability(
+		callID, PlaybackVoicemail, identity, call.Voicemail.DurationSeconds,
+	)
+}
+
+func (m *Module) IssueCallRecordingPlayback(
+	ctx context.Context,
+	identity access.Identity,
+	callID string,
+) (PlaybackCapability, error) {
+	call, err := m.ReadCall(ctx, identity, callID)
+	if err != nil {
+		return PlaybackCapability{}, err
+	}
+	if call.Recording.AudioState != RecordingReady {
+		return PlaybackCapability{}, ErrConflict
+	}
+	return m.issuePlaybackCapability(
+		callID, PlaybackCallRecording, identity, call.Recording.DurationSeconds,
+	)
+}
+
+func (m *Module) issuePlaybackCapability(
+	callID string,
+	kind PlaybackKind,
+	identity access.Identity,
+	durationSeconds int64,
+) (PlaybackCapability, error) {
+	const minimumLifetime = 5 * time.Minute
+	const maximumLifetime = 4 * time.Hour
+	lifetime := minimumLifetime
+	maximumDurationSeconds := int64((maximumLifetime - minimumLifetime) / time.Second)
+	if durationSeconds >= maximumDurationSeconds {
+		lifetime = maximumLifetime
+	} else if durationSeconds > 0 {
+		lifetime = time.Duration(durationSeconds)*time.Second + minimumLifetime
+	}
+	expiresAt := m.now().Add(lifetime)
 	raw, err := json.Marshal(playbackClaims{
-		CallID: callID, ExpiresAt: expiresAt.Unix(), Nonce: uuid.NewString(),
+		CallID: callID, Kind: kind, Subject: identity.Subject,
+		ExpiresAt: expiresAt.Unix(), Nonce: uuid.NewString(),
 	})
 	if err != nil {
 		return PlaybackCapability{}, fmt.Errorf("encode playback capability: %w", err)
@@ -589,32 +637,74 @@ func (m *Module) IssueVoicemailPlayback(
 func (m *Module) OpenVoicemailPlayback(
 	authorizationContext context.Context,
 	streamContext context.Context,
-	identity access.Identity,
 	token string,
 	rangeHeader string,
+) (content PlaybackContent, resultErr error) {
+	return m.openPlayback(
+		authorizationContext, streamContext, token, rangeHeader, PlaybackVoicemail,
+	)
+}
+
+func (m *Module) OpenCallRecordingPlayback(
+	authorizationContext context.Context,
+	streamContext context.Context,
+	token string,
+	rangeHeader string,
+) (content PlaybackContent, resultErr error) {
+	return m.openPlayback(
+		authorizationContext, streamContext, token, rangeHeader, PlaybackCallRecording,
+	)
+}
+
+func (m *Module) openPlayback(
+	authorizationContext context.Context,
+	streamContext context.Context,
+	token string,
+	rangeHeader string,
+	kind PlaybackKind,
 ) (content PlaybackContent, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		if resultErr != nil {
-			m.recordVoicemailPlayback(resultErr, time.Since(startedAt))
+			m.recordPlayback(kind, resultErr, time.Since(startedAt))
 		}
 	}()
 	claims, err := m.parsePlaybackCapability(token)
-	if err != nil {
+	if err != nil || claims.Kind != kind {
 		return PlaybackContent{}, ErrDenied
 	}
+	identity := access.Identity{Subject: claims.Subject, EmailVerified: true}
 	tx, err := m.database.BeginTx(authorizationContext, pgx.TxOptions{})
 	if err != nil {
-		return PlaybackContent{}, fmt.Errorf("begin voicemail playback: %w", err)
+		return PlaybackContent{}, fmt.Errorf("begin recording playback: %w", err)
 	}
 	defer func() { _ = tx.Rollback(authorizationContext) }()
 	var practiceID, locationID, recordingID string
-	if err := tx.QueryRow(authorizationContext, `
-		SELECT practice_id::text, location_id::text, provider_recording_id
-		FROM human_calling_voicemails
-		WHERE call_id = $1 AND outcome = 'VOICEMAIL'
-			AND audio_state = 'READY' AND provider_recording_id IS NOT NULL
-	`, claims.CallID).Scan(&practiceID, &locationID, &recordingID); err != nil {
+	var contentExpiresAt *time.Time
+	timelineKind := "voicemail.playback_authorized"
+	var row pgx.Row
+	if kind == PlaybackCallRecording {
+		row = tx.QueryRow(authorizationContext, `
+			SELECT recording.practice_id::text, recording.location_id::text,
+				recording.provider_recording_id, recording.content_expires_at
+			FROM human_calling_call_recordings recording
+			WHERE recording.call_id = $1 AND recording.audio_state = 'READY'
+				AND recording.provider_recording_id IS NOT NULL
+				AND recording.content_expires_at > $2
+		`, claims.CallID, m.now())
+		timelineKind = "call.recording.playback_authorized"
+	} else {
+		row = tx.QueryRow(authorizationContext, `
+			SELECT practice_id::text, location_id::text, provider_recording_id,
+				NULL::timestamptz
+			FROM human_calling_voicemails
+			WHERE call_id = $1 AND outcome = 'VOICEMAIL'
+				AND audio_state = 'READY' AND provider_recording_id IS NOT NULL
+		`, claims.CallID)
+	}
+	if err := row.Scan(
+		&practiceID, &locationID, &recordingID, &contentExpiresAt,
+	); err != nil {
 		return PlaybackContent{}, ErrDenied
 	}
 	if _, err := m.access.LockReadAuthorization(authorizationContext, tx,
@@ -622,24 +712,42 @@ func (m *Module) OpenVoicemailPlayback(
 		return PlaybackContent{}, ErrDenied
 	}
 	if err := appendTimeline(authorizationContext, tx, claims.CallID, practiceID,
-		"voicemail.playback_authorized", identity.Subject, "", "",
+		timelineKind, identity.Subject, "", "",
 		opaqueReference(claims.Nonce), "", m.now()); err != nil {
 		return PlaybackContent{}, err
 	}
 	if err := tx.Commit(authorizationContext); err != nil {
 		return PlaybackContent{}, err
 	}
-	if m.config.VoicemailAudioProvider == nil {
+	if m.config.RecordingAudioProvider == nil {
 		return PlaybackContent{}, ErrConflict
 	}
-	content, resultErr = m.config.VoicemailAudioProvider.OpenVoicemailRecording(
-		streamContext, recordingID, rangeHeader,
-	)
+	if contentExpiresAt == nil {
+		content, resultErr = m.config.RecordingAudioProvider.OpenRecording(
+			streamContext, recordingID, rangeHeader,
+		)
+	} else {
+		providerContext, cancelProviderContext := context.WithDeadline(
+			streamContext,
+			*contentExpiresAt,
+		)
+		content, resultErr = m.config.RecordingAudioProvider.OpenRecording(
+			providerContext, recordingID, rangeHeader,
+		)
+		if resultErr != nil || content.Body == nil {
+			cancelProviderContext()
+		} else {
+			content.Body = &cancelingReadCloser{
+				ReadCloser: content.Body,
+				cancel:     cancelProviderContext,
+			}
+		}
+	}
 	if resultErr != nil {
 		return PlaybackContent{}, resultErr
 	}
 	content.completion = &playbackCompletion{fn: func(streamErr error) {
-		m.recordVoicemailPlayback(streamErr, time.Since(startedAt))
+		m.recordPlayback(kind, streamErr, time.Since(startedAt))
 	}}
 	return content, nil
 }
@@ -664,7 +772,9 @@ func (m *Module) parsePlaybackCapability(token string) (playbackClaims, error) {
 	}
 	var claims playbackClaims
 	if err := json.Unmarshal(raw, &claims); err != nil || claims.CallID == "" ||
-		claims.Nonce == "" || !m.now().Before(time.Unix(claims.ExpiresAt, 0)) {
+		(claims.Kind != PlaybackVoicemail && claims.Kind != PlaybackCallRecording) ||
+		claims.Subject == "" || claims.Nonce == "" ||
+		!m.now().Before(time.Unix(claims.ExpiresAt, 0)) {
 		return playbackClaims{}, ErrDenied
 	}
 	return claims, nil

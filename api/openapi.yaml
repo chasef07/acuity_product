@@ -619,7 +619,8 @@ paths:
   /v1/calling/voicemail-playback/{token}:
     get:
       operationId: getCallingVoicemailPlayback
-      summary: Refresh and stream Telnyx-owned voicemail audio without exposing the provider URL.
+      summary: Stream Telnyx-owned voicemail audio through a short-lived bearer capability without exposing the provider URL.
+      security: []
       parameters:
         - name: token
           in: path
@@ -650,8 +651,83 @@ paths:
               schema:
                 type: string
                 format: binary
+        "403":
+          $ref: "#/components/responses/Denied"
+        "404":
+          description: The Telnyx recording is no longer available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          description: Telnyx recording retrieval timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /v1/calling/calls/{callId}/recording-playback:
+    post:
+      operationId: issueCallingRecordingPlayback
+      summary: Issue a short-lived connected-call recording playback capability after current Location authorization.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Short-lived authorized playback capability.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingPlaybackCapability"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/recording-playback/{token}:
+    get:
+      operationId: getCallingRecordingPlayback
+      summary: Stream Telnyx-owned connected-call audio through a short-lived bearer capability without exposing the provider URL.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: Range
+          in: header
+          required: false
+          description: Optional single byte range forwarded to the provider audio request.
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        "200":
+          description: Authorized complete connected-call audio.
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Authorized partial connected-call audio.
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
         "403":
           $ref: "#/components/responses/Denied"
         "404":
@@ -2203,7 +2279,29 @@ components:
           type: integer
           format: int64
           minimum: 0
+    CallingRecording:
+      type: object
+      additionalProperties: false
+      required: [audioState, durationSeconds]
+      properties:
+        audioState:
+          type: string
+          enum: [PROCESSING, READY, UNAVAILABLE, EXPIRED, DELETED]
+        durationSeconds:
+          type: integer
+          format: int64
+          minimum: 0
     VoicemailPlaybackCapability:
+      type: object
+      additionalProperties: false
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    RecordingPlaybackCapability:
       type: object
       additionalProperties: false
       required: [token, expiresAt]
@@ -2303,6 +2401,8 @@ components:
           minimum: 1
         voicemail:
           $ref: "#/components/schemas/CallingVoicemail"
+        recording:
+          $ref: "#/components/schemas/CallingRecording"
         recoveryTask:
           $ref: "#/components/schemas/CallingRecoveryTask"
     CallingRecoveryTask:

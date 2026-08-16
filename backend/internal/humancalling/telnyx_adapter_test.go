@@ -75,7 +75,7 @@ func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := adapter.OpenVoicemailRecording(
+	content, err := adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"bytes=0-3",
@@ -97,22 +97,57 @@ func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
 	}
 }
 
+func TestTelnyxAdapterDeletesExpiredRecordingIdempotently(t *testing.T) {
+	deleted := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodDelete ||
+			!strings.HasPrefix(request.URL.Path, "/v2/recordings/") {
+			http.NotFound(writer, request)
+			return
+		}
+		deleted <- strings.TrimPrefix(request.URL.Path, "/v2/recordings/")
+		if len(deleted) == 2 {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey: "synthetic-key", BaseURL: server.URL + "/v2", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := adapter.DeleteRecording(context.Background(), "expired-recording"); err != nil {
+			t.Fatalf("delete recording idempotently: %v", err)
+		}
+	}
+	if first, second := <-deleted, <-deleted; first != "expired-recording" || second != first {
+		t.Fatalf("deleted recordings = %q, %q", first, second)
+	}
+}
+
 func TestTelnyxAdapterClassifiesVoicemailPlaybackFailures(t *testing.T) {
 	tests := []struct {
 		name       string
 		status     int
 		expiredURL bool
 		timeout    bool
-		want       humancalling.VoicemailUnavailableReason
+		want       humancalling.RecordingUnavailableReason
 		wantRetry  string
 	}{
-		{name: "recording not found", status: http.StatusNotFound, want: humancalling.VoicemailRecordingNotFound},
-		{name: "provider unauthorized", status: http.StatusUnauthorized, want: humancalling.VoicemailProviderAuth},
-		{name: "provider forbidden", status: http.StatusForbidden, want: humancalling.VoicemailProviderAuth},
-		{name: "provider rate limited", status: http.StatusTooManyRequests, want: humancalling.VoicemailProviderRateLimited, wantRetry: "7"},
-		{name: "provider unavailable", status: http.StatusServiceUnavailable, want: humancalling.VoicemailProviderUnavailable},
-		{name: "fresh download URL expired", status: http.StatusOK, expiredURL: true, want: humancalling.VoicemailRecordingURLExpired},
-		{name: "provider timeout", timeout: true, want: humancalling.VoicemailProviderTimeout},
+		{name: "recording not found", status: http.StatusNotFound, want: humancalling.RecordingNotFound},
+		{name: "provider unauthorized", status: http.StatusUnauthorized, want: humancalling.RecordingProviderAuth},
+		{name: "provider forbidden", status: http.StatusForbidden, want: humancalling.RecordingProviderAuth},
+		{name: "provider rate limited", status: http.StatusTooManyRequests, want: humancalling.RecordingRateLimited, wantRetry: "7"},
+		{name: "provider unavailable", status: http.StatusServiceUnavailable, want: humancalling.RecordingProviderFailure},
+		{name: "fresh download URL expired", status: http.StatusOK, expiredURL: true, want: humancalling.RecordingURLExpired},
+		{name: "provider timeout", timeout: true, want: humancalling.RecordingProviderTimeout},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -156,12 +191,12 @@ func TestTelnyxAdapterClassifiesVoicemailPlaybackFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = adapter.OpenVoicemailRecording(
+			_, err = adapter.OpenRecording(
 				context.Background(),
 				"provider-recording-1",
 				"",
 			)
-			var unavailable *humancalling.VoicemailUnavailableError
+			var unavailable *humancalling.RecordingUnavailableError
 			if !errors.As(err, &unavailable) ||
 				unavailable.Reason != test.want ||
 				unavailable.RetryAfter != test.wantRetry {
@@ -193,14 +228,14 @@ func TestTelnyxAdapterRejectsInsecureProductionRecordingURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = adapter.OpenVoicemailRecording(
+	_, err = adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"",
 	)
-	var unavailable *humancalling.VoicemailUnavailableError
+	var unavailable *humancalling.RecordingUnavailableError
 	if !errors.As(err, &unavailable) ||
-		unavailable.Reason != humancalling.VoicemailProviderInvalid ||
+		unavailable.Reason != humancalling.RecordingInvalidResponse ||
 		requests != 1 {
 		t.Fatalf("insecure recording URL result = err:%#v requests:%d", err, requests)
 	}
@@ -240,14 +275,14 @@ func TestTelnyxAdapterRevalidatesEveryVoicemailRedirect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = adapter.OpenVoicemailRecording(
+			_, err = adapter.OpenRecording(
 				context.Background(),
 				"provider-recording-1",
 				"",
 			)
-			var unavailable *humancalling.VoicemailUnavailableError
+			var unavailable *humancalling.RecordingUnavailableError
 			if !errors.As(err, &unavailable) ||
-				unavailable.Reason != humancalling.VoicemailProviderInvalid ||
+				unavailable.Reason != humancalling.RecordingInvalidResponse ||
 				followed {
 				t.Fatalf("redirect result = err:%#v followed:%t", err, followed)
 			}
@@ -282,7 +317,7 @@ func TestTelnyxAdapterFollowsValidatedSameHostVoicemailRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := adapter.OpenVoicemailRecording(
+	content, err := adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"",
@@ -331,7 +366,7 @@ func TestTelnyxAdapterBoundsHeadersWithoutTimingOutVoicemailBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := adapter.OpenVoicemailRecording(
+	content, err := adapter.OpenRecording(
 		context.Background(),
 		"provider-recording-1",
 		"",
@@ -389,14 +424,14 @@ func TestTelnyxAdapterRejectsMalformedPartialVoicemailResponse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = adapter.OpenVoicemailRecording(
+			_, err = adapter.OpenRecording(
 				context.Background(),
 				"provider-recording-1",
 				"bytes=0-3",
 			)
-			var unavailable *humancalling.VoicemailUnavailableError
+			var unavailable *humancalling.RecordingUnavailableError
 			if !errors.As(err, &unavailable) ||
-				unavailable.Reason != humancalling.VoicemailProviderInvalid {
+				unavailable.Reason != humancalling.RecordingInvalidResponse {
 				t.Fatalf("partial response error = %#v", err)
 			}
 		})
@@ -558,6 +593,10 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 			"call_control_id":       "caller-control",
 			"prevent_double_bridge": true,
 			"client_state":          "opaque-bridge-state",
+			"record":                "record-from-answer",
+			"record_channels":       "dual",
+			"record_format":         "mp3",
+			"record_track":          "both",
 		},
 	}); err != nil {
 		t.Fatalf("bridge selected Staff CallLeg: %v", err)
@@ -582,7 +621,11 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 	if bridgeRequest["_path"] != "/v2/calls/staff-control/actions/bridge" ||
 		bridgeRequest["command_id"] != "command-bridge-1" ||
 		bridgeRequest["call_control_id"] != "caller-control" ||
-		bridgeRequest["prevent_double_bridge"] != true {
+		bridgeRequest["prevent_double_bridge"] != true ||
+		bridgeRequest["record"] != "record-from-answer" ||
+		bridgeRequest["record_channels"] != "dual" ||
+		bridgeRequest["record_format"] != "mp3" ||
+		bridgeRequest["record_track"] != "both" {
 		t.Fatalf("Telnyx Bridge request = %#v", bridgeRequest)
 	}
 }
@@ -725,6 +768,42 @@ func TestTelnyxAdapterResolvesCanonicalRecordingCallbackIdentity(t *testing.T) {
 		recording.CallControlID != "caller-control" ||
 		recording.EndedAt.Sub(recording.StartedAt) != 30*time.Second {
 		t.Fatalf("resolved recording = %#v, err = %v", recording, err)
+	}
+}
+
+func TestTelnyxAdapterResolvesTerminalRecordingError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/recordings":
+			_, _ = writer.Write([]byte(`{"data":[]}`))
+		case "/v2/call_events":
+			if request.URL.Query().Get("filter[leg_id]") != "caller-leg" ||
+				request.URL.Query().Get("filter[application_session_id]") != "caller-session" ||
+				request.URL.Query().Get("filter[name]") != "call.recording.error" ||
+				request.URL.Query().Get("filter[type]") != "webhook" ||
+				request.URL.Query().Get("page[size]") != "2" {
+				http.Error(writer, "unexpected recording event lookup", http.StatusBadRequest)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"data":[{
+				"name":"call.recording.error","call_leg_id":"caller-leg",
+				"call_session_id":"caller-session",
+				"event_timestamp":"2026-08-05T12:00:30Z"
+			}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey: "synthetic-key", BaseURL: server.URL + "/v2", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.ResolveRecording(context.Background(), "caller-leg", "caller-session")
+	if !errors.Is(err, humancalling.ErrProviderRecordingFailed) {
+		t.Fatalf("terminal recording error = %v", err)
 	}
 }
 

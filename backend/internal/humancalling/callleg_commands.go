@@ -453,6 +453,14 @@ func (m *Module) failBridgeCallLeg(
 	`, callLegID).Scan(&callID, &role, &subject, &controlID); err != nil {
 		return fmt.Errorf("read rejected Bridge CallLeg: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_recordings SET
+			audio_state = 'UNAVAILABLE', last_error_code = COALESCE(NULLIF($2, ''), 'BRIDGE_FAILED'),
+			updated_at = $3
+		WHERE call_id = $1 AND audio_state = 'PROCESSING'
+	`, callID, errorCode, m.now()); err != nil {
+		return fmt.Errorf("fail rejected Bridge recording: %w", err)
+	}
 	if _, err := m.insertCallLegCommand(
 		ctx, tx, callID, callLegID, "", subject, CommandHangupLeg, controlID,
 		map[string]any{"client_state": encodeCallLegClientState(

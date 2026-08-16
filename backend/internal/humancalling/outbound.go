@@ -699,13 +699,17 @@ func (m *Module) applyOutboundDestinationFact(
 		`, callID).Scan(&staffLegID, &staffControlID); err != nil {
 			return fmt.Errorf("lock outbound Staff CallLeg: %w", err)
 		}
+		bridgePayload, err := m.prepareConnectedBridgeCommand(
+			ctx, tx, callID, staffControlID,
+			encodeCallLegClientState(
+				callID, state.CallLegID, "DESTINATION", "bridge",
+			),
+		)
+		if err != nil {
+			return err
+		}
 		if _, err := m.insertCallLegCommand(ctx, tx, callID, state.CallLegID,
-			staffLegID, "", CommandBridge, fact.CallControlID, map[string]any{
-				"call_control_id": staffControlID, "prevent_double_bridge": true,
-				"client_state": encodeCallLegClientState(
-					callID, state.CallLegID, "DESTINATION", "bridge",
-				),
-			}, ""); err != nil {
+			staffLegID, "", CommandBridge, fact.CallControlID, bridgePayload, ""); err != nil {
 			return err
 		}
 	}

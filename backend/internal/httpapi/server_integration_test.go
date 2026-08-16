@@ -305,6 +305,18 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err := tx.Commit(context.Background()); err != nil {
 		t.Fatalf("commit voicemail HTTP fixture: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_recordings (
+			call_id, practice_id, location_id, audio_state,
+			provider_recording_id, retention_days, recording_started_at,
+			recording_ended_at, content_expires_at, duration_millis,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, 'READY', 'call-http-recording', 90,
+			$4, $5, $6, 12000, $4, $5)
+	`, callID, authorization.Practice.ID, voicemailLocationID,
+		now, now.Add(12*time.Second), now.Add(90*24*time.Hour)); err != nil {
+		t.Fatalf("insert call recording HTTP evidence: %v", err)
+	}
 
 	audio := &httpVoicemailAudio{}
 	calling := humancalling.New(
@@ -313,7 +325,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		httpCallingProvider{},
 		humancalling.Config{
 			PlaybackSigningKey:     []byte("abcdef0123456789abcdef0123456789"),
-			VoicemailAudioProvider: audio,
+			RecordingAudioProvider: audio,
 			Observer:               observer,
 		},
 		func() time.Time { return now },
@@ -347,15 +359,30 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	}
 	var capability api.VoicemailPlaybackCapability
 	decode(t, capabilityResponse, &capability)
+	deniedCapabilityResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/calls/"+callID+"/voicemail-playback",
+		"voicemail-hidden-token",
+		nil,
+	)
+	_ = deniedCapabilityResponse.Body.Close()
+	if deniedCapabilityResponse.StatusCode != http.StatusForbidden || audio.calls != 0 {
+		t.Fatalf(
+			"cross-Location capability = status:%d provider-calls:%d",
+			deniedCapabilityResponse.StatusCode,
+			audio.calls,
+		)
+	}
 	deniedRequest, err := http.NewRequest(
 		http.MethodGet,
-		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token+"invalid"),
 		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deniedRequest.Header.Set("Authorization", "Bearer voicemail-hidden-token")
 	deniedResponse, err := server.Client().Do(deniedRequest)
 	if err != nil {
 		t.Fatalf("request cross-Location voicemail playback: %v", err)
@@ -364,7 +391,7 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	deniedAudio := audio.snapshot()
 	if deniedResponse.StatusCode != http.StatusForbidden || deniedAudio.calls != 0 {
 		t.Fatalf(
-			"cross-Location playback = status:%d provider-calls:%d",
+			"invalid capability playback = status:%d provider-calls:%d",
 			deniedResponse.StatusCode,
 			deniedAudio.calls,
 		)
@@ -377,7 +404,6 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	playbackRequest.Header.Set("Authorization", "Bearer voicemail-http-token")
 	playbackRequest.Header.Set("Range", "bytes=0-3")
 	playbackResponse, err := server.Client().Do(playbackRequest)
 	if err != nil {
@@ -398,6 +424,94 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 		playbackAudio.rangeHeader != "bytes=0-3" {
 		t.Fatalf("voicemail playback response = status:%d headers:%v body:%q fixture:%#v",
 			playbackResponse.StatusCode, playbackResponse.Header, body, playbackAudio)
+	}
+	recordingCapabilityResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/v1/calling/calls/"+callID+"/recording-playback",
+		"voicemail-http-token",
+		nil,
+	)
+	if recordingCapabilityResponse.StatusCode != http.StatusOK {
+		t.Fatalf("recording capability status = %d, body = %s",
+			recordingCapabilityResponse.StatusCode, readBody(t, recordingCapabilityResponse))
+	}
+	var recordingCapability api.RecordingPlaybackCapability
+	decode(t, recordingCapabilityResponse, &recordingCapability)
+	contentExpiresAt := time.Now().Add(500 * time.Millisecond)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_recordings
+		SET content_expires_at = $2
+		WHERE call_id = $1
+	`, callID, contentExpiresAt); err != nil {
+		t.Fatalf("set imminent recording expiry: %v", err)
+	}
+	providerContextDone := make(chan time.Time, 1)
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.streamUntilContextDone = true
+		audio.contextDone = providerContextDone
+	})
+	recordingRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/recording-playback/"+url.PathEscape(recordingCapability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordingClient := *server.Client()
+	recordingClient.Timeout = 2 * time.Second
+	recordingResponse, requestErr := recordingClient.Do(recordingRequest)
+	if recordingResponse != nil {
+		_, _ = io.ReadAll(recordingResponse.Body)
+		_ = recordingResponse.Body.Close()
+	}
+	if requestErr == nil && recordingResponse == nil {
+		t.Fatal("recording playback returned neither a response nor an error")
+	}
+	select {
+	case canceledAt := <-providerContextDone:
+		if canceledAt.Before(contentExpiresAt.Add(-50*time.Millisecond)) ||
+			canceledAt.After(contentExpiresAt.Add(300*time.Millisecond)) {
+			t.Fatalf("recording provider context canceled at %v; content expired at %v",
+				canceledAt, contentExpiresAt)
+		}
+	case <-time.After(2500 * time.Millisecond):
+		t.Fatal("recording provider context was not canceled at content expiry")
+	}
+	audio.update(func(audio *httpVoicemailAudio) {
+		audio.streamUntilContextDone = false
+		audio.contextDone = nil
+	})
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET revoked_at = $2
+		WHERE user_subject = $1
+	`, identity.Subject, now); err != nil {
+		t.Fatalf("revoke voicemail playback membership: %v", err)
+	}
+	revokedRequest, err := http.NewRequest(
+		http.MethodGet,
+		server.URL+"/v1/calling/voicemail-playback/"+url.PathEscape(capability.Token),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedResponse, err := server.Client().Do(revokedRequest)
+	if err != nil {
+		t.Fatalf("request revoked voicemail playback: %v", err)
+	}
+	_ = revokedResponse.Body.Close()
+	if revokedResponse.StatusCode != http.StatusForbidden || audio.calls != 2 {
+		t.Fatalf("revoked playback = status:%d provider-calls:%d",
+			revokedResponse.StatusCode, audio.calls)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET revoked_at = NULL
+		WHERE user_subject = $1
+	`, identity.Subject); err != nil {
+		t.Fatalf("restore voicemail playback membership: %v", err)
 	}
 
 	waitForLog(t, &metrics, `"outcome":"succeeded"`)
@@ -468,22 +582,22 @@ func TestVoicemailPlaybackStreamsProviderRangeResponse(t *testing.T) {
 
 	failures := []struct {
 		name       string
-		reason     humancalling.VoicemailUnavailableReason
+		reason     humancalling.RecordingUnavailableReason
 		retryAfter string
 		status     int
 		retryable  bool
 	}{
-		{name: "recording not found", reason: humancalling.VoicemailRecordingNotFound, status: http.StatusNotFound},
-		{name: "provider auth", reason: humancalling.VoicemailProviderAuth, status: http.StatusServiceUnavailable},
-		{name: "provider rate limited", reason: humancalling.VoicemailProviderRateLimited, retryAfter: "7", status: http.StatusServiceUnavailable, retryable: true},
-		{name: "provider timeout", reason: humancalling.VoicemailProviderTimeout, status: http.StatusGatewayTimeout, retryable: true},
-		{name: "provider unavailable", reason: humancalling.VoicemailProviderUnavailable, status: http.StatusServiceUnavailable, retryable: true},
-		{name: "recording URL expired", reason: humancalling.VoicemailRecordingURLExpired, status: http.StatusServiceUnavailable, retryable: true},
+		{name: "recording not found", reason: humancalling.RecordingNotFound, status: http.StatusNotFound},
+		{name: "provider auth", reason: humancalling.RecordingProviderAuth, status: http.StatusServiceUnavailable},
+		{name: "provider rate limited", reason: humancalling.RecordingRateLimited, retryAfter: "7", status: http.StatusServiceUnavailable, retryable: true},
+		{name: "provider timeout", reason: humancalling.RecordingProviderTimeout, status: http.StatusGatewayTimeout, retryable: true},
+		{name: "provider unavailable", reason: humancalling.RecordingProviderFailure, status: http.StatusServiceUnavailable, retryable: true},
+		{name: "recording URL expired", reason: humancalling.RecordingURLExpired, status: http.StatusServiceUnavailable, retryable: true},
 	}
 	for _, failure := range failures {
 		t.Run(failure.name, func(t *testing.T) {
 			audio.update(func(audio *httpVoicemailAudio) {
-				audio.err = &humancalling.VoicemailUnavailableError{
+				audio.err = &humancalling.RecordingUnavailableError{
 					Reason:     failure.reason,
 					RetryAfter: failure.retryAfter,
 				}
@@ -2223,13 +2337,15 @@ func (httpCallingProvider) Execute(
 }
 
 type httpVoicemailAudio struct {
-	mu            sync.Mutex
-	calls         int
-	rangeHeader   string
-	contentLength string
-	contentRange  *string
-	failStream    bool
-	err           error
+	mu                     sync.Mutex
+	calls                  int
+	rangeHeader            string
+	contentLength          string
+	contentRange           *string
+	failStream             bool
+	streamUntilContextDone bool
+	contextDone            chan time.Time
+	err                    error
 }
 
 type httpVoicemailAudioSnapshot struct {
@@ -2252,8 +2368,8 @@ func (audio *httpVoicemailAudio) snapshot() httpVoicemailAudioSnapshot {
 	}
 }
 
-func (audio *httpVoicemailAudio) OpenVoicemailRecording(
-	_ context.Context,
+func (audio *httpVoicemailAudio) OpenRecording(
+	ctx context.Context,
 	_ string,
 	rangeHeader string,
 ) (humancalling.PlaybackContent, error) {
@@ -2270,6 +2386,8 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 		contentLength = "4"
 	}
 	failStream := audio.failStream
+	streamUntilContextDone := audio.streamUntilContextDone
+	contextDone := audio.contextDone
 	audio.mu.Unlock()
 	if providerErr != nil {
 		return humancalling.PlaybackContent{}, providerErr
@@ -2277,6 +2395,16 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 	var body io.ReadCloser = io.NopCloser(strings.NewReader("synt"))
 	if failStream {
 		body = &failingVoicemailBody{}
+	}
+	if streamUntilContextDone {
+		return humancalling.PlaybackContent{
+			StatusCode:  http.StatusOK,
+			ContentType: "audio/mpeg",
+			Body: &contextBoundPlaybackBody{
+				ctx:  ctx,
+				done: contextDone,
+			},
+		}, nil
 	}
 	return humancalling.PlaybackContent{
 		StatusCode:    http.StatusPartialContent,
@@ -2286,6 +2414,28 @@ func (audio *httpVoicemailAudio) OpenVoicemailRecording(
 		Body:          body,
 	}, nil
 }
+
+type contextBoundPlaybackBody struct {
+	ctx  context.Context
+	done chan time.Time
+	sent bool
+}
+
+func (body *contextBoundPlaybackBody) Read(target []byte) (int, error) {
+	if !body.sent {
+		body.sent = true
+		payload := bytes.Repeat([]byte("x"), 32*1024)
+		return copy(target, payload), nil
+	}
+	<-body.ctx.Done()
+	select {
+	case body.done <- time.Now():
+	default:
+	}
+	return 0, body.ctx.Err()
+}
+
+func (*contextBoundPlaybackBody) Close() error { return nil }
 
 type synchronizedBuffer struct {
 	mu sync.Mutex

@@ -38,16 +38,15 @@ flowchart LR
 
 ## Modules
 
-The Go runtime contains six deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, and durable jobs are adapters around those interfaces.
+The Go runtime contains five deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, and durable jobs are adapters around those interfaces.
 
 | Module | Owns | Does not own |
 |---|---|---|
 | `Access` | Human and service principals, Access Grants, Memberships, Platform Operators, roles, location scope, authorization decisions, operator audit | Better Auth session implementation, task state, provider credentials |
 | `Work` | Task creation, assignment, priority, status, completion, reopening, activity, queue projections | Telnyx behavior, call state, message delivery |
-| `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, post-call disposition, voicemail recording identity, and authorized playback | Browser-selected winners, connected-call recording, task lifecycle, SMS correlation, provider-owned audio bytes |
+| `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, Practice-scoped automatic connected-call recording, recording metadata, protected playback, access audit, retention and provider deletion, post-call disposition, and voicemail lifecycle | Browser-selected winners, task lifecycle, SMS correlation, provider-owned audio bytes |
 | `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts, cross-channel exact-phone Engagement History read model | Task and AI Interaction source truth, contact identity, call state |
 | `AIInteraction` | Abita AI call lifecycle records, full AI transcripts, receipt-backed appointment outcomes, daily outcome and call-detail views | Task workflows, human-call control, Engagement History composition, canonical patient identity |
-| `EvidenceArchive` | Human-call recording and transcript metadata, protected grants, access audit, retention, deletion | AI Interaction records, call control, task completion, provider-owned audio bytes |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
 
@@ -150,7 +149,6 @@ flowchart LR
     Work["Work<br/>deep module"]
     Calling["HumanCalling<br/>deep module"]
     Messaging["Messaging<br/>deep module"]
-    Evidence["EvidenceArchive<br/>deep module"]
 
     DB[("PostgreSQL")]
     Objects[("Protected SMS/MMS attachment storage")]
@@ -162,7 +160,6 @@ flowchart LR
     Access --> Work
     Access --> Calling
     Access --> Messaging
-    Access --> Evidence
 
     Browser --> Work
     Browser --> Calling
@@ -172,18 +169,15 @@ flowchart LR
     Transfer --> Calling
     Telnyx --> Calling
     Telnyx --> Messaging
-    Telnyx --> Evidence
 
     Calling -->|"create follow-up task"| Work
     Messaging -->|"create accountable work"| Work
-    Calling -->|"recording ready"| Evidence
 
     Access --> DB
     Work --> DB
     Calling --> DB
     Messaging --> DB
-    Evidence --> DB
-    Evidence -->|"fresh authorized recording fetch"| Telnyx
+    Calling -->|"fresh authorized recording fetch and deletion"| Telnyx
     Messaging --> Objects
 ```
 
@@ -191,7 +185,7 @@ Dependency rules:
 
 1. `Access` resolves Platform Operator or Practice membership, role, and dynamic or selected location scope before protected behavior runs. Client-supplied IDs are requested context, not proof of access.
 2. `HumanCalling` and `Messaging` may ask `Work` to create accountable work. `Work` does not know Telnyx.
-3. `HumanCalling` and `EvidenceArchive` grant protected access after authorization. PostgreSQL stores the durable Telnyx recording identity; the backend refreshes and proxies provider audio without exposing a raw provider URL.
+3. `HumanCalling` grants a short-lived signed playback capability after authorization. The native media element uses that capability for range requests; each request rechecks the signed subject's current Practice and Location access, and the backend streams provider audio without buffering it or exposing a raw provider URL. PostgreSQL stores the durable Telnyx recording identity, reconciles stale processing rows when a saved/error webhook is lost, and deletes provider content when the configured retention period expires.
 4. PostgreSQL is the sole durable product authority. SSE, browser state, and provider commands are projections or requests.
 5. Provider events are facts. A browser click cannot prove that a call bridged, an SMS delivered, or a recording became available.
 

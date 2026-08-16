@@ -169,10 +169,18 @@ func (adapter *TelnyxAdapter) Execute(
 		}
 		path = "/calls"
 	case CommandBridge:
+		recordingRequested := payload["record"] != nil ||
+			payload["record_channels"] != nil ||
+			payload["record_format"] != nil ||
+			payload["record_track"] != nil
 		if command.TargetID == "" ||
 			emptyString(payload["call_control_id"]) ||
 			payload["prevent_double_bridge"] != true ||
-			emptyString(payload["client_state"]) {
+			emptyString(payload["client_state"]) ||
+			(recordingRequested && (payload["record"] != "record-from-answer" ||
+				payload["record_channels"] != "dual" ||
+				payload["record_format"] != "mp3" ||
+				payload["record_track"] != "both")) {
 			return ProviderResult{}, ErrInvalidInput
 		}
 		path = callActionPath(command.TargetID, "bridge")
@@ -443,9 +451,85 @@ func (adapter *TelnyxAdapter) ResolveRecording(
 		}
 	}
 	if resolved == nil {
+		failedAt, err := adapter.recordingFailed(ctx, callLegID, callSessionID)
+		if err != nil {
+			return ProviderRecording{}, err
+		}
+		if !failedAt.IsZero() {
+			return ProviderRecording{}, &providerRecordingFailure{OccurredAt: failedAt}
+		}
 		return ProviderRecording{}, fmt.Errorf("%w: Telnyx recording is not available", ErrAmbiguousEffect)
 	}
 	return *resolved, nil
+}
+
+func (adapter *TelnyxAdapter) recordingFailed(
+	ctx context.Context,
+	callLegID string,
+	callSessionID string,
+) (time.Time, error) {
+	query := url.Values{}
+	query.Set("filter[leg_id]", callLegID)
+	query.Set("filter[application_session_id]", callSessionID)
+	query.Set("filter[name]", string(FactRecordingError))
+	query.Set("filter[type]", "webhook")
+	query.Set("page[size]", "2")
+	responseBody, err := adapter.request(
+		ctx,
+		http.MethodGet,
+		"/call_events?"+query.Encode(),
+		nil,
+	)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var response struct {
+		Data []struct {
+			Name           string    `json:"name"`
+			CallLegID      string    `json:"call_leg_id"`
+			CallSessionID  string    `json:"call_session_id"`
+			EventTimestamp time.Time `json:"event_timestamp"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return time.Time{}, fmt.Errorf(
+			"%w: invalid Telnyx recording events response",
+			ErrAmbiguousEffect,
+		)
+	}
+	for _, event := range response.Data {
+		if event.Name != string(FactRecordingError) ||
+			event.CallLegID != callLegID ||
+			event.CallSessionID != callSessionID ||
+			event.EventTimestamp.IsZero() {
+			return time.Time{}, fmt.Errorf(
+				"%w: contradictory Telnyx recording error identity",
+				ErrDefinitiveProviderFailure,
+			)
+		}
+		return event.EventTimestamp, nil
+	}
+	return time.Time{}, nil
+}
+
+func (adapter *TelnyxAdapter) DeleteRecording(
+	ctx context.Context,
+	recordingID string,
+) error {
+	recordingID = strings.TrimSpace(recordingID)
+	if recordingID == "" {
+		return ErrInvalidInput
+	}
+	_, err := adapter.request(
+		ctx,
+		http.MethodDelete,
+		"/recordings/"+url.PathEscape(recordingID),
+		nil,
+	)
+	if errors.Is(err, ErrProviderTargetAbsent) {
+		return nil
+	}
+	return err
 }
 
 func (adapter *TelnyxAdapter) ObserveCall(
@@ -609,7 +693,7 @@ func rawCallEvent(metadata map[string]json.RawMessage) ([]byte, bool) {
 	return nil, false
 }
 
-func (adapter *TelnyxAdapter) OpenVoicemailRecording(
+func (adapter *TelnyxAdapter) OpenRecording(
 	ctx context.Context,
 	recordingID string,
 	rangeHeader string,
@@ -631,8 +715,8 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(metadata, &response); err != nil {
-		return PlaybackContent{}, voicemailUnavailable(
-			VoicemailProviderInvalid,
+		return PlaybackContent{}, recordingUnavailable(
+			RecordingInvalidResponse,
 			"",
 		)
 	}
@@ -652,8 +736,8 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 		allowLocalHTTP,
 	)
 	if err != nil || locationErr != nil {
-		return PlaybackContent{}, voicemailUnavailable(
-			VoicemailProviderInvalid,
+		return PlaybackContent{}, recordingUnavailable(
+			RecordingInvalidResponse,
 			"",
 		)
 	}
@@ -664,8 +748,8 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 		nil,
 	)
 	if err != nil {
-		return PlaybackContent{}, voicemailUnavailable(
-			VoicemailProviderInvalid,
+		return PlaybackContent{}, recordingUnavailable(
+			RecordingInvalidResponse,
 			"",
 		)
 	}
@@ -702,25 +786,25 @@ func (adapter *TelnyxAdapter) OpenVoicemailRecording(
 	)
 	if err != nil {
 		if errors.Is(err, errInvalidRecordingLocation) {
-			return PlaybackContent{}, voicemailUnavailable(
-				VoicemailProviderInvalid,
+			return PlaybackContent{}, recordingUnavailable(
+				RecordingInvalidResponse,
 				"",
 			)
 		}
-		return PlaybackContent{}, voicemailTransportError(err)
+		return PlaybackContent{}, recordingTransportError(err)
 	}
 	if audio.StatusCode != http.StatusOK &&
 		audio.StatusCode != http.StatusPartialContent {
 		audio.Body.Close()
-		reason := VoicemailProviderUnavailable
+		reason := RecordingProviderFailure
 		if audio.StatusCode == http.StatusUnauthorized ||
 			audio.StatusCode == http.StatusForbidden ||
 			audio.StatusCode == http.StatusNotFound {
-			reason = VoicemailRecordingURLExpired
+			reason = RecordingURLExpired
 		} else if audio.StatusCode == http.StatusTooManyRequests {
-			reason = VoicemailProviderRateLimited
+			reason = RecordingRateLimited
 		}
-		return PlaybackContent{}, voicemailUnavailable(
+		return PlaybackContent{}, recordingUnavailable(
 			reason,
 			safeRetryAfter(audio.Header.Get("Retry-After")),
 		)
@@ -859,51 +943,51 @@ func (adapter *TelnyxAdapter) recordingMetadata(
 		nil,
 	)
 	if err != nil {
-		return nil, voicemailUnavailable(VoicemailProviderInvalid, "")
+		return nil, recordingUnavailable(RecordingInvalidResponse, "")
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+adapter.config.APIKey)
 	response, err := adapter.config.HTTPClient.Do(request)
 	if err != nil {
-		return nil, voicemailTransportError(err)
+		return nil, recordingTransportError(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		reason := VoicemailProviderUnavailable
+		reason := RecordingProviderFailure
 		switch response.StatusCode {
 		case http.StatusNotFound:
-			reason = VoicemailRecordingNotFound
+			reason = RecordingNotFound
 		case http.StatusUnauthorized, http.StatusForbidden:
-			reason = VoicemailProviderAuth
+			reason = RecordingProviderAuth
 		case http.StatusTooManyRequests:
-			reason = VoicemailProviderRateLimited
+			reason = RecordingRateLimited
 		}
-		return nil, voicemailUnavailable(
+		return nil, recordingUnavailable(
 			reason,
 			safeRetryAfter(response.Header.Get("Retry-After")),
 		)
 	}
 	metadata, err := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
 	if err != nil || len(metadata) == 0 || len(metadata) > 64*1024 {
-		return nil, voicemailUnavailable(VoicemailProviderInvalid, "")
+		return nil, recordingUnavailable(RecordingInvalidResponse, "")
 	}
 	return metadata, nil
 }
 
-func voicemailTransportError(err error) error {
+func recordingTransportError(err error) error {
 	var networkError net.Error
 	if errors.Is(err, context.DeadlineExceeded) ||
 		(errors.As(err, &networkError) && networkError.Timeout()) {
-		return voicemailUnavailable(VoicemailProviderTimeout, "")
+		return recordingUnavailable(RecordingProviderTimeout, "")
 	}
-	return voicemailUnavailable(VoicemailProviderUnavailable, "")
+	return recordingUnavailable(RecordingProviderFailure, "")
 }
 
-func voicemailUnavailable(
-	reason VoicemailUnavailableReason,
+func recordingUnavailable(
+	reason RecordingUnavailableReason,
 	retryAfter string,
 ) error {
-	return &VoicemailUnavailableError{Reason: reason, RetryAfter: retryAfter}
+	return &RecordingUnavailableError{Reason: reason, RetryAfter: retryAfter}
 }
 
 func safeRetryAfter(value string) string {
