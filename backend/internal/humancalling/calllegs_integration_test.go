@@ -406,6 +406,13 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	`, staff[1].Email, staff[1].Subject); err != nil {
 		t.Fatalf("promote ringing Staff to Platform Operator: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET desired_available = false, updated_at = $3
+		WHERE user_subject IN ($1, $2)
+	`, staff[0].Subject, staff[1].Subject, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("reserve browsers after local answer: %v", err)
+	}
 	answerErrors := make(chan error, len(answers))
 	var answersDone sync.WaitGroup
 	for _, answer := range answers {

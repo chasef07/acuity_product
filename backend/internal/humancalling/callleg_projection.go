@@ -556,12 +556,11 @@ func (m *Module) applyStaffInitiated(
 				AND lease_expires_at > $3
 				AND readiness_updated_at > $3 - $4::interval
 				AND registered AND microphone_ready AND audio_ready AND session_healthy
-				AND ($5 = 'OUTBOUND' OR desired_available)
 			FROM human_calling_softphone_leases
 			WHERE user_subject = $1
 			FOR UPDATE
 		`, staffSubject, staffSessionID, m.now(), m.config.ReadinessGrace.String(),
-			direction).Scan(&leaseEligible)
+		).Scan(&leaseEligible)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("lock Staff occupancy owner: %w", err)
 		}
