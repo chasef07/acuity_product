@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type Route } from "@playwright/test"
 
 import { signInAs } from "./support"
 
@@ -85,6 +85,35 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
 }) => {
   test.setTimeout(180_000)
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  const stalePracticeID = "00000000-0000-0000-0000-000000000091"
+  const staleLocationID = "00000000-0000-0000-0000-000000000092"
+  let sourcePracticeID = ""
+  await page.route(`${portalURL}/v1/access`, async (route) => {
+    const response = await route.fetch()
+    const discovery = (await response.json()) as {
+      practices: Array<{ id: string }>
+      [key: string]: unknown
+    }
+    sourcePracticeID = discovery.practices[0]?.id ?? ""
+    await route.fulfill({
+      response,
+      json: {
+        ...discovery,
+        practices: [
+          ...discovery.practices,
+          {
+            id: stalePracticeID,
+            name: "Stale Callback Practice",
+            version: 1,
+            locations: [
+              { id: staleLocationID, name: "Stale Callback Location" },
+            ],
+            callingEnabled: false,
+          },
+        ],
+      },
+    })
+  })
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
@@ -396,19 +425,254 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     await tasksSection.click()
   }
   await createAIStaffTask(page, "billing", "Review billing balance")
-  const taskCategory = page.getByLabel("Task category")
-  await expect(taskCategory).toHaveValue("all")
-  await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review billing balance \(/ }),
+  ).toBeVisible()
+  const taskCountsResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${portalURL}/v1/tasks/query` &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  )
   await createAIStaffTask(page, "medication", "Review medication refill")
-  await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
-  await taskCategory.selectOption("billing")
-  await expect(page.getByRole("button", { name: /Review billing balance/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: /Review medication refill/ })).toHaveCount(0)
+  const counts = ((await (await taskCountsResponse).json()) as {
+    counts: {
+      tasks: number
+      categories: Record<
+        | "billing"
+        | "appointments"
+        | "documentation"
+        | "optical"
+        | "medication"
+        | "referrals"
+        | "other",
+        number
+      >
+    }
+  }).counts
+  await expect(
+    page.getByRole("button", { name: /^Review medication refill \(/ }),
+  ).toBeVisible()
+
+  const taskFilter = page.getByRole("button", {
+    name: "Filter Tasks: All types",
+  })
+  await taskFilter.click()
+  for (const [label, count] of [
+    ["All types", counts.tasks],
+    ["Billing", counts.categories.billing],
+    ["Appointments", counts.categories.appointments],
+    ["Documentation", counts.categories.documentation],
+    ["Optical", counts.categories.optical],
+    ["Medication", counts.categories.medication],
+    ["Referrals", counts.categories.referrals],
+    ["Other", counts.categories.other],
+  ] as const) {
+    await expect(
+      page.getByRole("menuitemradio", { name: `${label} ${count}` }),
+    ).toBeVisible()
+  }
+  await page.getByRole("menuitemradio", { name: /^Billing / }).click()
+  await expect(
+    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review billing balance \(/ }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review medication refill \(/ }),
+  ).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: /^Missed Calls \d+$/ }),
   ).toBeVisible()
-  await taskCategory.selectOption("all")
-  await expect(page.getByRole("button", { name: /Review medication refill/ })).toBeVisible()
+
+  await page.reload()
+  const restoredTasksSection = page.getByRole("button", { name: /^Tasks/ })
+  if ((await restoredTasksSection.getAttribute("aria-expanded")) === "false") {
+    await restoredTasksSection.click()
+  }
+  await expect(
+    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review billing balance \(/ }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /^Review medication refill \(/ }),
+  ).toHaveCount(0)
+
+  const contextClose = page.getByRole("button", { name: "Close context panel" })
+  if (await contextClose.isVisible()) await contextClose.click()
+  const taskItem = page
+    .getByTestId("task-row")
+    .filter({ hasText: "Review billing balance" })
+  const taskRow = taskItem.getByRole("button", {
+    name: /^Review billing balance/,
+  })
+  const completeTask = taskItem.getByRole("button", {
+    name: "Complete Task: Review billing balance",
+  })
+  const relativeTime = taskItem.locator("time")
+  await expect(completeTask).toHaveCSS("opacity", "0")
+  const beforeHover = await taskRow.boundingBox()
+  await taskRow.hover()
+  await expect(completeTask).toHaveCSS("opacity", "1")
+  await expect(relativeTime).toHaveCSS("opacity", "0")
+  expect(await taskRow.boundingBox()).toEqual(beforeHover)
+
+  await taskRow.focus()
+  await expect(completeTask).toHaveCSS("opacity", "1")
+  await page.keyboard.press("Tab")
+  await expect(completeTask).toBeFocused()
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await expect(completeTask).toHaveCSS("transition-duration", "0s")
+  await expect(relativeTime).toHaveCSS("transition-duration", "0s")
+
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("acuity-auth-token")
+    channel.postMessage("clear-access-token")
+    channel.close()
+  })
+  await page.route("**/api/auth/token", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "temporarily unavailable" }),
+    }),
+  )
+  await completeTask.click()
+  await expect(
+    taskItem
+      .getByRole("alert")
+      .filter({ hasText: "Task completion is temporarily unavailable" }),
+  ).toBeVisible()
+  await expect(taskItem.getByRole("alert")).not.toContainText("session expired")
+  await page.unroute("**/api/auth/token")
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("acuity-auth-token")
+    channel.postMessage("clear-access-token")
+    channel.close()
+  })
+
+  let completionAttempt = 0
+  let releaseSuccess = () => {}
+  const successGate = new Promise<void>((resolve) => {
+    releaseSuccess = resolve
+  })
+  const completionRoute = async (route: Route) => {
+    completionAttempt += 1
+    if (completionAttempt === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "TASK_CONFLICT",
+            message: "The Task state changed. Refresh and try again.",
+            correlationId: "sidebar-conflict",
+            retryable: false,
+          },
+        }),
+      })
+      return
+    }
+    if (completionAttempt === 2) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "DEPENDENCY_UNAVAILABLE",
+            message: "Task storage is unavailable.",
+            correlationId: "sidebar-failure",
+            retryable: true,
+          },
+        }),
+      })
+      return
+    }
+    await successGate
+    await route.continue()
+  }
+  await page.route(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
+
+  await completeTask.click()
+  await expect(taskItem).toBeVisible()
+  await expect(page.getByTestId("context-panel")).toHaveAttribute(
+    "data-state",
+    "closed",
+  )
+  await expect(
+    taskItem.getByRole("alert").filter({ hasText: "changed elsewhere" }),
+  ).toBeVisible()
+
+  await taskRow.hover()
+  await completeTask.click()
+  await expect(taskItem).toBeVisible()
+  await expect(
+    taskItem.getByRole("alert").filter({ hasText: "could not be completed" }),
+  ).toBeVisible()
+
+  await taskRow.hover()
+  await completeTask.click()
+  await expect(completeTask).toHaveAttribute("aria-busy", "true")
+  await expect(completeTask.getByRole("status", { name: "Loading" })).toBeVisible()
+  await expect(taskItem).toBeVisible()
+  releaseSuccess()
+  await expect(taskItem).toHaveCount(0)
+  await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
+
+  await page.getByRole("button", { name: "Filter Tasks: Billing" }).click()
+  await page.getByRole("menuitemradio", { name: /^Medication / }).click()
+  await page.keyboard.press("Escape")
+  const medicationItem = page
+    .getByTestId("task-row")
+    .filter({ hasText: "Review medication refill" })
+  const completeMedication = medicationItem.getByRole("button", {
+    name: "Complete Task: Review medication refill",
+  })
+  let releaseStaleCompletion = () => {}
+  const staleCompletionGate = new Promise<void>((resolve) => {
+    releaseStaleCompletion = resolve
+  })
+  let finishStaleCompletion = (status: number) => {
+    void status
+  }
+  const staleCompletionHandled = new Promise<number>((resolve) => {
+    finishStaleCompletion = resolve
+  })
+  const staleCompletionRoute = async (route: Route) => {
+    await staleCompletionGate
+    const response = await route.fetch()
+    await route.fulfill({ response })
+    finishStaleCompletion(response.status())
+  }
+  let sourceTaskQueries = 0
+  const taskQueryRoute = async (route: Route) => {
+    const body = route.request().postDataJSON() as { practiceId?: string }
+    if (body.practiceId === sourcePracticeID) sourceTaskQueries += 1
+    await route.continue()
+  }
+  await page.route(/\/v1\/tasks\/query$/, taskQueryRoute)
+  await page.route(
+    /\/v1\/tasks\/[^/]+\/complete$/,
+    staleCompletionRoute,
+  )
+
+  await expect(medicationItem).toBeVisible()
+  await medicationItem.hover()
+  await completeMedication.click()
+  await expect(completeMedication).toHaveAttribute("aria-busy", "true")
+  await page.getByRole("button", { name: "Workspace selector" }).click()
+  await page
+    .getByRole("button", { name: "Stale Callback Location", exact: true })
+    .click()
+  await expect(page.getByTestId("task-row")).toHaveCount(0)
+  sourceTaskQueries = 0
+  releaseStaleCompletion()
+  expect(await staleCompletionHandled).toBe(200)
+  await page.waitForTimeout(500)
+  expect(sourceTaskQueries).toBe(0)
 })
 
 async function openNumberInbox(
