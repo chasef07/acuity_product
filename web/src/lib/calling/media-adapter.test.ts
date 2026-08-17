@@ -25,9 +25,11 @@ class FakeAudioElement {
   className = ""
   srcObject: unknown = null
   plays = 0
+  playImplementation?: () => Promise<void>
 
   async play() {
     this.plays += 1
+    await this.playImplementation?.()
   }
 
   remove() {}
@@ -222,6 +224,26 @@ test("warning 34001 refreshes login on the existing client", async () => {
   assert.deepEqual(sdk.logins, ["jwt-new"])
 })
 
+test("low inbound RTP warnings surface an audio issue", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const issues: string[] = []
+  const call = fakeCall("leg-1", "d".repeat(43), [])
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+    onAudioIssue: () => issues.push("low-bytes-received"),
+  })
+
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  await legs[0].answer()
+  sdk.emit("telnyx.warning", { warning: { code: 32001 } })
+
+  assert.deepEqual(issues, ["low-bytes-received"])
+})
+
 test("microphone authorization restores only the intended state", () => {
   const actions: string[] = []
   const call = {
@@ -386,4 +408,131 @@ test("DTMF is sent only through the current healthy attachment", async () => {
   assert.equal(legs[0].sendDTMF("6"), false)
 
   assert.deepEqual(actions, ["answer", "unmute", "dtmf:5", "mute"])
+})
+
+test("a terminal SDK update detaches the losing media leg", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const actions: string[] = []
+  const call = fakeCall("losing-leg", "c".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  await legs[0].answer()
+  assert.notEqual(output.srcObject, null)
+
+  call.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+
+  assert.equal(output.srcObject, null)
+  assert.equal(legs[0].sendDTMF("5"), false)
+  assert.deepEqual(actions, ["answer", "unmute"])
+})
+
+test("a terminal SDK update during answer never attaches the losing media leg", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const ended: Array<{ providerLegID: string; mediaToken: string }> = []
+  const actions: string[] = []
+  let finishAnswer = () => {}
+  let markAnswerStarted = () => {}
+  const answerStarted = new Promise<void>((resolve) => {
+    markAnswerStarted = resolve
+  })
+  const answerPending = new Promise<void>((resolve) => {
+    finishAnswer = resolve
+  })
+  const call = fakeCall("losing-leg", "e".repeat(43), actions)
+  call.answer = async () => {
+    actions.push("answer")
+    markAnswerStarted()
+    await answerPending
+  }
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+    onEnded: (leg) => ended.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  const attachment = legs[0].answer()
+  await answerStarted
+
+  call.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  finishAnswer()
+
+  assert.equal(await attachment, "ended")
+  assert.equal(output.srcObject, null)
+  assert.equal(legs[0].sendDTMF("5"), false)
+  assert.deepEqual(ended, [
+    { providerLegID: "losing-leg", mediaToken: "e".repeat(43) },
+  ])
+  assert.deepEqual(actions, ["answer"])
+})
+
+test("a terminal SDK update during audio playback resolves the answer as ended", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  let rejectPlayback = () => {}
+  let markPlaybackStarted = () => {}
+  const playbackStarted = new Promise<void>((resolve) => {
+    markPlaybackStarted = resolve
+  })
+  output.playImplementation = () =>
+    new Promise<void>((_resolve, reject) => {
+      rejectPlayback = () => reject(new DOMException("interrupted", "AbortError"))
+      markPlaybackStarted()
+    })
+  const call = fakeCall("losing-leg", "g".repeat(43), [])
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  const attachment = legs[0].answer()
+  await playbackStarted
+
+  call.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  rejectPlayback()
+
+  assert.equal(await attachment, "ended")
+  assert.equal(output.srcObject, null)
+})
+
+test("a terminal SDK update before answer makes a stale invite unanswerable", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const ended: Array<{ providerLegID: string; mediaToken: string }> = []
+  const actions: string[] = []
+  const call = fakeCall("stale-leg", "f".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+    onEnded: (leg) => ended.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  call.state = "purge"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+
+  assert.equal(await legs[0].answer(), "ended")
+  assert.equal(output.srcObject, null)
+  assert.deepEqual(ended, [
+    { providerLegID: "stale-leg", mediaToken: "f".repeat(43) },
+  ])
+  assert.deepEqual(actions, [])
 })

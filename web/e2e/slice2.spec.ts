@@ -202,15 +202,34 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     await selectedPage.clock.setFixedTime(browserNow)
     await expect(callCenter(selectedPage)).toBeVisible()
     const selectedLeg = staffLegs.find((leg) => leg.email === "selected@abita.test")!
-    await sendIncomingLeg(
-      selectedPage,
-      selectedLeg.provider_leg_id,
-      selectedLeg.media_token,
-    )
-    await selectedPage
-      .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-      .click()
-    await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
+    const secondaryLeg = staffLegs.find(
+      (leg) => leg.email === "secondary@abita.test",
+    )!
+    await Promise.all([
+      sendIncomingLeg(
+        selectedPage,
+        selectedLeg.provider_leg_id,
+        selectedLeg.media_token,
+      ),
+      sendIncomingLeg(
+        secondaryPage,
+        secondaryLeg.provider_leg_id,
+        secondaryLeg.media_token,
+      ),
+    ])
+    await deferMediaAnswer(secondaryPage, secondaryLeg.media_token)
+    await Promise.all([
+      selectedPage
+        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
+        .click(),
+      secondaryPage
+        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
+        .dblclick(),
+    ])
+    await Promise.all([
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
+      expect.poll(() => mediaAnswers(secondaryPage)).toBe(1),
+    ])
 
     await deliverProviderEvent(selectedPage, {
       eventType: "call.answered",
@@ -221,6 +240,17 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         call_leg_id: selectedLeg.provider_leg_id,
         call_session_id: "fixture-staff-session",
         client_state: selectedLeg.client_state,
+      },
+    })
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.answered",
+      eventId: "callleg-browser-secondary-staff-answered",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: secondaryLeg.control_id,
+        call_leg_id: secondaryLeg.provider_leg_id,
+        call_session_id: "fixture-secondary-staff-session",
+        client_state: secondaryLeg.client_state,
       },
     })
     const bridge = await readBridgeCommand(database, callID)
@@ -272,6 +302,39 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         { role: "STAFF", state: "BRIDGED", count: "1" },
         { role: "STAFF", state: "ENDING", count: "1" },
       ])
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.hangup",
+      eventId: "callleg-browser-secondary-loser-hangup",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: secondaryLeg.control_id,
+        call_leg_id: secondaryLeg.provider_leg_id,
+        call_session_id: "fixture-secondary-staff-session",
+        hangup_cause: "NORMAL_CLEARING",
+        hangup_source: "CALL_CONTROL",
+      },
+    })
+    await endMediaLeg(
+      secondaryPage,
+      secondaryLeg.provider_leg_id,
+      secondaryLeg.media_token,
+    )
+    await expect
+      .poll(async () => {
+        const result = await database.query<{
+          loser_state: string
+          provider_termination: string | null
+        }>(
+          `SELECT loser.state AS loser_state, call.provider_termination
+             FROM human_calling_calls call
+             JOIN human_calling_call_legs loser
+               ON loser.call_id = call.id AND loser.id = $2
+            WHERE call.id = $1`,
+          [callID, secondaryLeg.id],
+        )
+        return result.rows[0]
+      })
+      .toEqual({ loser_state: "ENDED", provider_termination: null })
     await expect(
       callCenter(selectedPage).getByText("Connected", { exact: true }),
     ).toBeVisible({ timeout: 20_000 })
@@ -280,6 +343,13 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         name: "(555) 555-0100",
         exact: true,
       }),
+    ).toBeVisible()
+    await selectedPage.reload()
+    await expect(
+      callCenter(selectedPage).getByText("Connected", { exact: true }),
+    ).toBeVisible({ timeout: 20_000 })
+    await expect(
+      selectedPage.getByRole("button", { name: "Hang up", exact: true }),
     ).toBeVisible()
     const recordingEndedAt = new Date()
     const recordingStartedAt = new Date(recordingEndedAt.getTime() - 30_000)
@@ -324,6 +394,14 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       })
       .toBeLessThan(900)
     await expect(callCenter(secondaryPage)).toHaveCount(0)
+    await expect(
+      secondaryPage.getByText("Another staff member answered this call.", {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      secondaryPage.getByRole("button", { name: "Hang up", exact: true }),
+    ).toHaveCount(0)
 
     let hangupConflicts = 0
     await selectedPage.route(
@@ -1011,9 +1089,15 @@ async function prepareBrowser(context: BrowserContext) {
   await context.addInitScript(() => {
     const state = {
       answers: 0,
+      deferredMediaToken: "",
+      finishDeferredAnswer: undefined as undefined | (() => void),
+      endedMediaTokens: new Set<string>(),
       incoming: undefined as
         | undefined
         | ((providerLegID: string, mediaToken: string, recovery: boolean) => void),
+      end: undefined as
+        | undefined
+        | ((providerLegID: string, mediaToken: string) => void),
     }
     const microphone = {
       readyState: "live",
@@ -1077,11 +1161,15 @@ async function prepareBrowser(context: BrowserContext) {
           _audio: string,
           callbacks: {
             onState: (state: string) => void
+            onEnded?: (leg: {
+              providerLegID: string
+              mediaToken: string
+            }) => void
             onIncoming: (leg: {
               providerLegID: string
               mediaToken: string
               recovery: boolean
-              answer: () => Promise<void>
+              answer: () => Promise<"attached" | "ended">
               reject: () => Promise<void>
               mute: () => void
               unmute: () => void
@@ -1089,6 +1177,12 @@ async function prepareBrowser(context: BrowserContext) {
             }) => void
           },
         ) => {
+          state.end = (providerLegID, mediaToken) => {
+            state.endedMediaTokens.add(mediaToken)
+            callbacks.onEnded?.({ providerLegID, mediaToken })
+            state.finishDeferredAnswer?.()
+            state.finishDeferredAnswer = undefined
+          }
           state.incoming = (providerLegID, mediaToken, recovery) =>
             callbacks.onIncoming({
               providerLegID,
@@ -1096,6 +1190,14 @@ async function prepareBrowser(context: BrowserContext) {
               recovery,
               answer: async () => {
                 state.answers += 1
+                if (state.deferredMediaToken === mediaToken) {
+                  await new Promise<void>((resolve) => {
+                    state.finishDeferredAnswer = resolve
+                  })
+                }
+                return state.endedMediaTokens.has(mediaToken)
+                  ? "ended"
+                  : "attached"
               },
               reject: async () => undefined,
               mute: () => undefined,
@@ -1169,5 +1271,32 @@ async function mediaAnswers(page: Page) {
           __acuityCallingTestState: { answers: number }
         }
       ).__acuityCallingTestState.answers,
+  )
+}
+
+async function deferMediaAnswer(page: Page, mediaToken: string) {
+  await page.evaluate((token) => {
+    const fixture = window as typeof window & {
+      __acuityCallingTestState: { deferredMediaToken: string }
+    }
+    fixture.__acuityCallingTestState.deferredMediaToken = token
+  }, mediaToken)
+}
+
+async function endMediaLeg(
+  page: Page,
+  providerLegID: string,
+  mediaToken: string,
+) {
+  await page.evaluate(
+    ({ providerLegID, mediaToken }) => {
+      const fixture = window as typeof window & {
+        __acuityCallingTestState: {
+          end?: (providerLegID: string, mediaToken: string) => void
+        }
+      }
+      fixture.__acuityCallingTestState.end?.(providerLegID, mediaToken)
+    },
+    { providerLegID, mediaToken },
   )
 }

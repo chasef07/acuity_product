@@ -1,39 +1,136 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import type {
+  CallingState,
+  CallingStateCall,
+  RingingCallLeg,
+} from "../api/generated/types.gen.ts"
+
 import {
 	confirmOutboundMediaWithRetry,
+  answeredCallLegStatus,
   currentCallingStateCallID,
   mediaAttachmentAfterState,
 	microphoneFailureMessage,
   routeIncomingMedia,
 } from "./dock-media-state.ts"
 
+function stateCall(
+  callId: string,
+  callLegId: string,
+  state = "CONNECTED",
+): CallingStateCall {
+  return {
+    callId,
+    callLegId,
+    practiceId: "practice-1",
+    locationId: "location-1",
+    locationName: "Location 1",
+    state,
+    version: 1,
+  }
+}
+
+function ringingCallLeg(
+  callId: string,
+  callLegId: string,
+): RingingCallLeg {
+  return {
+    ...stateCall(callId, callLegId, "BRIDGE_PENDING"),
+    mediaToken: "a".repeat(43),
+    displayName: "Caller",
+    phone: "+15555550100",
+    transferReason: "",
+    state: "BRIDGE_PENDING",
+    createdAt: "2026-08-17T00:00:00Z",
+    deadline: "2026-08-17T00:00:20Z",
+  }
+}
+
+function callingState(
+  overrides: Partial<CallingState> = {},
+): CallingState {
+  return {
+    softphone: {
+      sessionId: "session-1",
+      leaseExpiresAt: "2026-08-17T00:01:00Z",
+      owner: true,
+      available: false,
+      activeCallId: "",
+      pendingOutcomeCallId: "",
+    },
+    ringing: [],
+    ...overrides,
+  }
+}
+
+test("answered CallLeg controls require the exact bridged winner", () => {
+  const expected = { callId: "call-1", callLegId: "leg-loser" }
+
+  assert.equal(
+    answeredCallLegStatus(
+      callingState({
+        ringing: [ringingCallLeg("call-1", "leg-loser")],
+      }),
+      expected,
+    ),
+    "PENDING",
+  )
+  assert.equal(
+    answeredCallLegStatus(
+      callingState({ bridged: stateCall("call-1", "leg-loser") }),
+      expected,
+    ),
+    "BRIDGED",
+  )
+  assert.equal(
+    answeredCallLegStatus(
+      callingState({ bridged: stateCall("call-1", "leg-winner") }),
+      expected,
+    ),
+    "LOST",
+  )
+  assert.equal(answeredCallLegStatus(callingState(), expected), "LOST")
+})
+
 test("calling state leaves provider voicemail out of staff call controls", () => {
-  assert.equal(currentCallingStateCallID({}), undefined)
+  assert.equal(currentCallingStateCallID(callingState()), undefined)
   assert.equal(
-    currentCallingStateCallID({
-      voicemail: { callId: "call-1", state: "VOICEMAIL_GREETING" },
-    }),
+    currentCallingStateCallID(
+      callingState({
+        voicemail: stateCall("call-1", "caller-leg", "VOICEMAIL_GREETING"),
+      }),
+    ),
     undefined,
   )
   assert.equal(
-    currentCallingStateCallID({
-      voicemail: { callId: "call-1", state: "VOICEMAIL_RECORDING" },
-    }),
+    currentCallingStateCallID(
+      callingState({
+        voicemail: stateCall("call-1", "caller-leg", "VOICEMAIL_RECORDING"),
+      }),
+    ),
     undefined,
   )
   assert.equal(
-    currentCallingStateCallID({
-      voicemail: { callId: "call-1", state: "VOICEMAIL" },
-    }),
+    currentCallingStateCallID(
+      callingState({
+        voicemail: stateCall("call-1", "caller-leg", "VOICEMAIL"),
+      }),
+    ),
     undefined,
   )
   assert.equal(
-    currentCallingStateCallID({
-      voicemail: { callId: "call-1", state: "VOICEMAIL" },
-      disposition: { callId: "call-2", state: "NEEDS_DISPOSITION" },
-    }),
+    currentCallingStateCallID(
+      callingState({
+        voicemail: stateCall("call-1", "caller-leg", "VOICEMAIL"),
+        disposition: stateCall(
+          "call-2",
+          "staff-leg",
+          "NEEDS_DISPOSITION",
+        ),
+      }),
+    ),
     "call-2",
   )
 })

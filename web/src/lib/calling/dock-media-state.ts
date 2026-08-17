@@ -1,4 +1,5 @@
 import type { IncomingMediaLeg, MediaState } from "./media-adapter.ts"
+import type { CallingState } from "../api/generated/types.gen.ts"
 
 type MediaIdentity = Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">
 
@@ -13,10 +14,41 @@ type ConfirmationAttempt<T> = {
   status?: number
 }
 
-type CurrentCallingState = {
-  bridged?: { callId: string; state?: string }
-  voicemail?: { callId: string; state?: string }
-  disposition?: { callId: string; state?: string }
+type CurrentCallingState = Pick<
+  CallingState,
+  "ringing" | "bridged" | "voicemail" | "disposition"
+>
+
+type AnsweredCallLeg = {
+  callId: string
+  callLegId: string
+}
+
+export function answeredCallLegStatus(
+  state: CurrentCallingState,
+  expected: AnsweredCallLeg,
+) {
+  if (
+    state.bridged?.callId === expected.callId &&
+    state.bridged.callLegId === expected.callLegId
+  ) {
+    return "BRIDGED" as const
+  }
+  if (
+    state.disposition?.callId === expected.callId &&
+    state.disposition.callLegId === expected.callLegId
+  ) {
+    return "ENDED" as const
+  }
+  if (
+    state.ringing?.some(
+      (leg) =>
+        leg.callId === expected.callId && leg.callLegId === expected.callLegId,
+    )
+  ) {
+    return "PENDING" as const
+  }
+  return "LOST" as const
 }
 
 export function currentCallingStateCallID(state: CurrentCallingState) {

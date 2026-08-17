@@ -2791,6 +2791,87 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 	}
 }
 
+func TestLosingInboundStaffHangupDoesNotTerminateConnectedCall(t *testing.T) {
+	now := time.Date(2026, time.August, 17, 15, 13, 0, 0, time.UTC)
+	prefix := "late-answer-loser-termination"
+	dialResults := []humancalling.ProviderResult{
+		{CallControlID: prefix + "-winner-control", CallLegID: prefix + "-winner-leg"},
+		{CallControlID: prefix + "-loser-control", CallLegID: prefix + "-loser-leg"},
+	}
+	provider := &recordingProvider{dialResults: append(
+		[]humancalling.ProviderResult(nil), dialResults...,
+	)}
+	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 2)
+	processAllCommands(t, calling)
+	dials := provider.all(humancalling.CommandDialStaff)
+	if len(dials) != 2 {
+		t.Fatalf("staff Dials = %d, want 2", len(dials))
+	}
+
+	staffFacts := make([]humancalling.ProviderFact, 2)
+	for index, dial := range dials {
+		clientState, _ := dial.Payload["client_state"].(string)
+		staffFacts[index] = humancalling.ProviderFact{
+			EventID: prefix + fmt.Sprintf("-%d-initiated", index),
+			Type:    humancalling.FactCallInitiated, OccurredAt: now.Add(time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: dialResults[index].CallControlID,
+			CallLegID:     dialResults[index].CallLegID,
+			CallSessionID: prefix + fmt.Sprintf("-%d-session", index),
+			ClientState:   clientState,
+		}
+		if err := calling.ApplyProviderFact(context.Background(), staffFacts[index]); err != nil {
+			t.Fatalf("project Staff %d initiation: %v", index, err)
+		}
+		staffFacts[index].EventID = prefix + fmt.Sprintf("-%d-answered", index)
+		staffFacts[index].Type = humancalling.FactCallAnswered
+		staffFacts[index].OccurredAt = now.Add(time.Duration(2+index) * time.Second)
+		if err := calling.ApplyProviderFact(context.Background(), staffFacts[index]); err != nil {
+			t.Fatalf("project Staff %d answer: %v", index, err)
+		}
+	}
+
+	processAllCommands(t, calling)
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-winner-bridged", Type: humancalling.FactCallBridged,
+		OccurredAt:    now.Add(4 * time.Second),
+		CallControlID: staffFacts[0].CallControlID,
+		CallLegID:     staffFacts[0].CallLegID,
+		CallSessionID: staffFacts[0].CallSessionID,
+		ClientState:   bridgeState,
+	}); err != nil {
+		t.Fatalf("project winning Bridge: %v", err)
+	}
+	processAllCommands(t, calling)
+
+	loser := staffFacts[1]
+	loser.EventID = prefix + "-loser-hangup"
+	loser.Type = humancalling.FactCallHangup
+	loser.OccurredAt = now.Add(5 * time.Second)
+	loser.HangupCause = "NORMAL_CLEARING"
+	loser.TerminationSource = "CALL_CONTROL"
+	if err := calling.ApplyProviderFact(context.Background(), loser); err != nil {
+		t.Fatalf("project losing Staff Hangup: %v", err)
+	}
+
+	var loserState string
+	var providerTermination *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT loser.state, call.provider_termination
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs loser ON loser.call_id = call.id
+		WHERE loser.provider_call_leg_id = $1
+	`, loser.CallLegID).Scan(&loserState, &providerTermination); err != nil {
+		t.Fatal(err)
+	}
+	if loserState != "ENDED" || providerTermination != nil {
+		t.Fatalf("losing Staff Hangup = state:%s provider termination:%v",
+			loserState, providerTermination)
+	}
+}
+
 func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 14, 55, 0, 0, time.UTC)
 	prefix := "sending-loser"

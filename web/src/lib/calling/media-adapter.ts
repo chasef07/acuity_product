@@ -5,12 +5,13 @@ export type MediaState =
   | "unavailable"
 
 export type MediaFailure = "authentication" | "network" | "provider"
+export type MediaAttachmentOutcome = "attached" | "ended"
 
 export type IncomingMediaLeg = {
   providerLegID: string
   mediaToken: string
   recovery: boolean
-  answer: () => Promise<void>
+  answer: () => Promise<MediaAttachmentOutcome>
   reject: () => Promise<void>
   mute: () => void
   unmute: () => void
@@ -20,6 +21,10 @@ export type IncomingMediaLeg = {
 type CallingMediaCallbacks = {
   onState: (state: MediaState) => void
   onIncoming: (leg: IncomingMediaLeg) => void
+  onEnded?: (
+    leg: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
+  ) => void
+  onAudioIssue?: () => void
   onFailure?: (failure: MediaFailure) => void
   refreshToken?: () => Promise<string | undefined>
 }
@@ -137,19 +142,25 @@ export function applyMicrophoneFence(
   else call.unmuteAudio()
 }
 
-type ActiveMediaSession = {
+type MediaSession = {
   call: SDKCall
+  remoteStream?: MediaStream
   providerLegID: string
   mediaToken: string
   desiredMuted: boolean
   attachmentCurrent: boolean
 }
 
+type MediaIdentity = Pick<
+  IncomingMediaLeg,
+  "providerLegID" | "mediaToken"
+>
+
 function matchesMediaSession(
-  session: ActiveMediaSession | undefined,
+  session: MediaSession | undefined,
   providerLegID: string,
   mediaToken: string,
-): session is ActiveMediaSession {
+): session is MediaSession {
   return (
     session?.providerLegID === providerLegID &&
     session.mediaToken === mediaToken
@@ -158,11 +169,13 @@ function matchesMediaSession(
 
 class TelnyxMediaAdapter implements CallingMediaAdapter {
   private client?: SDKClient
-  private activeSession?: ActiveMediaSession
+  private activeSession?: MediaSession
   private output?: HTMLMediaElement
   private quarantine?: HTMLAudioElement
   private readonly createClient: SDKClientFactory
   private tokenRefresh?: Promise<void>
+  private readonly mediaIdentity = new WeakMap<SDKCall, MediaIdentity>()
+  private readonly terminalCalls = new WeakSet<SDKCall>()
 
   constructor(
     createClient: SDKClientFactory = async (token) => {
@@ -202,7 +215,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     client.on("telnyx.socket.close", () => {
       const session = this.activeSession
       if (session) {
-        this.activeSession = { ...session, attachmentCurrent: false }
+        session.attachmentCurrent = false
         applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
       callbacks.onState("reconnecting")
@@ -210,6 +223,12 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     client.on("telnyx.ready", () => callbacks.onState("ready"))
     client.on("telnyx.warning", (value) => {
       const warning = value as { warning?: { code?: number } }
+      if (
+        warning.warning?.code === 32001 &&
+        this.activeSession?.attachmentCurrent
+      ) {
+        callbacks.onAudioIssue?.()
+      }
       if (warning.warning?.code !== 34001 || !callbacks.refreshToken) return
       if (!this.tokenRefresh) {
         this.tokenRefresh = callbacks
@@ -226,7 +245,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     client.on("telnyx.error", (value) => {
       const session = this.activeSession
       if (session) {
-        this.activeSession = { ...session, attachmentCurrent: false }
+        session.attachmentCurrent = false
         applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
       callbacks.onFailure?.(classifyTelnyxError(value))
@@ -235,13 +254,30 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     client.on("telnyx.notification", (value) => {
       const notification = value as SDKNotification
       const call = notification.call
-      if (
-        notification.type !== "callUpdate" ||
-        !call ||
-        !["ringing", "active", "recovering"].includes(call.state)
-      ) {
+      if (notification.type !== "callUpdate" || !call) {
         return
       }
+      if (["hangup", "destroy", "purge"].includes(call.state)) {
+        const firstTerminalUpdate = !this.terminalCalls.has(call)
+        this.terminalCalls.add(call)
+        const session = this.activeSession
+        if (session?.call === call) {
+          this.activeSession = undefined
+          const output = this.output
+          if (
+            output &&
+            session.remoteStream &&
+            output.srcObject === session.remoteStream
+          ) {
+            output.srcObject = null
+          }
+        }
+        const identity = this.mediaIdentity.get(call) ?? session
+        if (firstTerminalUpdate && identity) callbacks.onEnded?.(identity)
+        return
+      }
+      if (this.terminalCalls.has(call)) return
+      if (!["ringing", "active", "recovering"].includes(call.state)) return
       if (
         call === this.activeSession?.call &&
         this.activeSession.attachmentCurrent &&
@@ -257,11 +293,13 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         )
         return
       }
+      this.mediaIdentity.set(call, { providerLegID, mediaToken })
       callbacks.onIncoming({
         providerLegID,
         mediaToken,
         recovery: call.state !== "ringing",
         answer: async () => {
+          if (this.terminalCalls.has(call)) return "ended"
           const current = this.activeSession
           const recoversActiveLeg = matchesMediaSession(
             current,
@@ -271,36 +309,58 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
           const desiredMuted = recoversActiveLeg
             ? current.desiredMuted
             : false
-          if (call.state === "ringing") {
-            await call.answer({ remoteElement: quarantine.id })
-          }
-          if (!call.remoteStream) {
-            throw new Error("browser audio stream is unavailable")
-          }
-          output.srcObject = call.remoteStream
-          await output.play()
-          await waitForSecureMedia(call)
-          applyMicrophoneFence(call, true, desiredMuted)
-          this.activeSession = {
+          const session: MediaSession = {
             call,
             providerLegID,
             mediaToken,
             desiredMuted,
-            attachmentCurrent: true,
+            attachmentCurrent: false,
+          }
+          this.activeSession = session
+          try {
+            if (call.state === "ringing") {
+              await call.answer({ remoteElement: quarantine.id })
+            }
+            if (this.activeSession !== session) return "ended"
+            const remoteStream = call.remoteStream
+            if (!remoteStream) {
+              throw new Error("browser audio stream is unavailable")
+            }
+            session.remoteStream = remoteStream
+            output.srcObject = remoteStream
+            await output.play()
+            if (this.activeSession !== session) return "ended"
+            try {
+              await waitForSecureMedia(call)
+            } catch (error) {
+              if (this.activeSession !== session) return "ended"
+              throw error
+            }
+            if (this.activeSession !== session) return "ended"
+            applyMicrophoneFence(call, true, desiredMuted)
+            session.attachmentCurrent = true
+            return "attached"
+          } catch (error) {
+            if (this.activeSession !== session) return "ended"
+            this.activeSession = undefined
+            if (output.srcObject === session.remoteStream) {
+              output.srcObject = null
+            }
+            throw error
           }
         },
         reject: () => rejectMediaCall(call),
         mute: () => {
           const current = this.activeSession
           if (matchesMediaSession(current, providerLegID, mediaToken)) {
-            this.activeSession = { ...current, desiredMuted: true }
+            current.desiredMuted = true
           }
           call.muteAudio()
         },
         unmute: () => {
           const current = this.activeSession
           if (matchesMediaSession(current, providerLegID, mediaToken)) {
-            this.activeSession = { ...current, desiredMuted: false }
+            current.desiredMuted = false
           }
           call.unmuteAudio()
         },
