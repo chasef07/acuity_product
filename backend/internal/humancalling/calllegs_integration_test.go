@@ -3103,6 +3103,166 @@ func TestAbsentHangupCompletionAndProviderFactUseConsistentLockOrder(t *testing.
 	}
 }
 
+func TestCommandFailureAndAbsentReconciliationUseConsistentLockOrder(t *testing.T) {
+	now := time.Date(2026, time.August, 17, 19, 30, 0, 0, time.UTC)
+	prefix := "command-reconciliation-lock-order"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+	}}}
+	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+
+	var commandID, callLegID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text, call_leg_id::text
+		FROM human_calling_provider_commands
+		WHERE action = 'DIAL_STAFF' AND state = 'PENDING'
+	`).Scan(&commandID, &callLegID); err != nil {
+		t.Fatalf("read pending Staff Dial: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'RECONCILED', updated_at = $2
+		WHERE state = 'PENDING' AND id <> $1
+	`, commandID, now); err != nil {
+		t.Fatalf("isolate pending Staff Dial: %v", err)
+	}
+
+	provider.mu.Lock()
+	provider.blockAction = humancalling.CommandDialStaff
+	provider.blockStarted = make(chan struct{})
+	provider.blockRelease = make(chan struct{})
+	provider.blockError = fmt.Errorf(
+		"%w: synthetic rejected Staff Dial",
+		humancalling.ErrDefinitiveProviderFailure,
+	)
+	provider.observations = append(
+		provider.observations,
+		humancalling.ProviderCallObservation{},
+	)
+	started, release := provider.blockStarted, provider.blockRelease
+	provider.mu.Unlock()
+
+	commandResult := make(chan error, 1)
+	go func() {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if !processed && err == nil {
+			err = errors.New("no Staff Dial command processed")
+		}
+		commandResult <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Staff Dial provider execution did not start")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE id = $1 AND state = 'SENDING'
+	`, commandID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("age in-flight Staff Dial: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, callLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("age in-flight Staff CallLeg: %v", err)
+	}
+
+	const barrierKey int64 = 817193001
+	barrier, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire reconciliation barrier connection: %v", err)
+	}
+	defer barrier.Release()
+	var barrierPID int32
+	if err := barrier.QueryRow(context.Background(), `SELECT pg_backend_pid()`).Scan(&barrierPID); err != nil {
+		t.Fatalf("read reconciliation barrier backend PID: %v", err)
+	}
+	if _, err := barrier.Exec(context.Background(), `SELECT pg_advisory_lock($1)`, barrierKey); err != nil {
+		t.Fatalf("lock reconciliation barrier: %v", err)
+	}
+	barrierLocked := true
+	defer func() {
+		if barrierLocked {
+			_, _ = barrier.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, barrierKey)
+		}
+	}()
+
+	const triggerName = "test_block_absent_reconciliation"
+	const functionName = "test_wait_for_absent_reconciliation"
+	if _, err := pool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON human_calling_provider_commands
+		FOR EACH ROW WHEN (NEW.id = '%s'::uuid AND NEW.state = 'FAILED')
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, commandID, functionName, barrierKey)); err != nil {
+		t.Fatalf("install reconciliation lock barrier: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), fmt.Sprintf(`
+			DROP TRIGGER IF EXISTS %s ON human_calling_provider_commands;
+			DROP FUNCTION IF EXISTS %s()
+		`, triggerName, functionName))
+	})
+
+	reconciliationResult := make(chan error, 1)
+	go func() {
+		reconciled, err := calling.ReconcileStaleCalls(context.Background())
+		if reconciled != 1 && err == nil {
+			err = fmt.Errorf("reconciled %d stale Calls, want 1", reconciled)
+		}
+		reconciliationResult <- err
+	}()
+	reconciliationPID := waitForPostgresLockWaiter(
+		t, barrier, "advisory", barrierPID,
+	)
+	close(release)
+	waitForPostgresLockWaiter(t, barrier, "transactionid", reconciliationPID)
+	if _, err := barrier.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, barrierKey); err != nil {
+		t.Fatalf("release reconciliation barrier: %v", err)
+	}
+	barrierLocked = false
+
+	select {
+	case err := <-reconciliationResult:
+		if err != nil {
+			t.Fatalf("reconcile absent concurrent Staff Dial: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("absent Staff Dial reconciliation did not finish")
+	}
+	select {
+	case err := <-commandResult:
+		if err != nil {
+			t.Fatalf("finish concurrent rejected Staff Dial: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rejected Staff Dial command did not finish")
+	}
+
+	var legState, commandState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE command.id = $1
+	`, commandID).Scan(&legState, &commandState); err != nil {
+		t.Fatal(err)
+	}
+	if legState != "FAILED" || commandState != "FAILED" ||
+		provider.count(humancalling.CommandDialStaff) != 1 {
+		t.Fatalf("rejected Staff Dial convergence = leg:%s command:%s executions:%d",
+			legState, commandState, provider.count(humancalling.CommandDialStaff))
+	}
+}
+
 func TestClosedHandoffAdmissionFailsBeforeDatabaseMutation(t *testing.T) {
 	calling := humancalling.New(nil, nil, nil, humancalling.Config{
 		HandoffAdmissionClosed: true,
