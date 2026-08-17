@@ -70,16 +70,16 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
 import {
-  appendOutcomePage,
+  applyOutcomePages,
   appointmentActionForFolder,
-  appointmentOutcomeFolders,
+  appointmentOutcomeFolderKeys,
   type AppointmentOutcomeCursors,
   type AppointmentOutcomeFolder,
   decrementOutcomeCount,
   emptyAppointmentOutcomeCursors,
-  mergeOutcomePages,
 } from "@/lib/ai-outcome-attention"
 import { cn } from "@/lib/utils"
+import { appendUniqueByID } from "@/lib/workspace-ordering"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import {
   projectTaskUpdate,
@@ -271,7 +271,7 @@ export function TaskWorkspaceShell() {
       hasLoadedTasksRef.current = true
       taskQueryKeyRef.current = queryKey
       const next = append
-        ? appendOutcomePage(tasksRef.current, result.data.items)
+        ? appendUniqueByID(tasksRef.current, result.data.items)
         : result.data.items
       tasksRef.current = next
       setTasks(next)
@@ -443,7 +443,7 @@ export function TaskWorkspaceShell() {
       }
     }
     const loaded = aiOutcomesRef.current
-    const requestedFolders = folder ? [folder] : appointmentOutcomeFolders
+    const requestedFolders = folder ? [folder] : appointmentOutcomeFolderKeys
     const responses = await Promise.all(
       requestedFolders.map((pageFolder, index) =>
         queryPage(pageFolder, folder ? cursor : "", !append && index === 0),
@@ -472,27 +472,24 @@ export function TaskWorkspaceShell() {
       folder: response.folder,
       data: response.data!,
     }))
-    const refreshing = !append && loaded.length > 0
-    const incoming = pages.flatMap((page) => page.data.items)
-    const next = append
-      ? appendOutcomePage(loaded, incoming)
-      : refreshing
-        ? mergeOutcomePages(loaded, incoming)
-        : appendOutcomePage([], incoming)
-    aiOutcomesRef.current = next
-    setAIOutcomes(next)
+    const applied = applyOutcomePages(
+      loaded,
+      pages.map((page) => ({
+        folder: page.folder,
+        items: page.data.items,
+        nextCursor: page.data.nextCursor,
+      })),
+      append,
+    )
+    aiOutcomesRef.current = applied.items
+    setAIOutcomes(applied.items)
     if (!append && pages[0].data.counts) {
       setAIOutcomeCounts(pages[0].data.counts)
     }
-    if (append || !refreshing) {
-      setAIOutcomeNextCursors((current) => {
-        const updated = append ? { ...current } : emptyAppointmentOutcomeCursors()
-        for (const page of pages) {
-          updated[page.folder] = page.data.nextCursor
-        }
-        return updated
-      })
-    }
+    setAIOutcomeNextCursors((current) => ({
+      ...(append ? current : emptyAppointmentOutcomeCursors()),
+      ...applied.nextCursors,
+    }))
   }, [locationScopeID, practiceID])
   const reviewAIOutcome = useCallback(async (interactionID: string) => {
     const token = await getAccessToken()

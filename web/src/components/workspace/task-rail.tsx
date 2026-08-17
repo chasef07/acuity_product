@@ -71,6 +71,8 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { aiCallCompletionLabel } from "@/lib/ai-interactions"
 import {
+  appointmentOutcomeFolderKeys,
+  appointmentOutcomeFolders,
   categorizeAIOutcomes,
   type AppointmentOutcomeCursors,
   type AppointmentOutcomeFolder,
@@ -244,26 +246,12 @@ export function TaskRail({
       ),
     [aiOutcomes],
   )
-  const appointmentFolders = [
-    {
-      key: "bookings" as const,
-      title: "Bookings",
-      outcomes: categorizedAIOutcomes.bookings,
-      count: outcomeCounts.bookings,
-    },
-    {
-      key: "cancellations" as const,
-      title: "Cancellations",
-      outcomes: categorizedAIOutcomes.cancellations,
-      count: outcomeCounts.cancellations,
-    },
-    {
-      key: "reschedules" as const,
-      title: "Reschedules",
-      outcomes: categorizedAIOutcomes.reschedules,
-      count: outcomeCounts.reschedules,
-    },
-  ]
+  const appointmentFolders = appointmentOutcomeFolderKeys.map((key) => ({
+    key,
+    title: appointmentOutcomeFolders[key].title,
+    outcomes: categorizedAIOutcomes[key],
+    count: outcomeCounts[key],
+  }))
   const appointmentCount = appointmentFolders.reduce(
     (total, folder) => total + folder.count,
     0,
@@ -1098,7 +1086,7 @@ function aggregateTexts(messages: MessageThreadSummary[]): TextAttentionRow[] {
   }
   return newestFirst(
     [...byPhone.entries()].map(([phone, threads]) => {
-      const newest = [...threads].sort((left, right) => right.latestActivity.localeCompare(left.latestActivity))[0]!
+      const newest = newestFirst(threads, (thread) => thread.latestActivity)[0]!
       return {
         previewThread: newest,
         engagement: {

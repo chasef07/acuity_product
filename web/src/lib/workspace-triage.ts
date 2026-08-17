@@ -2,6 +2,7 @@ import type {
   StaffTaskCategory,
   TaskFolderCounts,
 } from "./api/generated/types.gen.ts"
+import { newestFirst } from "./workspace-ordering.ts"
 
 export type TaskCategoryFilter = "all" | StaffTaskCategory
 export type AppointmentIntent = "bookings" | "cancellations" | "reschedules"
@@ -34,9 +35,7 @@ export function filterTaskQueue<
 }
 
 export function sortRecoveryQueue<T extends { updatedAt: string }>(tasks: T[]) {
-  return [...tasks].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  )
+  return newestFirst(tasks, (task) => task.updatedAt)
 }
 
 export function filterTasksByCategory<

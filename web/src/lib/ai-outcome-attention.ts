@@ -1,4 +1,5 @@
 import type { AiAppointmentAction } from "./api/generated/types.gen"
+import { appendUniqueByID } from "./workspace-ordering.ts"
 
 export type OutcomeCounts = {
   tasks: number
@@ -7,55 +8,53 @@ export type OutcomeCounts = {
   reschedules: number
 }
 
-export const appointmentOutcomeFolders = [
-  "bookings",
-  "cancellations",
-  "reschedules",
-] as const
+type AppointmentOutcomeFolderDefinition = {
+  action: AiAppointmentAction
+  title: string
+}
+
+export const appointmentOutcomeFolders = {
+  bookings: { action: "BOOKED", title: "Bookings" },
+  cancellations: { action: "CANCELLED", title: "Cancellations" },
+  reschedules: { action: "RESCHEDULED", title: "Reschedules" },
+} as const satisfies Record<string, AppointmentOutcomeFolderDefinition>
 
 export type AppointmentOutcomeFolder =
-  (typeof appointmentOutcomeFolders)[number]
+  keyof typeof appointmentOutcomeFolders
+
+export const appointmentOutcomeFolderKeys = Object.keys(
+  appointmentOutcomeFolders,
+) as AppointmentOutcomeFolder[]
 
 export type AppointmentOutcomeCursors = Record<AppointmentOutcomeFolder, string>
 
 export function emptyAppointmentOutcomeCursors(): AppointmentOutcomeCursors {
-  return { bookings: "", cancellations: "", reschedules: "" }
+  return Object.fromEntries(
+    appointmentOutcomeFolderKeys.map((folder) => [folder, ""]),
+  ) as AppointmentOutcomeCursors
 }
 
 export function appointmentActionForFolder(
   folder: AppointmentOutcomeFolder,
 ): AiAppointmentAction {
-  switch (folder) {
-    case "bookings":
-      return "BOOKED"
-    case "cancellations":
-      return "CANCELLED"
-    case "reschedules":
-      return "RESCHEDULED"
-  }
+  return appointmentOutcomeFolders[folder].action
 }
 
-export function appointmentFolderForAction(action?: string) {
-  switch (action) {
-    case "BOOKED":
-      return "bookings" as const
-    case "CANCELLED":
-      return "cancellations" as const
-    case "RESCHEDULED":
-      return "reschedules" as const
-    default:
-      return undefined
+export function appointmentFolderForAction(
+  action?: string,
+): AppointmentOutcomeFolder | undefined {
+  for (const folder of appointmentOutcomeFolderKeys) {
+    if (appointmentOutcomeFolders[folder].action === action) return folder
   }
+  return undefined
 }
 
 export function categorizeAIOutcomes<
   T extends { appointmentAction?: string },
 >(outcomes: T[]) {
-  const categorized = {
-    bookings: [] as T[],
-    cancellations: [] as T[],
-    reschedules: [] as T[],
-  }
+  const categorized = Object.fromEntries(
+    appointmentOutcomeFolderKeys.map((folder) => [folder, [] as T[]]),
+  ) as Record<AppointmentOutcomeFolder, T[]>
   for (const outcome of outcomes) {
     const folder = appointmentFolderForAction(outcome.appointmentAction)
     if (folder) categorized[folder].push(outcome)
@@ -63,25 +62,24 @@ export function categorizeAIOutcomes<
   return categorized
 }
 
-export function mergeOutcomePages<T extends { id: string }>(
-  loaded: T[],
-  refreshed: T[],
+export function applyOutcomePages<T extends { id: string }>(
+  loaded: readonly T[],
+  pages: ReadonlyArray<{
+    folder: AppointmentOutcomeFolder
+    items: readonly T[]
+    nextCursor: string
+  }>,
+  append: boolean,
 ) {
-  return appendOutcomePage(appendOutcomePage([], refreshed), loaded)
-}
-
-export function appendOutcomePage<T extends { id: string }>(
-  loaded: T[],
-  page: T[],
-) {
-  const seen = new Set(loaded.map((item) => item.id))
-  const items = [...loaded]
-  for (const item of page) {
-    if (seen.has(item.id)) continue
-    seen.add(item.id)
-    items.push(item)
+  return {
+    items: appendUniqueByID(
+      append ? loaded : [],
+      pages.flatMap((page) => page.items),
+    ),
+    nextCursors: Object.fromEntries(
+      pages.map((page) => [page.folder, page.nextCursor]),
+    ) as Partial<AppointmentOutcomeCursors>,
   }
-  return items
 }
 
 export function decrementOutcomeCount(
