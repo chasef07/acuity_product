@@ -3,11 +3,43 @@ import test from "node:test"
 
 import {
 	confirmOutboundMediaWithRetry,
+  answeredCallLegStatus,
   currentCallingStateCallID,
   mediaAttachmentAfterState,
 	microphoneFailureMessage,
   routeIncomingMedia,
 } from "./dock-media-state.ts"
+
+test("answered CallLeg controls require the exact bridged winner", () => {
+  const expected = { callId: "call-1", callLegId: "leg-loser" }
+
+  assert.equal(
+    answeredCallLegStatus(
+      {
+        ringing: [
+          { callId: "call-1", callLegId: "leg-loser", state: "BRIDGE_PENDING" },
+        ],
+      },
+      expected,
+    ),
+    "PENDING",
+  )
+  assert.equal(
+    answeredCallLegStatus(
+      { bridged: { callId: "call-1", callLegId: "leg-loser" } },
+      expected,
+    ),
+    "BRIDGED",
+  )
+  assert.equal(
+    answeredCallLegStatus(
+      { bridged: { callId: "call-1", callLegId: "leg-winner" } },
+      expected,
+    ),
+    "LOST",
+  )
+  assert.equal(answeredCallLegStatus({}, expected), "LOST")
+})
 
 test("calling state leaves provider voicemail out of staff call controls", () => {
   assert.equal(currentCallingStateCallID({}), undefined)

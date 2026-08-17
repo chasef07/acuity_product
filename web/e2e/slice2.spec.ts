@@ -202,15 +202,33 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     await selectedPage.clock.setFixedTime(browserNow)
     await expect(callCenter(selectedPage)).toBeVisible()
     const selectedLeg = staffLegs.find((leg) => leg.email === "selected@abita.test")!
-    await sendIncomingLeg(
-      selectedPage,
-      selectedLeg.provider_leg_id,
-      selectedLeg.media_token,
-    )
-    await selectedPage
-      .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-      .click()
-    await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
+    const secondaryLeg = staffLegs.find(
+      (leg) => leg.email === "secondary@abita.test",
+    )!
+    await Promise.all([
+      sendIncomingLeg(
+        selectedPage,
+        selectedLeg.provider_leg_id,
+        selectedLeg.media_token,
+      ),
+      sendIncomingLeg(
+        secondaryPage,
+        secondaryLeg.provider_leg_id,
+        secondaryLeg.media_token,
+      ),
+    ])
+    await Promise.all([
+      selectedPage
+        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
+        .click(),
+      secondaryPage
+        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
+        .click(),
+    ])
+    await Promise.all([
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
+      expect.poll(() => mediaAnswers(secondaryPage)).toBe(1),
+    ])
 
     await deliverProviderEvent(selectedPage, {
       eventType: "call.answered",
@@ -221,6 +239,17 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         call_leg_id: selectedLeg.provider_leg_id,
         call_session_id: "fixture-staff-session",
         client_state: selectedLeg.client_state,
+      },
+    })
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.answered",
+      eventId: "callleg-browser-secondary-staff-answered",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: secondaryLeg.control_id,
+        call_leg_id: secondaryLeg.provider_leg_id,
+        call_session_id: "fixture-secondary-staff-session",
+        client_state: secondaryLeg.client_state,
       },
     })
     const bridge = await readBridgeCommand(database, callID)
@@ -324,6 +353,14 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       })
       .toBeLessThan(900)
     await expect(callCenter(secondaryPage)).toHaveCount(0)
+    await expect(
+      secondaryPage.getByText("Another staff member answered this call.", {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      secondaryPage.getByRole("button", { name: "Hang up", exact: true }),
+    ).toHaveCount(0)
 
     let hangupConflicts = 0
     await selectedPage.route(

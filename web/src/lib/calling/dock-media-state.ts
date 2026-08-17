@@ -14,9 +14,42 @@ type ConfirmationAttempt<T> = {
 }
 
 type CurrentCallingState = {
-  bridged?: { callId: string; state?: string }
-  voicemail?: { callId: string; state?: string }
-  disposition?: { callId: string; state?: string }
+  ringing?: Array<{ callId: string; callLegId: string; state?: string }>
+  bridged?: { callId: string; callLegId?: string; state?: string }
+  voicemail?: { callId: string; callLegId?: string; state?: string }
+  disposition?: { callId: string; callLegId?: string; state?: string }
+}
+
+type AnsweredCallLeg = {
+  callId: string
+  callLegId: string
+}
+
+export function answeredCallLegStatus(
+  state: CurrentCallingState,
+  expected: AnsweredCallLeg,
+) {
+  if (
+    state.bridged?.callId === expected.callId &&
+    state.bridged.callLegId === expected.callLegId
+  ) {
+    return "BRIDGED" as const
+  }
+  if (
+    state.disposition?.callId === expected.callId &&
+    state.disposition.callLegId === expected.callLegId
+  ) {
+    return "ENDED" as const
+  }
+  if (
+    state.ringing?.some(
+      (leg) =>
+        leg.callId === expected.callId && leg.callLegId === expected.callLegId,
+    )
+  ) {
+    return "PENDING" as const
+  }
+  return "LOST" as const
 }
 
 export function currentCallingStateCallID(state: CurrentCallingState) {

@@ -20,6 +20,10 @@ export type IncomingMediaLeg = {
 type CallingMediaCallbacks = {
   onState: (state: MediaState) => void
   onIncoming: (leg: IncomingMediaLeg) => void
+  onEnded?: (
+    leg: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
+  ) => void
+  onAudioIssue?: () => void
   onFailure?: (failure: MediaFailure) => void
   refreshToken?: () => Promise<string | undefined>
 }
@@ -139,6 +143,7 @@ export function applyMicrophoneFence(
 
 type ActiveMediaSession = {
   call: SDKCall
+  remoteStream: MediaStream
   providerLegID: string
   mediaToken: string
   desiredMuted: boolean
@@ -210,6 +215,12 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     client.on("telnyx.ready", () => callbacks.onState("ready"))
     client.on("telnyx.warning", (value) => {
       const warning = value as { warning?: { code?: number } }
+      if (
+        warning.warning?.code === 32001 &&
+        this.activeSession?.attachmentCurrent
+      ) {
+        callbacks.onAudioIssue?.()
+      }
       if (warning.warning?.code !== 34001 || !callbacks.refreshToken) return
       if (!this.tokenRefresh) {
         this.tokenRefresh = callbacks
@@ -235,13 +246,25 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     client.on("telnyx.notification", (value) => {
       const notification = value as SDKNotification
       const call = notification.call
-      if (
-        notification.type !== "callUpdate" ||
-        !call ||
-        !["ringing", "active", "recovering"].includes(call.state)
-      ) {
+      if (notification.type !== "callUpdate" || !call) {
         return
       }
+      if (["hangup", "destroy", "purge"].includes(call.state)) {
+        const session = this.activeSession
+        if (session?.call === call) {
+          this.activeSession = undefined
+          const output = this.output
+          if (output && output.srcObject === session.remoteStream) {
+            output.srcObject = null
+          }
+          callbacks.onEnded?.({
+            providerLegID: session.providerLegID,
+            mediaToken: session.mediaToken,
+          })
+        }
+        return
+      }
+      if (!["ringing", "active", "recovering"].includes(call.state)) return
       if (
         call === this.activeSession?.call &&
         this.activeSession.attachmentCurrent &&
@@ -274,15 +297,17 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
           if (call.state === "ringing") {
             await call.answer({ remoteElement: quarantine.id })
           }
-          if (!call.remoteStream) {
+          const remoteStream = call.remoteStream
+          if (!remoteStream) {
             throw new Error("browser audio stream is unavailable")
           }
-          output.srcObject = call.remoteStream
+          output.srcObject = remoteStream
           await output.play()
           await waitForSecureMedia(call)
           applyMicrophoneFence(call, true, desiredMuted)
           this.activeSession = {
             call,
+            remoteStream,
             providerLegID,
             mediaToken,
             desiredMuted,
