@@ -25,9 +25,11 @@ class FakeAudioElement {
   className = ""
   srcObject: unknown = null
   plays = 0
+  playImplementation?: () => Promise<void>
 
   async play() {
     this.plays += 1
+    await this.playImplementation?.()
   }
 
   remove() {}
@@ -474,6 +476,39 @@ test("a terminal SDK update during answer never attaches the losing media leg", 
     { providerLegID: "losing-leg", mediaToken: "e".repeat(43) },
   ])
   assert.deepEqual(actions, ["answer"])
+})
+
+test("a terminal SDK update during audio playback resolves the answer as ended", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  let rejectPlayback = () => {}
+  let markPlaybackStarted = () => {}
+  const playbackStarted = new Promise<void>((resolve) => {
+    markPlaybackStarted = resolve
+  })
+  output.playImplementation = () =>
+    new Promise<void>((_resolve, reject) => {
+      rejectPlayback = () => reject(new DOMException("interrupted", "AbortError"))
+      markPlaybackStarted()
+    })
+  const call = fakeCall("losing-leg", "g".repeat(43), [])
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  const attachment = legs[0].answer()
+  await playbackStarted
+
+  call.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  rejectPlayback()
+
+  assert.equal(await attachment, "ended")
+  assert.equal(output.srcObject, null)
 })
 
 test("a terminal SDK update before answer makes a stale invite unanswerable", async () => {

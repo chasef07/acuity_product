@@ -224,7 +224,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         .click(),
       secondaryPage
         .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-        .click(),
+        .dblclick(),
     ])
     await Promise.all([
       expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
@@ -343,6 +343,13 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         name: "(555) 555-0100",
         exact: true,
       }),
+    ).toBeVisible()
+    await selectedPage.reload()
+    await expect(
+      callCenter(selectedPage).getByText("Connected", { exact: true }),
+    ).toBeVisible({ timeout: 20_000 })
+    await expect(
+      selectedPage.getByRole("button", { name: "Hang up", exact: true }),
     ).toBeVisible()
     const recordingEndedAt = new Date()
     const recordingStartedAt = new Date(recordingEndedAt.getTime() - 30_000)

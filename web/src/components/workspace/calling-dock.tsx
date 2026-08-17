@@ -866,6 +866,10 @@ export function CallingDock({
           }
           return
         }
+      } else if (activeCallSnapshotRef.current?.direction === "INBOUND") {
+        setInboundCallControlReady(
+          result.data.bridged?.callId === expectedCallRef.current,
+        )
       }
       const currentCallID = currentCallingStateCallID(result.data)
       if (currentCallID && currentCallID !== expectedCallRef.current) {
@@ -1262,6 +1266,7 @@ export function CallingDock({
   }
 
   async function answerRingingLeg(ringingLeg: RingingCallLeg) {
+    if (answeredInboundLegRef.current) return
     setError("")
     setCallingNotice("")
     setAudioIssue(false)

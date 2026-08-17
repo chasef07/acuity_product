@@ -341,11 +341,10 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
             session.attachmentCurrent = true
             return "attached"
           } catch (error) {
-            if (this.activeSession === session) {
-              this.activeSession = undefined
-              if (output.srcObject === session.remoteStream) {
-                output.srcObject = null
-              }
+            if (this.activeSession !== session) return "ended"
+            this.activeSession = undefined
+            if (output.srcObject === session.remoteStream) {
+              output.srcObject = null
             }
             throw error
           }
