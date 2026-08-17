@@ -248,7 +248,9 @@ func (m *Module) finishCallLegCommand(
 	defer func() { _ = tx.Rollback(ctx) }()
 	state, errorCode := m.providerCommandResult(command, executeErr)
 	if command.CallLegID != "" {
-		if err := lockCallLegCommandResult(ctx, tx, command.CallLegID); err != nil {
+		if err := lockCallThenCallLegForCommandMutation(
+			ctx, tx, command.CallLegID,
+		); err != nil {
 			return err
 		}
 	}
@@ -385,7 +387,7 @@ func (m *Module) finishCallLegCommand(
 	return tx.Commit(ctx)
 }
 
-func lockCallLegCommandResult(
+func lockCallThenCallLegForCommandMutation(
 	ctx context.Context,
 	tx pgx.Tx,
 	callLegID string,
@@ -396,7 +398,7 @@ func lockCallLegCommandResult(
 		FROM human_calling_call_legs
 		WHERE id = $1
 	`, callLegID).Scan(&callID); err != nil {
-		return fmt.Errorf("read provider command result Call: %w", err)
+		return fmt.Errorf("read provider command Call ownership: %w", err)
 	}
 	var lockedCallID string
 	if err := tx.QueryRow(ctx, `
@@ -405,7 +407,7 @@ func lockCallLegCommandResult(
 		WHERE id = $1
 		FOR UPDATE
 	`, callID).Scan(&lockedCallID); err != nil {
-		return fmt.Errorf("lock provider command result Call: %w", err)
+		return fmt.Errorf("lock provider command Call: %w", err)
 	}
 	var lockedCallLegID string
 	if err := tx.QueryRow(ctx, `
@@ -414,7 +416,7 @@ func lockCallLegCommandResult(
 		WHERE id = $1 AND call_id = $2
 		FOR UPDATE
 	`, callLegID, lockedCallID).Scan(&lockedCallLegID); err != nil {
-		return fmt.Errorf("lock provider command result CallLeg: %w", err)
+		return fmt.Errorf("lock provider command CallLeg: %w", err)
 	}
 	return nil
 }

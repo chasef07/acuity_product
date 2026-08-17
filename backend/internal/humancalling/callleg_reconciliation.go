@@ -519,6 +519,9 @@ func (m *Module) terminalizeStopRingWindow(
 		return false, fmt.Errorf("begin terminal ring-window reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockCallThenCallLegForCommandMutation(ctx, tx, callLegID); err != nil {
+		return false, err
+	}
 	reconciledAt := m.now()
 	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands command
@@ -707,7 +710,7 @@ func (m *Module) rejectUnobservedCommand(
 		return fmt.Errorf("begin provider observation result: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockCallLegCommandResult(ctx, tx, callLegID); err != nil {
+	if err := lockCallThenCallLegForCommandMutation(ctx, tx, callLegID); err != nil {
 		return err
 	}
 	tag, err := tx.Exec(ctx, `
