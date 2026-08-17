@@ -42,20 +42,21 @@ type Dependency interface {
 }
 
 type Config struct {
-	WorkInterval       time.Duration
-	WorkTimeout        time.Duration
-	CredentialInterval time.Duration
-	CredentialTimeout  time.Duration
-	HealthInterval     time.Duration
-	HealthTimeout      time.Duration
-	MetricInterval     time.Duration
-	MetricTimeout      time.Duration
-	ReceiptBatchSize   int
-	CommandBatchSize   int
-	CommandWorkers     int
-	IdleBackoffMax     time.Duration
-	ErrorBackoffMin    time.Duration
-	ErrorBackoffMax    time.Duration
+	WorkInterval             time.Duration
+	WorkTimeout              time.Duration
+	CredentialInterval       time.Duration
+	CredentialTimeout        time.Duration
+	HealthInterval           time.Duration
+	HealthTimeout            time.Duration
+	MetricInterval           time.Duration
+	MetricTimeout            time.Duration
+	ReceiptBatchSize         int
+	CommandBatchSize         int
+	ProviderCommandBatchSize int
+	CommandWorkers           int
+	IdleBackoffMax           time.Duration
+	ErrorBackoffMin          time.Duration
+	ErrorBackoffMax          time.Duration
 }
 
 type Runner struct {
@@ -78,6 +79,9 @@ func New(
 	if work == nil || messages == nil || interactions == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
 	}
+	if config.ProviderCommandBatchSize == 0 {
+		config.ProviderCommandBatchSize = config.CommandBatchSize
+	}
 	if config.WorkInterval <= 0 ||
 		config.WorkTimeout <= 0 ||
 		config.CredentialInterval <= 0 ||
@@ -86,6 +90,7 @@ func New(
 		config.HealthTimeout <= 0 ||
 		config.ReceiptBatchSize <= 0 ||
 		config.CommandBatchSize <= 0 ||
+		config.ProviderCommandBatchSize <= 0 ||
 		config.CommandWorkers <= 0 {
 		return nil, fmt.Errorf("positive worker limits are required")
 	}
@@ -144,9 +149,9 @@ func (runner *Runner) Run(ctx context.Context) error {
 	for range runner.config.CommandWorkers {
 		go func() {
 			defer lanes.Done()
-			runner.runQueueLane(
+			runner.runProviderCommandLane(
 				ctx,
-				runner.config.CommandBatchSize,
+				runner.config.ProviderCommandBatchSize,
 				"provider_command_processing_failed",
 				runner.work.ProcessNextCommand,
 			)
@@ -202,11 +207,41 @@ func (runner *Runner) runQueueLane(
 	failureEvent string,
 	process func(context.Context) (bool, error),
 ) {
+	runner.runQueueLaneWithIdleMaximum(
+		ctx,
+		batchSize,
+		failureEvent,
+		process,
+		runner.config.IdleBackoffMax,
+	)
+}
+
+func (runner *Runner) runProviderCommandLane(
+	ctx context.Context,
+	batchSize int,
+	failureEvent string,
+	process func(context.Context) (bool, error),
+) {
+	runner.runQueueLaneWithIdleMaximum(
+		ctx,
+		batchSize,
+		failureEvent,
+		process,
+		runner.config.WorkInterval,
+	)
+}
+
+func (runner *Runner) runQueueLaneWithIdleMaximum(
+	ctx context.Context,
+	batchSize int,
+	failureEvent string,
+	process func(context.Context) (bool, error),
+	idleMaximum time.Duration,
+) {
 	backoff := newFailureBackoff(
 		runner.config.ErrorBackoffMin,
 		runner.config.ErrorBackoffMax,
 	)
-	idleMaximum := runner.config.IdleBackoffMax
 	if idleMaximum < runner.config.WorkInterval {
 		idleMaximum = runner.config.WorkInterval
 	}
