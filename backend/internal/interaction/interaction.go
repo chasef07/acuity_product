@@ -135,11 +135,13 @@ type Interaction struct {
 }
 
 type QueryOutcomesCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Cursor     string
-	Limit      int
+	Identity          access.Identity
+	PracticeID        string
+	LocationID        string
+	AppointmentAction AppointmentAction
+	SkipCounts        bool
+	Cursor            string
+	Limit             int
 }
 
 type OutcomeItem struct {
@@ -164,7 +166,7 @@ type OutcomeItem struct {
 type OutcomePage struct {
 	Items      []OutcomeItem
 	NextCursor string
-	Counts     OutcomeCounts
+	Counts     *OutcomeCounts
 }
 
 type OutcomeCounts struct {
@@ -246,6 +248,12 @@ func (m *Module) QueryOutcomes(
 	if m.database == nil || m.access == nil || command.PracticeID == "" {
 		return OutcomePage{}, ErrInvalidInput
 	}
+	if command.AppointmentAction != "" &&
+		command.AppointmentAction != AppointmentBooked &&
+		command.AppointmentAction != AppointmentCancelled &&
+		command.AppointmentAction != AppointmentRescheduled {
+		return OutcomePage{}, ErrInvalidInput
+	}
 	limit := command.Limit
 	if limit == 0 {
 		limit = 50
@@ -284,17 +292,24 @@ func (m *Module) QueryOutcomes(
 		return OutcomePage{}, ErrDenied
 	}
 	page := OutcomePage{Items: []OutcomeItem{}}
-	if err := tx.QueryRow(ctx, `
+	if !command.SkipCounts {
+		counts := OutcomeCounts{}
+		if err := tx.QueryRow(ctx, `
 		SELECT
 			count(*) FILTER (WHERE interaction.appointment_action IS NULL),
 			count(*) FILTER (WHERE interaction.appointment_action = 'BOOKED'),
 			count(*) FILTER (WHERE interaction.appointment_action = 'CANCELLED'),
 			count(*) FILTER (WHERE interaction.appointment_action = 'RESCHEDULED')
 		FROM ai_interactions interaction
-		JOIN ai_interaction_attention attention
-			ON attention.interaction_id = interaction.id
-			AND attention.user_subject = $3
-			AND attention.reviewed_at IS NULL
+		JOIN LATERAL (
+			SELECT candidate.outcome_occurred_at
+			FROM ai_interaction_attention candidate
+			WHERE candidate.interaction_id = interaction.id
+				AND candidate.user_subject = $3
+				AND candidate.reviewed_at IS NULL
+			ORDER BY candidate.outcome_occurred_at DESC
+			LIMIT 1
+		) attention ON true
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id::text = ANY($2::text[])
 			AND NOT EXISTS (
@@ -313,13 +328,15 @@ func (m *Module) QueryOutcomes(
 				OR interaction.status IN ('FAILED', 'ESCALATED')
 				OR interaction.appointment_outcome = 'PARTIAL'
 			)
-	`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
-		&page.Counts.Tasks,
-		&page.Counts.Bookings,
-		&page.Counts.Cancellations,
-		&page.Counts.Reschedules,
-	); err != nil {
-		return OutcomePage{}, fmt.Errorf("count AI outcome attention: %w", err)
+		`, command.PracticeID, locationIDs, command.Identity.Subject).Scan(
+			&counts.Tasks,
+			&counts.Bookings,
+			&counts.Cancellations,
+			&counts.Reschedules,
+		); err != nil {
+			return OutcomePage{}, fmt.Errorf("count AI outcome attention: %w", err)
+		}
+		page.Counts = &counts
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -340,10 +357,15 @@ func (m *Module) QueryOutcomes(
 			COALESCE(interaction.old_appointment_id, ''),
 			COALESCE(interaction.new_appointment_id, '')
 		FROM ai_interactions interaction
-		JOIN ai_interaction_attention attention
-			ON attention.interaction_id = interaction.id
-			AND attention.user_subject = $3
-			AND attention.reviewed_at IS NULL
+		JOIN LATERAL (
+			SELECT candidate.outcome_occurred_at
+			FROM ai_interaction_attention candidate
+			WHERE candidate.interaction_id = interaction.id
+				AND candidate.user_subject = $3
+				AND candidate.reviewed_at IS NULL
+			ORDER BY candidate.outcome_occurred_at DESC
+			LIMIT 1
+		) attention ON true
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
 			AND location.id = interaction.location_id
@@ -365,15 +387,16 @@ func (m *Module) QueryOutcomes(
 				OR interaction.status IN ('FAILED', 'ESCALATED')
 				OR interaction.appointment_outcome = 'PARTIAL'
 			)
+			AND ($4::text = '' OR interaction.appointment_action = $4)
 			AND (
-				NOT $4::boolean
-				OR (attention.outcome_occurred_at, interaction.id) >
-					($5::timestamptz, $6::uuid)
+				NOT $5::boolean
+				OR (attention.outcome_occurred_at, interaction.id) <
+					($6::timestamptz, $7::uuid)
 			)
-		ORDER BY attention.outcome_occurred_at, interaction.id
-		LIMIT $7
+		ORDER BY attention.outcome_occurred_at DESC, interaction.id DESC
+		LIMIT $8
 	`, command.PracticeID, locationIDs, command.Identity.Subject,
-		cursor.Present, nullableOutcomeCursorTime(cursor),
+		command.AppointmentAction, cursor.Present, nullableOutcomeCursorTime(cursor),
 		nullableOutcomeCursorID(cursor), limit+1)
 	if err != nil {
 		return OutcomePage{}, fmt.Errorf("query AI outcome attention: %w", err)
@@ -524,16 +547,14 @@ func (m *Module) ReviewOutcome(
 	if err != nil {
 		return ErrDenied
 	}
-	attentionAt := outcomeAttentionAt(stored)
 	reviewedAt := m.now()
 	tag, err := tx.Exec(ctx, `
 		UPDATE ai_interaction_attention
-		SET reviewed_at = $4
+		SET reviewed_at = $3
 		WHERE interaction_id = $1
 			AND user_subject = $2
-			AND outcome_occurred_at = $3
 			AND reviewed_at IS NULL
-	`, stored.ID, identity.Subject, attentionAt, reviewedAt)
+	`, stored.ID, identity.Subject, reviewedAt)
 	if err != nil {
 		return fmt.Errorf("review AI Interaction outcome: %w", err)
 	}

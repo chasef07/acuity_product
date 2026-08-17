@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  applyOutcomePages,
+  appointmentActionForFolder,
   appointmentFolderForAction,
   categorizeAIOutcomes,
   decrementOutcomeCount,
-  mergeOutcomePages,
 } from "./ai-outcome-attention.ts"
 
 test("AI call outcomes are not classified as Tasks", () => {
@@ -28,17 +29,36 @@ test("appointment actions have one authoritative review folder", () => {
   assert.equal(appointmentFolderForAction("CANCELLED"), "cancellations")
   assert.equal(appointmentFolderForAction("RESCHEDULED"), "reschedules")
   assert.equal(appointmentFolderForAction(), undefined)
+  assert.equal(appointmentActionForFolder("bookings"), "BOOKED")
+  assert.equal(appointmentActionForFolder("cancellations"), "CANCELLED")
+  assert.equal(appointmentActionForFolder("reschedules"), "RESCHEDULED")
 })
 
-test("refreshing outcomes preserves loaded older pages without duplicates", () => {
-  const loaded = [{ id: "current" }, { id: "older" }]
-  const refreshed = [{ id: "new" }, { id: "current" }]
+test("refreshing outcomes resets to a contiguous page and its cursor", () => {
+  const loaded = Array.from({ length: 10 }, (_, index) => ({
+    id: `previous-${index + 1}`,
+  }))
+  const refreshed = Array.from({ length: 10 }, (_, index) => ({
+    id: `new-${index + 1}`,
+  }))
 
-  assert.deepEqual(mergeOutcomePages(loaded, refreshed), [
-    { id: "new" },
-    { id: "current" },
-    { id: "older" },
-  ])
+  assert.deepEqual(
+    applyOutcomePages(
+      loaded,
+      [
+        {
+          folder: "bookings",
+          items: refreshed,
+          nextCursor: "after-new-10",
+        },
+      ],
+      false,
+    ),
+    {
+      items: refreshed,
+      nextCursors: { bookings: "after-new-10" },
+    },
+  )
 })
 
 test("reviewing an outcome decrements only its authoritative folder total", () => {

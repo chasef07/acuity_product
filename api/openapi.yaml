@@ -3018,6 +3018,11 @@ components:
         locationId:
           type: string
           format: uuid
+        appointmentAction:
+          $ref: "#/components/schemas/AIAppointmentAction"
+        includeCounts:
+          type: boolean
+          default: true
         cursor:
           type: string
         limit:
@@ -3075,7 +3080,7 @@ components:
     AIOutcomePage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor, counts]
+      required: [items, nextCursor]
       properties:
         items:
           type: array

@@ -542,6 +542,8 @@ export type AiInteractionEvidence = {
 export type AiOutcomeQueryRequest = {
     practiceId: string;
     locationId?: string;
+    appointmentAction?: AiAppointmentAction;
+    includeCounts?: boolean;
     cursor?: string;
     limit?: number;
 };
@@ -567,7 +569,7 @@ export type AiOutcomeItem = {
 export type AiOutcomePage = {
     items: Array<AiOutcomeItem>;
     nextCursor: string;
-    counts: AiOutcomeCounts;
+    counts?: AiOutcomeCounts;
 };
 
 export type AiOutcomeCounts = {

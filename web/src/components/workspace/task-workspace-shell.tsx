@@ -70,11 +70,16 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { authClient, getAccessToken } from "@/lib/auth-client"
 import {
-  appendOutcomePage,
+  applyOutcomePages,
+  appointmentActionForFolder,
+  appointmentOutcomeFolderKeys,
+  type AppointmentOutcomeCursors,
+  type AppointmentOutcomeFolder,
   decrementOutcomeCount,
-  mergeOutcomePages,
+  emptyAppointmentOutcomeCursors,
 } from "@/lib/ai-outcome-attention"
 import { cn } from "@/lib/utils"
+import { appendUniqueByID } from "@/lib/workspace-ordering"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import {
   projectTaskUpdate,
@@ -148,7 +153,8 @@ export function TaskWorkspaceShell() {
   const [aiOutcomeCounts, setAIOutcomeCounts] = useState<AiOutcomeCounts>(() =>
     emptyAIOutcomeCounts(),
   )
-  const [aiOutcomeNextCursor, setAIOutcomeNextCursor] = useState("")
+  const [aiOutcomeNextCursors, setAIOutcomeNextCursors] =
+    useState<AppointmentOutcomeCursors>(() => emptyAppointmentOutcomeCursors())
   const [aiOutcomesLoading, setAIOutcomesLoading] = useState(false)
   const [aiOutcomesError, setAIOutcomesError] = useState("")
   const [selectedAIInteractionID, setSelectedAIInteractionID] = useState("")
@@ -237,7 +243,7 @@ export function TaskWorkspaceShell() {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
           state: "OPEN",
-          ordering: "priority",
+          ordering: "recent",
           folder: "work",
           ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
@@ -265,7 +271,7 @@ export function TaskWorkspaceShell() {
       hasLoadedTasksRef.current = true
       taskQueryKeyRef.current = queryKey
       const next = append
-        ? [...tasksRef.current, ...result.data.items]
+        ? appendUniqueByID(tasksRef.current, result.data.items)
         : result.data.items
       tasksRef.current = next
       setTasks(next)
@@ -310,7 +316,7 @@ export function TaskWorkspaceShell() {
           practiceId: practiceID,
           ...(locationScopeID ? { locationId: locationScopeID } : {}),
           state: "OPEN",
-          ordering: "time",
+          ordering: "recent",
           folder: "missed_calls",
           ...(taskSearch ? { search: taskSearch } : {}),
           ...(cursor ? { cursor } : {}),
@@ -397,7 +403,11 @@ export function TaskWorkspaceShell() {
     },
     [locationScopeID, practiceID],
   )
-  const loadAIOutcomes = useCallback(async (cursor = "", append = false) => {
+  const loadAIOutcomes = useCallback(async (
+    folder?: AppointmentOutcomeFolder,
+    cursor = "",
+    append = false,
+  ) => {
     if (!practiceID) return
     const requestGeneration = ++aiOutcomeQueryGenerationRef.current
     setAIOutcomesLoading(true)
@@ -408,26 +418,49 @@ export function TaskWorkspaceShell() {
       setLoadState("unauthorized")
       return
     }
-    const result = await queryAiInteractionOutcomes({
-      client: portalClient(token),
-      body: {
-        practiceId: practiceID,
-        ...(locationScopeID ? { locationId: locationScopeID } : {}),
-        ...(cursor ? { cursor } : {}),
-        limit: 50,
-      },
-    }).catch(() => undefined)
+    const client = portalClient(token)
+    const queryPage = async (
+      pageFolder: AppointmentOutcomeFolder,
+      pageCursor: string,
+      includeCounts: boolean,
+    ) => {
+      const result = await queryAiInteractionOutcomes({
+        client,
+        body: {
+          practiceId: practiceID,
+          ...(locationScopeID ? { locationId: locationScopeID } : {}),
+          appointmentAction: appointmentActionForFolder(pageFolder),
+          includeCounts,
+          ...(pageCursor ? { cursor: pageCursor } : {}),
+          limit: 10,
+        },
+      }).catch(() => undefined)
+      return {
+        folder: pageFolder,
+        data: result?.data,
+        status: result?.response?.status,
+        includeCounts,
+      }
+    }
+    const loaded = aiOutcomesRef.current
+    const requestedFolders = folder ? [folder] : appointmentOutcomeFolderKeys
+    const responses = await Promise.all(
+      requestedFolders.map((pageFolder, index) =>
+        queryPage(pageFolder, folder ? cursor : "", !append && index === 0),
+      ),
+    )
     if (requestGeneration !== aiOutcomeQueryGenerationRef.current) return
     setAIOutcomesLoading(false)
-    if (!result?.data) {
-      if (
-        result?.response?.status === 401 ||
-        result?.response?.status === 403
-      ) {
+    const failed = responses.find(
+      (response) =>
+        !response.data || (response.includeCounts && !response.data.counts),
+    )
+    if (failed) {
+      if (failed.status === 401 || failed.status === 403) {
         aiOutcomesRef.current = []
         setAIOutcomes([])
         setAIOutcomeCounts(emptyAIOutcomeCounts())
-        setAIOutcomeNextCursor("")
+        setAIOutcomeNextCursors(emptyAppointmentOutcomeCursors())
         setSelectedAIInteractionID("")
         setLoadState("unauthorized")
         return
@@ -435,19 +468,28 @@ export function TaskWorkspaceShell() {
       setAIOutcomesError("AI appointment updates are unavailable.")
       return
     }
-    const loaded = aiOutcomesRef.current
-    const refreshing = !append && loaded.length > 0
-    const next = append
-      ? appendOutcomePage(loaded, result.data.items)
-      : refreshing
-        ? mergeOutcomePages(loaded, result.data.items)
-        : result.data.items
-    aiOutcomesRef.current = next
-    setAIOutcomes(next)
-    setAIOutcomeCounts(result.data.counts)
-    if (!refreshing || append) {
-      setAIOutcomeNextCursor(result.data.nextCursor)
+    const pages = responses.map((response) => ({
+      folder: response.folder,
+      data: response.data!,
+    }))
+    const applied = applyOutcomePages(
+      loaded,
+      pages.map((page) => ({
+        folder: page.folder,
+        items: page.data.items,
+        nextCursor: page.data.nextCursor,
+      })),
+      append,
+    )
+    aiOutcomesRef.current = applied.items
+    setAIOutcomes(applied.items)
+    if (!append && pages[0].data.counts) {
+      setAIOutcomeCounts(pages[0].data.counts)
     }
+    setAIOutcomeNextCursors((current) => ({
+      ...(append ? current : emptyAppointmentOutcomeCursors()),
+      ...applied.nextCursors,
+    }))
   }, [locationScopeID, practiceID])
   const reviewAIOutcome = useCallback(async (interactionID: string) => {
     const token = await getAccessToken()
@@ -570,8 +612,8 @@ export function TaskWorkspaceShell() {
             },
             signal,
           }).catch(() => undefined),
-          loadTaskWindow("work", "priority", taskLoadedCount),
-          loadTaskWindow("missed_calls", "time", recoveryLoadedCount),
+          loadTaskWindow("work", "recent", taskLoadedCount),
+          loadTaskWindow("missed_calls", "recent", recoveryLoadedCount),
           queryMessageThreads({
             client,
             body: {
@@ -909,7 +951,7 @@ export function TaskWorkspaceShell() {
     setMessageThreads([])
     setAIOutcomes([])
     setAIOutcomeCounts(emptyAIOutcomeCounts())
-    setAIOutcomeNextCursor("")
+    setAIOutcomeNextCursors(emptyAppointmentOutcomeCursors())
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
@@ -976,7 +1018,7 @@ export function TaskWorkspaceShell() {
     setMessageThreads([])
     setAIOutcomes([])
     setAIOutcomeCounts(emptyAIOutcomeCounts())
-    setAIOutcomeNextCursor("")
+    setAIOutcomeNextCursors(emptyAppointmentOutcomeCursors())
     setAIOutcomesError("")
     setSelectedAIInteractionID("")
     updateSelectedTask(undefined)
@@ -1324,7 +1366,7 @@ export function TaskWorkspaceShell() {
           messageLoading={messagesLoading}
           outcomesLoading={aiOutcomesLoading}
           outcomesError={aiOutcomesError}
-          outcomeNextCursor={aiOutcomeNextCursor}
+          outcomeNextCursors={aiOutcomeNextCursors}
           nextCursor={nextCursor}
           recoveryNextCursor={recoveryNextCursor}
           messageNextCursor={messageNextCursor}
@@ -1356,8 +1398,8 @@ export function TaskWorkspaceShell() {
           onMessageLoadMore={() =>
             void loadMessageThreads(messageNextCursor, true)
           }
-          onOutcomeLoadMore={() =>
-            void loadAIOutcomes(aiOutcomeNextCursor, true)
+          onOutcomeLoadMore={(folder) =>
+            void loadAIOutcomes(folder, aiOutcomeNextCursors[folder], true)
           }
         />
         <SidebarInset
