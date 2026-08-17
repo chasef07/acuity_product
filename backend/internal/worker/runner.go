@@ -42,21 +42,21 @@ type Dependency interface {
 }
 
 type Config struct {
-	WorkInterval             time.Duration
-	WorkTimeout              time.Duration
-	CredentialInterval       time.Duration
-	CredentialTimeout        time.Duration
-	HealthInterval           time.Duration
-	HealthTimeout            time.Duration
-	MetricInterval           time.Duration
-	MetricTimeout            time.Duration
-	ReceiptBatchSize         int
-	CommandBatchSize         int
-	ProviderCommandBatchSize int
-	CommandWorkers           int
-	IdleBackoffMax           time.Duration
-	ErrorBackoffMin          time.Duration
-	ErrorBackoffMax          time.Duration
+	WorkInterval                  time.Duration
+	WorkTimeout                   time.Duration
+	CredentialInterval            time.Duration
+	CredentialTimeout             time.Duration
+	HealthInterval                time.Duration
+	HealthTimeout                 time.Duration
+	MetricInterval                time.Duration
+	MetricTimeout                 time.Duration
+	ReceiptBatchSize              int
+	RecoveryAndMessagingBatchSize int
+	ProviderCommandBatchSize      int
+	CommandWorkers                int
+	IdleBackoffMax                time.Duration
+	ErrorBackoffMin               time.Duration
+	ErrorBackoffMax               time.Duration
 }
 
 type Runner struct {
@@ -79,9 +79,6 @@ func New(
 	if work == nil || messages == nil || interactions == nil || dependency == nil {
 		return nil, fmt.Errorf("worker dependencies are required")
 	}
-	if config.ProviderCommandBatchSize == 0 {
-		config.ProviderCommandBatchSize = config.CommandBatchSize
-	}
 	if config.WorkInterval <= 0 ||
 		config.WorkTimeout <= 0 ||
 		config.CredentialInterval <= 0 ||
@@ -89,7 +86,7 @@ func New(
 		config.HealthInterval <= 0 ||
 		config.HealthTimeout <= 0 ||
 		config.ReceiptBatchSize <= 0 ||
-		config.CommandBatchSize <= 0 ||
+		config.RecoveryAndMessagingBatchSize <= 0 ||
 		config.ProviderCommandBatchSize <= 0 ||
 		config.CommandWorkers <= 0 {
 		return nil, fmt.Errorf("positive worker limits are required")
@@ -170,7 +167,7 @@ func (runner *Runner) Run(ctx context.Context) error {
 		defer lanes.Done()
 		runner.runQueueLane(
 			ctx,
-			runner.config.CommandBatchSize,
+			runner.config.RecoveryAndMessagingBatchSize,
 			"work_recovery_reconciliation_failed",
 			runner.work.ProcessNextRecoveryReconciliation,
 		)
@@ -179,7 +176,7 @@ func (runner *Runner) Run(ctx context.Context) error {
 		defer lanes.Done()
 		runner.runQueueLane(
 			ctx,
-			runner.config.CommandBatchSize,
+			runner.config.RecoveryAndMessagingBatchSize,
 			"messaging_command_processing_failed",
 			runner.messages.ProcessNextCommand,
 		)
