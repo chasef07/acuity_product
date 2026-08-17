@@ -357,27 +357,32 @@ func runWorker(
 		return fmt.Errorf("initial calling credential reconciliation: %w", err)
 	}
 	interactions := interaction.New(database, accessModule, nil)
-	runner, err := worker.New(worker.Config{
-		WorkInterval:       250 * time.Millisecond,
-		WorkTimeout:        10 * time.Second,
-		CredentialInterval: 30 * time.Second,
-		CredentialTimeout:  config.AcquireTimeout,
-		HealthInterval:     30 * time.Second,
-		HealthTimeout:      config.AcquireTimeout,
-		MetricInterval:     30 * time.Second,
-		MetricTimeout:      config.AcquireTimeout,
-		ReceiptBatchSize:   8,
-		CommandBatchSize:   1,
-		CommandWorkers:     2,
-		IdleBackoffMax:     2 * time.Second,
-		ErrorBackoffMin:    250 * time.Millisecond,
-		ErrorBackoffMax:    10 * time.Second,
-	}, calling, messages, interactions, pool)
+	runner, err := worker.New(productionWorkerConfig(config.AcquireTimeout), calling, messages, interactions, pool)
 	if err != nil {
 		return err
 	}
 	slog.Info("runtime_ready", "role", config.Role)
 	return runner.Run(ctx)
+}
+
+func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
+	return worker.Config{
+		WorkInterval:             250 * time.Millisecond,
+		WorkTimeout:              10 * time.Second,
+		CredentialInterval:       30 * time.Second,
+		CredentialTimeout:        acquireTimeout,
+		HealthInterval:           30 * time.Second,
+		HealthTimeout:            acquireTimeout,
+		MetricInterval:           30 * time.Second,
+		MetricTimeout:            acquireTimeout,
+		ReceiptBatchSize:         8,
+		CommandBatchSize:         1,
+		ProviderCommandBatchSize: 8,
+		CommandWorkers:           2,
+		IdleBackoffMax:           2 * time.Second,
+		ErrorBackoffMin:          250 * time.Millisecond,
+		ErrorBackoffMax:          10 * time.Second,
+	}
 }
 
 func newTelnyxProvider(config app.Config) (*humancalling.TelnyxAdapter, error) {

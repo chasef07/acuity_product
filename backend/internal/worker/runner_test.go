@@ -8,6 +8,92 @@ import (
 	"time"
 )
 
+func TestProviderCommandLaneCapsIdlePollingAtWorkInterval(t *testing.T) {
+	var delays []time.Duration
+	eligible := false
+	processed := 0
+	runner := &Runner{
+		config: Config{
+			WorkInterval:   10 * time.Millisecond,
+			WorkTimeout:    time.Second,
+			IdleBackoffMax: 100 * time.Millisecond,
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			if len(delays) == 4 {
+				eligible = true
+				return true
+			}
+			return len(delays) < 5
+		},
+	}
+
+	runner.runProviderCommandLane(
+		context.Background(),
+		1,
+		"provider_command_processing_failed",
+		func(context.Context) (bool, error) {
+			if !eligible {
+				return false, nil
+			}
+			processed++
+			return true, nil
+		},
+	)
+
+	want := []time.Duration{
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("provider command polling delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("provider command polling delays = %v, want %v", delays, want)
+		}
+	}
+	if processed != 1 {
+		t.Fatalf("newly eligible provider commands processed = %d, want 1", processed)
+	}
+}
+
+func TestProviderCommandLaneDrainsExactBatchBeforeYielding(t *testing.T) {
+	processed := 0
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval: 50 * time.Millisecond,
+			WorkTimeout:  time.Second,
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return false
+		},
+	}
+
+	runner.runProviderCommandLane(
+		context.Background(),
+		8,
+		"provider_command_processing_failed",
+		func(context.Context) (bool, error) {
+			processed++
+			return true, nil
+		},
+	)
+
+	if processed != 8 {
+		t.Fatalf("provider commands processed before yield = %d, want 8", processed)
+	}
+	want := []time.Duration{50 * time.Millisecond}
+	if len(delays) != len(want) || delays[0] != want[0] {
+		t.Fatalf("provider command yield delays = %v, want %v", delays, want)
+	}
+}
+
 func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *testing.T) {
 	work := newControlledWork()
 	work.staleReconciliationStarted = make(chan struct{}, 1)

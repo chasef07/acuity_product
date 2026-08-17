@@ -8,12 +8,26 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/app"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestProductionWorkerConfigDrainsBoundedProviderCommandBurst(t *testing.T) {
+	config := productionWorkerConfig(3 * time.Second)
+	if config.ProviderCommandBatchSize != 8 {
+		t.Fatalf("provider command batch size = %d, want 8", config.ProviderCommandBatchSize)
+	}
+	if config.CommandBatchSize != 1 {
+		t.Fatalf("other command batch size = %d, want 1", config.CommandBatchSize)
+	}
+	if config.CommandWorkers != 2 {
+		t.Fatalf("provider command workers = %d, want 2", config.CommandWorkers)
+	}
+}
 
 func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) {
 	pool := testdb.Open(t)
