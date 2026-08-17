@@ -1,4 +1,5 @@
 import type { IncomingMediaLeg, MediaState } from "./media-adapter.ts"
+import type { CallingState } from "../api/generated/types.gen.ts"
 
 type MediaIdentity = Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">
 
@@ -13,12 +14,10 @@ type ConfirmationAttempt<T> = {
   status?: number
 }
 
-type CurrentCallingState = {
-  ringing?: Array<{ callId: string; callLegId: string; state?: string }>
-  bridged?: { callId: string; callLegId?: string; state?: string }
-  voicemail?: { callId: string; callLegId?: string; state?: string }
-  disposition?: { callId: string; callLegId?: string; state?: string }
-}
+type CurrentCallingState = Pick<
+  CallingState,
+  "ringing" | "bridged" | "voicemail" | "disposition"
+>
 
 type AnsweredCallLeg = {
   callId: string

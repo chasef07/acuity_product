@@ -235,11 +235,48 @@ export function CallingDock({
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
   const notificationsRef = useRef(new Map<string, Notification>())
+  const clearMediaAttachment = useCallback(() => {
+    mediaLegRef.current = null
+    setMediaAttached(false)
+    setMuted(false)
+    setAudioIssue(false)
+  }, [])
   const clearAnsweredInboundLeg = useCallback(() => {
     answeredInboundLegRef.current = undefined
     setInboundCallControlReady(false)
-    setAudioIssue(false)
   }, [])
+  const rejectMediaLeg = useCallback(
+    async (leg: IncomingMediaLeg, currentAttachment = false) => {
+      try {
+        await leg.reject()
+        return true
+      } catch {
+        if (currentAttachment) {
+          const adapter = adapterRef.current
+          adapterRef.current = null
+          let disconnectFailed = false
+          try {
+            await adapter?.disconnect()
+          } catch {
+            disconnectFailed = true
+          }
+          mediaStateRef.current = "unavailable"
+          setMediaState("unavailable")
+          setError(
+            disconnectFailed
+              ? "Browser audio could not be safely stopped. Reconnect calling before answering another call."
+              : "Browser audio was stopped because the obsolete call leg could not be released. Reconnect calling.",
+          )
+          return false
+        }
+        setError(
+          "An obsolete browser media invite could not be released. Reconnect calling.",
+        )
+        return false
+      }
+    },
+    [],
+  )
   const applyActiveCall = useCallback((call?: CallingCall) => {
     if (call && call.id !== expectedCallRef.current) return false
     const applied = activeCallSnapshotRef.current
@@ -461,23 +498,38 @@ export function CallingDock({
         expectedCallRef.current,
       )
       if (route === "RECOVER_ATTACHED") {
-        await leg.answer().catch(() => undefined)
+        let outcome
+        try {
+          outcome = await leg.answer()
+        } catch {
+          clearMediaAttachment()
+          setError("Browser call audio could not be restored. Reconnect calling.")
+          return
+        }
+        if (outcome === "ended") return
         mediaLegRef.current = leg
         setMediaAttached(true)
         setAudioIssue(false)
         return
       }
       if (route === "REJECT") {
-        await leg.reject().catch(() => undefined)
+        await rejectMediaLeg(leg)
         return
       }
       if (route === "CONFIRM_OUTBOUND") {
         const token = await getAccessToken()
         if (!token) {
-          await leg.reject().catch(() => undefined)
+          await rejectMediaLeg(leg)
           return
         }
-        await leg.answer()
+        let outcome
+        try {
+          outcome = await leg.answer()
+        } catch (error) {
+          setError(microphoneFailureMessage(error))
+          return
+        }
+        if (outcome === "ended") return
         const callID = expectedCallRef.current
         const confirmed = await confirmOutboundMediaWithRetry(async () => {
           const result = await confirmCallingMediaReady({
@@ -488,7 +540,7 @@ export function CallingDock({
           return { data: result.data, status: result.response?.status }
         })
         if (!confirmed) {
-          await leg.reject().catch(() => undefined)
+          await rejectMediaLeg(leg, true)
           return
         }
         applyActiveCall(confirmed)
@@ -499,12 +551,12 @@ export function CallingDock({
       }
       const existing = incomingLegsRef.current.get(leg.mediaToken)
       if (existing && existing.providerLegID !== leg.providerLegID) {
-        await leg.reject().catch(() => undefined)
+        await rejectMediaLeg(leg)
         return
       }
       incomingLegsRef.current.set(leg.mediaToken, leg)
     },
-    [applyActiveCall, sessionID],
+    [applyActiveCall, clearMediaAttachment, rejectMediaLeg, sessionID],
   )
 
   const connectMedia = useCallback(async (ownedLease?: SoftphoneState) => {
@@ -649,16 +701,21 @@ export function CallingDock({
         onIncoming: (leg) => void handleIncoming(leg),
         onEnded: (leg) => {
           const attached = mediaLegRef.current
+          const answering = answeredInboundLegRef.current
+          incomingLegsRef.current.delete(leg.mediaToken)
           if (
-            attached?.providerLegID !== leg.providerLegID ||
-            attached.mediaToken !== leg.mediaToken
+            !(
+              attached?.providerLegID === leg.providerLegID &&
+              attached.mediaToken === leg.mediaToken
+            ) &&
+            !(
+              answering?.providerLegID === leg.providerLegID &&
+              answering.mediaToken === leg.mediaToken
+            )
           ) {
             return
           }
-          mediaLegRef.current = null
-          setMediaAttached(false)
-          setMuted(false)
-          setAudioIssue(false)
+          clearMediaAttachment()
           setInboundCallControlReady(false)
           void ownerLoopRef.current?.incomingMedia()
         },
@@ -693,15 +750,21 @@ export function CallingDock({
   }, [
     handleIncoming,
     applyActiveCall,
+    clearMediaAttachment,
     rememberAvailabilityIntent,
     sessionID,
     updateReadiness,
   ])
 
-  const refreshCallingState = useCallback(async () => {
+  const refreshCallingState = useCallback(async (requireFresh = false) => {
     if (!ownerRef.current) {
       setRingingLegs([])
       return
+    }
+    const currentPoll = statePollRef.current
+    if (currentPoll) {
+      await currentPoll
+      if (!requireFresh) return
     }
     if (statePollRef.current) return statePollRef.current
     const poll = (async () => {
@@ -745,32 +808,54 @@ export function CallingDock({
         const status = answeredCallLegStatus(result.data, answeredInboundLeg)
         setInboundCallControlReady(status === "BRIDGED")
         if (status === "LOST") {
-          const observed = await getCallingCall({
-            client: portalClient(token),
-            path: { callId: answeredInboundLeg.callId },
-          }).catch(() => undefined)
-          const answeredElsewhere =
-            observed?.data?.state === "CONNECTING" ||
-            observed?.data?.state === "CONNECTED" ||
-            observed?.data?.state === "NEEDS_DISPOSITION"
+          let answeredElsewhere =
+            (result.data.bridged?.callId === answeredInboundLeg.callId &&
+              result.data.bridged.callLegId !== answeredInboundLeg.callLegId) ||
+            (result.data.disposition?.callId === answeredInboundLeg.callId &&
+              result.data.disposition.callLegId !==
+                answeredInboundLeg.callLegId)
+          let callEnded = false
+          if (!answeredElsewhere) {
+            try {
+              const observed = await getCallingCall({
+                client: portalClient(token),
+                path: { callId: answeredInboundLeg.callId },
+              })
+              if (observed.data) {
+                answeredElsewhere =
+                  observed.data.state === "CONNECTING" ||
+                  observed.data.state === "CONNECTED" ||
+                  observed.data.state === "NEEDS_DISPOSITION"
+                callEnded = !answeredElsewhere
+              } else {
+                setError(
+                  "The Call changed, but its current state could not be confirmed. Refresh calling.",
+                )
+              }
+            } catch {
+              setError(
+                "The Call changed, but its current state could not be confirmed. Refresh calling.",
+              )
+            }
+          }
           const attached = mediaLegRef.current
           if (
             attached?.providerLegID === answeredInboundLeg.providerLegID &&
             attached.mediaToken === answeredInboundLeg.mediaToken
           ) {
-            await attached.reject().catch(() => undefined)
-            mediaLegRef.current = null
+            await rejectMediaLeg(attached, true)
           }
           clearAnsweredInboundLeg()
-          setMediaAttached(false)
-          setMuted(false)
+          clearMediaAttachment()
           applyActiveCall()
           expectedCallRef.current = ""
           setExpectedCallID("")
           setCallingNotice(
             answeredElsewhere
               ? "Another staff member answered this call."
-              : "The call ended before this browser connected.",
+              : callEnded
+                ? "The call ended before this browser connected."
+                : "This call is no longer available in this browser.",
           )
           if (
             mediaStateRef.current === "ready" &&
@@ -795,6 +880,8 @@ export function CallingDock({
   }, [
     applyActiveCall,
     clearAnsweredInboundLeg,
+    clearMediaAttachment,
+    rejectMediaLeg,
     readinessWriter,
     updateReadiness,
   ])
@@ -1192,9 +1279,15 @@ export function CallingDock({
     }
     setInboundCallControlReady(false)
     try {
-      await leg.answer()
+      const outcome = await leg.answer()
+      if (outcome === "ended") {
+        setCallingNotice("This call is no longer available in this browser.")
+        await refreshCallingState(true)
+        return
+      }
     } catch (error) {
       clearAnsweredInboundLeg()
+      clearMediaAttachment()
       setError(microphoneFailureMessage(error))
       await refreshCallingState()
       return

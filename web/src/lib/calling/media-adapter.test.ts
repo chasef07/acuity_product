@@ -431,3 +431,73 @@ test("a terminal SDK update detaches the losing media leg", async () => {
   assert.equal(legs[0].sendDTMF("5"), false)
   assert.deepEqual(actions, ["answer", "unmute"])
 })
+
+test("a terminal SDK update during answer never attaches the losing media leg", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const ended: Array<{ providerLegID: string; mediaToken: string }> = []
+  const actions: string[] = []
+  let finishAnswer = () => {}
+  let markAnswerStarted = () => {}
+  const answerStarted = new Promise<void>((resolve) => {
+    markAnswerStarted = resolve
+  })
+  const answerPending = new Promise<void>((resolve) => {
+    finishAnswer = resolve
+  })
+  const call = fakeCall("losing-leg", "e".repeat(43), actions)
+  call.answer = async () => {
+    actions.push("answer")
+    markAnswerStarted()
+    await answerPending
+  }
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+    onEnded: (leg) => ended.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  const attachment = legs[0].answer()
+  await answerStarted
+
+  call.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  finishAnswer()
+
+  assert.equal(await attachment, "ended")
+  assert.equal(output.srcObject, null)
+  assert.equal(legs[0].sendDTMF("5"), false)
+  assert.deepEqual(ended, [
+    { providerLegID: "losing-leg", mediaToken: "e".repeat(43) },
+  ])
+  assert.deepEqual(actions, ["answer"])
+})
+
+test("a terminal SDK update before answer makes a stale invite unanswerable", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const ended: Array<{ providerLegID: string; mediaToken: string }> = []
+  const actions: string[] = []
+  const call = fakeCall("stale-leg", "f".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+    onEnded: (leg) => ended.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  call.state = "purge"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+
+  assert.equal(await legs[0].answer(), "ended")
+  assert.equal(output.srcObject, null)
+  assert.deepEqual(ended, [
+    { providerLegID: "stale-leg", mediaToken: "f".repeat(43) },
+  ])
+  assert.deepEqual(actions, [])
+})
