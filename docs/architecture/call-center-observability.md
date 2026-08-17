@@ -37,6 +37,14 @@ Allowed outcomes and actions are declared in
 `backend/internal/observability/observability.go`. Unknown values become
 `other`; they never become a new label.
 
+Provider-command `queue_seconds` measures creation to claim. It includes
+intentional `next_attempt_at` scheduling, dependency gating, serialization
+behind another active command for the same Call, and worker polling delay. The
+current durable model does not record one exact eligibility transition across
+those blockers, so this metric must not be interpreted as eligible-to-claim
+latency. Separating that interval would require an explicit durable eligibility
+timestamp at the owning state transitions, not an inferred metric label.
+
 ## Privacy and cardinality
 
 Metric records must not contain Practice, Location, User, Call, receipt,

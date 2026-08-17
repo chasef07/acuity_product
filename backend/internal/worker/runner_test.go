@@ -3,107 +3,94 @@ package worker
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestRunnerClaimsNewlyEligibleProviderCommandWithinPollingInterval(t *testing.T) {
-	work := newEligibleCommandWork(4)
-	runner, err := New(Config{
-		WorkInterval:       10 * time.Millisecond,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   1,
-		CommandBatchSize:   1,
-		CommandWorkers:     1,
-		IdleBackoffMax:     100 * time.Millisecond,
-	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
-	if err != nil {
-		t.Fatalf("create worker runner: %v", err)
+func TestProviderCommandLaneCapsIdlePollingAtWorkInterval(t *testing.T) {
+	var delays []time.Duration
+	eligible := false
+	processed := 0
+	runner := &Runner{
+		config: Config{
+			WorkInterval:   10 * time.Millisecond,
+			WorkTimeout:    time.Second,
+			IdleBackoffMax: 100 * time.Millisecond,
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			if len(delays) == 4 {
+				eligible = true
+				return true
+			}
+			return len(delays) < 5
+		},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	runDone := make(chan error, 1)
-	go func() {
-		runDone <- runner.Run(ctx)
-	}()
+	runner.runProviderCommandLane(
+		context.Background(),
+		1,
+		"provider_command_processing_failed",
+		func(context.Context) (bool, error) {
+			if !eligible {
+				return false, nil
+			}
+			processed++
+			return true, nil
+		},
+	)
 
-	waitForSignal(t, work.idleAtMaximum, "provider command lane to reach maximum idle backoff")
-	eligibleAt := time.Now()
-	close(work.eligible)
-	waitForSignal(t, work.processed, "newly eligible provider command")
-	claimDelay := time.Since(eligibleAt)
-	if claimDelay > 50*time.Millisecond {
-		t.Fatalf("eligible provider command claim delay = %v, want at most 50ms", claimDelay)
+	want := []time.Duration{
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
 	}
-	t.Logf("eligible provider command claim delay = %v", claimDelay)
-
-	cancel()
-	select {
-	case err := <-runDone:
-		if err != nil {
-			t.Fatalf("run worker: %v", err)
+	if len(delays) != len(want) {
+		t.Fatalf("provider command polling delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("provider command polling delays = %v, want %v", delays, want)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("worker runner did not stop after cancellation")
+	}
+	if processed != 1 {
+		t.Fatalf("newly eligible provider commands processed = %d, want 1", processed)
 	}
 }
 
-func TestRunnerDrainsBoundedProviderCommandBurstBeforePollingDelay(t *testing.T) {
-	work := &hotCommandWork{
-		controlledWork: newControlledWork(),
-		processed:      make(chan struct{}, 9),
-	}
-	runner, err := New(Config{
-		WorkInterval:             50 * time.Millisecond,
-		WorkTimeout:              time.Second,
-		CredentialInterval:       time.Hour,
-		CredentialTimeout:        time.Second,
-		HealthInterval:           time.Hour,
-		HealthTimeout:            time.Second,
-		ReceiptBatchSize:         1,
-		CommandBatchSize:         1,
-		ProviderCommandBatchSize: 8,
-		CommandWorkers:           1,
-		IdleBackoffMax:           time.Second,
-	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
-	if err != nil {
-		t.Fatalf("create worker runner: %v", err)
+func TestProviderCommandLaneDrainsExactBatchBeforeYielding(t *testing.T) {
+	processed := 0
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval: 50 * time.Millisecond,
+			WorkTimeout:  time.Second,
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return false
+		},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	runDone := make(chan error, 1)
-	startedAt := time.Now()
-	go func() {
-		runDone <- runner.Run(ctx)
-	}()
-	for range 8 {
-		waitForSignal(t, work.processed, "provider command in bounded burst")
-	}
-	elapsed := time.Since(startedAt)
-	if elapsed > 25*time.Millisecond {
-		t.Fatalf("eight-command burst drain = %v, want no polling delay", elapsed)
-	}
-	t.Logf("eight-command bounded burst drain = %v", elapsed)
-	select {
-	case <-work.processed:
-		t.Fatal("provider command lane exceeded its drain bound before yielding")
-	case <-time.After(25 * time.Millisecond):
-	}
+	runner.runProviderCommandLane(
+		context.Background(),
+		8,
+		"provider_command_processing_failed",
+		func(context.Context) (bool, error) {
+			processed++
+			return true, nil
+		},
+	)
 
-	cancel()
-	select {
-	case err := <-runDone:
-		if err != nil {
-			t.Fatalf("run worker: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("worker runner did not stop after cancellation")
+	if processed != 8 {
+		t.Fatalf("provider commands processed before yield = %d, want 8", processed)
+	}
+	want := []time.Duration{50 * time.Millisecond}
+	if len(delays) != len(want) || delays[0] != want[0] {
+		t.Fatalf("provider command yield delays = %v, want %v", delays, want)
 	}
 }
 
@@ -561,52 +548,9 @@ type hotReceiptWork struct {
 	projected chan struct{}
 }
 
-type hotCommandWork struct {
-	*controlledWork
-	processed chan struct{}
-}
-
-func (work *hotCommandWork) ProcessNextCommand(context.Context) (bool, error) {
-	work.processed <- struct{}{}
-	return true, nil
-}
-
 func (work *hotReceiptWork) ProcessNextReceipt(context.Context) (bool, error) {
 	work.projected <- struct{}{}
 	return true, nil
-}
-
-type eligibleCommandWork struct {
-	*controlledWork
-	emptyBeforeMaximum int32
-	idleAtMaximum      chan struct{}
-	idleOnce           sync.Once
-	eligible           chan struct{}
-	processed          chan struct{}
-	processedOnce      sync.Once
-}
-
-func newEligibleCommandWork(emptyBeforeMaximum int32) *eligibleCommandWork {
-	return &eligibleCommandWork{
-		controlledWork:     newControlledWork(),
-		emptyBeforeMaximum: emptyBeforeMaximum,
-		idleAtMaximum:      make(chan struct{}),
-		eligible:           make(chan struct{}),
-		processed:          make(chan struct{}),
-	}
-}
-
-func (work *eligibleCommandWork) ProcessNextCommand(context.Context) (bool, error) {
-	if work.commandCalls.Add(1) == work.emptyBeforeMaximum {
-		work.idleOnce.Do(func() { close(work.idleAtMaximum) })
-	}
-	select {
-	case <-work.eligible:
-		work.processedOnce.Do(func() { close(work.processed) })
-		return true, nil
-	default:
-		return false, nil
-	}
 }
 
 func (work *controlledWork) ProcessNextCommand(ctx context.Context) (bool, error) {

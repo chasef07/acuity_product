@@ -359,7 +359,7 @@
   },
   {
     "name": "acuity_call_center_provider_command_queue_seconds",
-    "description": "Distribution of durable provider command queue time.",
+    "description": "Distribution of provider command creation-to-claim time, including scheduled, dependency, same-Call serialization, and worker polling delay.",
     "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command\"",
     "metricDescriptor": {
       "metricKind": "DELTA",
