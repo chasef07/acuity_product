@@ -1061,12 +1061,26 @@ func prepareTerminalNeverStartedCaller(
 	return pool, calling, terminalCallID, terminalLegID, activeLegID
 }
 
-func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
-	now := time.Date(2026, time.August, 12, 15, 0, 0, 0, time.UTC)
-	provider := &recordingProvider{}
-	pool, calling, _, staff := prepareInboundFanout(
-		t, now, "terminal-stop-ring-window", provider, 1,
-	)
+type terminalStopRingWindowFixture struct {
+	pool               *pgxpool.Pool
+	calling            *humancalling.Module
+	staff              []access.Identity
+	callID             string
+	callerLegID        string
+	practiceID         string
+	commandID          string
+	beforeCommandCount int
+}
+
+func prepareTerminalStopRingWindow(
+	t *testing.T,
+	now time.Time,
+	prefix string,
+	provider *recordingProvider,
+	commandState string,
+) terminalStopRingWindowFixture {
+	t.Helper()
+	pool, calling, _, staff := prepareInboundFanout(t, now, prefix, provider, 1)
 	var callID, callerLegID, practiceID string
 	if err := pool.QueryRow(context.Background(), `
 		SELECT call.id::text, caller.id::text, call.practice_id::text
@@ -1106,7 +1120,7 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO human_calling_provider_commands (
 			call_id, call_leg_id, action, target_id, payload, state,
-			sent_at, created_at, updated_at
+			next_attempt_at, sent_at, created_at, updated_at
 		)
 		SELECT $1, $2, 'STOP_RING_WINDOW', provider_call_control_id,
 			jsonb_build_object(
@@ -1118,11 +1132,13 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 					ORDER BY created_at, id LIMIT 1
 				)
 			),
-			'SENT', $3, $3, $3
+			$4, $3,
+			CASE WHEN $4 = 'SENT' THEN $3::timestamptz ELSE NULL END,
+			$3, $3
 		FROM human_calling_call_legs
 		WHERE id = $2
 		RETURNING id::text
-	`, callID, callerLegID, now.Add(-2*time.Minute),
+	`, callID, callerLegID, now.Add(-2*time.Minute), commandState,
 	).Scan(&commandID); err != nil {
 		t.Fatalf("seed accepted Stop ring-window command: %v", err)
 	}
@@ -1132,6 +1148,23 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	`, callID).Scan(&beforeCommandCount); err != nil {
 		t.Fatal(err)
 	}
+	return terminalStopRingWindowFixture{
+		pool: pool, calling: calling, staff: staff,
+		callID: callID, callerLegID: callerLegID, practiceID: practiceID,
+		commandID: commandID, beforeCommandCount: beforeCommandCount,
+	}
+}
+
+func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 15, 0, 0, 0, time.UTC)
+	prefix := "terminal-stop-ring-window"
+	fixture := prepareTerminalStopRingWindow(
+		t, now, prefix, &recordingProvider{}, "SENT",
+	)
+	pool, calling, staff := fixture.pool, fixture.calling, fixture.staff
+	callID, callerLegID := fixture.callID, fixture.callerLegID
+	practiceID, commandID := fixture.practiceID, fixture.commandID
+	beforeCommandCount := fixture.beforeCommandCount
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_timeline (
 			call_id, practice_id, kind, provider_command_id,
@@ -1139,7 +1172,7 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 		)
 		VALUES ($1, $2, 'caller_audio.degraded', $3, $4,
 			'STOP_RING_WINDOW_EVENT_ABSENT', $5)
-	`, callID, practiceID, commandID, "terminal-stop-ring-window", now.Add(-time.Minute)); err != nil {
+	`, callID, practiceID, commandID, prefix, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("seed degraded caller-audio evidence: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(), `
@@ -1238,6 +1271,109 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 			runnableCommands, terminalizedEvents, convergedAudio,
 			terminalEvidenceReason, convergedAudioReason, commandCount,
 			callingState.Softphone)
+	}
+}
+
+func TestStopRingWindowCompletionAndTerminalReconciliationUseConsistentLockOrder(t *testing.T) {
+	now := time.Date(2026, time.August, 17, 20, 0, 0, 0, time.UTC)
+	prefix := "terminal-stop-ring-window-lock-order"
+	provider := &recordingProvider{}
+	fixture := prepareTerminalStopRingWindow(t, now, prefix, provider, "PENDING")
+	pool, calling := fixture.pool, fixture.calling
+
+	provider.mu.Lock()
+	provider.blockAction = humancalling.CommandStopRingWindow
+	provider.blockStarted = make(chan struct{})
+	provider.blockRelease = make(chan struct{})
+	started, release := provider.blockStarted, provider.blockRelease
+	provider.mu.Unlock()
+
+	commandResult := make(chan error, 1)
+	go func() {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if !processed && err == nil {
+			err = errors.New("no Stop ring-window command processed")
+		}
+		commandResult <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop ring-window provider execution did not start")
+	}
+
+	const barrierKey int64 = 817200001
+	barrier := holdPostgresAdvisoryLock(t, pool, barrierKey)
+	defer barrier.close()
+
+	const triggerName = "test_block_terminal_stop_reconciliation"
+	const functionName = "test_wait_for_terminal_stop_reconciliation"
+	installPostgresTestTrigger(t, pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON human_calling_provider_commands
+		FOR EACH ROW WHEN (NEW.id = '%s'::uuid AND NEW.state = 'RECONCILED')
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, fixture.commandID, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_provider_commands;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	reconciliationResult := make(chan error, 1)
+	go func() {
+		reconciled, err := calling.ReconcileStaleCalls(context.Background())
+		if reconciled != 1 && err == nil {
+			err = fmt.Errorf("reconciled %d terminal Calls, want 1", reconciled)
+		}
+		reconciliationResult <- err
+	}()
+	reconciliationPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+	close(release)
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", reconciliationPID,
+	)
+	barrier.release()
+
+	select {
+	case err := <-reconciliationResult:
+		if err != nil {
+			t.Fatalf("terminalize concurrent Stop ring-window: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal Stop ring-window reconciliation did not finish")
+	}
+	select {
+	case err := <-commandResult:
+		if err != nil {
+			t.Fatalf("finish concurrent Stop ring-window: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop ring-window command did not finish")
+	}
+
+	var commandState string
+	var terminalizedEvents int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT command.state,
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE call_id = command.call_id AND kind = 'ring_window.terminalized')
+		FROM human_calling_provider_commands command
+		WHERE command.id = $1
+	`, fixture.commandID).Scan(&commandState, &terminalizedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "RECONCILED" || terminalizedEvents != 1 ||
+		provider.count(humancalling.CommandStopRingWindow) != 1 {
+		t.Fatalf("terminal Stop convergence = command:%s events:%d executions:%d",
+			commandState, terminalizedEvents,
+			provider.count(humancalling.CommandStopRingWindow))
 	}
 }
 
@@ -2962,6 +3098,263 @@ func TestBridgeWinnerCommitsCleanupWhenSendingLosingDialReturns(t *testing.T) {
 	}
 }
 
+func TestAbsentHangupCompletionAndProviderFactUseConsistentLockOrder(t *testing.T) {
+	now := time.Date(2026, time.August, 17, 19, 0, 0, 0, time.UTC)
+	prefix := "absent-hangup-lock-order"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	clientState, _ := dial.Payload["client_state"].(string)
+
+	caller.EventID = prefix + "-caller-hangup"
+	caller.Type = humancalling.FactCallHangup
+	caller.OccurredAt = now.Add(time.Second)
+	caller.HangupCause = "normal_clearing"
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("end abandoned caller: %v", err)
+	}
+
+	const barrierKey int64 = 817190001
+	barrier := holdPostgresAdvisoryLock(t, pool, barrierKey)
+	defer barrier.close()
+
+	const triggerName = "test_block_absent_hangup_fact"
+	const functionName = "test_wait_for_absent_hangup_fact"
+	installPostgresTestTrigger(t, pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON human_calling_call_legs
+		FOR EACH ROW WHEN (NEW.id = '%s'::uuid)
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, dial.CallLegID, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_call_legs;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	provider.mu.Lock()
+	provider.blockAction = humancalling.CommandHangupLeg
+	provider.blockStarted = make(chan struct{})
+	provider.blockRelease = make(chan struct{})
+	provider.blockError = fmt.Errorf(
+		"%w: synthetic absent Hangup target",
+		humancalling.ErrProviderTargetAbsent,
+	)
+	started, release := provider.blockStarted, provider.blockRelease
+	provider.mu.Unlock()
+
+	commandResult := make(chan error, 1)
+	go func() {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if !processed && err == nil {
+			err = errors.New("no Hangup command processed")
+		}
+		commandResult <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Hangup provider execution did not start")
+	}
+
+	factResult := make(chan error, 1)
+	go func() {
+		factResult <- calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+			EventID:       prefix + "-staff-hangup",
+			Type:          humancalling.FactCallHangup,
+			OccurredAt:    now.Add(2 * time.Second),
+			CallControlID: prefix + "-staff-control",
+			CallLegID:     prefix + "-staff-leg",
+			ClientState:   clientState,
+			HangupCause:   "normal_clearing",
+		})
+	}()
+	factPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+	close(release)
+	waitForPostgresLockWaiter(t, barrier.connection, "transactionid", factPID)
+	barrier.release()
+
+	select {
+	case err := <-factResult:
+		if err != nil {
+			t.Fatalf("project concurrent provider Hangup: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider Hangup projection did not finish")
+	}
+	select {
+	case err := <-commandResult:
+		if err != nil {
+			t.Fatalf("converge absent Hangup target: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("absent Hangup command did not finish")
+	}
+
+	var legState, commandState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE leg.id = $1 AND command.action = 'HANGUP_LEG'
+	`, dial.CallLegID).Scan(&legState, &commandState); err != nil {
+		t.Fatal(err)
+	}
+	if legState != "ENDED" || commandState != "RECONCILED" ||
+		provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("absent Hangup convergence = leg:%s command:%s executions:%d",
+			legState, commandState, provider.count(humancalling.CommandHangupLeg))
+	}
+}
+
+func TestCommandFailureAndAbsentReconciliationUseConsistentLockOrder(t *testing.T) {
+	now := time.Date(2026, time.August, 17, 19, 30, 0, 0, time.UTC)
+	prefix := "command-reconciliation-lock-order"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+	}}}
+	pool, calling, _, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+
+	var commandID, callLegID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text, call_leg_id::text
+		FROM human_calling_provider_commands
+		WHERE action = 'DIAL_STAFF' AND state = 'PENDING'
+	`).Scan(&commandID, &callLegID); err != nil {
+		t.Fatalf("read pending Staff Dial: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'RECONCILED', updated_at = $2
+		WHERE state = 'PENDING' AND id <> $1
+	`, commandID, now); err != nil {
+		t.Fatalf("isolate pending Staff Dial: %v", err)
+	}
+
+	provider.mu.Lock()
+	provider.blockAction = humancalling.CommandDialStaff
+	provider.blockStarted = make(chan struct{})
+	provider.blockRelease = make(chan struct{})
+	provider.blockError = fmt.Errorf(
+		"%w: synthetic rejected Staff Dial",
+		humancalling.ErrDefinitiveProviderFailure,
+	)
+	provider.observations = append(
+		provider.observations,
+		humancalling.ProviderCallObservation{},
+	)
+	started, release := provider.blockStarted, provider.blockRelease
+	provider.mu.Unlock()
+
+	commandResult := make(chan error, 1)
+	go func() {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if !processed && err == nil {
+			err = errors.New("no Staff Dial command processed")
+		}
+		commandResult <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Staff Dial provider execution did not start")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE id = $1 AND state = 'SENDING'
+	`, commandID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("age in-flight Staff Dial: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, callLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("age in-flight Staff CallLeg: %v", err)
+	}
+
+	const barrierKey int64 = 817193001
+	barrier := holdPostgresAdvisoryLock(t, pool, barrierKey)
+	defer barrier.close()
+
+	const triggerName = "test_block_absent_reconciliation"
+	const functionName = "test_wait_for_absent_reconciliation"
+	installPostgresTestTrigger(t, pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON human_calling_provider_commands
+		FOR EACH ROW WHEN (NEW.id = '%s'::uuid AND NEW.state = 'FAILED')
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, commandID, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_provider_commands;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	reconciliationResult := make(chan error, 1)
+	go func() {
+		reconciled, err := calling.ReconcileStaleCalls(context.Background())
+		if reconciled != 1 && err == nil {
+			err = fmt.Errorf("reconciled %d stale Calls, want 1", reconciled)
+		}
+		reconciliationResult <- err
+	}()
+	reconciliationPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+	close(release)
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", reconciliationPID,
+	)
+	barrier.release()
+
+	select {
+	case err := <-reconciliationResult:
+		if err != nil {
+			t.Fatalf("reconcile absent concurrent Staff Dial: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("absent Staff Dial reconciliation did not finish")
+	}
+	select {
+	case err := <-commandResult:
+		if err != nil {
+			t.Fatalf("finish concurrent rejected Staff Dial: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rejected Staff Dial command did not finish")
+	}
+
+	var legState, commandState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE command.id = $1
+	`, commandID).Scan(&legState, &commandState); err != nil {
+		t.Fatal(err)
+	}
+	if legState != "FAILED" || commandState != "FAILED" ||
+		provider.count(humancalling.CommandDialStaff) != 1 {
+		t.Fatalf("rejected Staff Dial convergence = leg:%s command:%s executions:%d",
+			legState, commandState, provider.count(humancalling.CommandDialStaff))
+	}
+}
+
 func TestClosedHandoffAdmissionFailsBeforeDatabaseMutation(t *testing.T) {
 	calling := humancalling.New(nil, nil, nil, humancalling.Config{
 		HandoffAdmissionClosed: true,
@@ -2970,6 +3363,47 @@ func TestClosedHandoffAdmissionFailsBeforeDatabaseMutation(t *testing.T) {
 		context.Background(), humancalling.CreateHandoffCommand{},
 	); !errors.Is(err, humancalling.ErrHandoffAdmissionClosed) {
 		t.Fatalf("closed handoff admission error = %v", err)
+	}
+}
+
+func TestPostgresWaiterLookupIsScopedToItsBlocker(t *testing.T) {
+	pool := testdb.Open(t)
+	const firstKey int64 = 817190101
+	const secondKey int64 = 817190102
+	first := holdPostgresAdvisoryLock(t, pool, firstKey)
+	defer first.close()
+	second := holdPostgresAdvisoryLock(t, pool, secondKey)
+	defer second.close()
+
+	waiterResult := make(chan error, 1)
+	go func() {
+		waiter, err := pool.Acquire(context.Background())
+		if err == nil {
+			defer waiter.Release()
+			_, err = waiter.Exec(context.Background(), `SELECT pg_advisory_lock($1)`, secondKey)
+			if err == nil {
+				_, err = waiter.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, secondKey)
+			}
+		}
+		waiterResult <- err
+	}()
+	waitForPostgresLockWaiter(t, first.connection, "advisory", second.pid)
+
+	if pid, found, err := findPostgresLockWaiter(
+		context.Background(), first.connection, "advisory", first.pid,
+	); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Fatalf("unrelated advisory waiter %d attributed to blocker %d", pid, first.pid)
+	}
+	second.release()
+	select {
+	case err := <-waiterResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("unrelated advisory waiter did not finish")
 	}
 }
 
@@ -4091,6 +4525,7 @@ type recordingProvider struct {
 	blockAction       humancalling.CommandAction
 	blockStarted      chan struct{}
 	blockRelease      chan struct{}
+	blockError        error
 }
 
 func (provider *recordingProvider) DeleteRecording(
@@ -4185,10 +4620,14 @@ func (provider *recordingProvider) Execute(
 	if provider.blockAction == command.Action && provider.blockStarted != nil &&
 		provider.blockRelease != nil {
 		started, release := provider.blockStarted, provider.blockRelease
+		blockError := provider.blockError
 		provider.blockAction = ""
 		provider.mu.Unlock()
 		close(started)
 		<-release
+		if blockError != nil {
+			return humancalling.ProviderResult{}, blockError
+		}
 		provider.mu.Lock()
 	}
 	defer provider.mu.Unlock()
@@ -4394,4 +4833,137 @@ func processAllCommands(t *testing.T, calling *humancalling.Module) {
 			return
 		}
 	}
+}
+
+type postgresAdvisoryBarrier struct {
+	t          *testing.T
+	connection *pgxpool.Conn
+	key        int64
+	pid        int32
+	locked     bool
+}
+
+func holdPostgresAdvisoryLock(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	key int64,
+) *postgresAdvisoryBarrier {
+	t.Helper()
+	connection, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire PostgreSQL advisory barrier connection: %v", err)
+	}
+	barrier := &postgresAdvisoryBarrier{
+		t: t, connection: connection, key: key,
+	}
+	if err := connection.QueryRow(
+		context.Background(), `SELECT pg_backend_pid()`,
+	).Scan(&barrier.pid); err != nil {
+		connection.Release()
+		t.Fatalf("read PostgreSQL advisory barrier backend PID: %v", err)
+	}
+	if _, err := connection.Exec(
+		context.Background(), `SELECT pg_advisory_lock($1)`, key,
+	); err != nil {
+		connection.Release()
+		t.Fatalf("lock PostgreSQL advisory barrier: %v", err)
+	}
+	barrier.locked = true
+	return barrier
+}
+
+func (barrier *postgresAdvisoryBarrier) release() {
+	barrier.t.Helper()
+	if !barrier.locked {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := barrier.connection.Exec(
+		ctx, `SELECT pg_advisory_unlock($1)`, barrier.key,
+	); err != nil {
+		barrier.t.Fatalf("release PostgreSQL advisory barrier: %v", err)
+	}
+	barrier.locked = false
+}
+
+func (barrier *postgresAdvisoryBarrier) close() {
+	if barrier.locked {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if _, err := barrier.connection.Exec(
+			ctx, `SELECT pg_advisory_unlock($1)`, barrier.key,
+		); err != nil {
+			barrier.t.Errorf("clean up PostgreSQL advisory barrier: %v", err)
+		}
+		cancel()
+		barrier.locked = false
+	}
+	barrier.connection.Release()
+}
+
+func installPostgresTestTrigger(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	createSQL string,
+	dropSQL string,
+) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), createSQL); err != nil {
+		t.Fatalf("install PostgreSQL test trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, err := pool.Exec(ctx, dropSQL); err != nil {
+			t.Errorf("clean up PostgreSQL test trigger: %v", err)
+		}
+	})
+}
+
+func waitForPostgresLockWaiter(
+	t *testing.T,
+	connection *pgxpool.Conn,
+	waitEvent string,
+	blockerPID int32,
+) int32 {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		pid, waiting, err := findPostgresLockWaiter(
+			context.Background(), connection, waitEvent, blockerPID,
+		)
+		if err != nil {
+			t.Fatalf("inspect PostgreSQL %s lock waiters: %v", waitEvent, err)
+		}
+		if waiting {
+			return pid
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("PostgreSQL did not expose a %s lock waiter blocked by PID %d",
+		waitEvent, blockerPID)
+	return 0
+}
+
+func findPostgresLockWaiter(
+	ctx context.Context,
+	connection *pgxpool.Conn,
+	waitEvent string,
+	blockerPID int32,
+) (int32, bool, error) {
+	var pid int32
+	err := connection.QueryRow(ctx, `
+		SELECT pid
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+			AND wait_event_type = 'Lock'
+			AND wait_event = $1
+			AND $2 = ANY(pg_blocking_pids(pid))
+		ORDER BY pid
+		LIMIT 1
+	`, waitEvent, blockerPID).Scan(&pid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	return pid, err == nil, err
 }

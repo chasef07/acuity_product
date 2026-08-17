@@ -247,6 +247,13 @@ func (m *Module) finishCallLegCommand(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	state, errorCode := m.providerCommandResult(command, executeErr)
+	if command.CallLegID != "" {
+		if err := lockCallThenCallLegForCommandMutation(
+			ctx, tx, command.CallLegID,
+		); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = $2, last_error_code = NULLIF($3, ''),
@@ -378,6 +385,40 @@ func (m *Module) finishCallLegCommand(
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func lockCallThenCallLegForCommandMutation(
+	ctx context.Context,
+	tx pgx.Tx,
+	callLegID string,
+) error {
+	var callID string
+	if err := tx.QueryRow(ctx, `
+		SELECT call_id::text
+		FROM human_calling_call_legs
+		WHERE id = $1
+	`, callLegID).Scan(&callID); err != nil {
+		return fmt.Errorf("read provider command Call ownership: %w", err)
+	}
+	var lockedCallID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM human_calling_calls
+		WHERE id = $1
+		FOR UPDATE
+	`, callID).Scan(&lockedCallID); err != nil {
+		return fmt.Errorf("lock provider command Call: %w", err)
+	}
+	var lockedCallLegID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM human_calling_call_legs
+		WHERE id = $1 AND call_id = $2
+		FOR UPDATE
+	`, callLegID, lockedCallID).Scan(&lockedCallLegID); err != nil {
+		return fmt.Errorf("lock provider command CallLeg: %w", err)
+	}
+	return nil
 }
 
 func isCredentialCommand(action CommandAction) bool {
