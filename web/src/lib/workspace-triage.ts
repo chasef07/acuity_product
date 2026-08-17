@@ -33,9 +33,9 @@ export function filterTaskQueue<
   )
 }
 
-export function sortRecoveryQueue<T extends { createdAt: string }>(tasks: T[]) {
+export function sortRecoveryQueue<T extends { updatedAt: string }>(tasks: T[]) {
   return [...tasks].sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
+    right.updatedAt.localeCompare(left.updatedAt),
   )
 }
 

@@ -173,6 +173,9 @@ export function EngagementWorkspace({
     ownsSoftphone,
     startOutbound,
   } = useCallingNavigation()
+  const routeName =
+    engagement.locations.find((location) => location.id === route)?.name ??
+    "Choose office"
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -210,6 +213,9 @@ export function EngagementWorkspace({
                   : "Copy number"}
             </TooltipContent>
           </Tooltip>
+          <span className="ml-2 hidden min-w-0 truncate text-sm text-muted-foreground sm:block">
+            {routeName}
+          </span>
           <span className="sr-only" role="status">
             {copyState === "copied"
               ? "Phone number copied"
@@ -217,33 +223,6 @@ export function EngagementWorkspace({
                 ? "Phone number could not be copied"
                 : ""}
           </span>
-          <Button
-            className="ml-1 size-10 min-h-10 rounded-full"
-            type="button"
-            size="icon-lg"
-            aria-label="Call"
-            title={`Call ${formatUSPhone(engagement.phone)}`}
-            disabled={
-              !canMutate ||
-              !callingEnabled ||
-              !route ||
-              !ownsSoftphone ||
-              Boolean(activeCall) ||
-              outboundPending
-            }
-            onClick={() => {
-              setCallError("")
-              void startOutbound(route, engagement.phone).then(
-                (requestError) => setCallError(requestError ?? ""),
-              )
-            }}
-          >
-            {outboundPending ? (
-              <Spinner />
-            ) : (
-              <PhoneCallIcon className="size-[1.125rem]" />
-            )}
-          </Button>
         </div>
         <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
           {headerTrailing}
@@ -265,6 +244,34 @@ export function EngagementWorkspace({
               ))}
             </NativeSelect>
           )}
+          <Button
+            className="order-first md:order-last"
+            type="button"
+            size="sm"
+            aria-label="Call"
+            title={`Call ${formatUSPhone(engagement.phone)}`}
+            disabled={
+              !canMutate ||
+              !callingEnabled ||
+              !route ||
+              !ownsSoftphone ||
+              Boolean(activeCall) ||
+              outboundPending
+            }
+            onClick={() => {
+              setCallError("")
+              void startOutbound(route, engagement.phone).then(
+                (requestError) => setCallError(requestError ?? ""),
+              )
+            }}
+          >
+            {outboundPending ? (
+              <Spinner />
+            ) : (
+              <PhoneCallIcon data-icon="inline-start" />
+            )}
+            Call
+          </Button>
         </div>
         {callError && (
           <p className="absolute right-3 top-[calc(100%+0.5rem)] z-10 rounded-lg border bg-popover px-3 py-2 text-xs text-destructive shadow-sm">

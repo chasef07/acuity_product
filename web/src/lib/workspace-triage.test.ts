@@ -63,19 +63,22 @@ test("Task folders keep pagination available until their total is loaded", () =>
   assert.equal(taskFolderCursor("", 0, 3), "")
 })
 
-test("Missed Calls keep the stable creation-time order across pages", () => {
-  const oldest = {
-    id: "oldest",
+test("Missed Calls keep newest activity first across pages", () => {
+  const recentlyUpdated = {
+    id: "recently-updated",
     createdAt: "2026-08-16T08:00:00Z",
     updatedAt: "2026-08-16T12:00:00Z",
   }
-  const newer = {
-    id: "newer",
+  const recentlyCreated = {
+    id: "recently-created",
     createdAt: "2026-08-16T10:00:00Z",
     updatedAt: "2026-08-16T10:00:00Z",
   }
 
-  assert.deepEqual(sortRecoveryQueue([newer, oldest]), [oldest, newer])
+  assert.deepEqual(
+    sortRecoveryQueue([recentlyCreated, recentlyUpdated]),
+    [recentlyUpdated, recentlyCreated],
+  )
 })
 
 test("live refresh refetches the expanded window plus one authoritative page", () => {

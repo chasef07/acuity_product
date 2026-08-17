@@ -1,8 +1,38 @@
+import type { AiAppointmentAction } from "./api/generated/types.gen"
+
 export type OutcomeCounts = {
   tasks: number
   bookings: number
   cancellations: number
   reschedules: number
+}
+
+export const appointmentOutcomeFolders = [
+  "bookings",
+  "cancellations",
+  "reschedules",
+] as const
+
+export type AppointmentOutcomeFolder =
+  (typeof appointmentOutcomeFolders)[number]
+
+export type AppointmentOutcomeCursors = Record<AppointmentOutcomeFolder, string>
+
+export function emptyAppointmentOutcomeCursors(): AppointmentOutcomeCursors {
+  return { bookings: "", cancellations: "", reschedules: "" }
+}
+
+export function appointmentActionForFolder(
+  folder: AppointmentOutcomeFolder,
+): AiAppointmentAction {
+  switch (folder) {
+    case "bookings":
+      return "BOOKED"
+    case "cancellations":
+      return "CANCELLED"
+    case "reschedules":
+      return "RESCHEDULED"
+  }
 }
 
 export function appointmentFolderForAction(action?: string) {
@@ -37,16 +67,21 @@ export function mergeOutcomePages<T extends { id: string }>(
   loaded: T[],
   refreshed: T[],
 ) {
-  const refreshedIDs = new Set(refreshed.map((item) => item.id))
-  return [...refreshed, ...loaded.filter((item) => !refreshedIDs.has(item.id))]
+  return appendOutcomePage(appendOutcomePage([], refreshed), loaded)
 }
 
 export function appendOutcomePage<T extends { id: string }>(
   loaded: T[],
   page: T[],
 ) {
-  const loadedIDs = new Set(loaded.map((item) => item.id))
-  return [...loaded, ...page.filter((item) => !loadedIDs.has(item.id))]
+  const seen = new Set(loaded.map((item) => item.id))
+  const items = [...loaded]
+  for (const item of page) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    items.push(item)
+  }
+  return items
 }
 
 export function decrementOutcomeCount(

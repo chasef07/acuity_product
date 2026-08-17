@@ -646,14 +646,21 @@ func (server *Server) QueryAIInteractionOutcomes(
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
+	appointmentAction := interaction.AppointmentAction("")
+	if body.AppointmentAction != nil {
+		appointmentAction = interaction.AppointmentAction(*body.AppointmentAction)
+	}
+	skipCounts := body.IncludeCounts != nil && !*body.IncludeCounts
 	page, err := server.interactions.QueryOutcomes(
 		ctx,
 		interaction.QueryOutcomesCommand{
-			Identity:   identity,
-			PracticeID: body.PracticeId.String(),
-			LocationID: uuidString(body.LocationId),
-			Cursor:     stringValue(body.Cursor),
-			Limit:      intValue(body.Limit),
+			Identity:          identity,
+			PracticeID:        body.PracticeId.String(),
+			LocationID:        uuidString(body.LocationId),
+			AppointmentAction: appointmentAction,
+			SkipCounts:        skipCounts,
+			Cursor:            stringValue(body.Cursor),
+			Limit:             intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -3506,12 +3513,14 @@ func aiOutcomePageResponse(
 	response := api.AIOutcomePage{
 		Items:      make([]api.AIOutcomeItem, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
-		Counts: api.AIOutcomeCounts{
+	}
+	if page.Counts != nil {
+		response.Counts = &api.AIOutcomeCounts{
 			Tasks:         page.Counts.Tasks,
 			Bookings:      page.Counts.Bookings,
 			Cancellations: page.Counts.Cancellations,
 			Reschedules:   page.Counts.Reschedules,
-		},
+		}
 	}
 	for _, item := range page.Items {
 		converted, err := aiOutcomeItemResponse(item)

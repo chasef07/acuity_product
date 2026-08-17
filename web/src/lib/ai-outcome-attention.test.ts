@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  appendOutcomePage,
+  appointmentActionForFolder,
   appointmentFolderForAction,
   categorizeAIOutcomes,
   decrementOutcomeCount,
@@ -28,6 +30,9 @@ test("appointment actions have one authoritative review folder", () => {
   assert.equal(appointmentFolderForAction("CANCELLED"), "cancellations")
   assert.equal(appointmentFolderForAction("RESCHEDULED"), "reschedules")
   assert.equal(appointmentFolderForAction(), undefined)
+  assert.equal(appointmentActionForFolder("bookings"), "BOOKED")
+  assert.equal(appointmentActionForFolder("cancellations"), "CANCELLED")
+  assert.equal(appointmentActionForFolder("reschedules"), "RESCHEDULED")
 })
 
 test("refreshing outcomes preserves loaded older pages without duplicates", () => {
@@ -39,6 +44,19 @@ test("refreshing outcomes preserves loaded older pages without duplicates", () =
     { id: "current" },
     { id: "older" },
   ])
+})
+
+test("appending repeated pages keeps each Task visible exactly once", () => {
+  const firstPage = [{ id: "task-1" }, { id: "task-2" }]
+
+  assert.deepEqual(
+    appendOutcomePage(firstPage, [
+      { id: "task-2" },
+      { id: "task-3" },
+      { id: "task-3" },
+    ]),
+    [{ id: "task-1" }, { id: "task-2" }, { id: "task-3" }],
+  )
 })
 
 test("reviewing an outcome decrements only its authoritative folder total", () => {

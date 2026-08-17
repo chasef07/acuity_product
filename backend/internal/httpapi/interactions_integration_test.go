@@ -728,6 +728,24 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"cancellationResult": map[string]any{"status": "error", "reason": "middleware_error"},
 	})
 	postCloseout("abita-indeterminate-63", "+17275550204", now.Add(time.Minute), nil)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO ai_interaction_attention (
+			interaction_id,
+			user_subject,
+			outcome_occurred_at,
+			created_at
+		)
+		SELECT
+			interaction.id,
+			'admin-subject',
+			interaction.appointment_occurred_at - interval '1 second',
+			$1
+		FROM ai_interactions interaction
+		WHERE interaction.practice_id = $2
+			AND interaction.source_call_id = 'abita-booking-63'
+	`, now, practiceID); err != nil {
+		t.Fatalf("seed duplicate unread AI outcome attention: %v", err)
+	}
 
 	outcomeQueryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
@@ -775,6 +793,94 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		itemsBySource["abita-partial-63"].Outcome != "PARTIAL" {
 		t.Fatalf("AI Interaction attention by source = %#v", itemsBySource)
 	}
+	olderBookingStart := afterHoursStart.Add(-24 * time.Hour)
+	postCloseout("abita-booking-older-63", "+17275550205", olderBookingStart, map[string]any{
+		"action":           "BOOKED",
+		"occurredAt":       olderBookingStart.Add(3 * time.Minute).Format(time.RFC3339),
+		"newAppointmentId": "appointment-booked-older",
+		"bookingResult":    map[string]any{"status": "booked", "appointmentId": 6305},
+	})
+	bookingQueryBody, _ := json.Marshal(map[string]any{
+		"practiceId":        practiceID,
+		"appointmentAction": "BOOKED",
+		"limit":             1,
+	})
+	bookingOutcomes := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", bookingQueryBody,
+	)
+	if bookingOutcomes.StatusCode != http.StatusOK {
+		t.Fatalf("query booking outcomes status = %d, body = %s",
+			bookingOutcomes.StatusCode, readBody(t, bookingOutcomes))
+	}
+	var bookingAttention struct {
+		Items []struct {
+			ID           string `json:"id"`
+			SourceCallID string `json:"sourceCallId"`
+		} `json:"items"`
+		NextCursor string `json:"nextCursor"`
+		Counts     struct {
+			Bookings      int `json:"bookings"`
+			Cancellations int `json:"cancellations"`
+			Reschedules   int `json:"reschedules"`
+		} `json:"counts"`
+	}
+	decode(t, bookingOutcomes, &bookingAttention)
+	if len(bookingAttention.Items) != 1 ||
+		bookingAttention.Items[0].SourceCallID != "abita-booking-63" ||
+		bookingAttention.NextCursor == "" ||
+		bookingAttention.Counts.Bookings != 2 ||
+		bookingAttention.Counts.Cancellations != 1 ||
+		bookingAttention.Counts.Reschedules != 2 {
+		t.Fatalf("filtered booking attention = %#v", bookingAttention)
+	}
+	olderBookingQueryBody, _ := json.Marshal(map[string]any{
+		"practiceId":        practiceID,
+		"appointmentAction": "BOOKED",
+		"cursor":            bookingAttention.NextCursor,
+		"includeCounts":     false,
+		"limit":             1,
+	})
+	olderBookingOutcomes := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", olderBookingQueryBody,
+	)
+	if olderBookingOutcomes.StatusCode != http.StatusOK {
+		t.Fatalf("query older booking outcomes status = %d, body = %s",
+			olderBookingOutcomes.StatusCode, readBody(t, olderBookingOutcomes))
+	}
+	var olderBookingAttention struct {
+		Items []struct {
+			ID           string `json:"id"`
+			SourceCallID string `json:"sourceCallId"`
+		} `json:"items"`
+		NextCursor string `json:"nextCursor"`
+		Counts     *struct {
+			Bookings int `json:"bookings"`
+		} `json:"counts"`
+	}
+	decode(t, olderBookingOutcomes, &olderBookingAttention)
+	if len(olderBookingAttention.Items) != 1 ||
+		olderBookingAttention.Items[0].SourceCallID != "abita-booking-older-63" ||
+		olderBookingAttention.NextCursor != "" ||
+		olderBookingAttention.Counts != nil {
+		t.Fatalf("older filtered booking attention = %#v", olderBookingAttention)
+	}
+	for _, token := range []string{"admin-token", "staff-token"} {
+		reviewedOlderBooking := request(
+			t, server.Client(), http.MethodPost,
+			server.URL+"/v1/ai/interactions/"+olderBookingAttention.Items[0].ID+"/review",
+			token, nil,
+		)
+		if reviewedOlderBooking.StatusCode != http.StatusNoContent {
+			t.Fatalf("review older booking outcome as %s status = %d, body = %s",
+				token, reviewedOlderBooking.StatusCode, readBody(t, reviewedOlderBooking))
+		}
+		_ = reviewedOlderBooking.Body.Close()
+	}
+	bookingInteractionID := itemsBySource["abita-booking-63"].ID
 	partialInteractionID := itemsBySource["abita-partial-63"].ID
 	partialTask, _, err := workModule.CreateAITask(
 		context.Background(),
@@ -846,7 +952,8 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	var firstPage outcomePageResponse
 	decode(t, firstPageResponse, &firstPage)
 	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" ||
-		firstPage.Items[0].SourceCallID != "abita-booking-63" ||
+		firstPage.Items[0].SourceCallID == "abita-booking-63" ||
+		firstPage.Items[1].SourceCallID == "abita-booking-63" ||
 		firstPage.Counts.Tasks != 0 ||
 		firstPage.Counts.Bookings != 1 ||
 		firstPage.Counts.Cancellations != 1 ||
@@ -897,6 +1004,38 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("staff AI Interaction attention = %#v", staffAttention)
 	}
 
+	reviewedBooking := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/"+bookingInteractionID+"/review",
+		"admin-token", nil,
+	)
+	if reviewedBooking.StatusCode != http.StatusNoContent {
+		t.Fatalf("review duplicate booking outcome status = %d, body = %s",
+			reviewedBooking.StatusCode, readBody(t, reviewedBooking))
+	}
+	_ = reviewedBooking.Body.Close()
+	bookingsAfterReview := request(
+		t, server.Client(), http.MethodPost,
+		server.URL+"/v1/ai/interactions/outcomes/query",
+		"admin-token", bookingQueryBody,
+	)
+	if bookingsAfterReview.StatusCode != http.StatusOK {
+		t.Fatalf("query bookings after review status = %d, body = %s",
+			bookingsAfterReview.StatusCode, readBody(t, bookingsAfterReview))
+	}
+	var noBookingsLeft struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		Counts struct {
+			Bookings int `json:"bookings"`
+		} `json:"counts"`
+	}
+	decode(t, bookingsAfterReview, &noBookingsLeft)
+	if len(noBookingsLeft.Items) != 0 || noBookingsLeft.Counts.Bookings != 0 {
+		t.Fatalf("reviewed duplicate booking reappeared = %#v", noBookingsLeft)
+	}
+
 	reviewed := request(
 		t, server.Client(), http.MethodPost,
 		server.URL+"/v1/ai/interactions/"+partialInteractionID+"/review",
@@ -939,9 +1078,9 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		} `json:"counts"`
 	}
 	decode(t, adminAfterReview, &remainingAttention)
-	if len(remainingAttention.Items) != 3 ||
+	if len(remainingAttention.Items) != 2 ||
 		remainingAttention.Counts.Tasks != 0 ||
-		remainingAttention.Counts.Bookings != 1 ||
+		remainingAttention.Counts.Bookings != 0 ||
 		remainingAttention.Counts.Cancellations != 1 ||
 		remainingAttention.Counts.Reschedules != 1 {
 		t.Fatalf("reviewed AI Interaction attention = %#v", remainingAttention)
