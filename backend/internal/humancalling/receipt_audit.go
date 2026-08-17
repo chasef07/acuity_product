@@ -15,7 +15,7 @@ type ProviderReceiptStateAudit struct {
 	NewestAgeSeconds int64        `json:"newestAgeSeconds"`
 }
 
-type ProviderReceiptQuarantineAudit struct {
+type ProviderReceiptOutcomeAudit struct {
 	EventType        string `json:"eventType"`
 	ErrorCode        string `json:"errorCode"`
 	AttachedToCall   bool   `json:"attachedToCall"`
@@ -27,9 +27,21 @@ type ProviderReceiptQuarantineAudit struct {
 }
 
 type ProviderReceiptAudit struct {
-	CheckedAt  time.Time                        `json:"checkedAt"`
-	States     []ProviderReceiptStateAudit      `json:"states"`
-	Quarantine []ProviderReceiptQuarantineAudit `json:"quarantine"`
+	CheckedAt  time.Time                     `json:"checkedAt"`
+	States     []ProviderReceiptStateAudit   `json:"states"`
+	Failures   []ProviderReceiptOutcomeAudit `json:"failures"`
+	Quarantine []ProviderReceiptOutcomeAudit `json:"quarantine"`
+}
+
+// providerReceiptAuditErrorCodes is the bounded public audit vocabulary.
+// Stored values outside it collapse into UNCLASSIFIED before aggregation.
+var providerReceiptAuditErrorCodes = []string{
+	"HANDOFF_REJECTED",
+	"INVALID_PROVIDER_EVENT",
+	"PROJECTION_RETRY_EXHAUSTED",
+	"RELATED_FACT_TIMEOUT",
+	"RELATED_HANDOFF_REJECTED",
+	"TERMINAL_OR_OBSOLETE_PROVIDER_FACT",
 }
 
 // AuditProviderReceipts returns aggregate durable queue evidence without
@@ -51,7 +63,8 @@ func (m *Module) AuditProviderReceipts(ctx context.Context) (ProviderReceiptAudi
 	audit := ProviderReceiptAudit{
 		CheckedAt:  checkedAt,
 		States:     []ProviderReceiptStateAudit{},
-		Quarantine: []ProviderReceiptQuarantineAudit{},
+		Failures:   []ProviderReceiptOutcomeAudit{},
+		Quarantine: []ProviderReceiptOutcomeAudit{},
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -85,26 +98,68 @@ func (m *Module) AuditProviderReceipts(ctx context.Context) (ProviderReceiptAudi
 	}
 	rows.Close()
 
-	rows, err = tx.Query(ctx, `
+	audit.Failures, err = readProviderReceiptOutcomeGroups(
+		ctx, tx, checkedAt, ReceiptFailed,
+	)
+	if err != nil {
+		return ProviderReceiptAudit{}, fmt.Errorf("read provider receipt failures: %w", err)
+	}
+	audit.Quarantine, err = readProviderReceiptOutcomeGroups(
+		ctx, tx, checkedAt, ReceiptQuarantined,
+	)
+	if err != nil {
+		return ProviderReceiptAudit{}, fmt.Errorf("read provider receipt quarantine: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProviderReceiptAudit{}, fmt.Errorf("commit provider receipt audit: %w", err)
+	}
+	return audit, nil
+}
+
+func readProviderReceiptOutcomeGroups(
+	ctx context.Context,
+	tx pgx.Tx,
+	checkedAt time.Time,
+	state ReceiptState,
+) ([]ProviderReceiptOutcomeAudit, error) {
+	if state != ReceiptFailed && state != ReceiptQuarantined {
+		return nil, ErrInvalidInput
+	}
+	groups := []ProviderReceiptOutcomeAudit{}
+	rows, err := tx.Query(ctx, `
+		WITH bounded AS (
+			SELECT
+				event_type,
+				CASE
+					WHEN projection_error_code = ANY($3::text[])
+						THEN projection_error_code
+					ELSE 'UNCLASSIFIED'
+				END AS error_code,
+				call_id IS NOT NULL AS attached_to_call,
+				projection_attempts,
+				received_at
+			FROM human_calling_provider_receipts
+			WHERE state = $2
+		)
 		SELECT
 			event_type,
-			COALESCE(projection_error_code, ''),
-			call_id IS NOT NULL,
+			error_code,
+			attached_to_call,
 			count(*),
 			min(projection_attempts),
 			max(projection_attempts),
 			GREATEST(0, EXTRACT(EPOCH FROM ($1 - min(received_at)))::bigint),
 			GREATEST(0, EXTRACT(EPOCH FROM ($1 - max(received_at)))::bigint)
-		FROM human_calling_provider_receipts
-		WHERE state = 'QUARANTINED'
-		GROUP BY event_type, projection_error_code, call_id IS NOT NULL
-		ORDER BY event_type, projection_error_code, call_id IS NOT NULL DESC
-	`, checkedAt)
+		FROM bounded
+		GROUP BY event_type, error_code, attached_to_call
+		ORDER BY event_type, error_code, attached_to_call DESC
+	`, checkedAt, state, providerReceiptAuditErrorCodes)
 	if err != nil {
-		return ProviderReceiptAudit{}, fmt.Errorf("read provider receipt quarantine: %w", err)
+		return nil, fmt.Errorf("query provider receipt outcome groups: %w", err)
 	}
+	defer rows.Close()
 	for rows.Next() {
-		var group ProviderReceiptQuarantineAudit
+		var group ProviderReceiptOutcomeAudit
 		if err := rows.Scan(
 			&group.EventType,
 			&group.ErrorCode,
@@ -115,18 +170,12 @@ func (m *Module) AuditProviderReceipts(ctx context.Context) (ProviderReceiptAudi
 			&group.OldestAgeSeconds,
 			&group.NewestAgeSeconds,
 		); err != nil {
-			rows.Close()
-			return ProviderReceiptAudit{}, fmt.Errorf("scan provider receipt quarantine: %w", err)
+			return nil, fmt.Errorf("scan provider receipt outcome group: %w", err)
 		}
-		audit.Quarantine = append(audit.Quarantine, group)
+		groups = append(groups, group)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
-		return ProviderReceiptAudit{}, fmt.Errorf("iterate provider receipt quarantine: %w", err)
+		return nil, fmt.Errorf("iterate provider receipt outcome groups: %w", err)
 	}
-	rows.Close()
-	if err := tx.Commit(ctx); err != nil {
-		return ProviderReceiptAudit{}, fmt.Errorf("commit provider receipt audit: %w", err)
-	}
-	return audit, nil
+	return groups, nil
 }
