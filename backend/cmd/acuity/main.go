@@ -367,21 +367,21 @@ func runWorker(
 
 func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
 	return worker.Config{
-		WorkInterval:             250 * time.Millisecond,
-		WorkTimeout:              10 * time.Second,
-		CredentialInterval:       30 * time.Second,
-		CredentialTimeout:        acquireTimeout,
-		HealthInterval:           30 * time.Second,
-		HealthTimeout:            acquireTimeout,
-		MetricInterval:           30 * time.Second,
-		MetricTimeout:            acquireTimeout,
-		ReceiptBatchSize:         8,
-		CommandBatchSize:         1,
-		ProviderCommandBatchSize: 8,
-		CommandWorkers:           2,
-		IdleBackoffMax:           2 * time.Second,
-		ErrorBackoffMin:          250 * time.Millisecond,
-		ErrorBackoffMax:          10 * time.Second,
+		WorkInterval:                  250 * time.Millisecond,
+		WorkTimeout:                   10 * time.Second,
+		CredentialInterval:            30 * time.Second,
+		CredentialTimeout:             acquireTimeout,
+		HealthInterval:                30 * time.Second,
+		HealthTimeout:                 acquireTimeout,
+		MetricInterval:                30 * time.Second,
+		MetricTimeout:                 acquireTimeout,
+		ReceiptBatchSize:              8,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      8,
+		CommandWorkers:                2,
+		IdleBackoffMax:                2 * time.Second,
+		ErrorBackoffMin:               250 * time.Millisecond,
+		ErrorBackoffMax:               10 * time.Second,
 	}
 }
 

@@ -99,15 +99,16 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 	work.staleReconciliationStarted = make(chan struct{}, 1)
 	work.blockStaleReconciliation = true
 	runner, err := New(Config{
-		WorkInterval:       time.Millisecond,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   1,
-		CommandBatchSize:   1,
-		CommandWorkers:     2,
+		WorkInterval:                  time.Millisecond,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                2,
 	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
@@ -145,15 +146,16 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 		attachmentProcessed: make(chan struct{}, 1),
 	}
 	runner, err := New(Config{
-		WorkInterval:       time.Millisecond,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   1,
-		CommandBatchSize:   1,
-		CommandWorkers:     1,
+		WorkInterval:                  time.Millisecond,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                1,
 	}, calling, messages, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create messaging worker runner: %v", err)
@@ -188,15 +190,16 @@ func TestRunnerRecoversAIInteractionReceiptsInIndependentLane(t *testing.T) {
 	}
 	interactions := &controlledInteractionWork{processed: make(chan struct{}, 1)}
 	runner, err := New(Config{
-		WorkInterval:       time.Millisecond,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   1,
-		CommandBatchSize:   1,
-		CommandWorkers:     1,
+		WorkInterval:                  time.Millisecond,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                1,
 	}, calling, messages, interactions, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create AI Interaction worker runner: %v", err)
@@ -223,15 +226,16 @@ func TestRunnerDoesNotStartLaneWorkAfterCancellation(t *testing.T) {
 	work := newControlledWork()
 	work.maintenanceStarted = make(chan struct{}, 1)
 	runner, err := New(Config{
-		WorkInterval:       time.Millisecond,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   1,
-		CommandBatchSize:   1,
-		CommandWorkers:     2,
+		WorkInterval:                  time.Millisecond,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                2,
 	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
@@ -255,15 +259,16 @@ func TestRunnerBoundsReceiptDrainBeforeYielding(t *testing.T) {
 		projected:      make(chan struct{}, 4),
 	}
 	runner, err := New(Config{
-		WorkInterval:       time.Hour,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   3,
-		CommandBatchSize:   1,
-		CommandWorkers:     2,
+		WorkInterval:                  time.Hour,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              3,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                2,
 	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)
@@ -300,15 +305,16 @@ func TestRunnerStopsMaintenanceLaneBetweenOperations(t *testing.T) {
 	work.blockStaleReconciliation = true
 	work.maintenanceStarted = make(chan struct{}, 1)
 	runner, err := New(Config{
-		WorkInterval:       time.Hour,
-		WorkTimeout:        time.Second,
-		CredentialInterval: time.Hour,
-		CredentialTimeout:  time.Second,
-		HealthInterval:     time.Hour,
-		HealthTimeout:      time.Second,
-		ReceiptBatchSize:   1,
-		CommandBatchSize:   1,
-		CommandWorkers:     2,
+		WorkInterval:                  time.Hour,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                2,
 	}, work, &controlledMessagingWork{}, &controlledInteractionWork{}, healthyDependency{})
 	if err != nil {
 		t.Fatalf("create worker runner: %v", err)

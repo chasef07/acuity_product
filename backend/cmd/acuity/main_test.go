@@ -21,8 +21,9 @@ func TestProductionWorkerConfigDrainsBoundedProviderCommandBurst(t *testing.T) {
 	if config.ProviderCommandBatchSize != 8 {
 		t.Fatalf("provider command batch size = %d, want 8", config.ProviderCommandBatchSize)
 	}
-	if config.CommandBatchSize != 1 {
-		t.Fatalf("other command batch size = %d, want 1", config.CommandBatchSize)
+	if config.RecoveryAndMessagingBatchSize != 1 {
+		t.Fatalf("recovery and messaging batch size = %d, want 1",
+			config.RecoveryAndMessagingBatchSize)
 	}
 	if config.CommandWorkers != 2 {
 		t.Fatalf("provider command workers = %d, want 2", config.CommandWorkers)
