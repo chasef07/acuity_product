@@ -565,7 +565,7 @@ func (m *Module) ResolveActor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -649,7 +649,7 @@ func (m *Module) lockAuthorization(
 		(requireLocation && strings.TrimSpace(locationID) == "") {
 		return Authorization{}, ErrDenied
 	}
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -794,7 +794,7 @@ func (m *Module) LockOperationalActor(
 		strings.TrimSpace(identity.Subject) == "" {
 		return nil, ErrDenied
 	}
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -1151,7 +1151,7 @@ func (m *Module) RevokeAccessGrant(
 		return fmt.Errorf("begin Access Grant revocation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
+	if _, isOperator, err := resolvePlatformOperator(ctx, tx, command.Identity); err != nil {
 		return err
 	} else if !isOperator {
 		return ErrDenied
@@ -1218,7 +1218,7 @@ func (m *Module) RevokeMembership(
 		return fmt.Errorf("begin Membership revocation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
+	if _, isOperator, err := resolvePlatformOperator(ctx, tx, command.Identity); err != nil {
 		return err
 	} else if !isOperator {
 		return ErrDenied
@@ -1284,7 +1284,7 @@ func (m *Module) AuditTrail(
 		return nil, fmt.Errorf("begin audit trail: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	_, isOperator, err := bindPlatformOperator(ctx, tx, identity)
+	_, isOperator, err := resolvePlatformOperator(ctx, tx, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -1345,7 +1345,7 @@ func (m *Module) AddLocation(
 		return LocationMutation{}, fmt.Errorf("begin Location mutation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, isOperator, err := bindPlatformOperator(ctx, tx, command.Identity); err != nil {
+	if _, isOperator, err := resolvePlatformOperator(ctx, tx, command.Identity); err != nil {
 		return LocationMutation{}, err
 	} else if !isOperator {
 		return LocationMutation{}, ErrDenied
@@ -1421,7 +1421,7 @@ func auditRevocation(
 	return nil
 }
 
-func bindPlatformOperator(
+func resolvePlatformOperator(
 	ctx context.Context,
 	tx pgx.Tx,
 	identity Identity,
@@ -1454,6 +1454,29 @@ func bindPlatformOperator(
 	}
 	if !candidateExists {
 		return "", false, nil
+	}
+	return bindPlatformOperator(ctx, tx, identity)
+}
+
+// bindPlatformOperator coordinates first-time identity discovery with operator
+// provisioning before any Access Grant can become a Membership.
+func bindPlatformOperator(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity Identity,
+) (string, bool, error) {
+	email := normalizeEmail(identity.Email)
+	var operatorID string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM access_platform_operators
+		WHERE user_subject = $1 AND email = $2
+	`, identity.Subject, email).Scan(&operatorID)
+	if err == nil {
+		return operatorID, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, fmt.Errorf("resolve bound Platform Operator: %w", err)
 	}
 
 	if err := lockPlatformOperatorIdentity(ctx, tx, identity); err != nil {
