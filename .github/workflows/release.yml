@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      release_sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Create scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Create or publish release
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  verify-release:
+    if: needs.release-please.outputs.release_created == 'true'
+    needs: [release-please]
+    uses: ./.github/workflows/verify.yml
+    with:
+      release_sha: ${{ needs.release-please.outputs.release_sha }}
+
+  deploy:
+    if: needs.release-please.outputs.release_created == 'true' && vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE == 'true'
+    needs: [release-please, verify-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: production-${{ github.ref }}
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://acuity-web-cbuqwpsdsq-ue.a.run.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.release_sha }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Build and release the verified commit
+        env:
+          CALLLEG_SCHEMA_CUTOVER_COMPLETE: ${{ vars.CALLLEG_SCHEMA_CUTOVER_COMPLETE }}
+          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
+          USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}
+        run: |
+          gcloud builds submit \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --region="${{ vars.GCP_REGION }}" \
+            --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" \
+            --config=cloudbuild.release.yaml \
+            --substitutions="_IMAGE_TAG=${RELEASE_SHA},_CALLLEG_SCHEMA_CUTOVER_COMPLETE=${CALLLEG_SCHEMA_CUTOVER_COMPLETE},_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}" \
+            .

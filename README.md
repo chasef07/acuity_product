@@ -285,10 +285,11 @@ bucket-level access and public-access prevention.
 
 Only a tested Release Please version can enter the production deployment.
 Ordinary merges to `main` update the Release Please pull request but do not
-deploy. Merging that release pull request runs the full suite again, publishes
-the GitHub release, and deploys its exact commit. GitHub Actions uses Workload
-Identity Federation, so the pipeline does not store a long-lived Google Cloud
-key.
+deploy. Successful `main` CI starts a separate, non-superseding Release
+workflow. When a merged Release Please pull request produces a GitHub release,
+that workflow reruns the same four verification jobs against the exact released
+SHA before deployment. GitHub Actions uses Workload Identity Federation, so the
+pipeline does not store a long-lived Google Cloud key.
 
 ```mermaid
 flowchart LR
@@ -302,11 +303,20 @@ flowchart LR
     Contracts --> Main
     Browser --> Main
     Main --> MainCI{"Full main CI"}
-    MainCI --> ReleasePlease{"Release Please"}
+    MainCI --> ReleaseFlow["Non-superseding Release workflow"]
+    ReleaseFlow --> ReleasePlease{"Release Please"}
     ReleasePlease -->|"ordinary change"| ReleasePR["Create or update release PR"]
     ReleasePR --> ReleaseMerge["Merge release PR"]
     ReleaseMerge --> MainCI
-    ReleasePlease -->|"release created"| OIDC["GitHub OIDC and Workload Identity"]
+    ReleasePlease -->|"release created"| ExactCI{"Verify exact released SHA"}
+    ExactCI --> BackendRelease["Go and PostgreSQL tests"]
+    ExactCI --> WebRelease["Lint, types, unit, build"]
+    ExactCI --> ContractRelease["Generated and auth schema checks"]
+    ExactCI --> BrowserRelease["Playwright journey"]
+    BackendRelease --> OIDC["GitHub OIDC and Workload Identity"]
+    WebRelease --> OIDC
+    ContractRelease --> OIDC
+    BrowserRelease --> OIDC
     OIDC --> Build["Cloud Build"]
     Build --> Images["Build and push immutable digests"]
     Images --> Migration["Run one forward migration job"]

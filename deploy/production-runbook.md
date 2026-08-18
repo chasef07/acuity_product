@@ -42,20 +42,26 @@ Every reviewed change merged to GitHub `main` follows one validation path, but
 only a merged Release Please pull request starts a production deployment:
 
 1. GitHub Actions runs the Go, web, generated-contract, and browser suites.
-2. For an ordinary change, Release Please creates or updates the product
-   release pull request and the workflow ends without deploying.
-3. When the Release Please pull request is merged, GitHub Actions runs the same
+2. Successful `main` CI starts a separate Release workflow. It has no
+   superseding workflow-level concurrency, so a newer `main` run cannot cancel
+   a pending release decision.
+3. For an ordinary change, Release Please creates or updates the product
+   release pull request and the Release workflow ends without deploying.
+4. When the Release Please pull request is merged, `main` CI runs the same
    suites again. Release Please recognizes the merged version and changelog,
-   tags that tested commit, and publishes the GitHub release.
-4. GitHub exchanges its `main`-bound identity for the
+   tags that commit, and publishes the GitHub release.
+5. The Release workflow checks out that exact released SHA and reruns the Go,
+   web, generated-contract, and browser suites. A later `main` commit's results
+   cannot stand in for the released commit.
+6. GitHub exchanges its `main`-bound identity for the
    `acuity-product-cloud-deploy` Google service account; there is no stored
    Google service-account key.
-5. Cloud Build creates backend and web images tagged with the released commit's
+7. Cloud Build creates backend and web images tagged with the released commit's
    full SHA and resolves them to immutable digests.
-6. `acuity-migrate` applies forward migrations and the reviewed runtime grants.
-7. Backend services and the worker stage on the digest, become ready, and
+8. `acuity-migrate` applies forward migrations and the reviewed runtime grants.
+9. Backend services and the worker stage on the digest, become ready, and
    promote before web is released last.
-8. Any post-promotion smoke failure returns request traffic and the worker split
+10. Any post-promotion smoke failure returns request traffic and the worker split
    to the revisions captured at the start of the release. Expanded migrations
    remain in place.
 
