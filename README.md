@@ -283,9 +283,12 @@ bucket-level access and public-access prevention.
 
 ## Tested release pipeline
 
-Only a tested `main` commit can enter the production release. GitHub Actions
-uses Workload Identity Federation, so the pipeline does not store a long-lived
-Google Cloud key.
+Only a tested Release Please version can enter the production deployment.
+Ordinary merges to `main` update the Release Please pull request but do not
+deploy. Merging that release pull request runs the full suite again, publishes
+the GitHub release, and deploys its exact commit. GitHub Actions uses Workload
+Identity Federation, so the pipeline does not store a long-lived Google Cloud
+key.
 
 ```mermaid
 flowchart LR
@@ -298,7 +301,12 @@ flowchart LR
     WebTests --> Main
     Contracts --> Main
     Browser --> Main
-    Main --> OIDC["GitHub OIDC and Workload Identity"]
+    Main --> MainCI{"Full main CI"}
+    MainCI --> ReleasePlease{"Release Please"}
+    ReleasePlease -->|"ordinary change"| ReleasePR["Create or update release PR"]
+    ReleasePR --> ReleaseMerge["Merge release PR"]
+    ReleaseMerge --> MainCI
+    ReleasePlease -->|"release created"| OIDC["GitHub OIDC and Workload Identity"]
     OIDC --> Build["Cloud Build"]
     Build --> Images["Build and push immutable digests"]
     Images --> Migration["Run one forward migration job"]

@@ -474,7 +474,7 @@ func TestProductionReleaseRepairsStaleDesiredTrafficBeforeMigration(t *testing.T
 	)
 }
 
-func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
+func TestProductionDeployRequiresTestedReleasePleaseRelease(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
 	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
 	if err != nil {
@@ -482,8 +482,15 @@ func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 	}
 	content := string(workflow)
 	for _, required := range []string{
-		"deploy:",
+		"release-please:",
 		"needs: [backend, web, contracts, browser]",
+		"googleapis/release-please-action@",
+		"release_created: ${{ steps.release.outputs.release_created }}",
+		"release_sha: ${{ steps.release.outputs.sha }}",
+		"deploy:",
+		"if: needs.release-please.outputs.release_created == 'true'",
+		"needs: [release-please]",
+		"ref: ${{ needs.release-please.outputs.release_sha }}",
 		"go test -p 1 ./backend/... ./deploy -count=1",
 		"github.event_name == 'push'",
 		"github.ref == 'refs/heads/main'",
@@ -491,6 +498,8 @@ func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
 		"google-github-actions/auth",
 		"gcloud builds submit",
 		"cloudbuild.release.yaml",
+		"RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}",
+		"_IMAGE_TAG=${RELEASE_SHA}",
 		"USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}",
 		"_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}",
 		"url: https://acuity-web-cbuqwpsdsq-ue.a.run.app",
