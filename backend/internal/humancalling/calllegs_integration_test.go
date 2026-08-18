@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1274,6 +1275,103 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	}
 }
 
+func TestTerminalCallerTreatsAbsentStopRingWindowTargetAsConvergedOnce(t *testing.T) {
+	now := time.Date(2026, time.August, 18, 20, 30, 0, 0, time.UTC)
+	provider := &recordingProvider{actionErrors: map[humancalling.CommandAction][]error{
+		humancalling.CommandStopRingWindow: {
+			fmt.Errorf("%w: synthetic terminal Stop target absent",
+				humancalling.ErrProviderTargetAbsent),
+		},
+	}}
+	fixture := prepareTerminalStopRingWindow(
+		t, now, "terminal-stop-target-absent", provider, "PENDING",
+	)
+
+	processed, err := fixture.calling.ProcessNextCommand(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process terminal absent Stop target = %t, %v", processed, err)
+	}
+	processed, err = fixture.calling.ProcessNextCommand(context.Background())
+	if err != nil || processed {
+		t.Fatalf("repeat terminal absent Stop target = %t, %v", processed, err)
+	}
+
+	var commandState, commandError string
+	var degradedAudio, terminalized int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT command.state, COALESCE(command.last_error_code, ''),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE call_id = command.call_id AND provider_command_id = command.id
+				AND kind = 'caller_audio.degraded'),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE call_id = command.call_id AND provider_command_id = command.id
+				AND kind = 'ring_window.terminalized')
+		FROM human_calling_provider_commands command
+		WHERE command.id = $1
+	`, fixture.commandID).Scan(
+		&commandState, &commandError, &degradedAudio, &terminalized,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "RECONCILED" || commandError != "" ||
+		degradedAudio != 0 || terminalized != 1 ||
+		provider.count(humancalling.CommandStopRingWindow) != 1 {
+		t.Fatalf("terminal absent Stop convergence = command:%s/%s degraded:%d terminalized:%d effects:%d",
+			commandState, commandError, degradedAudio, terminalized,
+			provider.count(humancalling.CommandStopRingWindow))
+	}
+}
+
+func TestTerminalCallerReconcilesPreviouslyRejectedStopRingWindowWithoutProviderEffect(t *testing.T) {
+	now := time.Date(2026, time.August, 18, 20, 45, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	fixture := prepareTerminalStopRingWindow(
+		t, now, "terminal-rejected-stop", provider, "FAILED",
+	)
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET last_error_code = 'STOP_RING_WINDOW_EVENT_ABSENT'
+		WHERE id = $1
+	`, fixture.commandID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		INSERT INTO human_calling_timeline (
+			call_id, practice_id, kind, provider_command_id,
+			opaque_reference, error_code, occurred_at
+		) VALUES ($1, $2, 'caller_audio.degraded', $3, $4,
+			'STOP_RING_WINDOW_EVENT_ABSENT', $5)
+	`, fixture.callID, fixture.practiceID, fixture.commandID,
+		"terminal-rejected-stop", now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if reconciled, err := fixture.calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile rejected terminal Stop = %d, %v", reconciled, err)
+	}
+	var commandState, commandError string
+	var convergedAudio, terminalized int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT command.state, COALESCE(command.last_error_code, ''),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE provider_command_id = command.id AND kind = 'caller_audio.converged'),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE provider_command_id = command.id AND kind = 'ring_window.terminalized')
+		FROM human_calling_provider_commands command WHERE command.id = $1
+	`, fixture.commandID).Scan(
+		&commandState, &commandError, &convergedAudio, &terminalized,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "RECONCILED" || commandError != "" ||
+		convergedAudio != 1 || terminalized != 1 ||
+		provider.count(humancalling.CommandStopRingWindow) != 0 {
+		t.Fatalf("rejected terminal Stop convergence = command:%s/%s converged:%d terminalized:%d effects:%d",
+			commandState, commandError, convergedAudio, terminalized,
+			provider.count(humancalling.CommandStopRingWindow))
+	}
+}
+
 func TestStopRingWindowCompletionAndTerminalReconciliationUseConsistentLockOrder(t *testing.T) {
 	now := time.Date(2026, time.August, 17, 20, 0, 0, 0, time.UTC)
 	prefix := "terminal-stop-ring-window-lock-order"
@@ -1546,6 +1644,77 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 	}
 	if pendingA != 1 || sentB != 1 {
 		t.Fatalf("concurrent command claims left pending Call A=%d sent Call B=%d", pendingA, sentB)
+	}
+}
+
+func TestDialStaffCreationQueueIncludesIntentionalSameCallSerialization(t *testing.T) {
+	createdAt := time.Date(2026, time.August, 18, 19, 0, 0, 0, time.UTC)
+	seedProvider := &recordingProvider{}
+	pool, _, _, _ := prepareInboundFanout(
+		t, createdAt, "dial-created-queue", seedProvider, 3,
+	)
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_calls LIMIT 1
+	`).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, payload,
+			created_at, next_attempt_at, updated_at
+		)
+		SELECT $1, leg.id, 'DIAL_STAFF', 'caller-control', '{}', $2, $2, $2
+		FROM human_calling_call_legs leg
+		WHERE leg.call_id = $1 AND leg.role = 'STAFF'
+		ORDER BY leg.id
+	`, callID, createdAt); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"dial-created-queue-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
+	currentTime := createdAt
+	provider := &advancingDialProvider{currentTime: &currentTime}
+	calling := humancalling.New(
+		pool,
+		nil,
+		provider,
+		humancalling.Config{Observer: observer},
+		func() time.Time { return currentTime },
+	)
+	for index := range 3 {
+		processed, err := calling.ProcessNextCommand(context.Background())
+		if err != nil || !processed {
+			t.Fatalf("process serialized Dial %d = %t, %v", index+1, processed, err)
+		}
+	}
+
+	queueSeconds := []int{}
+	for _, line := range strings.Split(strings.TrimSpace(metrics.String()), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode Dial metric: %v", err)
+		}
+		if entry["metric"] != "acuity_call_center_provider_command" ||
+			entry["action"] != "dial_staff" {
+			continue
+		}
+		queueSeconds = append(queueSeconds, int(entry["queue_seconds"].(float64)))
+	}
+	if fmt.Sprint(queueSeconds) != "[0 1 2]" ||
+		provider.effects != 3 {
+		t.Fatalf("serialized Dial creation queue = seconds:%v effects:%d metrics:%s",
+			queueSeconds, provider.effects, metrics.String())
 	}
 }
 
@@ -3648,7 +3817,7 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 	}
 }
 
-func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T) {
+func TestActiveStopRingWindowAbsentTargetRecordsDegradedAudioUntilPlaybackEnds(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 15, 25, 0, 0, time.UTC)
 	provider := &recordingProvider{
 		dialResults: []humancalling.ProviderResult{{
@@ -3657,7 +3826,8 @@ func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T
 		}},
 		actionErrors: map[humancalling.CommandAction][]error{
 			humancalling.CommandStopRingWindow: {
-				fmt.Errorf("%w: synthetic Stop rejection", humancalling.ErrDefinitiveProviderFailure),
+				fmt.Errorf("%w: synthetic active Stop target absent",
+					humancalling.ErrProviderTargetAbsent),
 			},
 		},
 	}
@@ -3714,8 +3884,11 @@ func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T
 	`).Scan(&stopState); err != nil {
 		t.Fatal(err)
 	}
-	if degraded != 1 || stopState != "FAILED" {
-		t.Fatalf("degraded caller audio = timeline:%d state:%s", degraded, stopState)
+	if degraded != 1 || stopState != "FAILED" ||
+		provider.count(humancalling.CommandStopRingWindow) != 1 {
+		t.Fatalf("degraded caller audio = timeline:%d state:%s effects:%d",
+			degraded, stopState,
+			provider.count(humancalling.CommandStopRingWindow))
 	}
 	ring := provider.last(humancalling.CommandStartRingWindow)
 	ringState, _ := ring.Payload["client_state"].(string)
@@ -3740,8 +3913,140 @@ func TestStopRingWindowFailureRecordsDegradedAudioUntilPlaybackEnds(t *testing.T
 	`).Scan(&stopState); err != nil {
 		t.Fatal(err)
 	}
-	if converged != 1 || stopState != "RECONCILED" {
-		t.Fatalf("converged caller audio = timeline:%d state:%s", converged, stopState)
+	if converged != 1 || stopState != "RECONCILED" ||
+		provider.count(humancalling.CommandStopRingWindow) != 1 {
+		t.Fatalf("converged caller audio = timeline:%d state:%s effects:%d",
+			converged, stopState,
+			provider.count(humancalling.CommandStopRingWindow))
+	}
+}
+
+func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
+	now := time.Date(2026, time.August, 18, 21, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "unobserved-stop-staff-control",
+		CallLegID:     "unobserved-stop-staff-leg",
+	}}}
+	pool, calling, caller, _ := prepareInboundFanout(
+		t, now, "active-unobserved-stop", provider, 1,
+	)
+	processAllCommands(t, calling)
+	dial := provider.last(humancalling.CommandDialStaff)
+	staffState, _ := dial.Payload["client_state"].(string)
+	staff := humancalling.ProviderFact{
+		EventID: "unobserved-stop-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "unobserved-stop-staff-control",
+		CallLegID:     "unobserved-stop-staff-leg", CallSessionID: "unobserved-stop-session",
+		ClientState: staffState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	staff.EventID = "unobserved-stop-staff-answered"
+	staff.Type = humancalling.FactCallAnswered
+	staff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := calling.ProcessNextCommand(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process unobserved Stop Bridge = %t, %v", processed, err)
+	}
+	bridge := provider.last(humancalling.CommandBridge)
+	bridgeState, _ := bridge.Payload["client_state"].(string)
+	staff.EventID = "unobserved-stop-staff-bridged"
+	staff.Type = humancalling.FactCallBridged
+	staff.OccurredAt = now.Add(4 * time.Second)
+	staff.ClientState = bridgeState
+	if err := calling.ApplyProviderFact(context.Background(), staff); err != nil {
+		t.Fatal(err)
+	}
+	processed, err = calling.ProcessNextCommand(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process accepted unobserved Stop = %t, %v", processed, err)
+	}
+	stop := provider.last(humancalling.CommandStopRingWindow)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'RECONCILED', updated_at = $2
+		WHERE call_id = (
+			SELECT call_id FROM human_calling_provider_commands WHERE id = $1
+		) AND action = 'START_RING_WINDOW'
+	`, stop.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE id = $1
+	`, stop.ID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, stop.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active: true, CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+	})
+	provider.mu.Unlock()
+
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile active unobserved Stop = %d, %v", reconciled, err)
+	}
+	var commandState string
+	var degradedAudio int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT command.state,
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE provider_command_id = command.id AND kind = 'caller_audio.degraded')
+		FROM human_calling_provider_commands command WHERE command.id = $1
+	`, stop.ID).Scan(&commandState, &degradedAudio); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "AMBIGUOUS" || degradedAudio != 1 ||
+		provider.count(humancalling.CommandStopRingWindow) != 1 {
+		t.Fatalf("active unobserved Stop = state:%s degraded:%d effects:%d",
+			commandState, degradedAudio,
+			provider.count(humancalling.CommandStopRingWindow))
+	}
+
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "unobserved-stop-caller-hangup", Type: humancalling.FactCallHangup,
+		OccurredAt: now.Add(5 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		HangupCause: "normal_clearing", TerminationSource: "caller",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+	`, stop.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("terminalize unobserved Stop = %d, %v", reconciled, err)
+	}
+	var convergedAudio, terminalized int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT command.state,
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE provider_command_id = command.id AND kind = 'caller_audio.converged'),
+			(SELECT count(*) FROM human_calling_timeline
+			 WHERE provider_command_id = command.id AND kind = 'ring_window.terminalized')
+		FROM human_calling_provider_commands command WHERE command.id = $1
+	`, stop.ID).Scan(&commandState, &convergedAudio, &terminalized); err != nil {
+		t.Fatal(err)
+	}
+	if commandState != "RECONCILED" || convergedAudio != 1 || terminalized != 1 ||
+		provider.count(humancalling.CommandStopRingWindow) != 1 {
+		t.Fatalf("terminal unobserved Stop = state:%s converged:%d terminalized:%d effects:%d",
+			commandState, convergedAudio, terminalized,
+			provider.count(humancalling.CommandStopRingWindow))
 	}
 }
 
@@ -4566,6 +4871,24 @@ func (commandOnlyProvider) Execute(
 	humancalling.ProviderCommand,
 ) (humancalling.ProviderResult, error) {
 	return humancalling.ProviderResult{}, nil
+}
+
+type advancingDialProvider struct {
+	currentTime *time.Time
+	effects     int
+}
+
+func (provider *advancingDialProvider) Execute(
+	_ context.Context,
+	_ humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	provider.effects++
+	*provider.currentTime = provider.currentTime.Add(time.Second)
+	suffix := fmt.Sprint(provider.effects)
+	return humancalling.ProviderResult{
+		CallControlID: "serialized-dial-control-" + suffix,
+		CallLegID:     "serialized-dial-leg-" + suffix,
+	}, nil
 }
 
 func (provider *recordingProvider) ResolveRecording(

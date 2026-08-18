@@ -52,25 +52,46 @@ const staleCallLegCandidateQuery = `
 	JOIN human_calling_call_legs leg ON leg.call_id = call.id
 	LEFT JOIN LATERAL (
 		SELECT pending.id, pending.action, pending.payload, pending.created_at
-		FROM human_calling_provider_commands pending
-		WHERE pending.call_leg_id = leg.id
-			AND pending.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
-			AND (
-				call.terminal_outcome IS NULL
-				OR pending.action = 'HANGUP_LEG'
-				OR (
-					pending.action = 'STOP_RING_WINDOW'
-					AND leg.role = 'CALLER'
-					AND leg.state IN ('ENDED', 'FAILED')
-					AND leg.provider_connection_id IS NOT NULL
-					AND leg.provider_call_control_id IS NOT NULL
-					AND leg.provider_call_leg_id IS NOT NULL
-					AND leg.provider_call_session_id IS NOT NULL
-					AND pending.target_id = leg.provider_call_control_id
-					AND pending.payload->>'stop' = 'all'
-					AND COALESCE(pending.payload->>'client_state', '') <> ''
+		FROM (
+			SELECT active.id, active.action, active.target_id,
+				active.payload, active.created_at
+			FROM human_calling_provider_commands active
+			WHERE active.call_leg_id = leg.id
+				AND active.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+			UNION ALL
+			SELECT failed.id, failed.action, failed.target_id,
+				failed.payload, failed.created_at
+			FROM human_calling_timeline degraded
+			JOIN human_calling_provider_commands failed
+				ON failed.id = degraded.provider_command_id
+			WHERE degraded.call_id = call.id
+				AND degraded.kind = 'caller_audio.degraded'
+				AND failed.call_leg_id = leg.id
+				AND failed.action = 'STOP_RING_WINDOW'
+				AND failed.state = 'FAILED'
+				AND NOT EXISTS (
+					SELECT 1 FROM human_calling_timeline converged
+					WHERE converged.call_id = call.id
+						AND converged.kind = 'caller_audio.converged'
+						AND converged.provider_command_id = failed.id
 				)
+		) pending
+		WHERE (
+			call.terminal_outcome IS NULL
+			OR pending.action = 'HANGUP_LEG'
+			OR (
+				pending.action = 'STOP_RING_WINDOW'
+				AND leg.role = 'CALLER'
+				AND leg.state IN ('ENDED', 'FAILED')
+				AND leg.provider_connection_id IS NOT NULL
+				AND leg.provider_call_control_id IS NOT NULL
+				AND leg.provider_call_leg_id IS NOT NULL
+				AND leg.provider_call_session_id IS NOT NULL
+				AND pending.target_id = leg.provider_call_control_id
+				AND pending.payload->>'stop' = 'all'
+				AND COALESCE(pending.payload->>'client_state', '') <> ''
 			)
+		)
 		ORDER BY pending.created_at, pending.id
 		LIMIT 1
 	) command ON true
@@ -381,6 +402,14 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		return 1, nil
 	}
 	if observation.Active {
+		if commandID != "" && commandAction == CommandStopRingWindow {
+			if err := m.markUnobservedStopRingWindowAmbiguous(
+				ctx, commandID, legID, commandCreatedAt, checkedAt,
+			); err != nil {
+				return 1, err
+			}
+			return 1, nil
+		}
 		if commandID != "" && commandAction == CommandStartRingWindow {
 			// An active Call and an absent event do not prove a finite playback
 			// never started. Preserve the effect as ambiguous until a positive
@@ -429,6 +458,51 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		return 1, err
 	}
 	return 1, nil
+}
+
+func (m *Module) markUnobservedStopRingWindowAmbiguous(
+	ctx context.Context,
+	commandID string,
+	callLegID string,
+	commandCreatedAt time.Time,
+	observedAt time.Time,
+) error {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin unobserved Stop ring-window result: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockCallThenCallLegForCommandMutation(ctx, tx, callLegID); err != nil {
+		return err
+	}
+	errorCode := string(CommandStopRingWindow) + "_EVENT_ABSENT"
+	tag, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands
+		SET state = 'AMBIGUOUS', last_error_code = $2, updated_at = $3
+		WHERE id = $1 AND call_leg_id = $4 AND action = 'STOP_RING_WINDOW'
+			AND state IN ('SENDING', 'SENT')
+	`, commandID, errorCode, observedAt, callLegID)
+	if err != nil {
+		return fmt.Errorf("mark unobserved Stop ring-window ambiguous: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return tx.Commit(ctx)
+	}
+	if err := m.recordDegradedCallerAudio(
+		ctx, tx, commandID, callLegID, errorCode,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit unobserved Stop ring-window result: %w", err)
+	}
+	m.recordProviderCommand(
+		ProviderCommand{Action: CommandStopRingWindow, createdAt: commandCreatedAt},
+		"AMBIGUOUS",
+		observedAt,
+		0,
+	)
+	return nil
 }
 
 func (m *Module) quarantineStaleCallLeg(
@@ -528,7 +602,7 @@ func (m *Module) terminalizeStopRingWindow(
 		SET state = 'RECONCILED', last_error_code = NULL, updated_at = $2
 		FROM human_calling_calls call, human_calling_call_legs caller
 		WHERE command.id = $1 AND command.action = 'STOP_RING_WINDOW'
-			AND command.state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+			AND command.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'FAILED')
 			AND command.call_id = call.id AND call.id = $3
 			AND command.call_leg_id = caller.id AND caller.id = $4
 			AND call.terminal_outcome IS NOT NULL

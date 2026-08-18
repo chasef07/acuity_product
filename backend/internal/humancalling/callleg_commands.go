@@ -195,7 +195,12 @@ func (m *Module) executeCallLegCommand(
 	if err := m.finishCallLegCommand(ctx, command, result, executeErr); err != nil {
 		return ProviderResult{}, err
 	}
-	state, _ := m.providerCommandResult(command, executeErr)
+	var state string
+	if err := m.database.QueryRow(ctx, `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, command.ID).Scan(&state); err != nil {
+		return ProviderResult{}, fmt.Errorf("read durable provider command result: %w", err)
+	}
 	if state != "PENDING" {
 		m.recordProviderCommand(
 			command,
@@ -204,7 +209,8 @@ func (m *Module) executeCallLegCommand(
 			m.now().Sub(claimedAt),
 		)
 	}
-	if executeErr != nil && (state == "FAILED" || state == "SENT") {
+	if executeErr != nil &&
+		(state == "FAILED" || state == "SENT" || state == "RECONCILED") {
 		return result, nil
 	}
 	return result, executeErr
@@ -254,15 +260,61 @@ func (m *Module) finishCallLegCommand(
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
+	terminalAbsentStop := false
+	terminalAbsentCallID := ""
+	terminalAbsentPracticeID := ""
+	if command.CallLegID != "" && command.Action == CommandStopRingWindow &&
+		errors.Is(executeErr, ErrProviderTargetAbsent) {
+		var terminalOutcome, role, legState string
+		if err := tx.QueryRow(ctx, `
+			SELECT call.id::text, call.practice_id::text,
+				COALESCE(call.terminal_outcome, ''), leg.role, leg.state
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE leg.id = $1
+		`, command.CallLegID).Scan(
+			&terminalAbsentCallID,
+			&terminalAbsentPracticeID,
+			&terminalOutcome,
+			&role,
+			&legState,
+		); err != nil {
+			return fmt.Errorf("read absent Stop ring-window target: %w", err)
+		}
+		terminalAbsentStop = terminalOutcome != "" && role == "CALLER" &&
+			(legState == "ENDED" || legState == "FAILED")
+		if terminalAbsentStop {
+			state = "RECONCILED"
+			errorCode = ""
+		}
+	}
+	resultTag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = $2, last_error_code = NULLIF($3, ''),
 			sent_at = CASE WHEN $2 = 'SENT' THEN COALESCE(sent_at, $4) ELSE sent_at END,
 			next_attempt_at = CASE WHEN $2 = 'PENDING' THEN $4 + interval '5 seconds' ELSE next_attempt_at END,
 			updated_at = $4
 		WHERE id = $1 AND state = 'SENDING'
-	`, command.ID, state, errorCode, m.now()); err != nil {
+	`, command.ID, state, errorCode, m.now())
+	if err != nil {
 		return fmt.Errorf("record provider command result: %w", err)
+	}
+	if terminalAbsentStop && resultTag.RowsAffected() == 1 {
+		if err := appendTimeline(
+			ctx,
+			tx,
+			terminalAbsentCallID,
+			terminalAbsentPracticeID,
+			"ring_window.terminalized",
+			"",
+			"",
+			command.ID,
+			opaqueReference(command.CallLegID),
+			"PROVIDER_TARGET_ABSENT",
+			m.now(),
+		); err != nil {
+			return err
+		}
 	}
 	if command.Action == CommandCreateCredential && executeErr == nil {
 		if _, err := tx.Exec(ctx, `
