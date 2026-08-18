@@ -474,30 +474,88 @@ func TestProductionReleaseRepairsStaleDesiredTrafficBeforeMigration(t *testing.T
 	)
 }
 
-func TestMainPushDeployWaitsForAllCIJobs(t *testing.T) {
+func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
-	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+	ciWorkflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatalf("read CI workflow: %v", err)
 	}
-	content := string(workflow)
+	ciContent := string(ciWorkflow)
 	for _, required := range []string{
+		"uses: ./.github/workflows/verify.yml",
+	} {
+		if !strings.Contains(ciContent, required) {
+			t.Errorf("CI workflow omits %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"release-please:",
 		"deploy:",
-		"needs: [backend, web, contracts, browser]",
+	} {
+		if strings.Contains(ciContent, forbidden) {
+			t.Errorf("superseding CI workflow still owns %q", forbidden)
+		}
+	}
+
+	verificationWorkflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "verify.yml"))
+	if err != nil {
+		t.Fatalf("read reusable verification workflow: %v", err)
+	}
+	verificationContent := string(verificationWorkflow)
+	for _, required := range []string{
+		"workflow_call:",
+		"release_sha:",
+		"ref: ${{ inputs.release_sha }}",
+		"backend:",
+		"web:",
+		"contracts:",
+		"browser:",
 		"go test -p 1 ./backend/... ./deploy -count=1",
-		"github.event_name == 'push'",
-		"github.ref == 'refs/heads/main'",
+	} {
+		if !strings.Contains(verificationContent, required) {
+			t.Errorf("reusable verification workflow omits %q", required)
+		}
+	}
+
+	releaseWorkflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	releaseContent := string(releaseWorkflow)
+	for _, required := range []string{
+		"workflow_run:",
+		"workflows: [\"CI\"]",
+		"types: [completed]",
+		"github.event.workflow_run.conclusion == 'success'",
+		"github.event.workflow_run.event == 'push'",
+		"github.event.workflow_run.head_branch == 'main'",
+		"release-please:",
+		"googleapis/release-please-action@",
+		"release_created: ${{ steps.release.outputs.release_created }}",
+		"release_sha: ${{ steps.release.outputs.sha }}",
+		"verify-release:",
+		"uses: ./.github/workflows/verify.yml",
+		"release_sha: ${{ needs.release-please.outputs.release_sha }}",
+		"deploy:",
+		"if: needs.release-please.outputs.release_created == 'true'",
+		"needs: [release-please, verify-release]",
+		"ref: ${{ needs.release-please.outputs.release_sha }}",
 		"id-token: write",
 		"google-github-actions/auth",
 		"gcloud builds submit",
 		"cloudbuild.release.yaml",
+		"RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}",
+		"_IMAGE_TAG=${RELEASE_SHA}",
 		"USABLE_DATABASE_CONNECTIONS: ${{ vars.USABLE_DATABASE_CONNECTIONS }}",
 		"_USABLE_DATABASE_CONNECTIONS=${USABLE_DATABASE_CONNECTIONS}",
 		"url: https://acuity-web-cbuqwpsdsq-ue.a.run.app",
 	} {
-		if !strings.Contains(content, required) {
-			t.Errorf("main deployment workflow omits %q", required)
+		if !strings.Contains(releaseContent, required) {
+			t.Errorf("non-superseding release workflow omits %q", required)
 		}
+	}
+	if strings.Contains(releaseContent, "\nconcurrency:") {
+		t.Error("release workflow must not use GitHub concurrency, which supersedes pending runs")
 	}
 }
 

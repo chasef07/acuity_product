@@ -38,24 +38,36 @@ Ordinary releases target that region and never copy data between regions.
 Application rollback uses compatible prior `us-east1` revisions; database
 recovery uses backup/PITR rather than a second regional stack.
 
-Every push to GitHub `main` now follows one release path:
+Every reviewed change merged to GitHub `main` follows one validation path, but
+only a merged Release Please pull request starts a production deployment:
 
 1. GitHub Actions runs the Go, web, generated-contract, and browser suites.
-2. GitHub exchanges its `main`-bound identity for the
+2. Successful `main` CI starts a separate Release workflow. It has no
+   superseding workflow-level concurrency, so a newer `main` run cannot cancel
+   a pending release decision.
+3. For an ordinary change, Release Please creates or updates the product
+   release pull request and the Release workflow ends without deploying.
+4. When the Release Please pull request is merged, `main` CI runs the same
+   suites again. Release Please recognizes the merged version and changelog,
+   tags that commit, and publishes the GitHub release.
+5. The Release workflow checks out that exact released SHA and reruns the Go,
+   web, generated-contract, and browser suites. A later `main` commit's results
+   cannot stand in for the released commit.
+6. GitHub exchanges its `main`-bound identity for the
    `acuity-product-cloud-deploy` Google service account; there is no stored
    Google service-account key.
-3. Cloud Build creates backend and web images tagged with the full Git commit
-   SHA and resolves them to immutable digests.
-4. `acuity-migrate` applies forward migrations and the reviewed runtime grants.
-5. Backend services and the worker stage on the digest, become ready, and
+7. Cloud Build creates backend and web images tagged with the released commit's
+   full SHA and resolves them to immutable digests.
+8. `acuity-migrate` applies forward migrations and the reviewed runtime grants.
+9. Backend services and the worker stage on the digest, become ready, and
    promote before web is released last.
-6. Any post-promotion smoke failure returns request traffic and the worker split
+10. Any post-promotion smoke failure returns request traffic and the worker split
    to the revisions captured at the start of the release. Expanded migrations
    remain in place.
 
 Operators do not run `pnpm` or a deployment script for an ordinary release.
-Push the reviewed commit to `main`, then follow the GitHub Actions run and its
-linked Cloud Build. The web URL is
+Merge the reviewed Release Please pull request, then follow the GitHub Actions
+run and its linked Cloud Build. The web URL is
 `https://acuity-web-cbuqwpsdsq-ue.a.run.app`.
 
 ## Custom domain cutover
