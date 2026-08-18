@@ -1,27 +1,25 @@
 # Provider receipt recovery
 
 Provider receipt recovery starts with aggregate evidence and advances one
-attached receipt at a time. Never bulk requeue a quarantine: a replay is safe
-only after the projection defect is fixed and the exact audited group is
-correlated to one Call. A smaller quarantine metric is not success when a Call,
-CallLeg, command, audit, or original receipt failure no longer agrees.
+attached receipt at a time. Never bulk requeue a quarantine: replay is safe only
+after the projection defect is fixed and the exact audited group is correlated
+to one Call. A smaller quarantine metric is not success when a Call, CallLeg,
+provider command, audit, or original receipt failure no longer agrees.
 
-The controlled drain has four interfaces:
+The controlled drain uses four Platform Operator HTTP interfaces:
 
-- `receipt-audit` is the read-only aggregate authority, including the separate
-  `attachedToCall=false` groups;
-- the Platform Operator candidate read selects one oldest attached receipt from
-  an exact `eventType` and bounded `errorCode` group;
-- the one-receipt status read follows that same opaque reference across state
-  changes and returns bounded Call, CallLeg, provider-command, backlog, duplicate,
-  and audit counts; and
-- the existing requeue and unreplayable resolution writes each accept exactly
-  one opaque receipt reference.
+- candidate selection returns the oldest attached receipt from one exact
+  `eventType` and bounded `errorCode` group without changing it;
+- status follows that exact opaque receipt reference across state changes;
+- requeue accepts exactly one quarantined attached receipt; and
+- `UNSAFE_TO_REPLAY` terminally resolves exactly one attached receipt while
+  preserving its original evidence and projection error.
 
-There is no unattached-receipt authorization path. Do not guess a Call, force an
-attachment, or use direct SQL to move an unattached receipt.
+There is no bulk interface and no authorization path for unattached receipts.
+Do not guess a Call, force an attachment, delete evidence, or use direct SQL to
+change receipt state.
 
-## Aggregate audit
+## 1. Capture the read-only aggregate audit
 
 Use a separately authorized database URL through a local Cloud SQL Auth Proxy.
 The command opens one connection, executes a read-only transaction, and emits
@@ -34,12 +32,8 @@ AUDIT_DATABASE_URL='postgresql://...' \
   go run ./backend/cmd/receipt-audit
 ```
 
-Group the output by `errorCode`, `eventType`, and `attachedToCall`. An unattached
-receipt cannot use the current operator recovery endpoint and must not be forced
-onto a guessed Call.
-
-Save the sanitized output with the incident evidence. Before every one-receipt
-action, confirm all of the following:
+Save the sanitized output with the incident evidence. Before selecting a
+candidate, confirm all of the following:
 
 1. active `PENDING` plus `PROCESSING` depth is stable and understood;
 2. the exact attached group is homogeneous by `eventType`, bounded `errorCode`,
@@ -48,125 +42,159 @@ action, confirm all of the following:
 4. every `attachedToCall=false`, `UNCLASSIFIED`, mixed, or unexplained group is
    recorded separately and excluded from the drain.
 
-## Select one candidate without changing it
+Stop if any evidence is missing. An unattached receipt remains an unresolved
+group; it must not be attached to a guessed Call.
 
-Use a short-lived Platform Operator bearer token. Keep it in the environment;
-never put it in shell history or command output.
+## 2. Select one candidate without changing it
 
-```sh
-OPERATOR_TOKEN='...' \
-  go run ./backend/cmd/receipt-recovery \
-  --base-url='https://portal-api.example' \
-  --practice-id='00000000-0000-0000-0000-000000000000' \
-  --event-type='call.answered' \
-  --error-code='PROJECTION_RETRY_EXHAUSTED' \
-  --action='requeue'
-```
-
-Without `--apply`, the command is read-only. It selects exactly one oldest
-attached candidate, reads that candidate's status, prints sanitized JSON, and
-exits. It never selects a second candidate in the same invocation.
-
-Record the returned `callId`, `receiptReference`, attempts, age,
-`remainingGroupCount`, receipt state, duplicate count, Call state/version,
-CallLeg state counts, command state counts, Practice-attached active/quarantine
-counts, and requeue/resolution audit counts. Then read the Call's Platform
-Operator timeline:
-
-```text
-GET /v1/operator/calls/{callId}/timeline
-```
-
-Stop before a write if the candidate is not `QUARANTINED`, the status does not
-match the exact selected group, any provider command is `AMBIGUOUS` or `FAILED`,
-the Call/CallLeg sequence is not understood, the duplicate count is unexplained,
-or the aggregate audit changed while reviewing the candidate.
-
-## One-receipt recovery gate
-
-For a receipt proven safe to replay, rerun the same command with explicit apply
-intent:
+Load a short-lived Platform Operator bearer token through the approved
+credential mechanism. Do not paste the token into incident notes, logs, or
+command output. Set `PORTAL_API_URL` without a trailing slash and set the exact
+Practice and audited group values:
 
 ```sh
-OPERATOR_TOKEN='...' \
-  go run ./backend/cmd/receipt-recovery \
-  --base-url='https://portal-api.example' \
-  --practice-id='00000000-0000-0000-0000-000000000000' \
-  --event-type='call.answered' \
-  --error-code='PROJECTION_RETRY_EXHAUSTED' \
-  --action='requeue' \
-  --apply
+export PORTAL_API_URL='https://portal-api.example'
+export PRACTICE_ID='00000000-0000-0000-0000-000000000000'
+export EVENT_TYPE='call.answered'
+export ERROR_CODE='PROJECTION_RETRY_EXHAUSTED'
+export OPERATOR_TOKEN='...'
 ```
 
-The command selects once, requeues only that reference, polls only that
-reference, and exits after it reaches `APPLIED` or a stop condition. The requeue
-transaction verifies Platform Operator authority, locks one attached
-`QUARANTINED` receipt inside the requested Practice, writes exactly one
-`provider_receipt.requeued` audit, and resets only that receipt to `PENDING`.
+Select one oldest attached candidate from only that group:
 
-After `APPLIED`, require all of this proof before another invocation:
+```sh
+curl --fail-with-body --silent --show-error --get \
+  --header "Authorization: Bearer ${OPERATOR_TOKEN:?}" \
+  --data-urlencode "eventType=${EVENT_TYPE:?}" \
+  --data-urlencode "errorCode=${ERROR_CODE:?}" \
+  "${PORTAL_API_URL:?}/v1/operator/practices/${PRACTICE_ID:?}/provider-receipts/quarantine-candidate"
+```
 
-1. the duplicate count did not change;
-2. the exact receipt's requeue audit count increased by one;
+Record the sanitized response. Manually copy its `receiptReference` and
+`callId`; do not run a loop or select another candidate:
+
+```sh
+export RECEIPT_REFERENCE='copy-the-43-character-reference'
+export CALL_ID='copy-the-call-id'
+```
+
+The candidate must match the requested Practice, `eventType`, and `errorCode`,
+must have projection-attempt evidence, and must identify one attached Call.
+Record its age and `remainingGroupCount` as the group baseline.
+
+## 3. Read status and Call evidence before writing
+
+Read the current status for only the copied reference:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  --header "Authorization: Bearer ${OPERATOR_TOKEN:?}" \
+  "${PORTAL_API_URL:?}/v1/operator/practices/${PRACTICE_ID:?}/provider-receipts/${RECEIPT_REFERENCE:?}"
+```
+
+Read the selected Call's sanitized Platform Operator timeline:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  --header "Authorization: Bearer ${OPERATOR_TOKEN:?}" \
+  "${PORTAL_API_URL:?}/v1/operator/calls/${CALL_ID:?}/timeline"
+```
+
+Save both responses as the before evidence. Stop before a write unless:
+
+- the status Practice, Call, reference, event type, and error code exactly match
+  the selected candidate;
+- receipt state is `QUARANTINED` and its attempts are explained;
+- every provider command state is understood, with none `AMBIGUOUS` or `FAILED`;
+- the duplicate count and Call/CallLeg sequence are explained; and
+- active and quarantine depths have not grown unexpectedly.
+
+## 4A. Requeue exactly one receipt proven safe to replay
+
+This request mutates only the copied reference and atomically records one
+`provider_receipt.requeued` Platform Operator audit:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header "Authorization: Bearer ${OPERATOR_TOKEN:?}" \
+  --header 'Content-Type: application/json' \
+  --data '{}' \
+  "${PORTAL_API_URL:?}/v1/operator/practices/${PRACTICE_ID:?}/provider-receipts/${RECEIPT_REFERENCE:?}/requeue"
+```
+
+A successful acceptance returns that same reference in `PENDING`. Do not treat
+the HTTP response as convergence proof.
+
+Manually repeat only the status request from step 3 for the same
+`RECEIPT_REFERENCE`. Never use a shell loop, `watch`, `xargs`, or a command that
+selects the next candidate. Wait for `APPLIED`, stopping immediately on
+`QUARANTINED`, `UNKNOWN`, `FAILED`, timeout, or any HTTP/database failure.
+
+After `APPLIED`, read the Call timeline again and require all of this proof:
+
+1. duplicate count is unchanged;
+2. requeue audit count increased by exactly one;
 3. no provider command is `AMBIGUOUS` or `FAILED`;
-4. Practice-attached active depth returned to or below its baseline and
-   quarantine depth decreased;
-5. the new Call timeline contains no duplicate command/effect and the resulting
-   Call and CallLeg transitions are the expected transitions for this audited
-   group; and
-6. a fresh `receipt-audit` shows no aggregate backlog growth or new unexplained
-   group.
+4. active depth returned to or below baseline and quarantine depth decreased;
+5. Call and CallLeg transitions are expected and no provider command/effect was
+   duplicated; and
+6. a fresh aggregate audit shows no backlog growth or new unexplained group.
 
-`requiresTimelineReview=true` means the Call state/version or CallLeg state
-counts changed. The command deliberately does not decide whether that domain
-transition was expected. Review the timeline and provider evidence, then stop or
-start a new one-receipt invocation. The summary cannot by itself prove a
-provider effect was not duplicated.
+Only after a human accepts all six checks may a new invocation of step 2 select
+another receipt.
 
-## Resolve one receipt proven unsafe to replay
+## 4B. Resolve exactly one receipt proven unsafe to replay
 
 Use terminal resolution only when retained evidence proves replay is unsafe or
-obsolete and the incident record explains why. Inspect first with
-`--action=resolve` and no `--apply`. Then run:
+obsolete and the incident record explains why. Repeat steps 2 and 3 with the
+same selected reference, then send the only accepted bounded intent:
 
 ```sh
-OPERATOR_TOKEN='...' \
-  go run ./backend/cmd/receipt-recovery \
-  --base-url='https://portal-api.example' \
-  --practice-id='00000000-0000-0000-0000-000000000000' \
-  --event-type='call.answered' \
-  --error-code='PROJECTION_RETRY_EXHAUSTED' \
-  --action='resolve' \
-  --apply
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header "Authorization: Bearer ${OPERATOR_TOKEN:?}" \
+  --header 'Content-Type: application/json' \
+  --data '{"resolution":"UNSAFE_TO_REPLAY"}' \
+  "${PORTAL_API_URL:?}/v1/operator/practices/${PRACTICE_ID:?}/provider-receipts/${RECEIPT_REFERENCE:?}/resolve"
 ```
 
-The HTTP adapter sends the bounded intent `UNSAFE_TO_REPLAY`. HumanCalling locks
-exactly one currently `QUARANTINED`, attached receipt, changes only its terminal
-and quarantine scheduling state, preserves `raw_body`, the original
-`projection_error_code`, attempts, last-attempt evidence, and projected time,
-and atomically writes `provider_receipt.resolved_unreplayable`. The command then
-requires `FAILED`, unchanged error/attempt/duplicate evidence, a one-count audit
-increment, and decreased Practice quarantine depth.
+The response must contain the same reference in `FAILED`. Read status again for
+only that reference and require:
+
+1. the status-visible original error code, attempts, and duplicate evidence
+   remain unchanged;
+2. resolution audit count increased by exactly one and requeue audit count did
+   not change;
+3. quarantine depth decreased by one and active depth did not grow; and
+4. the Call and CallLeg projection did not change.
+
+The safe status interface intentionally does not expose the raw receipt body.
+The HumanCalling transaction preserves that body, last-attempt evidence, and
+original projection error; database-backed tests are the application proof of
+that invariant. Do not broaden the operator response or print raw evidence to
+make it directly observable.
 
 Resolution is not available for unattached receipts. Keep those groups visible
-and escalate the missing correlation/authorization decision instead of making
-the metric zero.
+and escalate the missing correlation or authorization decision instead of
+making the quarantine metric zero.
 
 ## Stop conditions
 
 Stop the group immediately on any of these observations:
 
-- candidate ambiguity, empty/mixed group, unexpected bounded values, or a
+- candidate ambiguity, an empty or mixed group, unexpected bounded values, or a
   cross-Practice mismatch;
-- receipt re-quarantine, `UNKNOWN`, `FAILED` after requeue, timeout, or database/
-  HTTP failure;
-- duplicate-count growth, provider-command `AMBIGUOUS`/`FAILED`, a rejected or
-  duplicate provider effect, or an unexpected Call/CallLeg transition;
+- receipt re-quarantine, `UNKNOWN`, `FAILED` after requeue, timeout, or database
+  or HTTP failure;
+- duplicate-count growth, provider-command `AMBIGUOUS` or `FAILED`, a rejected
+  or duplicate provider effect, or an unexpected Call/CallLeg transition;
 - active or quarantine backlog growth, a new audit mismatch, or a new aggregate
   group; or
 - any unattached receipt, insufficient retained evidence, or uncertainty that
   replay is safe.
 
 Do not retry through a stronger tool, direct database update, deletion, bulk
-request, or forced attachment. Preserve the candidate, before/after status,
-timeline, aggregate audit, and incident decision as the recovery proof.
+request, forced attachment, or automated next-candidate selection. Preserve the
+candidate, before/after status, timeline, aggregate audit, and incident decision
+as the recovery proof.
