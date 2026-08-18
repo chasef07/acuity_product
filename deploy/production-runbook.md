@@ -274,8 +274,8 @@ The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
 voicemail greeting. The Demo Practice is a separate tenant and uses its own
 greeting and Telnyx Messaging profile. Sweetwater Optical has no voice or
 Messaging configuration yet; no number or sender is inferred by this topology
-change. The same file contains 31 Abita Access Grants: Jason is the
-sole Admin and the other 30 entries are Staff with reviewed Location Scopes.
+change. The same file contains 32 Abita Access Grants: Jason is the
+sole Admin and the other 31 entries are Staff with reviewed Location Scopes.
 Access Grants create no separate credential or human password.
 
 Migration `0023_split_abita_locations.sql` upgrades the already-provisioned

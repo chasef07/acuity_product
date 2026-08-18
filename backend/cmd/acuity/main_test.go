@@ -350,9 +350,27 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	`).Scan(&grantCount, &abitaGrantCount, &demoGrantCount); err != nil {
 		t.Fatalf("count provisioned Access Grants: %v", err)
 	}
-	if grantCount != 31 || abitaGrantCount != 31 || demoGrantCount != 0 {
-		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 31, 31, 0",
+	if grantCount != 32 || abitaGrantCount != 32 || demoGrantCount != 0 {
+		t.Fatalf("provisioned Access Grants = total:%d Abita:%d demo:%d, want 32, 32, 0",
 			grantCount, abitaGrantCount, demoGrantCount)
+	}
+	var brightVuEmail, brightVuRole, brightVuScope, brightVuLocation string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT access_grant.email, access_grant.role, access_grant.location_scope,
+			location.provisioning_key
+		FROM access_grants access_grant
+		JOIN access_grant_locations allowed ON allowed.access_grant_id = access_grant.id
+		JOIN access_locations location ON location.id = allowed.location_id
+		WHERE access_grant.provisioning_key = 'bright-vu-miami'
+	`).Scan(&brightVuEmail, &brightVuRole, &brightVuScope, &brightVuLocation); err != nil {
+		t.Fatalf("read Bright Vu Miami Access Grant: %v", err)
+	}
+	if brightVuEmail != "brightvumiami@gmail.com" || brightVuRole != "STAFF" ||
+		brightVuScope != "SELECTED" || brightVuLocation != "north-miami-beach-optical" {
+		t.Fatalf(
+			"Bright Vu Miami Access Grant = email:%q role:%q scope:%q location:%q",
+			brightVuEmail, brightVuRole, brightVuScope, brightVuLocation,
+		)
 	}
 	type grant struct {
 		Email string
@@ -434,8 +452,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	if err := json.NewDecoder(outputFile).Decode(&provisioned); err != nil {
 		t.Fatalf("decode provisioning output: %v", err)
 	}
-	if provisioned.AccessGrantCount != 31 {
-		t.Fatalf("provisioning output Access Grant count = %d, want 31", provisioned.AccessGrantCount)
+	if provisioned.AccessGrantCount != 32 {
+		t.Fatalf("provisioning output Access Grant count = %d, want 32", provisioned.AccessGrantCount)
 	}
 }
 
@@ -516,8 +534,8 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 	`).Scan(&grantCount); err != nil {
 		t.Fatalf("count reconciled Access Grants: %v", err)
 	}
-	if grantCount != 31 {
-		t.Fatalf("reconciled Access Grants = %d, want 31", grantCount)
+	if grantCount != 32 {
+		t.Fatalf("reconciled Access Grants = %d, want 32", grantCount)
 	}
 }
 

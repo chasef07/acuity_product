@@ -137,6 +137,13 @@
           "SelectedLocationKeys": ["north-miami-beach-optical", "sweetwater"]
         },
         {
+          "Key": "bright-vu-miami",
+          "Email": "brightvumiami@gmail.com",
+          "Role": "STAFF",
+          "LocationScope": "SELECTED",
+          "SelectedLocationKeys": ["north-miami-beach-optical"]
+        },
+        {
           "Key": "dr-licht",
           "Email": "drjlicht@gmail.com",
           "Role": "STAFF",
