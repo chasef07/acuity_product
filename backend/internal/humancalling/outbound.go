@@ -203,7 +203,7 @@ func (m *Module) ProvisionOutboundVoiceFallbacksInTx(
 		if err := tx.QueryRow(ctx, `
 			SELECT id::text FROM access_practices
 			WHERE provisioning_key = $1
-			FOR UPDATE
+			FOR NO KEY UPDATE
 		`, provision.PracticeKey).Scan(&practiceID); err != nil {
 			return ErrInvalidInput
 		}

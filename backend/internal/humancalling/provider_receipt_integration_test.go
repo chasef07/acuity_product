@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -18,7 +19,235 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/jackc/pgx/v5"
 )
+
+func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
+	t *testing.T,
+) {
+	pool := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	now := time.Date(2026, time.August, 18, 17, 56, 0, 0, time.UTC)
+	const prefix = "outbound-answer-provisioning"
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, 1)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+	}}}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+		WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
+		WebhookTolerance:       5 * time.Minute,
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
+	if err := calling.ProvisionLocationVoices(ctx, []humancalling.LocationVoiceProvision{{
+		PracticeKey: prefix + "-practice",
+		LocationKey: prefix + "-location",
+		Number:      "+15555550123",
+		Enabled:     true,
+	}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	call, err := calling.StartOutboundCall(ctx, humancalling.StartOutboundCallCommand{
+		Identity:       staff[0],
+		SessionID:      prefix + "-browser-1",
+		IdempotencyKey: prefix,
+		PracticeID:     authorization.Practice.ID,
+		LocationID:     authorization.Locations[0].ID,
+		Destination:    "+15555550124",
+	})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	if processed, err := calling.ProcessNextCommand(ctx); err != nil || !processed {
+		t.Fatalf("execute outbound Staff Dial: processed=%t err=%v", processed, err)
+	}
+	dial := provider.last(humancalling.CommandDialOutboundStaff)
+	clientState, _ := dial.Payload["client_state"].(string)
+	body, err := json.Marshal(map[string]any{"data": map[string]any{
+		"record_type": "event",
+		"event_type":  "call.answered",
+		"id":          prefix + "-answered",
+		"occurred_at": now.Add(time.Second).Format(time.RFC3339Nano),
+		"payload": map[string]any{
+			"connection_id":   "staff-call-control-connection",
+			"call_control_id": prefix + "-staff-control",
+			"call_leg_id":     prefix + "-staff-leg",
+			"call_session_id": prefix + "-staff-session",
+			"client_state":    clientState,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), body...),
+	))
+	if _, err := calling.ReceiveWebhook(ctx, body, timestamp, signature); err != nil {
+		t.Fatalf("receive outbound Staff answer: %v", err)
+	}
+
+	const barrierKey int64 = 818175616
+	barrier := holdPostgresAdvisoryLock(t, pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_outbound_answer_workspace_change"
+	const functionName = "test_wait_for_outbound_answer_workspace_change"
+	installPostgresTestTrigger(t, pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		AFTER INSERT ON human_calling_timeline
+		FOR EACH ROW WHEN (
+			NEW.call_id = '%s'::uuid AND NEW.kind = 'provider.staff.answered'
+		)
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, call.ID, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_timeline;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	receiptResult := make(chan error, 1)
+	go func() {
+		processed, err := calling.ProcessNextReceipt(ctx)
+		if !processed && err == nil {
+			err = errors.New("no outbound Staff answer receipt processed")
+		}
+		receiptResult <- err
+	}()
+	receiptPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+
+	provisioningResult := make(chan error, 1)
+	go func() {
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			provisioningResult <- err
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		_, err = accessModule.ProvisionInTx(ctx, tx, access.Provisioning{
+			Environment: "test",
+			RequestedBy: prefix + "-release",
+			Practices: []access.PracticeProvision{{
+				Key:  prefix + "-practice",
+				Name: prefix + " practice",
+				Locations: []access.LocationProvision{{
+					Key:  prefix + "-location",
+					Name: prefix + " location",
+				}},
+			}},
+		})
+		if err != nil {
+			err = fmt.Errorf("access provisioning: %w", err)
+		} else if err = calling.ProvisionOutboundVoiceFallbacksInTx(
+			ctx,
+			tx,
+			[]humancalling.OutboundVoiceFallbackProvision{{
+				PracticeKey: prefix + "-practice",
+				LocationKey: prefix + "-location",
+			}},
+		); err != nil {
+			err = fmt.Errorf("outbound fallback provisioning: %w", err)
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		provisioningResult <- err
+	}()
+
+	var provisioningErr error
+	provisioningComplete := false
+	var provisioningPID int32
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		pid, waiting, err := findPostgresLockWaiter(
+			ctx, barrier.connection, "transactionid", receiptPID,
+		)
+		if err != nil {
+			t.Fatalf("inspect provisioning blocker chain: %v", err)
+		}
+		if waiting {
+			provisioningPID = pid
+			break
+		}
+		select {
+		case provisioningErr = <-provisioningResult:
+			provisioningComplete = true
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+		if provisioningComplete {
+			break
+		}
+	}
+	if !provisioningComplete && provisioningPID == 0 {
+		t.Fatal("provisioning neither completed nor exposed the receipt as its exact blocker")
+	}
+	barrier.release()
+	if provisioningPID != 0 {
+		waitForPostgresLockWaiter(
+			t, barrier.connection, "transactionid", provisioningPID,
+		)
+	}
+	if !provisioningComplete {
+		select {
+		case provisioningErr = <-provisioningResult:
+		case <-time.After(5 * time.Second):
+			t.Fatal("release provisioning did not finish")
+		}
+	}
+	var receiptErr error
+	select {
+	case receiptErr = <-receiptResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("outbound Staff answer receipt did not finish")
+	}
+	if provisioningErr != nil || receiptErr != nil {
+		t.Fatalf("concurrent release provisioning and receipt projection: provisioning=%v receipt=%v",
+			provisioningErr, receiptErr)
+	}
+
+	var receiptState, projectionCode, staffState string
+	var attempts int
+	if err := pool.QueryRow(ctx, `
+		SELECT receipt.state, receipt.projection_attempts,
+			COALESCE(receipt.projection_error_code, ''), staff.state
+		FROM human_calling_provider_receipts receipt
+		JOIN human_calling_call_legs staff
+			ON staff.call_id = receipt.call_id AND staff.role = 'STAFF'
+		WHERE receipt.event_id = $1
+	`, prefix+"-answered").Scan(
+		&receiptState, &attempts, &projectionCode, &staffState,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if receiptState != string(humancalling.ReceiptApplied) || attempts != 1 ||
+		projectionCode != "" || staffState != "BRIDGE_PENDING" ||
+		provider.count(humancalling.CommandDialOutboundStaff) != 1 {
+		t.Fatalf(
+			"release/receipt convergence = receipt:%s attempts:%d code:%s staff:%s provider effects:%d",
+			receiptState, attempts, projectionCode, staffState,
+			provider.count(humancalling.CommandDialOutboundStaff),
+		)
+	}
+}
 
 func TestRejectedHandoffTerminalizesExactProviderLegLifecycleReceipts(t *testing.T) {
 	pool := testdb.Open(t)
