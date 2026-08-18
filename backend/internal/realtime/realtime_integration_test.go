@@ -22,6 +22,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
+	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/realtime"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
@@ -314,6 +315,243 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	if denied.StatusCode != http.StatusForbidden {
 		body, _ := io.ReadAll(denied.Body)
 		t.Fatalf("unauthorized stream status = %d, body = %s", denied.StatusCode, body)
+	}
+}
+
+func TestRealtimeReconnectAndRevalidationBurstStaysAvailableDuringUnrelatedOperatorBinding(t *testing.T) {
+	ownerPool := testdb.Open(t)
+	now := time.Date(2026, time.August, 18, 15, 38, 57, 0, time.UTC)
+	_, identity, authorization := provisionRealtimeMember(
+		t,
+		ownerPool,
+		now,
+		"realtime-reconnect-contention",
+	)
+
+	var metrics synchronizedBuffer
+	observer := observability.NewLogger(
+		observability.RuntimeRealtime,
+		"realtime-contention-test",
+		slog.New(slog.NewJSONHandler(&metrics, nil)),
+	)
+	poolConfig, err := pgxpool.ParseConfig(testDatabaseURL(t))
+	if err != nil {
+		t.Fatalf("parse realtime production pool: %v", err)
+	}
+	poolConfig.MaxConns = 1
+	poolConfig.MinConns = 0
+	runtimePool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		t.Fatalf("open realtime production pool: %v", err)
+	}
+	t.Cleanup(runtimePool.Close)
+	database, err := productpostgres.NewExecutor(
+		runtimePool,
+		productpostgres.ExecutorConfig{
+			AcquireTimeout:   150 * time.Millisecond,
+			OperationTimeout: time.Second,
+			StatementTimeout: 500 * time.Millisecond,
+		},
+		observer,
+	)
+	if err != nil {
+		t.Fatalf("create realtime production executor: %v", err)
+	}
+	runtimeAccess := access.New(database, func() time.Time { return now })
+
+	hubContext, stopHub := context.WithCancel(context.Background())
+	t.Cleanup(stopHub)
+	hub, err := realtime.New(realtime.Config{
+		DatabaseURL:        testDatabaseURL(t),
+		AccessTimeout:      time.Second,
+		HeartbeatInterval:  time.Second,
+		StreamLifetime:     5 * time.Second,
+		RevalidateInterval: 100 * time.Millisecond,
+		ReconnectMin:       10 * time.Millisecond,
+		ReconnectMax:       50 * time.Millisecond,
+		Observer:           observer,
+	}, runtimeAccess)
+	if err != nil {
+		t.Fatalf("new realtime contention adapter: %v", err)
+	}
+	go hub.Run(hubContext)
+
+	handler, err := httpapi.NewRealtime(httpapi.Config{
+		AllowedOrigins: []string{"http://localhost:3000"},
+		AcquireTimeout: 150 * time.Millisecond,
+		RequestTimeout: time.Second,
+		Observer:       observer,
+	}, runtimePool, httpapi.RealtimeDependencies{
+		Access:        runtimeAccess,
+		Authenticator: staticAuthenticator{"member-token": identity},
+		Events:        hub,
+	})
+	if err != nil {
+		t.Fatalf("new realtime contention HTTP adapter: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	waitForReady(t, server.Client(), server.URL+"/health/ready")
+	streamURL := server.URL + "/v1/events?" + url.Values{
+		"practiceId": {authorization.Practice.ID},
+		"locationId": {authorization.Locations[0].ID},
+	}.Encode()
+
+	const establishedStreams = 8
+	establishedCancels := make([]context.CancelFunc, 0, establishedStreams)
+	establishedBodies := make([]io.ReadCloser, 0, establishedStreams)
+	establishedClosed := make(chan struct{}, establishedStreams)
+	for range establishedStreams {
+		streamContext, cancel := context.WithCancel(context.Background())
+		request, requestErr := http.NewRequestWithContext(
+			streamContext,
+			http.MethodGet,
+			streamURL,
+			nil,
+		)
+		if requestErr != nil {
+			cancel()
+			t.Fatal(requestErr)
+		}
+		request.Header.Set("Authorization", "Bearer member-token")
+		response, requestErr := server.Client().Do(request)
+		if requestErr != nil {
+			cancel()
+			t.Fatalf("open established realtime stream: %v", requestErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			cancel()
+			t.Fatalf("established realtime stream status = %d, body = %s", response.StatusCode, body)
+		}
+		if event := readSSEEvent(t, bufio.NewReader(response.Body)); event.Event != "ready" {
+			_ = response.Body.Close()
+			cancel()
+			t.Fatalf("established realtime event = %#v", event)
+		}
+		establishedCancels = append(establishedCancels, cancel)
+		establishedBodies = append(establishedBodies, response.Body)
+		go func(body io.Reader) {
+			_, _ = io.Copy(io.Discard, body)
+			establishedClosed <- struct{}{}
+		}(response.Body)
+	}
+	defer func() {
+		for _, cancel := range establishedCancels {
+			cancel()
+		}
+		for _, body := range establishedBodies {
+			_ = body.Close()
+		}
+	}()
+	poolIdleDeadline := time.Now().Add(500 * time.Millisecond)
+	for runtimePool.Stat().AcquiredConns() != 0 && time.Now().Before(poolIdleDeadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if acquired := runtimePool.Stat().AcquiredConns(); acquired != 0 {
+		t.Fatalf("established SSE streams retain %d general-pool connections", acquired)
+	}
+
+	operatorBinding, err := ownerPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin unrelated operator binding: %v", err)
+	}
+	defer func() { _ = operatorBinding.Rollback(context.Background()) }()
+	if _, err := operatorBinding.Exec(context.Background(), `
+		SELECT pg_advisory_xact_lock(1094927189, hashtext($1))
+	`, identity.Subject); err != nil {
+		t.Fatalf("hold unrelated operator subject binding: %v", err)
+	}
+	if _, err := operatorBinding.Exec(context.Background(), `
+		SELECT pg_advisory_xact_lock(1094927188, hashtext($1))
+	`, identity.Email); err != nil {
+		t.Fatalf("hold unrelated operator email binding: %v", err)
+	}
+
+	const reconnects = 42
+	statuses := make([]int, reconnects)
+	requestErrors := make([]error, reconnects)
+	start := make(chan struct{})
+	var reconnectGroup sync.WaitGroup
+	for index := range reconnects {
+		reconnectGroup.Add(1)
+		go func(index int) {
+			defer reconnectGroup.Done()
+			<-start
+			requestContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			request, requestErr := http.NewRequestWithContext(
+				requestContext,
+				http.MethodGet,
+				streamURL,
+				nil,
+			)
+			if requestErr != nil {
+				requestErrors[index] = requestErr
+				return
+			}
+			request.Header.Set("Authorization", "Bearer member-token")
+			response, requestErr := server.Client().Do(request)
+			if requestErr != nil {
+				requestErrors[index] = requestErr
+				return
+			}
+			statuses[index] = response.StatusCode
+			_ = response.Body.Close()
+		}(index)
+	}
+	close(start)
+
+	var blockedQuery string
+	blockedDeadline := time.Now().Add(time.Second)
+	for blockedQuery == "" && time.Now().Before(blockedDeadline) {
+		_ = ownerPool.QueryRow(context.Background(), `
+			SELECT query
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+				AND state = 'active'
+				AND wait_event_type = 'Lock'
+				AND wait_event = 'advisory'
+				AND query LIKE '%pg_advisory_xact_lock(1094927189%'
+			LIMIT 1
+		`).Scan(&blockedQuery)
+		if blockedQuery == "" {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	time.Sleep(650 * time.Millisecond)
+	if err := operatorBinding.Rollback(context.Background()); err != nil {
+		t.Fatalf("release unrelated operator binding: %v", err)
+	}
+	reconnectGroup.Wait()
+
+	prematureClosures := len(establishedClosed)
+	acquireTimeouts := strings.Count(metrics.String(), `"cause":"acquire_timeout"`)
+	statementTimeouts := strings.Count(metrics.String(), `"cause":"statement_timeout"`)
+	failedStatuses := 0
+	for _, status := range statuses {
+		if status != http.StatusOK {
+			failedStatuses++
+		}
+	}
+	for _, requestErr := range requestErrors {
+		if requestErr != nil {
+			failedStatuses++
+		}
+	}
+	if failedStatuses != 0 || prematureClosures != 0 || acquireTimeouts != 0 || statementTimeouts != 0 {
+		t.Fatalf(
+			"realtime reconnect/revalidation burst: failed=%d/%d premature_closures=%d acquire_timeouts=%d statement_timeouts=%d blocked_query=%q statuses=%v errors=%v",
+			failedStatuses,
+			reconnects,
+			prematureClosures,
+			acquireTimeouts,
+			statementTimeouts,
+			strings.Join(strings.Fields(blockedQuery), " "),
+			statuses,
+			requestErrors,
+		)
 	}
 }
 
@@ -723,6 +961,23 @@ func waitForReady(t *testing.T, client *http.Client, target string) {
 type staticAuthenticator map[string]access.Identity
 
 type realtimeCallingProvider struct{}
+
+type synchronizedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (buffer *synchronizedBuffer) Write(body []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.Write(body)
+}
+
+func (buffer *synchronizedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.String()
+}
 
 func (realtimeCallingProvider) Execute(
 	context.Context,

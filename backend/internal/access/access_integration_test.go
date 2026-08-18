@@ -1259,8 +1259,14 @@ func TestDiscoverActorUsesConstantOrderedSetQueries(t *testing.T) {
 	if got := recorder.countContaining("FROM access_memberships membership"); got != 1 {
 		t.Fatalf("member discovery set queries = %d, want 1", got)
 	}
-	if got := recorder.count(); got != 6 {
-		t.Fatalf("member discovery statements = %d, want 6 independent of Practice count", got)
+	if got := recorder.countContaining("WHERE user_subject = $1 OR email = $2"); got != 1 {
+		t.Fatalf("member operator-candidate queries = %d, want 1", got)
+	}
+	if got := recorder.countContaining("pg_advisory_xact_lock(1094927189"); got != 0 {
+		t.Fatalf("member operator-subject locks = %d, want 0", got)
+	}
+	if got := recorder.count(); got != 4 {
+		t.Fatalf("member discovery statements = %d, want 4 independent of Practice count", got)
 	}
 
 	recorder.reset()

@@ -1439,6 +1439,22 @@ func bindPlatformOperator(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, fmt.Errorf("resolve bound Platform Operator: %w", err)
 	}
+	// Ordinary Practice members have no operator row to bind. Keep their
+	// authorization path out of the identity-binding advisory locks so one
+	// unrelated bind cannot hold a request role's only database connection.
+	var candidateExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM access_platform_operators
+			WHERE user_subject = $1 OR email = $2
+		)
+	`, identity.Subject, email).Scan(&candidateExists); err != nil {
+		return "", false, fmt.Errorf("check Platform Operator candidate: %w", err)
+	}
+	if !candidateExists {
+		return "", false, nil
+	}
 
 	if err := lockPlatformOperatorIdentity(ctx, tx, identity); err != nil {
 		return "", false, err
