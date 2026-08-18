@@ -1637,6 +1637,78 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/operator/practices/{practiceId}/provider-receipts/quarantine-candidate:
+    get:
+      operationId: getOperatorProviderReceiptQuarantineCandidate
+      summary: Select one oldest attached receipt from one exact quarantine group.
+      parameters:
+        - name: practiceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: eventType
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/ProviderReceiptEventType"
+        - name: errorCode
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/ProviderReceiptQuarantineErrorCode"
+      responses:
+        "200":
+          description: One sanitized attached quarantine candidate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderReceiptQuarantineCandidate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}:
+    get:
+      operationId: getOperatorProviderReceiptRecoveryStatus
+      summary: Read bounded durable status for one attached provider receipt.
+      parameters:
+        - name: practiceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: receiptReference
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}$'
+      responses:
+        "200":
+          description: Bounded receipt, Call, CallLeg, command, and backlog status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderReceiptRecoveryStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/requeue:
     post:
       operationId: requeueOperatorProviderReceipt
@@ -1667,6 +1739,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProviderReceiptRecovery"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/resolve:
+    post:
+      operationId: resolveOperatorProviderReceipt
+      summary: Terminally resolve one attached receipt proven unsafe to replay.
+      parameters:
+        - name: practiceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: receiptReference
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderReceiptResolutionRequest"
+      responses:
+        "200":
+          description: The receipt evidence was preserved and terminally resolved with an atomic audit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderReceiptResolution"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1910,6 +2022,197 @@ components:
         state:
           type: string
           enum: [PENDING]
+    ProviderReceiptEventType:
+      type: string
+      enum:
+        - call.initiated
+        - call.answered
+        - call.bridged
+        - call.hangup
+        - call.playback.started
+        - call.playback.ended
+        - call.speak.started
+        - call.speak.ended
+        - call.recording.saved
+        - call.recording.error
+    ProviderReceiptQuarantineErrorCode:
+      type: string
+      enum:
+        - HANDOFF_REJECTED
+        - INVALID_PROVIDER_EVENT
+        - PROJECTION_RETRY_EXHAUSTED
+        - RELATED_FACT_TIMEOUT
+        - RELATED_HANDOFF_REJECTED
+        - TERMINAL_OR_OBSOLETE_PROVIDER_FACT
+    ProviderReceiptQuarantineCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - practiceId
+        - callId
+        - receiptReference
+        - eventType
+        - errorCode
+        - attempts
+        - ageSeconds
+        - remainingGroupCount
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        callId:
+          type: string
+          format: uuid
+        receiptReference:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        eventType:
+          $ref: "#/components/schemas/ProviderReceiptEventType"
+        errorCode:
+          $ref: "#/components/schemas/ProviderReceiptQuarantineErrorCode"
+        attempts:
+          type: integer
+          format: int64
+          minimum: 0
+        ageSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+        remainingGroupCount:
+          type: integer
+          format: int64
+          minimum: 0
+    ProviderReceiptStateCount:
+      type: object
+      additionalProperties: false
+      required: [state, count]
+      properties:
+        state:
+          type: string
+        count:
+          type: integer
+          format: int64
+          minimum: 0
+    ProviderReceiptRecoveryStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - practiceId
+        - callId
+        - receiptReference
+        - eventType
+        - errorCode
+        - state
+        - attempts
+        - ageSeconds
+        - duplicateCount
+        - callState
+        - callVersion
+        - callLegStates
+        - commandStates
+        - activeReceiptCount
+        - quarantinedReceiptCount
+        - requeueAuditCount
+        - resolutionAuditCount
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        callId:
+          type: string
+          format: uuid
+        receiptReference:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        eventType:
+          $ref: "#/components/schemas/ProviderReceiptEventType"
+        errorCode:
+          type: string
+          enum:
+            - ""
+            - HANDOFF_REJECTED
+            - INVALID_PROVIDER_EVENT
+            - MANUALLY_REQUEUED
+            - PROJECTION_RETRY_EXHAUSTED
+            - RELATED_FACT_TIMEOUT
+            - RELATED_HANDOFF_REJECTED
+            - TERMINAL_OR_OBSOLETE_PROVIDER_FACT
+            - UNCLASSIFIED
+        state:
+          type: string
+          enum: [PENDING, PROCESSING, APPLIED, UNKNOWN, FAILED, QUARANTINED]
+        attempts:
+          type: integer
+          format: int64
+          minimum: 0
+        ageSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+        duplicateCount:
+          type: integer
+          format: int64
+          minimum: 0
+        callState:
+          type: string
+          enum:
+            - PREPARING
+            - RINGING
+            - CONNECTING
+            - CONNECTED
+            - UNANSWERED
+            - VOICEMAIL
+            - MISSED
+            - NEEDS_DISPOSITION
+            - RESOLVED
+            - FOLLOW_UP_REQUIRED
+        callVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        callLegStates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderReceiptStateCount"
+        commandStates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderReceiptStateCount"
+        activeReceiptCount:
+          type: integer
+          format: int64
+          minimum: 0
+        quarantinedReceiptCount:
+          type: integer
+          format: int64
+          minimum: 0
+        requeueAuditCount:
+          type: integer
+          format: int64
+          minimum: 0
+        resolutionAuditCount:
+          type: integer
+          format: int64
+          minimum: 0
+    ProviderReceiptResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolution]
+      properties:
+        resolution:
+          type: string
+          enum: [UNSAFE_TO_REPLAY]
+    ProviderReceiptResolution:
+      type: object
+      additionalProperties: false
+      required: [receiptReference, state]
+      properties:
+        receiptReference:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        state:
+          type: string
+          enum: [FAILED]
     AddLocationRequest:
       type: object
       additionalProperties: false

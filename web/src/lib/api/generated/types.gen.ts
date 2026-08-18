@@ -89,6 +89,55 @@ export type ProviderReceiptRecovery = {
     state: 'PENDING';
 };
 
+export type ProviderReceiptEventType = 'call.initiated' | 'call.answered' | 'call.bridged' | 'call.hangup' | 'call.playback.started' | 'call.playback.ended' | 'call.speak.started' | 'call.speak.ended' | 'call.recording.saved' | 'call.recording.error';
+
+export type ProviderReceiptQuarantineErrorCode = 'HANDOFF_REJECTED' | 'INVALID_PROVIDER_EVENT' | 'PROJECTION_RETRY_EXHAUSTED' | 'RELATED_FACT_TIMEOUT' | 'RELATED_HANDOFF_REJECTED' | 'TERMINAL_OR_OBSOLETE_PROVIDER_FACT';
+
+export type ProviderReceiptQuarantineCandidate = {
+    practiceId: string;
+    callId: string;
+    receiptReference: string;
+    eventType: ProviderReceiptEventType;
+    errorCode: ProviderReceiptQuarantineErrorCode;
+    attempts: number;
+    ageSeconds: number;
+    remainingGroupCount: number;
+};
+
+export type ProviderReceiptStateCount = {
+    state: string;
+    count: number;
+};
+
+export type ProviderReceiptRecoveryStatus = {
+    practiceId: string;
+    callId: string;
+    receiptReference: string;
+    eventType: ProviderReceiptEventType;
+    errorCode: '' | 'HANDOFF_REJECTED' | 'INVALID_PROVIDER_EVENT' | 'MANUALLY_REQUEUED' | 'PROJECTION_RETRY_EXHAUSTED' | 'RELATED_FACT_TIMEOUT' | 'RELATED_HANDOFF_REJECTED' | 'TERMINAL_OR_OBSOLETE_PROVIDER_FACT' | 'UNCLASSIFIED';
+    state: 'PENDING' | 'PROCESSING' | 'APPLIED' | 'UNKNOWN' | 'FAILED' | 'QUARANTINED';
+    attempts: number;
+    ageSeconds: number;
+    duplicateCount: number;
+    callState: 'PREPARING' | 'RINGING' | 'CONNECTING' | 'CONNECTED' | 'UNANSWERED' | 'VOICEMAIL' | 'MISSED' | 'NEEDS_DISPOSITION' | 'RESOLVED' | 'FOLLOW_UP_REQUIRED';
+    callVersion: number;
+    callLegStates: Array<ProviderReceiptStateCount>;
+    commandStates: Array<ProviderReceiptStateCount>;
+    activeReceiptCount: number;
+    quarantinedReceiptCount: number;
+    requeueAuditCount: number;
+    resolutionAuditCount: number;
+};
+
+export type ProviderReceiptResolutionRequest = {
+    resolution: 'UNSAFE_TO_REPLAY';
+};
+
+export type ProviderReceiptResolution = {
+    receiptReference: string;
+    state: 'FAILED';
+};
+
 export type AddLocationRequest = {
     key: string;
     name: string;
@@ -3049,6 +3098,96 @@ export type GetOperatorCallingTimelineResponses = {
 
 export type GetOperatorCallingTimelineResponse = GetOperatorCallingTimelineResponses[keyof GetOperatorCallingTimelineResponses];
 
+export type GetOperatorProviderReceiptQuarantineCandidateData = {
+    body?: never;
+    path: {
+        practiceId: string;
+    };
+    query: {
+        eventType: ProviderReceiptEventType;
+        errorCode: ProviderReceiptQuarantineErrorCode;
+    };
+    url: '/v1/operator/practices/{practiceId}/provider-receipts/quarantine-candidate';
+};
+
+export type GetOperatorProviderReceiptQuarantineCandidateErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorProviderReceiptQuarantineCandidateError = GetOperatorProviderReceiptQuarantineCandidateErrors[keyof GetOperatorProviderReceiptQuarantineCandidateErrors];
+
+export type GetOperatorProviderReceiptQuarantineCandidateResponses = {
+    /**
+     * One sanitized attached quarantine candidate.
+     */
+    200: ProviderReceiptQuarantineCandidate;
+};
+
+export type GetOperatorProviderReceiptQuarantineCandidateResponse = GetOperatorProviderReceiptQuarantineCandidateResponses[keyof GetOperatorProviderReceiptQuarantineCandidateResponses];
+
+export type GetOperatorProviderReceiptRecoveryStatusData = {
+    body?: never;
+    path: {
+        practiceId: string;
+        receiptReference: string;
+    };
+    query?: never;
+    url: '/v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}';
+};
+
+export type GetOperatorProviderReceiptRecoveryStatusErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type GetOperatorProviderReceiptRecoveryStatusError = GetOperatorProviderReceiptRecoveryStatusErrors[keyof GetOperatorProviderReceiptRecoveryStatusErrors];
+
+export type GetOperatorProviderReceiptRecoveryStatusResponses = {
+    /**
+     * Bounded receipt, Call, CallLeg, command, and backlog status.
+     */
+    200: ProviderReceiptRecoveryStatus;
+};
+
+export type GetOperatorProviderReceiptRecoveryStatusResponse = GetOperatorProviderReceiptRecoveryStatusResponses[keyof GetOperatorProviderReceiptRecoveryStatusResponses];
+
 export type RequeueOperatorProviderReceiptData = {
     body: ProviderReceiptRecoveryRequest;
     path: {
@@ -3092,3 +3231,47 @@ export type RequeueOperatorProviderReceiptResponses = {
 };
 
 export type RequeueOperatorProviderReceiptResponse = RequeueOperatorProviderReceiptResponses[keyof RequeueOperatorProviderReceiptResponses];
+
+export type ResolveOperatorProviderReceiptData = {
+    body: ProviderReceiptResolutionRequest;
+    path: {
+        practiceId: string;
+        receiptReference: string;
+    };
+    query?: never;
+    url: '/v1/operator/practices/{practiceId}/provider-receipts/{receiptReference}/resolve';
+};
+
+export type ResolveOperatorProviderReceiptErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ResolveOperatorProviderReceiptError = ResolveOperatorProviderReceiptErrors[keyof ResolveOperatorProviderReceiptErrors];
+
+export type ResolveOperatorProviderReceiptResponses = {
+    /**
+     * The receipt evidence was preserved and terminally resolved with an atomic audit.
+     */
+    200: ProviderReceiptResolution;
+};
+
+export type ResolveOperatorProviderReceiptResponse = ResolveOperatorProviderReceiptResponses[keyof ResolveOperatorProviderReceiptResponses];

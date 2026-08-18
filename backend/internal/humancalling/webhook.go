@@ -332,17 +332,28 @@ func (m *Module) resolveQuarantinedReceiptReference(
 		return "", fmt.Errorf("list quarantined provider receipts: %w", err)
 	}
 	defer rows.Close()
+	matched := ""
 	for rows.Next() {
 		var eventID string
 		if err := rows.Scan(&eventID); err != nil {
 			return "", fmt.Errorf("scan quarantined provider receipt: %w", err)
 		}
-		if m.receiptRecoveryReference(eventID) == reference {
-			return eventID, nil
+		if m.receiptRecoveryReference(eventID) != reference {
+			continue
 		}
+		if matched != "" {
+			return "", fmt.Errorf(
+				"%w: provider receipt recovery reference is ambiguous",
+				ErrConflict,
+			)
+		}
+		matched = eventID
 	}
 	if err := rows.Err(); err != nil {
 		return "", fmt.Errorf("iterate quarantined provider receipts: %w", err)
+	}
+	if matched != "" {
+		return matched, nil
 	}
 	return "", fmt.Errorf("%w: provider receipt recovery reference is unavailable", ErrConflict)
 }

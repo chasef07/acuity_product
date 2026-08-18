@@ -2160,7 +2160,7 @@ func TestCallingHangupReplaysCommittedCommandButRejectsMissingIntent(t *testing.
 	}
 }
 
-func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
+func TestOperatorCanSelectObserveAndRequeueOneReceipt(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.July, 29, 19, 0, 0, 0, time.UTC)
 	accessModule := access.New(pool, func() time.Time { return now })
@@ -2222,10 +2222,11 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 		INSERT INTO human_calling_provider_receipts (
 			event_id, call_id, event_type, occurred_at, received_at,
 			signature_timestamp, raw_body, state, projection_attempts,
-			last_attempt_at, next_attempt_at, projected_at, quarantined_at
+			projection_error_code, last_attempt_at, next_attempt_at,
+			projected_at, quarantined_at
 		)
 		VALUES ($1, $2, 'call.answered', $3, $3, 1, '{}'::bytea,
-			'QUARANTINED', 10, $3, $3, $3, $3)
+			'QUARANTINED', 10, 'PROJECTION_RETRY_EXHAUSTED', $3, $3, $3, $3)
 	`, eventID, callID, now); err != nil {
 		t.Fatalf("seed HTTP recovery receipt: %v", err)
 	}
@@ -2243,6 +2244,40 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
+	candidateResponse := request(
+		t,
+		server.Client(),
+		http.MethodGet,
+		fmt.Sprintf(
+			"%s/v1/operator/practices/%s/provider-receipts/quarantine-candidate?eventType=call.answered&errorCode=PROJECTION_RETRY_EXHAUSTED",
+			server.URL,
+			practiceID,
+		),
+		"operator-token",
+		nil,
+	)
+	if candidateResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"operator receipt candidate status = %d, body = %s",
+			candidateResponse.StatusCode,
+			readBody(t, candidateResponse),
+		)
+	}
+	var candidate struct {
+		PracticeID       string `json:"practiceId"`
+		CallID           string `json:"callId"`
+		ReceiptReference string `json:"receiptReference"`
+		EventType        string `json:"eventType"`
+		ErrorCode        string `json:"errorCode"`
+	}
+	decode(t, candidateResponse, &candidate)
+	if candidate.PracticeID != practiceID || candidate.CallID != callID ||
+		candidate.EventType != "call.answered" ||
+		candidate.ErrorCode != "PROJECTION_RETRY_EXHAUSTED" ||
+		len(candidate.ReceiptReference) != 43 ||
+		strings.Contains(candidate.ReceiptReference, eventID) {
+		t.Fatalf("operator receipt candidate = %#v", candidate)
+	}
 
 	timelineResponse := request(
 		t,
@@ -2269,6 +2304,10 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	}
 	if recoveryReference == "" || strings.Contains(recoveryReference, eventID) {
 		t.Fatalf("HTTP recovery reference = %q", recoveryReference)
+	}
+	if recoveryReference != candidate.ReceiptReference {
+		t.Fatalf("candidate reference %q != timeline reference %q",
+			candidate.ReceiptReference, recoveryReference)
 	}
 
 	body, _ := json.Marshal(api.ProviderReceiptRecoveryRequest{})
@@ -2308,6 +2347,99 @@ func TestOperatorCanRequeueTimelineReceiptDirectly(t *testing.T) {
 	}
 	if state != humancalling.ReceiptPending {
 		t.Fatalf("HTTP recovery receipt state = %q", state)
+	}
+	statusResponse := request(
+		t,
+		server.Client(),
+		http.MethodGet,
+		fmt.Sprintf(
+			"%s/v1/operator/practices/%s/provider-receipts/%s",
+			server.URL,
+			practiceID,
+			recoveryReference,
+		),
+		"operator-token",
+		nil,
+	)
+	if statusResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"operator receipt status = %d, body = %s",
+			statusResponse.StatusCode,
+			readBody(t, statusResponse),
+		)
+	}
+	var status struct {
+		ReceiptReference string `json:"receiptReference"`
+		State            string `json:"state"`
+		ErrorCode        string `json:"errorCode"`
+	}
+	decode(t, statusResponse, &status)
+	if status.ReceiptReference != recoveryReference || status.State != "PENDING" ||
+		status.ErrorCode != "MANUALLY_REQUEUED" {
+		t.Fatalf("operator receipt status = %#v", status)
+	}
+	const unreplayableEventID = "http-private-unreplayable-event"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_receipts (
+			event_id, call_id, event_type, occurred_at, received_at,
+			signature_timestamp, raw_body, state, projection_attempts,
+			projection_error_code, last_attempt_at, next_attempt_at,
+			projected_at, quarantined_at
+		)
+		VALUES ($1, $2, 'call.answered', $3, $3, 1, '{}'::bytea,
+			'QUARANTINED', 10, 'PROJECTION_RETRY_EXHAUSTED', $3, $3, $3, $3)
+	`, unreplayableEventID, callID, now.Add(time.Second)); err != nil {
+		t.Fatalf("seed HTTP unreplayable receipt: %v", err)
+	}
+	unreplayableCandidateResponse := request(
+		t,
+		server.Client(),
+		http.MethodGet,
+		fmt.Sprintf(
+			"%s/v1/operator/practices/%s/provider-receipts/quarantine-candidate?eventType=call.answered&errorCode=PROJECTION_RETRY_EXHAUSTED",
+			server.URL,
+			practiceID,
+		),
+		"operator-token",
+		nil,
+	)
+	if unreplayableCandidateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("unreplayable candidate status = %d, body = %s",
+			unreplayableCandidateResponse.StatusCode,
+			readBody(t, unreplayableCandidateResponse))
+	}
+	var unreplayableCandidate struct {
+		ReceiptReference string `json:"receiptReference"`
+	}
+	decode(t, unreplayableCandidateResponse, &unreplayableCandidate)
+	resolutionBody, _ := json.Marshal(map[string]string{
+		"resolution": "UNSAFE_TO_REPLAY",
+	})
+	resolutionResponse := request(
+		t,
+		server.Client(),
+		http.MethodPost,
+		fmt.Sprintf(
+			"%s/v1/operator/practices/%s/provider-receipts/%s/resolve",
+			server.URL,
+			practiceID,
+			unreplayableCandidate.ReceiptReference,
+		),
+		"operator-token",
+		resolutionBody,
+	)
+	if resolutionResponse.StatusCode != http.StatusOK {
+		t.Fatalf("operator receipt resolution status = %d, body = %s",
+			resolutionResponse.StatusCode, readBody(t, resolutionResponse))
+	}
+	var resolution struct {
+		ReceiptReference string `json:"receiptReference"`
+		State            string `json:"state"`
+	}
+	decode(t, resolutionResponse, &resolution)
+	if resolution.ReceiptReference != unreplayableCandidate.ReceiptReference ||
+		resolution.State != "FAILED" {
+		t.Fatalf("operator receipt resolution = %#v", resolution)
 	}
 }
 

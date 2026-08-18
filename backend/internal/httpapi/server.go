@@ -2117,6 +2117,87 @@ func (server *Server) GetOperatorCallingTimeline(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) GetOperatorProviderReceiptQuarantineCandidate(
+	w http.ResponseWriter,
+	r *http.Request,
+	practiceID openapi_types.UUID,
+	params api.GetOperatorProviderReceiptQuarantineCandidateParams,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	candidate, err := server.calling.SelectProviderReceiptCandidate(
+		ctx,
+		humancalling.ProviderReceiptCandidateQuery{
+			Identity: identity, PracticeID: practiceID.String(),
+			EventType: string(params.EventType), ErrorCode: string(params.ErrorCode),
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	callID, err := uuid.Parse(candidate.CallID)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.ProviderReceiptQuarantineCandidate{
+		PracticeId:          practiceID,
+		CallId:              callID,
+		ReceiptReference:    candidate.ReceiptReference,
+		EventType:           api.ProviderReceiptEventType(candidate.EventType),
+		ErrorCode:           api.ProviderReceiptQuarantineErrorCode(candidate.ErrorCode),
+		Attempts:            candidate.Attempts,
+		AgeSeconds:          candidate.AgeSeconds,
+		RemainingGroupCount: candidate.RemainingGroupCount,
+	})
+}
+
+func (server *Server) GetOperatorProviderReceiptRecoveryStatus(
+	w http.ResponseWriter,
+	r *http.Request,
+	practiceID openapi_types.UUID,
+	receiptReference string,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if !validProviderReceiptReference(receiptReference) {
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	status, err := server.calling.ReadProviderReceiptRecoveryStatus(
+		ctx,
+		humancalling.ProviderReceiptRecoveryStatusQuery{
+			Identity: identity, PracticeID: practiceID.String(),
+			ReceiptReference: receiptReference,
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := providerReceiptRecoveryStatusResponse(status)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) RequeueOperatorProviderReceipt(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2130,8 +2211,7 @@ func (server *Server) RequeueOperatorProviderReceipt(
 	if !ok {
 		return
 	}
-	decodedReference, err := base64.RawURLEncoding.DecodeString(receiptReference)
-	if err != nil || len(decodedReference) != 32 {
+	if !validProviderReceiptReference(receiptReference) {
 		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
 		return
 	}
@@ -2157,6 +2237,55 @@ func (server *Server) RequeueOperatorProviderReceipt(
 		ReceiptReference: receiptReference,
 		State:            api.ProviderReceiptRecoveryState(result.State),
 	})
+}
+
+func (server *Server) ResolveOperatorProviderReceipt(
+	w http.ResponseWriter,
+	r *http.Request,
+	practiceID openapi_types.UUID,
+	receiptReference string,
+) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if !validProviderReceiptReference(receiptReference) {
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
+	}
+	var body api.ProviderReceiptResolutionRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Resolution != api.UNSAFETOREPLAY {
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	result, err := server.calling.ResolveUnreplayableProviderReceipt(
+		ctx,
+		humancalling.ResolveUnreplayableProviderReceiptCommand{
+			Identity: identity, PracticeID: practiceID.String(),
+			ReceiptReference: receiptReference,
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, api.ProviderReceiptResolution{
+		ReceiptReference: result.ReceiptReference,
+		State:            api.ProviderReceiptResolutionState(result.State),
+	})
+}
+
+func validProviderReceiptReference(value string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(decoded) == 32
 }
 
 func (server *Server) portalOnly(w http.ResponseWriter, r *http.Request) bool {
@@ -3396,6 +3525,47 @@ func operatorTimelineResponse(
 			item.RecoveryReference = &entry.RecoveryReference
 		}
 		response.Entries = append(response.Entries, item)
+	}
+	return response, nil
+}
+
+func providerReceiptRecoveryStatusResponse(
+	status humancalling.ProviderReceiptRecoveryStatus,
+) (api.ProviderReceiptRecoveryStatus, error) {
+	practiceID, err := uuid.Parse(status.PracticeID)
+	if err != nil {
+		return api.ProviderReceiptRecoveryStatus{}, err
+	}
+	callID, err := uuid.Parse(status.CallID)
+	if err != nil {
+		return api.ProviderReceiptRecoveryStatus{}, err
+	}
+	response := api.ProviderReceiptRecoveryStatus{
+		PracticeId:              practiceID,
+		CallId:                  callID,
+		ReceiptReference:        status.ReceiptReference,
+		EventType:               api.ProviderReceiptEventType(status.EventType),
+		ErrorCode:               api.ProviderReceiptRecoveryStatusErrorCode(status.ErrorCode),
+		State:                   api.ProviderReceiptRecoveryStatusState(status.State),
+		Attempts:                status.Attempts,
+		AgeSeconds:              status.AgeSeconds,
+		DuplicateCount:          status.DuplicateCount,
+		CallState:               api.ProviderReceiptRecoveryStatusCallState(status.CallState),
+		CallVersion:             status.CallVersion,
+		CallLegStates:           make([]api.ProviderReceiptStateCount, 0, len(status.CallLegStates)),
+		CommandStates:           make([]api.ProviderReceiptStateCount, 0, len(status.CommandStates)),
+		ActiveReceiptCount:      status.ActiveReceiptCount,
+		QuarantinedReceiptCount: status.QuarantinedReceiptCount,
+		RequeueAuditCount:       status.RequeueAuditCount,
+		ResolutionAuditCount:    status.ResolutionAuditCount,
+	}
+	for _, count := range status.CallLegStates {
+		response.CallLegStates = append(response.CallLegStates,
+			api.ProviderReceiptStateCount{State: count.State, Count: count.Count})
+	}
+	for _, count := range status.CommandStates {
+		response.CommandStates = append(response.CommandStates,
+			api.ProviderReceiptStateCount{State: count.State, Count: count.Count})
 	}
 	return response, nil
 }
