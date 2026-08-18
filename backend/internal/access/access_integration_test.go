@@ -827,6 +827,90 @@ func TestPlatformOperatorPrecedenceFollowsBoundSubjectAndFailsClosedOnConflict(t
 	}
 }
 
+func TestDiscoverActorWaitsForConcurrentOperatorProvisioningBeforeClaimingGrant(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	module := access.New(pool, nil)
+	identity := access.Identity{
+		Subject:       "concurrent-provisioning-subject",
+		Email:         "concurrent-provisioning@acuity.test",
+		EmailVerified: true,
+	}
+	practice := access.PracticeProvision{
+		Key:  "concurrent-operator-provisioning",
+		Name: "Concurrent Operator Provisioning",
+		AccessGrants: []access.AccessGrantProvision{{
+			Key:           "concurrent-operator-grant",
+			Email:         identity.Email,
+			Role:          access.RoleStaff,
+			LocationScope: access.LocationScopeAll,
+		}},
+	}
+	if _, err := module.Provision(ctx, access.Provisioning{
+		Environment: "test",
+		RequestedBy: "concurrent-operator-grant",
+		Practices:   []access.PracticeProvision{practice},
+	}); err != nil {
+		t.Fatalf("provision concurrent operator Access Grant: %v", err)
+	}
+
+	provisioningTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin concurrent operator provisioning: %v", err)
+	}
+	defer func() { _ = provisioningTx.Rollback(ctx) }()
+	if _, err := module.ProvisionInTx(ctx, provisioningTx, access.Provisioning{
+		Environment:       "test",
+		RequestedBy:       "concurrent-operator-provisioning",
+		PlatformOperators: []string{identity.Email},
+		Practices: []access.PracticeProvision{{
+			Key:  practice.Key,
+			Name: practice.Name,
+		}},
+	}); err != nil {
+		t.Fatalf("stage concurrent operator provisioning: %v", err)
+	}
+
+	type discoveryResult struct {
+		discovery access.Discovery
+		err       error
+	}
+	discovered := make(chan discoveryResult, 1)
+	go func() {
+		discovery, err := module.DiscoverActor(ctx, identity)
+		discovered <- discoveryResult{discovery: discovery, err: err}
+	}()
+	select {
+	case result := <-discovered:
+		t.Fatalf("actor discovery bypassed concurrent operator provisioning: discovery=%#v err=%v", result.discovery, result.err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	if err := provisioningTx.Commit(ctx); err != nil {
+		t.Fatalf("commit concurrent operator provisioning: %v", err)
+	}
+	select {
+	case result := <-discovered:
+		if result.err != nil || !result.discovery.PlatformOperator {
+			t.Fatalf("discover provisioned operator: discovery=%#v err=%v", result.discovery, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("actor discovery did not resume after operator provisioning committed")
+	}
+
+	var membershipCount, claimedGrantCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM access_memberships WHERE user_subject = $1),
+			(SELECT count(*) FROM access_grants WHERE email = $2 AND claimed_at IS NOT NULL)
+	`, identity.Subject, identity.Email).Scan(&membershipCount, &claimedGrantCount); err != nil {
+		t.Fatalf("inspect concurrent operator durable state: %v", err)
+	}
+	if membershipCount != 0 || claimedGrantCount != 0 {
+		t.Fatalf("concurrent operator durable state = memberships:%d claimed-grants:%d, want 0/0", membershipCount, claimedGrantCount)
+	}
+}
+
 func TestAlreadyBoundPlatformOperatorReadAuthorizationsProceedConcurrently(t *testing.T) {
 	pool := testdb.Open(t)
 	module := access.New(pool, nil)
