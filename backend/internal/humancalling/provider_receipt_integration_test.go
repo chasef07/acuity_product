@@ -1240,6 +1240,17 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 }
 
 func TestOutboundRecordingSavedAfterStaffHangupAppliesImmediately(t *testing.T) {
+	testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(t, "")
+}
+
+func TestOutboundRecordingSavedAfterCleanupAppliesImmediately(t *testing.T) {
+	testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(t, "cleanup")
+}
+
+func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
+	t *testing.T,
+	recordingClientStateKind string,
+) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 16, 12, 0, 0, 0, time.UTC)
 	currentTime := now
@@ -1374,6 +1385,31 @@ func TestOutboundRecordingSavedAfterStaffHangupAppliesImmediately(t *testing.T) 
 	if recordingClientState == "" {
 		t.Fatal("destination Hangup omitted client_state")
 	}
+	if recordingClientStateKind != "" {
+		decoded, err := base64.StdEncoding.DecodeString(recordingClientState)
+		if err != nil {
+			t.Fatalf("decode destination Hangup client_state: %v", err)
+		}
+		var state map[string]any
+		if err := json.Unmarshal(decoded, &state); err != nil {
+			t.Fatalf("parse destination Hangup client_state: %v", err)
+		}
+		state["kind"] = recordingClientStateKind
+		encoded, err := json.Marshal(state)
+		if err != nil {
+			t.Fatalf("encode destination Hangup client_state: %v", err)
+		}
+		recordingClientState = base64.StdEncoding.EncodeToString(encoded)
+	}
+	var providerCommandRowsBefore int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands WHERE call_id = $1
+	`, call.ID).Scan(&providerCommandRowsBefore); err != nil {
+		t.Fatalf("count provider commands before recording callback: %v", err)
+	}
+	provider.mu.Lock()
+	providerEffectsBefore := len(provider.commands)
+	provider.mu.Unlock()
 
 	recordingStartedAt := now.Add(5 * time.Second)
 	recordingEndedAt := now.Add(17 * time.Second)
@@ -1410,12 +1446,43 @@ func TestOutboundRecordingSavedAfterStaffHangupAppliesImmediately(t *testing.T) 
 	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
 		t.Fatalf("process outbound recording webhook: processed=%t err=%v", processed, err)
 	}
-	receipt, err := calling.ReceiveWebhook(context.Background(), body, timestamp, signature)
+	duplicateReceipt, err := calling.ReceiveWebhook(
+		context.Background(), body, timestamp, signature,
+	)
 	if err != nil {
 		t.Fatalf("read outbound recording receipt: %v", err)
 	}
-	if receipt.State != humancalling.ReceiptApplied {
-		t.Fatalf("outbound recording receipt state = %s, want APPLIED", receipt.State)
+	if duplicateReceipt.State != humancalling.ReceiptApplied ||
+		!duplicateReceipt.Duplicate || duplicateReceipt.DuplicateCount != 1 {
+		t.Fatalf("outbound recording duplicate receipt = %#v", duplicateReceipt)
+	}
+	var receiptState, projectionCode, audioState, providerRecordingID string
+	var attempts, readyTimelineEntries int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT receipt.state, receipt.projection_attempts,
+			COALESCE(receipt.projection_error_code, ''), recording.audio_state,
+			COALESCE(recording.provider_recording_id, ''),
+			(
+				SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = receipt.call_id
+					AND timeline.kind = 'call.recording.ready'
+			)
+		FROM human_calling_provider_receipts receipt
+		JOIN human_calling_call_recordings recording
+			ON recording.call_id = receipt.call_id
+		WHERE receipt.event_id = 'outbound-recording-saved-after-hangup'
+	`).Scan(&receiptState, &attempts, &projectionCode, &audioState,
+		&providerRecordingID, &readyTimelineEntries); err != nil {
+		t.Fatalf("read outbound recording receipt evidence: %v", err)
+	}
+	if receiptState != string(humancalling.ReceiptApplied) || attempts != 1 ||
+		projectionCode != "" || audioState != string(humancalling.RecordingReady) ||
+		providerRecordingID != "outbound-recording-id" || readyTimelineEntries != 1 {
+		t.Fatalf(
+			"outbound recording receipt = state:%s attempts:%d code:%s audio:%s recording:%s timeline:%d",
+			receiptState, attempts, projectionCode, audioState, providerRecordingID,
+			readyTimelineEntries,
+		)
 	}
 	projected, err := calling.ReadCall(context.Background(), staff[0], call.ID)
 	if err != nil {
@@ -1424,6 +1491,107 @@ func TestOutboundRecordingSavedAfterStaffHangupAppliesImmediately(t *testing.T) 
 	if projected.Recording.AudioState != humancalling.RecordingReady ||
 		projected.Recording.DurationSeconds != 12 {
 		t.Fatalf("outbound recording = %#v, want READY for 12 seconds", projected.Recording)
+	}
+
+	readyEnvelope := envelope["data"].(map[string]any)
+	readyEnvelope["id"] = "outbound-recording-saved-ready-replay"
+	readyBody, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readySignature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), readyBody...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), readyBody, timestamp, readySignature,
+	); err != nil {
+		t.Fatalf("receive READY recording replay: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process READY recording replay: processed=%t err=%v", processed, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT receipt.state, receipt.projection_attempts,
+			COALESCE(receipt.projection_error_code, ''),
+			(
+				SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = receipt.call_id
+					AND timeline.kind = 'call.recording.ready'
+			)
+		FROM human_calling_provider_receipts receipt
+		WHERE receipt.event_id = 'outbound-recording-saved-ready-replay'
+	`).Scan(&receiptState, &attempts, &projectionCode, &readyTimelineEntries); err != nil {
+		t.Fatalf("read READY recording replay: %v", err)
+	}
+	if receiptState != string(humancalling.ReceiptApplied) || attempts != 1 ||
+		projectionCode != "" || readyTimelineEntries != 1 {
+		t.Fatalf("READY recording replay = state:%s attempts:%d code:%s timeline:%d",
+			receiptState, attempts, projectionCode, readyTimelineEntries)
+	}
+
+	readyEnvelope["id"] = "outbound-recording-saved-mismatched-recording"
+	readyPayload := readyEnvelope["payload"].(map[string]any)
+	readyPayload["recording_id"] = "different-recording-id"
+	mismatchBody, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchSignature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), mismatchBody...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), mismatchBody, timestamp, mismatchSignature,
+	); err != nil {
+		t.Fatalf("receive mismatched recording callback: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process mismatched recording callback: processed=%t err=%v", processed, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts
+		WHERE event_id = 'outbound-recording-saved-mismatched-recording'
+	`).Scan(&receiptState, &attempts, &projectionCode); err != nil {
+		t.Fatalf("read mismatched recording receipt: %v", err)
+	}
+	if receiptState != string(humancalling.ReceiptPending) || attempts != 1 ||
+		projectionCode != "PROJECTION_RETRY" {
+		t.Fatalf("mismatched recording receipt = state:%s attempts:%d code:%s",
+			receiptState, attempts, projectionCode)
+	}
+	var providerCommandRowsAfter int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands WHERE call_id = $1
+	`, call.ID).Scan(&providerCommandRowsAfter); err != nil {
+		t.Fatalf("count provider commands after recording callbacks: %v", err)
+	}
+	provider.mu.Lock()
+	providerEffectsAfter := len(provider.commands)
+	provider.mu.Unlock()
+	if providerCommandRowsAfter != providerCommandRowsBefore ||
+		providerEffectsAfter != providerEffectsBefore {
+		t.Fatalf(
+			"recording callbacks created provider work = commands:%d->%d effects:%d->%d",
+			providerCommandRowsBefore, providerCommandRowsAfter,
+			providerEffectsBefore, providerEffectsAfter,
+		)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(provider_recording_id, ''),
+			(
+				SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = recording.call_id
+					AND timeline.kind = 'call.recording.ready'
+			)
+		FROM human_calling_call_recordings recording WHERE call_id = $1
+	`, call.ID).Scan(&providerRecordingID, &readyTimelineEntries); err != nil {
+		t.Fatalf("read recording after mismatch: %v", err)
+	}
+	if providerRecordingID != "outbound-recording-id" || readyTimelineEntries != 1 {
+		t.Fatalf("mismatch changed recording evidence = recording:%s timeline:%d",
+			providerRecordingID, readyTimelineEntries)
 	}
 }
 

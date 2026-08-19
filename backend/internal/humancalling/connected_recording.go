@@ -34,7 +34,7 @@ func (m *Module) applyConnectedCallRecordingSaved(
 	ctx context.Context,
 	fact ProviderFact,
 ) error {
-	state, ok := connectedRecordingState(fact)
+	state, ok := connectedRecordingSavedCandidateState(fact)
 	if !ok || !fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
 		return ErrConflict
 	}
@@ -75,20 +75,27 @@ func (m *Module) applyConnectedCallRecordingSaved(
 		}
 		return tx.Commit(ctx)
 	}
-	practiceID, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
+	practiceID, bridged, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
 	if err != nil {
 		return err
 	}
-	var audioState string
+	if !bridged {
+		return ErrConflict
+	}
+	var audioState, providerRecordingID string
 	var retentionDays int
 	if err := tx.QueryRow(ctx, `
-		SELECT audio_state, retention_days FROM human_calling_call_recordings
+		SELECT audio_state, retention_days, COALESCE(provider_recording_id, '')
+		FROM human_calling_call_recordings
 		WHERE call_id = $1 FOR UPDATE
-	`, state.CallID).Scan(&audioState, &retentionDays); err != nil {
+	`, state.CallID).Scan(&audioState, &retentionDays, &providerRecordingID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
 		return fmt.Errorf("lock connected recording: %w", err)
+	}
+	if providerRecordingID != "" && providerRecordingID != fact.RecordingID {
+		return ErrConflict
 	}
 	if audioState == string(RecordingReady) || audioState == string(RecordingDeleted) {
 		return tx.Commit(ctx)
@@ -147,7 +154,7 @@ func (m *Module) applyConnectedCallRecordingError(
 		}
 		return tx.Commit(ctx)
 	}
-	practiceID, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
+	practiceID, _, err := m.requireExactConnectedRecordingLeg(ctx, tx, state, fact)
 	if err != nil {
 		return err
 	}
@@ -190,6 +197,11 @@ func connectedRecordingState(fact ProviderFact) (callLegClientState, bool) {
 		state.Kind == callLegClientStateStaffHangup
 	return state, ok && connectedKind &&
 		(state.Role == "STAFF" || state.Role == "DESTINATION")
+}
+
+func connectedRecordingSavedCandidateState(fact ProviderFact) (callLegClientState, bool) {
+	state, ok := parseCallLegClientState(fact.ClientState)
+	return state, ok && (state.Role == "STAFF" || state.Role == "DESTINATION")
 }
 
 func (m *Module) ProcessNextRecordingReconciliation(
@@ -567,24 +579,26 @@ func (m *Module) requireExactConnectedRecordingLeg(
 	tx pgx.Tx,
 	state callLegClientState,
 	fact ProviderFact,
-) (string, error) {
+) (string, bool, error) {
 	var practiceID, controlID, legID, sessionID string
+	var bridged bool
 	if err := tx.QueryRow(ctx, `
 		SELECT call.practice_id::text, leg.provider_call_control_id,
-			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, '')
+			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
+			leg.bridged_at IS NOT NULL
 		FROM human_calling_calls call
 		JOIN human_calling_call_legs leg
 			ON leg.call_id = call.id AND leg.id = $2 AND leg.role = $3
 		WHERE call.id = $1
 		FOR UPDATE OF call, leg
 	`, state.CallID, state.CallLegID, state.Role).Scan(
-		&practiceID, &controlID, &legID, &sessionID,
+		&practiceID, &controlID, &legID, &sessionID, &bridged,
 	); err != nil {
-		return "", fmt.Errorf("lock connected recording CallLeg: %w", err)
+		return "", false, fmt.Errorf("lock connected recording CallLeg: %w", err)
 	}
 	if (fact.CallControlID != "" && fact.CallControlID != controlID) ||
 		fact.CallLegID != legID || fact.CallSessionID != sessionID {
-		return "", ErrConflict
+		return "", false, ErrConflict
 	}
-	return practiceID, nil
+	return practiceID, bridged, nil
 }

@@ -533,7 +533,7 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	case FactSpeakEnded:
 		return m.applyVoicemailGreetingEnded(ctx, fact)
 	case FactRecordingSaved:
-		if _, connected := connectedRecordingState(fact); connected {
+		if _, connected := connectedRecordingSavedCandidateState(fact); connected {
 			return m.applyConnectedCallRecordingSaved(ctx, fact)
 		}
 		return m.applyVoicemailRecordingSaved(ctx, fact)
