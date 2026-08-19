@@ -38,12 +38,14 @@ Allowed outcomes and actions are declared in
 `other`; they never become a new label.
 
 Provider-command `queue_seconds` measures creation to claim. It includes
-intentional `next_attempt_at` scheduling, dependency gating, serialization
-behind another active command for the same Call, and worker polling delay. The
-current durable model does not record one exact eligibility transition across
-those blockers, so this metric must not be interpreted as eligible-to-claim
-latency. Separating that interval would require an explicit durable eligibility
-timestamp at the owning state transitions, not an inferred metric label.
+intentional `next_attempt_at` scheduling, dependency gating, serialization of
+non-Dial commands behind another active command for the same Call, and worker
+polling delay. Independent `DIAL_STAFF` commands for distinct Staff CallLegs may
+be claimed concurrently. The current durable model does not record one exact
+eligibility transition across the remaining blockers, so this metric must not
+be interpreted as eligible-to-claim latency. Separating that interval would
+require an explicit durable eligibility timestamp at the owning state
+transitions, not an inferred metric label.
 
 ## Privacy and cardinality
 

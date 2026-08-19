@@ -13,7 +13,7 @@ Only `ACUITY_RUNTIME_ROLE` changes.
 | `portal-api` | service | 20 | 0 | 3 | 4 | 0 | 1500 ms |
 | `provider-ingress` | service | 20 | 0 | 2 | 2 | 0 | 1500 ms |
 | `realtime` | service | 50 | 0 | 2 | 3 | 1 direct `LISTEN` | 1500 ms |
-| `worker` | worker pool | 4 lanes / instance (2 command) | 2 | 2 | 2 | 0 | 1500 ms |
+| `worker` | worker pool | 16 lanes / instance (10 provider-command) | 2 | 2 | 2 | 0 | 1500 ms |
 | `migrate` | job | one task | 0 | 1 | 2 | 0 | 5000 ms |
 
 One fully scaled revision can use at most:
@@ -32,17 +32,20 @@ safe correction.
 The worker pool is fixed at two instances in this non-production contract.
 Worker pools do not expose request concurrency or autoscale from zero; rollout
 uses an instance split between revisions while keeping the total fixed.
-Each instance runs one receipt lane, two command lanes, and one maintenance
-lane. Its two-connection pool remains the hard database-concurrency bound.
-Command claims lock a Call only while committing one command as `SENDING`;
-provider I/O happens after commit. Commands for another Call and receipt
-projection can therefore use the remaining capacity, while commands for the
-same Call remain serialized. Queue lanes poll at 250 milliseconds while work is
-moving, then back off empty claims deterministically through 500 milliseconds
-and one second to a two-second ceiling; any progress resets them immediately.
-This cuts steady empty polling by 8x while bounding idle wake-up latency at two
-seconds. Queue and maintenance failures use independent equal-jitter exponential
-backoff from 250 milliseconds to 10 seconds and reset after successful work.
+Each instance runs six fixed receipt, recovery, messaging, AI, and maintenance
+lanes plus ten provider-command lanes. Its two-connection pool remains the hard
+database-concurrency bound. Command claims lock a Call only while committing
+one command as `SENDING`; provider I/O happens after commit. Independent
+`DIAL_STAFF` commands for distinct Staff CallLegs may therefore overlap, while
+all other commands for the same Call remain serialized. Provider-command lanes
+poll every 250 milliseconds to keep newly committed Calls inside the checked
+latency envelope. Other empty queue lanes back off deterministically through 500
+milliseconds and one second to a two-second ceiling; any progress resets them
+immediately. Queue and maintenance failures use independent equal-jitter
+exponential backoff from 250 milliseconds to 10 seconds and reset after
+successful work. Ten provider-command lanes cover the checked 5–10 logged-in
+Staff envelope. Exceeding that envelope requires a new capacity review before
+the environment is represented as ready.
 
 Each runtime gets a distinct service account. Only `migrate` receives schema
 DDL authority and provisioning-file access.

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,6 +17,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/worker"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -1647,74 +1647,313 @@ func TestConcurrentCommandWorkersSerializePerCallWithoutStarvingOtherCalls(t *te
 	}
 }
 
-func TestDialStaffCreationQueueIncludesIntentionalSameCallSerialization(t *testing.T) {
-	createdAt := time.Date(2026, time.August, 18, 19, 0, 0, 0, time.UTC)
+func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *testing.T) {
+	const staffCount = 10
+	now := time.Date(2026, time.August, 19, 18, 30, 0, 0, time.UTC)
 	seedProvider := &recordingProvider{}
 	pool, _, _, _ := prepareInboundFanout(
-		t, createdAt, "dial-created-queue", seedProvider, 3,
+		t, now, "concurrent-staff-dial", seedProvider, staffCount,
 	)
-	var callID string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT id::text FROM human_calling_calls LIMIT 1
-	`).Scan(&callID); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := pool.Exec(context.Background(), `
-		DELETE FROM human_calling_provider_commands
+		DELETE FROM human_calling_provider_commands WHERE action <> 'DIAL_STAFF'
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO human_calling_provider_commands (
-			call_id, call_leg_id, action, target_id, payload,
-			created_at, next_attempt_at, updated_at
-		)
-		SELECT $1, leg.id, 'DIAL_STAFF', 'caller-control', '{}', $2, $2, $2
-		FROM human_calling_call_legs leg
-		WHERE leg.call_id = $1 AND leg.role = 'STAFF'
-		ORDER BY leg.id
-	`, callID, createdAt); err != nil {
+	workerConfig, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	if err != nil {
 		t.Fatal(err)
 	}
+	workerConfig.MaxConns = 2
+	workerPool, err := pgxpool.NewWithConfig(context.Background(), workerConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(workerPool.Close)
 
-	var metrics bytes.Buffer
-	observer := observability.NewLogger(
-		observability.RuntimeWorker,
-		"dial-created-queue-test",
-		slog.New(slog.NewJSONHandler(&metrics, nil)),
-	)
-	currentTime := createdAt
-	provider := &advancingDialProvider{currentTime: &currentTime}
+	provider := &blockingDialProvider{
+		started: make(chan struct{}, staffCount),
+		release: make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(provider.release) }) })
+	accessModule := access.New(workerPool, func() time.Time { return now })
 	calling := humancalling.New(
-		pool,
-		nil,
+		workerPool,
+		accessModule,
 		provider,
-		humancalling.Config{Observer: observer},
-		func() time.Time { return currentTime },
+		humancalling.Config{},
+		func() time.Time { return now },
 	)
-	for index := range 3 {
-		processed, err := calling.ProcessNextCommand(context.Background())
-		if err != nil || !processed {
-			t.Fatalf("process serialized Dial %d = %t, %v", index+1, processed, err)
+	runner, err := worker.New(worker.Config{
+		WorkInterval:                  5 * time.Millisecond,
+		WorkTimeout:                   time.Second,
+		CredentialInterval:            time.Hour,
+		CredentialTimeout:             time.Second,
+		HealthInterval:                time.Hour,
+		HealthTimeout:                 time.Second,
+		MetricInterval:                time.Hour,
+		MetricTimeout:                 time.Second,
+		ReceiptBatchSize:              1,
+		RecoveryAndMessagingBatchSize: 1,
+		ProviderCommandBatchSize:      1,
+		CommandWorkers:                staffCount,
+		IdleBackoffMax:                20 * time.Millisecond,
+		ErrorBackoffMin:               5 * time.Millisecond,
+		ErrorBackoffMax:               20 * time.Millisecond,
+	}, calling, idleMessagingWork{}, idleInteractionWork{}, workerPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runnerContext, cancelRunner := context.WithCancel(context.Background())
+	runnerDone := make(chan error, 1)
+	go func() { runnerDone <- runner.Run(runnerContext) }()
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(provider.release) })
+		cancelRunner()
+		select {
+		case err := <-runnerDone:
+			if err != nil {
+				t.Errorf("stop concurrent worker runner: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("concurrent worker runner did not stop")
 		}
+	})
+	for index := 1; index <= staffCount; index++ {
+		select {
+		case <-provider.started:
+		case <-time.After(time.Second):
+			t.Fatalf("Staff Dial %d did not start while prior Dials remained in flight", index)
+		}
+	}
+	if got := workerPool.Stat().MaxConns(); got != 2 {
+		t.Fatalf("worker pool maximum connections = %d, want 2", got)
+	}
+	receiptBody := []byte(`{"data":{"record_type":"event","event_type":"call.synthetic_unknown","id":"concurrent-staff-dial-receipt","occurred_at":"2026-08-19T18:30:00Z","payload":{}}}`)
+	if _, err := workerPool.Exec(context.Background(), `
+		INSERT INTO human_calling_provider_receipts (
+			event_id, event_type, occurred_at, received_at,
+			signature_timestamp, raw_body, next_attempt_at
+		) VALUES (
+			'concurrent-staff-dial-receipt', 'call.synthetic_unknown',
+			$1, $1, $2, $3, $1
+		)
+	`, now, now.Unix(), receiptBody); err != nil {
+		t.Fatalf("seed receipt during concurrent Staff Dials: %v", err)
+	}
+	receiptDeadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		var receiptState string
+		err := workerPool.QueryRow(context.Background(), `
+			SELECT state FROM human_calling_provider_receipts
+			WHERE event_id = 'concurrent-staff-dial-receipt'
+		`).Scan(&receiptState)
+		if err == nil && receiptState == "UNKNOWN" {
+			break
+		}
+		if time.Now().After(receiptDeadline) {
+			t.Fatalf("receipt did not progress while Staff Dials were in flight: state=%q err=%v",
+				receiptState, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	releaseOnce.Do(func() { close(provider.release) })
+	commandDeadline := time.Now().Add(time.Second)
+	for {
+		var sent int
+		if err := workerPool.QueryRow(context.Background(), `
+			SELECT count(*) FROM human_calling_provider_commands
+			WHERE action = 'DIAL_STAFF' AND state = 'SENT'
+		`).Scan(&sent); err != nil {
+			t.Fatal(err)
+		}
+		if sent == staffCount {
+			break
+		}
+		if time.Now().After(commandDeadline) {
+			t.Fatalf("completed concurrent Staff Dials = %d, want %d", sent, staffCount)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if provider.count() != staffCount {
+		t.Fatalf("concurrent Staff Dial effects = %d, want %d",
+			provider.count(), staffCount)
+	}
+}
+
+type idleMessagingWork struct{}
+
+func (idleMessagingWork) ProcessNextReceipt(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (idleMessagingWork) ProcessNextCommand(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (idleMessagingWork) RecoverInterruptedCommands(context.Context) error {
+	return nil
+}
+
+func (idleMessagingWork) ReconcileNextCommand(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (idleMessagingWork) ProcessNextAttachment(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (idleMessagingWork) ExpirePendingAttachments(context.Context) error {
+	return nil
+}
+
+type idleInteractionWork struct{}
+
+func (idleInteractionWork) ProcessNextReceipt(context.Context) (bool, error) {
+	return false, nil
+}
+
+func TestConcurrentStaffDialsPreserveOneWinnerAndCleanUpLosers(t *testing.T) {
+	const staffCount = 3
+	now := time.Date(2026, time.August, 19, 19, 30, 0, 0, time.UTC)
+	seedProvider := &recordingProvider{}
+	pool, _, _, _ := prepareInboundFanout(
+		t, now, "concurrent-dial-winner", seedProvider, staffCount,
+	)
+	if _, err := pool.Exec(context.Background(), `
+		DELETE FROM human_calling_provider_commands WHERE action <> 'DIAL_STAFF'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	provider := &blockingDialProvider{
+		started: make(chan struct{}, staffCount),
+		release: make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(provider.release) }) })
+	accessModule := access.New(pool, func() time.Time { return now })
+	calling := humancalling.New(
+		pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now },
+	)
+	type processResult struct {
+		processed bool
+		err       error
+	}
+	results := make(chan processResult, staffCount)
+	for index := 1; index <= staffCount; index++ {
+		go func() {
+			processed, err := calling.ProcessNextCommand(context.Background())
+			results <- processResult{processed: processed, err: err}
+		}()
+		select {
+		case <-provider.started:
+		case result := <-results:
+			t.Fatalf("Staff Dial worker %d exited before provider execution = %t, %v",
+				index, result.processed, result.err)
+		case <-time.After(time.Second):
+			t.Fatalf("Staff Dial %d did not start concurrently", index)
+		}
+	}
+	dials := provider.dials()
+	if len(dials) != staffCount {
+		t.Fatalf("in-flight Staff Dials = %d, want %d", len(dials), staffCount)
+	}
+	facts := make([]humancalling.ProviderFact, staffCount)
+	for index, dial := range dials {
+		clientState, _ := dial.command.Payload["client_state"].(string)
+		facts[index] = humancalling.ProviderFact{
+			EventID: fmt.Sprintf("concurrent-dial-winner-initiated-%d", index+1),
+			Type:    humancalling.FactCallInitiated, OccurredAt: now.Add(time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: dial.result.CallControlID,
+			CallLegID:     dial.result.CallLegID,
+			CallSessionID: fmt.Sprintf("concurrent-dial-winner-session-%d", index+1),
+			ClientState:   clientState,
+		}
+		if err := calling.ApplyProviderFact(context.Background(), facts[index]); err != nil {
+			t.Fatalf("project in-flight Staff Dial %d: %v", index+1, err)
+		}
+	}
+	answerErrors := make(chan error, 2)
+	for index := range 2 {
+		answer := facts[index]
+		answer.EventID = fmt.Sprintf("concurrent-dial-winner-answered-%d", index+1)
+		answer.Type = humancalling.FactCallAnswered
+		go func() {
+			answerErrors <- calling.ApplyProviderFact(context.Background(), answer)
+		}()
+	}
+	for range 2 {
+		if err := <-answerErrors; err != nil {
+			t.Fatalf("project concurrent in-flight Staff answer: %v", err)
+		}
+	}
+	var provisionalWinners, bridgeCommands int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM human_calling_call_legs
+			 WHERE state = 'BRIDGE_PENDING'),
+			(SELECT count(*) FROM human_calling_provider_commands
+			 WHERE action = 'BRIDGE')
+	`).Scan(&provisionalWinners, &bridgeCommands); err != nil {
+		t.Fatal(err)
+	}
+	if provisionalWinners != 1 || bridgeCommands != 1 {
+		t.Fatalf("concurrent in-flight answers = %d winners/%d Bridge commands, want 1/1",
+			provisionalWinners, bridgeCommands)
 	}
 
-	queueSeconds := []int{}
-	for _, line := range strings.Split(strings.TrimSpace(metrics.String()), "\n") {
-		var entry map[string]any
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			t.Fatalf("decode Dial metric: %v", err)
+	releaseOnce.Do(func() { close(provider.release) })
+	for range staffCount {
+		result := <-results
+		if result.err != nil || !result.processed {
+			t.Fatalf("complete concurrent Staff Dial = %t, %v", result.processed, result.err)
 		}
-		if entry["metric"] != "acuity_call_center_provider_command" ||
-			entry["action"] != "dial_staff" {
-			continue
-		}
-		queueSeconds = append(queueSeconds, int(entry["queue_seconds"].(float64)))
 	}
-	if fmt.Sprint(queueSeconds) != "[0 1 2]" ||
-		provider.effects != 3 {
-		t.Fatalf("serialized Dial creation queue = seconds:%v effects:%d metrics:%s",
-			queueSeconds, provider.effects, metrics.String())
+	processAllCommands(t, calling)
+	bridges := provider.all(humancalling.CommandBridge)
+	if len(bridges) != 1 {
+		t.Fatalf("executed Bridge commands = %d, want 1", len(bridges))
+	}
+	bridge := bridges[0]
+	var winner blockingDialExecution
+	var winnerFact humancalling.ProviderFact
+	for index, dial := range dials {
+		if dial.command.CallLegID == bridge.CallLegID {
+			winner = dial
+			winnerFact = facts[index]
+			break
+		}
+	}
+	if winner.command.CallLegID == "" {
+		t.Fatalf("Bridge winner %q was not an in-flight Staff Dial", bridge.CallLegID)
+	}
+	bridgeClientState, _ := bridge.Payload["client_state"].(string)
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "concurrent-dial-winner-bridged", Type: humancalling.FactCallBridged,
+		OccurredAt:    now.Add(2 * time.Second),
+		CallControlID: winner.result.CallControlID,
+		CallLegID:     winner.result.CallLegID,
+		CallSessionID: winnerFact.CallSessionID,
+		ClientState:   bridgeClientState,
+	}); err != nil {
+		t.Fatalf("confirm concurrent Dial winner Bridge: %v", err)
+	}
+	processAllCommands(t, calling)
+	var bridged, ending int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*) FILTER (WHERE state = 'BRIDGED'),
+			count(*) FILTER (WHERE state = 'ENDING')
+		FROM human_calling_call_legs WHERE role = 'STAFF'
+	`).Scan(&bridged, &ending); err != nil {
+		t.Fatal(err)
+	}
+	if bridged != 1 || ending != staffCount-1 ||
+		len(provider.all(humancalling.CommandHangupLeg)) != staffCount-1 {
+		t.Fatalf("concurrent Dial cleanup = %d bridged/%d ending/%d Hangups, want 1/%d/%d",
+			bridged, ending, len(provider.all(humancalling.CommandHangupLeg)),
+			staffCount-1, staffCount-1)
 	}
 }
 
@@ -4873,22 +5112,68 @@ func (commandOnlyProvider) Execute(
 	return humancalling.ProviderResult{}, nil
 }
 
-type advancingDialProvider struct {
-	currentTime *time.Time
-	effects     int
+type blockingDialProvider struct {
+	mu             sync.Mutex
+	started        chan struct{}
+	release        chan struct{}
+	commands       []humancalling.ProviderCommand
+	dialExecutions []blockingDialExecution
 }
 
-func (provider *advancingDialProvider) Execute(
+type blockingDialExecution struct {
+	command humancalling.ProviderCommand
+	result  humancalling.ProviderResult
+}
+
+func (provider *blockingDialProvider) Execute(
 	_ context.Context,
-	_ humancalling.ProviderCommand,
+	command humancalling.ProviderCommand,
 ) (humancalling.ProviderResult, error) {
-	provider.effects++
-	*provider.currentTime = provider.currentTime.Add(time.Second)
-	suffix := fmt.Sprint(provider.effects)
-	return humancalling.ProviderResult{
-		CallControlID: "serialized-dial-control-" + suffix,
-		CallLegID:     "serialized-dial-leg-" + suffix,
-	}, nil
+	provider.mu.Lock()
+	provider.commands = append(provider.commands, command)
+	if command.Action != humancalling.CommandDialStaff {
+		provider.mu.Unlock()
+		return humancalling.ProviderResult{}, nil
+	}
+	suffix := fmt.Sprint(len(provider.dialExecutions) + 1)
+	result := humancalling.ProviderResult{
+		CallControlID: "concurrent-dial-control-" + suffix,
+		CallLegID:     "concurrent-dial-leg-" + suffix,
+	}
+	provider.dialExecutions = append(provider.dialExecutions, blockingDialExecution{
+		command: command,
+		result:  result,
+	})
+	provider.mu.Unlock()
+	provider.started <- struct{}{}
+	<-provider.release
+	return result, nil
+}
+
+func (provider *blockingDialProvider) count() int {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return len(provider.dialExecutions)
+}
+
+func (provider *blockingDialProvider) dials() []blockingDialExecution {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return append([]blockingDialExecution(nil), provider.dialExecutions...)
+}
+
+func (provider *blockingDialProvider) all(
+	action humancalling.CommandAction,
+) []humancalling.ProviderCommand {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	commands := []humancalling.ProviderCommand{}
+	for _, command := range provider.commands {
+		if command.Action == action {
+			commands = append(commands, command)
+		}
+	}
+	return commands
 }
 
 func (provider *recordingProvider) ResolveRecording(
