@@ -24,6 +24,47 @@ Activity without an outcome is not success.
 
 ## Product Principles
 
+### Simplicity
+
+- Build the simplest system that fully solves the real problem.
+- Write clean, elegant code that is digestible in one pass.
+- Delete stale, dead, duplicated, or unnecessary code whenever it is in scope.
+- Prefer boring primitives, clear names, explicit control flow, and fewer moving
+  parts.
+- Prefer one owner, one state, and one source of truth.
+- New abstractions, dependencies, configuration, and compatibility paths must
+  earn their complexity.
+
+### Craft
+
+- Care about the small things. Names, states, contracts, errors, copy, layout,
+  timing, and transitions shape the product.
+- Work with extreme precision and attention to detail across frontend, backend,
+  operations, and the full staff and patient journey.
+- Make responsibilities narrow, boundaries explicit, state transitions obvious,
+  and failure modes visible and recoverable.
+- Trace behavior end to end. A locally correct component is not enough when the
+  complete experience is wrong.
+- Prefer code and interfaces that explain themselves over work that merely looks
+  clever or impressive.
+
+### Failure Analysis and Continuous Improvement
+
+- Capture the failing state before changing it: what failed, how to reproduce it,
+  the observable evidence, and the boundary that owns it.
+- Explain why it failed. Fix the cause at the owning boundary, not only the
+  downstream symptom.
+- Record what changed, why it improves the system, and any remaining risk.
+- Compare the failing state with the new state using the same scenario and
+  observable before-and-after proof.
+- Turn each useful failure into a stronger invariant, test, diagnostic, or
+  simpler design so the system improves continuously.
+- Do not hide failures with reassuring language, silent fallbacks, or weaker
+  checks. Keep failure visible and recoverable.
+- Weak evidence means no-change is valid.
+
+### Acuity Portal Principles
+
 - **Organize around work, not channels.** Calls, voicemails, messages, notes,
   and AI Interactions are evidence around patient work, not separate inboxes to
   reconcile from memory.
@@ -50,8 +91,8 @@ Activity without an outcome is not success.
 - **Design for handoffs and failure.** Unanswered calls, failed delivery,
   partial outcomes, retries, reassignment, and reopening are normal product
   states that must stay visible and recoverable.
-- **Learn from failure.** Turn useful failures into stronger invariants,
-  diagnostics, tests, or simpler workflows.
+- **Learn from operational failure.** Preserve useful provider and product
+  evidence so each failure improves the staff workflow.
 
 ## Non-Negotiables
 
