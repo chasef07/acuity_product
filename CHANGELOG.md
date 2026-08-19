@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/chasef07/acuity_product/compare/v0.1.1...v0.1.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* accept cleanup recording receipts with durable evidence ([#171](https://github.com/chasef07/acuity_product/issues/171)) ([006df51](https://github.com/chasef07/acuity_product/commit/006df51d18a32270103b3ecd278cb7c4943652be))
+* **calling:** dial staff call legs concurrently ([#173](https://github.com/chasef07/acuity_product/issues/173)) ([ade2013](https://github.com/chasef07/acuity_product/commit/ade201332b57099858c1c8ae8b64404a7d5bdf2a))
+
 ## [0.1.1](https://github.com/chasef07/acuity_product/compare/v0.1.0...v0.1.1) (2026-08-18)
 
 
