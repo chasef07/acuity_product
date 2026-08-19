@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 37 {
-		t.Fatalf("migration count = %d, want 37", migrationCount)
+	if migrationCount != 38 {
+		t.Fatalf("migration count = %d, want 38", migrationCount)
 	}
 	var recordingRetentionIndex string
 	if err := pool.QueryRow(ctx, `
@@ -187,6 +187,96 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 	if legacyVoicemailColumns != 0 {
 		t.Fatalf("legacy voicemail copy columns = %d, want 0", legacyVoicemailColumns)
+	}
+}
+
+func TestConcurrentStaffDialMigrationEnforcesActiveCommandLanes(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 19, 19, 0, 0, 0, time.UTC)
+	const (
+		practice  = "00000000-0000-0000-0000-000000003801"
+		location  = "00000000-0000-0000-0000-000000003802"
+		call      = "00000000-0000-0000-0000-000000003803"
+		firstLeg  = "00000000-0000-0000-0000-000000003804"
+		secondLeg = "00000000-0000-0000-0000-000000003805"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'concurrent-dial-migration', 'Concurrent Dial Migration')
+	`, practice); err != nil {
+		t.Fatalf("seed concurrent Staff Dial Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES ($2, $1, 'office', 'Office')
+	`, practice, location); err != nil {
+		t.Fatalf("seed concurrent Staff Dial Location: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_calls (
+			id, practice_id, location_id, direction, entry_point,
+			created_at, updated_at
+		) VALUES ($3, $1, $2, 'INBOUND', 'STANDALONE', $4, $4)
+	`, practice, location, call, now); err != nil {
+		t.Fatalf("seed concurrent Staff Dial Call: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_call_legs (
+			id, call_id, role, sequence, staff_subject, state,
+			created_at, updated_at
+		) VALUES
+			($2, $1, 'STAFF', 1, 'staff-one', 'PENDING', $4, $4),
+			($3, $1, 'STAFF', 1, 'staff-two', 'PENDING', $4, $4)
+	`, call, firstLeg, secondLeg, now); err != nil {
+		t.Fatalf("seed concurrent Staff Dial CallLegs: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, state,
+			created_at, next_attempt_at, updated_at
+		) VALUES
+			($1, $2, 'DIAL_STAFF', 'first', 'SENDING', $4, $4, $4),
+			($1, $3, 'DIAL_STAFF', 'second', 'SENDING', $4, $4, $4)
+	`, call, firstLeg, secondLeg, now); err != nil {
+		t.Fatalf("allow independent active Staff Dials: %v", err)
+	}
+	_, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, state,
+			created_at, next_attempt_at, updated_at
+		) VALUES ($1, $2, 'DIAL_STAFF', 'duplicate', 'AMBIGUOUS', $3, $3, $3)
+	`, call, firstLeg, now)
+	assertUniqueViolation(t, err, "duplicate active Staff Dial for one CallLeg")
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE human_calling_provider_commands SET state = 'SENT'
+		WHERE call_id = $1
+	`, call); err != nil {
+		t.Fatalf("finish Staff Dials: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, state,
+			created_at, next_attempt_at, updated_at
+		) VALUES ($1, $2, 'STOP_RING_WINDOW', 'stop', 'SENDING', $3, $3, $3)
+	`, call, firstLeg, now); err != nil {
+		t.Fatalf("seed active non-Dial command: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO human_calling_provider_commands (
+			call_id, call_leg_id, action, target_id, state,
+			created_at, next_attempt_at, updated_at
+		) VALUES ($1, $2, 'BRIDGE', 'bridge', 'SENDING', $3, $3, $3)
+	`, call, secondLeg, now)
+	assertUniqueViolation(t, err, "second active non-Dial command for one Call")
+}
+
+func assertUniqueViolation(t *testing.T, err error, operation string) {
+	t.Helper()
+	var postgresError *pgconn.PgError
+	if !errors.As(err, &postgresError) || postgresError.Code != "23505" {
+		t.Fatalf("%s error = %v, want PostgreSQL unique violation", operation, err)
 	}
 }
 

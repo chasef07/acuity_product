@@ -365,6 +365,8 @@ func runWorker(
 	return runner.Run(ctx)
 }
 
+const productionProviderCommandWorkers = 10
+
 func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
 	return worker.Config{
 		WorkInterval:                  250 * time.Millisecond,
@@ -378,7 +380,7 @@ func productionWorkerConfig(acquireTimeout time.Duration) worker.Config {
 		ReceiptBatchSize:              8,
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      8,
-		CommandWorkers:                2,
+		CommandWorkers:                productionProviderCommandWorkers,
 		IdleBackoffMax:                2 * time.Second,
 		ErrorBackoffMin:               250 * time.Millisecond,
 		ErrorBackoffMax:               10 * time.Second,

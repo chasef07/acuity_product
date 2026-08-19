@@ -33,7 +33,8 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 			SELECT command.id, command.created_at
 			FROM human_calling_calls call
 			JOIN LATERAL (
-				SELECT pending.id, pending.created_at
+				SELECT pending.id, pending.created_at, pending.action,
+					pending.call_leg_id
 				FROM human_calling_provider_commands pending
 				WHERE pending.call_id = call.id
 					AND pending.state = 'PENDING'
@@ -54,6 +55,13 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 				SELECT 1 FROM human_calling_provider_commands active
 				WHERE active.call_id = call.id
 					AND active.state IN ('SENDING', 'AMBIGUOUS')
+					AND (
+						command.action <> 'DIAL_STAFF'
+						OR active.action <> 'DIAL_STAFF'
+						OR command.call_leg_id IS NULL
+						OR active.call_leg_id IS NULL
+						OR active.call_leg_id = command.call_leg_id
+					)
 			)
 			ORDER BY command.created_at, command.id
 			FOR UPDATE OF call SKIP LOCKED
