@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/chasef07/acuity_product/compare/v0.1.4...v0.2.0) (2026-08-20)
+
+
+### Features
+
+* **messaging:** acknowledge AI-created tasks automatically ([#176](https://github.com/chasef07/acuity_product/issues/176)) ([94f95da](https://github.com/chasef07/acuity_product/commit/94f95dad726d67e9fc72a0d66f6d64591669efa8))
+
+
+### Bug Fixes
+
+* **database:** authorize worker recovery row locks ([#182](https://github.com/chasef07/acuity_product/issues/182)) ([1278bdb](https://github.com/chasef07/acuity_product/commit/1278bdbd85b3f5dd41d39e57491c0318500e5e5a))
+
 ## [0.1.4](https://github.com/chasef07/acuity_product/compare/v0.1.3...v0.1.4) (2026-08-20)
 
 
