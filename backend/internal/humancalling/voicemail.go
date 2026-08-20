@@ -35,8 +35,9 @@ const (
 	VoicemailReady       VoicemailAudioState = "READY"
 	VoicemailUnavailable VoicemailAudioState = "UNAVAILABLE"
 
-	voicemailRecordingMaximum = 120 * time.Second
-	defaultVoicemailGreeting  = "Please leave a message after the beep."
+	voicemailRecordingMaximum        = 120 * time.Second
+	defaultVoicemailGreeting         = "Please leave a message after the beep."
+	voicemailRecordingStartTolerance = 5 * time.Second
 )
 
 type Voicemail struct {
@@ -305,7 +306,7 @@ func (m *Module) applyVoicemailRecordingSaved(
 	fact ProviderFact,
 ) error {
 	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "CALLER" || state.Kind != "voicemail_recording" ||
+	if !ok || state.Role != "CALLER" ||
 		!fact.RecordingEndedAt.After(fact.RecordingStartedAt) {
 		return ErrConflict
 	}
@@ -348,6 +349,26 @@ func (m *Module) applyVoicemailRecordingSaved(
 	}
 	if err := m.requireExactVoicemailCaller(ctx, tx, state, fact); err != nil {
 		return err
+	}
+	var recordingOwned bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM human_calling_provider_commands command
+			JOIN human_calling_call_legs caller ON caller.id = command.call_leg_id
+			WHERE command.call_id = $1 AND command.call_leg_id = $2
+				AND command.action = 'START_VOICEMAIL_RECORDING'
+				AND command.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED', 'FAILED')
+				AND ($3 = '' OR caller.provider_connection_id = $3)
+				AND COALESCE(command.sent_at, command.created_at)
+					<= $4::timestamptz + $5::interval
+		)
+	`, state.CallID, state.CallLegID, fact.ConnectionID,
+		fact.RecordingStartedAt,
+		voicemailRecordingStartTolerance.String()).Scan(&recordingOwned); err != nil {
+		return fmt.Errorf("read voicemail recording ownership: %w", err)
+	}
+	if !recordingOwned {
+		return ErrConflict
 	}
 	var existingAudioState string
 	err = tx.QueryRow(ctx, `

@@ -1239,6 +1239,317 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 	}
 }
 
+func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing.T) {
+	now := time.Date(2026, time.August, 19, 17, 28, 0, 0, time.UTC)
+	prefix := "routing-failure-voicemail-recording"
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: prefix + "-staff-control",
+		CallLegID:     prefix + "-staff-leg",
+	}}}
+	pool, setupCalling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	processAllCommands(t, setupCalling)
+
+	withKind := func(encoded, kind string) string {
+		t.Helper()
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("decode Caller client state: %v", err)
+		}
+		var state map[string]any
+		if err := json.Unmarshal(decoded, &state); err != nil {
+			t.Fatalf("parse Caller client state: %v", err)
+		}
+		state["kind"] = kind
+		updated, err := json.Marshal(state)
+		if err != nil {
+			t.Fatalf("encode Caller client state: %v", err)
+		}
+		return base64.StdEncoding.EncodeToString(updated)
+	}
+
+	answerState, _ := provider.last(humancalling.CommandAnswerCaller).
+		Payload["client_state"].(string)
+	unownedLaterState := withKind(answerState, "routing_failure")
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:            prefix + "-unowned-recording",
+		Type:               humancalling.FactRecordingSaved,
+		OccurredAt:         now.Add(2 * time.Second),
+		ConnectionID:       caller.ConnectionID,
+		CallControlID:      caller.CallControlID,
+		CallLegID:          caller.CallLegID,
+		CallSessionID:      caller.CallSessionID,
+		ClientState:        unownedLaterState,
+		RecordingID:        prefix + "-unowned-recording",
+		RecordingStartedAt: now,
+		RecordingEndedAt:   now.Add(2 * time.Second),
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("unowned Caller recording error = %v", err)
+	}
+
+	ringState, _ := provider.last(humancalling.CommandStartRingWindow).
+		Payload["client_state"].(string)
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-ring-ended", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(20 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: ringState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatalf("complete ring window: %v", err)
+	}
+	processAllCommands(t, setupCalling)
+	speakState, _ := provider.last(humancalling.CommandSpeakVoicemail).
+		Payload["client_state"].(string)
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-speak-ended", Type: humancalling.FactSpeakEnded,
+		OccurredAt: now.Add(21 * time.Second), CallControlID: caller.CallControlID,
+		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
+		ClientState: speakState, PlaybackStatus: "completed",
+	}); err != nil {
+		t.Fatalf("complete voicemail greeting: %v", err)
+	}
+	processAllCommands(t, setupCalling)
+	record := provider.last(humancalling.CommandStartVoicemailRecording)
+	if record.ID == "" {
+		t.Fatal("voicemail recording command was not sent")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $2, updated_at = $2
+		WHERE id = $1
+	`, record.ID, now); err != nil {
+		t.Fatalf("pin voicemail recording command timing: %v", err)
+	}
+	provider.mu.Lock()
+	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
+		Active:        true,
+		CallControlID: caller.CallControlID,
+		CallLegID:     caller.CallLegID,
+		CallSessionID: caller.CallSessionID,
+	})
+	provider.mu.Unlock()
+	reconciliationTime := now.Add(80 * time.Second)
+	reconciliationCalling := humancalling.New(
+		pool,
+		access.New(pool, func() time.Time { return reconciliationTime }),
+		provider,
+		humancalling.Config{},
+		func() time.Time { return reconciliationTime },
+	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $1 WHERE role <> 'CALLER'
+	`, reconciliationTime); err != nil {
+		t.Fatalf("keep unrelated CallLegs out of reconciliation: %v", err)
+	}
+	if reconciled, err := reconciliationCalling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("reconcile absent voicemail recording event = %d, %v", reconciled, err)
+	}
+	processAllCommands(t, reconciliationCalling)
+
+	var routingFailureState string
+	for _, command := range provider.all(humancalling.CommandHangupLeg) {
+		if command.TargetID == caller.CallControlID {
+			routingFailureState, _ = command.Payload["client_state"].(string)
+		}
+	}
+	if routingFailureState == "" {
+		t.Fatal("routing failure Hangup omitted Caller client state")
+	}
+	var terminalOutcome, voicemailOutcome, audioState, recordingCommandState, recordingCommandError string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call.terminal_outcome, voicemail.outcome, voicemail.audio_state,
+			command.state, COALESCE(command.last_error_code, '')
+		FROM human_calling_calls call
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		JOIN human_calling_provider_commands command
+			ON command.id = $1 AND command.call_id = call.id
+	`, record.ID).Scan(
+		&terminalOutcome, &voicemailOutcome, &audioState,
+		&recordingCommandState, &recordingCommandError,
+	); err != nil {
+		t.Fatalf("read routing failure evidence: %v", err)
+	}
+	if terminalOutcome != "ROUTING_FAILED" || voicemailOutcome != "MISSED_CALL" ||
+		audioState != string(humancalling.VoicemailUnavailable) ||
+		recordingCommandState != "FAILED" ||
+		recordingCommandError != "START_VOICEMAIL_RECORDING_EVENT_ABSENT" {
+		t.Fatalf(
+			"routing failure = terminal:%s voicemail:%s audio:%s command:%s/%s",
+			terminalOutcome, voicemailOutcome, audioState,
+			recordingCommandState, recordingCommandError,
+		)
+	}
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:            prefix + "-recording-before-voicemail-command",
+		Type:               humancalling.FactRecordingSaved,
+		OccurredAt:         now.Add(10 * time.Second),
+		ConnectionID:       caller.ConnectionID,
+		CallControlID:      caller.CallControlID,
+		CallLegID:          caller.CallLegID,
+		CallSessionID:      caller.CallSessionID,
+		ClientState:        routingFailureState,
+		RecordingID:        prefix + "-earlier-recording",
+		RecordingStartedAt: now.Add(-10 * time.Second),
+		RecordingEndedAt:   now.Add(10 * time.Second),
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("recording predating voicemail command error = %v", err)
+	}
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:            prefix + "-wrong-connection",
+		Type:               humancalling.FactRecordingSaved,
+		OccurredAt:         now.Add(100 * time.Second),
+		ConnectionID:       "wrong-connection",
+		CallControlID:      caller.CallControlID,
+		CallLegID:          caller.CallLegID,
+		CallSessionID:      caller.CallSessionID,
+		ClientState:        routingFailureState,
+		RecordingID:        prefix + "-recording",
+		RecordingStartedAt: now.Add(22 * time.Second),
+		RecordingEndedAt:   now.Add(100 * time.Second),
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("mismatched later-state recording connection error = %v", err)
+	}
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:            prefix + "-wrong-session",
+		Type:               humancalling.FactRecordingSaved,
+		OccurredAt:         now.Add(100 * time.Second),
+		ConnectionID:       caller.ConnectionID,
+		CallControlID:      caller.CallControlID,
+		CallLegID:          caller.CallLegID,
+		CallSessionID:      "wrong-session",
+		ClientState:        routingFailureState,
+		RecordingID:        prefix + "-recording",
+		RecordingStartedAt: now.Add(22 * time.Second),
+		RecordingEndedAt:   now.Add(100 * time.Second),
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("mismatched later-state recording error = %v", err)
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentTime := now.Add(100*time.Second + 70*time.Millisecond)
+	calling := humancalling.New(
+		pool,
+		access.New(pool, func() time.Time { return currentTime }),
+		provider,
+		humancalling.Config{
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return currentTime },
+	)
+	providerCommandRowsBefore := 0
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands
+		WHERE call_id = (
+			SELECT call_id FROM human_calling_provider_commands WHERE id = $1
+		)
+	`, record.ID).Scan(&providerCommandRowsBefore); err != nil {
+		t.Fatalf("count provider commands before recording callback: %v", err)
+	}
+	provider.mu.Lock()
+	providerEffectsBefore := len(provider.commands)
+	provider.mu.Unlock()
+
+	recordingID := prefix + "-recording"
+	envelope := map[string]any{"data": map[string]any{
+		"record_type": "event", "event_type": "call.recording.saved",
+		"id":          prefix + "-recording-saved",
+		"occurred_at": now.Add(100 * time.Second).Format(time.RFC3339Nano),
+		"payload": map[string]any{
+			"connection_id":        caller.ConnectionID,
+			"call_control_id":      caller.CallControlID,
+			"call_leg_id":          caller.CallLegID,
+			"call_session_id":      caller.CallSessionID,
+			"client_state":         routingFailureState,
+			"recording_id":         recordingID,
+			"recording_started_at": now.Add(22 * time.Second).Format(time.RFC3339Nano),
+			"recording_ended_at":   now.Add(100 * time.Second).Format(time.RFC3339Nano),
+		},
+	}}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), body...),
+	))
+	if _, err := calling.ReceiveWebhook(context.Background(), body, timestamp, signature); err != nil {
+		t.Fatalf("receive later-state voicemail recording: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process later-state voicemail recording: processed=%t err=%v", processed, err)
+	}
+
+	var receiptState, projectionCode, providerRecordingID string
+	var attempts, voicemailTimelineEntries int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT receipt.state, receipt.projection_attempts,
+			COALESCE(receipt.projection_error_code, ''), call.terminal_outcome,
+			voicemail.outcome, voicemail.audio_state,
+			COALESCE(voicemail.provider_recording_id, ''),
+			(
+				SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = receipt.call_id
+					AND timeline.kind = 'call.recovery_task_created'
+					AND timeline.error_code = 'VOICEMAIL'
+			)
+		FROM human_calling_provider_receipts receipt
+		JOIN human_calling_calls call ON call.id = receipt.call_id
+		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
+		WHERE receipt.event_id = $1
+	`, prefix+"-recording-saved").Scan(
+		&receiptState, &attempts, &projectionCode, &terminalOutcome,
+		&voicemailOutcome, &audioState, &providerRecordingID,
+		&voicemailTimelineEntries,
+	); err != nil {
+		t.Fatalf("read later-state voicemail receipt evidence: %v", err)
+	}
+	if receiptState != string(humancalling.ReceiptApplied) || attempts != 1 ||
+		projectionCode != "" || terminalOutcome != "VOICEMAIL" ||
+		voicemailOutcome != "VOICEMAIL" ||
+		audioState != string(humancalling.VoicemailReady) ||
+		providerRecordingID != recordingID || voicemailTimelineEntries != 1 {
+		t.Fatalf(
+			"later-state voicemail receipt = state:%s attempts:%d code:%s terminal:%s voicemail:%s audio:%s recording:%s timeline:%d",
+			receiptState, attempts, projectionCode, terminalOutcome,
+			voicemailOutcome, audioState, providerRecordingID,
+			voicemailTimelineEntries,
+		)
+	}
+	duplicate, err := calling.ReceiveWebhook(context.Background(), body, timestamp, signature)
+	if err != nil {
+		t.Fatalf("receive duplicate later-state voicemail recording: %v", err)
+	}
+	if duplicate.State != humancalling.ReceiptApplied || !duplicate.Duplicate ||
+		duplicate.DuplicateCount != 1 {
+		t.Fatalf("duplicate later-state voicemail receipt = %#v", duplicate)
+	}
+	providerCommandRowsAfter := 0
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_provider_commands
+		WHERE call_id = (
+			SELECT call_id FROM human_calling_provider_commands WHERE id = $1
+		)
+	`, record.ID).Scan(&providerCommandRowsAfter); err != nil {
+		t.Fatalf("count provider commands after recording callback: %v", err)
+	}
+	provider.mu.Lock()
+	providerEffectsAfter := len(provider.commands)
+	provider.mu.Unlock()
+	if providerCommandRowsAfter != providerCommandRowsBefore ||
+		providerEffectsAfter != providerEffectsBefore {
+		t.Fatalf(
+			"voicemail recording callback created provider work = commands:%d->%d effects:%d->%d",
+			providerCommandRowsBefore, providerCommandRowsAfter,
+			providerEffectsBefore, providerEffectsAfter,
+		)
+	}
+}
+
 func TestOutboundRecordingSavedAfterStaffHangupAppliesImmediately(t *testing.T) {
 	testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(t, "")
 }

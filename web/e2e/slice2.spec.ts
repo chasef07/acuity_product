@@ -573,8 +573,8 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         page.getByRole("switch", { name: "Availability" }),
       ).toBeChecked()
 
+      const recordingStartedAt = recording.sent_at
       const recordingEndedAt = new Date()
-      const recordingStartedAt = new Date(recordingEndedAt.getTime() - 8_000)
       const savedEventID = `voicemail-${attempt}-recording-saved`
       const savedEvent = {
         eventType: "call.recording.saved",
@@ -989,8 +989,11 @@ async function readSentVoiceCommand(
       return result.rows[0]?.state ?? ""
     }, { timeout: 30_000 })
     .toMatch(/^(SENT|RECONCILED)$/)
-  const result = await database.query<{ client_state: string }>(
-    `SELECT payload->>'client_state' AS client_state
+  const result = await database.query<{
+    client_state: string
+    sent_at: Date
+  }>(
+    `SELECT payload->>'client_state' AS client_state, sent_at
        FROM human_calling_provider_commands
       WHERE call_id = $1 AND action = $2
       ORDER BY created_at DESC, id DESC
