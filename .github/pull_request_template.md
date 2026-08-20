@@ -1,11 +1,8 @@
 <!--
 PR title: <type>(optional-scope): <summary>
 
-Acuity Product tracks committed product work in GitHub Issues. Add the
-appropriate visible reference below, then delete its placeholder:
-- Closing link: `Fixes #___`
-- Non-closing link: `Related to #___`
-- No issue: explain why this repository process change does not need one.
+Acuity Product tracks committed product work in Linear. Add the visible closing
+reference `Fixes ACU-___` below, then replace the placeholder with the issue ID.
 
 Use only synthetic, PHI-free data in evidence, screenshots, logs, and docs.
 Do not include credentials, private URLs, raw transcripts, or recording URLs.
@@ -15,7 +12,7 @@ Delete comments and unused prompts before requesting review.
 
 ## Issue
 
-<!-- Add the appropriate closing or related GitHub Issue reference. -->
+Fixes ACU-___
 
 ## Problem
 
