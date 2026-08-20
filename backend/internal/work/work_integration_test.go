@@ -68,6 +68,7 @@ func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
 	if activityCount != 1 {
 		t.Fatalf("Task creation Activity count = %d, want 1", activityCount)
 	}
+	assertTaskAcknowledgementIntentCount(t, pool, task.ID, 0)
 }
 
 func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
@@ -125,6 +126,10 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 		Outcome:    work.RecoveryOutcomeMissedCall,
 		OccurredAt: now,
 	})
+	if missed.Origin != work.TaskOriginMissedCall {
+		t.Fatalf("missed-call recovery Task = %#v", missed)
+	}
+	assertTaskAcknowledgementIntentCount(t, pool, missed.ID, 0)
 	voicemail := ensureRecovery(work.EnsureRecoveryTaskCommand{
 		CallID:     voicemailCallID,
 		PracticeID: authorization.Practice.ID,
@@ -205,6 +210,28 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 }
 
+func assertTaskAcknowledgementIntentCount(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	taskID string,
+	want int,
+) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_acknowledgements
+		WHERE task_id = $1
+			AND purpose = 'CALLER_TASK_RECEIVED'
+			AND state = 'PENDING'
+	`, taskID).Scan(&count); err != nil {
+		t.Fatalf("read automatic Task acknowledgement intent: %v", err)
+	}
+	if count != want {
+		t.Fatalf("automatic Task acknowledgement intents = %d, want %d", count, want)
+	}
+}
+
 func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
@@ -246,6 +273,7 @@ func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
 	}
 
 	first := ensureRecovery(firstCallID, now)
+	assertTaskAcknowledgementIntentCount(t, pool, first.ID, 0)
 	second := ensureRecovery(secondCallID, now.Add(time.Minute))
 	replayed := ensureRecovery(secondCallID, now.Add(time.Minute))
 	if second.ID != first.ID || replayed.ID != first.ID {
@@ -552,9 +580,9 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		IdempotencyKey: "staff_task_3f94a1",
 		Phone:          "+17275551212",
 		CallerName:     "Jane Doe",
-		Summary:        "Caller needs records sent.",
-		Message:        "Caller asked the office to send their records to a specialist.",
-		Category:       work.TaskCategoryDocumentation,
+		Summary:        "Caller needs an appointment.",
+		Message:        "Caller asked the office to schedule an annual exam.",
+		Category:       work.TaskCategoryAppointments,
 		Urgency:        work.TaskUrgencyNormal,
 	}
 
@@ -569,6 +597,22 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	first, firstStatus, err := module.CreateAITask(context.Background(), command)
 	if err != nil {
 		t.Fatalf("create AI Task: %v", err)
+	}
+	var acknowledgementCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_acknowledgements
+		WHERE task_id = $1
+			AND purpose = 'CALLER_TASK_RECEIVED'
+			AND state = 'PENDING'
+	`, first.ID).Scan(&acknowledgementCount); err != nil {
+		t.Fatalf("read automatic Task acknowledgement intent: %v", err)
+	}
+	if acknowledgementCount != 1 {
+		t.Fatalf(
+			"automatic Task acknowledgement intents = %d, want 1",
+			acknowledgementCount,
+		)
 	}
 	var workspaceVersionAfterCreate int64
 	if err := pool.QueryRow(context.Background(), `
@@ -615,7 +659,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	if task.Origin != work.TaskOriginAbitaAI ||
 		task.CallID != "" ||
 		task.Urgency != work.TaskUrgencyNormal ||
-		task.Category != work.TaskCategoryDocumentation ||
+		task.Category != work.TaskCategoryAppointments ||
 		task.SourceCallID != command.SourceCallID ||
 		task.SourceMessage != command.Message ||
 		task.CallerName != command.CallerName ||
@@ -629,7 +673,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		workspace.QueryTasksCommand{
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
-			Search:     "specialist",
+			Search:     "annual exam",
 		},
 	)
 	if err != nil {
@@ -644,7 +688,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	for _, search := range []string{
 		"Jane Doe",
 		authorization.Locations[0].Name,
-		"documentation",
+		"appointments",
 	} {
 		page, err := workspace.New(pool, accessModule).QueryTasks(
 			context.Background(),
@@ -818,24 +862,28 @@ func TestCreateAITaskSupportsMultipleOutcomesAndConcurrentReplay(t *testing.T) {
 		)
 	}
 
-	var taskCount, activityCount int
+	var taskCount, activityCount, acknowledgementCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT
 			count(DISTINCT task.id),
-			count(activity.id)
+			count(activity.id),
+			count(acknowledgement.id)
 		FROM work_tasks task
 		LEFT JOIN work_task_activities activity
 			ON activity.task_id = task.id
 			AND activity.kind = 'TASK_CREATED'
+		LEFT JOIN work_task_acknowledgements acknowledgement
+			ON acknowledgement.task_id = task.id
 		WHERE task.created_by_subject = $1
-	`, service.Subject).Scan(&taskCount, &activityCount); err != nil {
+	`, service.Subject).Scan(&taskCount, &activityCount, &acknowledgementCount); err != nil {
 		t.Fatalf("count AI Task outcomes: %v", err)
 	}
-	if taskCount != 2 || activityCount != 2 {
+	if taskCount != 2 || activityCount != 2 || acknowledgementCount != 2 {
 		t.Fatalf(
-			"AI Task outcome counts = %d Tasks, %d Activities",
+			"AI Task outcome counts = %d Tasks, %d Activities, %d acknowledgements",
 			taskCount,
 			activityCount,
+			acknowledgementCount,
 		)
 	}
 }

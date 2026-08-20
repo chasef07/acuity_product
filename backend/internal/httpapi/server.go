@@ -3006,6 +3006,25 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 		response.ConversationThreadId = &threadID
 	}
+	if task.AutomaticAcknowledgement != nil {
+		acknowledgement := api.TaskAutomaticAcknowledgement{
+			State: api.TaskAutomaticAcknowledgementState(
+				task.AutomaticAcknowledgement.State,
+			),
+			UpdatedAt: task.AutomaticAcknowledgement.UpdatedAt,
+		}
+		if task.AutomaticAcknowledgement.SafeFailureCode != "" {
+			acknowledgement.SafeFailureCode = &task.AutomaticAcknowledgement.SafeFailureCode
+		}
+		if task.AutomaticAcknowledgement.MessageID != "" {
+			messageID, err := uuid.Parse(task.AutomaticAcknowledgement.MessageID)
+			if err != nil {
+				return api.Task{}, err
+			}
+			acknowledgement.MessageId = &messageID
+		}
+		response.AutomaticAcknowledgement = &acknowledgement
+	}
 	if task.CreatedBy.Email != "" {
 		email := apiEmail(task.CreatedBy.Email)
 		response.CreatedBy.Email = &email
@@ -3165,6 +3184,12 @@ func messageResponse(message messaging.Message) (api.Message, error) {
 			return api.Message{}, err
 		}
 		response.RetryOfMessageId = &retryID
+	}
+	if message.CreatedBy != nil {
+		response.CreatedBy = &api.TaskActor{
+			Kind:    api.TaskActorKind(message.CreatedBy.Kind),
+			Subject: message.CreatedBy.Subject,
+		}
 	}
 	if message.Attachment != nil {
 		attachment, err := messageAttachmentResponse(*message.Attachment)

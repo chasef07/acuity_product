@@ -26,6 +26,7 @@ type CallingWork interface {
 
 type MessagingWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
+	QueueNextTaskAcknowledgement(context.Context) (bool, error)
 	ProcessNextCommand(context.Context) (bool, error)
 	RecoverInterruptedCommands(context.Context) error
 	ReconcileNextCommand(context.Context) (bool, error)
@@ -178,7 +179,7 @@ func (runner *Runner) Run(ctx context.Context) error {
 			ctx,
 			runner.config.RecoveryAndMessagingBatchSize,
 			"messaging_command_processing_failed",
-			runner.messages.ProcessNextCommand,
+			runner.processNextMessageCommand,
 		)
 	}()
 	go func() {
@@ -196,6 +197,15 @@ func (runner *Runner) Run(ctx context.Context) error {
 	}()
 	lanes.Wait()
 	return nil
+}
+
+func (runner *Runner) processNextMessageCommand(ctx context.Context) (bool, error) {
+	queued, err := runner.messages.QueueNextTaskAcknowledgement(ctx)
+	if err != nil {
+		return false, err
+	}
+	processed, err := runner.messages.ProcessNextCommand(ctx)
+	return queued || processed, err
 }
 
 func (runner *Runner) runQueueLane(

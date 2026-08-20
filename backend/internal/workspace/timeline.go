@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
@@ -179,6 +180,8 @@ const messageProjectionSQL = `
 		COALESCE(message.provider_message_id, ''),
 		COALESCE(message.task_id::text, ''),
 		COALESCE(message.retry_of_message_id::text, ''),
+		COALESCE(message.created_by_kind, ''),
+		COALESCE(message.created_by_subject, ''),
 		COALESCE(attachment.id::text, ''),
 		COALESCE(attachment.direction, ''),
 		COALESCE(attachment.state, ''),
@@ -260,6 +263,8 @@ type rowScanner interface {
 func scanMessageProjection(scanner rowScanner) (messaging.Message, error) {
 	var message messaging.Message
 	var attachment messaging.Attachment
+	var createdByKind access.ActorKind
+	var createdBySubject string
 	if err := scanner.Scan(
 		&message.Thread.ID,
 		&message.Thread.PracticeID,
@@ -282,6 +287,8 @@ func scanMessageProjection(scanner rowScanner) (messaging.Message, error) {
 		&message.ProviderMessageID,
 		&message.TaskID,
 		&message.RetryOfMessageID,
+		&createdByKind,
+		&createdBySubject,
 		&attachment.ID,
 		&attachment.Direction,
 		&attachment.State,
@@ -299,6 +306,11 @@ func scanMessageProjection(scanner rowScanner) (messaging.Message, error) {
 	if attachment.ID != "" {
 		attachment.MessageID = message.ID
 		message.Attachment = &attachment
+	}
+	if createdByKind != "" {
+		message.CreatedBy = &messaging.ActorSnapshot{
+			Kind: createdByKind, Subject: createdBySubject,
+		}
 	}
 	return message, nil
 }

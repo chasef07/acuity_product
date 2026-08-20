@@ -141,9 +141,10 @@ func TestRunnerKeepsReceiptsAndReadyCommandsMovingDuringSlowProviderWork(t *test
 func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 	calling := newControlledWork()
 	messages := &controlledMessagingWork{
-		receiptProcessed:    make(chan struct{}, 1),
-		commandProcessed:    make(chan struct{}, 1),
-		attachmentProcessed: make(chan struct{}, 1),
+		receiptProcessed:      make(chan struct{}, 1),
+		acknowledgementQueued: make(chan struct{}, 1),
+		commandProcessed:      make(chan struct{}, 1),
+		attachmentProcessed:   make(chan struct{}, 1),
 	}
 	runner, err := New(Config{
 		WorkInterval:                  time.Millisecond,
@@ -168,6 +169,7 @@ func TestRunnerProcessesMessagingInIndependentLanes(t *testing.T) {
 	}()
 
 	waitForSignal(t, messages.receiptProcessed, "Message receipt")
+	waitForSignal(t, messages.acknowledgementQueued, "automatic Task acknowledgement")
 	waitForSignal(t, messages.commandProcessed, "Message command")
 	waitForSignal(t, messages.attachmentProcessed, "Message attachment")
 	cancel()
@@ -630,9 +632,19 @@ func (healthyDependency) Ping(context.Context) error {
 }
 
 type controlledMessagingWork struct {
-	receiptProcessed    chan struct{}
-	commandProcessed    chan struct{}
-	attachmentProcessed chan struct{}
+	receiptProcessed      chan struct{}
+	acknowledgementQueued chan struct{}
+	commandProcessed      chan struct{}
+	attachmentProcessed   chan struct{}
+}
+
+func (work *controlledMessagingWork) QueueNextTaskAcknowledgement(context.Context) (bool, error) {
+	select {
+	case work.acknowledgementQueued <- struct{}{}:
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 type controlledInteractionWork struct {

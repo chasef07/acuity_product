@@ -621,6 +621,24 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
 		t.Fatalf("reconcile stale CallLegs: %v", err)
 	}
+	var connectedTasks, connectedAcknowledgements int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM work_tasks WHERE call_id = $1),
+			(SELECT count(*)
+			 FROM work_task_acknowledgements acknowledgement
+			 JOIN work_tasks task ON task.id = acknowledgement.task_id
+			 WHERE task.call_id = $1)
+	`, bridgedCallID).Scan(&connectedTasks, &connectedAcknowledgements); err != nil {
+		t.Fatalf("read connected transfer Task effects: %v", err)
+	}
+	if connectedTasks != 0 || connectedAcknowledgements != 0 {
+		t.Fatalf(
+			"connected transfer effects = %d Tasks, %d acknowledgements; want none",
+			connectedTasks,
+			connectedAcknowledgements,
+		)
+	}
 }
 
 func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
@@ -1783,6 +1801,10 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 
 type idleMessagingWork struct{}
 
+func (idleMessagingWork) QueueNextTaskAcknowledgement(context.Context) (bool, error) {
+	return false, nil
+}
+
 func (idleMessagingWork) ProcessNextReceipt(context.Context) (bool, error) {
 	return false, nil
 }
@@ -2793,28 +2815,30 @@ func TestCallerHangupDuringVoicemailCreatesOneMissedCallRecovery(t *testing.T) {
 	}
 
 	var terminal, voicemailOutcome, taskOrigin, taskTitle string
-	var taskCount, interactionCount, activityCount int
+	var taskCount, interactionCount, activityCount, acknowledgementCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT call.terminal_outcome, voicemail.outcome, task.origin, task.title,
 			(SELECT count(*) FROM work_tasks),
 			(SELECT count(*) FROM work_task_interactions),
-			(SELECT count(*) FROM work_task_activities)
+			(SELECT count(*) FROM work_task_activities),
+			(SELECT count(*) FROM work_task_acknowledgements)
 		FROM human_calling_calls call
 		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
 		JOIN work_tasks task ON task.id = voicemail.task_id
 	`).Scan(
 		&terminal, &voicemailOutcome, &taskOrigin, &taskTitle,
-		&taskCount, &interactionCount, &activityCount,
+		&taskCount, &interactionCount, &activityCount, &acknowledgementCount,
 	); err != nil {
 		t.Fatalf("read answered caller recovery: %v", err)
 	}
 	if terminal != "MISSED" || voicemailOutcome != "MISSED_CALL" ||
 		taskOrigin != "MISSED_CALL_RECOVERY" || taskTitle != "Return missed call" ||
-		taskCount != 1 || interactionCount != 1 || activityCount != 1 {
+		taskCount != 1 || interactionCount != 1 || activityCount != 1 ||
+		acknowledgementCount != 0 {
 		t.Fatalf(
-			"answered caller recovery = terminal:%s outcome:%s origin:%s title:%s tasks:%d interactions:%d activities:%d",
+			"answered caller recovery = terminal:%s outcome:%s origin:%s title:%s tasks:%d interactions:%d activities:%d acknowledgements:%d",
 			terminal, voicemailOutcome, taskOrigin, taskTitle,
-			taskCount, interactionCount, activityCount,
+			taskCount, interactionCount, activityCount, acknowledgementCount,
 		)
 	}
 }
@@ -4604,23 +4628,27 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 		t.Fatal(err)
 	}
 	var callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome string
+	var acknowledgementCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT call.terminal_outcome, voicemail.outcome, voicemail.audio_state,
-			task.title, task.origin, task.recovery_outcome
+			task.title, task.origin, task.recovery_outcome,
+			(SELECT count(*) FROM work_task_acknowledgements WHERE task_id = task.id)
 		FROM human_calling_calls call
 		JOIN human_calling_voicemails voicemail ON voicemail.call_id = call.id
 		JOIN work_tasks task ON task.id = voicemail.task_id
 	`).Scan(
 		&callOutcome, &voicemailOutcome, &audioState,
-		&taskTitle, &taskOrigin, &taskOutcome,
+		&taskTitle, &taskOrigin, &taskOutcome, &acknowledgementCount,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if callOutcome != "VOICEMAIL" || voicemailOutcome != "VOICEMAIL" ||
 		audioState != "READY" || taskTitle != "Review voicemail" ||
-		taskOrigin != "VOICEMAIL_RECOVERY" || taskOutcome != "VOICEMAIL" {
-		t.Fatalf("upgraded voicemail recovery = %s %s %s %s %s %s",
-			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome)
+		taskOrigin != "VOICEMAIL_RECOVERY" || taskOutcome != "VOICEMAIL" ||
+		acknowledgementCount != 0 {
+		t.Fatalf("upgraded voicemail recovery = %s %s %s %s %s %s acknowledgements:%d",
+			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome,
+			acknowledgementCount)
 	}
 	savedState, err := calling.ReadCallingState(context.Background(), staff[0])
 	if err != nil {

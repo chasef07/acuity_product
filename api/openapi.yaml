@@ -2650,6 +2650,9 @@ components:
         updatedAt:
           type: string
           format: date-time
+        automaticAcknowledgement:
+          description: Present only for unresolved Tasks created by the AI service.
+          $ref: "#/components/schemas/TaskAutomaticAcknowledgement"
         relatedInteractionCount:
           type: integer
           minimum: 0
@@ -2657,6 +2660,22 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TaskInteraction"
+    TaskAutomaticAcknowledgement:
+      type: object
+      additionalProperties: false
+      required: [state, updatedAt]
+      properties:
+        state:
+          type: string
+          enum: [PENDING, MESSAGE_QUEUED, NOT_NEEDED]
+        safeFailureCode:
+          type: string
+        messageId:
+          type: string
+          format: uuid
+        updatedAt:
+          type: string
+          format: date-time
     TaskInteraction:
       type: object
       additionalProperties: false
@@ -3641,6 +3660,8 @@ components:
         retryOfMessageId:
           type: string
           format: uuid
+        createdBy:
+          $ref: "#/components/schemas/TaskActor"
         attachment:
           $ref: "#/components/schemas/MessageAttachment"
         createdAt:

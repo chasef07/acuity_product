@@ -860,6 +860,12 @@ function MessageEntry({
               <span>{message.delivery}</span>
             </>
           )}
+          {message.createdBy?.kind === "SERVICE" && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>Automated</span>
+            </>
+          )}
           {message.safeFailureCode && (
             <>
               <span aria-hidden="true">·</span>

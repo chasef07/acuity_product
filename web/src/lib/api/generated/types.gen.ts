@@ -378,8 +378,16 @@ export type Task = {
     completedAt?: string;
     version: number;
     updatedAt: string;
+    automaticAcknowledgement?: TaskAutomaticAcknowledgement;
     relatedInteractionCount: number;
     interactions: Array<TaskInteraction>;
+};
+
+export type TaskAutomaticAcknowledgement = {
+    state: 'PENDING' | 'MESSAGE_QUEUED' | 'NOT_NEEDED';
+    safeFailureCode?: string;
+    messageId?: string;
+    updatedAt: string;
 };
 
 export type TaskInteraction = {
@@ -773,6 +781,7 @@ export type Message = {
     providerMessageId?: string;
     taskId?: string;
     retryOfMessageId?: string;
+    createdBy?: TaskActor;
     attachment?: MessageAttachment;
     createdAt: string;
     updatedAt: string;

@@ -76,13 +76,14 @@ func TestMessageThreadQueryAggregatesActivityBeforeRanking(t *testing.T) {
 	if _, err := ownerPool.Exec(context.Background(), `
 		INSERT INTO messaging_messages (
 			thread_id, practice_id, location_id, direction, body,
-			sender, destination, delivery_state, created_by_subject,
+			sender, destination, delivery_state, created_by_kind,
+			created_by_subject,
 			created_at, updated_at
 		)
 		SELECT
 			thread.id, thread.practice_id, thread.location_id, 'OUTBOUND',
 			'Message ' || message_number,
-			thread.office_phone, thread.external_phone, 'SENT', 'burst-seed',
+			thread.office_phone, thread.external_phone, 'SENT', 'HUMAN', 'burst-seed',
 			thread.created_at + message_number * interval '1 millisecond',
 			thread.created_at + message_number * interval '1 millisecond'
 		FROM messaging_threads thread

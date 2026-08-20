@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 38 {
-		t.Fatalf("migration count = %d, want 38", migrationCount)
+	if migrationCount != 39 {
+		t.Fatalf("migration count = %d, want 39", migrationCount)
 	}
 	var recordingRetentionIndex string
 	if err := pool.QueryRow(ctx, `
@@ -187,6 +187,113 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 	if legacyVoicemailColumns != 0 {
 		t.Fatalf("legacy voicemail copy columns = %d, want 0", legacyVoicemailColumns)
+	}
+}
+
+func TestMessageCreatorKindSupportsOverlappingOldRevision(t *testing.T) {
+	pool := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 20, 15, 0, 0, 0, time.UTC)
+	const (
+		creatorPractice = "00000000-0000-0000-0000-000000003901"
+		creatorLocation = "00000000-0000-0000-0000-000000003902"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'message-creator-constraint', 'Message Creator Constraint')
+	`, creatorPractice); err != nil {
+		t.Fatalf("seed Message creator Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES ($2, $1, 'main', 'Main')
+	`, creatorPractice, creatorLocation); err != nil {
+		t.Fatalf("seed Message creator Location: %v", err)
+	}
+	var threadID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO messaging_threads (
+			practice_id, location_id, office_phone, external_phone,
+			created_at, updated_at
+		) VALUES ($1, $2, '+17275550100', '+17275550199', $3, $3)
+		RETURNING id::text
+	`, creatorPractice, creatorLocation, now).Scan(&threadID); err != nil {
+		t.Fatalf("seed Message creator Thread: %v", err)
+	}
+	var outboundCreatorKind string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO messaging_messages (
+			thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_by_subject,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, $3, 'OUTBOUND', 'Creator is required',
+			'+17275550100', '+17275550199', 'SENDING', 'staff-subject',
+			$4, $4
+		)
+		RETURNING created_by_kind
+	`, threadID, creatorPractice, creatorLocation, now).Scan(
+		&outboundCreatorKind,
+	); err != nil {
+		t.Fatalf("insert old-revision outbound Message: %v", err)
+	}
+	if outboundCreatorKind != "HUMAN" {
+		t.Fatalf("old-revision outbound creator kind = %q, want HUMAN", outboundCreatorKind)
+	}
+	var serviceCreatorKind string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO messaging_messages (
+			thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_by_kind,
+			created_by_subject, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, 'OUTBOUND', 'Automatic acknowledgement',
+			'+17275550100', '+17275550199', 'SENDING', 'SERVICE',
+			'service:task-acknowledgement', $4, $4
+		)
+		RETURNING created_by_kind
+	`, threadID, creatorPractice, creatorLocation, now).Scan(
+		&serviceCreatorKind,
+	); err != nil {
+		t.Fatalf("insert service-authored outbound Message: %v", err)
+	}
+	if serviceCreatorKind != "SERVICE" {
+		t.Fatalf("service-authored outbound creator kind = %q, want SERVICE", serviceCreatorKind)
+	}
+
+	var inboundCreatorKind *string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO messaging_messages (
+			thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, provider_message_id,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, $3, 'INBOUND', 'Legacy inbound Message',
+			'+17275550199', '+17275550100', 'DELIVERED',
+			'legacy-inbound-provider-message', $4, $4
+		)
+		RETURNING created_by_kind
+	`, threadID, creatorPractice, creatorLocation, now).Scan(
+		&inboundCreatorKind,
+	); err != nil {
+		t.Fatalf("insert old-revision inbound Message: %v", err)
+	}
+	if inboundCreatorKind != nil {
+		t.Fatalf("old-revision inbound creator kind = %q, want NULL", *inboundCreatorKind)
+	}
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO messaging_messages (
+			thread_id, practice_id, location_id, direction, body,
+			sender, destination, delivery_state, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, 'OUTBOUND', 'Creator is required',
+			'+17275550100', '+17275550199', 'SENDING', $4, $4
+		)
+	`, threadID, creatorPractice, creatorLocation, now)
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "23514" {
+		t.Fatalf("outbound Message without creator evidence error = %v, want check violation", err)
 	}
 }
 
