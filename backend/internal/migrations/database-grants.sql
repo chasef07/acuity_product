@@ -457,6 +457,12 @@ GRANT UPDATE ON TABLE
     public.work_tasks
 TO acuity_worker;
 
+-- PostgreSQL requires UPDATE authority for SELECT ... FOR UPDATE even when the
+-- worker only locks and later deletes the claimed reconciliation queue row.
+GRANT UPDATE (enqueued_at)
+ON TABLE public.work_recovery_reconciliation_queue
+TO acuity_worker;
+
 GRANT DELETE ON TABLE
 	public.ai_interaction_attention,
 	public.work_recovery_reconciliation_queue
