@@ -322,6 +322,10 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 		"acuity_worker": {
 			`SELECT user_subject FROM access_operational_users WHERE false`,
 			`SELECT email FROM access_platform_operators WHERE false`,
+			`SELECT practice_id::text, phone
+				 FROM work_recovery_reconciliation_queue
+				 WHERE false
+				 FOR UPDATE SKIP LOCKED`,
 			`SELECT EXISTS (
 				SELECT 1 FROM human_calling_timeline
 				WHERE call_id = gen_random_uuid()
@@ -712,6 +716,12 @@ func expectedColumnPrivileges() map[string]bool {
 		"provider_recording_id",
 		"content_expires_at",
 		"duration_millis",
+	)
+	grant(
+		"acuity_worker",
+		"public.work_recovery_reconciliation_queue",
+		"UPDATE",
+		"enqueued_at",
 	)
 	grant(
 		"acuity_worker",
