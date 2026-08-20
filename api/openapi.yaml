@@ -2651,6 +2651,7 @@ components:
           type: string
           format: date-time
         automaticAcknowledgement:
+          description: Present only for unresolved Tasks created by the AI service.
           $ref: "#/components/schemas/TaskAutomaticAcknowledgement"
         relatedInteractionCount:
           type: integer

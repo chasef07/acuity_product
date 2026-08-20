@@ -52,7 +52,10 @@ $$;
 
 CREATE TRIGGER work_create_task_acknowledgement
 AFTER INSERT ON work_tasks
-FOR EACH ROW EXECUTE FUNCTION work_create_task_acknowledgement();
+-- Only the AI service sends a new request into the Staff Task queue. Recovery,
+-- human-call, and staff-message Tasks already have their own caller journey.
+FOR EACH ROW WHEN (NEW.origin = 'ABITA_AI')
+EXECUTE FUNCTION work_create_task_acknowledgement();
 
 ALTER TABLE messaging_messages
     ADD COLUMN created_by_kind text CHECK (

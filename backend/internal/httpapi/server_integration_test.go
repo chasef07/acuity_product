@@ -785,9 +785,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Id.String() != task.ID {
 		t.Fatalf("Task query page = %#v", page)
 	}
-	if page.Items[0].AutomaticAcknowledgement == nil ||
-		page.Items[0].AutomaticAcknowledgement.State !=
-			api.TaskAutomaticAcknowledgementStatePENDING {
+	if page.Items[0].AutomaticAcknowledgement != nil {
 		t.Fatalf("Task automatic acknowledgement = %#v", page.Items[0].AutomaticAcknowledgement)
 	}
 	if page.Counts.Tasks != 1 {

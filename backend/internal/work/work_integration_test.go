@@ -68,7 +68,7 @@ func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
 	if activityCount != 1 {
 		t.Fatalf("Task creation Activity count = %d, want 1", activityCount)
 	}
-	assertTaskAcknowledgementIntent(t, pool, task.ID)
+	assertTaskAcknowledgementIntentCount(t, pool, task.ID, 0)
 }
 
 func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
@@ -129,7 +129,7 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	if missed.Origin != work.TaskOriginMissedCall {
 		t.Fatalf("missed-call recovery Task = %#v", missed)
 	}
-	assertTaskAcknowledgementIntent(t, pool, missed.ID)
+	assertTaskAcknowledgementIntentCount(t, pool, missed.ID, 0)
 	voicemail := ensureRecovery(work.EnsureRecoveryTaskCommand{
 		CallID:     voicemailCallID,
 		PracticeID: authorization.Practice.ID,
@@ -171,10 +171,11 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 	}
 }
 
-func assertTaskAcknowledgementIntent(
+func assertTaskAcknowledgementIntentCount(
 	t *testing.T,
 	pool *pgxpool.Pool,
 	taskID string,
+	want int,
 ) {
 	t.Helper()
 	var count int
@@ -187,8 +188,8 @@ func assertTaskAcknowledgementIntent(
 	`, taskID).Scan(&count); err != nil {
 		t.Fatalf("read automatic Task acknowledgement intent: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("automatic Task acknowledgement intents = %d, want 1", count)
+	if count != want {
+		t.Fatalf("automatic Task acknowledgement intents = %d, want %d", count, want)
 	}
 }
 
@@ -233,7 +234,7 @@ func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
 	}
 
 	first := ensureRecovery(firstCallID, now)
-	assertTaskAcknowledgementIntent(t, pool, first.ID)
+	assertTaskAcknowledgementIntentCount(t, pool, first.ID, 0)
 	second := ensureRecovery(secondCallID, now.Add(time.Minute))
 	replayed := ensureRecovery(secondCallID, now.Add(time.Minute))
 	if second.ID != first.ID || replayed.ID != first.ID {
@@ -540,9 +541,9 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		IdempotencyKey: "staff_task_3f94a1",
 		Phone:          "+17275551212",
 		CallerName:     "Jane Doe",
-		Summary:        "Caller needs records sent.",
-		Message:        "Caller asked the office to send their records to a specialist.",
-		Category:       work.TaskCategoryDocumentation,
+		Summary:        "Caller needs an appointment.",
+		Message:        "Caller asked the office to schedule an annual exam.",
+		Category:       work.TaskCategoryAppointments,
 		Urgency:        work.TaskUrgencyNormal,
 	}
 
@@ -619,7 +620,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	if task.Origin != work.TaskOriginAbitaAI ||
 		task.CallID != "" ||
 		task.Urgency != work.TaskUrgencyNormal ||
-		task.Category != work.TaskCategoryDocumentation ||
+		task.Category != work.TaskCategoryAppointments ||
 		task.SourceCallID != command.SourceCallID ||
 		task.SourceMessage != command.Message ||
 		task.CallerName != command.CallerName ||
@@ -633,7 +634,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 		workspace.QueryTasksCommand{
 			Identity:   identity,
 			PracticeID: authorization.Practice.ID,
-			Search:     "specialist",
+			Search:     "annual exam",
 		},
 	)
 	if err != nil {
@@ -648,7 +649,7 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	for _, search := range []string{
 		"Jane Doe",
 		authorization.Locations[0].Name,
-		"documentation",
+		"appointments",
 	} {
 		page, err := workspace.New(pool, accessModule).QueryTasks(
 			context.Background(),

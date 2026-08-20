@@ -2834,7 +2834,7 @@ func TestCallerHangupDuringVoicemailCreatesOneMissedCallRecovery(t *testing.T) {
 	if terminal != "MISSED" || voicemailOutcome != "MISSED_CALL" ||
 		taskOrigin != "MISSED_CALL_RECOVERY" || taskTitle != "Return missed call" ||
 		taskCount != 1 || interactionCount != 1 || activityCount != 1 ||
-		acknowledgementCount != 1 {
+		acknowledgementCount != 0 {
 		t.Fatalf(
 			"answered caller recovery = terminal:%s outcome:%s origin:%s title:%s tasks:%d interactions:%d activities:%d acknowledgements:%d",
 			terminal, voicemailOutcome, taskOrigin, taskTitle,
@@ -4645,7 +4645,7 @@ func TestVoicemailEvidenceRequiresExactCallerAndUpgradesRecoveryTask(t *testing.
 	if callOutcome != "VOICEMAIL" || voicemailOutcome != "VOICEMAIL" ||
 		audioState != "READY" || taskTitle != "Review voicemail" ||
 		taskOrigin != "VOICEMAIL_RECOVERY" || taskOutcome != "VOICEMAIL" ||
-		acknowledgementCount != 1 {
+		acknowledgementCount != 0 {
 		t.Fatalf("upgraded voicemail recovery = %s %s %s %s %s %s acknowledgements:%d",
 			callOutcome, voicemailOutcome, audioState, taskTitle, taskOrigin, taskOutcome,
 			acknowledgementCount)

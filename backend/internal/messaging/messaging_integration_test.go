@@ -797,11 +797,10 @@ func TestCreateFollowUpTaskKeepsDistinctMessageThreadsSeparate(t *testing.T) {
 	`, []string{created[0].ID, created[1].ID}).Scan(&acknowledgementCount); err != nil {
 		t.Fatalf("read Message follow-up acknowledgement intents: %v", err)
 	}
-	if acknowledgementCount != len(created) {
+	if acknowledgementCount != 0 {
 		t.Fatalf(
-			"Message follow-up acknowledgement intents = %d, want %d",
+			"Message follow-up acknowledgement intents = %d, want 0",
 			acknowledgementCount,
-			len(created),
 		)
 	}
 }
