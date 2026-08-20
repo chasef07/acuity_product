@@ -1316,15 +1316,8 @@ func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing
 		UPDATE human_calling_provider_commands
 		SET created_at = $2, updated_at = $2
 		WHERE id = $1
-	`, record.ID, now.Add(-2*time.Minute)); err != nil {
-		t.Fatalf("age voicemail recording command: %v", err)
-	}
-	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs
-		SET updated_at = $2
-		WHERE id = $1
-	`, record.CallLegID, now.Add(-2*time.Minute)); err != nil {
-		t.Fatalf("age voicemail Caller leg: %v", err)
+	`, record.ID, now); err != nil {
+		t.Fatalf("pin voicemail recording command timing: %v", err)
 	}
 	provider.mu.Lock()
 	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{
@@ -1334,10 +1327,23 @@ func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing
 		CallSessionID: caller.CallSessionID,
 	})
 	provider.mu.Unlock()
-	if reconciled, err := setupCalling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
+	reconciliationTime := now.Add(80 * time.Second)
+	reconciliationCalling := humancalling.New(
+		pool,
+		access.New(pool, func() time.Time { return reconciliationTime }),
+		provider,
+		humancalling.Config{},
+		func() time.Time { return reconciliationTime },
+	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $1 WHERE role <> 'CALLER'
+	`, reconciliationTime); err != nil {
+		t.Fatalf("keep unrelated CallLegs out of reconciliation: %v", err)
+	}
+	if reconciled, err := reconciliationCalling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
 		t.Fatalf("reconcile absent voicemail recording event = %d, %v", reconciled, err)
 	}
-	processAllCommands(t, setupCalling)
+	processAllCommands(t, reconciliationCalling)
 
 	var routingFailureState string
 	for _, command := range provider.all(humancalling.CommandHangupLeg) {
@@ -1371,6 +1377,21 @@ func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing
 			terminalOutcome, voicemailOutcome, audioState,
 			recordingCommandState, recordingCommandError,
 		)
+	}
+	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:            prefix + "-recording-before-voicemail-command",
+		Type:               humancalling.FactRecordingSaved,
+		OccurredAt:         now.Add(10 * time.Second),
+		ConnectionID:       caller.ConnectionID,
+		CallControlID:      caller.CallControlID,
+		CallLegID:          caller.CallLegID,
+		CallSessionID:      caller.CallSessionID,
+		ClientState:        routingFailureState,
+		RecordingID:        prefix + "-earlier-recording",
+		RecordingStartedAt: now.Add(-10 * time.Second),
+		RecordingEndedAt:   now.Add(10 * time.Second),
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("recording predating voicemail command error = %v", err)
 	}
 	if err := setupCalling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
 		EventID:            prefix + "-wrong-connection",

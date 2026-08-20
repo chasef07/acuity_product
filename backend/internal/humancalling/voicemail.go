@@ -35,8 +35,9 @@ const (
 	VoicemailReady       VoicemailAudioState = "READY"
 	VoicemailUnavailable VoicemailAudioState = "UNAVAILABLE"
 
-	voicemailRecordingMaximum = 120 * time.Second
-	defaultVoicemailGreeting  = "Please leave a message after the beep."
+	voicemailRecordingMaximum        = 120 * time.Second
+	defaultVoicemailGreeting         = "Please leave a message after the beep."
+	voicemailRecordingStartTolerance = 5 * time.Second
 )
 
 type Voicemail struct {
@@ -358,8 +359,12 @@ func (m *Module) applyVoicemailRecordingSaved(
 				AND command.action = 'START_VOICEMAIL_RECORDING'
 				AND command.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED', 'FAILED')
 				AND ($3 = '' OR caller.provider_connection_id = $3)
+				AND COALESCE(command.sent_at, command.created_at)
+					<= $4::timestamptz + $5::interval
 		)
-	`, state.CallID, state.CallLegID, fact.ConnectionID).Scan(&recordingOwned); err != nil {
+	`, state.CallID, state.CallLegID, fact.ConnectionID,
+		fact.RecordingStartedAt,
+		voicemailRecordingStartTolerance.String()).Scan(&recordingOwned); err != nil {
 		return fmt.Errorf("read voicemail recording ownership: %w", err)
 	}
 	if !recordingOwned {
