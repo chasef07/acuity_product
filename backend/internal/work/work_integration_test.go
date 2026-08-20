@@ -68,6 +68,7 @@ func TestEnsureCallFollowUpCreatesOneDurableOpenTask(t *testing.T) {
 	if activityCount != 1 {
 		t.Fatalf("Task creation Activity count = %d, want 1", activityCount)
 	}
+	assertTaskAcknowledgementIntent(t, pool, task.ID)
 }
 
 func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
@@ -125,6 +126,10 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 		Outcome:    work.RecoveryOutcomeMissedCall,
 		OccurredAt: now,
 	})
+	if missed.Origin != work.TaskOriginMissedCall {
+		t.Fatalf("missed-call recovery Task = %#v", missed)
+	}
+	assertTaskAcknowledgementIntent(t, pool, missed.ID)
 	voicemail := ensureRecovery(work.EnsureRecoveryTaskCommand{
 		CallID:     voicemailCallID,
 		PracticeID: authorization.Practice.ID,
@@ -163,6 +168,27 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 		read.Interactions[0].CallID != missedCallID ||
 		read.Interactions[1].CallID != voicemailCallID {
 		t.Fatalf("recovery Task read model = %#v", read)
+	}
+}
+
+func assertTaskAcknowledgementIntent(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	taskID string,
+) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_acknowledgements
+		WHERE task_id = $1
+			AND purpose = 'CALLER_TASK_RECEIVED'
+			AND state = 'PENDING'
+	`, taskID).Scan(&count); err != nil {
+		t.Fatalf("read automatic Task acknowledgement intent: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("automatic Task acknowledgement intents = %d, want 1", count)
 	}
 }
 
@@ -207,6 +233,7 @@ func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {
 	}
 
 	first := ensureRecovery(firstCallID, now)
+	assertTaskAcknowledgementIntent(t, pool, first.ID)
 	second := ensureRecovery(secondCallID, now.Add(time.Minute))
 	replayed := ensureRecovery(secondCallID, now.Add(time.Minute))
 	if second.ID != first.ID || replayed.ID != first.ID {
@@ -531,6 +558,22 @@ func TestCreateAITaskCommitsSourceAndReturnsSafeReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create AI Task: %v", err)
 	}
+	var acknowledgementCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_acknowledgements
+		WHERE task_id = $1
+			AND purpose = 'CALLER_TASK_RECEIVED'
+			AND state = 'PENDING'
+	`, first.ID).Scan(&acknowledgementCount); err != nil {
+		t.Fatalf("read automatic Task acknowledgement intent: %v", err)
+	}
+	if acknowledgementCount != 1 {
+		t.Fatalf(
+			"automatic Task acknowledgement intents = %d, want 1",
+			acknowledgementCount,
+		)
+	}
 	var workspaceVersionAfterCreate int64
 	if err := pool.QueryRow(context.Background(), `
 		SELECT workspace_version
@@ -779,24 +822,28 @@ func TestCreateAITaskSupportsMultipleOutcomesAndConcurrentReplay(t *testing.T) {
 		)
 	}
 
-	var taskCount, activityCount int
+	var taskCount, activityCount, acknowledgementCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT
 			count(DISTINCT task.id),
-			count(activity.id)
+			count(activity.id),
+			count(acknowledgement.id)
 		FROM work_tasks task
 		LEFT JOIN work_task_activities activity
 			ON activity.task_id = task.id
 			AND activity.kind = 'TASK_CREATED'
+		LEFT JOIN work_task_acknowledgements acknowledgement
+			ON acknowledgement.task_id = task.id
 		WHERE task.created_by_subject = $1
-	`, service.Subject).Scan(&taskCount, &activityCount); err != nil {
+	`, service.Subject).Scan(&taskCount, &activityCount, &acknowledgementCount); err != nil {
 		t.Fatalf("count AI Task outcomes: %v", err)
 	}
-	if taskCount != 2 || activityCount != 2 {
+	if taskCount != 2 || activityCount != 2 || acknowledgementCount != 2 {
 		t.Fatalf(
-			"AI Task outcome counts = %d Tasks, %d Activities",
+			"AI Task outcome counts = %d Tasks, %d Activities, %d acknowledgements",
 			taskCount,
 			activityCount,
+			acknowledgementCount,
 		)
 	}
 }

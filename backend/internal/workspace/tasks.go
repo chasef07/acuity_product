@@ -193,7 +193,16 @@ const taskColumns = `
 		task.completed_by_email,
 		task.completed_at,
 		task.version,
-		task.updated_at`
+		task.updated_at,
+		acknowledgement.state,
+		acknowledgement.safe_failure_code,
+		acknowledgement.message_id::text,
+		acknowledgement.updated_at`
+
+const taskAcknowledgementJoin = `
+	LEFT JOIN work_task_acknowledgements acknowledgement
+		ON acknowledgement.task_id = task.id
+		AND acknowledgement.purpose = 'CALLER_TASK_RECEIVED'`
 
 const taskConversationJoin = `
 	LEFT JOIN LATERAL (
@@ -226,7 +235,7 @@ const taskQuerySelect = `
 	FROM work_tasks task
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
-		AND location.id = task.location_id` + taskConversationJoin + `
+		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
 	WHERE task.practice_id = $1
 		AND task.location_id::text = ANY($2::text[])
 		AND (
@@ -323,7 +332,7 @@ const taskReadQuery = `
 	FROM work_tasks task
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
-		AND location.id = task.location_id` + taskConversationJoin + `
+		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
 	WHERE task.id = $1`
 
 const conversationTaskQuery = `
@@ -340,6 +349,9 @@ const conversationTaskQuery = `
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id
+	LEFT JOIN work_task_acknowledgements acknowledgement
+		ON acknowledgement.task_id = task.id
+		AND acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
 	WHERE task.practice_id = $1
 		AND task.location_id = $2
 		AND (
@@ -366,6 +378,9 @@ const phoneTaskActivityQuery = `
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id
+	LEFT JOIN work_task_acknowledgements acknowledgement
+		ON acknowledgement.task_id = task.id
+		AND acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
 	JOIN work_task_activities activity ON activity.task_id = task.id
 	WHERE task.practice_id = $1
 		AND task.location_id::text = ANY($2::text[])
@@ -386,6 +401,8 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
 	var createdEmail, completedSubject, completedEmail *string
+	var acknowledgementState, acknowledgementFailure, acknowledgementMessageID *string
+	var acknowledgementUpdatedAt *time.Time
 	destinations := append(prefix,
 		&task.ID,
 		&task.PracticeID,
@@ -413,6 +430,10 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
+		&acknowledgementState,
+		&acknowledgementFailure,
+		&acknowledgementMessageID,
+		&acknowledgementUpdatedAt,
 		&task.ConversationThreadID,
 		&task.Unread,
 		&task.RelatedInteractionCount,
@@ -443,6 +464,18 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 	}
 	if recoveryOutcome != nil {
 		task.RecoveryOutcome = work.RecoveryOutcome(*recoveryOutcome)
+	}
+	if acknowledgementState != nil && acknowledgementUpdatedAt != nil {
+		task.AutomaticAcknowledgement = &work.TaskAcknowledgement{
+			State:     *acknowledgementState,
+			UpdatedAt: *acknowledgementUpdatedAt,
+		}
+		if acknowledgementFailure != nil {
+			task.AutomaticAcknowledgement.SafeFailureCode = *acknowledgementFailure
+		}
+		if acknowledgementMessageID != nil {
+			task.AutomaticAcknowledgement.MessageID = *acknowledgementMessageID
+		}
 	}
 	if createdEmail != nil {
 		task.CreatedBy.Email = *createdEmail

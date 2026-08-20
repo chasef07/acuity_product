@@ -35,6 +35,7 @@ import type {
   Task,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
+import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 import { cn } from "@/lib/utils"
 
 type InteractionWorkspaceProps = {
@@ -373,6 +374,14 @@ function TaskWorkspace({
             label="Created"
             value={`${formatDateTime(task.createdAt)} · ${actorLabel(task.createdBy)}`}
           />
+          {task.automaticAcknowledgement && (
+            <Metadata
+              label="Caller acknowledgement"
+              value={automaticAcknowledgementLabel(
+                task.automaticAcknowledgement,
+              )}
+            />
+          )}
           <Metadata label="Last changed" value={formatDateTime(task.updatedAt)} />
           <Metadata
             label="Completed"

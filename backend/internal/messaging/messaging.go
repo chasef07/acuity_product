@@ -51,6 +51,12 @@ const (
 	MessageDuplicate MessageCreateStatus = "duplicate"
 )
 
+const automaticTaskAcknowledgementCopy = "We received your request and shared it with our office team. Someone will follow up with you soon. Reply STOP to opt out."
+
+const automaticTaskAcknowledgementActor = "task-acknowledgement"
+
+const automaticTaskAcknowledgementConfigurationRetryDelay = 5 * time.Minute
+
 var (
 	ErrDenied                 = errors.New("messaging access denied")
 	ErrInvalidInput           = errors.New("invalid messaging input")
@@ -103,9 +109,15 @@ type Message struct {
 	TaskID            string
 	RetryOfMessageID  string
 	Attachment        *Attachment
+	CreatedBy         *ActorSnapshot
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	Version           int64
+}
+
+type ActorSnapshot struct {
+	Kind    access.ActorKind
+	Subject string
 }
 
 type QueryThreadsCommand struct {
@@ -516,48 +528,16 @@ func (m *Module) Send(
 
 	now := m.now()
 	if thread.ID == "" {
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO messaging_threads (
-				practice_id,
-				location_id,
-				office_phone,
-				external_phone,
-				created_at,
-				updated_at
-			)
-			VALUES ($1, $2, $3, $4, $5, $5)
-			ON CONFLICT (
-				practice_id,
-				location_id,
-				office_phone,
-				external_phone
-			)
-			DO UPDATE SET updated_at = EXCLUDED.updated_at
-			RETURNING
-				id::text,
-				practice_id::text,
-				location_id::text,
-				office_phone,
-				external_phone,
-				COALESCE(display_name, ''),
-				COALESCE(name_source, ''),
-				outbound_blocked,
-				created_at,
-				updated_at
-		`, command.PracticeID, command.LocationID, sender,
-			command.Destination, now,
-		).Scan(
-			&thread.ID,
-			&thread.PracticeID,
-			&thread.LocationID,
-			&thread.OfficePhone,
-			&thread.ExternalPhone,
-			&thread.DisplayName,
-			&thread.NameSource,
-			&thread.OutboundBlocked,
-			&thread.CreatedAt,
-			&thread.UpdatedAt,
-		); err != nil {
+		thread, err = findOrCreateMessageThread(
+			ctx,
+			tx,
+			command.PracticeID,
+			command.LocationID,
+			sender,
+			command.Destination,
+			now,
+		)
+		if err != nil {
 			return Message{}, "", fmt.Errorf("find or create Message Thread: %w", err)
 		}
 	} else {
@@ -658,32 +638,21 @@ func (m *Module) Send(
 		attachment = &pending
 	}
 
-	messageID := uuid.NewString()
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO messaging_messages (
-			id,
-			thread_id,
-			practice_id,
-			location_id,
-			direction,
-			body,
-			sender,
-			destination,
-			delivery_state,
-			task_id,
-			retry_of_message_id,
-			created_by_subject,
-			created_at,
-			updated_at
-		)
-		VALUES (
-			$1, $2, $3, $4, 'OUTBOUND', NULLIF($5, ''), $6, $7, 'SENDING',
-			NULLIF($8, '')::uuid, NULLIF($9, '')::uuid, $10, $11, $11
-		)
-	`, messageID, thread.ID, command.PracticeID, command.LocationID,
-		command.Body, sender, command.Destination, command.TaskID,
-		command.RetryOfMessageID, command.Identity.Subject, now,
-	); err != nil {
+	messageID, err := insertOutboundMessage(ctx, tx, outboundMessageInput{
+		ThreadID:         thread.ID,
+		PracticeID:       command.PracticeID,
+		LocationID:       command.LocationID,
+		Body:             command.Body,
+		Sender:           sender,
+		Destination:      command.Destination,
+		Delivery:         DeliverySending,
+		TaskID:           command.TaskID,
+		RetryOfMessageID: command.RetryOfMessageID,
+		CreatorKind:      access.ActorHuman,
+		CreatorSubject:   command.Identity.Subject,
+		CreatedAt:        now,
+	})
+	if err != nil {
 		return Message{}, "", fmt.Errorf("commit outbound Message: %w", err)
 	}
 	if attachment != nil {
@@ -708,26 +677,17 @@ func (m *Module) Send(
 	if err != nil {
 		return Message{}, "", err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO messaging_provider_commands (
-			id,
-			message_id,
-			practice_id,
-			location_id,
-			actor_subject,
-			idempotency_key,
-			input_fingerprint,
-			callback_token,
-			messaging_profile_id,
-			next_attempt_at,
-			created_at,
-			updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10)
-	`, uuid.NewString(), messageID, command.PracticeID, command.LocationID,
-		command.Identity.Subject, command.IdempotencyKey, fingerprint[:],
-		callbackToken, profileID, now,
-	); err != nil {
+	if err := insertMessageProviderCommand(ctx, tx, messageProviderCommandInput{
+		MessageID:          messageID,
+		PracticeID:         command.PracticeID,
+		LocationID:         command.LocationID,
+		ActorSubject:       command.Identity.Subject,
+		IdempotencyKey:     command.IdempotencyKey,
+		InputFingerprint:   fingerprint[:],
+		CallbackToken:      callbackToken,
+		MessagingProfileID: profileID,
+		CreatedAt:          now,
+	}); err != nil {
 		return Message{}, "", fmt.Errorf("commit Message provider command: %w", err)
 	}
 	if err := m.access.AuditOperatorMutation(
@@ -765,10 +725,354 @@ func (m *Module) Send(
 		TaskID:           command.TaskID,
 		RetryOfMessageID: command.RetryOfMessageID,
 		Attachment:       attachment,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		Version:          1,
+		CreatedBy: &ActorSnapshot{
+			Kind: access.ActorHuman, Subject: command.Identity.Subject,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+		Version:   1,
 	}, MessageCreated, nil
+}
+
+type outboundMessageInput struct {
+	ThreadID         string
+	PracticeID       string
+	LocationID       string
+	Body             string
+	Sender           string
+	Destination      string
+	Delivery         DeliveryState
+	FailureCode      string
+	TaskID           string
+	RetryOfMessageID string
+	CreatorKind      access.ActorKind
+	CreatorSubject   string
+	CreatedAt        time.Time
+}
+
+type messageProviderCommandInput struct {
+	MessageID          string
+	PracticeID         string
+	LocationID         string
+	ActorSubject       string
+	IdempotencyKey     string
+	InputFingerprint   []byte
+	CallbackToken      string
+	MessagingProfileID string
+	CreatedAt          time.Time
+}
+
+func findOrCreateMessageThread(
+	ctx context.Context,
+	tx pgx.Tx,
+	practiceID string,
+	locationID string,
+	sender string,
+	destination string,
+	now time.Time,
+) (Thread, error) {
+	var thread Thread
+	err := tx.QueryRow(ctx, `
+		INSERT INTO messaging_threads (
+			practice_id,
+			location_id,
+			office_phone,
+			external_phone,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $5)
+		ON CONFLICT (practice_id, location_id, office_phone, external_phone)
+		DO UPDATE SET updated_at = GREATEST(messaging_threads.updated_at, EXCLUDED.updated_at)
+		RETURNING
+			id::text,
+			practice_id::text,
+			location_id::text,
+			office_phone,
+			external_phone,
+			COALESCE(display_name, ''),
+			COALESCE(name_source, ''),
+			outbound_blocked,
+			created_at,
+			updated_at
+	`, practiceID, locationID, sender, destination, now).Scan(
+		&thread.ID,
+		&thread.PracticeID,
+		&thread.LocationID,
+		&thread.OfficePhone,
+		&thread.ExternalPhone,
+		&thread.DisplayName,
+		&thread.NameSource,
+		&thread.OutboundBlocked,
+		&thread.CreatedAt,
+		&thread.UpdatedAt,
+	)
+	return thread, err
+}
+
+func insertOutboundMessage(
+	ctx context.Context,
+	tx pgx.Tx,
+	input outboundMessageInput,
+) (string, error) {
+	messageID := uuid.NewString()
+	_, err := tx.Exec(ctx, `
+		INSERT INTO messaging_messages (
+			id,
+			thread_id,
+			practice_id,
+			location_id,
+			direction,
+			body,
+			sender,
+			destination,
+			delivery_state,
+			safe_failure_code,
+			task_id,
+			retry_of_message_id,
+			created_by_kind,
+			created_by_subject,
+			created_at,
+			updated_at
+		)
+		VALUES (
+			$1, $2, $3, $4, 'OUTBOUND', NULLIF($5, ''), $6, $7, $8,
+			NULLIF($9, ''), NULLIF($10, '')::uuid, NULLIF($11, '')::uuid,
+			$12, $13, $14, $14
+		)
+	`, messageID, input.ThreadID, input.PracticeID, input.LocationID,
+		input.Body, input.Sender, input.Destination, input.Delivery,
+		input.FailureCode, input.TaskID, input.RetryOfMessageID,
+		input.CreatorKind, input.CreatorSubject, input.CreatedAt,
+	)
+	return messageID, err
+}
+
+func insertMessageProviderCommand(
+	ctx context.Context,
+	tx pgx.Tx,
+	input messageProviderCommandInput,
+) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO messaging_provider_commands (
+			id,
+			message_id,
+			practice_id,
+			location_id,
+			actor_subject,
+			idempotency_key,
+			input_fingerprint,
+			callback_token,
+			messaging_profile_id,
+			next_attempt_at,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10)
+	`, uuid.NewString(), input.MessageID, input.PracticeID, input.LocationID,
+		input.ActorSubject, input.IdempotencyKey, input.InputFingerprint,
+		input.CallbackToken, input.MessagingProfileID, input.CreatedAt,
+	)
+	return err
+}
+
+// QueueNextTaskAcknowledgement turns one committed unresolved Task intent into
+// a linked automatic Message. It commits the Message and provider command
+// before any provider contact, and pre-send failures remain durable and visible.
+func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error) {
+	if m.database == nil || m.access == nil || m.work == nil {
+		return false, ErrInvalidInput
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin automatic Task acknowledgement: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	now := m.now()
+	claim, found, err := m.work.ClaimNextTaskAcknowledgement(ctx, tx, now)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit empty automatic Task acknowledgement claim: %w", err)
+		}
+		return false, nil
+	}
+	if claim.TaskState != work.TaskOpen {
+		if err := m.work.MarkTaskAcknowledgementNotNeeded(
+			ctx,
+			tx,
+			claim.ID,
+			"TASK_ALREADY_RESOLVED",
+			now,
+		); err != nil {
+			return false, err
+		}
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
+			return false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit resolved Task acknowledgement: %w", err)
+		}
+		return true, nil
+	}
+
+	var sender, profileID string
+	var active bool
+	if err := tx.QueryRow(ctx, `
+		SELECT sender, messaging_profile_id, active
+		FROM messaging_location_configurations
+		WHERE practice_id = $1 AND location_id = $2
+		FOR SHARE
+	`, claim.PracticeID, claim.LocationID).Scan(&sender, &profileID, &active); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("load automatic acknowledgement sender: %w", err)
+		}
+		if err := m.work.DeferTaskAcknowledgement(
+			ctx,
+			tx,
+			claim.ID,
+			"SENDER_CONFIGURATION_UNAVAILABLE",
+			now,
+			now.Add(automaticTaskAcknowledgementConfigurationRetryDelay),
+		); err != nil {
+			return false, err
+		}
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
+			return false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit unavailable automatic acknowledgement sender: %w", err)
+		}
+		return true, nil
+	}
+
+	if !active {
+		if err := m.work.DeferTaskAcknowledgement(
+			ctx,
+			tx,
+			claim.ID,
+			"SENDER_CONFIGURATION_INACTIVE",
+			now,
+			now.Add(automaticTaskAcknowledgementConfigurationRetryDelay),
+		); err != nil {
+			return false, err
+		}
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
+			return false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit inactive automatic acknowledgement sender: %w", err)
+		}
+		return true, nil
+	}
+
+	thread, err := findOrCreateMessageThread(
+		ctx,
+		tx,
+		claim.PracticeID,
+		claim.LocationID,
+		sender,
+		claim.Phone,
+		now,
+	)
+	if err != nil {
+		return false, fmt.Errorf("find automatic acknowledgement Message Thread: %w", err)
+	}
+	lockedTask, err := m.work.LockTaskAcknowledgementTask(ctx, tx, claim)
+	if err != nil {
+		if errors.Is(err, work.ErrConflict) {
+			return false, fmt.Errorf("automatic acknowledgement Task changed during queue: %w", ErrConflict)
+		}
+		return false, err
+	}
+	if lockedTask.State != work.TaskOpen {
+		if err := m.work.MarkTaskAcknowledgementNotNeeded(
+			ctx,
+			tx,
+			claim.ID,
+			"TASK_ALREADY_RESOLVED",
+			now,
+		); err != nil {
+			return false, err
+		}
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
+			return false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit concurrently resolved Task acknowledgement: %w", err)
+		}
+		return true, nil
+	}
+
+	delivery := DeliverySending
+	failureCode := ""
+	if thread.OutboundBlocked {
+		delivery = DeliveryFailed
+		failureCode = "OUTBOUND_BLOCKED"
+	}
+	messageID, err := insertOutboundMessage(ctx, tx, outboundMessageInput{
+		ThreadID:       thread.ID,
+		PracticeID:     claim.PracticeID,
+		LocationID:     claim.LocationID,
+		Body:           automaticTaskAcknowledgementCopy,
+		Sender:         sender,
+		Destination:    claim.Phone,
+		Delivery:       delivery,
+		FailureCode:    failureCode,
+		TaskID:         claim.TaskID,
+		CreatorKind:    access.ActorService,
+		CreatorSubject: automaticTaskAcknowledgementActor,
+		CreatedAt:      now,
+	})
+	if err != nil {
+		return false, fmt.Errorf("commit automatic Task acknowledgement Message: %w", err)
+	}
+	if delivery == DeliverySending {
+		callbackToken, err := newOpaqueToken()
+		if err != nil {
+			return false, err
+		}
+		idempotency := "automatic-task-acknowledgement:" + claim.TaskID
+		fingerprint := sha256.Sum256([]byte(strings.Join([]string{
+			claim.PracticeID,
+			claim.LocationID,
+			claim.TaskID,
+			sender,
+			claim.Phone,
+			automaticTaskAcknowledgementCopy,
+		}, "\x00")))
+		if err := insertMessageProviderCommand(ctx, tx, messageProviderCommandInput{
+			MessageID:          messageID,
+			PracticeID:         claim.PracticeID,
+			LocationID:         claim.LocationID,
+			ActorSubject:       automaticTaskAcknowledgementActor,
+			IdempotencyKey:     idempotency,
+			InputFingerprint:   fingerprint[:],
+			CallbackToken:      callbackToken,
+			MessagingProfileID: profileID,
+			CreatedAt:          now,
+		}); err != nil {
+			return false, fmt.Errorf("commit automatic acknowledgement provider command: %w", err)
+		}
+	}
+	if err := m.work.MarkTaskAcknowledgementQueued(
+		ctx,
+		tx,
+		claim.ID,
+		messageID,
+		now,
+	); err != nil {
+		return false, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, claim.PracticeID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit automatic Task acknowledgement: %w", err)
+	}
+	return true, nil
 }
 
 func (m *Module) SendAgain(
@@ -2682,6 +2986,8 @@ func loadMessageByIdempotency(
 			COALESCE(message.provider_message_id, ''),
 			COALESCE(message.task_id::text, ''),
 			COALESCE(message.retry_of_message_id::text, ''),
+			COALESCE(message.created_by_kind, ''),
+			COALESCE(message.created_by_subject, ''),
 			COALESCE(attachment.id::text, ''),
 			COALESCE(attachment.direction, ''),
 			COALESCE(attachment.state, ''),
@@ -2707,6 +3013,8 @@ func loadMessageByIdempotency(
 			AND command.idempotency_key = $3
 	`, practiceID, actorSubject, key)
 	var attachment Attachment
+	var createdByKind access.ActorKind
+	var createdBySubject string
 	err := row.Scan(
 		&result.ID,
 		&result.Thread.ID,
@@ -2729,6 +3037,8 @@ func loadMessageByIdempotency(
 		&result.ProviderMessageID,
 		&result.TaskID,
 		&result.RetryOfMessageID,
+		&createdByKind,
+		&createdBySubject,
 		&attachment.ID,
 		&attachment.Direction,
 		&attachment.State,
@@ -2745,6 +3055,9 @@ func loadMessageByIdempotency(
 	if err == nil && attachment.ID != "" {
 		attachment.MessageID = result.ID
 		result.Attachment = &attachment
+	}
+	if err == nil && createdByKind != "" {
+		result.CreatedBy = &ActorSnapshot{Kind: createdByKind, Subject: createdBySubject}
 	}
 	return result, fingerprint, err
 }
@@ -2778,6 +3091,8 @@ func loadMessage(
 			COALESCE(message.provider_message_id, ''),
 			COALESCE(message.task_id::text, ''),
 			COALESCE(message.retry_of_message_id::text, ''),
+			COALESCE(message.created_by_kind, ''),
+			COALESCE(message.created_by_subject, ''),
 			COALESCE(attachment.id::text, ''),
 			COALESCE(attachment.direction, ''),
 			COALESCE(attachment.state, ''),
@@ -2800,6 +3115,8 @@ func loadMessage(
 		FOR SHARE OF message, thread
 	`, messageID)
 	var attachment Attachment
+	var createdByKind access.ActorKind
+	var createdBySubject string
 	err := row.Scan(
 		&result.ID,
 		&result.Thread.ID,
@@ -2822,6 +3139,8 @@ func loadMessage(
 		&result.ProviderMessageID,
 		&result.TaskID,
 		&result.RetryOfMessageID,
+		&createdByKind,
+		&createdBySubject,
 		&attachment.ID,
 		&attachment.Direction,
 		&attachment.State,
@@ -2840,6 +3159,9 @@ func loadMessage(
 	if attachment.ID != "" {
 		attachment.MessageID = result.ID
 		result.Attachment = &attachment
+	}
+	if createdByKind != "" {
+		result.CreatedBy = &ActorSnapshot{Kind: createdByKind, Subject: createdBySubject}
 	}
 	return result, nil
 }

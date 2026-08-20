@@ -68,7 +68,11 @@ import type {
   TaskFolderCounts,
   WorkspaceSnapshot,
 } from "@/lib/api/generated/types.gen"
-import { authClient, getAccessToken } from "@/lib/auth-client"
+import {
+  authClient,
+  getAccessToken,
+  getAccessTokenResult,
+} from "@/lib/auth-client"
 import {
   applyOutcomePages,
   appointmentActionForFolder,
@@ -231,12 +235,15 @@ export function TaskWorkspaceShell() {
       )
       const requestGeneration = ++taskQueryGenerationRef.current
       setTasksLoading(true)
-      const token = await getAccessToken()
-      if (!token) {
+      const authentication = await getAccessTokenResult()
+      if (authentication.status !== "authenticated") {
         setTasksLoading(false)
-        setLoadState("unauthorized")
+        if (authentication.status === "unauthenticated") {
+          setLoadState("unauthorized")
+        }
         return
       }
+      const token = authentication.token
       const result = await queryTasks({
         client: portalClient(token),
         body: {
@@ -304,12 +311,15 @@ export function TaskWorkspaceShell() {
       )
       const requestGeneration = ++recoveryTaskQueryGenerationRef.current
       setRecoveryTasksLoading(true)
-      const token = await getAccessToken()
-      if (!token) {
+      const authentication = await getAccessTokenResult()
+      if (authentication.status !== "authenticated") {
         setRecoveryTasksLoading(false)
-        setLoadState("unauthorized")
+        if (authentication.status === "unauthenticated") {
+          setLoadState("unauthorized")
+        }
         return
       }
+      const token = authentication.token
       const result = await queryTasks({
         client: portalClient(token),
         body: {
@@ -364,12 +374,15 @@ export function TaskWorkspaceShell() {
       )
       const requestGeneration = ++messageQueryGenerationRef.current
       setMessagesLoading(true)
-      const token = await getAccessToken()
-      if (!token) {
+      const authentication = await getAccessTokenResult()
+      if (authentication.status !== "authenticated") {
         setMessagesLoading(false)
-        setLoadState("unauthorized")
+        if (authentication.status === "unauthenticated") {
+          setLoadState("unauthorized")
+        }
         return
       }
+      const token = authentication.token
       const result = await queryMessageThreads({
         client: portalClient(token),
         body: {
@@ -412,12 +425,15 @@ export function TaskWorkspaceShell() {
     const requestGeneration = ++aiOutcomeQueryGenerationRef.current
     setAIOutcomesLoading(true)
     setAIOutcomesError("")
-    const token = await getAccessToken()
-    if (!token) {
+    const authentication = await getAccessTokenResult()
+    if (authentication.status !== "authenticated") {
       setAIOutcomesLoading(false)
-      setLoadState("unauthorized")
+      if (authentication.status === "unauthenticated") {
+        setLoadState("unauthorized")
+      }
       return
     }
+    const token = authentication.token
     const client = portalClient(token)
     const queryPage = async (
       pageFolder: AppointmentOutcomeFolder,
@@ -757,11 +773,16 @@ export function TaskWorkspaceShell() {
 
   const loadAuthority = useCallback(async () => {
     if (!session.data) return
-    const token = await getAccessToken()
-    if (!token) {
-      setLoadState("unauthorized")
+    const authentication = await getAccessTokenResult()
+    if (authentication.status !== "authenticated") {
+      setLoadState(
+        authentication.status === "unauthenticated"
+          ? "unauthorized"
+          : "unavailable",
+      )
       return
     }
+    const token = authentication.token
     const result = await discoverAccess({
       client: portalClient(token),
     }).catch(() => undefined)
@@ -886,7 +907,14 @@ export function TaskWorkspaceShell() {
   useEffect(() => {
     const sync = createWorkspaceSync({
       realtimeURL: realtimeURL(),
-      getToken: getAccessToken,
+      getToken: async () => {
+        const authentication = await getAccessTokenResult()
+        if (authentication.status === "authenticated") {
+          return authentication.token
+        }
+        if (authentication.status === "unauthenticated") return undefined
+        throw new Error("access token is temporarily unavailable")
+      },
       reconcile: (input) => reconcileWorkspaceRef.current(input),
       onStateChange: setConnection,
       onUnauthorized: () => setLoadState("unauthorized"),

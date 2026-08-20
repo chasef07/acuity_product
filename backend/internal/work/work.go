@@ -109,33 +109,50 @@ type ActorSnapshot struct {
 }
 
 type Task struct {
-	ID                      string
-	PracticeID              string
-	LocationID              string
-	LocationName            string
-	CallID                  string
-	Phone                   string
-	Title                   string
-	State                   TaskState
-	Origin                  TaskOrigin
-	Urgency                 TaskUrgency
-	Category                TaskCategory
-	CallerName              string
-	SourceCallID            string
-	SourceMessage           string
-	MessageID               string
-	MessageThreadID         string
-	ConversationThreadID    string
-	RecoveryOutcome         RecoveryOutcome
-	RelatedInteractionCount int
-	Interactions            []TaskInteraction
-	Unread                  bool
-	CreatedBy               ActorSnapshot
-	CreatedAt               time.Time
-	CompletedBy             *ActorSnapshot
-	CompletedAt             *time.Time
-	Version                 int64
-	UpdatedAt               time.Time
+	ID                       string
+	PracticeID               string
+	LocationID               string
+	LocationName             string
+	CallID                   string
+	Phone                    string
+	Title                    string
+	State                    TaskState
+	Origin                   TaskOrigin
+	Urgency                  TaskUrgency
+	Category                 TaskCategory
+	CallerName               string
+	SourceCallID             string
+	SourceMessage            string
+	MessageID                string
+	MessageThreadID          string
+	ConversationThreadID     string
+	RecoveryOutcome          RecoveryOutcome
+	RelatedInteractionCount  int
+	Interactions             []TaskInteraction
+	Unread                   bool
+	CreatedBy                ActorSnapshot
+	CreatedAt                time.Time
+	CompletedBy              *ActorSnapshot
+	CompletedAt              *time.Time
+	Version                  int64
+	UpdatedAt                time.Time
+	AutomaticAcknowledgement *TaskAcknowledgement
+}
+
+type TaskAcknowledgement struct {
+	State           string
+	SafeFailureCode string
+	MessageID       string
+	UpdatedAt       time.Time
+}
+
+type TaskAcknowledgementClaim struct {
+	ID         string
+	TaskID     string
+	PracticeID string
+	LocationID string
+	Phone      string
+	TaskState  TaskState
 }
 
 // TaskInteraction is the authorized communication evidence attached to a
@@ -937,6 +954,165 @@ func (m *Module) LockOpenMessageTask(
 	return task, nil
 }
 
+// ClaimNextTaskAcknowledgement locks one due acknowledgement intent without
+// locking its Task. Messaging can then follow its normal configuration,
+// Message Thread, and Task lock order before committing delivery intent.
+func (m *Module) ClaimNextTaskAcknowledgement(
+	ctx context.Context,
+	tx pgx.Tx,
+	dueAt time.Time,
+) (TaskAcknowledgementClaim, bool, error) {
+	if tx == nil || dueAt.IsZero() {
+		return TaskAcknowledgementClaim{}, false, ErrInvalidInput
+	}
+	var claim TaskAcknowledgementClaim
+	err := tx.QueryRow(ctx, `
+		SELECT
+			acknowledgement.id::text,
+			task.id::text,
+			task.practice_id::text,
+			task.location_id::text,
+			task.phone,
+			task.state
+		FROM work_task_acknowledgements acknowledgement
+		JOIN work_tasks task ON task.id = acknowledgement.task_id
+		WHERE acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
+			AND acknowledgement.state = 'PENDING'
+			AND acknowledgement.next_attempt_at <= $1
+		ORDER BY acknowledgement.next_attempt_at,
+			acknowledgement.created_at,
+			acknowledgement.id
+		FOR UPDATE OF acknowledgement SKIP LOCKED
+		LIMIT 1
+	`, dueAt).Scan(
+		&claim.ID,
+		&claim.TaskID,
+		&claim.PracticeID,
+		&claim.LocationID,
+		&claim.Phone,
+		&claim.TaskState,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TaskAcknowledgementClaim{}, false, nil
+	}
+	if err != nil {
+		return TaskAcknowledgementClaim{}, false,
+			fmt.Errorf("claim automatic Task acknowledgement: %w", err)
+	}
+	return claim, true, nil
+}
+
+// LockTaskAcknowledgementTask serializes the final delivery decision against
+// Task completion and rejects a changed Task snapshot.
+func (m *Module) LockTaskAcknowledgementTask(
+	ctx context.Context,
+	tx pgx.Tx,
+	claim TaskAcknowledgementClaim,
+) (Task, error) {
+	if tx == nil || claim.ID == "" || claim.TaskID == "" {
+		return Task{}, ErrInvalidInput
+	}
+	task, err := lockTask(ctx, tx, claim.TaskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.PracticeID != claim.PracticeID ||
+		task.LocationID != claim.LocationID ||
+		task.Phone != claim.Phone {
+		return Task{}, ErrConflict
+	}
+	return task, nil
+}
+
+func (m *Module) DeferTaskAcknowledgement(
+	ctx context.Context,
+	tx pgx.Tx,
+	acknowledgementID string,
+	failureCode string,
+	attemptedAt time.Time,
+	nextAttemptAt time.Time,
+) error {
+	if tx == nil || acknowledgementID == "" || failureCode == "" ||
+		attemptedAt.IsZero() || !nextAttemptAt.After(attemptedAt) {
+		return ErrInvalidInput
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE work_task_acknowledgements
+		SET
+			safe_failure_code = $2,
+			next_attempt_at = $3,
+			updated_at = $4
+		WHERE id = $1 AND state = 'PENDING'
+	`, acknowledgementID, failureCode, nextAttemptAt, attemptedAt)
+	if err != nil {
+		return fmt.Errorf("defer automatic Task acknowledgement: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (m *Module) MarkTaskAcknowledgementQueued(
+	ctx context.Context,
+	tx pgx.Tx,
+	acknowledgementID string,
+	messageID string,
+	completedAt time.Time,
+) error {
+	if tx == nil || acknowledgementID == "" || messageID == "" || completedAt.IsZero() {
+		return ErrInvalidInput
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE work_task_acknowledgements
+		SET
+			state = 'MESSAGE_QUEUED',
+			safe_failure_code = NULL,
+			message_id = $2,
+			next_attempt_at = NULL,
+			completed_at = $3,
+			updated_at = $3
+		WHERE id = $1 AND state = 'PENDING'
+	`, acknowledgementID, messageID, completedAt)
+	if err != nil {
+		return fmt.Errorf("complete automatic Task acknowledgement intent: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (m *Module) MarkTaskAcknowledgementNotNeeded(
+	ctx context.Context,
+	tx pgx.Tx,
+	acknowledgementID string,
+	failureCode string,
+	completedAt time.Time,
+) error {
+	if tx == nil || acknowledgementID == "" || failureCode == "" || completedAt.IsZero() {
+		return ErrInvalidInput
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE work_task_acknowledgements
+		SET
+			state = 'NOT_NEEDED',
+			safe_failure_code = $2,
+			message_id = NULL,
+			next_attempt_at = NULL,
+			completed_at = $3,
+			updated_at = $3
+		WHERE id = $1 AND state = 'PENDING'
+	`, acknowledgementID, failureCode, completedAt)
+	if err != nil {
+		return fmt.Errorf("finish automatic Task acknowledgement without Message: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
 // LockOpenOutboundTask resolves the immutable Location and destination used by
 // HumanCalling. The caller owns the transaction and must apply current Access
 // authorization before committing a Call.
@@ -1718,6 +1894,9 @@ func insertTask(
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
+	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
+		return Task{}, false, err
+	}
 	return task, inserted, nil
 }
 
@@ -1765,6 +1944,9 @@ func loadTask(
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("read Task: %w", err)
+	}
+	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
+		return Task{}, err
 	}
 	return task, nil
 }
@@ -1815,7 +1997,38 @@ func lockTask(
 	if err != nil {
 		return Task{}, fmt.Errorf("lock Task: %w", err)
 	}
+	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
+		return Task{}, err
+	}
 	return task, nil
+}
+
+func loadTaskAcknowledgement(ctx context.Context, tx pgx.Tx, task *Task) error {
+	var acknowledgement TaskAcknowledgement
+	var safeFailureCode, messageID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT state, safe_failure_code, message_id::text, updated_at
+		FROM work_task_acknowledgements
+		WHERE task_id = $1 AND purpose = 'CALLER_TASK_RECEIVED'
+	`, task.ID).Scan(
+		&acknowledgement.State,
+		&safeFailureCode,
+		&messageID,
+		&acknowledgement.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("read automatic Task acknowledgement: %w", err)
+	}
+	if safeFailureCode != nil {
+		acknowledgement.SafeFailureCode = *safeFailureCode
+	}
+	if messageID != nil {
+		acknowledgement.MessageID = *messageID
+	}
+	task.AutomaticAcknowledgement = &acknowledgement
+	return nil
 }
 
 type taskScanner interface {

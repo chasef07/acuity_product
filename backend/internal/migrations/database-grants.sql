@@ -45,6 +45,7 @@ GRANT SELECT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
 	public.work_task_activities,
+    public.work_task_acknowledgements,
 	public.work_task_interactions,
 	public.work_recovery_resolution_checkpoints,
 	public.work_tasks
@@ -125,6 +126,7 @@ GRANT INSERT ON TABLE
     public.messaging_provider_commands,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_acknowledgements,
     public.work_task_interactions,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
@@ -335,6 +337,7 @@ GRANT SELECT ON TABLE
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_acknowledgements,
     public.work_task_interactions,
 	public.work_recovery_reconciliation_queue,
 	public.work_recovery_resolution_checkpoints,
@@ -369,12 +372,25 @@ GRANT INSERT ON TABLE
     public.human_calling_voicemails,
     public.messaging_attachments,
     public.messaging_messages,
+    public.messaging_provider_commands,
     public.messaging_thread_unreads,
     public.messaging_threads,
     public.work_task_activities,
+    public.work_task_acknowledgements,
     public.work_task_interactions,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
+TO acuity_worker;
+
+GRANT UPDATE (
+    state,
+    safe_failure_code,
+    message_id,
+    next_attempt_at,
+    completed_at,
+    updated_at
+)
+ON TABLE public.work_task_acknowledgements
 TO acuity_worker;
 
 GRANT UPDATE (

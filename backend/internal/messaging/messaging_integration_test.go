@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -22,7 +23,693 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/workspace"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const automaticTaskAcknowledgementCopy = "We received your request and shared it with our office team. Someone will follow up with you soon. Reply STOP to opt out."
+
+func TestQueueTaskAcknowledgementCreatesOneAutomaticMessageBeforeProviderContact(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+
+	queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+	if err != nil || !queued {
+		t.Fatalf("queue automatic Task acknowledgement = %t, %v", queued, err)
+	}
+	if len(fixture.provider.commands) != 0 {
+		t.Fatalf("provider contacted before durable Message claim: %#v", fixture.provider.commands)
+	}
+	var messageID, body, taskID, delivery, actorKind, actorSubject string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			message.id::text,
+			message.body,
+			message.task_id::text,
+			message.delivery_state,
+			message.created_by_kind,
+			message.created_by_subject
+		FROM messaging_messages message
+		WHERE message.task_id = $1
+	`, fixture.task.ID).Scan(&messageID, &body, &taskID, &delivery, &actorKind, &actorSubject); err != nil {
+		t.Fatalf("read automatic Task acknowledgement Message: %v", err)
+	}
+	if body != automaticTaskAcknowledgementCopy ||
+		taskID != fixture.task.ID ||
+		delivery != string(messaging.DeliverySending) ||
+		actorKind != string(access.ActorService) ||
+		actorSubject != "task-acknowledgement" {
+		t.Fatalf(
+			"automatic Task acknowledgement Message = (%q, %q, %q, %q, %q)",
+			body,
+			taskID,
+			delivery,
+			actorKind,
+			actorSubject,
+		)
+	}
+	var acknowledgementState, linkedMessageID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, message_id::text
+		FROM work_task_acknowledgements
+		WHERE task_id = $1 AND purpose = 'CALLER_TASK_RECEIVED'
+	`, fixture.task.ID).Scan(&acknowledgementState, &linkedMessageID); err != nil {
+		t.Fatalf("read queued automatic acknowledgement intent: %v", err)
+	}
+	if acknowledgementState != "MESSAGE_QUEUED" || linkedMessageID != messageID {
+		t.Fatalf(
+			"automatic acknowledgement intent = (%q, %q), want MESSAGE_QUEUED, %q",
+			acknowledgementState,
+			linkedMessageID,
+			messageID,
+		)
+	}
+
+	processed, err := fixture.module.ProcessNextCommand(context.Background())
+	if err != nil || !processed || len(fixture.provider.commands) != 1 {
+		t.Fatalf("process automatic acknowledgement Message = %t, %#v, %v", processed, fixture.provider.commands, err)
+	}
+	if fixture.provider.commands[0].Body != automaticTaskAcknowledgementCopy ||
+		fixture.provider.commands[0].Destination != fixture.task.Phone {
+		t.Fatalf("automatic acknowledgement provider command = %#v", fixture.provider.commands[0])
+	}
+	queued, err = fixture.module.QueueNextTaskAcknowledgement(context.Background())
+	if err != nil || queued {
+		t.Fatalf("requeue completed automatic acknowledgement = %t, %v", queued, err)
+	}
+}
+
+type automaticAcknowledgementTestFixture struct {
+	pool       *pgxpool.Pool
+	module     *messaging.Module
+	provider   *providerFixture
+	task       work.Task
+	practiceID string
+	locationID string
+	identity   access.Identity
+	now        time.Time
+	clock      *time.Time
+	privateKey ed25519.PrivateKey
+}
+
+func newAutomaticAcknowledgementTestFixture(
+	t *testing.T,
+	configuration bool,
+) automaticAcknowledgementTestFixture {
+	t.Helper()
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	clock := &now
+	accessModule := access.New(pool, func() time.Time { return *clock })
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "automatic-task-acknowledgement-scenarios",
+		Practices: []access.PracticeProvision{{
+			Key:  "automatic-acknowledgement-scenarios",
+			Name: "Automatic Acknowledgement Scenarios",
+			Locations: []access.LocationProvision{{
+				Key:             "main",
+				Name:            "Main",
+				AbitaOfficeKeys: []string{"automatic-acknowledgement-scenarios-office"},
+			}},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:           "staff",
+				Email:         "staff@automatic-acknowledgement.test",
+				Role:          access.RoleStaff,
+				LocationScope: access.LocationScopeAll,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision automatic acknowledgement scenario: %v", err)
+	}
+	identity := access.Identity{
+		Subject:       "automatic-acknowledgement-staff",
+		Email:         "staff@automatic-acknowledgement.test",
+		EmailVerified: true,
+	}
+	testaccess.Activate(t, accessModule, identity)
+	var practiceID, locationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT practice.id::text, location.id::text
+		FROM access_practices practice
+		JOIN access_locations location ON location.practice_id = practice.id
+		WHERE practice.provisioning_key = 'automatic-acknowledgement-scenarios'
+			AND location.provisioning_key = 'main'
+	`).Scan(&practiceID, &locationID); err != nil {
+		t.Fatalf("read automatic acknowledgement scenario scope: %v", err)
+	}
+	workModule := work.New(pool, accessModule, func() time.Time { return *clock })
+	provider := &providerFixture{}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("create automatic acknowledgement webhook key: %v", err)
+	}
+	module := messaging.New(
+		pool,
+		accessModule,
+		workModule,
+		provider,
+		messaging.Config{
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  time.Minute,
+		},
+		func() time.Time { return *clock },
+	)
+	if configuration {
+		if err := module.Provision(context.Background(), []messaging.LocationProvision{{
+			PracticeKey:        "automatic-acknowledgement-scenarios",
+			LocationKey:        "main",
+			Sender:             "+17275550100",
+			MessagingProfileID: "automatic-acknowledgement-profile",
+		}}); err != nil {
+			t.Fatalf("provision automatic acknowledgement Messaging: %v", err)
+		}
+	}
+	task, status, err := workModule.CreateAITask(
+		context.Background(),
+		work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{
+				Subject:       "abita-automatic-acknowledgement",
+				PracticeID:    practiceID,
+				LocationScope: access.LocationScopeAll,
+				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
+			},
+			OfficeKey:      "automatic-acknowledgement-scenarios-office",
+			OfficePhone:    "+17275919997",
+			SourceCallID:   "automatic-acknowledgement-scenario-call",
+			IdempotencyKey: "automatic-acknowledgement-scenario-task",
+			Phone:          "+17275550199",
+			Summary:        "Caller needs office follow-up",
+			Message:        "Caller asked the office to return the call.",
+			Category:       work.TaskCategoryOther,
+			Urgency:        work.TaskUrgencyNormal,
+		},
+	)
+	if err != nil || status != work.TaskCreated {
+		t.Fatalf("create automatic acknowledgement scenario Task = %#v, %q, %v", task, status, err)
+	}
+	return automaticAcknowledgementTestFixture{
+		pool: pool, module: module, provider: provider, task: task,
+		practiceID: practiceID, locationID: locationID, identity: identity, now: now,
+		clock:      clock,
+		privateKey: privateKey,
+	}
+}
+
+func TestQueueTaskAcknowledgementRetriesAfterMessagingConfigurationBecomesAvailable(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, false)
+	processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("record unavailable acknowledgement sender = %t, %v", processed, err)
+	}
+	var state, failure string
+	var messageCount int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			acknowledgement.state,
+			COALESCE(acknowledgement.safe_failure_code, ''),
+			(SELECT count(*) FROM messaging_messages WHERE task_id = $1)
+		FROM work_task_acknowledgements acknowledgement
+		WHERE acknowledgement.task_id = $1
+	`, fixture.task.ID).Scan(&state, &failure, &messageCount); err != nil {
+		t.Fatalf("read unavailable acknowledgement sender evidence: %v", err)
+	}
+	if state != "PENDING" || failure != "SENDER_CONFIGURATION_UNAVAILABLE" || messageCount != 0 {
+		t.Fatalf("unavailable acknowledgement sender = (%q, %q, %d Messages)", state, failure, messageCount)
+	}
+
+	if err := fixture.module.Provision(context.Background(), []messaging.LocationProvision{{
+		PracticeKey:        "automatic-acknowledgement-scenarios",
+		LocationKey:        "main",
+		Sender:             "+17275550100",
+		MessagingProfileID: "automatic-acknowledgement-profile",
+	}}); err != nil {
+		t.Fatalf("provision acknowledgement sender after visible failure: %v", err)
+	}
+	*fixture.clock = fixture.now.Add(5 * time.Minute)
+	processed, err = fixture.module.QueueNextTaskAcknowledgement(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("retry acknowledgement after sender provisioning = %t, %v", processed, err)
+	}
+	var commandCount int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			acknowledgement.state,
+			COALESCE(acknowledgement.safe_failure_code, ''),
+			(SELECT count(*) FROM messaging_messages WHERE task_id = $1),
+			(SELECT count(*) FROM messaging_provider_commands command
+				JOIN messaging_messages message ON message.id = command.message_id
+				WHERE message.task_id = $1)
+		FROM work_task_acknowledgements acknowledgement
+		WHERE acknowledgement.task_id = $1
+	`, fixture.task.ID).Scan(&state, &failure, &messageCount, &commandCount); err != nil {
+		t.Fatalf("read retried acknowledgement sender evidence: %v", err)
+	}
+	if state != "MESSAGE_QUEUED" || failure != "" || messageCount != 1 || commandCount != 1 {
+		t.Fatalf(
+			"retried acknowledgement sender = (%q, %q, %d Messages, %d commands)",
+			state, failure, messageCount, commandCount,
+		)
+	}
+}
+
+func TestQueueTaskAcknowledgementPreservesPreSendNonDeliveryEvidence(t *testing.T) {
+	tests := []struct {
+		name             string
+		configuration    bool
+		prepare          func(*testing.T, automaticAcknowledgementTestFixture)
+		ackState         string
+		ackFailure       string
+		messageCount     int
+		messageDelivery  string
+		messageFailure   string
+		providerCommands int
+	}{
+		{
+			name: "resolved before queue", configuration: true,
+			prepare: func(t *testing.T, fixture automaticAcknowledgementTestFixture) {
+				_, err := fixture.pool.Exec(context.Background(), `
+					UPDATE work_tasks
+					SET state = 'COMPLETED', completed_by_kind = 'SERVICE',
+						completed_by_subject = 'test-resolution', completed_at = $2,
+						version = version + 1, updated_at = $2
+					WHERE id = $1
+				`, fixture.task.ID, fixture.now)
+				if err != nil {
+					t.Fatalf("resolve Task before acknowledgement queue: %v", err)
+				}
+			},
+			ackState: "NOT_NEEDED", ackFailure: "TASK_ALREADY_RESOLVED",
+		},
+		{
+			name: "missing configuration", configuration: false,
+			ackState: "PENDING", ackFailure: "SENDER_CONFIGURATION_UNAVAILABLE",
+		},
+		{
+			name: "inactive configuration", configuration: true,
+			prepare: func(t *testing.T, fixture automaticAcknowledgementTestFixture) {
+				_, err := fixture.pool.Exec(context.Background(), `
+					UPDATE messaging_location_configurations SET active = false
+					WHERE practice_id = $1 AND location_id = $2
+				`, fixture.practiceID, fixture.locationID)
+				if err != nil {
+					t.Fatalf("deactivate Messaging configuration: %v", err)
+				}
+			},
+			ackState: "PENDING", ackFailure: "SENDER_CONFIGURATION_INACTIVE",
+		},
+		{
+			name: "caller opted out", configuration: true,
+			prepare: func(t *testing.T, fixture automaticAcknowledgementTestFixture) {
+				_, err := fixture.pool.Exec(context.Background(), `
+					INSERT INTO messaging_threads (
+						practice_id, location_id, office_phone, external_phone,
+						outbound_blocked, opt_out_evidence_at, opt_out_evidence_event_id,
+						created_at, updated_at
+					) VALUES ($1, $2, '+17275550100', $3, true, $4, 'opt-out-event', $4, $4)
+				`, fixture.practiceID, fixture.locationID, fixture.task.Phone, fixture.now)
+				if err != nil {
+					t.Fatalf("record caller opt-out evidence: %v", err)
+				}
+			},
+			ackState: "MESSAGE_QUEUED", messageCount: 1,
+			messageDelivery: "FAILED", messageFailure: "OUTBOUND_BLOCKED",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAutomaticAcknowledgementTestFixture(t, test.configuration)
+			if test.prepare != nil {
+				test.prepare(t, fixture)
+			}
+			processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+			if err != nil || !processed {
+				t.Fatalf("queue automatic acknowledgement = %t, %v", processed, err)
+			}
+			var ackState, ackFailure string
+			if err := fixture.pool.QueryRow(context.Background(), `
+				SELECT state, COALESCE(safe_failure_code, '')
+				FROM work_task_acknowledgements WHERE task_id = $1
+			`, fixture.task.ID).Scan(&ackState, &ackFailure); err != nil {
+				t.Fatalf("read acknowledgement outcome: %v", err)
+			}
+			var messageCount, providerCommands int
+			var messageDelivery, messageFailure string
+			if err := fixture.pool.QueryRow(context.Background(), `
+				SELECT
+					count(*),
+					COALESCE(min(delivery_state), ''),
+					COALESCE(min(safe_failure_code), '')
+				FROM messaging_messages WHERE task_id = $1
+			`, fixture.task.ID).Scan(&messageCount, &messageDelivery, &messageFailure); err != nil {
+				t.Fatalf("read automatic Message outcome: %v", err)
+			}
+			if err := fixture.pool.QueryRow(context.Background(), `
+				SELECT count(*) FROM messaging_provider_commands command
+				JOIN messaging_messages message ON message.id = command.message_id
+				WHERE message.task_id = $1
+			`, fixture.task.ID).Scan(&providerCommands); err != nil {
+				t.Fatalf("count automatic provider commands: %v", err)
+			}
+			if ackState != test.ackState || ackFailure != test.ackFailure ||
+				messageCount != test.messageCount || messageDelivery != test.messageDelivery ||
+				messageFailure != test.messageFailure || providerCommands != test.providerCommands ||
+				len(fixture.provider.commands) != 0 {
+				t.Fatalf(
+					"pre-send evidence = ack (%q, %q), Message (%d, %q, %q), commands %d, provider %#v",
+					ackState, ackFailure, messageCount, messageDelivery, messageFailure,
+					providerCommands, fixture.provider.commands,
+				)
+			}
+		})
+	}
+}
+
+func TestQueueTaskAcknowledgementConvergesAcrossConcurrentClaimsAndTransactionInterruption(t *testing.T) {
+	t.Run("concurrent claims", func(t *testing.T) {
+		fixture := newAutomaticAcknowledgementTestFixture(t, true)
+		results := make(chan bool, 8)
+		errors := make(chan error, 8)
+		for range 8 {
+			go func() {
+				processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+				results <- processed
+				errors <- err
+			}()
+		}
+		processedCount := 0
+		for range 8 {
+			if err := <-errors; err != nil {
+				t.Fatalf("concurrent automatic acknowledgement claim: %v", err)
+			}
+			if <-results {
+				processedCount++
+			}
+		}
+		var messages, commands int
+		if err := fixture.pool.QueryRow(context.Background(), `
+			SELECT
+				(SELECT count(*) FROM messaging_messages WHERE task_id = $1),
+				(SELECT count(*) FROM messaging_provider_commands command
+					JOIN messaging_messages message ON message.id = command.message_id
+					WHERE message.task_id = $1)
+		`, fixture.task.ID).Scan(&messages, &commands); err != nil {
+			t.Fatalf("count concurrent acknowledgement effects: %v", err)
+		}
+		if processedCount != 1 || messages != 1 || commands != 1 {
+			t.Fatalf("concurrent claims = %d processed, %d Messages, %d commands", processedCount, messages, commands)
+		}
+	})
+
+	t.Run("rollback between Message and intent completion", func(t *testing.T) {
+		fixture := newAutomaticAcknowledgementTestFixture(t, true)
+		if _, err := fixture.pool.Exec(context.Background(), `
+			CREATE FUNCTION reject_acknowledgement_completion() RETURNS trigger
+			LANGUAGE plpgsql AS $$ BEGIN
+				IF NEW.state = 'MESSAGE_QUEUED' THEN
+					RAISE EXCEPTION 'simulated acknowledgement completion interruption';
+				END IF;
+				RETURN NEW;
+			END $$;
+			CREATE TRIGGER reject_acknowledgement_completion
+			BEFORE UPDATE ON work_task_acknowledgements
+			FOR EACH ROW EXECUTE FUNCTION reject_acknowledgement_completion();
+		`); err != nil {
+			t.Fatalf("install acknowledgement interruption: %v", err)
+		}
+		if processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err == nil || processed {
+			t.Fatalf("interrupted acknowledgement queue = %t, %v; want rollback", processed, err)
+		}
+		var state string
+		var messages, commands int
+		if err := fixture.pool.QueryRow(context.Background(), `
+			SELECT
+				(SELECT state FROM work_task_acknowledgements WHERE task_id = $1),
+				(SELECT count(*) FROM messaging_messages WHERE task_id = $1),
+				(SELECT count(*) FROM messaging_provider_commands command
+					JOIN messaging_messages message ON message.id = command.message_id
+					WHERE message.task_id = $1)
+		`, fixture.task.ID).Scan(&state, &messages, &commands); err != nil {
+			t.Fatalf("read rolled-back acknowledgement: %v", err)
+		}
+		if state != "PENDING" || messages != 0 || commands != 0 {
+			t.Fatalf("rolled-back acknowledgement = %q, %d Messages, %d commands", state, messages, commands)
+		}
+		if _, err := fixture.pool.Exec(context.Background(), `
+			DROP TRIGGER reject_acknowledgement_completion ON work_task_acknowledgements;
+			DROP FUNCTION reject_acknowledgement_completion();
+		`); err != nil {
+			t.Fatalf("remove acknowledgement interruption: %v", err)
+		}
+		processed, err := fixture.module.QueueNextTaskAcknowledgement(context.Background())
+		if err != nil || !processed {
+			t.Fatalf("retry interrupted acknowledgement = %t, %v", processed, err)
+		}
+		if err := fixture.pool.QueryRow(context.Background(), `
+			SELECT
+				(SELECT count(*) FROM messaging_messages WHERE task_id = $1),
+				(SELECT count(*) FROM messaging_provider_commands command
+					JOIN messaging_messages message ON message.id = command.message_id
+					WHERE message.task_id = $1)
+		`, fixture.task.ID).Scan(&messages, &commands); err != nil {
+			t.Fatalf("read retried acknowledgement: %v", err)
+		}
+		if messages != 1 || commands != 1 {
+			t.Fatalf("retried acknowledgement = %d Messages, %d commands", messages, commands)
+		}
+	})
+}
+
+func TestStaffSendAndAutomaticTaskAcknowledgementUseOneLockOrder(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	ctx := context.Background()
+	if _, err := fixture.pool.Exec(ctx, `
+		INSERT INTO messaging_threads (
+			practice_id, location_id, office_phone, external_phone,
+			created_at, updated_at
+		) VALUES ($1, $2, '+17275550100', $3, $4, $4)
+	`, fixture.practiceID, fixture.locationID, fixture.task.Phone, fixture.now); err != nil {
+		t.Fatalf("seed shared Message Thread: %v", err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+		CREATE FUNCTION pause_staff_thread_update() RETURNS trigger
+		LANGUAGE plpgsql AS $$ BEGIN
+			IF current_setting('application_name') = 'automatic-ack-staff-send' THEN
+				PERFORM pg_advisory_lock(39001);
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER pause_staff_thread_update
+		AFTER UPDATE ON messaging_threads
+		FOR EACH ROW EXECUTE FUNCTION pause_staff_thread_update();
+	`); err != nil {
+		t.Fatalf("install staff Message Thread barrier: %v", err)
+	}
+
+	barrierConnection, err := fixture.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire staff Message Thread barrier: %v", err)
+	}
+	t.Cleanup(barrierConnection.Release)
+	if _, err := barrierConnection.Exec(ctx, `SELECT pg_advisory_lock(39001)`); err != nil {
+		t.Fatalf("hold staff Message Thread barrier: %v", err)
+	}
+
+	staffPool := openMessagingTestPoolWithApplicationName(t, "automatic-ack-staff-send")
+	staffAccess := access.New(staffPool, func() time.Time { return *fixture.clock })
+	staffModule := messaging.New(
+		staffPool,
+		staffAccess,
+		work.New(staffPool, staffAccess, func() time.Time { return *fixture.clock }),
+		fixture.provider,
+		messaging.Config{},
+		func() time.Time { return *fixture.clock },
+	)
+	queuePool := openMessagingTestPoolWithApplicationName(t, "automatic-ack-queue")
+	queueAccess := access.New(queuePool, func() time.Time { return *fixture.clock })
+	queueModule := messaging.New(
+		queuePool,
+		queueAccess,
+		work.New(queuePool, queueAccess, func() time.Time { return *fixture.clock }),
+		fixture.provider,
+		messaging.Config{},
+		func() time.Time { return *fixture.clock },
+	)
+
+	staffResult := make(chan error, 1)
+	go func() {
+		_, _, err := staffModule.Send(ctx, messaging.SendCommand{
+			Identity:       fixture.identity,
+			PracticeID:     fixture.practiceID,
+			LocationID:     fixture.locationID,
+			TaskID:         fixture.task.ID,
+			Destination:    fixture.task.Phone,
+			Body:           "Staff is following up now.",
+			IdempotencyKey: "staff-send-during-automatic-acknowledgement",
+		})
+		staffResult <- err
+	}()
+	staffPID := waitForMessagingPostgresWaiter(t, fixture.pool, "automatic-ack-staff-send", 0)
+
+	queueResult := make(chan error, 1)
+	go func() {
+		queued, err := queueModule.QueueNextTaskAcknowledgement(ctx)
+		if err == nil && !queued {
+			err = errors.New("automatic Task acknowledgement was not queued")
+		}
+		queueResult <- err
+	}()
+	waitForMessagingPostgresWaiter(t, fixture.pool, "automatic-ack-queue", staffPID)
+	if _, err := barrierConnection.Exec(ctx, `SELECT pg_advisory_unlock(39001)`); err != nil {
+		t.Fatalf("release staff Message Thread barrier: %v", err)
+	}
+
+	for name, result := range map[string]<-chan error{
+		"staff Send":                staffResult,
+		"automatic acknowledgement": queueResult,
+	} {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("%s failed under mixed concurrency: %v", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s did not finish under mixed concurrency", name)
+		}
+	}
+}
+
+func openMessagingTestPoolWithApplicationName(t *testing.T, name string) *pgxpool.Pool {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("parse named Messaging test pool: %v", err)
+	}
+	config.ConnConfig.RuntimeParams["application_name"] = name
+	config.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("open named Messaging test pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func waitForMessagingPostgresWaiter(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	applicationName string,
+	blockerPID int32,
+) int32 {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var pid int32
+		err := pool.QueryRow(context.Background(), `
+			SELECT pid
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+				AND application_name = $1
+				AND wait_event_type = 'Lock'
+				AND ($2::integer = 0 OR $2 = ANY(pg_blocking_pids(pid)))
+			ORDER BY pid
+			LIMIT 1
+		`, applicationName, blockerPID).Scan(&pid)
+		if err == nil {
+			return pid
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("inspect PostgreSQL waiter %q: %v", applicationName, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("PostgreSQL did not expose waiter %q blocked by PID %d", applicationName, blockerPID)
+	return 0
+}
+
+func TestAutomaticTaskAcknowledgementProjectsProviderRejectionAndUnknownOutcome(t *testing.T) {
+	tests := []struct {
+		name      string
+		sendError error
+		delivery  string
+		failure   string
+	}{
+		{name: "rejected", sendError: messaging.ErrRejected, delivery: "FAILED", failure: "PROVIDER_REJECTED"},
+		{name: "unknown", sendError: errors.New("provider connection ended without a response"), delivery: "UNKNOWN", failure: "PROVIDER_OUTCOME_UNKNOWN"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAutomaticAcknowledgementTestFixture(t, true)
+			fixture.provider.sendError = test.sendError
+			if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+				t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
+			}
+			if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+				t.Fatalf("process automatic acknowledgement = %t, %v", processed, err)
+			}
+			var delivery, failure string
+			if err := fixture.pool.QueryRow(context.Background(), `
+				SELECT delivery_state, COALESCE(safe_failure_code, '')
+				FROM messaging_messages WHERE task_id = $1
+			`, fixture.task.ID).Scan(&delivery, &failure); err != nil {
+				t.Fatalf("read provider acknowledgement outcome: %v", err)
+			}
+			if delivery != test.delivery || failure != test.failure || len(fixture.provider.commands) != 1 {
+				t.Fatalf("provider acknowledgement outcome = (%q, %q), commands %#v", delivery, failure, fixture.provider.commands)
+			}
+		})
+	}
+}
+
+func TestAutomaticTaskAcknowledgementProjectsDuplicateProviderFailureReceiptOnce(t *testing.T) {
+	fixture := newAutomaticAcknowledgementTestFixture(t, true)
+	if queued, err := fixture.module.QueueNextTaskAcknowledgement(context.Background()); err != nil || !queued {
+		t.Fatalf("queue automatic acknowledgement = %t, %v", queued, err)
+	}
+	if processed, err := fixture.module.ProcessNextCommand(context.Background()); err != nil || !processed {
+		t.Fatalf("send automatic acknowledgement = %t, %v", processed, err)
+	}
+	providerCommand := fixture.provider.commands[0]
+	rawReceipt := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"automatic-acknowledgement-failed","occurred_at":"%s","payload":{"id":"provider-message-1","from":"+17275550100","to":"%s","delivery_status":"failed","errors":[{"code":"40001"}]}}}`,
+		fixture.now.Format(time.RFC3339),
+		fixture.task.Phone,
+	))
+	timestamp := fmt.Sprintf("%d", fixture.now.Unix())
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		fixture.privateKey,
+		append([]byte(timestamp+"|"), rawReceipt...),
+	))
+	first, err := fixture.module.ReceiveWebhook(
+		context.Background(), providerCommand.CallbackToken, rawReceipt, timestamp, signature,
+	)
+	if err != nil {
+		t.Fatalf("receive automatic acknowledgement failure: %v", err)
+	}
+	duplicate, err := fixture.module.ReceiveWebhook(
+		context.Background(), providerCommand.CallbackToken, rawReceipt, timestamp, signature,
+	)
+	if err != nil || first.Duplicate || !duplicate.Duplicate {
+		t.Fatalf("automatic acknowledgement receipts = %#v, %#v, %v", first, duplicate, err)
+	}
+	if processed, err := fixture.module.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("project automatic acknowledgement failure = %t, %v", processed, err)
+	}
+	if processed, err := fixture.module.ProcessNextReceipt(context.Background()); err != nil || processed {
+		t.Fatalf("replay automatic acknowledgement failure = %t, %v; want idle", processed, err)
+	}
+	var delivery, failure string
+	var version int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT delivery_state, COALESCE(safe_failure_code, ''), version
+		FROM messaging_messages WHERE task_id = $1
+	`, fixture.task.ID).Scan(&delivery, &failure, &version); err != nil {
+		t.Fatalf("read automatic acknowledgement delivery failure: %v", err)
+	}
+	if delivery != "FAILED" || failure == "" || version != 3 {
+		t.Fatalf("automatic acknowledgement delivery failure = (%q, %q, version %d)", delivery, failure, version)
+	}
+}
 
 func TestCreateFollowUpTaskKeepsDistinctMessageThreadsSeparate(t *testing.T) {
 	pool := testdb.Open(t)
@@ -72,10 +759,11 @@ func TestCreateFollowUpTaskKeepsDistinctMessageThreadsSeparate(t *testing.T) {
 		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO messaging_messages (
 				id, thread_id, practice_id, location_id, direction, body,
-				sender, destination, delivery_state, created_by_subject,
+				sender, destination, delivery_state, created_by_kind,
+				created_by_subject,
 				created_at, updated_at
 			) VALUES ($1, $2, $3, $4, 'OUTBOUND', 'Please follow up',
-				$5, '+17275550199', 'SENT', $6, $7, $7)
+				$5, '+17275550199', 'SENT', 'HUMAN', $6, $7, $7)
 		`, messageID, threadID, authorization.Practice.ID,
 			authorization.Locations[0].ID, officePhone, identity.Subject,
 			now.Add(time.Duration(index)*time.Minute)); err != nil {
@@ -98,6 +786,23 @@ func TestCreateFollowUpTaskKeepsDistinctMessageThreadsSeparate(t *testing.T) {
 	if created[0].ID == created[1].ID ||
 		created[0].MessageThreadID == created[1].MessageThreadID {
 		t.Fatalf("distinct Message Threads shared follow-up Tasks: %#v", created)
+	}
+	var acknowledgementCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM work_task_acknowledgements
+		WHERE task_id = ANY($1::uuid[])
+			AND purpose = 'CALLER_TASK_RECEIVED'
+			AND state = 'PENDING'
+	`, []string{created[0].ID, created[1].ID}).Scan(&acknowledgementCount); err != nil {
+		t.Fatalf("read Message follow-up acknowledgement intents: %v", err)
+	}
+	if acknowledgementCount != len(created) {
+		t.Fatalf(
+			"Message follow-up acknowledgement intents = %d, want %d",
+			acknowledgementCount,
+			len(created),
+		)
 	}
 }
 
