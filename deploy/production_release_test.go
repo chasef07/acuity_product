@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -506,11 +507,21 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 		"workflow_call:",
 		"release_sha:",
 		"ref: ${{ inputs.release_sha }}",
-		"backend:",
+		"backend-shard:\n    if: github.event_name == 'pull_request'",
+		"database: acuity_calling_test",
+		"database: acuity_domain_test",
+		"database: acuity_support_test",
+		"run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}",
+		"if: matrix.shard == 'support'",
+		"backend-exact:\n    if: github.event_name != 'pull_request'",
+		"backend:\n    if: always()\n    needs: [backend-shard, backend-exact]",
+		"SHARD_RESULT: ${{ needs.backend-shard.result }}",
+		"EXACT_RESULT: ${{ needs.backend-exact.result }}",
 		"web:",
 		"contracts:",
 		"browser:",
 		"go test -p 1 ./backend/... ./deploy -count=1",
+		"run: pnpm playwright install --with-deps chromium\n        timeout-minutes: 10",
 	} {
 		if !strings.Contains(verificationContent, required) {
 			t.Errorf("reusable verification workflow omits %q", required)
@@ -556,6 +567,43 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 	}
 	if strings.Contains(releaseContent, "\nconcurrency:") {
 		t.Error("release workflow must not use GitHub concurrency, which supersedes pending runs")
+	}
+}
+
+func TestPullRequestBackendShardsCoverEveryPackageExactlyOnce(t *testing.T) {
+	root := filepath.Dir(releaseDeployDirectory(t))
+	shardScript := filepath.Join(root, "scripts", "run-backend-test-shard.sh")
+
+	expectedCommand := exec.Command("go", "list", "./backend/...", "./deploy")
+	expectedCommand.Dir = root
+	expectedOutput, err := expectedCommand.Output()
+	if err != nil {
+		t.Fatalf("list complete backend package set: %v", err)
+	}
+	expected := strings.Fields(string(expectedOutput))
+	sort.Strings(expected)
+
+	seen := make(map[string]string, len(expected))
+	var actual []string
+	for _, shard := range []string{"calling", "domain", "support"} {
+		command := exec.Command("bash", shardScript, shard, "--list")
+		command.Dir = root
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("list %s backend shard: %v\n%s", shard, err, output)
+		}
+		for _, packagePath := range strings.Fields(string(output)) {
+			if previousShard, duplicated := seen[packagePath]; duplicated {
+				t.Fatalf("backend package %q appears in both %s and %s shards", packagePath, previousShard, shard)
+			}
+			seen[packagePath] = shard
+			actual = append(actual, packagePath)
+		}
+	}
+	sort.Strings(actual)
+
+	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
+		t.Fatalf("backend shards do not cover the complete package set\nactual:\n%s\nexpected:\n%s", strings.Join(actual, "\n"), strings.Join(expected, "\n"))
 	}
 }
 
