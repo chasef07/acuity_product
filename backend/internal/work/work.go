@@ -436,8 +436,9 @@ func (m *Module) EnsureMessageFollowUp(
 }
 
 // EnsureRecoveryTask attaches compatible missed-call and voicemail evidence to
-// one open recovery Task. HumanCalling owns the caller outcome transaction;
-// Work owns the Task and Interaction attachment written inside it.
+// one recovery Task. HumanCalling owns the caller outcome transaction; Work
+// owns the Task and Interaction attachment written inside it. Replays for an
+// exact Call preserve an already completed Task instead of reopening it.
 func (m *Module) EnsureRecoveryTask(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -511,7 +512,15 @@ func (m *Module) EnsureRecoveryTask(
 	inserted := true
 	if errors.Is(err, pgx.ErrNoRows) {
 		inserted = false
-		if err := tx.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
+			SELECT task.id::text
+			FROM work_task_interactions interaction
+			JOIN work_tasks task ON task.id = interaction.task_id
+			WHERE interaction.call_id = $1
+			FOR UPDATE OF task
+		`, command.CallID).Scan(&taskID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `
 			SELECT task.id::text
 			FROM work_tasks task
 			WHERE task.practice_id = $1
@@ -527,7 +536,9 @@ func (m *Module) EnsureRecoveryTask(
 			LIMIT 1
 			FOR UPDATE
 		`, command.PracticeID, command.LocationID, command.Phone,
-			command.CallerName).Scan(&taskID); err != nil {
+				command.CallerName).Scan(&taskID)
+		}
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Task{}, ErrConflict
 			}
@@ -577,6 +588,7 @@ func (m *Module) EnsureRecoveryTask(
 				version = version + 1,
 				updated_at = GREATEST(updated_at, $4)
 			WHERE id = $1
+				AND state = 'OPEN'
 				AND (
 					$3
 					OR ($2 AND (

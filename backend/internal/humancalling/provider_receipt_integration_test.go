@@ -19,6 +19,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -1239,14 +1240,14 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 	}
 }
 
-func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing.T) {
+func TestVoicemailRecordingSavedAfterRoutingFailureWithCompletedTaskAppliesImmediately(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 17, 28, 0, 0, time.UTC)
 	prefix := "routing-failure-voicemail-recording"
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
 		CallControlID: prefix + "-staff-control",
 		CallLegID:     prefix + "-staff-leg",
 	}}}
-	pool, setupCalling, caller, _ := prepareInboundFanout(t, now, prefix, provider, 1)
+	pool, setupCalling, caller, staff := prepareInboundFanout(t, now, prefix, provider, 1)
 	processAllCommands(t, setupCalling)
 
 	withKind := func(encoded, kind string) string {
@@ -1424,11 +1425,39 @@ func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing
 		t.Fatalf("mismatched later-state recording error = %v", err)
 	}
 
+	currentTime := now.Add(100*time.Second + 70*time.Millisecond)
+	var recoveryTaskID string
+	var recoveryTaskVersion int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT task.id::text, task.version
+		FROM human_calling_voicemails voicemail
+		JOIN work_tasks task ON task.id = voicemail.task_id
+		JOIN human_calling_provider_commands command ON command.call_id = voicemail.call_id
+		WHERE command.id = $1
+	`, record.ID).Scan(&recoveryTaskID, &recoveryTaskVersion); err != nil {
+		t.Fatalf("read routing failure recovery Task: %v", err)
+	}
+	workModule := work.New(
+		pool,
+		access.New(pool, func() time.Time { return currentTime }),
+		func() time.Time { return currentTime },
+	)
+	completedTask, err := workModule.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Identity:        staff[0],
+		TaskID:          recoveryTaskID,
+		ExpectedVersion: recoveryTaskVersion,
+	})
+	if err != nil {
+		t.Fatalf("complete routing failure recovery Task before replay: %v", err)
+	}
+	if completedTask.State != work.TaskCompleted {
+		t.Fatalf("completed routing failure recovery Task = %#v", completedTask)
+	}
+
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	currentTime := now.Add(100*time.Second + 70*time.Millisecond)
 	calling := humancalling.New(
 		pool,
 		access.New(pool, func() time.Time { return currentTime }),
@@ -1528,6 +1557,19 @@ func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing
 		duplicate.DuplicateCount != 1 {
 		t.Fatalf("duplicate later-state voicemail receipt = %#v", duplicate)
 	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_timeline timeline
+		JOIN human_calling_provider_receipts receipt ON receipt.call_id = timeline.call_id
+		WHERE receipt.event_id = $1
+			AND timeline.kind = 'call.recovery_task_created'
+			AND timeline.error_code = 'VOICEMAIL'
+	`, prefix+"-recording-saved").Scan(&voicemailTimelineEntries); err != nil {
+		t.Fatalf("count voicemail timeline after duplicate callback: %v", err)
+	}
+	if voicemailTimelineEntries != 1 {
+		t.Fatalf("voicemail timeline after duplicate callback = %d, want 1", voicemailTimelineEntries)
+	}
 	providerCommandRowsAfter := 0
 	if err := pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM human_calling_provider_commands
@@ -1546,6 +1588,36 @@ func TestVoicemailRecordingSavedAfterRoutingFailureAppliesImmediately(t *testing
 			"voicemail recording callback created provider work = commands:%d->%d effects:%d->%d",
 			providerCommandRowsBefore, providerCommandRowsAfter,
 			providerEffectsBefore, providerEffectsAfter,
+		)
+	}
+	var taskState, taskTitle, taskOrigin, taskOutcome string
+	var taskVersionAfter int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, title, origin, recovery_outcome, version
+		FROM work_tasks
+		WHERE id = $1
+	`, recoveryTaskID).Scan(
+		&taskState,
+		&taskTitle,
+		&taskOrigin,
+		&taskOutcome,
+		&taskVersionAfter,
+	); err != nil {
+		t.Fatalf("read completed recovery Task after recording callback: %v", err)
+	}
+	if taskState != string(work.TaskCompleted) ||
+		taskTitle != completedTask.Title ||
+		taskOrigin != string(completedTask.Origin) ||
+		taskOutcome != string(completedTask.RecoveryOutcome) ||
+		taskVersionAfter != completedTask.Version {
+		t.Fatalf(
+			"completed recovery Task changed during replay = state:%s title:%s origin:%s outcome:%s version:%d; want %#v",
+			taskState,
+			taskTitle,
+			taskOrigin,
+			taskOutcome,
+			taskVersionAfter,
+			completedTask,
 		)
 	}
 }
