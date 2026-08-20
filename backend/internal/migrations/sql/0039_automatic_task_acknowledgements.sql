@@ -59,6 +59,28 @@ ALTER TABLE messaging_messages
         created_by_kind IS NULL OR created_by_kind IN ('HUMAN', 'SERVICE')
     );
 
+-- The migration is applied before traffic leaves the prior portal revision.
+-- That revision supplies the human subject but not created_by_kind, while the
+-- new revision always supplies the kind explicitly. Keep both revisions and a
+-- traffic rollback compatible without weakening the stored-row invariant.
+CREATE FUNCTION messaging_default_legacy_outbound_creator_kind()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.direction = 'OUTBOUND'
+        AND NEW.created_by_kind IS NULL
+        AND NEW.created_by_subject IS NOT NULL THEN
+        NEW.created_by_kind = 'HUMAN';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER messaging_default_legacy_outbound_creator_kind
+BEFORE INSERT ON messaging_messages
+FOR EACH ROW EXECUTE FUNCTION messaging_default_legacy_outbound_creator_kind();
+
 UPDATE messaging_messages
 SET created_by_kind = 'HUMAN'
 WHERE direction = 'OUTBOUND' AND created_by_subject IS NOT NULL;
