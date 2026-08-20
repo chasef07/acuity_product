@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/chasef07/acuity_product/compare/v0.1.3...v0.1.4) (2026-08-20)
+
+
+### Bug Fixes
+
+* **calling:** preserve completed recovery tasks on replay ([#178](https://github.com/chasef07/acuity_product/issues/178)) ([5f86015](https://github.com/chasef07/acuity_product/commit/5f860158d254aedb3c73bcff33029ee616d2506f))
+
 ## [0.1.3](https://github.com/chasef07/acuity_product/compare/v0.1.2...v0.1.3) (2026-08-20)
 
 
