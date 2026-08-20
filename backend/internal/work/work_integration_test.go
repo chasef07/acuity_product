@@ -164,6 +164,45 @@ func TestEnsureRecoveryTaskCombinesCompatibleCallEvidence(t *testing.T) {
 		read.Interactions[1].CallID != voicemailCallID {
 		t.Fatalf("recovery Task read model = %#v", read)
 	}
+
+	now = now.Add(2 * time.Minute)
+	completed, err := module.CompleteTask(context.Background(), work.CompleteTaskCommand{
+		Identity: identity, TaskID: read.ID, ExpectedVersion: read.Version,
+	})
+	if err != nil {
+		t.Fatalf("complete combined recovery Task: %v", err)
+	}
+	replayed := ensureRecovery(work.EnsureRecoveryTaskCommand{
+		CallID:     voicemailCallID,
+		PracticeID: authorization.Practice.ID,
+		LocationID: locationID,
+		Phone:      phone,
+		Outcome:    work.RecoveryOutcomeVoicemail,
+		OccurredAt: now,
+	})
+	if replayed.ID != completed.ID ||
+		replayed.State != work.TaskCompleted ||
+		replayed.Version != completed.Version {
+		t.Fatalf("completed combined recovery replay = %#v, want %#v", replayed, completed)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM work_tasks
+				WHERE practice_id = $1 AND location_id = $2 AND phone = $3),
+			(SELECT count(*) FROM work_task_interactions WHERE task_id = $4)
+	`, authorization.Practice.ID, locationID, phone, completed.ID).Scan(
+		&taskCount,
+		&interactionCount,
+	); err != nil {
+		t.Fatalf("read completed replay evidence: %v", err)
+	}
+	if taskCount != 1 || interactionCount != 2 {
+		t.Fatalf(
+			"completed recovery replay = %d Tasks, %d Interactions; want 1, 2",
+			taskCount,
+			interactionCount,
+		)
+	}
 }
 
 func TestEnsureRecoveryTaskOrdersSamePhoneVoicemailsAndReplays(t *testing.T) {

@@ -484,68 +484,71 @@ func (m *Module) EnsureRecoveryTask(
 
 	var taskID string
 	err := tx.QueryRow(ctx, `
-		INSERT INTO work_tasks (
-			practice_id,
-			location_id,
-			call_id,
-			phone,
-			title,
-			state,
-			origin,
-			urgency,
-			caller_name,
-			created_by_kind,
-			created_by_subject,
-			created_at,
-			recovery_outcome,
-			updated_at
-		)
-		VALUES (
-			$1, $2, $3, $4, $5, 'OPEN', $6, 'normal',
-			NULLIF($7, ''), 'SERVICE', 'human-calling', $8, $9, $8
-		)
-		ON CONFLICT DO NOTHING
-		RETURNING id::text
-	`, command.PracticeID, command.LocationID, command.CallID, command.Phone,
-		title, origin, command.CallerName, command.OccurredAt, command.Outcome,
-	).Scan(&taskID)
-	inserted := true
+		SELECT task.id::text
+		FROM work_task_interactions interaction
+		JOIN work_tasks task ON task.id = interaction.task_id
+		WHERE interaction.call_id = $1
+		FOR UPDATE OF task
+	`, command.CallID).Scan(&taskID)
+	inserted := false
 	if errors.Is(err, pgx.ErrNoRows) {
-		inserted = false
 		err = tx.QueryRow(ctx, `
-			SELECT task.id::text
-			FROM work_task_interactions interaction
-			JOIN work_tasks task ON task.id = interaction.task_id
-			WHERE interaction.call_id = $1
-			FOR UPDATE OF task
-		`, command.CallID).Scan(&taskID)
+			INSERT INTO work_tasks (
+				practice_id,
+				location_id,
+				call_id,
+				phone,
+				title,
+				state,
+				origin,
+				urgency,
+				caller_name,
+				created_by_kind,
+				created_by_subject,
+				created_at,
+				recovery_outcome,
+				updated_at
+			)
+			VALUES (
+				$1, $2, $3, $4, $5, 'OPEN', $6, 'normal',
+				NULLIF($7, ''), 'SERVICE', 'human-calling', $8, $9, $8
+			)
+			ON CONFLICT DO NOTHING
+			RETURNING id::text
+		`, command.PracticeID, command.LocationID, command.CallID, command.Phone,
+			title, origin, command.CallerName, command.OccurredAt, command.Outcome,
+		).Scan(&taskID)
+		inserted = true
 		if errors.Is(err, pgx.ErrNoRows) {
+			inserted = false
 			err = tx.QueryRow(ctx, `
-			SELECT task.id::text
-			FROM work_tasks task
-			WHERE task.practice_id = $1
-				AND task.location_id = $2
-				AND task.phone = $3
-				AND COALESCE(lower(task.caller_name), '') = lower($4)
-				AND task.state = 'OPEN'
-				AND task.origin IN (
-					'VOICEMAIL_RECOVERY',
-					'MISSED_CALL_RECOVERY'
-				)
-			ORDER BY task.created_at, task.id
-			LIMIT 1
-			FOR UPDATE
-		`, command.PracticeID, command.LocationID, command.Phone,
+				SELECT task.id::text
+				FROM work_tasks task
+				WHERE task.practice_id = $1
+					AND task.location_id = $2
+					AND task.phone = $3
+					AND COALESCE(lower(task.caller_name), '') = lower($4)
+					AND task.state = 'OPEN'
+					AND task.origin IN (
+						'VOICEMAIL_RECOVERY',
+						'MISSED_CALL_RECOVERY'
+					)
+				ORDER BY task.created_at, task.id
+				LIMIT 1
+				FOR UPDATE
+			`, command.PracticeID, command.LocationID, command.Phone,
 				command.CallerName).Scan(&taskID)
-		}
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return Task{}, ErrConflict
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return Task{}, ErrConflict
+				}
+				return Task{}, fmt.Errorf("load compatible recovery Task: %w", err)
 			}
-			return Task{}, fmt.Errorf("load compatible recovery Task: %w", err)
+		} else if err != nil {
+			return Task{}, fmt.Errorf("create recovery Task: %w", err)
 		}
 	} else if err != nil {
-		return Task{}, fmt.Errorf("create recovery Task: %w", err)
+		return Task{}, fmt.Errorf("load exact recovery Task: %w", err)
 	}
 	interaction, err := tx.Exec(ctx, `
 		INSERT INTO work_task_interactions (
