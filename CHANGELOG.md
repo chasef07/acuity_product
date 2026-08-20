@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/chasef07/acuity_product/compare/v0.1.2...v0.1.3) (2026-08-20)
+
+
+### Bug Fixes
+
+* **calling:** accept late voicemail recording receipts ([#174](https://github.com/chasef07/acuity_product/issues/174)) ([26fc029](https://github.com/chasef07/acuity_product/commit/26fc029cbd93d7b71ce14f610e17e9a2c73be3bf))
+
 ## [0.1.2](https://github.com/chasef07/acuity_product/compare/v0.1.1...v0.1.2) (2026-08-19)
 
 
