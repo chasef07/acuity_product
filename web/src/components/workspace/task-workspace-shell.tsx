@@ -1377,7 +1377,6 @@ export function TaskWorkspaceShell() {
             />
           }
           availabilityControl={<CallingAvailabilityControl />}
-          locationScopeID={locationScopeID}
           tasks={tasks}
           recoveryTasks={recoveryTasks}
           taskCounts={taskCounts}
@@ -1437,7 +1436,7 @@ export function TaskWorkspaceShell() {
         >
           {view !== "engagement" && (
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
-              <SidebarTrigger />
+              <SidebarTrigger collapsedOnly />
               <div className="flex-1" />
             </header>
           )}
@@ -1455,7 +1454,7 @@ export function TaskWorkspaceShell() {
                   practiceID={practiceID}
                   canMutate
                   revision={workspaceRevision}
-                  headerLeading={<SidebarTrigger />}
+                  headerLeading={<SidebarTrigger collapsedOnly />}
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
                   onCallOpen={(callID) => void openCallContext(callID)}

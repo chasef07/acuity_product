@@ -1289,7 +1289,7 @@ function MessageComposer({
       onSubmit={(event) => void submit(event)}
     >
       <div className="mx-auto max-w-2xl">
-        <InputGroup className="h-auto min-h-14 rounded-2xl bg-card px-1 shadow-sm">
+        <InputGroup className="h-auto min-h-16 rounded-[1.375rem] bg-card px-1.5 shadow-sm">
           <InputGroupAddon align="inline-start">
             <InputGroupButton
               type="button"
@@ -1308,7 +1308,7 @@ function MessageComposer({
             rows={1}
             maxLength={maximumMessageLength}
             placeholder="Message"
-            className="max-h-40 min-h-10 py-2.5 text-sm"
+            className="max-h-40 min-h-12 py-3 text-sm leading-5"
             value={body}
             disabled={disabled || pending}
             onChange={(event) => setBody(event.target.value)}
@@ -1325,6 +1325,7 @@ function MessageComposer({
               size="icon-sm"
               variant="default"
               aria-label="Send message"
+              className="size-9 rounded-full"
               disabled={
                 disabled ||
                 pending ||
