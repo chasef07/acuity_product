@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/chasef07/acuity_product/compare/v0.3.0...v0.4.0) (2026-08-22)
+
+
+### Features
+
+* add specialty demo Locations ([#186](https://github.com/chasef07/acuity_product/issues/186)) ([fab5da9](https://github.com/chasef07/acuity_product/commit/fab5da979eec57c688a8ee2165742c0222ed0c86))
+
 ## [0.3.0](https://github.com/chasef07/acuity_product/compare/v0.2.0...v0.3.0) (2026-08-22)
 
 
