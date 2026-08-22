@@ -379,7 +379,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   ).toHaveCount(0)
 
   await expect(
-    page.getByRole("button", { name: /^Follow up on text \(727\)/ }),
+    page.getByRole("button", { name: "Follow up on text", exact: true }),
   ).toHaveCount(0)
 
   await page.setViewportSize({ width: 390, height: 844 })
@@ -430,7 +430,11 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   const headerTop = await inboxHeading.evaluate(
     (element) => element.closest("header")?.getBoundingClientRect().top,
   )
+  await timeline.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
   const latestScrollTop = await timeline.evaluate((element) => element.scrollTop)
+  expect(latestScrollTop).toBeGreaterThan(0)
   await timeline.hover()
   await page.mouse.wheel(0, -1_000)
   await expect
@@ -495,9 +499,12 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
     await tasksSection.click()
   }
-  await page
-    .getByRole("button", { name: /^Follow up on text \(727\)/ })
-    .click()
+  const sidebarTask = page.getByRole("button", {
+    name: "Follow up on text",
+    exact: true,
+  })
+  await expect(sidebarTask).toBeVisible()
+  await sidebarTask.click()
   const sidebarTaskContext = page.getByRole("complementary", {
     name: "Task context",
   })
@@ -591,9 +598,11 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     await tasksSection.click()
   }
   await createAIStaffTask(page, "billing", "Review billing balance")
-  await expect(
-    page.getByRole("button", { name: /^Review billing balance \(/ }),
-  ).toBeVisible()
+  const billingTaskButton = page.getByRole("button", {
+    name: "Review billing balance",
+    exact: true,
+  })
+  await expect(billingTaskButton).toBeVisible()
   const taskCountsResponse = page.waitForResponse(
     (response) =>
       response.url() === `${portalURL}/v1/tasks/query` &&
@@ -616,9 +625,11 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
       >
     }
   }).counts
-  await expect(
-    page.getByRole("button", { name: /^Review medication refill \(/ }),
-  ).toBeVisible()
+  const medicationTaskButton = page.getByRole("button", {
+    name: "Review medication refill",
+    exact: true,
+  })
+  await expect(medicationTaskButton).toBeVisible()
 
   const taskFilter = page.getByRole("button", {
     name: "Filter Tasks: All types",
@@ -642,12 +653,8 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("button", { name: "Filter Tasks: Billing" }),
   ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: /^Review billing balance \(/ }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: /^Review medication refill \(/ }),
-  ).toHaveCount(0)
+  await expect(billingTaskButton).toBeVisible()
+  await expect(medicationTaskButton).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: /^Missed Calls \d+$/ }),
   ).toBeVisible()
@@ -660,12 +667,8 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(
     page.getByRole("button", { name: "Filter Tasks: Billing" }),
   ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: /^Review billing balance \(/ }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: /^Review medication refill \(/ }),
-  ).toHaveCount(0)
+  await expect(billingTaskButton).toBeVisible()
+  await expect(medicationTaskButton).toHaveCount(0)
 
   const contextClose = page.getByRole("button", { name: "Close context panel" })
   if (await contextClose.isVisible()) await contextClose.click()
