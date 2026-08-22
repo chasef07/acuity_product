@@ -290,12 +290,24 @@
       "Locations": [
         {
           "Key": "demo-484",
-          "Name": "Demo — 484",
-          "AbitaOfficeKeys": ["dev"],
+          "Name": "Rheumatology",
+          "AbitaOfficeKeys": ["dev", "rheumatology-demo"],
           "VoiceNumber": "+14843989071",
           "VoicemailGreeting": "Thank you for calling Acuity Demo. Please leave a message after the tone.",
           "MessagingSender": "+14843989071",
           "MessagingProfileID": "40019fbc-d47c-4e6c-86ee-87ab00795371"
+        },
+        {
+          "Key": "ophthalmology-demo",
+          "Name": "Ophthalmology",
+          "AbitaOfficeKeys": ["ophthalmology-demo"],
+          "VoiceNumber": "+18027878312"
+        },
+        {
+          "Key": "mental-health-demo",
+          "Name": "Mental Health",
+          "AbitaOfficeKeys": ["mental-health-demo"],
+          "VoiceNumber": "+13207388132"
         }
       ]
     }

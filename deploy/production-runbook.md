@@ -280,13 +280,18 @@ at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
 | Abita Eye Group | Sweetwater | `sweetwater` | `+17864654836` | `+17864654836` |
 | Abita Eye Group | Sweetwater Optical | `sweetwater-optical` | Not activated | Not activated |
 | Abita Eye Group | North Miami Beach Optical | `north-miami-beach-optical` | `+13055095333` | Not activated |
-| Acuity Demo | Demo — 484 | `dev` | `+14843989071` | `+14843989071` |
+| Acuity Demo | Rheumatology | `dev`, `rheumatology-demo` | `+14843989071` | `+14843989071` |
+| Acuity Demo | Ophthalmology | `ophthalmology-demo` | `+18027878312` | Not activated |
+| Acuity Demo | Mental Health | `mental-health-demo` | `+13207388132` | Not activated |
 
 The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
-voicemail greeting. The Demo Practice is a separate tenant and uses its own
-greeting and Telnyx Messaging profile. Sweetwater Optical has no voice or
-Messaging configuration yet; no number or sender is inferred by this topology
-change. The same file contains 32 Abita Access Grants: Jason is the
+voicemail greeting. The Acuity Demo Practice is a separate tenant.
+Rheumatology preserves the stable `demo-484` provisioning key, its existing
+voice and Messaging configuration, and its Acuity Demo greeting while both
+`dev` and `rheumatology-demo` resolve to that one Location. Ophthalmology and
+Mental Health have voice configuration only; neither has an inferred Messaging
+sender or profile. Sweetwater Optical also has no voice or Messaging
+configuration yet. The same file contains 32 Abita Access Grants: Jason is the
 sole Admin and the other 31 entries are Staff with reviewed Location Scopes.
 Access Grants create no separate credential or human password.
 
