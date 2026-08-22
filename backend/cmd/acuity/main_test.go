@@ -104,7 +104,10 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Office: "crystal-river", Location: "crystal-river"},
 		{Practice: "acuity-demo", Office: "dev", Location: "demo-484"},
 		{Practice: "abita-eye-group", Office: "hollywood", Location: "hollywood"},
+		{Practice: "acuity-demo", Office: "mental-health-demo", Location: "mental-health-demo"},
 		{Practice: "abita-eye-group", Office: "north-miami-beach-optical", Location: "north-miami-beach-optical"},
+		{Practice: "acuity-demo", Office: "ophthalmology-demo", Location: "ophthalmology-demo"},
+		{Practice: "acuity-demo", Office: "rheumatology-demo", Location: "demo-484"},
 		{Practice: "abita-eye-group", Office: "spring-hill", Location: "spring-hill"},
 		{Practice: "abita-eye-group", Office: "sweetwater", Location: "sweetwater"},
 		{Practice: "abita-eye-group", Office: "sweetwater-optical", Location: "sweetwater-optical"},
@@ -113,9 +116,14 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		t.Fatalf("office routes = %#v, want %#v", routes, wantRoutes)
 	}
 
-	locations := []string{}
+	type location struct {
+		Practice string
+		Key      string
+		Name     string
+	}
+	locations := []location{}
 	rows, err = pool.Query(context.Background(), `
-		SELECT practice.provisioning_key || '/' || location.provisioning_key
+		SELECT practice.provisioning_key, location.provisioning_key, location.name
 		FROM access_locations location
 		JOIN access_practices practice ON practice.id = location.practice_id
 		ORDER BY practice.provisioning_key, location.provisioning_key
@@ -125,26 +133,57 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var location string
-		if err := rows.Scan(&location); err != nil {
+		var candidate location
+		if err := rows.Scan(&candidate.Practice, &candidate.Key, &candidate.Name); err != nil {
 			t.Fatalf("scan provisioned Location: %v", err)
 		}
-		locations = append(locations, location)
+		locations = append(locations, candidate)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate provisioned Locations: %v", err)
 	}
-	wantLocations := []string{
-		"abita-eye-group/crystal-river",
-		"abita-eye-group/hollywood",
-		"abita-eye-group/north-miami-beach-optical",
-		"abita-eye-group/spring-hill",
-		"abita-eye-group/sweetwater",
-		"abita-eye-group/sweetwater-optical",
-		"acuity-demo/demo-484",
+	wantLocations := []location{
+		{Practice: "abita-eye-group", Key: "crystal-river", Name: "Crystal River"},
+		{Practice: "abita-eye-group", Key: "hollywood", Name: "Hollywood"},
+		{Practice: "abita-eye-group", Key: "north-miami-beach-optical", Name: "North Miami Beach Optical"},
+		{Practice: "abita-eye-group", Key: "spring-hill", Name: "Spring Hill"},
+		{Practice: "abita-eye-group", Key: "sweetwater", Name: "Sweetwater"},
+		{Practice: "abita-eye-group", Key: "sweetwater-optical", Name: "Sweetwater Optical"},
+		{Practice: "acuity-demo", Key: "demo-484", Name: "Rheumatology"},
+		{Practice: "acuity-demo", Key: "mental-health-demo", Name: "Mental Health"},
+		{Practice: "acuity-demo", Key: "ophthalmology-demo", Name: "Ophthalmology"},
 	}
 	if !reflect.DeepEqual(locations, wantLocations) {
 		t.Fatalf("Locations = %#v, want %#v", locations, wantLocations)
+	}
+
+	discovery, err := access.New(pool, nil).DiscoverActor(
+		context.Background(),
+		access.Identity{
+			Subject:       "production-topology-test",
+			Email:         "chase@acuityhealth.io",
+			EmailVerified: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("discover production selector topology: %v", err)
+	}
+	var demoLocationNames []string
+	for _, practice := range discovery.Practices {
+		if practice.Name != "Acuity Demo" {
+			continue
+		}
+		for _, location := range practice.Locations {
+			demoLocationNames = append(demoLocationNames, location.Name)
+		}
+	}
+	wantDemoLocationNames := []string{"Mental Health", "Ophthalmology", "Rheumatology"}
+	if !reflect.DeepEqual(demoLocationNames, wantDemoLocationNames) {
+		t.Fatalf(
+			"Acuity Demo selector Locations = %#v, want %#v",
+			demoLocationNames,
+			wantDemoLocationNames,
+		)
 	}
 
 	type number struct {
@@ -189,6 +228,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Location: "spring-hill", Phone: "+17275919997"},
 		{Practice: "abita-eye-group", Location: "sweetwater", Phone: "+17864654836"},
 		{Practice: "acuity-demo", Location: "demo-484", Phone: "+14843989071"},
+		{Practice: "acuity-demo", Location: "mental-health-demo", Phone: "+13207388132"},
+		{Practice: "acuity-demo", Location: "ophthalmology-demo", Phone: "+18027878312"},
 	}
 	if !reflect.DeepEqual(voiceNumbers, wantVoiceNumbers) {
 		t.Fatalf("voice numbers = %#v, want %#v", voiceNumbers, wantVoiceNumbers)
@@ -218,17 +259,17 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		Location string
 		Sender   string
 		Profile  string
+		Active   bool
 	}
 	messagingConfigurations := []messagingConfiguration{}
 	rows, err = pool.Query(context.Background(), `
 		SELECT practice.provisioning_key, location.provisioning_key,
-			messaging.sender, messaging.messaging_profile_id
+			messaging.sender, messaging.messaging_profile_id, messaging.active
 		FROM messaging_location_configurations messaging
 		JOIN access_practices practice ON practice.id = messaging.practice_id
 		JOIN access_locations location
 			ON location.practice_id = messaging.practice_id
 			AND location.id = messaging.location_id
-		WHERE messaging.active
 		ORDER BY practice.provisioning_key, location.provisioning_key
 	`)
 	if err != nil {
@@ -242,6 +283,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 			&configured.Location,
 			&configured.Sender,
 			&configured.Profile,
+			&configured.Active,
 		); err != nil {
 			t.Fatalf("scan Messaging configuration: %v", err)
 		}
@@ -256,24 +298,28 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 			Location: "hollywood",
 			Sender:   "+19542872010",
 			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
+			Active:   true,
 		},
 		{
 			Practice: "abita-eye-group",
 			Location: "spring-hill",
 			Sender:   "+17275919997",
 			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
+			Active:   true,
 		},
 		{
 			Practice: "abita-eye-group",
 			Location: "sweetwater",
 			Sender:   "+17864654836",
 			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
+			Active:   true,
 		},
 		{
 			Practice: "acuity-demo",
 			Location: "demo-484",
 			Sender:   "+14843989071",
 			Profile:  "40019fbc-d47c-4e6c-86ee-87ab00795371",
+			Active:   true,
 		},
 	}
 	if !reflect.DeepEqual(messagingConfigurations, wantMessagingConfigurations) {
@@ -328,6 +374,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: sharedGreeting},
 		{Practice: "acuity-demo", Location: "demo-484", Greeting: demoGreeting},
+		{Practice: "acuity-demo", Location: "mental-health-demo", Greeting: "Please leave a message after the beep."},
+		{Practice: "acuity-demo", Location: "ophthalmology-demo", Greeting: "Please leave a message after the beep."},
 	}
 	if !reflect.DeepEqual(greetings, wantGreetings) {
 		t.Fatalf("voicemail greetings = %#v, want %#v", greetings, wantGreetings)
@@ -494,16 +542,32 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 		INSERT INTO access_practices (provisioning_key, name)
 		VALUES ('abita-eye-group', 'Abita Eye Group')
 	`); err != nil {
-		t.Fatalf("seed established Practice: %v", err)
+		t.Fatalf("seed established Abita Practice: %v", err)
+	}
+	var demoPracticeID, rheumatologyLocationID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO access_practices (provisioning_key, name)
+		VALUES ('acuity-demo', 'Acuity Demo')
+		RETURNING id::text
+	`).Scan(&demoPracticeID); err != nil {
+		t.Fatalf("seed established demo Practice: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO access_locations (practice_id, provisioning_key, name)
+		VALUES ($1, 'demo-484', 'Demo — 484')
+		RETURNING id::text
+	`, demoPracticeID).Scan(&rheumatologyLocationID); err != nil {
+		t.Fatalf("seed established demo Location: %v", err)
 	}
 
-	if err := runMigrate(context.Background(), app.Config{
-		ProvisioningInput: filepath.Join(
-			"..", "..", "..", "config", "production-provisioning.json",
-		),
-		ProvisioningOutput: filepath.Join(t.TempDir(), "provisioning-output.json"),
-	}, pool); err != nil {
-		t.Fatalf("reconcile established production provisioning: %v", err)
+	input := filepath.Join("..", "..", "..", "config", "production-provisioning.json")
+	for run := 1; run <= 2; run++ {
+		if err := runMigrate(context.Background(), app.Config{
+			ProvisioningInput:  input,
+			ProvisioningOutput: filepath.Join(t.TempDir(), "provisioning-output.json"),
+		}, pool); err != nil {
+			t.Fatalf("reconcile established production provisioning run %d: %v", run, err)
+		}
 	}
 
 	var practiceCount int
@@ -514,6 +578,46 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 	}
 	if practiceCount != 2 {
 		t.Fatalf("reconciled Practices = %d, want 2", practiceCount)
+	}
+	var reconciledLocationID, reconciledLocationName string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text, name
+		FROM access_locations
+		WHERE practice_id = $1 AND provisioning_key = 'demo-484'
+	`, demoPracticeID).Scan(&reconciledLocationID, &reconciledLocationName); err != nil {
+		t.Fatalf("read reconciled demo Location: %v", err)
+	}
+	if reconciledLocationID != rheumatologyLocationID || reconciledLocationName != "Rheumatology" {
+		t.Fatalf(
+			"reconciled demo Location = id:%q name:%q, want id:%q name:Rheumatology",
+			reconciledLocationID,
+			reconciledLocationName,
+			rheumatologyLocationID,
+		)
+	}
+	var demoLocationCount, demoRouteCount, demoVoiceCount, demoMessagingCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM access_locations WHERE practice_id = $1),
+			(SELECT count(*) FROM access_abita_office_locations WHERE practice_id = $1),
+			(SELECT count(*) FROM human_calling_location_voice_numbers WHERE practice_id = $1 AND enabled),
+			(SELECT count(*) FROM messaging_location_configurations WHERE practice_id = $1 AND active)
+	`, demoPracticeID).Scan(
+		&demoLocationCount,
+		&demoRouteCount,
+		&demoVoiceCount,
+		&demoMessagingCount,
+	); err != nil {
+		t.Fatalf("count reconciled demo topology: %v", err)
+	}
+	if demoLocationCount != 3 || demoRouteCount != 4 || demoVoiceCount != 3 || demoMessagingCount != 1 {
+		t.Fatalf(
+			"reconciled demo topology = Locations:%d routes:%d voice:%d Messaging:%d, want 3/4/3/1",
+			demoLocationCount,
+			demoRouteCount,
+			demoVoiceCount,
+			demoMessagingCount,
+		)
 	}
 	var recordingEnabled bool
 	var recordingRetentionDays int
