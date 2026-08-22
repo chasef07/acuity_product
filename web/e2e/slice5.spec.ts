@@ -67,6 +67,10 @@ test("appointment reviews are nested and leave the queue when opened", async ({
   await expect(page.getByRole("button", { name: /^Reschedules/ })).toHaveCount(0)
 
   await appointmentsSection.click()
+  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
+  await tasksSection.click()
+  await expect(appointmentsSection).toHaveAttribute("aria-expanded", "true")
+  await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
   const bookingsSection = page.getByRole("button", { name: /^Bookings/ })
   const cancellationsSection = page.getByRole("button", {
     name: /^Cancellations/,
@@ -80,11 +84,10 @@ test("appointment reviews are nested and leave the queue when opened", async ({
   await bookingsSection.click()
   await expect(bookingsSection).toHaveAttribute("aria-expanded", "true")
   await cancellationsSection.click()
-  await expect(bookingsSection).toHaveAttribute("aria-expanded", "false")
+  await expect(bookingsSection).toHaveAttribute("aria-expanded", "true")
   await expect(cancellationsSection).toHaveAttribute("aria-expanded", "true")
 
   await expect(appointmentsSection).toContainText("1")
-  await bookingsSection.click()
   const bookingReview = page.getByRole("button", {
     name: /\(727\) 555-0188/,
   })
@@ -93,6 +96,68 @@ test("appointment reviews are nested and leave the queue when opened", async ({
   await expect(page.getByRole("heading", { name: "Appointment booked" })).toBeVisible()
   await expect(bookingReview).toHaveCount(0)
   await expect(appointmentsSection).toContainText("0")
+})
+
+test("rail hover details and the message composer preserve compact context", async ({
+  page,
+}) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+
+  await createAIStaffTask(
+    page,
+    "billing",
+    "Review billing balance",
+    "hover-details",
+  )
+  await page.reload()
+  const tasksSection = page.getByRole("button", { name: /^Tasks/ })
+  if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
+    await tasksSection.click()
+  }
+  const taskRow = page.getByRole("button", {
+    name: /^Review billing balance/,
+  })
+  await taskRow.hover()
+  const hoverDetails = page.getByTestId("rail-hover-details")
+  await expect(hoverDetails).toContainText("(727) 555-0196")
+  await expect(hoverDetails).toContainText("Fixture Location 1")
+  await expect(hoverDetails).toHaveCSS("opacity", "1")
+
+  const searchInput = page.getByLabel("Search tasks, names, or phone")
+  await searchInput.fill("7275550199")
+  await searchInput.press("Enter")
+  await expect(page.getByRole("heading", { name: "(727) 555-0199" })).toBeVisible()
+  await page.mouse.move(720, 360)
+  await expect(hoverDetails).toBeHidden()
+  const composerSurface = page
+    .getByRole("form", { name: "Message composer" })
+    .locator('[data-slot="input-group"]')
+  const composerHeight = await composerSurface.evaluate(
+    (element) => element.getBoundingClientRect().height,
+  )
+  expect(composerHeight).toBeGreaterThanOrEqual(60)
+  expect(composerHeight).toBeLessThanOrEqual(72)
+  const sendButton = page.getByRole("button", { name: "Send message" })
+  const sendButtonBox = await sendButton.boundingBox()
+  expect(sendButtonBox?.width).toBe(sendButtonBox?.height)
+  const sendButtonRadius = await sendButton.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).borderTopLeftRadius),
+  )
+  expect(sendButtonRadius).toBeGreaterThanOrEqual((sendButtonBox?.width ?? 0) / 2)
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill(
+    "Confirm appointment availability",
+  )
+  await expect(sendButton).toBeEnabled()
+  await expect(sendButton).toHaveCSS("opacity", "1")
+  await expect(sendButton).toHaveCSS("background-color", "rgb(34, 34, 34)")
+
+  await taskRow.hover()
+  await page
+    .getByRole("button", { name: "Complete Task: Review billing balance" })
+    .click()
+  await expect(taskRow).toHaveCount(0)
 })
 
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
@@ -328,8 +393,15 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   const restingComposerHeight = await composerSurface.evaluate(
     (element) => element.getBoundingClientRect().height,
   )
-  expect(restingComposerHeight).toBeGreaterThanOrEqual(52)
-  expect(restingComposerHeight).toBeLessThanOrEqual(64)
+  expect(restingComposerHeight).toBeGreaterThanOrEqual(60)
+  expect(restingComposerHeight).toBeLessThanOrEqual(72)
+  const sendButton = page.getByRole("button", { name: "Send message" })
+  const sendButtonBox = await sendButton.boundingBox()
+  expect(sendButtonBox?.width).toBe(sendButtonBox?.height)
+  const sendButtonRadius = await sendButton.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).borderTopLeftRadius),
+  )
+  expect(sendButtonRadius).toBeGreaterThanOrEqual((sendButtonBox?.width ?? 0) / 2)
   const messageInput = page.getByRole("textbox", {
     name: "Message",
     exact: true,
@@ -610,6 +682,9 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(completeTask).toHaveCSS("opacity", "0")
   const beforeHover = await taskRow.boundingBox()
   await taskRow.hover()
+  const taskHoverDetails = page.getByTestId("rail-hover-details")
+  await expect(taskHoverDetails).toContainText("(727) 555-0196")
+  await expect(taskHoverDetails).toContainText("Fixture Location 1")
   await expect(completeTask).toHaveCSS("opacity", "1")
   await expect(relativeTime).toHaveCSS("opacity", "0")
   expect(await taskRow.boundingBox()).toEqual(beforeHover)
@@ -799,8 +874,9 @@ async function createAIStaffTask(
   page: Page,
   category: "billing" | "medication",
   summary: string,
+  idempotencySuffix?: string,
 ) {
-  const suffix = category === "billing" ? "billing" : "medication"
+  const suffix = idempotencySuffix ?? (category === "billing" ? "billing" : "medication")
   const response = await page.request.post(`${portalURL}/v1/tasks`, {
     headers: { authorization: "Bearer synthetic-service-token" },
     data: {
