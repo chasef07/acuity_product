@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/chasef07/acuity_product/compare/v0.2.0...v0.3.0) (2026-08-22)
+
+
+### Features
+
+* **workspace:** refine visual hierarchy ([#183](https://github.com/chasef07/acuity_product/issues/183)) ([550751b](https://github.com/chasef07/acuity_product/commit/550751be8af9fa789e6013c0fdda69bad48e30d2))
+
+
+### Bug Fixes
+
+* **e2e:** align Slice 5 with compact Task rows ([#184](https://github.com/chasef07/acuity_product/issues/184)) ([945c72d](https://github.com/chasef07/acuity_product/commit/945c72de15e5d1c736e266957e765b8efe165474))
+
 ## [0.2.0](https://github.com/chasef07/acuity_product/compare/v0.1.4...v0.2.0) (2026-08-20)
 
 
