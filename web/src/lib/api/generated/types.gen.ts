@@ -671,8 +671,26 @@ export type OperatorAiToolExecution = {
     callId: string;
     name: string;
     occurredAt: string;
-    status: 'SUCCESS' | 'ERROR';
+    /**
+     * Native LiveKit tool execution status.
+     */
+    status: 'SUCCESS' | 'ERROR' | 'INCOMPLETE';
+    /**
+     * Historical Agent output classification, retained for legacy rows only.
+     */
     outputClass?: string;
+    /**
+     * Correlated Acuity domain outcome when one was recorded.
+     */
+    domainOutcome?: string;
+    /**
+     * Correlated Acuity business-result status when one was recorded.
+     */
+    domainStatus?: 'success' | 'blocked' | 'partial' | 'ambiguous' | 'failed';
+    /**
+     * Durable Product Task proving Staff Task follow-up.
+     */
+    taskId?: string;
 };
 
 export type OperatorAiInteractionAnalytics = {

@@ -3364,9 +3364,21 @@ components:
           format: date-time
         status:
           type: string
-          enum: [SUCCESS, ERROR]
+          enum: [SUCCESS, ERROR, INCOMPLETE]
+          description: Native LiveKit tool execution status.
         outputClass:
           type: string
+          description: Historical Agent output classification, retained for legacy rows only.
+        domainOutcome:
+          type: string
+          description: Correlated Acuity domain outcome when one was recorded.
+        domainStatus:
+          type: string
+          enum: [success, blocked, partial, ambiguous, failed]
+          description: Correlated Acuity business-result status when one was recorded.
+        taskId:
+          type: string
+          description: Durable Product Task proving Staff Task follow-up.
     OperatorAIInteractionAnalytics:
       type: object
       additionalProperties: false

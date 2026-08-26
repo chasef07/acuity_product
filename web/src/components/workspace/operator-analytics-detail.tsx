@@ -285,15 +285,25 @@ function OperatorAnalyticsDetailView({
                           variant={
                             execution.status === "ERROR"
                               ? "destructive"
-                              : "secondary"
+                              : execution.status === "INCOMPLETE"
+                                ? "outline"
+                                : "secondary"
                           }
                         >
-                          {execution.status}
+                          execution: {execution.status}
                         </Badge>
-                        {execution.outputClass && (
+                        {(execution.domainOutcome || execution.outputClass) && (
                           <Badge variant="outline">
-                            {execution.outputClass}
+                            outcome: {execution.domainOutcome ?? execution.outputClass}
                           </Badge>
+                        )}
+                        {execution.domainStatus && (
+                          <Badge variant="outline">
+                            domain: {execution.domainStatus}
+                          </Badge>
+                        )}
+                        {execution.taskId && (
+                          <Badge variant="outline">task: {execution.taskId}</Badge>
                         )}
                         <time className="ml-auto font-mono text-[0.625rem] text-muted-foreground">
                           {formatTime(execution.occurredAt)}

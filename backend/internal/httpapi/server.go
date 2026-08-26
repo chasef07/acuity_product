@@ -3299,15 +3299,15 @@ func conversationTimelineResponse(
 func visibleDelivery(state messaging.DeliveryState) api.MessageDeliveryState {
 	switch state {
 	case messaging.DeliverySent:
-		return api.Sent
+		return api.MessageDeliveryStateSent
 	case messaging.DeliveryDelivered:
-		return api.Delivered
+		return api.MessageDeliveryStateDelivered
 	case messaging.DeliveryFailed:
-		return api.Failed
+		return api.MessageDeliveryStateFailed
 	case messaging.DeliveryUnknown:
-		return api.StatusUnknown
+		return api.MessageDeliveryStateStatusUnknown
 	default:
-		return api.Sending
+		return api.MessageDeliveryStateSending
 	}
 }
 
@@ -3710,14 +3710,25 @@ func operatorAIInteractionAnalyticsResponse(
 	}
 	for _, execution := range detail.ToolExecutions {
 		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
-			CallId:      execution.CallID,
-			Name:        execution.Name,
-			OccurredAt:  execution.OccurredAt,
-			Status:      api.OperatorAIToolExecutionStatus(execution.Status),
-			OutputClass: stringPointer(execution.OutputClass),
+			CallId:        execution.CallID,
+			Name:          execution.Name,
+			OccurredAt:    execution.OccurredAt,
+			Status:        api.OperatorAIToolExecutionStatus(execution.Status),
+			OutputClass:   stringPointer(execution.OutputClass),
+			DomainOutcome: stringPointer(execution.DomainOutcome),
+			DomainStatus:  optionalOperatorAIToolDomainStatus(execution.DomainStatus),
+			TaskId:        stringPointer(execution.TaskID),
 		})
 	}
 	return response, nil
+}
+
+func optionalOperatorAIToolDomainStatus(value string) *api.OperatorAIToolExecutionDomainStatus {
+	if value == "" {
+		return nil
+	}
+	status := api.OperatorAIToolExecutionDomainStatus(value)
+	return &status
 }
 
 func mapPointer(value map[string]any) *map[string]interface{} {

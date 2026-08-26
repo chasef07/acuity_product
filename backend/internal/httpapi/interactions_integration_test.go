@@ -449,6 +449,41 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		}
 		_ = summary.Body.Close()
 	}
+	sessionReport := map[string]any{
+		"chat_history": map[string]any{"items": []map[string]any{
+			{
+				"id":         "turn-1",
+				"type":       "message",
+				"role":       "user",
+				"content":    []string{"Please move my appointment."},
+				"created_at": now.Add(time.Minute).UnixMilli(),
+			},
+			{
+				"id":         "tool-1",
+				"type":       "function_call",
+				"name":       "reschedule_appointment",
+				"call_id":    "reschedule-63",
+				"arguments":  `{"appointmentId":"appointment-old"}`,
+				"created_at": now.Add(2 * time.Minute).UnixMilli(),
+			},
+			{
+				"id":         "result-1",
+				"type":       "function_call_output",
+				"name":       "reschedule_appointment",
+				"call_id":    "reschedule-63",
+				"output":     `"Rescheduled."`,
+				"is_error":   false,
+				"created_at": now.Add(3 * time.Minute).UnixMilli(),
+			},
+			{
+				"id":         "turn-2",
+				"type":       "message",
+				"role":       "assistant",
+				"content":    []string{"Your appointment is rescheduled."},
+				"created_at": now.Add(4 * time.Minute).UnixMilli(),
+			},
+		}},
+	}
 	closeoutBody, _ := json.Marshal(map[string]any{
 		"kind":         "CLOSEOUT",
 		"officeKey":    "spring-hill",
@@ -458,22 +493,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"endedAt":      endedAt.Format(time.RFC3339),
 		"status":       "COMPLETED",
-		"summary":      "Caller successfully rescheduled an appointment.",
-		"transcript": map[string]any{
-			"phase": "closeout",
-			"items": []map[string]any{
-				{
-					"id":   "turn-1",
-					"role": "user",
-					"text": "Please move my appointment.",
-				},
-				{
-					"id":   "turn-2",
-					"role": "assistant",
-					"text": "I can help with that.",
-				},
-			},
-		},
+		"transcript":   sessionReport,
 		"appointmentOutcome": map[string]any{
 			"action":            "RESCHEDULED",
 			"occurredAt":        now.Add(3 * time.Minute).Format(time.RFC3339),
@@ -488,27 +508,59 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			"cancellationResult": map[string]any{"status": "cancelled"},
 		},
 		"closeoutPayload": map[string]any{
-			"callId": "abita-call-63",
-			"appointmentActions": []map[string]any{{
-				"action": "rescheduled",
-				"status": "success",
-				"appointment": map[string]any{
-					"patientName":         "Jane Doe",
-					"appointmentDate":     "2026-08-20",
-					"appointmentTime":     "2:30 PM",
-					"providerName":        "Dr. Bach",
-					"locationName":        "Spring Hill",
-					"appointmentTypeName": "Medical follow-up",
-					"careLane":            "medical_md",
+			"callId":      "abita-call-63",
+			"callerPhone": "+17275550199",
+			"officeKey":   "spring-hill",
+			"officePhone": "+17275919997",
+			"startedAt":   startedAt.Format(time.RFC3339Nano),
+			"endedAt":     endedAt.Format(time.RFC3339),
+			"status":      "COMPLETED",
+			"durationSec": 300,
+			"language":    map[string]any{"currentLanguage": "en"},
+			"voiceLanguage": map[string]any{
+				"activeLanguage": "en",
+			},
+			"appointmentOutcome": map[string]any{
+				"action":            "rescheduled",
+				"occurredAt":        now.Add(3 * time.Minute).Format(time.RFC3339),
+				"externalPatientId": "patient-63",
+				"oldAppointmentId":  "appointment-old",
+				"newAppointmentId":  "appointment-new",
+				"bookingResult": map[string]any{
+					"status":          "booked",
+					"appointmentId":   6302,
+					"receiptSequence": json.Number("9007199254740993"),
 				},
-				"cancelledAppointment": map[string]any{
-					"patientName":     "Jane Doe",
-					"appointmentDate": "2026-08-12",
-					"appointmentTime": "9:00 AM",
-					"providerName":    "Dr. Bach",
-					"locationName":    "Spring Hill",
+				"cancellationResult": map[string]any{"status": "cancelled"},
+			},
+			"domainOutcomes": []map[string]any{{
+				"callId":     "reschedule-63",
+				"toolName":   "reschedule_appointment",
+				"outcome":    "rescheduled",
+				"status":     "success",
+				"occurredAt": now.Add(3 * time.Minute).Format(time.RFC3339),
+				"evidence": map[string]any{
+					"action": "rescheduled",
+					"appointment": map[string]any{
+						"patientName":         "Jane Doe",
+						"appointmentDate":     "2026-08-20",
+						"appointmentTime":     "2:30 PM",
+						"providerName":        "Dr. Bach",
+						"locationName":        "Spring Hill",
+						"appointmentTypeName": "Medical follow-up",
+						"careLane":            "medical_md",
+					},
+					"cancelledAppointment": map[string]any{
+						"patientName":     "Jane Doe",
+						"appointmentDate": "2026-08-12",
+						"appointmentTime": "9:00 AM",
+						"providerName":    "Dr. Bach",
+						"locationName":    "Spring Hill",
+					},
 				},
 			}},
+			"sttProfiles":   []map[string]any{},
+			"sessionReport": sessionReport,
 		},
 	})
 	closeout := request(
@@ -590,7 +642,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	decode(t, detail, &stored)
 	if stored.Status != "COMPLETED" ||
-		stored.Summary != "Caller successfully rescheduled an appointment." ||
+		stored.Summary != "Caller rescheduled an appointment." ||
 		stored.AppointmentAction != "RESCHEDULED" ||
 		stored.AppointmentOutcome != "RESCHEDULE" ||
 		stored.Appointment["patientName"] != "Jane Doe" ||
@@ -632,9 +684,9 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		CloseoutPayload map[string]any `json:"closeoutPayload"`
 	}
 	decode(t, evidence, &storedEvidence)
-	storedTranscript, _ := json.Marshal(storedEvidence.Transcript)
-	if string(storedTranscript) != `{"items":[{"id":"turn-1","role":"user","text":"Please move my appointment."},{"id":"turn-2","role":"assistant","text":"I can help with that."}],"phase":"closeout"}` ||
-		storedEvidence.CloseoutPayload["appointmentActions"] == nil {
+	chatHistory, _ := storedEvidence.Transcript["chat_history"].(map[string]any)
+	chatItems, _ := chatHistory["items"].([]any)
+	if len(chatItems) != 4 || storedEvidence.CloseoutPayload["domainOutcomes"] == nil {
 		t.Fatalf("admin AI Interaction evidence = %#v", storedEvidence)
 	}
 	staffEvidence := request(

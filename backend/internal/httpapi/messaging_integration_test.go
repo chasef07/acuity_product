@@ -159,7 +159,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	}
 	var receipt api.MessageReceipt
 	decode(t, sent, &receipt)
-	if receipt.Message.Delivery != api.Sending ||
+	if receipt.Message.Delivery != api.MessageDeliveryStateSending ||
 		receipt.Message.Sender != "+17275550100" ||
 		receipt.Message.Destination != "+17275550199" {
 		t.Fatalf("durable HTTP Message = %#v", receipt)
@@ -263,7 +263,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	decode(t, timelineResponse, &timeline)
 	if len(timeline.Items) != 2 ||
 		timeline.Items[0].Message == nil ||
-		timeline.Items[0].Message.Delivery != api.Delivered ||
+		timeline.Items[0].Message.Delivery != api.MessageDeliveryStateDelivered ||
 		timeline.Items[1].Message == nil ||
 		timeline.Items[1].Message.Direction != api.MessageDirectionINBOUND {
 		t.Fatalf("HTTP conversation timeline = %#v", timeline)
