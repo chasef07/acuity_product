@@ -1288,25 +1288,11 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 		}
 		return tx.Commit(ctx)
 	}
-	var callID, legID, practiceID, role, direction, legState, terminalOutcome string
+	var legID string
 	var storedControlID, storedProviderLegID, storedSessionID string
-	var bridgedAt *time.Time
-	var callBridged, voicemailStarted bool
 	query := `
-		SELECT call.id::text, leg.id::text, call.practice_id::text, leg.role,
-			leg.bridged_at, call.direction, leg.state,
-			COALESCE(call.terminal_outcome, ''), leg.provider_call_control_id,
-			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
-			EXISTS (
-				SELECT 1 FROM human_calling_call_legs bridged
-				WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
-			),
-			EXISTS (
-				SELECT 1 FROM human_calling_provider_commands voicemail
-				WHERE voicemail.call_id = call.id
-					AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
-					AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
-			)
+		SELECT leg.id::text, leg.provider_call_control_id,
+			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, '')
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
 		WHERE leg.provider_call_control_id = $1 AND leg.provider_call_leg_id = $2
@@ -1315,20 +1301,8 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	args := []any{fact.CallControlID, fact.CallLegID}
 	if hasState {
 		query = `
-			SELECT call.id::text, leg.id::text, call.practice_id::text, leg.role,
-				leg.bridged_at, call.direction, leg.state,
-				COALESCE(call.terminal_outcome, ''), leg.provider_call_control_id,
-				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
-				EXISTS (
-					SELECT 1 FROM human_calling_call_legs bridged
-					WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
-				),
-				EXISTS (
-					SELECT 1 FROM human_calling_provider_commands voicemail
-					WHERE voicemail.call_id = call.id
-						AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
-						AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
-				)
+			SELECT leg.id::text, leg.provider_call_control_id,
+				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, '')
 			FROM human_calling_calls call
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
 			WHERE call.id = $1 AND leg.id = $2
@@ -1337,9 +1311,7 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 		args = []any{state.CallID, state.CallLegID}
 	}
 	if err := tx.QueryRow(ctx, query, args...).Scan(
-		&callID, &legID, &practiceID, &role, &bridgedAt, &direction, &legState,
-		&terminalOutcome, &storedControlID, &storedProviderLegID, &storedSessionID,
-		&callBridged, &voicemailStarted,
+		&legID, &storedControlID, &storedProviderLegID, &storedSessionID,
 	); err != nil {
 		return fmt.Errorf("correlate hung-up CallLeg: %w", err)
 	}
@@ -1347,30 +1319,8 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 		fact.CallSessionID != storedSessionID {
 		return ErrConflict
 	}
-	quality, err := json.Marshal(fact.CallQualityStats)
-	if err != nil {
-		return fmt.Errorf("encode Call quality stats: %w", err)
-	}
-	if fact.CallQualityStats == nil {
-		quality = nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_call_legs
-		SET state = 'ENDED',
-			ending_at = COALESCE(
-				ending_at, GREATEST($2, COALESCE(answered_at, $2))
-			),
-			ended_at = GREATEST(
-				$2, COALESCE(ending_at, $2), COALESCE(answered_at, $2),
-				COALESCE(ended_at, $2)
-			),
-			hangup_cause = NULLIF($3, ''), termination_source = NULLIF($4, ''),
-			sip_cause = NULLIF($5, ''), call_quality_stats = COALESCE($6, call_quality_stats),
-			updated_at = $7
-		WHERE id = $1
-	`, legID, fact.OccurredAt, fact.HangupCause, fact.TerminationSource,
-		fact.SIPCause, quality, m.now()); err != nil {
-		return fmt.Errorf("project CallLeg Hangup: %w", err)
+	if err := m.finishEndedCallLeg(ctx, tx, legID, fact); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
@@ -1379,85 +1329,6 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, legID, fact.OccurredAt, m.now()); err != nil {
 		return fmt.Errorf("reconcile CallLeg Hangup: %w", err)
-	}
-	providerTermination := fact.HangupCause
-	if direction == string(CallOutbound) {
-		providerTermination = outboundTermination(fact.HangupCause)
-	}
-	authoritativeTermination := role == "CALLER" ||
-		(direction == string(CallInbound) && bridgedAt != nil) ||
-		(direction == string(CallOutbound) && role == "DESTINATION")
-	if authoritativeTermination {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET provider_termination = COALESCE(NULLIF($2, ''), provider_termination),
-				updated_at = $3
-			WHERE id = $1
-		`, callID, providerTermination, m.now()); err != nil {
-			return fmt.Errorf("record provider Call termination: %w", err)
-		}
-	}
-	if terminalOutcome != "" {
-		// Recovery/disposition already owns the terminal outcome.
-	} else if role == "CALLER" && !callBridged {
-		if direction == string(CallInbound) && voicemailStarted {
-			if _, err := m.ensureRecoveryOutcome(
-				ctx, tx, callID, RecoveryMissedCall, "MISSED", fact,
-			); err != nil {
-				return fmt.Errorf("create voicemail caller recovery: %w", err)
-			}
-		} else {
-			if _, err := tx.Exec(ctx, `
-				UPDATE human_calling_calls
-				SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
-					ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
-				WHERE id = $1
-			`, callID, fact.OccurredAt, m.now()); err != nil {
-				return fmt.Errorf("mark caller abandonment: %w", err)
-			}
-		}
-		if err := m.endRemainingCallLegs(ctx, tx, callID); err != nil {
-			return err
-		}
-	} else if callBridged &&
-		(role == "CALLER" || bridgedAt != nil || legState == "BRIDGE_PENDING") {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET terminal_outcome = COALESCE(terminal_outcome, 'ENDED'),
-				ended_at = COALESCE(ended_at, $2),
-				disposition_deadline = COALESCE(disposition_deadline, $4),
-				version = version + 1, updated_at = $3
-			WHERE id = $1
-		`, callID, fact.OccurredAt, m.now(), m.now().Add(m.config.DispositionDuration)); err != nil {
-			return fmt.Errorf("end connected Call: %w", err)
-		}
-		if err := m.endConnectedCallLegs(ctx, tx, callID); err != nil {
-			return err
-		}
-	} else if direction == string(CallOutbound) {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-				version = version + 1, updated_at = $3
-			WHERE id = $1 AND terminal_outcome IS NULL
-		`, callID, fact.OccurredAt, m.now()); err != nil {
-			return fmt.Errorf("end unanswered outbound Call: %w", err)
-		}
-		if err := m.endRemainingCallLegs(ctx, tx, callID); err != nil {
-			return err
-		}
-	} else if role == "STAFF" && legState == "BRIDGE_PENDING" {
-		if err := m.maybeStartVoicemailAfterRingCompleted(ctx, tx, callID); err != nil {
-			return err
-		}
-	}
-	if err := appendTimeline(ctx, tx, callID, practiceID, "call_leg.ended", "",
-		fact.EventID, "", opaqueReference(fact.CallLegID),
-		sanitizeCode(fact.HangupCause), fact.OccurredAt); err != nil {
-		return err
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
 	}
 	return tx.Commit(ctx)
 }

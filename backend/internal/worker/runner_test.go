@@ -855,16 +855,16 @@ func (*controlledWork) ProcessNextRecordingRetention(context.Context) (bool, err
 	return false, nil
 }
 
-func (work *controlledWork) ReconcileStaleCalls(ctx context.Context) (int, error) {
+func (work *controlledWork) MaintainOutgoingCallLegs(ctx context.Context) (bool, error) {
 	if work.staleReconciliationStarted != nil {
 		work.staleReconciliationStarted <- struct{}{}
 	}
 	if work.blockStaleReconciliation {
 		<-ctx.Done()
-		return 0, ctx.Err()
+		return false, ctx.Err()
 	}
 	work.signalMaintenance()
-	return 0, nil
+	return false, nil
 }
 
 func (*controlledWork) ExpireDispositions(context.Context) (int, error) {
@@ -875,10 +875,6 @@ func (work *controlledWork) signalMaintenance() {
 	if work.maintenanceStarted != nil {
 		work.maintenanceStarted <- struct{}{}
 	}
-}
-
-func (*controlledWork) RecoverInterruptedCommands(context.Context) error {
-	return nil
 }
 
 func (*controlledWork) ReconcileCredentials(context.Context) error {

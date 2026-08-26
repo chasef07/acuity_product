@@ -2,11 +2,170 @@ package humancalling
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+type endedCallLegState struct {
+	callID           string
+	practiceID       string
+	role             string
+	direction        string
+	legState         string
+	terminalOutcome  string
+	bridgedAt        *time.Time
+	callBridged      bool
+	voicemailStarted bool
+}
+
+func (m *Module) finishEndedCallLeg(
+	ctx context.Context,
+	tx pgx.Tx,
+	callLegID string,
+	fact ProviderFact,
+) error {
+	var ended endedCallLegState
+	if err := tx.QueryRow(ctx, `
+			SELECT call.id::text, call.practice_id::text, leg.role,
+				call.direction, leg.state, COALESCE(call.terminal_outcome, ''),
+				leg.bridged_at,
+			EXISTS (
+				SELECT 1 FROM human_calling_call_legs bridged
+				WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
+			),
+			EXISTS (
+				SELECT 1 FROM human_calling_provider_commands voicemail
+				WHERE voicemail.call_id = call.id
+					AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
+					AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+			)
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg ON leg.call_id = call.id
+		WHERE leg.id = $1
+	`, callLegID).Scan(
+		&ended.callID,
+		&ended.practiceID,
+		&ended.role,
+		&ended.direction,
+		&ended.legState,
+		&ended.terminalOutcome,
+		&ended.bridgedAt,
+		&ended.callBridged,
+		&ended.voicemailStarted,
+	); err != nil {
+		return fmt.Errorf("read ended CallLeg state: %w", err)
+	}
+	quality, err := json.Marshal(fact.CallQualityStats)
+	if err != nil {
+		return fmt.Errorf("encode Call quality stats: %w", err)
+	}
+	if fact.CallQualityStats == nil {
+		quality = nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDED',
+			ending_at = COALESCE(
+				ending_at, GREATEST($2, COALESCE(answered_at, $2))
+			),
+			ended_at = GREATEST(
+				$2, COALESCE(ending_at, $2), COALESCE(answered_at, $2),
+				COALESCE(ended_at, $2)
+			),
+			hangup_cause = COALESCE(NULLIF($3, ''), hangup_cause),
+			termination_source = COALESCE(NULLIF($4, ''), termination_source),
+			sip_cause = COALESCE(NULLIF($5, ''), sip_cause),
+			call_quality_stats = COALESCE($6, call_quality_stats), updated_at = $7
+		WHERE id = $1
+	`, callLegID, fact.OccurredAt, fact.HangupCause, fact.TerminationSource,
+		fact.SIPCause, quality, m.now()); err != nil {
+		return fmt.Errorf("finish ended CallLeg: %w", err)
+	}
+	providerTermination := fact.HangupCause
+	if ended.direction == string(CallOutbound) {
+		providerTermination = outboundTermination(fact.HangupCause)
+	}
+	authoritativeTermination := ended.role == "CALLER" ||
+		(ended.direction == string(CallInbound) && ended.bridgedAt != nil) ||
+		(ended.direction == string(CallOutbound) && ended.role == "DESTINATION")
+	if authoritativeTermination {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET provider_termination = COALESCE(NULLIF($2, ''), provider_termination),
+				updated_at = $3
+			WHERE id = $1
+		`, ended.callID, providerTermination, m.now()); err != nil {
+			return fmt.Errorf("record provider Call termination: %w", err)
+		}
+	}
+	if ended.terminalOutcome != "" {
+		// Recovery/disposition already owns the terminal outcome.
+	} else if ended.role == "CALLER" && !ended.callBridged {
+		if ended.direction == string(CallInbound) && ended.voicemailStarted {
+			if _, err := m.ensureRecoveryOutcome(
+				ctx, tx, ended.callID, RecoveryMissedCall, "MISSED", fact,
+			); err != nil {
+				return fmt.Errorf("create voicemail caller recovery: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_calls
+				SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
+					ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
+				WHERE id = $1
+			`, ended.callID, fact.OccurredAt, m.now()); err != nil {
+				return fmt.Errorf("mark caller abandonment: %w", err)
+			}
+		}
+		if err := m.endRemainingCallLegs(ctx, tx, ended.callID); err != nil {
+			return err
+		}
+	} else if ended.callBridged &&
+		(ended.role == "CALLER" || ended.bridgedAt != nil || ended.legState == "BRIDGE_PENDING") {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET terminal_outcome = COALESCE(terminal_outcome, 'ENDED'),
+				ended_at = COALESCE(ended_at, $2),
+				disposition_deadline = COALESCE(disposition_deadline, $4),
+				version = version + 1, updated_at = $3
+			WHERE id = $1
+		`, ended.callID, fact.OccurredAt, m.now(), m.now().Add(m.config.DispositionDuration)); err != nil {
+			return fmt.Errorf("end connected Call: %w", err)
+		}
+		if err := m.endConnectedCallLegs(ctx, tx, ended.callID); err != nil {
+			return err
+		}
+	} else if ended.direction == string(CallOutbound) {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
+				version = version + 1, updated_at = $3
+			WHERE id = $1 AND terminal_outcome IS NULL
+		`, ended.callID, fact.OccurredAt, m.now()); err != nil {
+			return fmt.Errorf("end unanswered outbound Call: %w", err)
+		}
+		if err := m.endRemainingCallLegs(ctx, tx, ended.callID); err != nil {
+			return err
+		}
+	} else if ended.role == "STAFF" && ended.legState == "BRIDGE_PENDING" {
+		if err := m.maybeStartVoicemailAfterRingCompleted(ctx, tx, ended.callID); err != nil {
+			return err
+		}
+	}
+	if err := appendTimeline(ctx, tx, ended.callID, ended.practiceID, "call_leg.ended", "",
+		fact.EventID, "", opaqueReference(fact.CallLegID),
+		sanitizeCode(fact.HangupCause), fact.OccurredAt); err != nil {
+		return err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
+		return err
+	}
+	return nil
+}
 
 func (m *Module) startCallLegVoicemail(
 	ctx context.Context,
