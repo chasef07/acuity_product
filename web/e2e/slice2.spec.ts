@@ -405,7 +405,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       callCenter(selectedPage).getByText("Connected", { exact: true }),
     ).toBeVisible({ timeout: 20_000 })
     await expect(
-      selectedPage.getByRole("button", { name: "Hang up", exact: true }),
+      selectedPage.getByRole("button", { name: "End", exact: true }),
     ).toBeVisible()
     const recordingEndedAt = new Date()
     const recordingStartedAt = new Date(recordingEndedAt.getTime() - 30_000)
@@ -456,7 +456,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toBeVisible()
     await expect(
-      secondaryPage.getByRole("button", { name: "Hang up", exact: true }),
+      secondaryPage.getByRole("button", { name: "End", exact: true }),
     ).toHaveCount(0)
 
     let hangupConflicts = 0
@@ -509,13 +509,13 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       },
     )
     await selectedPage
-      .getByRole("button", { name: "Hang up", exact: true })
+      .getByRole("button", { name: "End", exact: true })
       .click()
     await expect.poll(() => hangupConflicts).toBe(1)
     const outcome = selectedPage.getByRole("region", { name: "Call outcome" })
     await expect(outcome).toBeVisible()
     await expect(
-      selectedPage.getByText("Hang up was not committed", { exact: false }),
+      selectedPage.getByText("End was not committed", { exact: false }),
     ).toHaveCount(0)
     await expect(
       selectedPage.getByText("Calling ownership or the Call state changed", {
@@ -860,6 +860,12 @@ async function startAndEndOutboundWhileVoicemail(
   await expect(
     page.getByRole("region", { name: "Active call controls" }),
   ).toBeVisible()
+  const endButton = page.getByRole("button", { name: "End", exact: true })
+  await expect(endButton).toBeVisible()
+  await expect(endButton).toHaveClass(/rounded-full/)
+  await expect(endButton.locator("xpath=following-sibling::span")).toHaveText(
+    "End",
+  )
 
   await expect
     .poll(async () => {

@@ -316,6 +316,7 @@ type Call struct {
 	TransferReason      string
 	ReasonSource        string
 	ProviderTermination string
+	EndRequested        bool
 	ConnectedAt         *time.Time
 	Version             int64
 	Voicemail           Voicemail

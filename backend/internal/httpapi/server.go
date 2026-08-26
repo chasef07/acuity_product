@@ -2853,6 +2853,7 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		TransferReason:      call.TransferReason,
 		ReasonSource:        call.ReasonSource,
 		ProviderTermination: call.ProviderTermination,
+		EndRequested:        call.EndRequested,
 		RetryAllowed:        call.RetryAllowed,
 		Version:             call.Version,
 	}

@@ -690,6 +690,256 @@ func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
 	}
 }
 
+type outboundEndFixture struct {
+	pool          *pgxpool.Pool
+	calling       *humancalling.Module
+	authorization access.Authorization
+	identity      access.Identity
+	sessionID     string
+}
+
+func newOutboundEndFixture(
+	t *testing.T,
+	prefix string,
+	now time.Time,
+	provider humancalling.Provider,
+) outboundEndFixture {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, prefix, 1,
+	)
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: prefix + "-practice",
+			LocationKey: prefix + "-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	return outboundEndFixture{
+		pool: pool, calling: calling, authorization: authorization,
+		identity: staff[0], sessionID: prefix + "-browser-1",
+	}
+}
+
+func (fixture outboundEndFixture) startCall(t *testing.T, idempotencyKey string) humancalling.Call {
+	t.Helper()
+	call, err := fixture.calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: idempotencyKey,
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	return call
+}
+
+func TestOutboundCallCanEndBeforeProviderControlExists(t *testing.T) {
+	fixture := newOutboundEndFixture(
+		t,
+		"end-preparing-outbound",
+		time.Date(2026, time.August, 26, 14, 0, 0, 0, time.UTC),
+		&recordingProvider{},
+	)
+
+	call := fixture.startCall(t, "end-preparing-outbound-call")
+	if call.State != humancalling.CallRinging {
+		t.Fatalf("start preparing outbound Call = %#v", call)
+	}
+
+	ended, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	)
+	if err != nil || ended.State != humancalling.CallUnanswered {
+		t.Fatalf("end preparing outbound Call = %#v, %v", ended, err)
+	}
+
+	var terminal string
+	var activeLegs, failedLegs, pendingDials, canceledDials, requestedEvents int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			call.terminal_outcome,
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = call.id
+					AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED')),
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = call.id AND leg.state = 'FAILED'
+					AND leg.error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
+			(SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action = 'DIAL_OUTBOUND_STAFF' AND command.state = 'PENDING'),
+			(SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action = 'DIAL_OUTBOUND_STAFF' AND command.state = 'FAILED'
+					AND command.last_error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_calls call
+		WHERE call.id = $1
+	`, call.ID).Scan(
+		&terminal, &activeLegs, &failedLegs, &pendingDials, &canceledDials,
+		&requestedEvents,
+	); err != nil {
+		t.Fatalf("read ended preparing outbound Call: %v", err)
+	}
+	if terminal != "UNANSWERED" || activeLegs != 0 || failedLegs != 2 ||
+		pendingDials != 0 || canceledDials != 1 || requestedEvents != 1 {
+		t.Fatalf(
+			"ended preparing outbound Call = terminal:%s active:%d failed:%d pending dials:%d canceled dials:%d events:%d",
+			terminal, activeLegs, failedLegs, pendingDials, canceledDials, requestedEvents,
+		)
+	}
+}
+
+func TestOutboundCallEndIsIdempotentAfterProviderControlExists(t *testing.T) {
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "end-ringing-staff-control",
+		CallLegID:     "end-ringing-staff-leg",
+	}}}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-ringing-outbound",
+		time.Date(2026, time.August, 26, 14, 15, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-ringing-outbound-call")
+	processAllCommands(t, fixture.calling)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		current, err := fixture.calling.RequestHangup(
+			context.Background(), fixture.identity, fixture.sessionID, call.ID,
+		)
+		if err != nil || current.State != humancalling.CallRinging {
+			t.Fatalf("end ringing outbound Call attempt %d = %#v, %v", attempt, current, err)
+		}
+		if !current.EndRequested {
+			t.Fatalf("end ringing outbound Call attempt %d omitted durable End intent", attempt)
+		}
+	}
+
+	var hangups, endingLegs, requestedEvents int
+	var targetID, clientState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			count(*)::int,
+			min(command.target_id),
+			min(command.payload->>'client_state'),
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = $1 AND leg.state = 'ENDING'),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = $1 AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'HANGUP_LEG'
+	`, call.ID).Scan(
+		&hangups, &targetID, &clientState, &endingLegs, &requestedEvents,
+	); err != nil {
+		t.Fatalf("read ringing outbound End intent: %v", err)
+	}
+	if hangups != 1 || targetID != "end-ringing-staff-control" ||
+		clientState == "" || endingLegs != 1 || requestedEvents != 1 {
+		t.Fatalf(
+			"ringing outbound End intent = hangups:%d target:%q client state:%q ending:%d events:%d",
+			hangups, targetID, clientState, endingLegs, requestedEvents,
+		)
+	}
+	processAllCommands(t, fixture.calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("provider Hangup executions = %d, want 1",
+			provider.count(humancalling.CommandHangupLeg))
+	}
+	current, err := fixture.calling.ReadCall(context.Background(), fixture.identity, call.ID)
+	if err != nil || current.State != humancalling.CallRinging {
+		t.Fatalf("provider acceptance projected terminal Call = %#v, %v", current, err)
+	}
+}
+
+func TestOutboundCallEndCleansUpProviderControlThatArrivesLate(t *testing.T) {
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "end-late-provider-staff-control",
+			CallLegID:     "end-late-provider-staff-leg",
+		}},
+		blockAction:  humancalling.CommandDialOutboundStaff,
+		blockStarted: make(chan struct{}),
+		blockRelease: make(chan struct{}),
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-late-provider-outbound",
+		time.Date(2026, time.August, 26, 14, 30, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-late-provider-outbound-call")
+	processed := make(chan error, 1)
+	go func() {
+		worked, err := fixture.calling.ProcessNextCommand(context.Background())
+		if err == nil && !worked {
+			err = errors.New("late-provider Dial command was not processed")
+		}
+		processed <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("late-provider Dial did not start")
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		current, err := fixture.calling.RequestHangup(
+			context.Background(), fixture.identity, fixture.sessionID, call.ID,
+		)
+		if err != nil || current.State != humancalling.CallRinging {
+			t.Fatalf("end in-flight outbound Dial attempt %d = %#v, %v", attempt, current, err)
+		}
+	}
+	close(provider.blockRelease)
+	if err := <-processed; err != nil {
+		t.Fatalf("complete late-provider Dial: %v", err)
+	}
+
+	current, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	)
+	if err != nil || current.State != humancalling.CallRinging {
+		t.Fatalf("replay End after late provider identity = %#v, %v", current, err)
+	}
+	var hangups, requestedEvents int
+	var targetID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT count(*)::int, min(command.target_id),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = $1 AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'HANGUP_LEG'
+	`, call.ID).Scan(&hangups, &targetID, &requestedEvents); err != nil {
+		t.Fatalf("read late-provider End cleanup: %v", err)
+	}
+	if hangups != 1 || targetID != "end-late-provider-staff-control" ||
+		requestedEvents != 1 {
+		t.Fatalf("late-provider End cleanup = hangups:%d target:%q events:%d",
+			hangups, targetID, requestedEvents)
+	}
+	processAllCommands(t, fixture.calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("late-provider Hangup executions = %d, want 1",
+			provider.count(humancalling.CommandHangupLeg))
+	}
+}
+
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)
