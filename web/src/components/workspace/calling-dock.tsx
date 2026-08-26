@@ -66,6 +66,11 @@ import {
   microphoneFailureMessage,
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
+import {
+  activeCallEndPending,
+  endingCallIDAfterProjection,
+  showActiveCallEndControl,
+} from "@/lib/calling/active-call-controls"
 import { LatestWrite } from "@/lib/calling/latest-write"
 import {
   createCallingOwnerLoop,
@@ -315,12 +320,7 @@ export function CallingDock({
     }
     activeCallSnapshotRef.current = call
     setActiveCall(call)
-    setEndingCallID((current) =>
-      current &&
-      (!call || call.id !== current || call.state !== "CONNECTED")
-        ? ""
-        : current,
-    )
+    setEndingCallID((current) => endingCallIDAfterProjection(current, call))
     return true
   }, [])
   useEffect(() => {
@@ -1369,7 +1369,7 @@ export function CallingDock({
     if (!token) {
       setEndingCallID("")
       setError(
-        "Your authentication needs to be refreshed before you try Hang up again.",
+        "Your authentication needs to be refreshed before you try End again.",
       )
       return
     }
@@ -1379,48 +1379,58 @@ export function CallingDock({
       body: { sessionId: sessionID },
     }).catch(() => undefined)
     if (!result?.data) {
-      setEndingCallID((current) => (current === callID ? "" : current))
       const failure = hangupFailure({
         status: result?.response?.status,
         code: result?.error?.error.code,
       })
-      if (failure === "conflict") {
+      const clearEnding = () =>
+        setEndingCallID((current) => (current === callID ? "" : current))
+      if (failure === "authentication") {
+        clearEnding()
+        setError(
+          "Your authentication or Call access needs to be refreshed before you try End again.",
+        )
+        return
+      }
+      if (failure === "conflict" || failure === "retry") {
         const refreshed = await refreshCall(callID)
-        if (refreshed?.call && callIsSettled(refreshed.call.state)) {
-          setError("")
+        if (refreshed?.call) {
+          if (
+            callIsSettled(refreshed.call.state) ||
+            refreshed.call.endRequested
+          ) {
+            setError("")
+            return
+          }
+          clearEnding()
+          setError(
+            failure === "conflict"
+              ? "Calling ownership or the Call state changed before End."
+              : "End was not committed. Check your connection and try again.",
+          )
           return
         }
+        clearEnding()
         const reconciliationFailure = hangupFailure({
           status: refreshed?.status,
         })
         if (reconciliationFailure === "authentication") {
           setError(
-            "Your authentication or Call access needs to be refreshed before you try Hang up again.",
+            "Your authentication or Call access needs to be refreshed before you try End again.",
           )
           return
         }
-        if (reconciliationFailure === "retry") {
+        if (failure === "retry" || reconciliationFailure === "retry") {
           setError(
-            "Hang up status could not be refreshed. Check your connection and try again.",
+            "End status could not be confirmed. Check your connection before trying again.",
           )
           return
         }
-        setError("Calling ownership or the Call state changed before Hang up.")
+        setError("Calling ownership or the Call state changed before End.")
         return
       }
-      if (failure === "authentication") {
-        setError(
-          "Your authentication or Call access needs to be refreshed before you try Hang up again.",
-        )
-        return
-      }
-      if (failure === "retry") {
-        setError(
-          "Hang up was not committed. Check your connection and try again.",
-        )
-        return
-      }
-      setError("Hang up is not available for the current Call.")
+      clearEnding()
+      setError("End is not available for the current Call.")
       return
     }
     if (result.data.state === "NEEDS_DISPOSITION") {
@@ -1545,6 +1555,9 @@ export function CallingDock({
     activeCall?.state === "CONNECTED" && !exactCallLegControlReady
       ? "CONNECTING"
       : activeCall?.state
+  const activeCallEnding = activeCall
+    ? activeCallEndPending(activeCall, endingCallID)
+    : false
   return (
     <CallingNavigationContext.Provider
       value={{
@@ -1598,11 +1611,11 @@ export function CallingDock({
                       }
                       className={cn(
                         visibleCallState === "CONNECTED" && "text-success",
-                        endingCallID === activeCall.id && "text-warning",
+                        activeCallEnding && "text-warning",
                         visibleCallState === "CONNECTING" && "text-warning",
                       )}
                     >
-                      {endingCallID === activeCall.id
+                      {activeCallEnding
                         ? "Ending…"
                         : callStateLabel(visibleCallState!)}
                     </Badge>
@@ -1626,14 +1639,14 @@ export function CallingDock({
                 <Badge
                   aria-label={
                     visibleCallState === "CONNECTED" &&
-                    endingCallID !== activeCall.id
+                    !activeCallEnding
                       ? "Call timer"
                       : "Call status"
                   }
                   variant="outline"
                   className="tabular-nums"
                 >
-                  {endingCallID === activeCall.id
+                  {activeCallEnding
                     ? "Ending…"
                     : visibleCallState === "CONNECTING"
                       ? "Connecting"
@@ -1656,7 +1669,7 @@ export function CallingDock({
                 onDispose={(outcome) => void dispose(outcome)}
                 onRetry={() => void retryCall()}
                 retryPending={outboundPending}
-                controlsPending={endingCallID === activeCall.id}
+                controlsPending={activeCallEnding}
                 onClose={() => {
                   applyActiveCall()
                   setExpectedCallID("")
@@ -1874,6 +1887,9 @@ function ActiveCallControls({
     controlReady &&
     (call.state === "CONNECTING" || call.state === "CONNECTED")
   const showKeypad = owner && controlReady && call.state === "CONNECTED"
+  const showEnd =
+    showActiveCallEndControl(call, owner) ||
+    (call.direction !== "OUTBOUND" && showKeypad)
   const showDisposition = owner && ended
   const showRetry = call.retryAllowed
   const showClosedState = callIsSettled(call.state) && !ended
@@ -1881,6 +1897,7 @@ function ActiveCallControls({
     !showCallDetails &&
     !showMute &&
     !showKeypad &&
+    !showEnd &&
     !showDisposition &&
     !showRetry &&
     !showClosedState
@@ -1916,6 +1933,23 @@ function ActiveCallControls({
           )}
         </p>
       )}
+      {showEnd && (
+        <div className="flex basis-full flex-col items-center gap-1">
+          <Button
+            size="icon"
+            variant="destructive"
+            aria-label={controlsPending ? "Ending" : "End"}
+            className="size-12 rounded-full bg-destructive text-background hover:bg-destructive/85 hover:text-background"
+            disabled={controlsPending}
+            onClick={onHangup}
+          >
+            <PhoneOffIcon className="size-5" />
+          </Button>
+          <span className="text-xs font-medium text-foreground">
+            {controlsPending ? "Ending…" : "End"}
+          </span>
+        </div>
+      )}
       {showMute && (
         <Button
           size="sm"
@@ -1928,25 +1962,14 @@ function ActiveCallControls({
         </Button>
       )}
       {showKeypad && (
-        <>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!keypadEligible}
-            onClick={() => setKeypadOpen((current) => !current)}
-          >
-            Keypad
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={controlsPending}
-            onClick={onHangup}
-          >
-            <PhoneOffIcon />
-            {controlsPending ? "Ending…" : "Hang up"}
-          </Button>
-        </>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!keypadEligible}
+          onClick={() => setKeypadOpen((current) => !current)}
+        >
+          Keypad
+        </Button>
       )}
       {showDisposition && (
         <>

@@ -261,7 +261,7 @@ export const retryOutboundCall = <ThrowOnError extends boolean = false>(options:
 });
 
 /**
- * Commit a provider hangup command without claiming termination.
+ * Commit owned Call end intent without claiming provider termination.
  */
 export const requestCallingHangup = <ThrowOnError extends boolean = false>(options: Options<RequestCallingHangupData, ThrowOnError>): RequestResult<RequestCallingHangupResponses, RequestCallingHangupErrors, ThrowOnError> => (options.client ?? client).post<RequestCallingHangupResponses, RequestCallingHangupErrors, ThrowOnError>({
     security: [{

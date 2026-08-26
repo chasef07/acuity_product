@@ -122,13 +122,61 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 	now := m.now()
-	if _, err := m.database.Exec(ctx, `
-		UPDATE human_calling_provider_commands
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin interrupted provider command recovery: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		SELECT call.id::text
+		FROM human_calling_calls call
+		WHERE EXISTS (
+			SELECT 1 FROM human_calling_provider_commands command
+			WHERE command.call_id = call.id AND command.state = 'SENDING'
+				AND command.updated_at <= $1::timestamptz - interval '30 seconds'
+		)
+		ORDER BY call.id
+		FOR UPDATE OF call
+	`, now)
+	if err != nil {
+		return fmt.Errorf("lock Calls for interrupted provider command recovery: %w", err)
+	}
+	for rows.Next() {
+		var callID string
+		if err := rows.Scan(&callID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan interrupted provider command Call: %w", err)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate interrupted provider command Calls: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands command
 		SET state = CASE
+				WHEN command.action IN (
+					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
+				) AND EXISTS (
+					SELECT 1
+					FROM human_calling_calls call
+					JOIN human_calling_timeline timeline ON timeline.call_id = call.id
+					WHERE call.id = command.call_id AND call.direction = 'OUTBOUND'
+						AND timeline.kind = 'call.hangup.requested'
+				) THEN 'AMBIGUOUS'
 				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'PENDING'
 				ELSE 'AMBIGUOUS'
 			END,
 			last_error_code = CASE
+				WHEN command.action IN (
+					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
+				) AND EXISTS (
+					SELECT 1
+					FROM human_calling_calls call
+					JOIN human_calling_timeline timeline ON timeline.call_id = call.id
+					WHERE call.id = command.call_id AND call.direction = 'OUTBOUND'
+						AND timeline.kind = 'call.hangup.requested'
+				) THEN 'PROVIDER_EFFECT_UNCERTAIN'
 				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'WORKER_INTERRUPTED'
 				ELSE 'PROVIDER_EFFECT_UNCERTAIN'
 			END,
@@ -136,6 +184,9 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		WHERE state = 'SENDING' AND updated_at <= $1::timestamptz - interval '30 seconds'
 	`, now); err != nil {
 		return fmt.Errorf("recover interrupted provider commands: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit interrupted provider command recovery: %w", err)
 	}
 	return nil
 }
