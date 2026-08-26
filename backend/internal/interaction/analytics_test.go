@@ -19,7 +19,7 @@ func TestNormalizeTimelineOmitsSystemMessagesAndNormalizesLiveKitItems(t *testin
 	}`)
 	closeout := json.RawMessage(`{
 		"turnMetrics":[{"itemId":"agent-1","metrics":{"e2eLatency":1.4}}],
-		"toolExecutions":[{"callId":"call-1","createdAt":"2026-08-10T09:00:02Z","outputClass":"middleware_error","status":"error","toolName":"reschedule_appointment"}]
+		"domainOutcomes":[{"callId":"call-1","toolName":"reschedule_appointment","outcome":"rescheduled","status":"failed","occurredAt":"2026-08-10T09:00:03Z"}]
 	}`)
 
 	timeline, samples := normalizeTimeline(transcript, closeout, startedAt)
@@ -62,10 +62,127 @@ func TestNormalizeTimelineOmitsSystemMessagesAndNormalizesLiveKitItems(t *testin
 		}
 	}
 
-	executions := normalizeToolExecutions(closeout, startedAt)
+	executions := normalizeToolExecutions(transcript, closeout, startedAt)
 	if len(executions) != 1 || executions[0].Status != "ERROR" ||
-		executions[0].OutputClass != "middleware_error" {
+		executions[0].OutputClass != "rescheduled" {
 		t.Fatalf("tool executions = %#v", executions)
+	}
+}
+
+func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 25, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		transcript string
+		closeout   string
+		want       []ToolExecution
+	}{
+		{
+			name: "sequential calls and out-of-order results correlate by call ID",
+			transcript: `{"chat_history":{"items":[
+				{"type":"function_call_output","name":"cancel_appointment","call_id":"cancel-2","output":"Cancelled.","is_error":false,"created_at":1787648405000},
+				{"type":"function_call","name":"book_appointment","call_id":"book-1","arguments":"{\"slot\":\"09:30\"}","created_at":1787648401000},
+				{"type":"function_call","name":"cancel_appointment","call_id":"cancel-2","arguments":"{\"appointmentId\":\"old-2\"}","created_at":1787648404000},
+				{"type":"function_call_output","name":"book_appointment","call_id":"book-1","output":"Booked.","is_error":false,"created_at":1787648402000}
+			]}}`,
+			closeout: `{"domainOutcomes":[
+				{"callId":"cancel-2","toolName":"cancel_appointment","outcome":"cancelled","status":"success","occurredAt":"2026-08-25T09:00:05Z","evidence":{"action":"cancelled"}},
+				{"callId":"book-1","toolName":"book_appointment","outcome":"booked","status":"success","occurredAt":"2026-08-25T09:00:02Z","evidence":{"action":"booked"}}
+			]}`,
+			want: []ToolExecution{
+				{CallID: "book-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", OutputClass: "booked"},
+				{CallID: "cancel-2", Name: "cancel_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 4, 0, time.UTC), Status: "SUCCESS", OutputClass: "cancelled"},
+			},
+		},
+		{
+			name: "failed partial blocked ambiguous and replay receipts remain correlated evidence",
+			transcript: `{"chat_history":{"items":[
+				{"type":"function_call","name":"add_patient","call_id":"failed-1","arguments":"{}","created_at":1787648401000},
+				{"type":"function_call_output","name":"add_patient","call_id":"failed-1","output":"Could not create patient.","is_error":false,"created_at":1787648402000},
+				{"type":"function_call","name":"reschedule_appointment","call_id":"partial-2","arguments":"{}","created_at":1787648403000},
+				{"type":"function_call_output","name":"reschedule_appointment","call_id":"partial-2","output":"New appointment booked; old appointment remains.","is_error":false,"created_at":1787648404000},
+				{"type":"function_call","name":"update_insurance","call_id":"blocked-3","arguments":"{}","created_at":1787648405000},
+				{"type":"function_call_output","name":"update_insurance","call_id":"blocked-3","output":"Update blocked.","is_error":false,"created_at":1787648406000},
+				{"type":"function_call","name":"transfer_call","call_id":"ambiguous-4","arguments":"{}","created_at":1787648407000},
+				{"type":"function_call_output","name":"transfer_call","call_id":"ambiguous-4","output":"Transfer status uncertain.","is_error":false,"created_at":1787648408000},
+				{"type":"function_call","name":"book_appointment","call_id":"replay-5","arguments":"{}","created_at":1787648409000},
+				{"type":"function_call_output","name":"book_appointment","call_id":"replay-5","output":"Already booked.","is_error":false,"created_at":1787648410000}
+			]}}`,
+			closeout: `{"domainOutcomes":[
+				{"callId":"replay-5","toolName":"book_appointment","outcome":"booked","status":"success","occurredAt":"2026-08-25T09:00:10Z","evidence":{"replayed":true}},
+				{"callId":"ambiguous-4","toolName":"transfer_call","outcome":"transfer_ambiguous","status":"ambiguous","occurredAt":"2026-08-25T09:00:08Z"},
+				{"callId":"blocked-3","toolName":"update_insurance","outcome":"insurance_update_blocked","status":"blocked","occurredAt":"2026-08-25T09:00:06Z"},
+				{"callId":"partial-2","toolName":"reschedule_appointment","outcome":"rescheduled","status":"partial","occurredAt":"2026-08-25T09:00:04Z","evidence":{"action":"rescheduled"}},
+				{"callId":"failed-1","toolName":"add_patient","outcome":"patient_creation_failed","status":"failed","occurredAt":"2026-08-25T09:00:02Z"}
+			]}`,
+			want: []ToolExecution{
+				{CallID: "failed-1", Name: "add_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "ERROR", OutputClass: "patient_creation_failed"},
+				{CallID: "partial-2", Name: "reschedule_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "ERROR", OutputClass: "rescheduled"},
+				{CallID: "blocked-3", Name: "update_insurance", OccurredAt: time.Date(2026, 8, 25, 9, 0, 5, 0, time.UTC), Status: "ERROR", OutputClass: "insurance_update_blocked"},
+				{CallID: "ambiguous-4", Name: "transfer_call", OccurredAt: time.Date(2026, 8, 25, 9, 0, 7, 0, time.UTC), Status: "ERROR", OutputClass: "transfer_ambiguous"},
+				{CallID: "replay-5", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 9, 0, time.UTC), Status: "SUCCESS", OutputClass: "booked"},
+			},
+		},
+		{
+			name: "native platform failures need no semantic receipt or output parsing",
+			transcript: `{"chat_history":{"items":[
+				{"type":"function_call","name":"book_appointment","call_id":"invalid-1","arguments":"{}","created_at":1787648401000},
+				{"type":"function_call_output","name":"book_appointment","call_id":"invalid-1","output":"Invalid arguments: private prose changes freely.","is_error":true,"created_at":1787648402000},
+				{"type":"function_call","name":"reticulating_splines","call_id":"unknown-2","arguments":"{}","created_at":1787648403000},
+				{"type":"function_call_output","name":"reticulating_splines","call_id":"unknown-2","output":"Unknown tool: private prose changes freely.","is_error":true,"created_at":1787648404000}
+			]}}`,
+			closeout: `{ "domainOutcomes": [] }`,
+			want: []ToolExecution{
+				{CallID: "invalid-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "ERROR"},
+				{CallID: "unknown-2", Name: "reticulating_splines", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "ERROR"},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := normalizeToolExecutions(
+				json.RawMessage(test.transcript),
+				json.RawMessage(test.closeout),
+				startedAt,
+			)
+			if len(got) != len(test.want) {
+				t.Fatalf("tool executions = %#v, want %#v", got, test.want)
+			}
+			for index := range test.want {
+				if got[index] != test.want[index] {
+					t.Fatalf("tool execution %d = %#v, want %#v", index, got[index], test.want[index])
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeToolExecutionsUsesNarrowHistoricalFallback(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 25, 9, 0, 0, 0, time.UTC)
+	legacy := json.RawMessage(`{"toolExecutions":[{"callId":"legacy-1","createdAt":"2026-08-25T09:00:01Z","outputClass":"patient_verified","status":"success","toolName":"resolve_patient"}]}`)
+	got := normalizeToolExecutions(
+		json.RawMessage(`{"chat_history":{"items":[{"type":"message","role":"user","content":["Hello"]}]}}`),
+		legacy,
+		startedAt,
+	)
+	if len(got) != 1 || got[0].CallID != "legacy-1" || got[0].OutputClass != "patient_verified" {
+		t.Fatalf("historical tool fallback = %#v", got)
+	}
+
+	native := json.RawMessage(`{"chat_history":{"items":[
+		{"type":"function_call","name":"resolve_patient","call_id":"native-1","arguments":"{}","created_at":1787648401000},
+		{"type":"function_call_output","name":"resolve_patient","call_id":"native-1","output":"Verified.","is_error":false,"created_at":1787648402000}
+	]}}`)
+	got = normalizeToolExecutions(native, legacy, startedAt)
+	if len(got) != 1 || got[0].CallID != "legacy-1" || got[0].OutputClass != "patient_verified" {
+		t.Fatalf("historical native-looking transcript lost legacy evidence = %#v", got)
+	}
+
+	current := json.RawMessage(`{"domainOutcomes":[],"toolExecutions":[{"callId":"legacy-1","createdAt":"2026-08-25T09:00:01Z","outputClass":"patient_verified","status":"success","toolName":"resolve_patient"}]}`)
+	got = normalizeToolExecutions(native, current, startedAt)
+	if len(got) != 1 || got[0].CallID != "native-1" || got[0].OutputClass != "" {
+		t.Fatalf("current native evidence did not suppress legacy field = %#v", got)
 	}
 }
 
@@ -80,9 +197,9 @@ func TestProjectAnalyticsCallMergesCloseoutAndTranscriptLatency(t *testing.T) {
 				{"id":"agent","metrics":{"llm_node_ttft":0.4,"tts_node_ttfb":0.1,"e2e_latency":1.2}}
 			]
 		}`),
-		turnMetrics: json.RawMessage(`[
+		closeoutPayload: json.RawMessage(`{"turnMetrics":[
 			{"itemId":"agent","metrics":{"e2eLatency":1.4}}
-		]`),
+		]}`),
 	}
 
 	projectAnalyticsCall(&projection, endedAt)
@@ -103,7 +220,7 @@ func TestProjectAnalyticsCallDerivesTransferOnlyFromEscalatedStatus(t *testing.T
 			EndedAt:   &endedAt,
 			Status:    CallCompleted,
 		},
-		tools: json.RawMessage(`[{"callId":"transfer-1","toolName":"transfer_call","status":"success"}]`),
+		closeoutPayload: json.RawMessage(`{"toolExecutions":[{"callId":"transfer-1","toolName":"transfer_call","status":"success"}]}`),
 	}
 	projectAnalyticsCall(&projection, endedAt)
 	if projection.call.Transferred {

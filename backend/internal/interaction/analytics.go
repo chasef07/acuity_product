@@ -139,8 +139,7 @@ type analyticsProjection struct {
 	call               AnalyticsCall
 	appointmentOutcome AppointmentOutcome
 	transcript         json.RawMessage
-	turnMetrics        json.RawMessage
-	tools              json.RawMessage
+	closeoutPayload    json.RawMessage
 	latencySamples     latencyValueSet
 }
 
@@ -227,8 +226,7 @@ func queryAnalyticsSummary(
 			interaction.status,
 			interaction.appointment_outcome,
 			COALESCE(interaction.transcript, '{}'::jsonb),
-			COALESCE(interaction.closeout_payload->'turnMetrics', '[]'::jsonb),
-			COALESCE(interaction.closeout_payload->'toolExecutions', '[]'::jsonb)
+			COALESCE(interaction.closeout_payload, '{}'::jsonb)
 		FROM ai_interactions interaction
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id::text = ANY($2::text[])
@@ -247,8 +245,7 @@ func queryAnalyticsSummary(
 			&projection.call.Status,
 			&projection.appointmentOutcome,
 			&projection.transcript,
-			&projection.turnMetrics,
-			&projection.tools,
+			&projection.closeoutPayload,
 		); err != nil {
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
 		}
@@ -343,8 +340,7 @@ func queryAnalyticsCalls(
 			interaction.ended_at,
 			interaction.status,
 			COALESCE(interaction.transcript, '{}'::jsonb),
-			COALESCE(interaction.closeout_payload->'turnMetrics', '[]'::jsonb),
-			COALESCE(interaction.closeout_payload->'toolExecutions', '[]'::jsonb),
+			COALESCE(interaction.closeout_payload, '{}'::jsonb),
 			interaction.transcript IS NOT NULL
 		FROM ai_interactions interaction
 		JOIN access_locations location
@@ -378,8 +374,7 @@ func queryAnalyticsCalls(
 			&projection.call.EndedAt,
 			&projection.call.Status,
 			&projection.transcript,
-			&projection.turnMetrics,
-			&projection.tools,
+			&projection.closeoutPayload,
 			&projection.call.TranscriptAvailable,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan operator AI analytics page: %w", err)
@@ -449,7 +444,11 @@ func (m *Module) ReadOperatorAnalytics(
 		P50TtsTtfbMs:      medianMilliseconds(samples.ttsTtfb),
 		P50TotalLatencyMs: medianMilliseconds(samples.total),
 		Timeline:          timeline,
-		ToolExecutions:    normalizeToolExecutions(stored.CloseoutPayload, stored.StartedAt),
+		ToolExecutions: normalizeToolExecutions(
+			stored.Transcript,
+			stored.CloseoutPayload,
+			stored.StartedAt,
+		),
 	}, nil
 }
 
@@ -502,13 +501,19 @@ func projectAnalyticsCall(projection *analyticsProjection, now time.Time) {
 }
 
 func projectAnalyticsEvidence(projection *analyticsProjection) {
-	samples := analyticsLatencySamples(projection.transcript, projection.turnMetrics)
+	closeout := decodeRecord(projection.closeoutPayload)
+	turnMetrics, _ := json.Marshal(arrayValue(closeout["turnMetrics"]))
+	samples := analyticsLatencySamples(projection.transcript, turnMetrics)
 	projection.call.P50SttMs = medianMilliseconds(samples.stt)
 	projection.call.P50TtftMs = medianMilliseconds(samples.ttft)
 	projection.call.P50TtsTtfbMs = medianMilliseconds(samples.ttsTtfb)
 	projection.call.P50TotalLatencyMs = medianMilliseconds(samples.total)
 	projection.latencySamples = samples
-	executions := toolExecutionsFromRaw(projection.tools, projection.call.StartedAt)
+	executions := normalizeToolExecutions(
+		projection.transcript,
+		projection.closeoutPayload,
+		projection.call.StartedAt,
+	)
 	projection.call.ToolCallCount = len(executions)
 	projection.call.ToolActions = []string{}
 	seenActions := map[string]struct{}{}
@@ -708,12 +713,89 @@ func percentileMilliseconds(values []float64, percentile float64) *int {
 }
 
 func normalizeToolExecutions(
+	transcript json.RawMessage,
 	closeoutPayload json.RawMessage,
 	fallback time.Time,
 ) []ToolExecution {
 	closeout := decodeRecord(closeoutPayload)
+	if _, current := closeout["domainOutcomes"]; current {
+		return nativeToolExecutions(transcript, closeout, fallback)
+	}
+
 	raw, _ := json.Marshal(arrayValue(closeout["toolExecutions"]))
 	return toolExecutionsFromRaw(raw, fallback)
+}
+
+func nativeToolExecutions(
+	transcript json.RawMessage,
+	closeout map[string]any,
+	fallback time.Time,
+) []ToolExecution {
+	items := transcriptItems(decodeRecord(transcript))
+	outputsByCallID := map[string]map[string]any{}
+	receiptsByCallID := domainOutcomeReceiptsByCallID(closeout)
+	for _, value := range items {
+		record := recordValue(value)
+		if strings.EqualFold(firstRecordString(record, "type"), "function_call_output") {
+			if callID := firstRecordString(record, "call_id", "callId"); callID != "" {
+				outputsByCallID[callID] = record
+			}
+		}
+	}
+
+	result := make([]ToolExecution, 0)
+	for index, value := range items {
+		call := recordValue(value)
+		if !strings.EqualFold(firstRecordString(call, "type"), "function_call") {
+			continue
+		}
+		callID := firstRecordString(call, "call_id", "callId")
+		name := firstRecordString(call, "name")
+		if callID == "" || name == "" {
+			continue
+		}
+		output := outputsByCallID[callID]
+		receipt := receiptsByCallID[callID]
+		status := "SUCCESS"
+		if (output == nil && receipt == nil) ||
+			boolValue(firstRecordValue(output, "is_error", "isError")) ||
+			domainOutcomeIsError(firstRecordString(receipt, "status")) {
+			status = "ERROR"
+		}
+		occurredAt := timestampValue(
+			firstRecordValue(call, "created_at", "createdAt"),
+			timestampValue(
+				firstRecordValue(output, "created_at", "createdAt"),
+				fallback.Add(time.Duration(index)*time.Nanosecond),
+			),
+		)
+		result = append(result, ToolExecution{
+			CallID:      callID,
+			Name:        name,
+			OccurredAt:  occurredAt,
+			Status:      status,
+			OutputClass: firstRecordString(receipt, "outcome"),
+		})
+	}
+	sort.SliceStable(result, func(left, right int) bool {
+		return result[left].OccurredAt.Before(result[right].OccurredAt)
+	})
+	return result
+}
+
+func domainOutcomeReceiptsByCallID(closeout map[string]any) map[string]map[string]any {
+	result := map[string]map[string]any{}
+	for _, value := range arrayValue(closeout["domainOutcomes"]) {
+		receipt := recordValue(value)
+		if callID := firstRecordString(receipt, "callId", "call_id"); callID != "" {
+			result[callID] = receipt
+		}
+	}
+	return result
+}
+
+func domainOutcomeIsError(status string) bool {
+	return status != "" && !strings.EqualFold(status, "success")
 }
 
 func toolExecutionsFromRaw(raw json.RawMessage, fallback time.Time) []ToolExecution {
