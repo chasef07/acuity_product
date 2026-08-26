@@ -369,6 +369,26 @@ export function WhoWeArePageContent() {
         </div>
       </section>
 
+      <section
+        aria-labelledby="company-mission"
+        className={styles.missionVision}
+      >
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Our mission</p>
+          <h2 id="company-mission">
+            Free medical practices from administrative overload so every patient
+            can be treated like a VIP.
+          </h2>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>Our vision</p>
+          <p>
+            A future where AI runs the administration, humans elevate the care,
+            and no patient falls through the cracks.
+          </p>
+        </div>
+      </section>
+
       <section className={styles.foundersSection}>
         <header><p className={styles.eyebrow}>Meet the founders + Engineering team</p><h2>The same people stay in the work.</h2></header>
         <div className={styles.founderGrid}>

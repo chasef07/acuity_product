@@ -29,6 +29,16 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Acuity began as a consulting relationship." }),
   ).toBeVisible()
+  await expect(
+    page.getByRole("heading", {
+      name: "Free medical practices from administrative overload so every patient can be treated like a VIP.",
+    }),
+  ).toBeVisible()
+  await expect(
+    page.getByText(
+      "A future where AI runs the administration, humans elevate the care, and no patient falls through the cracks.",
+    ),
+  ).toBeVisible()
 })
 
 test("work with us links land on the conversation", async ({ page }) => {
