@@ -113,7 +113,7 @@
 
 .workLink {
   padding: 10px 17px;
-  border-radius: 3px;
+  border-radius: 999px;
   background: var(--marketing-ink);
   color: white;
   font-size: 13px;
@@ -195,7 +195,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  border-radius: 3px;
+  border-radius: 999px;
   background: var(--marketing-ink);
   color: white;
   font-size: 13px;
