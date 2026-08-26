@@ -444,8 +444,9 @@ func (m *Module) RequestHangup(
 			), '')
 		FROM human_calling_call_legs
 		WHERE call_id = $1 AND state NOT IN ('ENDED', 'FAILED', 'ENDING')
+			AND ($2::text = 'OUTBOUND' OR provider_call_control_id IS NOT NULL)
 		ORDER BY role, id FOR UPDATE
-	`, callID)
+	`, callID, direction)
 	if err != nil {
 		return Call{}, fmt.Errorf("lock exact Hangup targets: %w", err)
 	}

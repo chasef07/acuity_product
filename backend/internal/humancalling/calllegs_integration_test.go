@@ -690,6 +690,84 @@ func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
 	}
 }
 
+func TestInboundHangupLeavesUnstartedFanoutLegToInboundLifecycle(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
+	prefix := "inbound-hangup-pending-fanout"
+	pool, calling, caller, staff := prepareInboundFanout(
+		t, now, prefix, &recordingProvider{}, 2,
+	)
+
+	var callID, winnerLegID, pendingLegID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs
+		WHERE provider_call_control_id = $1
+	`, caller.CallControlID).Scan(&callID); err != nil {
+		t.Fatalf("read inbound Call: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
+	`, callID, staff[0].Subject).Scan(&winnerLegID); err != nil {
+		t.Fatalf("read inbound winning Staff CallLeg: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
+	`, callID, staff[1].Subject).Scan(&pendingLegID); err != nil {
+		t.Fatalf("read inbound pending Staff CallLeg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET answered_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'CALLER'
+	`, callID, now); err != nil {
+		t.Fatalf("align inbound caller evidence time: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGE_PENDING',
+			provider_call_control_id = $2,
+			provider_call_leg_id = $3,
+			provider_call_session_id = $4,
+			answered_at = $5,
+			bridge_pending_at = $5,
+			updated_at = $5
+		WHERE id = $1
+	`, winnerLegID, prefix+"-winner-control", prefix+"-winner-leg",
+		prefix+"-winner-session", now); err != nil {
+		t.Fatalf("prepare inbound winning Staff CallLeg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENT', updated_at = $2
+		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
+	`, winnerLegID, now); err != nil {
+		t.Fatalf("complete inbound winning Staff Dial: %v", err)
+	}
+
+	if _, err := calling.RequestHangup(
+		context.Background(), staff[0], prefix+"-browser-1", callID,
+	); err != nil {
+		t.Fatalf("request inbound Hangup with pending fanout: %v", err)
+	}
+
+	var pendingLegState, pendingDialState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE leg.id = $1 AND command.action = 'DIAL_STAFF'
+	`, pendingLegID).Scan(&pendingLegState, &pendingDialState); err != nil {
+		t.Fatalf("read pending inbound fanout after Hangup: %v", err)
+	}
+	if pendingLegState != "PENDING" || pendingDialState != "PENDING" {
+		t.Fatalf(
+			"pending inbound fanout after Hangup = leg:%s Dial:%s, want PENDING/PENDING",
+			pendingLegState, pendingDialState,
+		)
+	}
+}
+
 type outboundEndFixture struct {
 	pool          *pgxpool.Pool
 	calling       *humancalling.Module
