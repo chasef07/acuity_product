@@ -134,6 +134,12 @@ availability SLO:
 | Answer-to-Bridge p95 above eight seconds | p95 over 10 minutes for 60 seconds |
 | Any terminal Staff occupancy beyond reconciliation window | any sampled occupancy for 60 seconds after the 60-second reconciliation window |
 
+The quarantine-depth and terminal-occupancy metrics use width-one linear
+distribution buckets. Cloud Monitoring interpolates a raw zero sample to a p99
+just below `1` and a raw one sample to a p99 just below `2`, so their alert
+threshold is `> 1`. This preserves the intended "any nonzero count" behavior
+without holding incidents open on healthy zero samples.
+
 Load evidence must replace the receipt-depth and Staff-answer-contention hypotheses
 with measured baselines before the production gate is complete.
 
