@@ -207,8 +207,19 @@ func (m *Module) ReadCallingState(
 		return CallingState{}, err
 	}
 	transferRows, err := m.database.Query(ctx, staffTransferSelect+`
+		JOIN access_calling_scopes calling_scope
+			ON calling_scope.practice_id = transfer.practice_id
+			AND calling_scope.user_subject = $1
 		WHERE (transfer.requested_by_subject = $1 OR transfer.recipient_subject = $1)
 			AND transfer.state IN ('REQUESTED', 'ACCEPTED')
+			AND (
+				calling_scope.location_scope = 'ALL'
+				OR EXISTS (
+					SELECT 1 FROM access_membership_locations allowed
+					WHERE allowed.membership_id = calling_scope.membership_id
+						AND allowed.location_id = transfer.location_id
+				)
+			)
 		ORDER BY transfer.created_at, transfer.id
 	`, identity.Subject)
 	if err != nil {

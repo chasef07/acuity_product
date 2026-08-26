@@ -354,12 +354,14 @@ func (m *Module) respondStaffTransfer(
 	if command.Identity.Subject != actorSubject || transfer.State != StaffTransferRequested {
 		return StaffTransfer{}, ErrConflict
 	}
-	var expectedSession string
-	if err := tx.QueryRow(ctx, `
-		SELECT CASE WHEN $2 THEN recipient_session_id ELSE requested_by_session_id END
-		FROM human_calling_staff_transfers WHERE id = $1
-	`, transfer.ID, recipient).Scan(&expectedSession); err != nil || expectedSession != command.SessionID {
-		return StaffTransfer{}, ErrConflict
+	if recipient {
+		var expectedSession string
+		if err := tx.QueryRow(ctx, `
+			SELECT recipient_session_id
+			FROM human_calling_staff_transfers WHERE id = $1
+		`, transfer.ID).Scan(&expectedSession); err != nil || expectedSession != command.SessionID {
+			return StaffTransfer{}, ErrConflict
+		}
 	}
 	var ownsSession bool
 	if err := tx.QueryRow(ctx, `

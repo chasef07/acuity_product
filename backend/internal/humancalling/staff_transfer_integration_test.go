@@ -463,6 +463,64 @@ func TestStaffTransferDeclineLeavesSourceOwner(t *testing.T) {
 	}
 }
 
+func TestStaffTransferSourceCanCancelAfterSoftphoneTakeover(t *testing.T) {
+	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-takeover-cancel")
+	transfer, _ := requestFixtureTransfer(t, fixture, "takeover-cancel")
+	const takeoverSession = "staff-transfer-takeover-cancel-browser-replacement"
+
+	lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.staff[0], takeoverSession, true,
+	)
+	if err != nil || !lease.Owner || lease.SessionID != takeoverSession {
+		t.Fatalf("take over source softphone = %#v, %v", lease, err)
+	}
+
+	canceled, err := fixture.calling.CancelStaffTransfer(
+		context.Background(), humancalling.RespondStaffTransferCommand{
+			Identity: fixture.staff[0], TransferID: transfer.ID,
+			SessionID: takeoverSession,
+		},
+	)
+	if err != nil || canceled.State != humancalling.StaffTransferCanceled {
+		t.Fatalf("cancel transfer from current source browser = %#v, %v", canceled, err)
+	}
+	assertTransferLegStates(t, fixture.pool, transfer.ID, "CANCELED", "BRIDGED", "ENDING")
+}
+
+func TestCallingStateHidesActiveStaffTransferAfterLocationAccessLoss(t *testing.T) {
+	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-access-scope")
+	transfer, _ := requestFixtureTransfer(t, fixture, "access-scope")
+
+	var otherLocationID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		INSERT INTO access_locations (practice_id, provisioning_key, name)
+		VALUES ($1, 'staff-transfer-access-scope-other', 'Other Location')
+		RETURNING id::text
+	`, transfer.PracticeID).Scan(&otherLocationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		WITH narrowed AS (
+			UPDATE access_memberships
+			SET location_scope = 'SELECTED'
+			WHERE practice_id = $1 AND user_subject = $2
+			RETURNING id, practice_id
+		)
+		INSERT INTO access_membership_locations (membership_id, practice_id, location_id)
+		SELECT id, practice_id, $3 FROM narrowed
+	`, transfer.PracticeID, fixture.staff[0].Subject, otherLocationID); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Transfers) != 0 {
+		t.Fatalf("active transfers after Location access loss = %#v, want none", state.Transfers)
+	}
+}
+
 func TestStaffTransferFailurePathsPreserveSourceOwnership(t *testing.T) {
 	tests := []struct {
 		name      string
