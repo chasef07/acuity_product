@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
   AudioLinesIcon,
-  BotIcon,
   CheckIcon,
   CheckCircle2Icon,
   PencilIcon,
@@ -17,7 +16,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { portalAPIURL, portalClient } from "@/lib/api/client"
 import {
@@ -36,7 +34,6 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
-import { cn } from "@/lib/utils"
 
 type InteractionWorkspaceProps = {
   task: Task | undefined
@@ -253,7 +250,7 @@ function TaskWorkspace({
   return (
     <section
       aria-label="Focused Task"
-      className="h-full min-h-0 flex-1 overflow-y-auto bg-transparent px-4 py-4"
+      className="h-full min-h-0 flex-1 overflow-y-auto bg-transparent px-5 py-5"
     >
       {editing && task.state === "OPEN" ? (
         <div className="flex items-center gap-1">
@@ -290,8 +287,8 @@ function TaskWorkspace({
           </Button>
         </div>
       ) : (
-        <div className="flex items-start gap-1">
-          <h2 className="min-w-0 flex-1 text-lg font-semibold leading-snug">
+        <div className="flex items-start gap-1 pr-8">
+          <h2 className="min-w-0 flex-1 text-lg font-semibold leading-snug tracking-[-0.015em]">
             {task.title}
           </h2>
           {task.state === "OPEN" && canMutate && (
@@ -306,47 +303,57 @@ function TaskWorkspace({
           )}
         </div>
       )}
-      <div className="mt-4 flex flex-col gap-2">
-        {activeCall && (
-          <Button variant="outline" onClick={onReturnToCall}>
-            <PhoneCallIcon /> Return to active call
-          </Button>
-        )}
-        {!canMutate ? (
-          <Badge variant="outline">Read only</Badge>
-        ) : task.state === "OPEN" ? (
-          <>
-            {!activeCall && (
+      {(task.urgency === "high_priority" || !canMutate) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {task.urgency === "high_priority" && (
+            <Badge variant="destructive">High priority</Badge>
+          )}
+          {!canMutate && <Badge variant="outline">Read only</Badge>}
+        </div>
+      )}
+      {task.sourceMessage && (
+        <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+          {task.sourceMessage}
+        </p>
+      )}
+      {canMutate && (
+        <div className="mt-4 flex flex-col gap-2">
+          {task.state === "OPEN" ? (
+            <>
               <Button
-                variant="outline"
-                disabled={!taskCallingEligible || taskCallPending}
-                title={taskCallingEligible ? "Call this Task" : taskCallingReason}
-                onClick={() => onStartTaskCall(task)}
+                onClick={() => void transition("complete")}
+                disabled={pending}
               >
-                <PhoneCallIcon /> {taskCallPending ? "Preparing…" : recovery ? "Call back" : "Call"}
+                {pending ? <Spinner /> : <CheckCircle2Icon />} {recovery ? "Resolve" : "Complete"}
               </Button>
-            )}
+              {activeCall ? (
+                <Button variant="outline" onClick={onReturnToCall}>
+                  <PhoneCallIcon /> Return to active call
+                </Button>
+              ) : canCall ? (
+                <Button
+                  variant="outline"
+                  disabled={!taskCallingEligible || taskCallPending}
+                  title={taskCallingEligible ? "Call this Task" : taskCallingReason}
+                  onClick={() => onStartTaskCall(task)}
+                >
+                  <PhoneCallIcon /> {taskCallPending ? "Preparing…" : recovery ? "Call back" : "Call"}
+                </Button>
+              ) : null}
+            </>
+          ) : (
             <Button
-              onClick={() => void transition("complete")}
+              variant="outline"
+              onClick={() => void transition("reopen")}
               disabled={pending}
             >
-              {pending ? <Spinner /> : <CheckCircle2Icon />} {recovery ? "Resolve" : "Complete"}
+              {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
             </Button>
-          </>
-        ) : (
-          <Button
-            variant="outline"
-            onClick={() => void transition("reopen")}
-            disabled={pending}
-          >
-            {pending ? <Spinner /> : <RotateCcwIcon />} Reopen
-          </Button>
-        )}
-      </div>
-      {(taskCallError || (!taskCallingEligible && taskCallingReason)) && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {taskCallError || taskCallingReason}
-        </p>
+          )}
+        </div>
+      )}
+      {taskCallError && (
+        <p className="mt-3 text-xs text-destructive">{taskCallError}</p>
       )}
       {error && (
         <Alert variant="destructive" className="mt-3">
@@ -357,17 +364,13 @@ function TaskWorkspace({
       {recovery && (
         <RecoveryTaskSource task={task} revision={historyHint} />
       )}
-      <Separator className="my-4" />
-      <details className="group rounded-md border px-3 py-2">
+      <details className="group mt-4 border-t pt-4">
         <summary className="cursor-pointer text-sm font-medium">
           Details
         </summary>
-        <div className="mt-3 space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Task activity appears in the number history.
-          </p>
-          {task.origin === "ABITA_AI" && <AITaskSource task={task} />}
-          {task.sourceCallId && task.origin !== "ABITA_AI" && (
+        <div className="mt-3 flex flex-col gap-3">
+          <TaskSourceDetails task={task} />
+          {task.sourceCallId && (
             <Metadata label="Source call" value={task.sourceCallId} />
           )}
           <Metadata
@@ -395,43 +398,18 @@ function TaskWorkspace({
   )
 }
 
-function AITaskSource({ task }: { task: Task }) {
+function TaskSourceDetails({ task }: { task: Task }) {
   return (
-    <section aria-label="AI Task source" className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className="gap-1.5">
-          <BotIcon className="size-3.5" aria-hidden="true" />
-          AI-created
-        </Badge>
-        {task.category && (
-          <Badge variant="secondary">{formatCategory(task.category)}</Badge>
-        )}
-        <Badge
-          variant={
-            task.urgency === "high_priority" ? "destructive" : "secondary"
-          }
-        >
-          {formatUrgency(task.urgency)}
-        </Badge>
-      </div>
-      <div className="text-sm">
-        <div>
-          <p className="font-medium">
-            {task.callerName
-              ? `AI-supplied name: ${task.callerName}`
-              : "No sourced caller name"}
-          </p>
-          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-            {task.sourceMessage}
-          </p>
-        </div>
-        {task.sourceCallId && (
-          <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
-            Source call · {task.sourceCallId}
-          </p>
-        )}
-      </div>
-    </section>
+    <>
+      <Metadata label="Source" value={taskSourceLabel(task)} />
+      {task.category && (
+        <Metadata label="Category" value={formatCategory(task.category)} />
+      )}
+      <Metadata label="Urgency" value={formatUrgency(task.urgency)} />
+      {task.callerName && (
+        <Metadata label="Sourced name" value={task.callerName} />
+      )}
+    </>
   )
 }
 
@@ -566,7 +544,7 @@ type RecordingKind = "voicemail" | "call"
 
 const recordingPresentation = {
   voicemail: {
-    title: "Voicemail source",
+    title: "Voicemail",
     label: "voicemail",
     audioLabel: "Voicemail recording",
     playbackPath: "voicemail-playback",
@@ -608,7 +586,7 @@ function RecordingSource({
 
   const stateLabel =
     unavailable
-      ? "No recording was produced."
+      ? "No voicemail recording."
       : audioState === "READY"
         ? "Ready"
         : audioState === "EXPIRED" || audioState === "DELETED"
@@ -641,20 +619,16 @@ function RecordingSource({
   }
 
   return (
-    <div className={compact ? "mt-3" : "border-b bg-muted px-5 py-4"}>
-      {!compact && (
-        <div className="mb-2 flex items-center gap-2">
-          <AudioLinesIcon className="size-4" />
+    <section className={compact ? "mt-4" : "border-t px-5 py-4"}>
+      <div className="flex items-start gap-3">
+        <AudioLinesIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">{presentation.title}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {stateLabel}
+            {durationSeconds > 0 && ` · ${formatDuration(durationSeconds)}`}
+          </p>
         </div>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="secondary">{stateLabel}</Badge>
-        {durationSeconds > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {formatDuration(durationSeconds)}
-          </span>
-        )}
         {audioState === "READY" && !audioURL && (
           <Button
             size="sm"
@@ -665,21 +639,21 @@ function RecordingSource({
             {loading ? <Spinner /> : "Play"}
           </Button>
         )}
-        {audioURL && (
-          <audio
-            ref={audioRef}
-            aria-label={presentation.audioLabel}
-            controls
-            controlsList="nodownload"
-            preload="metadata"
-            src={audioURL}
-            onError={() => setError(`The ${presentation.label} could not be opened.`)}
-            className="h-9 max-w-full"
-          />
-        )}
       </div>
+      {audioURL && (
+        <audio
+          ref={audioRef}
+          aria-label={presentation.audioLabel}
+          controls
+          controlsList="nodownload"
+          preload="metadata"
+          src={audioURL}
+          onError={() => setError(`The ${presentation.label} could not be opened.`)}
+          className="mt-3 h-9 max-w-full"
+        />
+      )}
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-    </div>
+    </section>
   )
 }
 
@@ -703,6 +677,21 @@ function formatUrgency(urgency: Task["urgency"]) {
   }
 }
 
+function taskSourceLabel(task: Task) {
+  switch (task.origin) {
+    case "ABITA_AI":
+      return "Created by AI"
+    case "STAFF_MESSAGE_FOLLOW_UP":
+      return "Message follow-up"
+    case "VOICEMAIL_RECOVERY":
+      return "Voicemail follow-up"
+    case "MISSED_CALL_RECOVERY":
+      return "Missed-call follow-up"
+    default:
+      return "Call follow-up"
+  }
+}
+
 function CallWorkspace({
   call,
   returnTask,
@@ -714,71 +703,58 @@ function CallWorkspace({
   onReturnToTask: (() => void) | undefined
   onOpenRecoveryTask: (taskID: string) => void
 }) {
+  const formattedPhone = formatPhone(call.phone)
+  const contactName =
+    call.displayName &&
+    call.displayName !== call.phone &&
+    call.displayName !== formattedPhone
+      ? call.displayName
+      : ""
+  const taskAction = call.recoveryTask
+    ? {
+        label: "Open Task",
+        onClick: () => onOpenRecoveryTask(call.recoveryTask!.id),
+      }
+    : returnTask && onReturnToTask
+      ? { label: "Back to Task", onClick: onReturnToTask }
+      : undefined
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b px-5 py-4">
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-            <div className="mb-2 flex items-center gap-2">
-              <Badge
-                variant="secondary"
-                className={cn(
-                  call.state === "CONNECTED" && "text-success",
-					call.state === "CONNECTING" && "text-warning",
-                )}
-              >
-                {callWorkspaceLabel(call.state)}
-              </Badge>
-              <span className="text-xs font-medium text-muted-foreground">
-                {callStateLabel(call.state)}
-              </span>
-            </div>
-            <p className="text-xs font-medium text-muted-foreground">
-              Contact Context
-            </p>
-            <h1 className="truncate text-xl font-semibold tracking-[-0.015em]">
-              {call.displayName || formatPhone(call.phone)}
-            </h1>
-            <p className="mt-2 text-sm tabular-nums text-muted-foreground">
-              {formatPhone(call.phone)} · {call.locationName}
-            </p>
-			{call.recoveryTask && (
-				<div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-					<span className="font-medium">{call.recoveryTask.title}</span>
-					<Button size="sm" variant="outline" onClick={() => onOpenRecoveryTask(call.recoveryTask!.id)}>
-						Open Task
-					</Button>
-				</div>
-			)}
-          </div>
-          {returnTask && onReturnToTask && (
-            <Button variant="outline" onClick={onReturnToTask}>
-              <ArrowLeftIcon />
-              Back to Task
-            </Button>
-          )}
-        </div>
-        <div className="mt-4 grid gap-3 border-t pt-3 text-xs text-muted-foreground sm:grid-cols-3">
-          <Metadata
-            label="Transfer reason"
-            value={call.transferReason || "No transfer reason"}
-          />
-          <Metadata
-            label="Office"
-            value={call.locationName}
-          />
-          <Metadata
-            label="Connected"
-            value={
-              call.connectedAt
-                ? formatDateTime(call.connectedAt)
-                : "Connection in progress"
-            }
-          />
-        </div>
+      <header className="px-5 py-5 pr-12">
+        <h2 className="text-lg font-semibold tracking-[-0.015em]">
+          {callContextTitle(call.state)}
+        </h2>
+        {contactName && <p className="mt-3 font-medium">{contactName}</p>}
+        <p className="mt-1 text-sm tabular-nums text-muted-foreground">
+          {formattedPhone} · {call.locationName}
+        </p>
+        {call.transferReason && (
+          <p className="mt-3 text-sm leading-6">{call.transferReason}</p>
+        )}
+        {call.recoveryTask && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {call.recoveryTask.title}
+          </p>
+        )}
+        {taskAction && (
+          <Button className="mt-4 w-full" variant="outline" onClick={taskAction.onClick}>
+            {taskAction.label === "Back to Task" && <ArrowLeftIcon />}
+            {taskAction.label}
+          </Button>
+        )}
       </header>
       {call.voicemail && <VoicemailSource call={call} />}
       {call.recording && <CallRecordingSource call={call} />}
+      <details className="group border-t px-5 py-4">
+        <summary className="cursor-pointer text-sm font-medium">Details</summary>
+        <div className="mt-3 flex flex-col gap-3">
+          <Metadata label="Direction" value={formatDirection(call.direction)} />
+          <Metadata label="Started from" value={formatEntryPoint(call.entryPoint)} />
+          {call.connectedAt && (
+            <Metadata label="Connected" value={formatDateTime(call.connectedAt)} />
+          )}
+        </div>
+      </details>
     </section>
   )
 }
@@ -815,18 +791,45 @@ function formatPhone(phone: string) {
   return `(${match[1]}) ${match[2]}-${match[3]}`
 }
 
-function callStateLabel(state: CallingCall["state"]) {
-  return state.toLowerCase().replaceAll("_", " ")
+function callContextTitle(state: CallingCall["state"]) {
+  switch (state) {
+    case "PREPARING":
+      return "Preparing call"
+    case "RINGING":
+      return "Calling"
+    case "CONNECTING":
+      return "Connecting"
+    case "CONNECTED":
+      return "Call connected"
+    case "VOICEMAIL_GREETING":
+    case "VOICEMAIL_RECORDING":
+      return "Leaving voicemail"
+    case "UNANSWERED":
+      return "Unanswered call"
+    case "VOICEMAIL":
+      return "Voicemail"
+    case "MISSED":
+      return "Missed call"
+    case "NEEDS_DISPOSITION":
+      return "Call ended"
+    case "FOLLOW_UP_REQUIRED":
+      return "Follow-up required"
+    default:
+      return "Call resolved"
+  }
 }
 
-function callWorkspaceLabel(state: CallingCall["state"]) {
-  if (state === "NEEDS_DISPOSITION") return "Call ended"
-  if (
-    state === "UNANSWERED" ||
-    state === "RESOLVED" ||
-    state === "FOLLOW_UP_REQUIRED"
-  ) {
-    return "Call closed"
+function formatDirection(direction: CallingCall["direction"]) {
+  return direction === "INBOUND" ? "Inbound call" : "Outbound call"
+}
+
+function formatEntryPoint(entryPoint: CallingCall["entryPoint"]) {
+  switch (entryPoint) {
+    case "AI_HANDOFF":
+      return "AI handoff"
+    case "TASK":
+      return "Task"
+    default:
+      return "Phone number"
   }
-  return "Live call"
 }

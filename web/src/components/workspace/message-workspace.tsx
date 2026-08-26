@@ -815,7 +815,7 @@ function MessageEntry({
       }}
     >
       <MessageContent>
-        <Bubble variant={outbound ? "muted" : "outline"}>
+        <Bubble variant={outbound ? "muted" : "ghost"}>
           <BubbleContent>
             {message.body && (
               <p className="whitespace-pre-wrap">{message.body}</p>
@@ -958,11 +958,11 @@ function ActivityItem({
   onOpen?: () => void
 }) {
   const content = (
-    <span className="flex flex-1 flex-col gap-0.5">
-      <span className="line-clamp-1 w-fit text-sm font-semibold leading-5 tracking-[-0.01em] text-foreground">
+    <span className="flex flex-1 flex-col gap-1">
+      <span className="line-clamp-1 w-fit text-xs/relaxed font-medium leading-snug">
         {title}
       </span>
-      <span className="line-clamp-2 text-left text-xs font-normal leading-5 text-muted-foreground">
+      <span className="line-clamp-2 text-left text-xs/relaxed font-normal text-muted-foreground">
         {metadata.filter(Boolean).join(" · ")}
       </span>
     </span>
@@ -970,7 +970,7 @@ function ActivityItem({
 
   if (!onOpen) {
     return (
-      <Item size="sm" className="mx-auto max-w-xl px-3 py-2.5">
+      <Item size="sm" className="mx-auto max-w-xl">
         {content}
       </Item>
     )
@@ -980,7 +980,7 @@ function ActivityItem({
     <Item
       size="sm"
       data-selected={selected || undefined}
-      className="mx-auto max-w-xl cursor-pointer px-3 py-2.5 text-left hover:bg-muted focus-visible:bg-muted data-[selected=true]:bg-accent"
+      className="relative mx-auto max-w-xl cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
       render={
         <button
           type="button"
@@ -1266,7 +1266,11 @@ function MessageComposer({
       onSubmit={(event) => void submit(event)}
     >
       <div className="mx-auto max-w-2xl">
-        <InputGroup className="h-auto min-h-16 rounded-[1.375rem] bg-card px-1.5 shadow-sm">
+        <InputGroup
+          focusStyle="quiet"
+          shape="pill"
+          className="h-auto min-h-16 bg-card px-1.5 shadow-sm"
+        >
           <InputGroupAddon align="inline-start">
             <InputGroupButton
               type="button"
