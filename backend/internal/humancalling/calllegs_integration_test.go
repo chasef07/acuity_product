@@ -2321,18 +2321,18 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 		accessModule,
 		provider,
 		humancalling.Config{},
-		func() time.Time { return now },
+		time.Now,
 	)
 	runner, err := worker.New(worker.Config{
 		WorkInterval:                  250 * time.Millisecond,
-		WorkTimeout:                   time.Second,
+		WorkTimeout:                   10 * time.Second,
 		CredentialInterval:            time.Hour,
 		CredentialTimeout:             time.Second,
 		HealthInterval:                time.Hour,
 		HealthTimeout:                 time.Second,
 		MetricInterval:                time.Hour,
 		MetricTimeout:                 time.Second,
-		ReceiptBatchSize:              1,
+		ReceiptBatchSize:              8,
 		RecoveryAndMessagingBatchSize: 1,
 		ProviderCommandBatchSize:      8,
 		CommandWorkers:                staffCount,
@@ -2343,9 +2343,16 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	committedAt := time.Now()
+	if _, err := workerPool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $1, updated_at = $1, next_attempt_at = $1
+		WHERE action = 'DIAL_STAFF'
+	`, committedAt); err != nil {
+		t.Fatalf("commit production-shaped Staff Dial queue: %v", err)
+	}
 	runnerContext, cancelRunner := context.WithCancel(context.Background())
 	runnerDone := make(chan error, 1)
-	burstStartedAt := time.Now()
 	go func() { runnerDone <- runner.Run(runnerContext) }()
 	t.Cleanup(func() {
 		releaseOnce.Do(func() { close(provider.release) })
@@ -2362,15 +2369,15 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	for index := 1; index <= staffCount; index++ {
 		select {
 		case <-provider.started:
-		case <-time.After(time.Second):
+		case <-time.After(2 * time.Second):
 			t.Fatalf("Staff Dial %d did not start while prior Dials remained in flight", index)
 		}
 	}
-	burstPickup := time.Since(burstStartedAt)
-	if burstPickup >= time.Second {
-		t.Fatalf("ten-command burst pickup = %s, want under 1s", burstPickup)
+	claimLatency := time.Since(committedAt)
+	t.Logf("ten committed Staff Dials reached the provider in %s", claimLatency)
+	if claimLatency >= 500*time.Millisecond {
+		t.Fatalf("committed Staff Dial claim latency = %s, want < 500ms", claimLatency)
 	}
-	t.Logf("ten-command burst pickup = %s", burstPickup)
 	if got := workerPool.Stat().MaxConns(); got != 2 {
 		t.Fatalf("worker pool maximum connections = %d, want 2", got)
 	}
