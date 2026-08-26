@@ -188,7 +188,7 @@ export function OperatorAnalytics({
   return (
     <section
       aria-labelledby="operator-analytics-title"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/20"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
     >
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[100rem] p-4 sm:p-6 lg:p-8">
@@ -463,7 +463,7 @@ function LatencyPercentiles({
       </CardHeader>
       <CardContent className="overflow-x-auto p-0">
         <table className="w-full min-w-[38rem] border-collapse text-left text-xs">
-          <thead className="bg-muted/60 text-muted-foreground">
+          <thead className="bg-muted text-muted-foreground">
             <tr>
               <TableHeading>Pipeline stage</TableHeading>
               <TableHeading>P50</TableHeading>
@@ -681,7 +681,7 @@ function CallLedger({
       <div className="hidden overflow-hidden rounded-xl border bg-card xl:block">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[78rem] border-collapse text-left text-xs">
-            <thead className="bg-muted/70 text-[0.6875rem] text-muted-foreground">
+            <thead className="bg-muted text-[0.6875rem] text-muted-foreground">
               <tr>
                 <TableHeading>Date / time</TableHeading>
                 <TableHeading>Caller</TableHeading>
@@ -700,7 +700,7 @@ function CallLedger({
               {calls.map((call) => (
                 <tr
                   key={call.id}
-                  className="group transition-colors hover:bg-muted/40"
+                  className="group transition-colors hover:bg-muted"
                   onClick={() => onSelect(call.id)}
                 >
                   <td className="px-3 py-3">
@@ -751,7 +751,7 @@ function CallLedger({
             key={call.id}
             type="button"
             aria-label={`Open analytics for call from ${formatDateTime(call.startedAt)}`}
-            className="rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40"
             onClick={() => onSelect(call.id)}
           >
             <div className="flex items-start justify-between gap-3">

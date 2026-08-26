@@ -50,7 +50,7 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
 
 test("appointment reviews are nested and leave the queue when opened", async ({
   page,
-}) => {
+}, testInfo) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
@@ -93,14 +93,101 @@ test("appointment reviews are nested and leave the queue when opened", async ({
   })
   await expect(bookingReview).toBeVisible()
   await bookingReview.click()
-  await expect(page.getByRole("heading", { name: "Appointment booked" })).toBeVisible()
+  const appointmentContext = page.getByRole("complementary", {
+    name: "AI call context",
+  })
+  await expect(
+    appointmentContext.getByRole("heading", { name: "Appointment booked" }),
+  ).toBeVisible()
+  await expect(appointmentContext.getByText("Call completed")).toHaveCount(0)
+  await expect(appointmentContext.getByText("Booking", { exact: true })).toHaveCount(0)
+  await expect(appointmentContext.getByText("Details", { exact: true })).toBeVisible()
+  await expect(appointmentContext.getByText("Evidence", { exact: true })).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath("ai-call-appointment-context.png"),
+    fullPage: true,
+  })
   await expect(bookingReview).toHaveCount(0)
   await expect(appointmentsSection).toContainText("0")
 })
 
+test("an AI call without appointment actions stays call-first", async ({
+  page,
+}, testInfo) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+  await createAINoAppointmentCall(page)
+
+  const searchInput = page.getByLabel("Search tasks, names, or phone")
+  await searchInput.fill("7275550187")
+  await searchInput.press("Enter")
+
+  const outboundText = "We’re open until 4:30 PM today."
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill(outboundText)
+  await page.getByRole("button", { name: "Send message" }).click()
+  const outboundMessage = page
+    .getByRole("article")
+    .filter({ hasText: outboundText })
+  await expect(outboundMessage.getByText("Sent", { exact: true })).toBeVisible()
+
+  const inboundText = "Perfect, thank you!"
+  await sendInbound(page, "slice-5-no-appointment-inbound", inboundText, "+17275550187")
+  const inboundMessage = page
+    .getByRole("article")
+    .filter({ hasText: inboundText })
+  await expect(inboundMessage).toBeVisible()
+  await expect(inboundMessage.locator('[data-slot="bubble"]')).toHaveAttribute(
+    "data-variant",
+    "ghost",
+  )
+
+  const callRow = page.getByRole("button", { name: "View AI call: AI call" })
+  await expect(callRow).toContainText("AI call")
+  await expect(callRow).not.toContainText("No appointment actions")
+  await callRow.click()
+  await expect(callRow).toHaveAttribute("aria-current", "true")
+  await expect(callRow).toHaveAttribute("data-selected", "true")
+  await expect
+    .poll(() =>
+      callRow.evaluate((element) => ({
+        background: getComputedStyle(element).backgroundColor,
+        marker: getComputedStyle(element, "::before").backgroundColor,
+      })),
+    )
+    .toMatchObject({
+      background: "rgba(0, 0, 0, 0)",
+    })
+  expect(
+    await callRow.evaluate(
+      (element) => getComputedStyle(element, "::before").backgroundColor,
+    ),
+  ).not.toBe("rgba(0, 0, 0, 0)")
+
+  const callContext = page.getByRole("complementary", {
+    name: "AI call context",
+  })
+  await expect(callContext).toBeVisible()
+  await expect(
+    callContext.getByRole("heading", { name: "AI call", exact: true }),
+  ).toBeVisible()
+  await expect(callContext).not.toContainText("AI call details")
+  await expect(callContext).toContainText("Caller asked about office hours.")
+  await expect(callContext.getByText("Details", { exact: true })).toBeVisible()
+  await expect(callContext.getByText("Evidence", { exact: true })).toBeVisible()
+  await expect(callContext).not.toContainText("No appointment actions")
+  await expect(callContext).not.toContainText("Patient")
+  await page.screenshot({
+    path: testInfo.outputPath("ai-call-routine-context.png"),
+    fullPage: true,
+  })
+})
+
 test("rail hover details and the message composer preserve compact context", async ({
   page,
-}) => {
+}, testInfo) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
@@ -139,6 +226,17 @@ test("rail hover details and the message composer preserve compact context", asy
   )
   expect(composerHeight).toBeGreaterThanOrEqual(60)
   expect(composerHeight).toBeLessThanOrEqual(72)
+  const composerRadius = await composerSurface.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).borderTopLeftRadius),
+  )
+  expect(composerRadius).toBeGreaterThanOrEqual(composerHeight / 2)
+  const idleComposerPresentation = await composerSurface.evaluate((element) => {
+    const styles = getComputedStyle(element)
+    return {
+      borderColor: styles.borderColor,
+      boxShadow: styles.boxShadow,
+    }
+  })
   const sendButton = page.getByRole("button", { name: "Send message" })
   const sendButtonBox = await sendButton.boundingBox()
   expect(sendButtonBox?.width).toBe(sendButtonBox?.height)
@@ -146,12 +244,29 @@ test("rail hover details and the message composer preserve compact context", asy
     Number.parseFloat(getComputedStyle(element).borderTopLeftRadius),
   )
   expect(sendButtonRadius).toBeGreaterThanOrEqual((sendButtonBox?.width ?? 0) / 2)
-  await page.getByRole("textbox", { name: "Message", exact: true }).fill(
-    "Confirm appointment availability",
-  )
+  const messageBox = page.getByRole("textbox", {
+    name: "Message",
+    exact: true,
+  })
+  await messageBox.fill("Confirm appointment availability")
+  await expect
+    .poll(() =>
+      composerSurface.evaluate((element) => {
+        const styles = getComputedStyle(element)
+        return {
+          borderColor: styles.borderColor,
+          boxShadow: styles.boxShadow,
+        }
+      }),
+    )
+    .toEqual(idleComposerPresentation)
   await expect(sendButton).toBeEnabled()
   await expect(sendButton).toHaveCSS("opacity", "1")
-  await expect(sendButton).toHaveCSS("background-color", "rgb(34, 34, 34)")
+  await expect(sendButton).toHaveCSS("background-color", "rgb(13, 13, 13)")
+  await page.screenshot({
+    path: testInfo.outputPath("message-composer-quiet-focus.png"),
+    fullPage: true,
+  })
 
   await taskRow.hover()
   await page
@@ -163,7 +278,7 @@ test("rail hover details and the message composer preserve compact context", asy
 test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
   context,
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(180_000)
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
   const stalePracticeID = "00000000-0000-0000-0000-000000000091"
@@ -282,6 +397,10 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("article")
     .filter({ hasText: outgoingText })
   await expect(outgoing).toBeVisible()
+  await expect(outgoing.locator('[data-slot="bubble"]')).toHaveAttribute(
+    "data-variant",
+    "muted",
+  )
   await expect(outgoing.getByText("Sending", { exact: true })).toBeVisible()
   await expect(outgoing.getByText("Sent", { exact: true })).toBeVisible()
   await expect(
@@ -371,6 +490,10 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("article")
     .filter({ hasText: inboundText })
   await expect(inbound).toBeVisible()
+  await expect(inbound.locator('[data-slot="bubble"]')).toHaveAttribute(
+    "data-variant",
+    "ghost",
+  )
   await expect(page.getByText("Today", { exact: true }).first()).toBeVisible()
   await expect(
     page
@@ -483,6 +606,12 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     contextPanel.getByRole("heading", { name: "Follow up on text" }),
   ).toBeVisible()
   await expect(contextPanel).toHaveCSS("width", "288px")
+  await expect(contextPanel.getByText("Task context", { exact: true })).toHaveCount(0)
+  await expect(contextPanel.getByText("Normal", { exact: true })).toBeHidden()
+  await page.screenshot({
+    path: testInfo.outputPath("task-context.png"),
+    fullPage: true,
+  })
   expect(
     await contextPanel.evaluate(
       (element) => getComputedStyle(element).transitionProperty,
@@ -856,7 +985,12 @@ async function openNumberInbox(
   await expect(page.getByRole("heading", { name: /\(727\) 555-01\d\d/ })).toBeVisible()
 }
 
-async function sendInbound(page: Page, eventID: string, text: string) {
+async function sendInbound(
+  page: Page,
+  eventID: string,
+  text: string,
+  from = "+17275550199",
+) {
   const response = await page.request.post(
     `${telnyxFixtureURL}/fixture/message-inbound`,
     {
@@ -864,7 +998,7 @@ async function sendInbound(page: Page, eventID: string, text: string) {
       data: {
         eventId: eventID,
         providerMessageId: `provider-${eventID}`,
-        from: "+17275550199",
+        from,
         to: "+17275550101",
         text,
       },
@@ -923,6 +1057,27 @@ async function createAIAppointmentReview(page: Page) {
           appointmentId: "slice-5-booking",
         },
       },
+    },
+  })
+  expect([200, 201]).toContain(response.status())
+}
+
+async function createAINoAppointmentCall(page: Page) {
+  const endedAt = new Date()
+  const startedAt = new Date(endedAt.getTime() - 90_000)
+  const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
+    headers: { authorization: "Bearer synthetic-production-token" },
+    data: {
+      kind: "CLOSEOUT",
+      officeKey: "spring-hill",
+      sourceCallId: "slice-5-no-appointment-call",
+      callerPhone: "+17275550187",
+      officePhone: "+17275550101",
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      status: "COMPLETED",
+      summary: "Caller asked about office hours.",
+      closeoutPayload: { callId: "slice-5-no-appointment-call" },
     },
   })
   expect([200, 201]).toContain(response.status())

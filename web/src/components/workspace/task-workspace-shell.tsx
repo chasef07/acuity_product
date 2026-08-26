@@ -109,7 +109,7 @@ const OperatorAnalytics = dynamic(
       <div
         aria-label="Loading analytics workspace"
         aria-busy="true"
-        className="flex min-h-0 flex-1 bg-muted/20 p-4 sm:p-6 lg:p-8"
+        className="flex min-h-0 flex-1 bg-background p-4 sm:p-6 lg:p-8"
       >
         <Skeleton className="h-40 w-full rounded-xl" />
       </div>
@@ -119,7 +119,7 @@ const OperatorAnalytics = dynamic(
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type View = "none" | "engagement" | "analytics"
-type ContextView = "task" | "call" | "appointment"
+type ContextView = "task" | "call" | "ai-call"
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
@@ -1113,7 +1113,7 @@ export function TaskWorkspaceShell() {
   function openAIInteractionContext(interactionID: string) {
     callDetailGenerationRef.current += 1
     setSelectedAIInteractionID(interactionID)
-    setContextView("appointment")
+    setContextView("ai-call")
     setContextPanelOpen(true)
   }
 
@@ -1321,9 +1321,7 @@ export function TaskWorkspaceShell() {
       ? "Task context"
       : contextView === "call"
         ? "Call context"
-        : "Appointment context"
-  const contextPanelTitle =
-    contextView === "appointment" ? "Appointment details" : contextPanelLabel
+        : "AI call context"
   const callingShell = (children: ReactNode) => (
     <SidebarProvider>
       <CallingDock
@@ -1446,7 +1444,7 @@ export function TaskWorkspaceShell() {
               locationScopeID={locationScopeID}
             />
           ) : view === "engagement" && selectedEngagement ? (
-            <div className="relative flex min-h-0 flex-1 bg-muted/20">
+            <div className="relative flex min-h-0 flex-1 bg-background">
               <div className="flex min-h-0 min-w-0 flex-1 bg-background">
                 <EngagementWorkspace
                   key={selectedEngagement.phone}
@@ -1454,6 +1452,21 @@ export function TaskWorkspaceShell() {
                   practiceID={practiceID}
                   canMutate
                   revision={workspaceRevision}
+                  selectedTaskID={
+                    contextPanelOpen && contextView === "task"
+                      ? selectedTask?.id
+                      : undefined
+                  }
+                  selectedCallID={
+                    contextPanelOpen && contextView === "call"
+                      ? (historicalCall ?? activeCall)?.id
+                      : undefined
+                  }
+                  selectedAIInteractionID={
+                    contextPanelOpen && contextView === "ai-call"
+                      ? selectedAIInteractionID
+                      : undefined
+                  }
                   headerLeading={<SidebarTrigger collapsedOnly />}
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
@@ -1468,7 +1481,7 @@ export function TaskWorkspaceShell() {
                 data-testid="context-panel"
                 inert={!contextPanelOpen}
                 className={cn(
-                  "absolute top-3 right-3 flex h-fit max-h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
+                  "absolute top-3 right-3 flex h-fit max-h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] max-w-[20rem] self-start flex-col overflow-hidden rounded-3xl border bg-popover shadow-lg transition-[width,margin,opacity,transform,border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:my-3 lg:max-w-none lg:shrink-0",
                   contextPanelOpen
                     ? "translate-x-0 opacity-100 lg:mr-3 lg:w-72"
                     : "pointer-events-none translate-x-4 border-transparent opacity-0 shadow-none lg:mr-0 lg:w-0",
@@ -1479,23 +1492,18 @@ export function TaskWorkspaceShell() {
                   }
                 }}
               >
-                <div className="flex h-12 shrink-0 items-center border-b px-4">
-                  <p className="text-sm font-medium">
-                    {contextPanelTitle}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="ml-auto"
-                    aria-label="Close context panel"
-                    onClick={closeContextPanel}
-                  >
-                    <PanelRightCloseIcon />
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="absolute top-3 right-3 z-10"
+                  aria-label="Close context panel"
+                  onClick={closeContextPanel}
+                >
+                  <PanelRightCloseIcon />
+                </Button>
                 <div className="flex min-h-0 flex-1">
-                  {contextView === "appointment" ? (
+                  {contextView === "ai-call" ? (
                     <AIInteractionContext
                       interactionID={selectedAIInteractionID}
                       onReview={reviewAIOutcome}
@@ -1768,7 +1776,7 @@ function WorkspaceFailure({
   onAction: () => void
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-muted/40 p-6">
+    <main className="flex min-h-svh items-center justify-center bg-background p-6">
       <Alert className="max-w-md" variant="destructive">
         <WifiOffIcon />
         <AlertTitle>{title}</AlertTitle>

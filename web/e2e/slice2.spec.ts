@@ -25,7 +25,7 @@ test("caller ringback is a stable public WAV", async ({ request }) => {
 test("production browser path fans out exact CallLegs and bridges one provider-confirmed winner", async ({
   browser,
   page: selectedPage,
-}) => {
+}, testInfo) => {
   test.setTimeout(180_000)
   test.skip(
     !provisioningOutput || !databaseURL,
@@ -437,6 +437,18 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       name: "Call context",
     })
     await expect(contextPanel).toBeVisible()
+    await expect(
+      contextPanel.getByRole("heading", {
+        name: /Call connected|Call ended|Call resolved|Follow-up required/,
+      }),
+    ).toBeVisible()
+    await expect(contextPanel.getByText("Contact Context")).toHaveCount(0)
+    await expect(contextPanel.getByText("Transfer reason")).toHaveCount(0)
+    await expect(contextPanel.getByText("Details", { exact: true })).toBeVisible()
+    await selectedPage.screenshot({
+      path: testInfo.outputPath("call-context.png"),
+      fullPage: true,
+    })
     const contextPanelBox = await contextPanel.boundingBox()
     const viewport = selectedPage.viewportSize()
     expect(contextPanelBox).not.toBeNull()
@@ -532,7 +544,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
 
 test("voicemail and meaningful missed calls refresh into their recovery folders", async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(180_000)
   test.skip(
     !provisioningOutput || !databaseURL,
@@ -781,6 +793,22 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
         name: /\(555\) 555-0112.*Missed call/,
       }),
     ).toBeVisible({ timeout: 30_000 })
+    await page.getByLabel("Search tasks, names, or phone").fill(missedPhone)
+    await page.getByLabel("Search tasks, names, or phone").press("Enter")
+    await page.getByRole("button", { name: /View call:/ }).last().click()
+    const missedCallContext = page.getByRole("complementary", {
+      name: "Call context",
+    })
+    await expect(
+      missedCallContext.getByRole("heading", { name: "Missed call" }),
+    ).toBeVisible()
+    await expect(missedCallContext).toHaveCSS("width", "288px")
+    await expect(missedCallContext.getByText("Live call")).toHaveCount(0)
+    await expect(missedCallContext.getByText("Contact Context")).toHaveCount(0)
+    await page.screenshot({
+      path: testInfo.outputPath("missed-call-context.png"),
+      fullPage: true,
+    })
     const missedTask = await database.query<{ id: string; version: string }>(
       `SELECT id::text, version::text
          FROM work_tasks

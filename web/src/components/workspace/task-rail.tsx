@@ -21,6 +21,7 @@ import {
   FolderOpenIcon,
   ListFilterIcon,
   LogOutIcon,
+  MonitorIcon,
   MoonIcon,
   PhoneIcon,
   SearchIcon,
@@ -231,7 +232,7 @@ export function TaskRail({
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
-  const { resolvedTheme, setTheme } = useTheme()
+  const { resolvedTheme, setTheme, theme } = useTheme()
   const taskRows = useMemo(
     () => newestFirst(filterTaskQueue(tasks), taskRelativeAt),
     [tasks],
@@ -399,7 +400,7 @@ export function TaskRail({
               onSearchSubmit()
             }}
           >
-            <InputGroup className="h-8 rounded-lg border-transparent bg-sidebar-accent/45 shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-sidebar-border hover:bg-background hover:shadow-[0_1px_2px_rgba(0,0,0,0.05),0_0_0_3px_rgba(0,0,0,0.08)] focus-within:border-sidebar-foreground/25 focus-within:bg-background focus-within:shadow-[0_1px_2px_rgba(0,0,0,0.06),0_0_0_3px_rgba(0,0,0,0.11)] dark:hover:shadow-[0_1px_2px_rgba(0,0,0,0.18),0_0_0_3px_rgba(255,255,255,0.08)] dark:focus-within:shadow-[0_1px_2px_rgba(0,0,0,0.22),0_0_0_3px_rgba(255,255,255,0.12)]">
+            <InputGroup className="h-8 rounded-lg border-sidebar-border bg-sidebar-accent shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
               <InputGroupAddon>
                 <SearchIcon />
               </InputGroupAddon>
@@ -558,7 +559,7 @@ export function TaskRail({
         </SidebarContent>
         <SidebarFooter className="p-2">
           {availabilityControl && (
-            <div className="mb-1 border-b border-sidebar-border/70 px-2 py-2">
+            <div className="mb-1 border-b border-sidebar-border px-2 py-2">
               {availabilityControl}
             </div>
           )}
@@ -576,13 +577,41 @@ export function TaskRail({
               </SidebarMenuItem>
             )}
             <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip={resolvedTheme === "dark" ? "Use light mode" : "Use dark mode"}
-                onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-              >
-                {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
-                <span>{resolvedTheme === "dark" ? "Light mode" : "Dark mode"}</span>
-              </SidebarMenuButton>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm/5 font-medium text-sidebar-foreground outline-hidden transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:bg-sidebar-accent"
+                      aria-label="Appearance"
+                      title="Appearance"
+                    />
+                  }
+                >
+                  {resolvedTheme === "dark" ? <MoonIcon /> : <SunIcon />}
+                  <span>Appearance</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="right" align="end" className="w-40">
+                  <DropdownMenuRadioGroup
+                    value={theme ?? "system"}
+                    onValueChange={setTheme}
+                  >
+                    <DropdownMenuLabel>Theme</DropdownMenuLabel>
+                    <DropdownMenuRadioItem value="system" closeOnClick>
+                      <MonitorIcon />
+                      System
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="light" closeOnClick>
+                      <SunIcon />
+                      Light
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="dark" closeOnClick>
+                      <MoonIcon />
+                      Dark
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -628,13 +657,13 @@ function AttentionGroup({
           type="button"
           aria-controls={contentID}
           aria-expanded={expanded}
-          className="group/disclosure flex h-9 min-w-0 flex-1 shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-sidebar-foreground/72 outline-hidden transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          className="group/disclosure flex h-9 min-w-0 flex-1 shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           onClick={onToggle}
         >
           <ChevronRightIcon
             aria-hidden="true"
             className={cn(
-              "mr-1 size-3.5 shrink-0 stroke-[1.5] text-sidebar-foreground/40 transition-transform motion-reduce:transition-none",
+              "mr-1 size-3.5 shrink-0 stroke-[1.5] text-muted-foreground transition-transform motion-reduce:transition-none",
               expanded && "rotate-90",
             )}
           />
@@ -653,7 +682,7 @@ function AttentionGroup({
         {action}
       </div>
       <SidebarGroupContent id={contentID} hidden={!expanded}>
-        <SidebarMenu className="mx-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2">
+        <SidebarMenu className="mx-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2">
           {children}
         </SidebarMenu>
       </SidebarGroupContent>
@@ -739,7 +768,7 @@ function AppointmentFolder({
         type="button"
         aria-controls={contentID}
         aria-expanded={expanded}
-        className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground/70 outline-hidden transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
         onClick={onToggle}
       >
         <ChevronRightIcon
@@ -757,7 +786,7 @@ function AppointmentFolder({
       <SidebarMenu
         id={contentID}
         hidden={!expanded}
-        className="ml-3 w-auto gap-0.5 border-l border-sidebar-border/70 py-1 pl-2"
+        className="ml-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2"
       >
         {outcomes.map((interaction) => (
           <AIOutcomeRow
@@ -936,7 +965,7 @@ function TaskRow({
                   aria-label={`Complete Task: ${task.title}`}
                   aria-busy={completionPending || undefined}
                   disabled={completionDisabled}
-                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md text-sidebar-foreground/62 opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-success/12 hover:text-success focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
+                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-sidebar-accent hover:text-success focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
                   onClick={(event) => {
                     event.stopPropagation()
                     onComplete()
@@ -1235,7 +1264,7 @@ function RailShowMore({
     <SidebarMenuItem className="px-1 py-1">
       <button
         type="button"
-        className="flex h-8 w-full items-center justify-center rounded-md text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-60"
+        className="flex h-8 w-full items-center justify-center rounded-md text-xs font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-60"
         disabled={loading}
         onClick={onLoadMore}
       >
