@@ -192,6 +192,9 @@ export function CallingDock({
   const [mediaState, setMediaState] = useState<MediaState>("unavailable")
   const [available, setAvailable] = useState(false)
   const [ringingLegs, setRingingLegs] = useState<RingingCallLeg[]>([])
+  const [readyIncomingMediaTokens, setReadyIncomingMediaTokens] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [pendingOutcome, setPendingOutcome] = useState<CallingCall>()
   const [expectedCallID, setExpectedCallID] = useState("")
@@ -235,6 +238,33 @@ export function CallingDock({
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
   const notificationsRef = useRef(new Map<string, Notification>())
+  const rememberIncomingLeg = useCallback((leg: IncomingMediaLeg) => {
+    incomingLegsRef.current.set(leg.mediaToken, leg)
+    setReadyIncomingMediaTokens((current) => {
+      if (current.has(leg.mediaToken)) return current
+      const next = new Set(current)
+      next.add(leg.mediaToken)
+      return next
+    })
+  }, [])
+  const forgetIncomingLeg = useCallback(
+    (leg: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">) => {
+      const currentLeg = incomingLegsRef.current.get(leg.mediaToken)
+      if (currentLeg && currentLeg.providerLegID !== leg.providerLegID) return
+      incomingLegsRef.current.delete(leg.mediaToken)
+      setReadyIncomingMediaTokens((current) => {
+        if (!current.has(leg.mediaToken)) return current
+        const next = new Set(current)
+        next.delete(leg.mediaToken)
+        return next
+      })
+    },
+    [],
+  )
+  const clearIncomingLegs = useCallback(() => {
+    incomingLegsRef.current.clear()
+    setReadyIncomingMediaTokens(new Set())
+  }, [])
   const clearMediaAttachment = useCallback(() => {
     mediaLegRef.current = null
     setMediaAttached(false)
@@ -513,6 +543,7 @@ export function CallingDock({
         return
       }
       if (route === "REJECT") {
+        forgetIncomingLeg(leg)
         await rejectMediaLeg(leg)
         return
       }
@@ -554,9 +585,16 @@ export function CallingDock({
         await rejectMediaLeg(leg)
         return
       }
-      incomingLegsRef.current.set(leg.mediaToken, leg)
+      rememberIncomingLeg(leg)
     },
-    [applyActiveCall, clearMediaAttachment, rejectMediaLeg, sessionID],
+    [
+      applyActiveCall,
+      clearMediaAttachment,
+      forgetIncomingLeg,
+      rejectMediaLeg,
+      rememberIncomingLeg,
+      sessionID,
+    ],
   )
 
   const connectMedia = useCallback(async (ownedLease?: SoftphoneState) => {
@@ -674,6 +712,7 @@ export function CallingDock({
         setAvailabilityPending(false)
         return
       }
+      clearIncomingLegs()
       await adapterRef.current?.disconnect()
       const adapter = createCallingMediaAdapter()
       adapterRef.current = adapter
@@ -687,6 +726,7 @@ export function CallingDock({
               expectedCallRef.current === ""
             void updateReadiness(mayReceiveCalls, state)
           } else if (state === "unavailable" || state === "reconnecting") {
+            clearIncomingLegs()
             setAvailable(false)
             availabilityRef.current = false
             mediaLegRef.current = mediaAttachmentAfterState(
@@ -702,7 +742,7 @@ export function CallingDock({
         onEnded: (leg) => {
           const attached = mediaLegRef.current
           const answering = answeredInboundLegRef.current
-          incomingLegsRef.current.delete(leg.mediaToken)
+          forgetIncomingLeg(leg)
           if (
             !(
               attached?.providerLegID === leg.providerLegID &&
@@ -751,6 +791,8 @@ export function CallingDock({
     handleIncoming,
     applyActiveCall,
     clearMediaAttachment,
+    clearIncomingLegs,
+    forgetIncomingLeg,
     rememberAvailabilityIntent,
     sessionID,
     updateReadiness,
@@ -968,7 +1010,7 @@ export function CallingDock({
       setMediaState("unavailable")
       mediaStateRef.current = "unavailable"
       setRingingLegs([])
-      incomingLegsRef.current.clear()
+      clearIncomingLegs()
       mediaLegRef.current = null
       clearAnsweredInboundLeg()
       setMediaAttached(false)
@@ -978,7 +1020,7 @@ export function CallingDock({
       probeStreamRef.current?.getTracks().forEach((track) => track.stop())
       probeStreamRef.current = null
     },
-    [clearAnsweredInboundLeg],
+    [clearAnsweredInboundLeg, clearIncomingLegs],
   )
 
   const refreshOwnershipNow = useCallback(async () => {
@@ -1272,8 +1314,12 @@ export function CallingDock({
     setAudioIssue(false)
     const leg = incomingLegsRef.current.get(ringingLeg.mediaToken)
     if (!leg) {
-      setError("The browser media invite is still converging. Try Answer again.")
-      await refreshCallingState()
+      setReadyIncomingMediaTokens((current) => {
+        if (!current.has(ringingLeg.mediaToken)) return current
+        const next = new Set(current)
+        next.delete(ringingLeg.mediaToken)
+        return next
+      })
       return
     }
     answeredInboundLegRef.current = {
@@ -1283,6 +1329,7 @@ export function CallingDock({
       mediaToken: leg.mediaToken,
     }
     setInboundCallControlReady(false)
+    forgetIncomingLeg(leg)
     try {
       const outcome = await leg.answer()
       if (outcome === "ended") {
@@ -1297,7 +1344,6 @@ export function CallingDock({
       await refreshCallingState()
       return
     }
-    incomingLegsRef.current.delete(ringingLeg.mediaToken)
     mediaLegRef.current = leg
     setMediaAttached(true)
     setExpectedCallID(ringingLeg.callId)
@@ -1519,6 +1565,7 @@ export function CallingDock({
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
             ringingLegs={activeOffers}
+            readyMediaTokens={readyIncomingMediaTokens}
             now={now}
             error={error}
             onAnswer={(leg) => void answerRingingLeg(leg)}
@@ -1695,11 +1742,13 @@ export function CallingDock({
 
 function IncomingCallControls({
   ringingLegs,
+  readyMediaTokens,
   now,
   error,
   onAnswer,
 }: {
   ringingLegs: RingingCallLeg[]
+  readyMediaTokens: ReadonlySet<string>
   now: number
   error: string
   onAnswer: (leg: RingingCallLeg) => void
@@ -1713,6 +1762,7 @@ function IncomingCallControls({
     >
       {ringingLegs.map((leg) => {
         const phone = formatPhone(leg.phone)
+        const mediaReady = readyMediaTokens.has(leg.mediaToken)
         const displayName = leg.displayName.trim()
         const showDisplayName =
           Boolean(displayName) && displayName.toLowerCase() !== "incoming caller"
@@ -1741,13 +1791,21 @@ function IncomingCallControls({
               >
                 {offerSecondsRemaining(leg.deadline, now)}s
               </Badge>
-              <Button
-                size="sm"
-                aria-label={`Answer ${phone}`}
-                onClick={() => onAnswer(leg)}
-              >
-                Answer
-              </Button>
+              <div className="flex items-center gap-3">
+                {!mediaReady && (
+                  <span className="text-sm text-muted-foreground">
+                    Connecting audio…
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  aria-label={`Answer ${phone}`}
+                  disabled={!mediaReady}
+                  onClick={() => onAnswer(leg)}
+                >
+                  Answer
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         )
