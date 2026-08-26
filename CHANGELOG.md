@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.5](https://github.com/chasef07/acuity_product/compare/v0.4.4...v0.4.5) (2026-08-26)
+
+
+### Bug Fixes
+
+* **calling:** authorize deferred hangup target binding ([#208](https://github.com/chasef07/acuity_product/issues/208)) ([a5d648c](https://github.com/chasef07/acuity_product/commit/a5d648cab33533c3625843d868945b30fa4c1e86))
+* **calling:** deepen outgoing CallLeg control ([4808775](https://github.com/chasef07/acuity_product/commit/480877581842134b40afec5cdac67bb86f969852)), closes [#188](https://github.com/chasef07/acuity_product/issues/188)
+
 ## [0.4.4](https://github.com/chasef07/acuity_product/compare/v0.4.3...v0.4.4) (2026-08-26)
 
 
