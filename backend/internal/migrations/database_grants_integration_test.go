@@ -3,6 +3,7 @@ package migrations_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
@@ -245,6 +246,10 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 	`); err != nil {
 		t.Fatalf("seed runtime grant query receipt: %v", err)
 	}
+	deferredHangupTargets := map[string]deferredHangupTarget{
+		"acuity_portal": seedDeferredHangupTarget(t, pool, "portal"),
+		"acuity_worker": seedDeferredHangupTarget(t, pool, "worker"),
+	}
 	queries := map[string][]string{
 		"acuity_auth": {
 			`SELECT id FROM auth."user" WHERE false`,
@@ -413,10 +418,92 @@ func assertRepresentativeRuntimeQueries(t *testing.T, pool *pgxpool.Pool) {
 				t.Fatalf("%s representative query failed: %v", role, err)
 			}
 		}
+		if target, ok := deferredHangupTargets[role]; ok {
+			var boundCommandID string
+			if err := tx.QueryRow(context.Background(), `
+				UPDATE human_calling_provider_commands
+				SET target_id = $2, depends_on_command_id = NULL, updated_at = $3
+				WHERE id = (
+					SELECT id FROM human_calling_provider_commands
+					WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+						AND target_id IS NULL AND state = 'PENDING'
+					ORDER BY created_at, id
+					LIMIT 1
+					FOR UPDATE
+				)
+				RETURNING id::text
+			`, target.callLegID, target.providerTargetID, time.Date(
+				2026, time.August, 26, 22, 13, 8, 0, time.UTC,
+			)).Scan(&boundCommandID); err != nil {
+				_ = tx.Rollback(context.Background())
+				t.Fatalf("%s bind deferred Hangup target: %v", role, err)
+			}
+			if boundCommandID != target.commandID {
+				_ = tx.Rollback(context.Background())
+				t.Fatalf(
+					"%s bound deferred Hangup command = %q, want %q",
+					role,
+					boundCommandID,
+					target.commandID,
+				)
+			}
+		}
 		if err := tx.Rollback(context.Background()); err != nil {
 			t.Fatalf("rollback %s grant query verification: %v", role, err)
 		}
 	}
+}
+
+type deferredHangupTarget struct {
+	commandID        string
+	callLegID        string
+	providerTargetID string
+}
+
+func seedDeferredHangupTarget(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	role string,
+) deferredHangupTarget {
+	t.Helper()
+	target := deferredHangupTarget{providerTargetID: "grant-contract-" + role + "-target"}
+	if err := pool.QueryRow(context.Background(), `
+		WITH practice AS (
+			INSERT INTO access_practices (provisioning_key, name)
+			VALUES ($1, $2)
+			RETURNING id
+		), location AS (
+			INSERT INTO access_locations (practice_id, provisioning_key, name)
+			SELECT id, 'main', 'Main' FROM practice
+			RETURNING practice_id, id
+		), seeded_call AS (
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point
+			)
+			SELECT practice_id, id, 'OUTBOUND', 'STANDALONE' FROM location
+			RETURNING id
+		), call_leg AS (
+			INSERT INTO human_calling_call_legs (
+				call_id, role, sequence, state
+			)
+			SELECT id, 'CALLER', 1, 'PENDING' FROM seeded_call
+			RETURNING id, call_id
+		), command AS (
+			INSERT INTO human_calling_provider_commands (
+				call_id, call_leg_id, action, payload, state
+			)
+			SELECT call_id, id, 'HANGUP_LEG', '{}'::jsonb, 'PENDING'
+			FROM call_leg
+			RETURNING id, call_leg_id
+		)
+		SELECT id::text, call_leg_id::text FROM command
+	`, "grant-contract-deferred-hangup-"+role, "Deferred Hangup "+role).Scan(
+		&target.commandID,
+		&target.callLegID,
+	); err != nil {
+		t.Fatalf("seed %s deferred Hangup target: %v", role, err)
+	}
+	return target
 }
 
 func createDatabaseRoles(t *testing.T, pool *pgxpool.Pool) {
@@ -843,6 +930,8 @@ func expectedColumnPrivileges() map[string]bool {
 		"acuity_portal",
 		"public.human_calling_provider_commands",
 		"UPDATE",
+		"target_id",
+		"depends_on_command_id",
 		"state",
 		"attempts",
 		"sent_at",
@@ -854,6 +943,8 @@ func expectedColumnPrivileges() map[string]bool {
 		"acuity_worker",
 		"public.human_calling_provider_commands",
 		"UPDATE",
+		"target_id",
+		"depends_on_command_id",
 		"state",
 		"attempts",
 		"sent_at",

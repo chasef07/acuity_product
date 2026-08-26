@@ -133,6 +133,8 @@ GRANT INSERT ON TABLE
 TO acuity_portal;
 
 GRANT UPDATE (
+    target_id,
+    depends_on_command_id,
     state,
     attempts,
     sent_at,
@@ -469,6 +471,8 @@ GRANT DELETE ON TABLE
 TO acuity_worker;
 
 GRANT UPDATE (
+    target_id,
+    depends_on_command_id,
     state,
     attempts,
     sent_at,
