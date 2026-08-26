@@ -1,18 +1,17 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
+
 import { ImageResponse } from "next/og"
 
-export const alt = "Acuity — Voice agents for medical enterprises"
+export const alt = "Acuity: AI agents for medical enterprises"
 export const size = { width: 1200, height: 630 }
 export const contentType = "image/png"
 
-const dots = [
-  [70, 18],
-  [38, 36],
-  [102, 36],
-  [70, 54],
-  [38, 72],
-  [102, 72],
-  [70, 90],
-]
+const logoData = await readFile(
+  join(process.cwd(), "src/app/acuity-health-mark-og.png"),
+  "base64",
+)
+const logoSrc = `data:image/png;base64,${logoData}`
 
 export default function OpenGraphImage() {
   return new ImageResponse(
@@ -39,29 +38,7 @@ export default function OpenGraphImage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
-            <div
-              style={{
-                width: 140,
-                height: 108,
-                position: "relative",
-                display: "flex",
-              }}
-            >
-              {dots.map(([left, top]) => (
-                <span
-                  key={`${left}-${top}`}
-                  style={{
-                    position: "absolute",
-                    left,
-                    top,
-                    width: 15,
-                    height: 15,
-                    borderRadius: 999,
-                    background: "#101820",
-                  }}
-                />
-              ))}
-            </div>
+            <img alt="" height="108" src={logoSrc} width="108" />
             <span style={{ fontFamily: "Arial, sans-serif", fontSize: 34, fontWeight: 700 }}>
               Acuity
             </span>
@@ -84,7 +61,7 @@ export default function OpenGraphImage() {
                 textTransform: "uppercase",
               }}
             >
-              Voice agents for medical enterprises
+              AI agents for medical enterprises
             </span>
           </div>
         </div>

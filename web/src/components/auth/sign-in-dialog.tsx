@@ -1,12 +1,10 @@
 "use client"
 
-import { ArrowRight } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { Suspense, useState } from "react"
 
 import { AcuityMark } from "@/components/acuity-mark"
 import { SignInForm } from "@/components/auth/sign-in-form"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -23,11 +21,9 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 
-export function PortalSignInTrigger() {
+export function PortalSignInTrigger({ className }: { className?: string }) {
   return (
-    <DialogTrigger render={<Button className="rounded-full" size="sm" />}>
-      Portal <ArrowRight data-icon="inline-end" />
-    </DialogTrigger>
+    <DialogTrigger className={className}>Sign in</DialogTrigger>
   )
 }
 

@@ -6,7 +6,7 @@ test("enterprise story leads from medical voice to the Acuity Method", async ({ 
   await expect(
     page.getByRole("heading", { name: "Redesign patient access." }),
   ).toBeVisible()
-  await expect(page.getByText("Voice agents", { exact: true })).toBeVisible()
+  await expect(page.getByText("AI agents", { exact: true })).toBeVisible()
   await expect(page.getByText("for medical enterprises", { exact: true })).toBeVisible()
   await expect(page.getByText("Built for enterprise")).toBeVisible()
 })
@@ -19,14 +19,16 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
-  await expect(page.getByText("Medical voice agents")).toBeVisible()
+  await expect(page.getByText("Medical AI agents")).toBeVisible()
   await expect(
     page.getByRole("heading", { name: "A working operation creates measurable capacity." }),
   ).toBeVisible()
 
   await page.getByRole("link", { name: "Who We Are" }).first().click()
   await expect(page).toHaveURL(/\/who-we-are$/)
-  await expect(page.getByText("Acuity began as a consulting relationship.")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Acuity began as a consulting relationship." }),
+  ).toBeVisible()
 })
 
 test("work with us links land on the conversation", async ({ page }) => {

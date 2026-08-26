@@ -1,5 +1,3 @@
-import { SignInDialog } from "@/components/auth/sign-in-dialog"
-
 import { EnterpriseHome } from "./enterprise-site"
 
 export function MarketingPage({
@@ -7,12 +5,5 @@ export function MarketingPage({
 }: {
   initiallyOpen?: boolean
 }) {
-  return (
-    <SignInDialog
-      key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
-      initiallyOpen={initiallyOpen}
-    >
-      <EnterpriseHome />
-    </SignInDialog>
-  )
+  return <EnterpriseHome initiallyOpen={initiallyOpen} />
 }

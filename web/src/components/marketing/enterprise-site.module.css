@@ -78,7 +78,13 @@
 
 .navLink,
 .portalLink {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--marketing-ink-soft);
+  cursor: pointer;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 520;
   transition: color 180ms ease;
@@ -155,7 +161,6 @@
 }
 
 .hero h1,
-.interiorHero h1,
 .workHero h1 {
   max-width: 850px;
   margin: 0;
@@ -222,109 +227,6 @@
   padding-bottom: 4px;
 }
 
-.voiceField {
-  min-height: clamp(470px, 51vw, 650px);
-  position: relative;
-  display: grid;
-  place-items: center;
-  isolation: isolate;
-  color: var(--marketing-blue-deep);
-}
-
-.voiceField::before {
-  width: 76%;
-  aspect-ratio: 1;
-  position: absolute;
-  z-index: -1;
-  top: 12%;
-  left: 12%;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgb(255 255 255 / 0.48), transparent 66%);
-  content: "";
-  filter: blur(18px);
-}
-
-.voiceAgentPanel {
-  width: 100%;
-  min-height: inherit;
-  position: relative;
-  color: var(--marketing-blue-deep);
-}
-
-.voiceAgentPanel::before {
-  position: absolute;
-  inset: 2% -2% 0;
-  background-image: radial-gradient(rgb(37 51 74 / 0.34) 1px, transparent 1px);
-  background-size: 12px 12px;
-  content: "";
-  mask-image: radial-gradient(ellipse 54% 48% at 47% 44%, black 20%, transparent 78%);
-  pointer-events: none;
-}
-
-.voiceAgentWave {
-  width: min(100%, 470px);
-  height: 220px;
-  position: absolute;
-  z-index: 1;
-  top: 42%;
-  left: 47%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: clamp(9px, 1.25vw, 16px);
-  isolation: isolate;
-  transform: translate(-50%, -50%);
-}
-
-.voiceAgentWave i {
-  width: clamp(5px, 0.5vw, 7px);
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  overflow: hidden;
-  border-radius: 3px;
-  animation: voiceLineFloat 6.2s ease-in-out infinite alternate;
-}
-
-.voiceAgentWave i span {
-  width: 100%;
-  aspect-ratio: 1;
-  display: block;
-  flex: 0 0 auto;
-  background: var(--marketing-blue-deep);
-  box-shadow: 0 0 10px rgb(37 51 74 / 0.08);
-}
-
-.voiceAgentCaption {
-  max-width: 430px;
-  margin: 0;
-  position: absolute;
-  z-index: 1;
-  right: 2%;
-  bottom: 7%;
-  display: grid;
-  justify-items: end;
-  color: var(--marketing-blue-deep);
-  text-align: right;
-}
-
-.voiceAgentCaption span {
-  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.voiceAgentCaption strong {
-  margin-top: 5px;
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(1.6rem, 2.35vw, 2.55rem);
-  font-weight: 400;
-  letter-spacing: -0.045em;
-  line-height: 1;
-}
-
 .waveform {
   height: 64px;
   display: flex;
@@ -367,10 +269,6 @@
 .proofSection .eyebrow,
 .fitStatement .eyebrow {
   color: var(--marketing-sage);
-}
-
-.methodSection {
-  padding: clamp(44px, 4.5vw, 62px) max(5vw, calc((100vw - 1400px) / 2));
 }
 
 .methodPageVenn {
@@ -447,7 +345,6 @@
 .proofSection h2,
 .storyPreview h2,
 .partnershipCta h2,
-.stagesSection h2,
 .commitmentSection h2,
 .foundingStory h1,
 .foundersSection h2,
@@ -480,10 +377,6 @@
   align-items: center;
 }
 
-.vennCompact {
-  margin-top: clamp(24px, 2.6vw, 32px);
-}
-
 .vennCircle {
   width: 100%;
   aspect-ratio: 1;
@@ -506,20 +399,6 @@
   grid-column: 2 / 4;
   justify-content: flex-end;
   background: rgb(83 106 145 / 0.3);
-}
-
-.vennCompact .vennCopy {
-  padding-right: clamp(38px, 5vw, 66px);
-  padding-left: clamp(38px, 5vw, 66px);
-}
-
-.vennCompact .vennCopy p {
-  margin-bottom: 18px;
-  font-size: clamp(1.55rem, 2.25vw, 2.15rem);
-}
-
-.vennCompact .vennCopy ul {
-  font-size: clamp(0.84rem, 1vw, 0.96rem);
 }
 
 .vennCopy {
@@ -571,10 +450,6 @@
   font-weight: 550;
   letter-spacing: -0.04em;
   line-height: 1;
-}
-
-.methodSection > .inlineArrowLink {
-  margin-top: 16px;
 }
 
 .inlineArrowLink {
@@ -814,7 +689,6 @@
   font-size: 12px;
 }
 
-.interiorHero,
 .workHero {
   min-height: 590px;
   padding: clamp(90px, 12vw, 170px) max(6vw, calc((100vw - 1320px) / 2));
@@ -823,82 +697,6 @@
   background:
     radial-gradient(circle at 82% 20%, rgb(255 255 255 / 0.62), transparent 25%),
     linear-gradient(140deg, #eef3ef, var(--marketing-sage));
-}
-
-.interiorHero h1 {
-  max-width: 1180px;
-}
-
-.interiorHero > p:last-child {
-  max-width: 720px;
-  margin: 40px 0 0 auto;
-  color: var(--marketing-sage-deep);
-  font-size: clamp(1.08rem, 1.6vw, 1.35rem);
-  line-height: 1.65;
-}
-
-.stagesSection {
-  padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
-  background: var(--marketing-ink);
-  color: white;
-}
-
-.stagesSection header {
-  max-width: 1000px;
-}
-
-.stagesSection .eyebrow {
-  color: var(--marketing-sage);
-}
-
-.stagesSection header > p:last-child {
-  max-width: 620px;
-  margin: 26px 0 0;
-  color: rgb(255 255 255 / 0.62);
-  font-size: 1rem;
-}
-
-.stagesSection ol {
-  margin: 0;
-  padding: 0;
-  display: grid;
-  list-style: none;
-}
-
-.stagesSection li {
-  min-height: 150px;
-  padding: 30px 0;
-  display: grid;
-  grid-template-columns: 80px minmax(180px, 0.42fr) minmax(0, 1fr);
-  align-items: baseline;
-  gap: 28px;
-  border-top: 1px solid rgb(255 255 255 / 0.2);
-}
-
-.stagesSection li:last-child {
-  border-bottom: 1px solid rgb(255 255 255 / 0.2);
-}
-
-.stagesSection li > span {
-  color: var(--marketing-sage);
-  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
-  font-size: 10px;
-}
-
-.stagesSection h3 {
-  margin: 0;
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(2rem, 3.4vw, 3.8rem);
-  font-weight: 400;
-  letter-spacing: -0.05em;
-}
-
-.stagesSection li p {
-  max-width: 680px;
-  margin: 0;
-  color: rgb(255 255 255 / 0.62);
-  font-size: 1rem;
-  line-height: 1.65;
 }
 
 .commitmentSection {
@@ -1213,11 +1011,6 @@
   max-width: 1180px;
 }
 
-@keyframes voiceLineFloat {
-  from { transform: translateY(-9px); }
-  to { transform: translateY(9px); }
-}
-
 @media (max-width: 1100px) {
   .siteHeader {
     gap: 24px;
@@ -1352,10 +1145,6 @@
     padding-top: 20px;
   }
 
-  .voiceField {
-    min-height: 520px;
-  }
-
   .sectionHeader,
   .enterpriseDifference,
   .proofSection,
@@ -1370,11 +1159,6 @@
 
   .venn {
     --venn-overlap: 138px;
-  }
-
-  .vennCompact .vennCopy {
-    padding-right: 34px;
-    padding-left: 34px;
   }
 
   .methodPageVenn {
@@ -1471,7 +1255,6 @@
   }
 
   .hero h1,
-  .interiorHero h1,
   .workHero h1 {
     font-size: clamp(3.6rem, 18vw, 5.3rem);
   }
@@ -1480,38 +1263,12 @@
     font-size: 1rem;
   }
 
-  .voiceField {
-    min-height: 410px;
-    margin: 0 -14px;
-  }
-
-  .voiceAgentPanel {
-    width: 100%;
-  }
-
-  .voiceAgentWave {
-    top: 39%;
-    left: 50%;
-  }
-
-  .voiceAgentCaption {
-    right: 5%;
-    bottom: 6%;
-  }
-
-  .voiceAgentCaption strong {
-    max-width: 250px;
-    font-size: 1.65rem;
-  }
-
   .proofSection,
   .fitStatement,
-  .methodSection,
   .methodPageVenn,
   .enterpriseDifference,
   .storyPreview,
   .partnershipCta,
-  .stagesSection,
   .commitmentSection,
   .foundingStory,
   .foundersSection,
@@ -1530,8 +1287,7 @@
     padding-bottom: 96px;
   }
 
-  .venn,
-  .vennCompact {
+  .venn {
     margin-top: 46px;
     display: grid;
     grid-template-columns: 1fr;
@@ -1590,15 +1346,6 @@
     color: white;
   }
 
-  .stagesSection li {
-    grid-template-columns: 42px 1fr;
-    gap: 16px;
-  }
-
-  .stagesSection li p {
-    grid-column: 2;
-  }
-
   .proofMetrics {
     grid-template-columns: 1fr;
   }
@@ -1622,14 +1369,9 @@
     gap: 12px;
   }
 
-  .interiorHero,
   .workHero {
     min-height: 500px;
     padding: 80px 24px 54px;
-  }
-
-  .interiorHero > p:last-child {
-    margin-left: 0;
   }
 
   .foundingStory {
@@ -1649,10 +1391,6 @@
 @media (prefers-reduced-motion: reduce) {
   .founderPortrait img {
     transition: none;
-  }
-
-  .voiceAgentWave i {
-    animation: none;
   }
 
   .darkButton,

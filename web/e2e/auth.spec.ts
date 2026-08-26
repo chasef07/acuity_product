@@ -2,17 +2,14 @@ import { expect, test } from "@playwright/test"
 
 import { signInAs } from "./support"
 
-test("homepage portal link opens a Google-only sign-in dialog", async ({
+test("homepage opens a Google-only sign-in dialog", async ({
   page,
 }) => {
   await page.goto("/")
 
   await expect(page.getByTestId("sign-in-dialog")).toBeHidden()
-  await page
-    .getByRole("banner")
-    .getByRole("link", { name: "Portal sign in" })
-    .click()
-  await expect(page).toHaveURL(/\/sign-in$/)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL("/")
 
   const card = page.getByTestId("sign-in-card")
   await expect(
@@ -24,6 +21,19 @@ test("homepage portal link opens a Google-only sign-in dialog", async ({
   await expect(card.getByText("Secure Google sign-in")).toBeVisible()
   await expect(card.getByLabel("Email")).toBeHidden()
   await expect(card.getByLabel("Password")).toBeHidden()
+})
+
+test("interior marketing pages open the same sign-in dialog in place", async ({
+  page,
+}) => {
+  await page.goto("/method")
+
+  await page.getByRole("button", { name: "Sign in" }).click()
+
+  await expect(page).toHaveURL(/\/method$/)
+  await expect(
+    page.getByRole("dialog", { name: "Sign in to Acuity" }),
+  ).toBeVisible()
 })
 
 test("Google sign-in opens in a popup and leaves the portal in place", async ({
@@ -38,10 +48,7 @@ test("Google sign-in opens in a popup and leaves the portal in place", async ({
       })
     })
   await page.goto("/")
-  await page
-    .getByRole("banner")
-    .getByRole("link", { name: "Portal sign in" })
-    .click()
+  await page.getByRole("button", { name: "Sign in" }).click()
 
   const popupPromise = page.waitForEvent("popup")
   await page.getByRole("button", { name: "Continue with Google" }).click()
@@ -51,7 +58,7 @@ test("Google sign-in opens in a popup and leaves the portal in place", async ({
   expect(popupURL.pathname).toBe("/api/auth/oauth-popup/start")
   expect(popupURL.searchParams.get("provider")).toBe("google")
   expect(popupURL.searchParams.get("callbackURL")).toBe("/workspace")
-  await expect(page).toHaveURL(/\/sign-in$/)
+  await expect(page).toHaveURL("/")
   await expect(
     page.getByRole("dialog", { name: "Sign in to Acuity" }),
   ).toBeVisible()

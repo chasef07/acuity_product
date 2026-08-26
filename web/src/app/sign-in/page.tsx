@@ -4,7 +4,7 @@ import { connection } from "next/server"
 import { MarketingPage } from "@/components/marketing/marketing-page"
 
 export const metadata: Metadata = {
-  title: "Portal Sign In",
+  title: "Sign In",
   robots: {
     index: false,
     follow: false,

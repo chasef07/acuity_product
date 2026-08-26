@@ -6,6 +6,10 @@ import { ArrowRight, Check } from "lucide-react"
 import { Geist, Newsreader } from "next/font/google"
 
 import { AcuityMark } from "@/components/acuity-mark"
+import {
+  PortalSignInTrigger,
+  SignInDialog,
+} from "@/components/auth/sign-in-dialog"
 import { cn } from "@/lib/utils"
 
 import { PixelWaveField } from "./pixel-wave-field"
@@ -54,9 +58,7 @@ function SiteHeader({ current }: { current: MarketingRoute }) {
       </nav>
 
       <div className={styles.headerActions}>
-        <Link className={styles.portalLink} href="/sign-in">
-          Portal sign in
-        </Link>
+        <PortalSignInTrigger className={styles.portalLink} />
         <Link className={styles.workLink} href="/work-with-us#conversation">
           Work With Us
         </Link>
@@ -77,7 +79,7 @@ function SiteFooter() {
         <Link href="/method">The Acuity Method</Link>
         <Link href="/who-we-are">Who We Are</Link>
         <Link href="/work-with-us#conversation">Work With Us</Link>
-        <Link href="/sign-in">Portal sign in</Link>
+        <Link href="/sign-in">Sign in</Link>
       </div>
     </footer>
   )
@@ -86,19 +88,26 @@ function SiteFooter() {
 export function MarketingFrame({
   children,
   current,
+  initiallyOpen = false,
 }: {
   children: ReactNode
   current: MarketingRoute
+  initiallyOpen?: boolean
 }) {
   return (
-    <div className={cn(styles.site, sans.variable, display.variable)}>
-      <a className={styles.skipLink} href="#main-content">
-        Skip to main content
-      </a>
-      <SiteHeader current={current} />
-      <main id="main-content">{children}</main>
-      <SiteFooter />
-    </div>
+    <SignInDialog
+      key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
+      initiallyOpen={initiallyOpen}
+    >
+      <div className={cn(styles.site, sans.variable, display.variable)}>
+        <a className={styles.skipLink} href="#main-content">
+          Skip to main content
+        </a>
+        <SiteHeader current={current} />
+        <main id="main-content">{children}</main>
+        <SiteFooter />
+      </div>
+    </SignInDialog>
   )
 }
 
@@ -115,14 +124,14 @@ function Waveform({ compact = false }: { compact?: boolean }) {
   )
 }
 
-export function MethodVenn({ compact = false }: { compact?: boolean }) {
+export function MethodVenn() {
   return (
-    <div className={cn(styles.venn, compact && styles.vennCompact)}>
+    <div className={styles.venn}>
       <div className={cn(styles.vennCircle, styles.vennSystem)}>
         <div className={styles.vennCopy}>
           <p>Agentic<br /><span>system design</span></p>
           <ul>
-            <li>Medical voice agents</li>
+            <li>Medical AI agents</li>
             <li>Evals + safeguards</li>
             <li>Enterprise integrations</li>
           </ul>
@@ -179,9 +188,13 @@ function PartnershipCta() {
   )
 }
 
-export function EnterpriseHome() {
+export function EnterpriseHome({
+  initiallyOpen = false,
+}: {
+  initiallyOpen?: boolean
+}) {
   return (
-    <MarketingFrame current="/">
+    <MarketingFrame current="/" initiallyOpen={initiallyOpen}>
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
           <h1>Redesign patient access.</h1>
@@ -236,7 +249,7 @@ export function EnterpriseHome() {
           <h2>We started close to the work.</h2>
           <p>
             Consulting taught us the hard part was not answering the phone. It
-            was understanding the workflow—and staying long enough to redesign
+            was understanding the workflow and staying long enough to redesign
             it with the people who run it.
           </p>
           <Link className={styles.inlineArrowLink} href="/who-we-are">
@@ -339,7 +352,7 @@ export function WhoWeArePageContent() {
             <p>
               Working closely with medical practices taught us that the hard part
               was never simply teaching a model to answer the phone. It was
-              understanding how the practice actually worked—how scheduling rules
+              understanding how the practice actually worked: how scheduling rules
               changed by location, where handoffs failed, which exceptions required
               judgment, and what staff and patients needed to trust the system.
               Making the technology useful required workflow redesign, frontline

@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   publisher: siteConfig.name,
   category: "Healthcare technology",
   keywords: [
-    "medical voice agents",
+    "medical AI agents",
     "enterprise healthcare AI",
     "patient access",
     "healthcare workflow automation",
