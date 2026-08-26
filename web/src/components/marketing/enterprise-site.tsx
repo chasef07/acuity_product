@@ -422,11 +422,34 @@ export function WhoWeArePageContent() {
       </section>
 
       <section className={styles.principlesSection}>
-        <p className={styles.eyebrow}>How we work</p>
+        <p className={styles.eyebrow}>How we build</p>
         <div>
-          <article><span>Radical simplicity</span><p>Solve the real problem with fewer moving parts.</p></article>
-          <article><span>Craft</span><p>Make the full journey precise and dependable.</p></article>
-          <article><span>Failure analysis</span><p>Make failure visible, learn, and improve continuously.</p></article>
+          <article>
+            <div>
+              <h3>Radical simplicity</h3>
+              <small>KANSO · 簡素</small>
+            </div>
+            <p>We solve the real problem with fewer moving parts.</p>
+          </article>
+          <article>
+            <div>
+              <h3>Craft</h3>
+              <small>MONOZUKURI · ものづくり</small>
+            </div>
+            <p>
+              We make every interaction, handoff, and outcome precise and
+              dependable.
+            </p>
+          </article>
+          <article>
+            <div>
+              <h3>Continuous improvement</h3>
+              <small>KAIZEN · 改善</small>
+            </div>
+            <p>
+              We surface problems, learn from them, and strengthen the system.
+            </p>
+          </article>
         </div>
       </section>
 

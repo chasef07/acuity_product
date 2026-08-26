@@ -39,6 +39,11 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
       "A future where AI runs the administration, humans elevate the care, and no patient falls through the cracks.",
     ),
   ).toBeVisible()
+  await expect(page.getByText("How we build")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Continuous improvement" }),
+  ).toBeVisible()
+  await expect(page.getByText("KAIZEN · 改善")).toBeVisible()
 })
 
 test("work with us links land on the conversation", async ({ page }) => {

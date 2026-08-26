@@ -1000,10 +1000,24 @@
   background: #eef3ef;
 }
 
-.principlesSection span {
+.principlesSection h3 {
+  margin: 0;
   font-family: var(--font-acuity-display), Georgia, serif;
   font-size: clamp(1.8rem, 3vw, 3.2rem);
+  font-weight: 400;
   letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.principlesSection small {
+  margin-top: 14px;
+  display: block;
+  color: var(--marketing-blue);
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.5;
 }
 
 .principlesSection article p {
