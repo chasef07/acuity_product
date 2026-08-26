@@ -1379,17 +1379,38 @@ export function CallingDock({
       body: { sessionId: sessionID },
     }).catch(() => undefined)
     if (!result?.data) {
-      setEndingCallID((current) => (current === callID ? "" : current))
       const failure = hangupFailure({
         status: result?.response?.status,
         code: result?.error?.error.code,
       })
-      if (failure === "conflict") {
+      const clearEnding = () =>
+        setEndingCallID((current) => (current === callID ? "" : current))
+      if (failure === "authentication") {
+        clearEnding()
+        setError(
+          "Your authentication or Call access needs to be refreshed before you try End again.",
+        )
+        return
+      }
+      if (failure === "conflict" || failure === "retry") {
         const refreshed = await refreshCall(callID)
-        if (refreshed?.call && callIsSettled(refreshed.call.state)) {
-          setError("")
+        if (refreshed?.call) {
+          if (
+            callIsSettled(refreshed.call.state) ||
+            refreshed.call.endRequested
+          ) {
+            setError("")
+            return
+          }
+          clearEnding()
+          setError(
+            failure === "conflict"
+              ? "Calling ownership or the Call state changed before End."
+              : "End was not committed. Check your connection and try again.",
+          )
           return
         }
+        clearEnding()
         const reconciliationFailure = hangupFailure({
           status: refreshed?.status,
         })
@@ -1399,27 +1420,16 @@ export function CallingDock({
           )
           return
         }
-        if (reconciliationFailure === "retry") {
+        if (failure === "retry" || reconciliationFailure === "retry") {
           setError(
-            "End status could not be refreshed. Check your connection and try again.",
+            "End status could not be confirmed. Check your connection before trying again.",
           )
           return
         }
         setError("Calling ownership or the Call state changed before End.")
         return
       }
-      if (failure === "authentication") {
-        setError(
-          "Your authentication or Call access needs to be refreshed before you try End again.",
-        )
-        return
-      }
-      if (failure === "retry") {
-        setError(
-          "End was not committed. Check your connection and try again.",
-        )
-        return
-      }
+      clearEnding()
       setError("End is not available for the current Call.")
       return
     }

@@ -268,6 +268,24 @@ func (m *Module) finishCallLegCommand(
 			return err
 		}
 	}
+	if state == "PENDING" && isOutboundCallWork(command.Action) {
+		var endRequested bool
+		if err := tx.QueryRow(ctx, `
+			SELECT call.direction = 'OUTBOUND' AND EXISTS (
+				SELECT 1 FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id
+					AND timeline.kind = 'call.hangup.requested'
+			)
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE leg.id = $1
+		`, command.CallLegID).Scan(&endRequested); err != nil {
+			return fmt.Errorf("read outbound End intent after provider work: %w", err)
+		}
+		if endRequested {
+			state = "AMBIGUOUS"
+		}
+	}
 	terminalAbsentStop := false
 	terminalAbsentCallID := ""
 	terminalAbsentPracticeID := ""
@@ -493,6 +511,11 @@ func isCredentialCommand(action CommandAction) bool {
 	return action == CommandCreateCredential || action == CommandDisableCredential
 }
 
+func isOutboundCallWork(action CommandAction) bool {
+	return action == CommandDialOutboundStaff ||
+		action == CommandDialOutboundDestination || action == CommandBridge
+}
+
 func (m *Module) failDialCallLeg(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -624,7 +647,7 @@ func (m *Module) insertCallLegCommand(
 		if targetID != "" {
 			err = tx.QueryRow(ctx, `
 				UPDATE human_calling_provider_commands
-				SET target_id = $2, updated_at = $3
+				SET target_id = $2, depends_on_command_id = NULL, updated_at = $3
 				WHERE id = (
 					SELECT id FROM human_calling_provider_commands
 					WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'

@@ -1018,6 +1018,158 @@ func TestOutboundCallEndCleansUpProviderControlThatArrivesLate(t *testing.T) {
 	}
 }
 
+func TestOutboundCallEndBindsLateControlAfterRejectedAmbiguousDial(t *testing.T) {
+	prefix := "end-rejected-ambiguous-outbound"
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t,
+		prefix,
+		time.Date(2026, time.August, 26, 14, 45, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, prefix+"-call")
+
+	var dialID, staffLegID, clientState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT command.id::text, command.call_leg_id::text,
+			command.payload->>'client_state'
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialID, &staffLegID, &clientState); err != nil {
+		t.Fatalf("read ambiguous outbound Dial: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'AMBIGUOUS', last_error_code = 'SYNTHETIC_TIMEOUT'
+		WHERE id = $1
+	`, dialID); err != nil {
+		t.Fatalf("make outbound Dial ambiguous: %v", err)
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end ambiguous outbound Dial: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'DIAL_OUTBOUND_STAFF_EVENT_ABSENT'
+		WHERE id = $1
+	`, dialID); err != nil {
+		t.Fatalf("reject absent ambiguous outbound Dial: %v", err)
+	}
+
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-late-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt:    time.Date(2026, time.August, 26, 14, 46, 0, 0, time.UTC),
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: prefix + "-late-control",
+		CallLegID:     prefix + "-late-leg", CallSessionID: prefix + "-late-session",
+		ClientState: clientState,
+	}); err != nil {
+		t.Fatalf("project late ambiguous outbound Dial: %v", err)
+	}
+	processAllCommands(t, fixture.calling)
+
+	var hangupState, hangupTarget string
+	var dependencyID *string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, target_id, depends_on_command_id::text
+		FROM human_calling_provider_commands
+		WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+	`, staffLegID).Scan(&hangupState, &hangupTarget, &dependencyID); err != nil {
+		t.Fatalf("read rebound exact Hangup: %v", err)
+	}
+	if hangupState != "SENT" || hangupTarget != prefix+"-late-control" ||
+		dependencyID != nil || provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf(
+			"rebound exact Hangup = state:%s target:%s dependency:%v executions:%d",
+			hangupState, hangupTarget, dependencyID,
+			provider.count(humancalling.CommandHangupLeg),
+		)
+	}
+}
+
+func TestOutboundCallEndDoesNotRetryTransientInFlightDial(t *testing.T) {
+	prefix := "end-transient-inflight-outbound"
+	provider := &recordingProvider{
+		blockAction:  humancalling.CommandDialOutboundStaff,
+		blockStarted: make(chan struct{}), blockRelease: make(chan struct{}),
+		blockError: errors.New("synthetic transient provider failure"),
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		prefix,
+		time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, prefix+"-call")
+	processed := make(chan error, 1)
+	go func() {
+		_, err := fixture.calling.ProcessNextCommand(context.Background())
+		processed <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight outbound Dial did not start")
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end in-flight transient outbound Dial: %v", err)
+	}
+	close(provider.blockRelease)
+	if err := <-processed; err == nil {
+		t.Fatal("transient outbound Dial unexpectedly succeeded")
+	}
+
+	var dialState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialState); err != nil {
+		t.Fatalf("read transient outbound Dial after End: %v", err)
+	}
+	if dialState != "AMBIGUOUS" || provider.count(humancalling.CommandDialOutboundStaff) != 1 {
+		t.Fatalf("transient outbound Dial after End = state:%s executions:%d",
+			dialState, provider.count(humancalling.CommandDialOutboundStaff))
+	}
+}
+
+func TestOutboundCallEndDoesNotRecoverInterruptedDialForRetry(t *testing.T) {
+	prefix := "end-interrupted-outbound"
+	now := time.Date(2026, time.August, 26, 15, 15, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(t, prefix, now, &recordingProvider{})
+	call := fixture.startCall(t, prefix+"-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', updated_at = $2
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("interrupt outbound Dial: %v", err)
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end interrupted outbound Dial: %v", err)
+	}
+	if err := fixture.calling.RecoverInterruptedCommands(context.Background()); err != nil {
+		t.Fatalf("recover interrupted outbound Dial after End: %v", err)
+	}
+
+	var dialState, errorCode string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialState, &errorCode); err != nil {
+		t.Fatalf("read recovered outbound Dial after End: %v", err)
+	}
+	if dialState != "AMBIGUOUS" || errorCode != "PROVIDER_EFFECT_UNCERTAIN" {
+		t.Fatalf("recovered outbound Dial after End = state:%s error:%s",
+			dialState, errorCode)
+	}
+}
+
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)
