@@ -1340,6 +1340,7 @@ export function CallingDock({
     } catch (error) {
       clearAnsweredInboundLeg()
       clearMediaAttachment()
+      rememberIncomingLeg(leg)
       setError(microphoneFailureMessage(error))
       await refreshCallingState()
       return

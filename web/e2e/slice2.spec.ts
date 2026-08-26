@@ -266,13 +266,24 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       expect(selectedAnswer).toBeEnabled(),
       expect(secondaryAnswer).toBeEnabled(),
     ])
+    await failNextMediaAnswer(selectedPage)
+    await selectedAnswer.click()
+    await Promise.all([
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
+      expect(selectedAnswer).toBeEnabled(),
+      expect(
+        selectedPage.getByText(
+          "Browser audio could not be started. Check your microphone and try again.",
+        ),
+      ).toBeVisible(),
+    ])
     await deferMediaAnswer(secondaryPage, secondaryLeg.media_token)
     await Promise.all([
       selectedAnswer.click(),
       secondaryAnswer.dblclick(),
     ])
     await Promise.all([
-      expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(2),
       expect.poll(() => mediaAnswers(secondaryPage)).toBe(1),
     ])
 
@@ -1137,6 +1148,7 @@ async function prepareBrowser(context: BrowserContext) {
   await context.addInitScript(() => {
     const state = {
       answers: 0,
+      answerFailures: 0,
       deferredMediaToken: "",
       finishDeferredAnswer: undefined as undefined | (() => void),
       endedMediaTokens: new Set<string>(),
@@ -1239,6 +1251,10 @@ async function prepareBrowser(context: BrowserContext) {
               recovery,
               answer: async () => {
                 state.answers += 1
+                if (state.answerFailures > 0) {
+                  state.answerFailures -= 1
+                  throw new Error("fixture media answer failed")
+                }
                 if (state.deferredMediaToken === mediaToken) {
                   await new Promise<void>((resolve) => {
                     state.finishDeferredAnswer = resolve
@@ -1322,6 +1338,15 @@ async function mediaAnswers(page: Page) {
         }
       ).__acuityCallingTestState.answers,
   )
+}
+
+async function failNextMediaAnswer(page: Page) {
+  await page.evaluate(() => {
+    const fixture = window as typeof window & {
+      __acuityCallingTestState: { answerFailures: number }
+    }
+    fixture.__acuityCallingTestState.answerFailures += 1
+  })
 }
 
 async function deferMediaAnswer(page: Page, mediaToken: string) {
