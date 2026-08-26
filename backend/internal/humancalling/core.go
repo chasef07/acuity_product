@@ -59,6 +59,7 @@ const (
 	CommandStartRingWindow         CommandAction = "START_RING_WINDOW"
 	CommandDialStaff               CommandAction = "DIAL_STAFF"
 	CommandBridge                  CommandAction = "BRIDGE"
+	CommandTransferStaff           CommandAction = "TRANSFER_STAFF"
 	CommandStopRingWindow          CommandAction = "STOP_RING_WINDOW"
 	CommandHangupLeg               CommandAction = "HANGUP_LEG"
 	CommandSpeakVoicemail          CommandAction = "SPEAK_VOICEMAIL"
@@ -152,6 +153,7 @@ type Config struct {
 	LeaseDuration          time.Duration
 	ReadinessGrace         time.Duration
 	DispositionDuration    time.Duration
+	StaffTransferDuration  time.Duration
 	CallControlID          string
 	CredentialConnectionID string
 	FromNumber             string
@@ -437,6 +439,9 @@ func New(
 	if config.DispositionDuration <= 0 {
 		config.DispositionDuration = 20 * time.Second
 	}
+	if config.StaffTransferDuration <= 0 {
+		config.StaffTransferDuration = 20 * time.Second
+	}
 	if config.StaffSIPDomain == "" {
 		config.StaffSIPDomain = config.HandoffSIPDomain
 	}
@@ -480,6 +485,9 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	state, hasState := parseCallLegClientState(fact.ClientState)
 	switch fact.Type {
 	case FactCallInitiated:
+		if hasState && state.Kind == staffTransferTargetKind {
+			return m.applyStaffTransferTargetFact(ctx, fact)
+		}
 		if hasState && state.Role == "STAFF" {
 			return m.applyStaffInitiated(ctx, fact, state.CallID)
 		}
@@ -491,6 +499,9 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 		}
 		return m.admitHandoff(ctx, fact)
 	case FactCallAnswered:
+		if hasState && state.Kind == staffTransferTargetKind {
+			return m.applyStaffTransferTargetFact(ctx, fact)
+		}
 		if hasState && state.Role == "STAFF" {
 			return m.applyStaffInitiated(ctx, fact, state.CallID)
 		}
@@ -508,6 +519,13 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 		}
 		return m.applyCallerAnswered(ctx, fact)
 	case FactCallBridged:
+		if hasState && (state.Kind == staffTransferTargetKind ||
+			state.Kind == staffTransferSourceKind || state.Kind == staffTransferPeerKind) {
+			if state.Kind == staffTransferTargetKind {
+				return m.applyStaffTransferTargetFact(ctx, fact)
+			}
+			return m.applyStaffTransferBridge(ctx, fact)
+		}
 		if hasState && state.Role == "DESTINATION" {
 			return m.applyOutboundBridge(ctx, fact)
 		}

@@ -85,6 +85,31 @@ func (m *Module) finishEndedCallLeg(
 		fact.SIPCause, quality, m.now()); err != nil {
 		return fmt.Errorf("finish ended CallLeg: %w", err)
 	}
+	handledTransfer, err := m.handleStaffTransferHangupTx(
+		ctx, tx, ended.callID, callLegID, ended.role, fact.OccurredAt,
+	)
+	if err != nil {
+		return err
+	}
+	if handledTransfer {
+		if err := appendTimeline(
+			ctx, tx, ended.callID, ended.practiceID, "call_leg.ended", "",
+			fact.EventID, "", opaqueReference(fact.CallLegID),
+			sanitizeCode(fact.HangupCause), fact.OccurredAt,
+		); err != nil {
+			return err
+		}
+		if _, err := m.access.RecordWorkspaceChange(ctx, tx, ended.practiceID); err != nil {
+			return err
+		}
+		return nil
+	}
+	if ended.role == "CALLER" ||
+		(ended.direction == string(CallOutbound) && ended.role == "DESTINATION") {
+		if err := m.failCallTransfersTx(ctx, tx, ended.callID, "CALL_TERMINATED"); err != nil {
+			return err
+		}
+	}
 	providerTermination := fact.HangupCause
 	if ended.direction == string(CallOutbound) {
 		providerTermination = outboundTermination(fact.HangupCause)

@@ -185,6 +185,7 @@ export type MediaToken = {
 export type CallingState = {
     softphone: SoftphoneState;
     ringing: Array<RingingCallLeg>;
+    staffTransfers: Array<StaffTransfer>;
     bridged?: CallingStateCall;
     voicemail?: CallingStateCall;
     disposition?: CallingStateCall;
@@ -200,10 +201,17 @@ export type RingingCallLeg = {
     displayName: string;
     phone: string;
     transferReason: string;
-    state: 'PENDING' | 'DIALING' | 'RINGING' | 'BRIDGE_PENDING';
+    state: 'PENDING' | 'DIALING' | 'RINGING' | 'ANSWERED' | 'BRIDGE_PENDING';
     version: number;
     createdAt: string;
     deadline: string;
+    offerKind: 'INBOUND_OFFER' | 'STAFF_TRANSFER';
+    /**
+     * Empty for an ordinary inbound offer.
+     */
+    staffTransferId: string;
+    originatorEmail: string;
+    handoffNote: string;
 };
 
 export type CallingStateCall = {
@@ -218,6 +226,50 @@ export type CallingStateCall = {
 
 export type CallingControlRequest = {
     sessionId: string;
+};
+
+export type StaffTransferCandidate = {
+    subject: string;
+    email: string;
+};
+
+export type StaffTransferCandidateList = {
+    items: Array<StaffTransferCandidate>;
+};
+
+export type StaffTransferRequest = {
+    sessionId: string;
+    recipientSubject: string;
+    idempotencyKey: string;
+    expectedVersion: number;
+    handoffNote?: string;
+};
+
+export type StaffTransferResponseRequest = {
+    sessionId: string;
+};
+
+export type StaffTransfer = {
+    id: string;
+    callId: string;
+    practiceId: string;
+    locationId: string;
+    locationName: string;
+    sourceCallLegId: string;
+    targetCallLegId: string;
+    customerCallLegId: string;
+    requestedBySubject: string;
+    requestedByEmail: string;
+    recipientSubject: string;
+    recipientEmail: string;
+    handoffNote: string;
+    state: 'REQUESTED' | 'ACCEPTED' | 'COMPLETED' | 'DECLINED' | 'EXPIRED' | 'CANCELED' | 'FAILED';
+    failureCode: string;
+    targetAnsweredAt?: string;
+    bridgeObservedAt?: string;
+    completedAt?: string;
+    expiresAt: string;
+    createdAt: string;
 };
 
 export type StartOutboundCallRequest = {
@@ -1461,6 +1513,168 @@ export type GetCallingCallResponses = {
 };
 
 export type GetCallingCallResponse = GetCallingCallResponses[keyof GetCallingCallResponses];
+
+export type ListStaffTransferCandidatesData = {
+    body?: never;
+    path: {
+        callId: string;
+    };
+    query: {
+        sessionId: string;
+    };
+    url: '/v1/calling/calls/{callId}/transfer-candidates';
+};
+
+export type ListStaffTransferCandidatesErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ListStaffTransferCandidatesError = ListStaffTransferCandidatesErrors[keyof ListStaffTransferCandidatesErrors];
+
+export type ListStaffTransferCandidatesResponses = {
+    /**
+     * Current same-Location transfer candidates.
+     */
+    200: StaffTransferCandidateList;
+};
+
+export type ListStaffTransferCandidatesResponse = ListStaffTransferCandidatesResponses[keyof ListStaffTransferCandidatesResponses];
+
+export type RequestStaffTransferData = {
+    body: StaffTransferRequest;
+    path: {
+        callId: string;
+    };
+    query?: never;
+    url: '/v1/calling/calls/{callId}/transfers';
+};
+
+export type RequestStaffTransferErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type RequestStaffTransferError = RequestStaffTransferErrors[keyof RequestStaffTransferErrors];
+
+export type RequestStaffTransferResponses = {
+    /**
+     * Durable transfer request and stable provider command committed.
+     */
+    202: StaffTransfer;
+};
+
+export type RequestStaffTransferResponse = RequestStaffTransferResponses[keyof RequestStaffTransferResponses];
+
+export type DeclineStaffTransferData = {
+    body: StaffTransferResponseRequest;
+    path: {
+        transferId: string;
+    };
+    query?: never;
+    url: '/v1/calling/transfers/{transferId}/decline';
+};
+
+export type DeclineStaffTransferErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type DeclineStaffTransferError = DeclineStaffTransferErrors[keyof DeclineStaffTransferErrors];
+
+export type DeclineStaffTransferResponses = {
+    /**
+     * Terminal declined transfer; source ownership is preserved.
+     */
+    200: StaffTransfer;
+};
+
+export type DeclineStaffTransferResponse = DeclineStaffTransferResponses[keyof DeclineStaffTransferResponses];
+
+export type CancelStaffTransferData = {
+    body: StaffTransferResponseRequest;
+    path: {
+        transferId: string;
+    };
+    query?: never;
+    url: '/v1/calling/transfers/{transferId}/cancel';
+};
+
+export type CancelStaffTransferErrors = {
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CancelStaffTransferError = CancelStaffTransferErrors[keyof CancelStaffTransferErrors];
+
+export type CancelStaffTransferResponses = {
+    /**
+     * Terminal canceled transfer; source ownership is preserved.
+     */
+    200: StaffTransfer;
+};
+
+export type CancelStaffTransferResponse = CancelStaffTransferResponses[keyof CancelStaffTransferResponses];
 
 export type ConfirmCallingMediaReadyData = {
     body: ConfirmCallingMediaRequest;

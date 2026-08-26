@@ -18,23 +18,28 @@ type CallingState struct {
 	Bridged     *CallingStateCall
 	Voicemail   *CallingStateCall
 	Disposition *CallingStateCall
+	Transfers   []StaffTransfer
 	ETag        string
 }
 
 type RingingCallLeg struct {
-	CallID         string
-	CallLegID      string
-	MediaToken     string
-	PracticeID     string
-	LocationID     string
-	LocationName   string
-	DisplayName    string
-	Phone          string
-	TransferReason string
-	State          string
-	Version        int64
-	CreatedAt      time.Time
-	Deadline       time.Time
+	CallID          string
+	CallLegID       string
+	MediaToken      string
+	PracticeID      string
+	LocationID      string
+	LocationName    string
+	DisplayName     string
+	Phone           string
+	TransferReason  string
+	State           string
+	Version         int64
+	CreatedAt       time.Time
+	Deadline        time.Time
+	OfferKind       string
+	StaffTransferID string
+	OriginatorEmail string
+	HandoffNote     string
 }
 
 type CallingStateCall struct {
@@ -59,7 +64,7 @@ func (m *Module) ReadCallingState(
 		return CallingState{}, ErrDenied
 	}
 
-	state := CallingState{Ringing: []RingingCallLeg{}}
+	state := CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}
 	var leaseVersion int64
 	if err := m.database.QueryRow(ctx, `
 		SELECT session_id, lease_expires_at,
@@ -93,7 +98,12 @@ func (m *Module) ReadCallingState(
 			COALESCE(handoff.display_name, ''),
 			COALESCE(call.caller_phone, call.destination_phone, ''),
 			COALESCE(handoff.transfer_reason, ''), leg.state,
-			call.version, leg.created_at, ring.sent_at + $2::interval
+			call.version, leg.created_at,
+			COALESCE(transfer.expires_at, ring.sent_at + $2::interval),
+			CASE WHEN transfer.id IS NULL THEN 'INBOUND_OFFER' ELSE 'STAFF_TRANSFER' END,
+			COALESCE(transfer.id::text, ''),
+			COALESCE(requester.email, operator.email, ''),
+			COALESCE(transfer.handoff_note, '')
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
 		JOIN access_locations location
@@ -104,7 +114,14 @@ func (m *Module) ReadCallingState(
 			AND operational_scope.user_subject = leg.staff_subject
 		LEFT JOIN human_calling_handoffs handoff
 			ON handoff.id = call.source_handoff_id
-		JOIN LATERAL (
+		LEFT JOIN human_calling_staff_transfers transfer
+			ON transfer.target_staff_leg_id = leg.id
+		LEFT JOIN access_memberships requester
+			ON requester.practice_id = call.practice_id
+			AND requester.user_subject = transfer.requested_by_subject
+		LEFT JOIN access_platform_operators operator
+			ON operator.user_subject = transfer.requested_by_subject
+		LEFT JOIN LATERAL (
 			SELECT command.sent_at
 			FROM human_calling_provider_commands command
 			WHERE command.call_id = call.id
@@ -123,7 +140,8 @@ func (m *Module) ReadCallingState(
 		) ring ON true
 		WHERE leg.role = 'STAFF'
 			AND leg.staff_subject = $1
-			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING')
+			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED', 'BRIDGE_PENDING')
+			AND (transfer.id IS NOT NULL OR ring.sent_at IS NOT NULL)
 			AND (
 				call.direction = 'OUTBOUND'
 				OR operational_scope.role = 'STAFF'
@@ -148,6 +166,8 @@ func (m *Module) ReadCallingState(
 			&leg.CallID, &leg.CallLegID, &leg.PracticeID, &leg.LocationID,
 			&leg.LocationName, &leg.DisplayName, &leg.Phone, &leg.TransferReason,
 			&leg.State, &leg.Version, &leg.CreatedAt, &leg.Deadline,
+			&leg.OfferKind, &leg.StaffTransferID, &leg.OriginatorEmail,
+			&leg.HandoffNote,
 		); err != nil {
 			rows.Close()
 			return CallingState{}, fmt.Errorf("scan ringing CallLeg: %w", err)
@@ -170,6 +190,14 @@ func (m *Module) ReadCallingState(
 	state.Disposition, err = m.readStaffStateCall(ctx, identity.Subject, `
 		leg.bridged_at IS NOT NULL AND call.terminal_outcome = 'ENDED'
 		AND call.disposition_at IS NULL
+		AND leg.id = (
+			SELECT owner.id FROM human_calling_call_legs owner
+			WHERE owner.call_id = call.id AND owner.role = 'STAFF'
+				AND owner.bridged_at IS NOT NULL
+			ORDER BY (owner.state = 'BRIDGED') DESC, owner.sequence DESC,
+				owner.bridged_at DESC, owner.id DESC
+			LIMIT 1
+		)
 	`)
 	if err != nil {
 		return CallingState{}, err
@@ -178,6 +206,27 @@ func (m *Module) ReadCallingState(
 	if err != nil {
 		return CallingState{}, err
 	}
+	transferRows, err := m.database.Query(ctx, staffTransferSelect+`
+		WHERE (transfer.requested_by_subject = $1 OR transfer.recipient_subject = $1)
+			AND transfer.state IN ('REQUESTED', 'ACCEPTED')
+		ORDER BY transfer.created_at, transfer.id
+	`, identity.Subject)
+	if err != nil {
+		return CallingState{}, fmt.Errorf("read active staff transfers: %w", err)
+	}
+	for transferRows.Next() {
+		transfer, err := scanStaffTransfer(transferRows)
+		if err != nil {
+			transferRows.Close()
+			return CallingState{}, err
+		}
+		state.Transfers = append(state.Transfers, transfer)
+	}
+	if err := transferRows.Err(); err != nil {
+		transferRows.Close()
+		return CallingState{}, err
+	}
+	transferRows.Close()
 
 	state.ETag = callingStateETag(state, leaseVersion)
 	return state, nil
@@ -311,6 +360,10 @@ func callingStateETag(state CallingState, leaseVersion int64) string {
 	for _, leg := range state.Ringing {
 		value += fmt.Sprintf("|ring:%s:%s:%s:%s:%s:%d", leg.CallID, leg.CallLegID,
 			leg.Phone, leg.Deadline.UTC().Format(time.RFC3339Nano), leg.State, leg.Version)
+	}
+	for _, transfer := range state.Transfers {
+		value += fmt.Sprintf("|transfer:%s:%s:%s:%s", transfer.ID, transfer.State,
+			transfer.TargetCallLegID, transfer.ExpiresAt.UTC().Format(time.RFC3339Nano))
 	}
 	orderedCalls := []struct {
 		name string

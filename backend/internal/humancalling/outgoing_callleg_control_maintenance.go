@@ -41,7 +41,8 @@ func (m *Module) recoverInterruptedCommandOwnership(
 		UPDATE human_calling_provider_commands command
 		SET state = CASE
 				WHEN command.action IN (
-					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
+					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE',
+					'TRANSFER_STAFF'
 				) AND EXISTS (
 					SELECT 1
 					FROM human_calling_calls call
@@ -54,7 +55,8 @@ func (m *Module) recoverInterruptedCommandOwnership(
 			END,
 			last_error_code = CASE
 				WHEN command.action IN (
-					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
+					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE',
+					'TRANSFER_STAFF'
 				) AND EXISTS (
 					SELECT 1
 					FROM human_calling_calls call

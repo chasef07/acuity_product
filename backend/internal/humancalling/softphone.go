@@ -85,6 +85,13 @@ func (m *Module) AcquireSoftphone(
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return SoftphoneState{}, fmt.Errorf("lock existing softphone lease: %w", err)
 	}
+	if previousSessionID != "" && previousSessionID != sessionID {
+		if err := m.failRecipientTransfersForReadinessLoss(
+			ctx, tx, identity.Subject, previousSessionID,
+		); err != nil {
+			return SoftphoneState{}, err
+		}
+	}
 	if connectedCall && previousSessionID != "" && previousSessionID != sessionID {
 		if err := tx.Commit(ctx); err != nil {
 			return SoftphoneState{}, fmt.Errorf("commit connected Call lease refusal: %w", err)
@@ -222,7 +229,7 @@ func (m *Module) SetReadiness(
 				FROM human_calling_call_legs leg
 				JOIN human_calling_calls call ON call.id = leg.call_id
 				WHERE leg.staff_subject = $1 AND leg.role = 'STAFF'
-					AND (leg.state IN ('BRIDGE_PENDING', 'BRIDGED')
+					AND (leg.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 						OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
 						OR (call.direction = 'OUTBOUND'
 							AND call.terminal_outcome IS NULL
@@ -246,6 +253,14 @@ func (m *Module) SetReadiness(
 	}
 	if err != nil {
 		return SoftphoneState{}, fmt.Errorf("update calling readiness: %w", err)
+	}
+	if !command.Registered || !command.MicrophoneReady || !command.AudioReady ||
+		!command.SessionHealthy {
+		if err := m.failRecipientTransfersForReadinessLoss(
+			ctx, tx, command.Identity.Subject, command.SessionID,
+		); err != nil {
+			return SoftphoneState{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return SoftphoneState{}, fmt.Errorf("commit calling readiness: %w", err)
@@ -271,7 +286,7 @@ func (m *Module) loadCurrentCallCapacity(
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
 			WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
 				AND (
-					leg.state IN ('BRIDGE_PENDING', 'BRIDGED')
+					leg.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
 					OR (
 						call.direction = 'OUTBOUND'
@@ -301,7 +316,7 @@ func (m *Module) loadCurrentCallCapacity(
 				)
 				AND (
 					occupied.direction <> 'OUTBOUND'
-					OR occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
+					OR occupied.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 					OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
 					OR occupied.staff_session_id = $2
 				)

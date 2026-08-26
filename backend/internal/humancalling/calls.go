@@ -206,7 +206,7 @@ func deriveCallState(
 	if staffState == "BRIDGED" || destinationState == "BRIDGED" {
 		return CallConnected
 	}
-	if staffState == "BRIDGE_PENDING" {
+	if staffState == "ANSWERED" || staffState == "BRIDGE_PENDING" {
 		return CallConnecting
 	}
 	if staffState != "" {
@@ -277,9 +277,15 @@ func (m *Module) QueryCallHistory(
 			ON allowed.membership_id = calling_scope.membership_id
 			AND allowed.location_id = call.location_id
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
-		LEFT JOIN human_calling_call_legs bridged_staff
-			ON bridged_staff.call_id = call.id AND bridged_staff.role = 'STAFF'
-			AND bridged_staff.bridged_at IS NOT NULL
+		LEFT JOIN LATERAL (
+			SELECT leg.staff_subject
+			FROM human_calling_call_legs leg
+			WHERE leg.call_id = call.id AND leg.role = 'STAFF'
+				AND leg.bridged_at IS NOT NULL
+			ORDER BY (leg.state = 'BRIDGED') DESC, leg.sequence DESC,
+				leg.bridged_at DESC, leg.id DESC
+			LIMIT 1
+		) bridged_staff ON true
 		LEFT JOIN access_memberships staff_membership
 			ON staff_membership.practice_id = call.practice_id
 			AND staff_membership.user_subject = bridged_staff.staff_subject
@@ -578,6 +584,14 @@ func (m *Module) RecordDisposition(
 			SELECT 1 FROM human_calling_call_legs leg
 			WHERE leg.call_id = $1 AND leg.role = 'STAFF'
 				AND leg.staff_subject = $2 AND leg.bridged_at IS NOT NULL
+				AND leg.id = (
+					SELECT owner.id FROM human_calling_call_legs owner
+					WHERE owner.call_id = leg.call_id AND owner.role = 'STAFF'
+						AND owner.bridged_at IS NOT NULL
+					ORDER BY (owner.state = 'BRIDGED') DESC, owner.sequence DESC,
+						owner.bridged_at DESC, owner.id DESC
+					LIMIT 1
+				)
 		) OR EXISTS (
 			SELECT 1 FROM human_calling_calls call
 			WHERE call.id = $1 AND call.direction = 'OUTBOUND'

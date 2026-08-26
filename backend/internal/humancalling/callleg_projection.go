@@ -365,7 +365,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 					ON occupied_call.id = occupied.call_id
 				WHERE occupied.staff_subject = calling_scope.user_subject
 					AND (
-						occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
+						occupied.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 						OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
 						OR (occupied_call.direction = 'OUTBOUND'
 							AND occupied_call.terminal_outcome IS NULL
@@ -597,7 +597,7 @@ func (m *Module) applyStaffInitiated(
 		`, practiceID, staffSubject, locationID, direction).Scan(&staffEligible); err != nil {
 			return fmt.Errorf("revalidate Staff answer authorization: %w", err)
 		}
-		if priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {
+		if priorLegState == "ANSWERED" || priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {
 			// Reordered duplicate answer evidence must not create another Bridge.
 		} else if !staffEligible || !leaseEligible || terminalOutcome != nil ||
 			(priorLegState != "PENDING" && priorLegState != "DIALING" &&
