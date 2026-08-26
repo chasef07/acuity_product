@@ -268,6 +268,24 @@ func (m *Module) finishCallLegCommand(
 			return err
 		}
 	}
+	if state == "PENDING" && isOutboundCallWork(command.Action) {
+		var endRequested bool
+		if err := tx.QueryRow(ctx, `
+			SELECT call.direction = 'OUTBOUND' AND EXISTS (
+				SELECT 1 FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id
+					AND timeline.kind = 'call.hangup.requested'
+			)
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			WHERE leg.id = $1
+		`, command.CallLegID).Scan(&endRequested); err != nil {
+			return fmt.Errorf("read outbound End intent after provider work: %w", err)
+		}
+		if endRequested {
+			state = "AMBIGUOUS"
+		}
+	}
 	terminalAbsentStop := false
 	terminalAbsentCallID := ""
 	terminalAbsentPracticeID := ""
@@ -401,6 +419,14 @@ func (m *Module) finishCallLegCommand(
 	if command.CallLegID != "" && state == "FAILED" {
 		switch command.Action {
 		case CommandDialStaff, CommandDialOutboundStaff, CommandDialOutboundDestination:
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_provider_commands
+				SET state = 'RECONCILED', last_error_code = NULLIF($2, ''), updated_at = $3
+				WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+					AND target_id IS NULL AND state = 'PENDING'
+			`, command.CallLegID, errorCode, m.now()); err != nil {
+				return fmt.Errorf("reconcile deferred Hangup without provider target: %w", err)
+			}
 			if err := m.failDialCallLeg(
 				ctx, tx, command.CallLegID, command.Action, errorCode,
 			); err != nil {
@@ -483,6 +509,11 @@ func lockCallThenCallLegForCommandMutation(
 
 func isCredentialCommand(action CommandAction) bool {
 	return action == CommandCreateCredential || action == CommandDisableCredential
+}
+
+func isOutboundCallWork(action CommandAction) bool {
+	return action == CommandDialOutboundStaff ||
+		action == CommandDialOutboundDestination || action == CommandBridge
 }
 
 func (m *Module) failDialCallLeg(
@@ -612,6 +643,27 @@ func (m *Module) insertCallLegCommand(
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("read existing Hangup command: %w", err)
+		}
+		if targetID != "" {
+			err = tx.QueryRow(ctx, `
+				UPDATE human_calling_provider_commands
+				SET target_id = $2, depends_on_command_id = NULL, updated_at = $3
+				WHERE id = (
+					SELECT id FROM human_calling_provider_commands
+					WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+						AND target_id IS NULL AND state = 'PENDING'
+					ORDER BY created_at, id
+					LIMIT 1
+					FOR UPDATE
+				)
+				RETURNING id::text
+			`, callLegID, targetID, m.now()).Scan(&existingID)
+			if err == nil {
+				return existingID, nil
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return "", fmt.Errorf("bind deferred Hangup target: %w", err)
+			}
 		}
 	}
 	commandID := uuid.NewString()

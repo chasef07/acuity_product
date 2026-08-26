@@ -23,6 +23,8 @@ type callProjection struct {
 	voicemailPhase   string
 }
 
+const staffEndedBeforeProviderStartErrorCode = "STAFF_ENDED_BEFORE_PROVIDER_START"
+
 func (m *Module) ReadCall(
 	ctx context.Context,
 	identity access.Identity,
@@ -74,6 +76,11 @@ func (m *Module) loadCallProjection(
 			COALESCE(handoff.transfer_reason, ''), COALESCE(handoff.reason_source, ''),
 			COALESCE(call.provider_termination, ''), call.version,
 			COALESCE(call.terminal_outcome, ''),
+			EXISTS (
+				SELECT 1 FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id
+					AND timeline.kind = 'call.hangup.requested'
+			),
 			COALESCE(call.disposition_outcome, ''), call.disposition_deadline,
 			COALESCE(call.retry_of_call_id::text, ''),
 			(
@@ -133,7 +140,7 @@ func (m *Module) loadCallProjection(
 		&result.call.PhoneSource, &result.call.DisplayName, &result.call.NameSource,
 		&result.call.TransferReason, &result.call.ReasonSource,
 		&result.call.ProviderTermination, &result.call.Version,
-		&result.terminalOutcome, &result.disposition,
+		&result.terminalOutcome, &result.call.EndRequested, &result.disposition,
 		&result.call.DispositionDeadline, &result.call.RetryOfCallID,
 		&connectedAt, &result.staffState, &result.destinationState,
 		&result.voicemailPhase,
@@ -336,15 +343,19 @@ func (m *Module) RequestHangup(
 		return Call{}, fmt.Errorf("begin exact-leg Hangup: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var practiceID, locationID string
+	var practiceID, locationID, initiatingSubject string
+	var direction CallDirection
 	var terminal bool
 	if err := tx.QueryRow(ctx, `
 		SELECT call.practice_id::text, call.location_id::text,
+			call.direction, COALESCE(call.initiating_subject, ''),
 			call.terminal_outcome IS NOT NULL
 		FROM human_calling_calls call
 		WHERE call.id = $1
 		FOR UPDATE OF call
-	`, callID).Scan(&practiceID, &locationID, &terminal); err != nil {
+	`, callID).Scan(
+		&practiceID, &locationID, &direction, &initiatingSubject, &terminal,
+	); err != nil {
 		return Call{}, ErrDenied
 	}
 	if _, err := m.access.LockMembershipAuthorization(
@@ -394,31 +405,61 @@ func (m *Module) RequestHangup(
 	`, identity.Subject, sessionID, m.now()).Scan(&ownsLease); err != nil || !ownsLease {
 		return Call{}, ErrConflict
 	}
-	var ownsCall bool
+	var ownsConnectedCall bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM human_calling_call_legs
 			WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
 				AND state IN ('BRIDGE_PENDING', 'BRIDGED')
 		)
-	`, callID, identity.Subject).Scan(&ownsCall); err != nil || !ownsCall {
+	`, callID, identity.Subject).Scan(&ownsConnectedCall); err != nil ||
+		(!ownsConnectedCall &&
+			(direction != CallOutbound || initiatingSubject != identity.Subject)) {
 		return Call{}, ErrConflict
 	}
+	if direction == CallOutbound {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_provider_commands
+			SET state = 'FAILED', last_error_code = $3,
+				updated_at = $2
+			WHERE call_id = $1
+				AND action IN ('DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE')
+				AND state = 'PENDING'
+		`, callID, m.now(), staffEndedBeforeProviderStartErrorCode); err != nil {
+			return Call{}, fmt.Errorf("cancel unsent outbound work: %w", err)
+		}
+	}
 	rows, err := tx.Query(ctx, `
-		SELECT id::text, role, COALESCE(staff_subject, ''), provider_call_control_id
+		SELECT id::text, role, COALESCE(staff_subject, ''),
+			COALESCE(provider_call_control_id, ''),
+			COALESCE((
+				SELECT command.id::text FROM human_calling_provider_commands command
+				WHERE command.call_leg_id = human_calling_call_legs.id
+					AND command.action IN (
+						'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION'
+					)
+					AND command.state IN ('SENDING', 'AMBIGUOUS')
+				ORDER BY command.created_at, command.id
+				LIMIT 1
+			), '')
 		FROM human_calling_call_legs
 		WHERE call_id = $1 AND state NOT IN ('ENDED', 'FAILED', 'ENDING')
-			AND provider_call_control_id IS NOT NULL
+			AND ($2::text = 'OUTBOUND' OR provider_call_control_id IS NOT NULL)
 		ORDER BY role, id FOR UPDATE
-	`, callID)
+	`, callID, direction)
 	if err != nil {
 		return Call{}, fmt.Errorf("lock exact Hangup targets: %w", err)
 	}
-	type target struct{ id, role, subject, controlID string }
+	type target struct {
+		id, role, subject, controlID, uncertainDialCommandID string
+	}
 	targets := []target{}
 	for rows.Next() {
 		var item target
-		if err := rows.Scan(&item.id, &item.role, &item.subject, &item.controlID); err != nil {
+		if err := rows.Scan(
+			&item.id, &item.role, &item.subject, &item.controlID,
+			&item.uncertainDialCommandID,
+		); err != nil {
 			rows.Close()
 			return Call{}, err
 		}
@@ -428,13 +469,38 @@ func (m *Module) RequestHangup(
 	if len(targets) == 0 {
 		return Call{}, ErrConflict
 	}
+	providerWorkRemaining := false
 	for _, target := range targets {
+		if target.controlID == "" && target.uncertainDialCommandID == "" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_call_legs
+				SET state = 'FAILED', ending_at = COALESCE(ending_at, $2),
+					ended_at = COALESCE(ended_at, $2),
+					error_code = $3, updated_at = $2
+				WHERE id = $1
+			`, target.id, m.now(), staffEndedBeforeProviderStartErrorCode); err != nil {
+				return Call{}, err
+			}
+			continue
+		}
+		providerWorkRemaining = true
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_call_legs
 			SET state = 'ENDING', ending_at = COALESCE(ending_at, $2), updated_at = $2
 			WHERE id = $1
 		`, target.id, m.now()); err != nil {
 			return Call{}, err
+		}
+		if target.controlID == "" {
+			if _, err := m.insertCallLegCommand(
+				ctx, tx, callID, target.id, "", target.subject, CommandHangupLeg, "",
+				map[string]any{"client_state": encodeCallLegClientState(
+					callID, target.id, target.role, callLegClientStateStaffHangup,
+				)}, target.uncertainDialCommandID,
+			); err != nil {
+				return Call{}, err
+			}
+			continue
 		}
 		if _, err := m.insertCallLegCommand(
 			ctx, tx, callID, target.id, "", target.subject, CommandHangupLeg,
@@ -445,7 +511,16 @@ func (m *Module) RequestHangup(
 			return Call{}, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
+	if direction == CallOutbound && !providerWorkRemaining {
+		if _, err := tx.Exec(ctx, `
+			UPDATE human_calling_calls
+			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
+				version = version + 1, updated_at = $2
+			WHERE id = $1 AND terminal_outcome IS NULL
+		`, callID, m.now()); err != nil {
+			return Call{}, fmt.Errorf("end outbound Call before provider start: %w", err)
+		}
+	} else if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_calls SET version = version + 1, updated_at = $2 WHERE id = $1
 	`, callID, m.now()); err != nil {
 		return Call{}, err

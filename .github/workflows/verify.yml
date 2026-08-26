@@ -48,7 +48,7 @@ jobs:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.7"
           cache: true
       - run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}
       - if: matrix.shard == 'support'
@@ -79,7 +79,7 @@ jobs:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.7"
           cache: true
       - run: go test -p 1 ./backend/... ./deploy -count=1
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
@@ -114,10 +114,10 @@ jobs:
           ref: ${{ inputs.release_sha }}
       - uses: pnpm/action-setup@v4
         with:
-          version: "10.34.3"
+          version: "10.34.5"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.4.1"
+          node-version: "24.20.0"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -161,14 +161,14 @@ jobs:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.7"
           cache: true
       - uses: pnpm/action-setup@v4
         with:
-          version: "10.34.3"
+          version: "10.34.5"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.4.1"
+          node-version: "24.20.0"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -212,14 +212,14 @@ jobs:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.7"
           cache: true
       - uses: pnpm/action-setup@v4
         with:
-          version: "10.34.3"
+          version: "10.34.5"
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.4.1"
+          node-version: "24.20.0"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

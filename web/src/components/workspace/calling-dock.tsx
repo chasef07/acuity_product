@@ -66,6 +66,11 @@ import {
   microphoneFailureMessage,
   routeIncomingMedia,
 } from "@/lib/calling/dock-media-state"
+import {
+  activeCallEndPending,
+  endingCallIDAfterProjection,
+  showActiveCallEndControl,
+} from "@/lib/calling/active-call-controls"
 import { LatestWrite } from "@/lib/calling/latest-write"
 import {
   createCallingOwnerLoop,
@@ -192,6 +197,9 @@ export function CallingDock({
   const [mediaState, setMediaState] = useState<MediaState>("unavailable")
   const [available, setAvailable] = useState(false)
   const [ringingLegs, setRingingLegs] = useState<RingingCallLeg[]>([])
+  const [readyIncomingMediaTokens, setReadyIncomingMediaTokens] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
   const [activeCall, setActiveCall] = useState<CallingCall>()
   const [pendingOutcome, setPendingOutcome] = useState<CallingCall>()
   const [expectedCallID, setExpectedCallID] = useState("")
@@ -235,6 +243,33 @@ export function CallingDock({
   const connectingRef = useRef(false)
   const handledTaskCallRef = useRef("")
   const notificationsRef = useRef(new Map<string, Notification>())
+  const rememberIncomingLeg = useCallback((leg: IncomingMediaLeg) => {
+    incomingLegsRef.current.set(leg.mediaToken, leg)
+    setReadyIncomingMediaTokens((current) => {
+      if (current.has(leg.mediaToken)) return current
+      const next = new Set(current)
+      next.add(leg.mediaToken)
+      return next
+    })
+  }, [])
+  const forgetIncomingLeg = useCallback(
+    (leg: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">) => {
+      const currentLeg = incomingLegsRef.current.get(leg.mediaToken)
+      if (currentLeg && currentLeg.providerLegID !== leg.providerLegID) return
+      incomingLegsRef.current.delete(leg.mediaToken)
+      setReadyIncomingMediaTokens((current) => {
+        if (!current.has(leg.mediaToken)) return current
+        const next = new Set(current)
+        next.delete(leg.mediaToken)
+        return next
+      })
+    },
+    [],
+  )
+  const clearIncomingLegs = useCallback(() => {
+    incomingLegsRef.current.clear()
+    setReadyIncomingMediaTokens(new Set())
+  }, [])
   const clearMediaAttachment = useCallback(() => {
     mediaLegRef.current = null
     setMediaAttached(false)
@@ -285,12 +320,7 @@ export function CallingDock({
     }
     activeCallSnapshotRef.current = call
     setActiveCall(call)
-    setEndingCallID((current) =>
-      current &&
-      (!call || call.id !== current || call.state !== "CONNECTED")
-        ? ""
-        : current,
-    )
+    setEndingCallID((current) => endingCallIDAfterProjection(current, call))
     return true
   }, [])
   useEffect(() => {
@@ -513,6 +543,7 @@ export function CallingDock({
         return
       }
       if (route === "REJECT") {
+        forgetIncomingLeg(leg)
         await rejectMediaLeg(leg)
         return
       }
@@ -554,9 +585,16 @@ export function CallingDock({
         await rejectMediaLeg(leg)
         return
       }
-      incomingLegsRef.current.set(leg.mediaToken, leg)
+      rememberIncomingLeg(leg)
     },
-    [applyActiveCall, clearMediaAttachment, rejectMediaLeg, sessionID],
+    [
+      applyActiveCall,
+      clearMediaAttachment,
+      forgetIncomingLeg,
+      rejectMediaLeg,
+      rememberIncomingLeg,
+      sessionID,
+    ],
   )
 
   const connectMedia = useCallback(async (ownedLease?: SoftphoneState) => {
@@ -674,6 +712,7 @@ export function CallingDock({
         setAvailabilityPending(false)
         return
       }
+      clearIncomingLegs()
       await adapterRef.current?.disconnect()
       const adapter = createCallingMediaAdapter()
       adapterRef.current = adapter
@@ -687,6 +726,7 @@ export function CallingDock({
               expectedCallRef.current === ""
             void updateReadiness(mayReceiveCalls, state)
           } else if (state === "unavailable" || state === "reconnecting") {
+            clearIncomingLegs()
             setAvailable(false)
             availabilityRef.current = false
             mediaLegRef.current = mediaAttachmentAfterState(
@@ -702,7 +742,7 @@ export function CallingDock({
         onEnded: (leg) => {
           const attached = mediaLegRef.current
           const answering = answeredInboundLegRef.current
-          incomingLegsRef.current.delete(leg.mediaToken)
+          forgetIncomingLeg(leg)
           if (
             !(
               attached?.providerLegID === leg.providerLegID &&
@@ -751,6 +791,8 @@ export function CallingDock({
     handleIncoming,
     applyActiveCall,
     clearMediaAttachment,
+    clearIncomingLegs,
+    forgetIncomingLeg,
     rememberAvailabilityIntent,
     sessionID,
     updateReadiness,
@@ -968,7 +1010,7 @@ export function CallingDock({
       setMediaState("unavailable")
       mediaStateRef.current = "unavailable"
       setRingingLegs([])
-      incomingLegsRef.current.clear()
+      clearIncomingLegs()
       mediaLegRef.current = null
       clearAnsweredInboundLeg()
       setMediaAttached(false)
@@ -978,7 +1020,7 @@ export function CallingDock({
       probeStreamRef.current?.getTracks().forEach((track) => track.stop())
       probeStreamRef.current = null
     },
-    [clearAnsweredInboundLeg],
+    [clearAnsweredInboundLeg, clearIncomingLegs],
   )
 
   const refreshOwnershipNow = useCallback(async () => {
@@ -1272,8 +1314,12 @@ export function CallingDock({
     setAudioIssue(false)
     const leg = incomingLegsRef.current.get(ringingLeg.mediaToken)
     if (!leg) {
-      setError("The browser media invite is still converging. Try Answer again.")
-      await refreshCallingState()
+      setReadyIncomingMediaTokens((current) => {
+        if (!current.has(ringingLeg.mediaToken)) return current
+        const next = new Set(current)
+        next.delete(ringingLeg.mediaToken)
+        return next
+      })
       return
     }
     answeredInboundLegRef.current = {
@@ -1283,6 +1329,7 @@ export function CallingDock({
       mediaToken: leg.mediaToken,
     }
     setInboundCallControlReady(false)
+    forgetIncomingLeg(leg)
     try {
       const outcome = await leg.answer()
       if (outcome === "ended") {
@@ -1293,11 +1340,11 @@ export function CallingDock({
     } catch (error) {
       clearAnsweredInboundLeg()
       clearMediaAttachment()
+      rememberIncomingLeg(leg)
       setError(microphoneFailureMessage(error))
       await refreshCallingState()
       return
     }
-    incomingLegsRef.current.delete(ringingLeg.mediaToken)
     mediaLegRef.current = leg
     setMediaAttached(true)
     setExpectedCallID(ringingLeg.callId)
@@ -1322,7 +1369,7 @@ export function CallingDock({
     if (!token) {
       setEndingCallID("")
       setError(
-        "Your authentication needs to be refreshed before you try Hang up again.",
+        "Your authentication needs to be refreshed before you try End again.",
       )
       return
     }
@@ -1332,48 +1379,58 @@ export function CallingDock({
       body: { sessionId: sessionID },
     }).catch(() => undefined)
     if (!result?.data) {
-      setEndingCallID((current) => (current === callID ? "" : current))
       const failure = hangupFailure({
         status: result?.response?.status,
         code: result?.error?.error.code,
       })
-      if (failure === "conflict") {
+      const clearEnding = () =>
+        setEndingCallID((current) => (current === callID ? "" : current))
+      if (failure === "authentication") {
+        clearEnding()
+        setError(
+          "Your authentication or Call access needs to be refreshed before you try End again.",
+        )
+        return
+      }
+      if (failure === "conflict" || failure === "retry") {
         const refreshed = await refreshCall(callID)
-        if (refreshed?.call && callIsSettled(refreshed.call.state)) {
-          setError("")
+        if (refreshed?.call) {
+          if (
+            callIsSettled(refreshed.call.state) ||
+            refreshed.call.endRequested
+          ) {
+            setError("")
+            return
+          }
+          clearEnding()
+          setError(
+            failure === "conflict"
+              ? "Calling ownership or the Call state changed before End."
+              : "End was not committed. Check your connection and try again.",
+          )
           return
         }
+        clearEnding()
         const reconciliationFailure = hangupFailure({
           status: refreshed?.status,
         })
         if (reconciliationFailure === "authentication") {
           setError(
-            "Your authentication or Call access needs to be refreshed before you try Hang up again.",
+            "Your authentication or Call access needs to be refreshed before you try End again.",
           )
           return
         }
-        if (reconciliationFailure === "retry") {
+        if (failure === "retry" || reconciliationFailure === "retry") {
           setError(
-            "Hang up status could not be refreshed. Check your connection and try again.",
+            "End status could not be confirmed. Check your connection before trying again.",
           )
           return
         }
-        setError("Calling ownership or the Call state changed before Hang up.")
+        setError("Calling ownership or the Call state changed before End.")
         return
       }
-      if (failure === "authentication") {
-        setError(
-          "Your authentication or Call access needs to be refreshed before you try Hang up again.",
-        )
-        return
-      }
-      if (failure === "retry") {
-        setError(
-          "Hang up was not committed. Check your connection and try again.",
-        )
-        return
-      }
-      setError("Hang up is not available for the current Call.")
+      clearEnding()
+      setError("End is not available for the current Call.")
       return
     }
     if (result.data.state === "NEEDS_DISPOSITION") {
@@ -1498,6 +1555,9 @@ export function CallingDock({
     activeCall?.state === "CONNECTED" && !exactCallLegControlReady
       ? "CONNECTING"
       : activeCall?.state
+  const activeCallEnding = activeCall
+    ? activeCallEndPending(activeCall, endingCallID)
+    : false
   return (
     <CallingNavigationContext.Provider
       value={{
@@ -1519,6 +1579,7 @@ export function CallingDock({
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-96">
           <IncomingCallControls
             ringingLegs={activeOffers}
+            readyMediaTokens={readyIncomingMediaTokens}
             now={now}
             error={error}
             onAnswer={(leg) => void answerRingingLeg(leg)}
@@ -1550,11 +1611,11 @@ export function CallingDock({
                       }
                       className={cn(
                         visibleCallState === "CONNECTED" && "text-success",
-                        endingCallID === activeCall.id && "text-warning",
+                        activeCallEnding && "text-warning",
                         visibleCallState === "CONNECTING" && "text-warning",
                       )}
                     >
-                      {endingCallID === activeCall.id
+                      {activeCallEnding
                         ? "Ending…"
                         : callStateLabel(visibleCallState!)}
                     </Badge>
@@ -1578,14 +1639,14 @@ export function CallingDock({
                 <Badge
                   aria-label={
                     visibleCallState === "CONNECTED" &&
-                    endingCallID !== activeCall.id
+                    !activeCallEnding
                       ? "Call timer"
                       : "Call status"
                   }
                   variant="outline"
                   className="tabular-nums"
                 >
-                  {endingCallID === activeCall.id
+                  {activeCallEnding
                     ? "Ending…"
                     : visibleCallState === "CONNECTING"
                       ? "Connecting"
@@ -1608,7 +1669,7 @@ export function CallingDock({
                 onDispose={(outcome) => void dispose(outcome)}
                 onRetry={() => void retryCall()}
                 retryPending={outboundPending}
-                controlsPending={endingCallID === activeCall.id}
+                controlsPending={activeCallEnding}
                 onClose={() => {
                   applyActiveCall()
                   setExpectedCallID("")
@@ -1695,11 +1756,13 @@ export function CallingDock({
 
 function IncomingCallControls({
   ringingLegs,
+  readyMediaTokens,
   now,
   error,
   onAnswer,
 }: {
   ringingLegs: RingingCallLeg[]
+  readyMediaTokens: ReadonlySet<string>
   now: number
   error: string
   onAnswer: (leg: RingingCallLeg) => void
@@ -1713,6 +1776,7 @@ function IncomingCallControls({
     >
       {ringingLegs.map((leg) => {
         const phone = formatPhone(leg.phone)
+        const mediaReady = readyMediaTokens.has(leg.mediaToken)
         const displayName = leg.displayName.trim()
         const showDisplayName =
           Boolean(displayName) && displayName.toLowerCase() !== "incoming caller"
@@ -1741,13 +1805,21 @@ function IncomingCallControls({
               >
                 {offerSecondsRemaining(leg.deadline, now)}s
               </Badge>
-              <Button
-                size="sm"
-                aria-label={`Answer ${phone}`}
-                onClick={() => onAnswer(leg)}
-              >
-                Answer
-              </Button>
+              <div className="flex items-center gap-3">
+                {!mediaReady && (
+                  <span className="text-sm text-muted-foreground">
+                    Connecting audio…
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  aria-label={`Answer ${phone}`}
+                  disabled={!mediaReady}
+                  onClick={() => onAnswer(leg)}
+                >
+                  Answer
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         )
@@ -1815,6 +1887,9 @@ function ActiveCallControls({
     controlReady &&
     (call.state === "CONNECTING" || call.state === "CONNECTED")
   const showKeypad = owner && controlReady && call.state === "CONNECTED"
+  const showEnd =
+    showActiveCallEndControl(call, owner) ||
+    (call.direction !== "OUTBOUND" && showKeypad)
   const showDisposition = owner && ended
   const showRetry = call.retryAllowed
   const showClosedState = callIsSettled(call.state) && !ended
@@ -1822,6 +1897,7 @@ function ActiveCallControls({
     !showCallDetails &&
     !showMute &&
     !showKeypad &&
+    !showEnd &&
     !showDisposition &&
     !showRetry &&
     !showClosedState
@@ -1857,6 +1933,23 @@ function ActiveCallControls({
           )}
         </p>
       )}
+      {showEnd && (
+        <div className="flex basis-full flex-col items-center gap-1">
+          <Button
+            size="icon"
+            variant="destructive"
+            aria-label={controlsPending ? "Ending" : "End"}
+            className="size-12 rounded-full bg-destructive text-background hover:bg-destructive/85 hover:text-background"
+            disabled={controlsPending}
+            onClick={onHangup}
+          >
+            <PhoneOffIcon className="size-5" />
+          </Button>
+          <span className="text-xs font-medium text-foreground">
+            {controlsPending ? "Ending…" : "End"}
+          </span>
+        </div>
+      )}
       {showMute && (
         <Button
           size="sm"
@@ -1869,25 +1962,14 @@ function ActiveCallControls({
         </Button>
       )}
       {showKeypad && (
-        <>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!keypadEligible}
-            onClick={() => setKeypadOpen((current) => !current)}
-          >
-            Keypad
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={controlsPending}
-            onClick={onHangup}
-          >
-            <PhoneOffIcon />
-            {controlsPending ? "Ending…" : "Hang up"}
-          </Button>
-        </>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!keypadEligible}
+          onClick={() => setKeypadOpen((current) => !current)}
+        >
+          Keypad
+        </Button>
       )}
       {showDisposition && (
         <>

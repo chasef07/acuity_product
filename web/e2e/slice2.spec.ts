@@ -205,6 +205,51 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     const secondaryLeg = staffLegs.find(
       (leg) => leg.email === "secondary@abita.test",
     )!
+    const selectedAnswer = selectedPage.getByRole("button", {
+      name: "Answer (555) 555-0100",
+      exact: true,
+    })
+    const secondaryAnswer = secondaryPage.getByRole("button", {
+      name: "Answer (555) 555-0100",
+      exact: true,
+    })
+    await Promise.all([
+      expect(selectedAnswer).toBeDisabled(),
+      expect(secondaryAnswer).toBeDisabled(),
+      expect(selectedPage.getByText("Connecting audio…")).toBeVisible(),
+      expect(secondaryPage.getByText("Connecting audio…")).toBeVisible(),
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(0),
+      expect.poll(() => mediaAnswers(secondaryPage)).toBe(0),
+    ])
+    const mismatchedMediaToken = "z".repeat(43)
+    await sendIncomingLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      mismatchedMediaToken,
+    )
+    await expect(selectedAnswer).toBeDisabled()
+    await expect.poll(() => mediaAnswers(selectedPage)).toBe(0)
+    await endMediaLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      mismatchedMediaToken,
+    )
+    await sendIncomingLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      selectedLeg.media_token,
+    )
+    await expect(selectedAnswer).toBeEnabled()
+    await endMediaLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      selectedLeg.media_token,
+    )
+    await Promise.all([
+      expect(selectedAnswer).toBeDisabled(),
+      expect(selectedPage.getByText("Connecting audio…")).toBeVisible(),
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(0),
+    ])
     await Promise.all([
       sendIncomingLeg(
         selectedPage,
@@ -217,17 +262,28 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         secondaryLeg.media_token,
       ),
     ])
-    await deferMediaAnswer(secondaryPage, secondaryLeg.media_token)
     await Promise.all([
-      selectedPage
-        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-        .click(),
-      secondaryPage
-        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-        .dblclick(),
+      expect(selectedAnswer).toBeEnabled(),
+      expect(secondaryAnswer).toBeEnabled(),
     ])
+    await failNextMediaAnswer(selectedPage)
+    await selectedAnswer.click()
     await Promise.all([
       expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
+      expect(selectedAnswer).toBeEnabled(),
+      expect(
+        selectedPage.getByText(
+          "Browser audio could not be started. Check your microphone and try again.",
+        ),
+      ).toBeVisible(),
+    ])
+    await deferMediaAnswer(secondaryPage, secondaryLeg.media_token)
+    await Promise.all([
+      selectedAnswer.click(),
+      secondaryAnswer.dblclick(),
+    ])
+    await Promise.all([
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(2),
       expect.poll(() => mediaAnswers(secondaryPage)).toBe(1),
     ])
 
@@ -349,7 +405,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       callCenter(selectedPage).getByText("Connected", { exact: true }),
     ).toBeVisible({ timeout: 20_000 })
     await expect(
-      selectedPage.getByRole("button", { name: "Hang up", exact: true }),
+      selectedPage.getByRole("button", { name: "End", exact: true }),
     ).toBeVisible()
     const recordingEndedAt = new Date()
     const recordingStartedAt = new Date(recordingEndedAt.getTime() - 30_000)
@@ -400,7 +456,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toBeVisible()
     await expect(
-      secondaryPage.getByRole("button", { name: "Hang up", exact: true }),
+      secondaryPage.getByRole("button", { name: "End", exact: true }),
     ).toHaveCount(0)
 
     let hangupConflicts = 0
@@ -453,13 +509,13 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       },
     )
     await selectedPage
-      .getByRole("button", { name: "Hang up", exact: true })
+      .getByRole("button", { name: "End", exact: true })
       .click()
     await expect.poll(() => hangupConflicts).toBe(1)
     const outcome = selectedPage.getByRole("region", { name: "Call outcome" })
     await expect(outcome).toBeVisible()
     await expect(
-      selectedPage.getByText("Hang up was not committed", { exact: false }),
+      selectedPage.getByText("End was not committed", { exact: false }),
     ).toHaveCount(0)
     await expect(
       selectedPage.getByText("Calling ownership or the Call state changed", {
@@ -782,6 +838,7 @@ async function startAndEndOutboundWhileVoicemail(
     callButton.click(),
   ])
   expect(commitResponse.status()).toBe(201)
+  const committedCall = (await commitResponse.json()) as Record<string, unknown>
 
   await expect
     .poll(async () => {
@@ -801,9 +858,104 @@ async function startAndEndOutboundWhileVoicemail(
     [destination],
   )
   const outboundCallID = outbound.rows[0]!.id
+  const callURL = `${portalURL}/v1/calling/calls/${outboundCallID}`
+  const hangupURL = `${callURL}/hangup`
+  let projectedCall = committedCall
+  let hangupResponseLost = false
+  let hangupRefreshes = 0
+  await page.route(callURL, async (route) => {
+    if (route.request().method() === "GET") {
+      if (hangupResponseLost) hangupRefreshes += 1
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(projectedCall),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  let stableEndPosition = ""
+  for (const state of [
+    "PREPARING",
+    "RINGING",
+    "CONNECTING",
+    "CONNECTED",
+  ] as const) {
+    projectedCall = {
+      ...committedCall,
+      state,
+      endRequested: false,
+      connectedAt:
+        state === "CONNECTED" ? new Date().toISOString() : undefined,
+    }
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    )
+    const activeControls = page.getByRole("region", {
+      name: "Active call controls",
+    })
+    if (state === "CONNECTED") {
+      await expect(activeControls.getByLabel("Call timer"), state).toBeVisible()
+    } else {
+      const status = {
+        PREPARING: "Preparing",
+        RINGING: "Ringing",
+        CONNECTING: "Connecting",
+      }[state]
+      await expect(activeControls.getByLabel("Call status"), state).toHaveText(
+        status,
+      )
+    }
+    const renderedEnd = page.getByRole("button", { name: "End", exact: true })
+    await expect(renderedEnd, state).toBeVisible()
+    await expect(renderedEnd, state).toHaveClass(/rounded-full/)
+    await expect(
+      renderedEnd.locator("xpath=following-sibling::span"),
+      state,
+    ).toHaveText("End")
+    const position = (await renderedEnd.locator("..").getAttribute("class")) ?? ""
+    expect(position, state).toContain("basis-full")
+    if (stableEndPosition) expect(position, state).toBe(stableEndPosition)
+    stableEndPosition = position
+  }
+
+  projectedCall = {
+    ...committedCall,
+    state: "RINGING",
+    endRequested: false,
+  }
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  )
   await expect(
-    page.getByRole("region", { name: "Active call controls" }),
-  ).toBeVisible()
+    page
+      .getByRole("region", { name: "Active call controls" })
+      .getByLabel("Call status"),
+  ).toHaveText("Ringing")
+  await page.route(hangupURL, async (route) => {
+    projectedCall = { ...projectedCall, endRequested: true }
+    hangupResponseLost = true
+    await route.abort("failed")
+  })
+  await page.getByRole("button", { name: "End", exact: true }).click()
+  await expect.poll(() => hangupRefreshes, { timeout: 10_000 }).toBeGreaterThan(0)
+  const endingButton = page.getByRole("button", {
+    name: "Ending",
+    exact: true,
+  })
+  await expect(endingButton).toBeVisible()
+  await expect(endingButton).toBeDisabled()
+  await expect(
+    endingButton.locator("xpath=following-sibling::span"),
+  ).toHaveText("Ending…")
+  await expect(
+    page.getByText("End was not committed", { exact: false }),
+  ).toHaveCount(0)
+
+  await page.unroute(hangupURL)
+  await page.unroute(callURL)
 
   await expect
     .poll(async () => {
@@ -1092,6 +1244,7 @@ async function prepareBrowser(context: BrowserContext) {
   await context.addInitScript(() => {
     const state = {
       answers: 0,
+      answerFailures: 0,
       deferredMediaToken: "",
       finishDeferredAnswer: undefined as undefined | (() => void),
       endedMediaTokens: new Set<string>(),
@@ -1186,13 +1339,18 @@ async function prepareBrowser(context: BrowserContext) {
             state.finishDeferredAnswer?.()
             state.finishDeferredAnswer = undefined
           }
-          state.incoming = (providerLegID, mediaToken, recovery) =>
+          state.incoming = (providerLegID, mediaToken, recovery) => {
+            state.endedMediaTokens.delete(mediaToken)
             callbacks.onIncoming({
               providerLegID,
               mediaToken,
               recovery,
               answer: async () => {
                 state.answers += 1
+                if (state.answerFailures > 0) {
+                  state.answerFailures -= 1
+                  throw new Error("fixture media answer failed")
+                }
                 if (state.deferredMediaToken === mediaToken) {
                   await new Promise<void>((resolve) => {
                     state.finishDeferredAnswer = resolve
@@ -1207,6 +1365,7 @@ async function prepareBrowser(context: BrowserContext) {
               unmute: () => undefined,
               sendDTMF: () => true,
             })
+          }
           callbacks.onState("ready")
         },
         disconnect: async () => undefined,
@@ -1275,6 +1434,15 @@ async function mediaAnswers(page: Page) {
         }
       ).__acuityCallingTestState.answers,
   )
+}
+
+async function failNextMediaAnswer(page: Page) {
+  await page.evaluate(() => {
+    const fixture = window as typeof window & {
+      __acuityCallingTestState: { answerFailures: number }
+    }
+    fixture.__acuityCallingTestState.answerFailures += 1
+  })
 }
 
 async function deferMediaAnswer(page: Page, mediaToken: string) {

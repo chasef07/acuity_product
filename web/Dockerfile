@@ -1,6 +1,6 @@
 FROM node:24.4.1-alpine AS base
 
-RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 FROM base AS dependencies
 

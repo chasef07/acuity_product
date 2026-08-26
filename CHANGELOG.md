@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.3](https://github.com/chasef07/acuity_product/compare/v0.4.2...v0.4.3) (2026-08-26)
+
+
+### Bug Fixes
+
+* **release:** restore available Node image ([#199](https://github.com/chasef07/acuity_product/issues/199)) ([5015994](https://github.com/chasef07/acuity_product/commit/501599473e4b1fe06ad1126a992a7a5351fd5c46))
+
+## [0.4.2](https://github.com/chasef07/acuity_product/compare/v0.4.1...v0.4.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **calling:** require hangup evidence for bridged calls ([#194](https://github.com/chasef07/acuity_product/issues/194)) ([cf5aebe](https://github.com/chasef07/acuity_product/commit/cf5aebe9dd60d5f98135ffe5b058e6504bfaa571))
+
+## [0.4.1](https://github.com/chasef07/acuity_product/compare/v0.4.0...v0.4.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **web-calling:** gate Answer on matching media invite ([#192](https://github.com/chasef07/acuity_product/issues/192)) ([d7cf3de](https://github.com/chasef07/acuity_product/commit/d7cf3de1f2d48f2747dae63411511740ce57a098))
+
 ## [0.4.0](https://github.com/chasef07/acuity_product/compare/v0.3.0...v0.4.0) (2026-08-22)
 
 

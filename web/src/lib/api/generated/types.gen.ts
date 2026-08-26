@@ -283,6 +283,7 @@ export type CallingCall = {
     transferReason: string;
     reasonSource: string;
     providerTermination: string;
+    endRequested: boolean;
     callerId: string;
     retryOfCallId?: string;
     retryAllowed: boolean;
@@ -1582,7 +1583,7 @@ export type RequestCallingHangupError = RequestCallingHangupErrors[keyof Request
 
 export type RequestCallingHangupResponses = {
     /**
-     * Hangup intent committed.
+     * Call end intent committed.
      */
     202: CallingCall;
 };

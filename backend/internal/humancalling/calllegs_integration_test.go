@@ -690,6 +690,486 @@ func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
 	}
 }
 
+func TestInboundHangupLeavesUnstartedFanoutLegToInboundLifecycle(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
+	prefix := "inbound-hangup-pending-fanout"
+	pool, calling, caller, staff := prepareInboundFanout(
+		t, now, prefix, &recordingProvider{}, 2,
+	)
+
+	var callID, winnerLegID, pendingLegID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs
+		WHERE provider_call_control_id = $1
+	`, caller.CallControlID).Scan(&callID); err != nil {
+		t.Fatalf("read inbound Call: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
+	`, callID, staff[0].Subject).Scan(&winnerLegID); err != nil {
+		t.Fatalf("read inbound winning Staff CallLeg: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
+	`, callID, staff[1].Subject).Scan(&pendingLegID); err != nil {
+		t.Fatalf("read inbound pending Staff CallLeg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET answered_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'CALLER'
+	`, callID, now); err != nil {
+		t.Fatalf("align inbound caller evidence time: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGE_PENDING',
+			provider_call_control_id = $2,
+			provider_call_leg_id = $3,
+			provider_call_session_id = $4,
+			answered_at = $5,
+			bridge_pending_at = $5,
+			updated_at = $5
+		WHERE id = $1
+	`, winnerLegID, prefix+"-winner-control", prefix+"-winner-leg",
+		prefix+"-winner-session", now); err != nil {
+		t.Fatalf("prepare inbound winning Staff CallLeg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENT', updated_at = $2
+		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
+	`, winnerLegID, now); err != nil {
+		t.Fatalf("complete inbound winning Staff Dial: %v", err)
+	}
+
+	if _, err := calling.RequestHangup(
+		context.Background(), staff[0], prefix+"-browser-1", callID,
+	); err != nil {
+		t.Fatalf("request inbound Hangup with pending fanout: %v", err)
+	}
+
+	var pendingLegState, pendingDialState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE leg.id = $1 AND command.action = 'DIAL_STAFF'
+	`, pendingLegID).Scan(&pendingLegState, &pendingDialState); err != nil {
+		t.Fatalf("read pending inbound fanout after Hangup: %v", err)
+	}
+	if pendingLegState != "PENDING" || pendingDialState != "PENDING" {
+		t.Fatalf(
+			"pending inbound fanout after Hangup = leg:%s Dial:%s, want PENDING/PENDING",
+			pendingLegState, pendingDialState,
+		)
+	}
+}
+
+type outboundEndFixture struct {
+	pool          *pgxpool.Pool
+	calling       *humancalling.Module
+	authorization access.Authorization
+	identity      access.Identity
+	sessionID     string
+}
+
+func newOutboundEndFixture(
+	t *testing.T,
+	prefix string,
+	now time.Time,
+	provider humancalling.Provider,
+) outboundEndFixture {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, prefix, 1,
+	)
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: prefix + "-practice",
+			LocationKey: prefix + "-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	return outboundEndFixture{
+		pool: pool, calling: calling, authorization: authorization,
+		identity: staff[0], sessionID: prefix + "-browser-1",
+	}
+}
+
+func (fixture outboundEndFixture) startCall(t *testing.T, idempotencyKey string) humancalling.Call {
+	t.Helper()
+	call, err := fixture.calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: idempotencyKey,
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	return call
+}
+
+func TestOutboundCallCanEndBeforeProviderControlExists(t *testing.T) {
+	fixture := newOutboundEndFixture(
+		t,
+		"end-preparing-outbound",
+		time.Date(2026, time.August, 26, 14, 0, 0, 0, time.UTC),
+		&recordingProvider{},
+	)
+
+	call := fixture.startCall(t, "end-preparing-outbound-call")
+	if call.State != humancalling.CallRinging {
+		t.Fatalf("start preparing outbound Call = %#v", call)
+	}
+
+	ended, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	)
+	if err != nil || ended.State != humancalling.CallUnanswered {
+		t.Fatalf("end preparing outbound Call = %#v, %v", ended, err)
+	}
+
+	var terminal string
+	var activeLegs, failedLegs, pendingDials, canceledDials, requestedEvents int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			call.terminal_outcome,
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = call.id
+					AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED')),
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = call.id AND leg.state = 'FAILED'
+					AND leg.error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
+			(SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action = 'DIAL_OUTBOUND_STAFF' AND command.state = 'PENDING'),
+			(SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action = 'DIAL_OUTBOUND_STAFF' AND command.state = 'FAILED'
+					AND command.last_error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_calls call
+		WHERE call.id = $1
+	`, call.ID).Scan(
+		&terminal, &activeLegs, &failedLegs, &pendingDials, &canceledDials,
+		&requestedEvents,
+	); err != nil {
+		t.Fatalf("read ended preparing outbound Call: %v", err)
+	}
+	if terminal != "UNANSWERED" || activeLegs != 0 || failedLegs != 2 ||
+		pendingDials != 0 || canceledDials != 1 || requestedEvents != 1 {
+		t.Fatalf(
+			"ended preparing outbound Call = terminal:%s active:%d failed:%d pending dials:%d canceled dials:%d events:%d",
+			terminal, activeLegs, failedLegs, pendingDials, canceledDials, requestedEvents,
+		)
+	}
+}
+
+func TestOutboundCallEndIsIdempotentAfterProviderControlExists(t *testing.T) {
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "end-ringing-staff-control",
+		CallLegID:     "end-ringing-staff-leg",
+	}}}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-ringing-outbound",
+		time.Date(2026, time.August, 26, 14, 15, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-ringing-outbound-call")
+	processAllCommands(t, fixture.calling)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		current, err := fixture.calling.RequestHangup(
+			context.Background(), fixture.identity, fixture.sessionID, call.ID,
+		)
+		if err != nil || current.State != humancalling.CallRinging {
+			t.Fatalf("end ringing outbound Call attempt %d = %#v, %v", attempt, current, err)
+		}
+		if !current.EndRequested {
+			t.Fatalf("end ringing outbound Call attempt %d omitted durable End intent", attempt)
+		}
+	}
+
+	var hangups, endingLegs, requestedEvents int
+	var targetID, clientState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			count(*)::int,
+			min(command.target_id),
+			min(command.payload->>'client_state'),
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = $1 AND leg.state = 'ENDING'),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = $1 AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'HANGUP_LEG'
+	`, call.ID).Scan(
+		&hangups, &targetID, &clientState, &endingLegs, &requestedEvents,
+	); err != nil {
+		t.Fatalf("read ringing outbound End intent: %v", err)
+	}
+	if hangups != 1 || targetID != "end-ringing-staff-control" ||
+		clientState == "" || endingLegs != 1 || requestedEvents != 1 {
+		t.Fatalf(
+			"ringing outbound End intent = hangups:%d target:%q client state:%q ending:%d events:%d",
+			hangups, targetID, clientState, endingLegs, requestedEvents,
+		)
+	}
+	processAllCommands(t, fixture.calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("provider Hangup executions = %d, want 1",
+			provider.count(humancalling.CommandHangupLeg))
+	}
+	current, err := fixture.calling.ReadCall(context.Background(), fixture.identity, call.ID)
+	if err != nil || current.State != humancalling.CallRinging {
+		t.Fatalf("provider acceptance projected terminal Call = %#v, %v", current, err)
+	}
+}
+
+func TestOutboundCallEndCleansUpProviderControlThatArrivesLate(t *testing.T) {
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "end-late-provider-staff-control",
+			CallLegID:     "end-late-provider-staff-leg",
+		}},
+		blockAction:  humancalling.CommandDialOutboundStaff,
+		blockStarted: make(chan struct{}),
+		blockRelease: make(chan struct{}),
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-late-provider-outbound",
+		time.Date(2026, time.August, 26, 14, 30, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-late-provider-outbound-call")
+	processed := make(chan error, 1)
+	go func() {
+		worked, err := fixture.calling.ProcessNextCommand(context.Background())
+		if err == nil && !worked {
+			err = errors.New("late-provider Dial command was not processed")
+		}
+		processed <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("late-provider Dial did not start")
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		current, err := fixture.calling.RequestHangup(
+			context.Background(), fixture.identity, fixture.sessionID, call.ID,
+		)
+		if err != nil || current.State != humancalling.CallRinging {
+			t.Fatalf("end in-flight outbound Dial attempt %d = %#v, %v", attempt, current, err)
+		}
+	}
+	close(provider.blockRelease)
+	if err := <-processed; err != nil {
+		t.Fatalf("complete late-provider Dial: %v", err)
+	}
+
+	current, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	)
+	if err != nil || current.State != humancalling.CallRinging {
+		t.Fatalf("replay End after late provider identity = %#v, %v", current, err)
+	}
+	var hangups, requestedEvents int
+	var targetID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT count(*)::int, min(command.target_id),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = $1 AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'HANGUP_LEG'
+	`, call.ID).Scan(&hangups, &targetID, &requestedEvents); err != nil {
+		t.Fatalf("read late-provider End cleanup: %v", err)
+	}
+	if hangups != 1 || targetID != "end-late-provider-staff-control" ||
+		requestedEvents != 1 {
+		t.Fatalf("late-provider End cleanup = hangups:%d target:%q events:%d",
+			hangups, targetID, requestedEvents)
+	}
+	processAllCommands(t, fixture.calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("late-provider Hangup executions = %d, want 1",
+			provider.count(humancalling.CommandHangupLeg))
+	}
+}
+
+func TestOutboundCallEndBindsLateControlAfterRejectedAmbiguousDial(t *testing.T) {
+	prefix := "end-rejected-ambiguous-outbound"
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t,
+		prefix,
+		time.Date(2026, time.August, 26, 14, 45, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, prefix+"-call")
+
+	var dialID, staffLegID, clientState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT command.id::text, command.call_leg_id::text,
+			command.payload->>'client_state'
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialID, &staffLegID, &clientState); err != nil {
+		t.Fatalf("read ambiguous outbound Dial: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'AMBIGUOUS', last_error_code = 'SYNTHETIC_TIMEOUT'
+		WHERE id = $1
+	`, dialID); err != nil {
+		t.Fatalf("make outbound Dial ambiguous: %v", err)
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end ambiguous outbound Dial: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'DIAL_OUTBOUND_STAFF_EVENT_ABSENT'
+		WHERE id = $1
+	`, dialID); err != nil {
+		t.Fatalf("reject absent ambiguous outbound Dial: %v", err)
+	}
+
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-late-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt:    time.Date(2026, time.August, 26, 14, 46, 0, 0, time.UTC),
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: prefix + "-late-control",
+		CallLegID:     prefix + "-late-leg", CallSessionID: prefix + "-late-session",
+		ClientState: clientState,
+	}); err != nil {
+		t.Fatalf("project late ambiguous outbound Dial: %v", err)
+	}
+	processAllCommands(t, fixture.calling)
+
+	var hangupState, hangupTarget string
+	var dependencyID *string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, target_id, depends_on_command_id::text
+		FROM human_calling_provider_commands
+		WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+	`, staffLegID).Scan(&hangupState, &hangupTarget, &dependencyID); err != nil {
+		t.Fatalf("read rebound exact Hangup: %v", err)
+	}
+	if hangupState != "SENT" || hangupTarget != prefix+"-late-control" ||
+		dependencyID != nil || provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf(
+			"rebound exact Hangup = state:%s target:%s dependency:%v executions:%d",
+			hangupState, hangupTarget, dependencyID,
+			provider.count(humancalling.CommandHangupLeg),
+		)
+	}
+}
+
+func TestOutboundCallEndDoesNotRetryTransientInFlightDial(t *testing.T) {
+	prefix := "end-transient-inflight-outbound"
+	provider := &recordingProvider{
+		blockAction:  humancalling.CommandDialOutboundStaff,
+		blockStarted: make(chan struct{}), blockRelease: make(chan struct{}),
+		blockError: errors.New("synthetic transient provider failure"),
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		prefix,
+		time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, prefix+"-call")
+	processed := make(chan error, 1)
+	go func() {
+		_, err := fixture.calling.ProcessNextCommand(context.Background())
+		processed <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight outbound Dial did not start")
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end in-flight transient outbound Dial: %v", err)
+	}
+	close(provider.blockRelease)
+	if err := <-processed; err == nil {
+		t.Fatal("transient outbound Dial unexpectedly succeeded")
+	}
+
+	var dialState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialState); err != nil {
+		t.Fatalf("read transient outbound Dial after End: %v", err)
+	}
+	if dialState != "AMBIGUOUS" || provider.count(humancalling.CommandDialOutboundStaff) != 1 {
+		t.Fatalf("transient outbound Dial after End = state:%s executions:%d",
+			dialState, provider.count(humancalling.CommandDialOutboundStaff))
+	}
+}
+
+func TestOutboundCallEndDoesNotRecoverInterruptedDialForRetry(t *testing.T) {
+	prefix := "end-interrupted-outbound"
+	now := time.Date(2026, time.August, 26, 15, 15, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(t, prefix, now, &recordingProvider{})
+	call := fixture.startCall(t, prefix+"-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', updated_at = $2
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("interrupt outbound Dial: %v", err)
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end interrupted outbound Dial: %v", err)
+	}
+	if err := fixture.calling.RecoverInterruptedCommands(context.Background()); err != nil {
+		t.Fatalf("recover interrupted outbound Dial after End: %v", err)
+	}
+
+	var dialState, errorCode string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialState, &errorCode); err != nil {
+		t.Fatalf("read recovered outbound Dial after End: %v", err)
+	}
+	if dialState != "AMBIGUOUS" || errorCode != "PROVIDER_EFFECT_UNCERTAIN" {
+		t.Fatalf("recovered outbound Dial after End = state:%s error:%s",
+			dialState, errorCode)
+	}
+}
+
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)
@@ -857,6 +1337,147 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	)
 	if err != nil || terminalCall.State != humancalling.CallNeedsDisposition {
 		t.Fatalf("authorized terminal Hangup = %#v, %v", terminalCall, err)
+	}
+}
+
+func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "stale-bridged-outbound", 1,
+	)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{
+			{CallControlID: "stale-bridged-staff-control", CallLegID: "stale-bridged-staff-leg"},
+			{CallControlID: "stale-bridged-destination-control", CallLegID: "stale-bridged-destination-leg"},
+		},
+		observations: []humancalling.ProviderCallObservation{{Active: false}},
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "stale-bridged-outbound-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "stale-bridged-outbound-practice",
+			LocationKey: "stale-bridged-outbound-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: "stale-bridged-outbound-browser-1",
+			IdempotencyKey: "stale-bridged-outbound-call",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
+	staffClientState, _ := staffDial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: "stale-bridged-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "stale-bridged-staff-control", CallLegID: "stale-bridged-staff-leg",
+		CallSessionID: "stale-bridged-staff-session", ClientState: staffClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	staffFact.EventID = "stale-bridged-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(2 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff answer: %v", err)
+	}
+	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(callingState.Ringing) != 1 {
+		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[0], SessionID: "stale-bridged-outbound-browser-1",
+			CallID: call.ID, MediaToken: callingState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm outbound Staff media: %v", err)
+	}
+	processAllCommands(t, calling)
+	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
+	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
+	destinationFact := humancalling.ProviderFact{
+		EventID: "stale-bridged-destination-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(3 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "stale-bridged-destination-control", CallLegID: "stale-bridged-destination-leg",
+		CallSessionID: "stale-bridged-destination-session", ClientState: destinationClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination initiation: %v", err)
+	}
+	destinationFact.EventID = "stale-bridged-destination-answered"
+	destinationFact.Type = humancalling.FactCallAnswered
+	destinationFact.OccurredAt = now.Add(4 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination answer: %v", err)
+	}
+	processAllCommands(t, calling)
+	for _, fact := range []humancalling.ProviderFact{
+		{
+			EventID: "stale-bridged-destination-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: destinationFact.CallControlID,
+			CallLegID: destinationFact.CallLegID, CallSessionID: destinationFact.CallSessionID,
+		},
+		{
+			EventID: "stale-bridged-staff-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: staffFact.CallControlID,
+			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+		},
+	} {
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project outbound Bridge: %v", err)
+		}
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2
+		WHERE id = $1
+	`, staffDial.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("age bridged Staff CallLeg: %v", err)
+	}
+
+	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
+		t.Fatalf("reconcile stale bridged Staff CallLeg: %v", err)
+	}
+	callingState, err = calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil {
+		t.Fatalf("read connected Call after reconciliation: %v", err)
+	}
+	var connected bool
+	var bridgedLegs, cleanupCommands int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome IS NULL,
+			(SELECT count(*) FROM human_calling_call_legs
+			 WHERE call_id = call.id AND state = 'BRIDGED'),
+			(SELECT count(*) FROM human_calling_provider_commands
+			 WHERE call_id = call.id AND action = 'HANGUP_LEG')
+		FROM human_calling_calls call WHERE id = $1
+	`, call.ID).Scan(&connected, &bridgedLegs, &cleanupCommands); err != nil {
+		t.Fatal(err)
+	}
+	if !connected || bridgedLegs != 2 || cleanupCommands != 0 ||
+		callingState.Bridged == nil || callingState.Bridged.CallID != call.ID ||
+		callingState.Softphone.ActiveCallID != call.ID {
+		t.Fatalf("inactive observation ended bridged Call = connected:%t bridged legs:%d cleanup:%d state:%#v",
+			connected, bridgedLegs, cleanupCommands, callingState)
 	}
 }
 

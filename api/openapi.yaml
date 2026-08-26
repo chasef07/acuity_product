@@ -461,7 +461,7 @@ paths:
   /v1/calling/calls/{callId}/hangup:
     post:
       operationId: requestCallingHangup
-      summary: Commit a provider hangup command without claiming termination.
+      summary: Commit owned Call end intent without claiming provider termination.
       parameters:
         - name: callId
           in: path
@@ -477,7 +477,7 @@ paths:
               $ref: "#/components/schemas/CallingControlRequest"
       responses:
         "202":
-          description: Hangup intent committed.
+          description: Call end intent committed.
           content:
             application/json:
               schema:
@@ -2329,6 +2329,7 @@ components:
         - transferReason
         - reasonSource
         - providerTermination
+        - endRequested
         - callerId
         - retryAllowed
         - version
@@ -2385,6 +2386,8 @@ components:
           type: string
         providerTermination:
           type: string
+        endRequested:
+          type: boolean
         callerId:
           type: string
         retryOfCallId:
