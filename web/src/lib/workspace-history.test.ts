@@ -6,7 +6,6 @@ import {
   conversationDateLabel,
   presentTimeline,
   recoveryFollowUpCallIDs,
-  technicalTimelineItems,
 } from "./workspace-history.ts"
 
 const base = {
@@ -179,6 +178,5 @@ test("history combines recovery bookkeeping with its call and keeps the evidence
   ] as ConversationTimelineItem[]
 
   assert.deepEqual(presentTimeline(items).map((item) => item.id), ["item"])
-  assert.deepEqual(technicalTimelineItems(items).map((item) => item.id), ["task"])
   assert.deepEqual([...recoveryFollowUpCallIDs(items)], ["call", "later-call"])
 })

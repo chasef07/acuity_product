@@ -468,7 +468,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await expect(createTask).toHaveCSS("opacity", "1")
   await createTask.click()
   const taskTouchpoint = page.getByRole("button", {
-    name: /Open task: Follow up on text/,
+    name: /View task: Follow up on text/,
   })
   await expect(taskTouchpoint).toBeVisible()
   await taskTouchpoint.click()
@@ -557,7 +557,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   ).toBeVisible()
   await page
     .getByRole("button", {
-      name: /Open task: Follow up on text/,
+      name: /View task: Follow up on text/,
     })
     .last()
     .click()

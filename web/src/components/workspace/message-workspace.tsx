@@ -13,10 +13,6 @@ import {
 import {
   AlertTriangleIcon,
   ArrowUpIcon,
-  BotIcon,
-  CalendarCheck2Icon,
-  CalendarClockIcon,
-  CalendarX2Icon,
   CheckIcon,
   CheckSquareIcon,
   CopyIcon,
@@ -25,11 +21,7 @@ import {
   FileTextIcon,
   PaperclipIcon,
   PhoneCallIcon,
-  PhoneIncomingIcon,
-  PhoneMissedIcon,
-  PhoneOutgoingIcon,
   RefreshCwIcon,
-  VoicemailIcon,
   XIcon,
 } from "lucide-react"
 
@@ -55,14 +47,7 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group"
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item"
+import { Item } from "@/components/ui/item"
 import { Marker, MarkerContent } from "@/components/ui/marker"
 import {
   Message as MessageRow,
@@ -103,11 +88,7 @@ import type {
   MessageAttachment,
   Task,
 } from "@/lib/api/generated/types.gen"
-import {
-  aiCallCompletionLabel,
-  appointmentOutcomeLabel,
-  appointmentOutcomeTitle,
-} from "@/lib/ai-interactions"
+import { aiCallTimelinePresentation } from "@/lib/ai-interactions"
 import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
@@ -116,9 +97,7 @@ import {
   presentTimeline,
   recoveryFollowUpCallIDs,
   sameConversationDate,
-  technicalTimelineItems,
 } from "@/lib/workspace-history"
-import { appointmentIntentForTask } from "@/lib/workspace-triage"
 
 const maximumMessageLength = 1_600
 const maximumAttachmentBytes = 600 * 1_024
@@ -434,7 +413,6 @@ function MessageConversation({
   )?.message?.thread
   const composerThreadID = conversationThread?.id ?? ""
   const presentedItems = presentTimeline(items)
-  const technicalItems = technicalTimelineItems(items)
   const followUpCallIDs = recoveryFollowUpCallIDs(items)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -534,24 +512,6 @@ function MessageConversation({
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                </MessageScrollerItem>
-              )}
-              {!loading && technicalItems.length > 0 && (
-                <MessageScrollerItem messageId="technical-details">
-                  <details className="mx-auto w-full max-w-md px-2 py-1 text-xs text-muted-foreground">
-                    <summary className="cursor-pointer">Technical details</summary>
-                    <ul className="mt-2 flex flex-col gap-1 pl-4">
-                      {technicalItems.map((item) => (
-                        <li key={`${item.type}:${item.id}`}>
-                          {item.task?.title} ·{" "}
-                          {taskActivityLabel(
-                            item.taskActivity,
-                            item.task?.state ?? "OPEN",
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>
@@ -655,18 +615,18 @@ function TimelineEntry({
     const touchpoint = callTouchpoint(item.call)
     return (
       <ActivityItem
-        icon={touchpoint.icon}
-        label={`${touchpoint.label}${recoveryFollowUp ? " · Follow-up created" : ""}`}
-        occurredAt={item.occurredAt}
         title={item.call.transferReason || touchpoint.label}
-        detail={touchpoint.detail}
-        location={
+        metadata={[
+          item.call.transferReason ? touchpoint.label : "",
+          recoveryFollowUp ? "Follow-up created" : "",
+          touchpoint.detail,
           item.call.locationId !== contextLocationID
             ? item.call.locationName
-            : ""
-        }
+            : "",
+          formatTime(item.occurredAt),
+        ]}
         actionLabel={
-          item.call.outcome === "VOICEMAIL" ? "Open voicemail" : "Open call"
+          item.call.outcome === "VOICEMAIL" ? "View voicemail" : "View call"
         }
         onOpen={onCallOpen ? () => onCallOpen(item.call!.id) : undefined}
       />
@@ -674,19 +634,21 @@ function TimelineEntry({
   }
   if (item.type === "AI_INTERACTION" && item.aiInteraction) {
     const interaction = item.aiInteraction
+    const presentation = aiCallTimelinePresentation(
+      interaction.appointmentOutcome,
+      interaction.status,
+    )
     return (
       <ActivityItem
-        icon={<BotIcon aria-hidden="true" />}
-        label={`AI call · ${appointmentOutcomeLabel(interaction.appointmentOutcome)}`}
-        occurredAt={item.occurredAt}
-        title={appointmentOutcomeTitle(interaction.appointmentOutcome)}
-        detail={aiCallCompletionLabel(interaction.status)}
-        location={
+        title={presentation.title}
+        metadata={[
+          presentation.detail,
           interaction.locationId !== contextLocationID
             ? interaction.locationName
-            : ""
-        }
-        actionLabel="Open appointment"
+            : "",
+          formatTime(item.occurredAt),
+        ]}
+        actionLabel="View AI call"
         onOpen={
           onAIInteractionOpen
             ? () => onAIInteractionOpen(interaction.id)
@@ -697,18 +659,15 @@ function TimelineEntry({
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
-    const touchpoint = taskTouchpoint(task)
     return (
       <ActivityItem
-        icon={touchpoint.icon}
-        label={`${touchpoint.label} · ${taskActivityLabel(item.taskActivity, task.state)}`}
-        occurredAt={item.occurredAt}
         title={task.title}
-        detail={`Created by ${task.createdBy.email || task.createdBy.subject}`}
-        location={
-          task.locationId !== contextLocationID ? task.locationName : ""
-        }
-        actionLabel="Open task"
+        metadata={[
+          taskActivityDetail(item.taskActivity, task),
+          task.locationId !== contextLocationID ? task.locationName : "",
+          formatTime(item.occurredAt),
+        ]}
+        actionLabel="View task"
         onOpen={onTaskOpen ? () => onTaskOpen(task) : undefined}
       />
     )
@@ -960,48 +919,48 @@ function MessageEntry({
 }
 
 function ActivityItem({
-  icon,
-  label,
-  occurredAt,
   title,
-  detail,
-  location,
+  metadata,
   actionLabel,
   onOpen,
 }: {
-  icon: React.ReactNode
-  label: string
-  occurredAt: string
   title: string
-  detail: string
-  location: string
+  metadata: string[]
   actionLabel: string
   onOpen?: () => void
 }) {
+  const content = (
+    <span className="flex flex-1 flex-col gap-1">
+      <span className="line-clamp-1 w-fit text-xs/relaxed font-medium leading-snug">
+        {title}
+      </span>
+      <span className="line-clamp-2 text-left text-xs/relaxed font-normal text-muted-foreground">
+        {metadata.filter(Boolean).join(" · ")}
+      </span>
+    </span>
+  )
+
+  if (!onOpen) {
+    return (
+      <Item size="sm" className="mx-auto max-w-xl">
+        {content}
+      </Item>
+    )
+  }
+
   return (
-    <Item size="sm" className="mx-auto max-w-xl">
-      <ItemMedia variant="icon">{icon}</ItemMedia>
-      <ItemContent>
-        <ItemTitle>{title}</ItemTitle>
-        <ItemDescription>
-          {[label, detail, location, formatTime(occurredAt)]
-            .filter(Boolean)
-            .join(" · ")}
-        </ItemDescription>
-      </ItemContent>
-      {onOpen && (
-        <ItemActions>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            aria-label={`${actionLabel}: ${title}`}
-            onClick={onOpen}
-          >
-            {actionLabel}
-          </Button>
-        </ItemActions>
-      )}
+    <Item
+      size="sm"
+      className="mx-auto max-w-xl cursor-pointer text-left hover:bg-muted"
+      render={
+        <button
+          type="button"
+          aria-label={`${actionLabel}: ${title}`}
+          onClick={onOpen}
+        />
+      }
+    >
+      {content}
     </Item>
   )
 }
@@ -1400,29 +1359,29 @@ function fileToBase64(file: File) {
   })
 }
 
-function taskActivityLabel(
+function taskActivityDetail(
   activity: ConversationTimelineItem["taskActivity"],
-  state: Task["state"],
+  task: Task,
 ) {
   switch (activity) {
     case "TASK_CREATED":
-      return "Created"
+      return task.origin === "ABITA_AI" ? "Task created by AI" : "Task created"
     case "TITLE_CHANGED":
-      return "Title changed"
+      return "Task title changed"
     case "TASK_COMPLETED":
-      return "Completed"
+      return "Task completed"
     case "TASK_REOPENED":
-      return "Reopened"
+      return "Task reopened"
     case "INTERACTION_ATTACHED":
-      return "New interaction attached"
+      return "New activity added"
     case "TASK_AUTO_COMPLETED_INBOUND_CALL":
-      return "Auto-completed after connected inbound call"
+      return "Task completed after connected call"
     case "TASK_AUTO_COMPLETED_BOOKING":
-      return "Auto-completed after successful booking"
+      return "Task completed after booking"
     case "TASK_AUTO_COMPLETED_DUPLICATE":
-      return "Duplicate resolved"
+      return "Duplicate Task resolved"
     default:
-      return state === "OPEN" ? "Open" : "Completed"
+      return task.state === "OPEN" ? "Task open" : "Task completed"
   }
 }
 
@@ -1430,51 +1389,26 @@ function callTouchpoint(call: NonNullable<ConversationTimelineItem["call"]>) {
   const duration = call.durationSeconds > 0 ? formatDuration(call.durationSeconds) : ""
   if (call.outcome === "VOICEMAIL") {
     return {
-      icon: <VoicemailIcon />,
       label: "Voicemail",
-      detail: duration ? `Recorded · ${duration}` : "Recorded",
+      detail: duration,
     }
   }
   if (call.outcome === "MISSED" || call.outcome === "UNANSWERED") {
     return {
-      icon: <PhoneMissedIcon />,
       label: call.direction === "INBOUND" ? "Missed call" : "Unanswered call",
-      detail: [sentenceCase(call.direction), duration].filter(Boolean).join(" · "),
+      detail: duration,
     }
   }
   if (call.direction === "INBOUND") {
     return {
-      icon: <PhoneIncomingIcon />,
       label: "Inbound call",
       detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
     }
   }
   return {
-    icon: <PhoneOutgoingIcon />,
     label: "Outbound call",
     detail: [sentenceCase(call.outcome), duration].filter(Boolean).join(" · "),
   }
-}
-
-function taskTouchpoint(task: Task) {
-  switch (appointmentIntentForTask(task)) {
-    case "cancellations":
-      return { icon: <CalendarX2Icon />, label: "Cancellation" }
-    case "reschedules":
-      return { icon: <CalendarClockIcon />, label: "Reschedule" }
-    case "bookings":
-      return { icon: <CalendarCheck2Icon />, label: "Booking" }
-  }
-  if (task.category === "appointments") {
-    return { icon: <CalendarClockIcon />, label: "Appointment" }
-  }
-  if (task.origin === "VOICEMAIL_RECOVERY") {
-    return { icon: <VoicemailIcon />, label: "Voicemail follow-up" }
-  }
-  if (task.origin === "MISSED_CALL_RECOVERY") {
-    return { icon: <PhoneMissedIcon />, label: "Missed call follow-up" }
-  }
-  return { icon: <CheckSquareIcon />, label: "Task" }
 }
 
 function formatTime(value: string) {
