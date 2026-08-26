@@ -202,7 +202,7 @@ test("pinned Telnyx SDK treats zero reconnect attempts as unlimited", () => {
     "node_modules/@telnyx/webrtc/lib/bundle.mjs",
     "utf8",
   )
-  assert.equal(sdkPackage.version, "2.27.8")
+  assert.equal(sdkPackage.version, "2.27.10")
   assert.match(
     sdkBundle,
     /maxReconnectAttempts[\s\S]{0,300}e>0&&this\._reconnectAttempts>e/,
