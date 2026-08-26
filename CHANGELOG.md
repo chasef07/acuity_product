@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.4](https://github.com/chasef07/acuity_product/compare/v0.4.3...v0.4.4) (2026-08-26)
+
+
+### Bug Fixes
+
+* **calling:** keep End available through outbound calls ([#198](https://github.com/chasef07/acuity_product/issues/198)) ([ab5c198](https://github.com/chasef07/acuity_product/commit/ab5c19811d5838a2dec3de37431d9ace3b9e5d79))
+* **interaction:** consume native LiveKit call closeout ([#191](https://github.com/chasef07/acuity_product/issues/191)) ([42337e0](https://github.com/chasef07/acuity_product/commit/42337e0b2937e7fc8ce390fd5f6259c3f41c1dde))
+* **observability:** ignore zero-count histogram samples ([#202](https://github.com/chasef07/acuity_product/issues/202)) ([ea73213](https://github.com/chasef07/acuity_product/commit/ea7321346d3c37b60beb6d419f24d236caf4abde))
+* **workspace:** simplify activity timeline ([#206](https://github.com/chasef07/acuity_product/issues/206)) ([5bc11de](https://github.com/chasef07/acuity_product/commit/5bc11def7c3250db892842072dfe2c205e7f32be))
+
+
+### Performance Improvements
+
+* **worker:** coordinate idle provider command polling ([#203](https://github.com/chasef07/acuity_product/issues/203)) ([bedcae5](https://github.com/chasef07/acuity_product/commit/bedcae554f40575fbe4eb6fae819bf577136d9a9))
+
 ## [0.4.3](https://github.com/chasef07/acuity_product/compare/v0.4.2...v0.4.3) (2026-08-26)
 
 
