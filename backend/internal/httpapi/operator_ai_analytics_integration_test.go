@@ -294,9 +294,12 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 			Error   string         `json:"error"`
 		} `json:"timeline"`
 		ToolExecutions []struct {
-			Name        string `json:"name"`
-			Status      string `json:"status"`
-			OutputClass string `json:"outputClass"`
+			Name          string `json:"name"`
+			Status        string `json:"status"`
+			OutputClass   string `json:"outputClass"`
+			DomainOutcome string `json:"domainOutcome"`
+			DomainStatus  string `json:"domainStatus"`
+			TaskID        string `json:"taskId"`
 		} `json:"toolExecutions"`
 	}
 	decode(t, detailResponse, &detail)
@@ -315,7 +318,8 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		detail.Timeline[3].Payload["appointmentId"] != "appointment-old" ||
 		detail.Timeline[4].Kind != "TOOL_RESULT" || detail.Timeline[4].Error == "" ||
 		detail.ToolExecutions[1].Status != "ERROR" ||
-		detail.ToolExecutions[1].OutputClass != "rescheduled" {
+		detail.ToolExecutions[1].DomainOutcome != "rescheduled" ||
+		detail.ToolExecutions[1].DomainStatus != "failed" {
 		t.Fatalf("normalized operator tool evidence = %#v / %#v", detail.Timeline, detail.ToolExecutions)
 	}
 

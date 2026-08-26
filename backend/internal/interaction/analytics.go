@@ -110,11 +110,14 @@ type TimelineItem struct {
 }
 
 type ToolExecution struct {
-	CallID      string
-	Name        string
-	OccurredAt  time.Time
-	Status      string
-	OutputClass string
+	CallID        string
+	Name          string
+	OccurredAt    time.Time
+	Status        string // Native LiveKit execution status.
+	OutputClass   string // Historical Agent output classification only.
+	DomainOutcome string // Correlated Acuity domain outcome, when present.
+	DomainStatus  string // Correlated Acuity business-result status, when present.
+	TaskID        string // Durable Product Task proving Staff Task follow-up.
 }
 
 type OperatorAnalyticsDetail struct {
@@ -756,12 +759,8 @@ func nativeToolExecutions(
 		}
 		output := outputsByCallID[callID]
 		receipt := receiptsByCallID[callID]
-		status := "SUCCESS"
-		if (output == nil && receipt == nil) ||
-			boolValue(firstRecordValue(output, "is_error", "isError")) ||
-			domainOutcomeIsError(firstRecordString(receipt, "status")) {
-			status = "ERROR"
-		}
+		status := nativeToolExecutionStatus(output)
+		domainOutcome, domainStatus, taskID := domainReceiptProjection(receipt)
 		occurredAt := timestampValue(
 			firstRecordValue(call, "created_at", "createdAt"),
 			timestampValue(
@@ -770,17 +769,62 @@ func nativeToolExecutions(
 			),
 		)
 		result = append(result, ToolExecution{
-			CallID:      callID,
-			Name:        name,
-			OccurredAt:  occurredAt,
-			Status:      status,
-			OutputClass: firstRecordString(receipt, "outcome"),
+			CallID:        callID,
+			Name:          name,
+			OccurredAt:    occurredAt,
+			Status:        status,
+			DomainOutcome: domainOutcome,
+			DomainStatus:  domainStatus,
+			TaskID:        taskID,
 		})
 	}
 	sort.SliceStable(result, func(left, right int) bool {
 		return result[left].OccurredAt.Before(result[right].OccurredAt)
 	})
 	return result
+}
+
+func nativeToolExecutionStatus(output map[string]any) string {
+	if output == nil {
+		return "INCOMPLETE"
+	}
+	value, present := output["is_error"]
+	if !present {
+		value, present = output["isError"]
+	}
+	isError, valid := value.(bool)
+	if !present || !valid {
+		return "INCOMPLETE"
+	}
+	if isError {
+		return "ERROR"
+	}
+	return "SUCCESS"
+}
+
+func domainReceiptProjection(receipt map[string]any) (string, string, string) {
+	outcome := firstRecordString(receipt, "outcome")
+	status := normalizedDomainStatus(firstRecordString(receipt, "status"))
+	if outcome == "" || status == "" {
+		return "", "", ""
+	}
+	if (outcome == "staff_task_created" || outcome == "staff_task_duplicate") && status == "success" {
+		taskID := firstRecordString(recordValue(receipt["evidence"]), "taskId", "task_id")
+		if taskID == "" {
+			return "", "", ""
+		}
+		return outcome, status, taskID
+	}
+	return outcome, status, ""
+}
+
+func normalizedDomainStatus(status string) string {
+	switch strings.ToLower(status) {
+	case "success", "blocked", "partial", "ambiguous", "failed":
+		return strings.ToLower(status)
+	default:
+		return ""
+	}
 }
 
 func domainOutcomeReceiptsByCallID(closeout map[string]any) map[string]map[string]any {
@@ -792,10 +836,6 @@ func domainOutcomeReceiptsByCallID(closeout map[string]any) map[string]map[strin
 		}
 	}
 	return result
-}
-
-func domainOutcomeIsError(status string) bool {
-	return status != "" && !strings.EqualFold(status, "success")
 }
 
 func toolExecutionsFromRaw(raw json.RawMessage, fallback time.Time) []ToolExecution {

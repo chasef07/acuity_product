@@ -64,7 +64,8 @@ func TestNormalizeTimelineOmitsSystemMessagesAndNormalizesLiveKitItems(t *testin
 
 	executions := normalizeToolExecutions(transcript, closeout, startedAt)
 	if len(executions) != 1 || executions[0].Status != "ERROR" ||
-		executions[0].OutputClass != "rescheduled" {
+		executions[0].DomainOutcome != "rescheduled" ||
+		executions[0].DomainStatus != "failed" {
 		t.Fatalf("tool executions = %#v", executions)
 	}
 }
@@ -90,19 +91,19 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 				{"callId":"book-1","toolName":"book_appointment","outcome":"booked","status":"success","occurredAt":"2026-08-25T09:00:02Z","evidence":{"action":"booked"}}
 			]}`,
 			want: []ToolExecution{
-				{CallID: "book-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", OutputClass: "booked"},
-				{CallID: "cancel-2", Name: "cancel_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 4, 0, time.UTC), Status: "SUCCESS", OutputClass: "cancelled"},
+				{CallID: "book-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "booked", DomainStatus: "success"},
+				{CallID: "cancel-2", Name: "cancel_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 4, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "cancelled", DomainStatus: "success"},
 			},
 		},
 		{
-			name: "failed partial blocked ambiguous and replay receipts remain correlated evidence",
+			name: "domain results remain separate from successful native execution",
 			transcript: `{"chat_history":{"items":[
 				{"type":"function_call","name":"add_patient","call_id":"failed-1","arguments":"{}","created_at":1787648401000},
 				{"type":"function_call_output","name":"add_patient","call_id":"failed-1","output":"Could not create patient.","is_error":false,"created_at":1787648402000},
 				{"type":"function_call","name":"reschedule_appointment","call_id":"partial-2","arguments":"{}","created_at":1787648403000},
 				{"type":"function_call_output","name":"reschedule_appointment","call_id":"partial-2","output":"New appointment booked; old appointment remains.","is_error":false,"created_at":1787648404000},
-				{"type":"function_call","name":"update_insurance","call_id":"blocked-3","arguments":"{}","created_at":1787648405000},
-				{"type":"function_call_output","name":"update_insurance","call_id":"blocked-3","output":"Update blocked.","is_error":false,"created_at":1787648406000},
+				{"type":"function_call","name":"resolve_patient","call_id":"blocked-3","arguments":"{}","created_at":1787648405000},
+				{"type":"function_call_output","name":"resolve_patient","call_id":"blocked-3","output":"More identity is required.","is_error":false,"created_at":1787648406000},
 				{"type":"function_call","name":"transfer_call","call_id":"ambiguous-4","arguments":"{}","created_at":1787648407000},
 				{"type":"function_call_output","name":"transfer_call","call_id":"ambiguous-4","output":"Transfer status uncertain.","is_error":false,"created_at":1787648408000},
 				{"type":"function_call","name":"book_appointment","call_id":"replay-5","arguments":"{}","created_at":1787648409000},
@@ -111,16 +112,16 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 			closeout: `{"domainOutcomes":[
 				{"callId":"replay-5","toolName":"book_appointment","outcome":"booked","status":"success","occurredAt":"2026-08-25T09:00:10Z","evidence":{"replayed":true}},
 				{"callId":"ambiguous-4","toolName":"transfer_call","outcome":"transfer_ambiguous","status":"ambiguous","occurredAt":"2026-08-25T09:00:08Z"},
-				{"callId":"blocked-3","toolName":"update_insurance","outcome":"insurance_update_blocked","status":"blocked","occurredAt":"2026-08-25T09:00:06Z"},
+				{"callId":"blocked-3","toolName":"resolve_patient","outcome":"patient_lookup_needs_identity","status":"blocked","occurredAt":"2026-08-25T09:00:06Z"},
 				{"callId":"partial-2","toolName":"reschedule_appointment","outcome":"rescheduled","status":"partial","occurredAt":"2026-08-25T09:00:04Z","evidence":{"action":"rescheduled"}},
 				{"callId":"failed-1","toolName":"add_patient","outcome":"patient_creation_failed","status":"failed","occurredAt":"2026-08-25T09:00:02Z"}
 			]}`,
 			want: []ToolExecution{
-				{CallID: "failed-1", Name: "add_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "ERROR", OutputClass: "patient_creation_failed"},
-				{CallID: "partial-2", Name: "reschedule_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "ERROR", OutputClass: "rescheduled"},
-				{CallID: "blocked-3", Name: "update_insurance", OccurredAt: time.Date(2026, 8, 25, 9, 0, 5, 0, time.UTC), Status: "ERROR", OutputClass: "insurance_update_blocked"},
-				{CallID: "ambiguous-4", Name: "transfer_call", OccurredAt: time.Date(2026, 8, 25, 9, 0, 7, 0, time.UTC), Status: "ERROR", OutputClass: "transfer_ambiguous"},
-				{CallID: "replay-5", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 9, 0, time.UTC), Status: "SUCCESS", OutputClass: "booked"},
+				{CallID: "failed-1", Name: "add_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "patient_creation_failed", DomainStatus: "failed"},
+				{CallID: "partial-2", Name: "reschedule_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "rescheduled", DomainStatus: "partial"},
+				{CallID: "blocked-3", Name: "resolve_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 5, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "patient_lookup_needs_identity", DomainStatus: "blocked"},
+				{CallID: "ambiguous-4", Name: "transfer_call", OccurredAt: time.Date(2026, 8, 25, 9, 0, 7, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "transfer_ambiguous", DomainStatus: "ambiguous"},
+				{CallID: "replay-5", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 9, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "booked", DomainStatus: "success"},
 			},
 		},
 		{
@@ -135,6 +136,42 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 			want: []ToolExecution{
 				{CallID: "invalid-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "ERROR"},
 				{CallID: "unknown-2", Name: "reticulating_splines", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "ERROR"},
+			},
+		},
+		{
+			name: "domain receipt cannot manufacture a completed native execution",
+			transcript: `{"chat_history":{"items":[
+				{"type":"function_call","name":"create_staff_task","call_id":"task-1","arguments":"{}","created_at":1787648401000}
+			]}}`,
+			closeout: `{"domainOutcomes":[
+				{"callId":"task-1","toolName":"create_staff_task","outcome":"staff_task_created","status":"success","occurredAt":"2026-08-25T09:00:02Z","evidence":{"taskId":"task-63"}}
+			]}`,
+			want: []ToolExecution{
+				{CallID: "task-1", Name: "create_staff_task", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "INCOMPLETE", DomainOutcome: "staff_task_created", DomainStatus: "success", TaskID: "task-63"},
+			},
+		},
+		{
+			name: "malformed native output without error evidence remains incomplete",
+			transcript: `{"chat_history":{"items":[
+				{"type":"function_call","name":"resolve_patient","call_id":"malformed-1","arguments":"{}","created_at":1787648401000},
+				{"type":"function_call_output","name":"resolve_patient","call_id":"malformed-1","output":"Verified.","created_at":1787648402000}
+			]}}`,
+			closeout: `{ "domainOutcomes": [] }`,
+			want: []ToolExecution{
+				{CallID: "malformed-1", Name: "resolve_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "INCOMPLETE"},
+			},
+		},
+		{
+			name: "Staff Task success without a durable Task ID is not projected",
+			transcript: `{"chat_history":{"items":[
+				{"type":"function_call","name":"create_staff_task","call_id":"task-missing","arguments":"{}","created_at":1787648401000},
+				{"type":"function_call_output","name":"create_staff_task","call_id":"task-missing","output":"Task sent.","is_error":false,"created_at":1787648402000}
+			]}}`,
+			closeout: `{"domainOutcomes":[
+				{"callId":"task-missing","toolName":"create_staff_task","outcome":"staff_task_created","status":"success","occurredAt":"2026-08-25T09:00:02Z"}
+			]}`,
+			want: []ToolExecution{
+				{CallID: "task-missing", Name: "create_staff_task", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS"},
 			},
 		},
 	}
@@ -181,7 +218,8 @@ func TestNormalizeToolExecutionsUsesNarrowHistoricalFallback(t *testing.T) {
 
 	current := json.RawMessage(`{"domainOutcomes":[],"toolExecutions":[{"callId":"legacy-1","createdAt":"2026-08-25T09:00:01Z","outputClass":"patient_verified","status":"success","toolName":"resolve_patient"}]}`)
 	got = normalizeToolExecutions(native, current, startedAt)
-	if len(got) != 1 || got[0].CallID != "native-1" || got[0].OutputClass != "" {
+	if len(got) != 1 || got[0].CallID != "native-1" ||
+		got[0].OutputClass != "" || got[0].DomainOutcome != "" {
 		t.Fatalf("current native evidence did not suppress legacy field = %#v", got)
 	}
 }
