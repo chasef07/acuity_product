@@ -386,7 +386,7 @@ function ReceiptEvidence({
   value: Record<string, unknown>
 }) {
   return (
-    <details className="group rounded-lg border bg-muted/20 px-3 py-2">
+    <details className="group rounded-lg border bg-muted px-3 py-2">
       <summary className="cursor-pointer text-xs font-medium">{label}</summary>
       <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-background p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
         {JSON.stringify(value, null, 2)}

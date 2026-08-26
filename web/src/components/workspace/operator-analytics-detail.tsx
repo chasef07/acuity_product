@@ -275,7 +275,7 @@ function OperatorAnalyticsDetailView({
                   {detail.toolExecutions.map((execution) => (
                     <div
                       key={execution.callId}
-                      className="rounded-md bg-muted/60 px-3 py-2"
+                      className="rounded-md bg-muted px-3 py-2"
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs font-medium">
@@ -396,7 +396,7 @@ function AppointmentEvidence({
             <summary className="cursor-pointer text-sm font-medium">
               {receipt.label}
             </summary>
-            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted/60 p-3 font-mono text-[0.6875rem] leading-5">
+            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-[0.6875rem] leading-5">
               {formatPayload(receipt.value)}
             </pre>
           </details>
@@ -441,10 +441,10 @@ function TimelineItem({
         </span>
         <div
           aria-label={`${agent ? "Agent" : "Caller"} message`}
-          className={`max-w-[88%] rounded-2xl px-4 py-3 shadow-sm ${
+          className={`max-w-[88%] rounded-2xl px-4 py-3 ${
             agent
-              ? "rounded-bl-md border bg-muted/70"
-              : "ml-auto rounded-br-md bg-primary text-primary-foreground"
+              ? "rounded-bl-md bg-muted"
+              : "ml-auto rounded-br-md border bg-card text-card-foreground"
           }`}
         >
           <div className="mb-1 flex items-center justify-between gap-3">
@@ -452,9 +452,7 @@ function TimelineItem({
               {agent ? "Acuity" : "Caller"}
             </span>
             <time
-              className={`font-mono text-[0.625rem] ${
-                agent ? "text-muted-foreground" : "text-primary-foreground/75"
-              }`}
+              className="font-mono text-[0.625rem] text-muted-foreground"
             >
               {formatTime(item.occurredAt)}
             </time>
@@ -542,7 +540,7 @@ function ToolPayload({
         className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-[0.6875rem] leading-5 ${
           error
             ? "border-destructive/30 bg-destructive/5 text-destructive"
-            : "bg-muted/60"
+            : "bg-muted"
         }`}
       >
         {formatPayload(value)}

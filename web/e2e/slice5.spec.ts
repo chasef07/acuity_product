@@ -198,7 +198,7 @@ test("rail hover details and the message composer preserve compact context", asy
   )
   await expect(sendButton).toBeEnabled()
   await expect(sendButton).toHaveCSS("opacity", "1")
-  await expect(sendButton).toHaveCSS("background-color", "rgb(34, 34, 34)")
+  await expect(sendButton).toHaveCSS("background-color", "rgb(13, 13, 13)")
 
   await taskRow.hover()
   await page

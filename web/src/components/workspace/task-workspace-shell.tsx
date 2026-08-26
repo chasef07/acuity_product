@@ -109,7 +109,7 @@ const OperatorAnalytics = dynamic(
       <div
         aria-label="Loading analytics workspace"
         aria-busy="true"
-        className="flex min-h-0 flex-1 bg-muted/20 p-4 sm:p-6 lg:p-8"
+        className="flex min-h-0 flex-1 bg-background p-4 sm:p-6 lg:p-8"
       >
         <Skeleton className="h-40 w-full rounded-xl" />
       </div>
@@ -1446,7 +1446,7 @@ export function TaskWorkspaceShell() {
               locationScopeID={locationScopeID}
             />
           ) : view === "engagement" && selectedEngagement ? (
-            <div className="relative flex min-h-0 flex-1 bg-muted/20">
+            <div className="relative flex min-h-0 flex-1 bg-background">
               <div className="flex min-h-0 min-w-0 flex-1 bg-background">
                 <EngagementWorkspace
                   key={selectedEngagement.phone}
@@ -1783,7 +1783,7 @@ function WorkspaceFailure({
   onAction: () => void
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-muted/40 p-6">
+    <main className="flex min-h-svh items-center justify-center bg-background p-6">
       <Alert className="max-w-md" variant="destructive">
         <WifiOffIcon />
         <AlertTitle>{title}</AlertTitle>

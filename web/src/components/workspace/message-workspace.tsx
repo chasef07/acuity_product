@@ -980,7 +980,7 @@ function ActivityItem({
     <Item
       size="sm"
       data-selected={selected || undefined}
-      className="mx-auto max-w-xl cursor-pointer px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:bg-muted/50 data-[selected=true]:bg-muted/50"
+      className="mx-auto max-w-xl cursor-pointer px-3 py-2.5 text-left hover:bg-muted focus-visible:bg-muted data-[selected=true]:bg-accent"
       render={
         <button
           type="button"
@@ -1084,7 +1084,7 @@ function AttachmentCard({
           className="max-h-44 w-full bg-background object-contain"
         />
       ) : (
-        <div className="flex items-center gap-2 bg-muted/50 px-3 py-2 text-xs">
+        <div className="flex items-center gap-2 bg-muted px-3 py-2 text-xs">
           <FileTextIcon className="size-4" />
           <span className="min-w-0 flex-1 truncate">{attachment.fileName}</span>
           <span className="tabular-nums">{formatBytes(attachment.byteSize)}</span>

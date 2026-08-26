@@ -641,7 +641,7 @@ function RecordingSource({
   }
 
   return (
-    <div className={compact ? "mt-3" : "border-b bg-muted/20 px-5 py-4"}>
+    <div className={compact ? "mt-3" : "border-b bg-muted px-5 py-4"}>
       {!compact && (
         <div className="mb-2 flex items-center gap-2">
           <AudioLinesIcon className="size-4" />

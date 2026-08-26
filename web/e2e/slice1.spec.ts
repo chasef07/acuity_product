@@ -498,12 +498,61 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
   await test.step("persisted theme and explicit browser states", async () => {
     await page.goto("/workspace")
     await expectNoOpenTasks(page)
+    const appearanceButton = page.getByRole("button", { name: "Appearance" })
+    const systemThemeOption = page.getByRole("menuitemradio", {
+      name: "System",
+    })
+    await appearanceButton.click()
+    await expect(systemThemeOption).toBeVisible()
+    await page.getByRole("menuitemradio", { name: "Light" }).click()
+    await expect(systemThemeOption).toBeHidden()
+    await expect(page.locator("html")).not.toHaveClass(/dark/)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const styles = getComputedStyle(document.documentElement)
+          return {
+            background: styles.getPropertyValue("--background").trim(),
+            foreground: styles.getPropertyValue("--foreground").trim(),
+            primary: styles.getPropertyValue("--primary").trim(),
+            sidebar: styles.getPropertyValue("--sidebar").trim(),
+          }
+        }),
+      )
+      .toEqual({
+        background: "#fff",
+        foreground: "#0d0d0d",
+        primary: "#0d0d0d",
+        sidebar: "#f3f3f1",
+      })
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
       fullPage: true,
     })
-    await page.getByRole("button", { name: "Dark mode" }).click()
+    await appearanceButton.click()
+    const darkThemeOption = page.getByRole("menuitemradio", { name: "Dark" })
+    await expect(darkThemeOption).toBeVisible()
+    await darkThemeOption.click()
+    await expect(darkThemeOption).toBeHidden()
     await expect(page.locator("html")).toHaveClass(/dark/)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const styles = getComputedStyle(document.documentElement)
+          return {
+            background: styles.getPropertyValue("--background").trim(),
+            foreground: styles.getPropertyValue("--foreground").trim(),
+            primary: styles.getPropertyValue("--primary").trim(),
+            sidebar: styles.getPropertyValue("--sidebar").trim(),
+          }
+        }),
+      )
+      .toEqual({
+        background: "#0f0f0f",
+        foreground: "#f5f5f3",
+        primary: "#f5f5f3",
+        sidebar: "#161616",
+      })
     await page.screenshot({
       path: testInfo.outputPath("workspace-dark.png"),
       fullPage: true,
