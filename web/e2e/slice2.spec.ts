@@ -205,6 +205,51 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     const secondaryLeg = staffLegs.find(
       (leg) => leg.email === "secondary@abita.test",
     )!
+    const selectedAnswer = selectedPage.getByRole("button", {
+      name: "Answer (555) 555-0100",
+      exact: true,
+    })
+    const secondaryAnswer = secondaryPage.getByRole("button", {
+      name: "Answer (555) 555-0100",
+      exact: true,
+    })
+    await Promise.all([
+      expect(selectedAnswer).toBeDisabled(),
+      expect(secondaryAnswer).toBeDisabled(),
+      expect(selectedPage.getByText("Connecting audio…")).toBeVisible(),
+      expect(secondaryPage.getByText("Connecting audio…")).toBeVisible(),
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(0),
+      expect.poll(() => mediaAnswers(secondaryPage)).toBe(0),
+    ])
+    const mismatchedMediaToken = "z".repeat(43)
+    await sendIncomingLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      mismatchedMediaToken,
+    )
+    await expect(selectedAnswer).toBeDisabled()
+    await expect.poll(() => mediaAnswers(selectedPage)).toBe(0)
+    await endMediaLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      mismatchedMediaToken,
+    )
+    await sendIncomingLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      selectedLeg.media_token,
+    )
+    await expect(selectedAnswer).toBeEnabled()
+    await endMediaLeg(
+      selectedPage,
+      selectedLeg.provider_leg_id,
+      selectedLeg.media_token,
+    )
+    await Promise.all([
+      expect(selectedAnswer).toBeDisabled(),
+      expect(selectedPage.getByText("Connecting audio…")).toBeVisible(),
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(0),
+    ])
     await Promise.all([
       sendIncomingLeg(
         selectedPage,
@@ -217,17 +262,28 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         secondaryLeg.media_token,
       ),
     ])
-    await deferMediaAnswer(secondaryPage, secondaryLeg.media_token)
     await Promise.all([
-      selectedPage
-        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-        .click(),
-      secondaryPage
-        .getByRole("button", { name: "Answer (555) 555-0100", exact: true })
-        .dblclick(),
+      expect(selectedAnswer).toBeEnabled(),
+      expect(secondaryAnswer).toBeEnabled(),
     ])
+    await failNextMediaAnswer(selectedPage)
+    await selectedAnswer.click()
     await Promise.all([
       expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
+      expect(selectedAnswer).toBeEnabled(),
+      expect(
+        selectedPage.getByText(
+          "Browser audio could not be started. Check your microphone and try again.",
+        ),
+      ).toBeVisible(),
+    ])
+    await deferMediaAnswer(secondaryPage, secondaryLeg.media_token)
+    await Promise.all([
+      selectedAnswer.click(),
+      secondaryAnswer.dblclick(),
+    ])
+    await Promise.all([
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(2),
       expect.poll(() => mediaAnswers(secondaryPage)).toBe(1),
     ])
 
@@ -1092,6 +1148,7 @@ async function prepareBrowser(context: BrowserContext) {
   await context.addInitScript(() => {
     const state = {
       answers: 0,
+      answerFailures: 0,
       deferredMediaToken: "",
       finishDeferredAnswer: undefined as undefined | (() => void),
       endedMediaTokens: new Set<string>(),
@@ -1186,13 +1243,18 @@ async function prepareBrowser(context: BrowserContext) {
             state.finishDeferredAnswer?.()
             state.finishDeferredAnswer = undefined
           }
-          state.incoming = (providerLegID, mediaToken, recovery) =>
+          state.incoming = (providerLegID, mediaToken, recovery) => {
+            state.endedMediaTokens.delete(mediaToken)
             callbacks.onIncoming({
               providerLegID,
               mediaToken,
               recovery,
               answer: async () => {
                 state.answers += 1
+                if (state.answerFailures > 0) {
+                  state.answerFailures -= 1
+                  throw new Error("fixture media answer failed")
+                }
                 if (state.deferredMediaToken === mediaToken) {
                   await new Promise<void>((resolve) => {
                     state.finishDeferredAnswer = resolve
@@ -1207,6 +1269,7 @@ async function prepareBrowser(context: BrowserContext) {
               unmute: () => undefined,
               sendDTMF: () => true,
             })
+          }
           callbacks.onState("ready")
         },
         disconnect: async () => undefined,
@@ -1275,6 +1338,15 @@ async function mediaAnswers(page: Page) {
         }
       ).__acuityCallingTestState.answers,
   )
+}
+
+async function failNextMediaAnswer(page: Page) {
+  await page.evaluate(() => {
+    const fixture = window as typeof window & {
+      __acuityCallingTestState: { answerFailures: number }
+    }
+    fixture.__acuityCallingTestState.answerFailures += 1
+  })
 }
 
 async function deferMediaAnswer(page: Page, mediaToken: string) {
