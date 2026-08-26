@@ -3,9 +3,9 @@ import { createPublicPageMetadata } from "@/lib/site"
 
 export const metadata = createPublicPageMetadata({
   path: "/method",
-  title: "The Acuity Method",
+  title: "The Acuity Health Method",
   description:
-    "How Acuity combines agentic system design with workflow transformation to deploy enterprise medical voice.",
+    "How Acuity Health combines agentic system design with workflow transformation to deploy enterprise medical voice.",
 })
 
 export default function MethodPage() {

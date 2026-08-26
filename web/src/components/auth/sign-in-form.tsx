@@ -85,7 +85,7 @@ export function SignInForm() {
 
 function googleErrorMessage(code: string): string {
   if (code === "POPUP_BLOCKED") {
-    return "Allow pop-ups for Acuity, then try again."
+    return "Allow pop-ups for Acuity Health, then try again."
   }
   if (code === "POPUP_CLOSED") {
     return "Google sign-in was closed. Try again."

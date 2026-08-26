@@ -5,7 +5,7 @@ export const metadata = createPublicPageMetadata({
   path: "/work-with-us",
   title: "Work With Us",
   description:
-    "Work with Acuity to redesign patient access, deploy medical voice, and make the new operating model succeed.",
+    "Work with Acuity Health to redesign patient access, deploy medical voice, and make the new operating model succeed.",
 })
 
 export default function WorkWithUsPage() {

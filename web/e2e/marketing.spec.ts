@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-test("enterprise story leads from medical voice to the Acuity Method", async ({ page }) => {
+test("enterprise story leads from medical voice to the Acuity Health Method", async ({ page }) => {
   await page.goto("/")
 
   await expect(
@@ -14,7 +14,7 @@ test("enterprise story leads from medical voice to the Acuity Method", async ({ 
 test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await page.goto("/")
 
-  await page.getByRole("link", { name: "The Acuity Method" }).first().click()
+  await page.getByRole("link", { name: "The Acuity Health Method" }).first().click()
   await expect(page).toHaveURL(/\/method$/)
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
@@ -27,7 +27,7 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await page.getByRole("link", { name: "Who We Are" }).first().click()
   await expect(page).toHaveURL(/\/who-we-are$/)
   await expect(
-    page.getByRole("heading", { name: "Acuity began as a consulting relationship." }),
+    page.getByRole("heading", { name: "Acuity Health began as a consulting relationship." }),
   ).toBeVisible()
   await expect(
     page.getByRole("heading", {

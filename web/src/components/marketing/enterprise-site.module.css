@@ -127,9 +127,9 @@
 }
 
 .hero {
-  width: min(100% - 16px, 1540px);
-  min-height: calc(100svh - 84px);
-  margin: 0 auto 8px;
+  width: 100%;
+  min-height: calc(100svh - 76px);
+  margin: 0;
   padding: clamp(46px, 5.4vw, 80px) clamp(30px, 5vw, 76px) clamp(54px, 6.5vw, 96px);
   position: relative;
   display: grid;
@@ -137,7 +137,6 @@
   align-items: start;
   gap: clamp(30px, 5vw, 84px);
   overflow: hidden;
-  border-radius: 5px;
   background:
     radial-gradient(circle at 18% 28%, rgb(255 255 255 / 0.7), transparent 31%),
     linear-gradient(137deg, #eef3ef 0%, var(--marketing-sage) 72%, #b8cbbc 100%);
@@ -1334,10 +1333,7 @@
   }
 
   .hero {
-    width: calc(100% - 12px);
-    margin-bottom: 6px;
     padding: 54px 24px 24px;
-    border-radius: 3px;
   }
 
   .hero h1,

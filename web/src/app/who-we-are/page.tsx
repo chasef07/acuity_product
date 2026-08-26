@@ -5,7 +5,7 @@ export const metadata = createPublicPageMetadata({
   path: "/who-we-are",
   title: "Who We Are",
   description:
-    "Acuity is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
+    "Acuity Health is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
 })
 
 export default function WhoWeArePage() {

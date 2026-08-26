@@ -2,11 +2,11 @@ import type { Metadata } from "next"
 
 export const siteConfig = {
   name: "Acuity Health",
-  shortName: "Acuity",
+  shortName: "Acuity Health",
   url: "https://acuityhealth.io",
-  title: "Acuity | AI Agents for Medical Enterprises",
+  title: "Acuity Health | AI Agents for Medical Enterprises",
   description:
-    "Acuity redesigns patient-access workflows, deploys medical AI agents across the systems you already use, and stays with your team until the new operating model works.",
+    "Acuity Health redesigns patient-access workflows, deploys medical AI agents across the systems you already use, and stays with your team until the new operating model works.",
 } as const
 
 export function createPublicPageMetadata({
@@ -36,7 +36,7 @@ export function createPublicPageMetadata({
           url: "/opengraph-image",
           width: 1200,
           height: 630,
-          alt: "Acuity: AI agents for medical enterprises",
+          alt: "Acuity Health: AI agents for medical enterprises",
         },
       ],
     },

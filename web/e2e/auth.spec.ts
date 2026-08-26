@@ -13,7 +13,7 @@ test("homepage opens a Google-only sign-in dialog", async ({
 
   const card = page.getByTestId("sign-in-card")
   await expect(
-    card.getByRole("heading", { name: "Sign in to Acuity" }),
+    card.getByRole("heading", { name: "Sign in to Acuity Health" }),
   ).toBeVisible()
   await expect(
     card.getByRole("button", { name: "Continue with Google" }),
@@ -32,7 +32,7 @@ test("interior marketing pages open the same sign-in dialog in place", async ({
 
   await expect(page).toHaveURL(/\/method$/)
   await expect(
-    page.getByRole("dialog", { name: "Sign in to Acuity" }),
+    page.getByRole("dialog", { name: "Sign in to Acuity Health" }),
   ).toBeVisible()
 })
 
@@ -60,7 +60,7 @@ test("Google sign-in opens in a popup and leaves the portal in place", async ({
   expect(popupURL.searchParams.get("callbackURL")).toBe("/workspace")
   await expect(page).toHaveURL("/")
   await expect(
-    page.getByRole("dialog", { name: "Sign in to Acuity" }),
+    page.getByRole("dialog", { name: "Sign in to Acuity Health" }),
   ).toBeVisible()
   await popup.close()
 })

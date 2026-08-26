@@ -3,7 +3,7 @@ import { join } from "node:path"
 
 import { ImageResponse } from "next/og"
 
-export const alt = "Acuity: AI agents for medical enterprises"
+export const alt = "Acuity Health: AI agents for medical enterprises"
 export const size = { width: 1200, height: 630 }
 export const contentType = "image/png"
 
@@ -40,7 +40,7 @@ export default function OpenGraphImage() {
           <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
             <img alt="" height="108" src={logoSrc} width="108" />
             <span style={{ fontFamily: "Arial, sans-serif", fontSize: 34, fontWeight: 700 }}>
-              Acuity
+              Acuity Health
             </span>
           </div>
 

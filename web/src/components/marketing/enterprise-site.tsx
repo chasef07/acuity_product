@@ -32,16 +32,16 @@ type MarketingRoute = "/" | "/method" | "/who-we-are" | "/work-with-us"
 
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
-  { href: "/method", label: "The Acuity Method" },
+  { href: "/method", label: "The Acuity Health Method" },
   { href: "/who-we-are", label: "Who We Are" },
 ]
 
 function SiteHeader({ current }: { current: MarketingRoute }) {
   return (
     <header className={styles.siteHeader}>
-      <Link className={styles.brand} href="/" aria-label="Acuity home">
+      <Link className={styles.brand} href="/" aria-label="Acuity Health home">
         <AcuityMark className={styles.brandMark} />
-        <span>Acuity</span>
+        <span>Acuity Health</span>
       </Link>
 
       <nav className={styles.primaryNav} aria-label="Main navigation">
@@ -72,11 +72,11 @@ function SiteFooter() {
     <footer className={styles.siteFooter}>
       <Link className={styles.footerBrand} href="/">
         <AcuityMark className={styles.footerMark} />
-        <span>Acuity</span>
+        <span>Acuity Health</span>
       </Link>
-      <p>Founder-deployed medical voice.</p>
+      <p>Forward-deployed AI for patient access.</p>
       <div>
-        <Link href="/method">The Acuity Method</Link>
+        <Link href="/method">The Acuity Health Method</Link>
         <Link href="/who-we-are">Who We Are</Link>
         <Link href="/work-with-us#conversation">Work With Us</Link>
         <Link href="/sign-in">Sign in</Link>
@@ -148,7 +148,7 @@ export function MethodVenn() {
         </div>
       </div>
       <div className={styles.vennCenter}>
-        <strong>The Acuity Method</strong>
+        <strong>The Acuity Health Method</strong>
       </div>
     </div>
   )
@@ -199,7 +199,7 @@ export function EnterpriseHome({
         <div className={styles.heroCopy}>
           <h1>Redesign patient access.</h1>
           <p className={styles.heroBody}>
-            Acuity redesigns patient-access workflows, deploys medical voice
+            Acuity Health redesigns patient-access workflows, deploys medical AI
             agents across the systems you already use, and stays with your team
             until the new operating model works.
           </p>
@@ -208,7 +208,7 @@ export function EnterpriseHome({
               Work with us <ArrowRight size={17} aria-hidden="true" />
             </Link>
             <Link className={styles.textLink} href="/method">
-              See the Acuity Method
+              See the Acuity Health Method
             </Link>
           </div>
         </div>
@@ -269,11 +269,11 @@ export function MethodPageContent() {
       <section className={styles.methodPageVenn}>
         <header className={styles.sectionHeader}>
           <div>
-            <p className={styles.eyebrow}>The Acuity Method</p>
+            <p className={styles.eyebrow}>The Acuity Health Method</p>
             <h1>Two capabilities make enterprise AI work.</h1>
           </div>
           <p>
-            Acuity combines medical voice system design with the workflow
+            Acuity Health combines medical voice system design with the workflow
             expertise needed to deploy it across the enterprise.
           </p>
         </header>
@@ -319,7 +319,7 @@ function FounderPanel({
     <article className={styles.founderPanel}>
       <div className={cn(styles.founderPortrait, portraitClassName)}>
         <Image
-          alt={`${fullName}, Acuity co-founder`}
+          alt={`${fullName}, Acuity Health co-founder`}
           fill
           placeholder="blur"
           sizes="(max-width: 860px) calc(100vw - 48px), 46vw"
@@ -347,7 +347,7 @@ export function WhoWeArePageContent() {
       <section className={styles.foundingStory}>
         <p className={styles.eyebrow}>The founding story</p>
         <div>
-          <h1>Acuity began as a consulting relationship.</h1>
+          <h1>Acuity Health began as a consulting relationship.</h1>
           <div className={styles.storyColumns}>
             <p>
               Working closely with medical practices taught us that the hard part
@@ -361,7 +361,7 @@ export function WhoWeArePageContent() {
             </p>
             <p>
               That understanding cannot be handed from a sales team to an
-              implementation queue. So we built Acuity the same way we learned to
+              implementation queue. So we built Acuity Health the same way we learned to
               solve the problem: founder-deployed, inside the operation, with the
               relationship treated as part of the product.
             </p>

@@ -62,7 +62,7 @@ export function SignInDialog({
             <AcuityMark className="size-10" />
             <CardTitle>
               <DialogTitle className="text-xl font-semibold tracking-tight">
-                Sign in to Acuity
+                Sign in to Acuity Health
               </DialogTitle>
             </CardTitle>
           </CardHeader>
