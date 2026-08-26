@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/chasef07/acuity_product/compare/v0.4.2...v0.4.3) (2026-08-26)
+
+
+### Bug Fixes
+
+* **release:** restore available Node image ([#199](https://github.com/chasef07/acuity_product/issues/199)) ([5015994](https://github.com/chasef07/acuity_product/commit/501599473e4b1fe06ad1126a992a7a5351fd5c46))
+
 ## [0.4.2](https://github.com/chasef07/acuity_product/compare/v0.4.1...v0.4.2) (2026-08-26)
 
 
