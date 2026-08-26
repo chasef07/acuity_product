@@ -14,6 +14,68 @@ const terminalNeverStartedErrorCode = "CALL_TERMINATED_BEFORE_PROVIDER_START"
 
 const providerObservationConflictErrorCode = "PROVIDER_OBSERVATION_CONFLICT"
 
+type interruptedCommandOwner int
+
+const (
+	outgoingCallLegCommandOwner interruptedCommandOwner = iota
+	credentialCommandOwner
+)
+
+func (m *Module) recoverInterruptedCommandOwnership(
+	ctx context.Context,
+	tx pgx.Tx,
+	owner interruptedCommandOwner,
+	now time.Time,
+) (bool, error) {
+	var ownerPredicate string
+	switch owner {
+	case outgoingCallLegCommandOwner:
+		ownerPredicate = "command.call_id IS NOT NULL"
+	case credentialCommandOwner:
+		ownerPredicate = `command.call_id IS NULL
+			AND command.action IN ('CREATE_CREDENTIAL', 'DISABLE_CREDENTIAL')`
+	default:
+		return false, fmt.Errorf("unknown interrupted command owner %d", owner)
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands command
+		SET state = CASE
+				WHEN command.action IN (
+					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
+				) AND EXISTS (
+					SELECT 1
+					FROM human_calling_calls call
+					JOIN human_calling_timeline timeline ON timeline.call_id = call.id
+					WHERE call.id = command.call_id AND call.direction = 'OUTBOUND'
+						AND timeline.kind = 'call.hangup.requested'
+				) THEN 'AMBIGUOUS'
+				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'PENDING'
+				ELSE 'AMBIGUOUS'
+			END,
+			last_error_code = CASE
+				WHEN command.action IN (
+					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
+				) AND EXISTS (
+					SELECT 1
+					FROM human_calling_calls call
+					JOIN human_calling_timeline timeline ON timeline.call_id = call.id
+					WHERE call.id = command.call_id AND call.direction = 'OUTBOUND'
+						AND timeline.kind = 'call.hangup.requested'
+				) THEN 'PROVIDER_EFFECT_UNCERTAIN'
+				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'WORKER_INTERRUPTED'
+				ELSE 'PROVIDER_EFFECT_UNCERTAIN'
+			END,
+			next_attempt_at = $1, updated_at = $1
+		WHERE `+ownerPredicate+`
+			AND command.state = 'SENDING'
+			AND command.updated_at <= $1::timestamptz - interval '30 seconds'
+	`, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 const terminalNeverStartedCallLegQuery = `
 	SELECT call.id::text, call.practice_id::text, leg.id::text
 	FROM human_calling_calls call
@@ -135,11 +197,11 @@ func (m *Module) ClaimNextCommand(
 	}, true, nil
 }
 
-func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
+func (m *Module) recoverInterruptedCommands(ctx context.Context) (bool, error) {
 	now := m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin interrupted provider command recovery: %w", err)
+		return false, fmt.Errorf("begin interrupted provider command recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `
@@ -154,56 +216,41 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		FOR UPDATE OF call
 	`, now)
 	if err != nil {
-		return fmt.Errorf("lock Calls for interrupted provider command recovery: %w", err)
+		return false, fmt.Errorf("lock Calls for interrupted provider command recovery: %w", err)
 	}
 	for rows.Next() {
 		var callID string
 		if err := rows.Scan(&callID); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan interrupted provider command Call: %w", err)
+			return false, fmt.Errorf("scan interrupted provider command Call: %w", err)
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate interrupted provider command Calls: %w", err)
+		return false, fmt.Errorf("iterate interrupted provider command Calls: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_provider_commands command
-		SET state = CASE
-				WHEN command.action IN (
-					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
-				) AND EXISTS (
-					SELECT 1
-					FROM human_calling_calls call
-					JOIN human_calling_timeline timeline ON timeline.call_id = call.id
-					WHERE call.id = command.call_id AND call.direction = 'OUTBOUND'
-						AND timeline.kind = 'call.hangup.requested'
-				) THEN 'AMBIGUOUS'
-				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'PENDING'
-				ELSE 'AMBIGUOUS'
-			END,
-			last_error_code = CASE
-				WHEN command.action IN (
-					'DIAL_OUTBOUND_STAFF', 'DIAL_OUTBOUND_DESTINATION', 'BRIDGE'
-				) AND EXISTS (
-					SELECT 1
-					FROM human_calling_calls call
-					JOIN human_calling_timeline timeline ON timeline.call_id = call.id
-					WHERE call.id = command.call_id AND call.direction = 'OUTBOUND'
-						AND timeline.kind = 'call.hangup.requested'
-				) THEN 'PROVIDER_EFFECT_UNCERTAIN'
-				WHEN created_at > $1::timestamptz - interval '55 seconds' THEN 'WORKER_INTERRUPTED'
-				ELSE 'PROVIDER_EFFECT_UNCERTAIN'
-			END,
-			next_attempt_at = $1, updated_at = $1
-		WHERE state = 'SENDING' AND updated_at <= $1::timestamptz - interval '30 seconds'
-	`, now); err != nil {
-		return fmt.Errorf("recover interrupted provider commands: %w", err)
+	recovered, err := m.recoverInterruptedCommandOwnership(
+		ctx, tx, outgoingCallLegCommandOwner, now,
+	)
+	if err != nil {
+		return false, fmt.Errorf("recover interrupted provider commands: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit interrupted provider command recovery: %w", err)
+		return false, fmt.Errorf("commit interrupted provider command recovery: %w", err)
 	}
-	return nil
+	return recovered, nil
+}
+
+// MaintainOutgoingCallLegs recovers interrupted provider-command ownership
+// before applying provider observations to one stale CallLeg. Callers do not
+// choose the ordering between those two halves of outgoing control.
+func (m *Module) MaintainOutgoingCallLegs(ctx context.Context) (bool, error) {
+	recovered, err := m.recoverInterruptedCommands(ctx)
+	if err != nil {
+		return false, err
+	}
+	reconciled, err := m.reconcileStaleCallLeg(ctx)
+	return recovered || reconciled, err
 }
 
 func (m *Module) reconcileNeverStartedTerminalCallLeg(
@@ -271,28 +318,28 @@ func (m *Module) reconcileNeverStartedTerminalCallLeg(
 	return true, nil
 }
 
-func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
+func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 	expired, err := m.expireUnconfirmedOutboundMedia(ctx)
 	if err != nil {
-		return 0, err
+		return false, err
 	}
 	if expired {
-		return 1, nil
+		return true, nil
 	}
 	cleaned, err := m.reconcileNeverStartedTerminalCallLeg(ctx)
 	if err != nil {
-		return 0, err
+		return false, err
 	}
 	if cleaned {
-		return 1, nil
+		return true, nil
 	}
 	provider, ok := m.provider.(CallStateProvider)
 	if !ok {
-		return 0, nil
+		return false, nil
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
+		return false, fmt.Errorf("begin stale CallLeg reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var callID, practiceID, legID, role, direction, legState, terminalOutcome string
@@ -308,26 +355,26 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		&providerClientState, &observationSince, &commandCreatedAt, &terminalAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, tx.Commit(ctx)
+		return false, tx.Commit(ctx)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("claim stale CallLeg: %w", err)
+		return false, fmt.Errorf("claim stale CallLeg: %w", err)
 	}
 	checkedAt := m.now()
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
 	`, legID, checkedAt); err != nil {
-		return 0, fmt.Errorf("mark stale CallLeg check: %w", err)
+		return false, fmt.Errorf("mark stale CallLeg check: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit stale CallLeg claim: %w", err)
+		return false, fmt.Errorf("commit stale CallLeg claim: %w", err)
 	}
 	if commandAction == CommandStopRingWindow && terminalOutcome != "" &&
 		(legState == "ENDED" || legState == "FAILED") {
 		state, valid := parseCallLegClientState(providerClientState)
 		if !valid || state.CallID != callID || state.CallLegID != legID ||
 			state.Role != "CALLER" || state.Kind != "ring_window" {
-			return 0, nil
+			return false, nil
 		}
 		terminalized, err := m.terminalizeStopRingWindow(
 			ctx,
@@ -340,12 +387,12 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			providerClientState,
 		)
 		if err != nil {
-			return 1, err
+			return true, err
 		}
 		if terminalized {
-			return 1, nil
+			return true, nil
 		}
-		return 0, nil
+		return false, nil
 	}
 	clientState := encodeCallLegClientState(callID, legID, role, "reconciled")
 	if providerClientState == "" {
@@ -360,7 +407,7 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		observationSince.Add(-time.Second),
 	)
 	if err != nil {
-		return 1, err
+		return true, err
 	}
 	if observation.CallControlID != "" {
 		controlID = observation.CallControlID
@@ -418,11 +465,11 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 				if quarantineErr := m.quarantineStaleCallLeg(
 					ctx, callID, practiceID, legID, commandID,
 				); quarantineErr != nil {
-					return 1, quarantineErr
+					return true, quarantineErr
 				}
-				return 1, nil
+				return true, nil
 			}
-			return 1, err
+			return true, err
 		}
 	}
 	if commandID != "" {
@@ -431,10 +478,10 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			SELECT state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 			FROM human_calling_provider_commands WHERE id = $1
 		`, commandID).Scan(&unresolved); err != nil {
-			return 1, fmt.Errorf("read observed provider command state: %w", err)
+			return true, fmt.Errorf("read observed provider command state: %w", err)
 		}
 		if !unresolved {
-			return 1, nil
+			return true, nil
 		}
 	}
 	if observation.Active && !observedInitiation &&
@@ -452,29 +499,29 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			ClientState:   clientState,
 		}
 		if err := m.ApplyProviderFact(ctx, fact); err != nil {
-			return 1, err
+			return true, err
 		}
-		return 1, nil
+		return true, nil
 	}
 	if commandID == "" && observedHangup {
-		return 1, nil
+		return true, nil
 	}
 	if !observation.Active && commandID != "" && commandAction != CommandHangupLeg {
 		if err := m.rejectUnobservedCommand(
 			ctx, commandID, legID, commandAction, "PROVIDER_EFFECT_ABSENT",
 		); err != nil {
-			return 1, err
+			return true, err
 		}
-		return 1, nil
+		return true, nil
 	}
 	if observation.Active {
 		if commandID != "" && commandAction == CommandStopRingWindow {
 			if err := m.markUnobservedStopRingWindowAmbiguous(
 				ctx, commandID, legID, commandCreatedAt, checkedAt,
 			); err != nil {
-				return 1, err
+				return true, err
 			}
-			return 1, nil
+			return true, nil
 		}
 		if commandID != "" && commandAction == CommandStartRingWindow {
 			// An active Call and an absent event do not prove a finite playback
@@ -483,9 +530,9 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 			if err := m.markUnobservedCommandAmbiguous(
 				ctx, commandID, commandAction, commandCreatedAt, checkedAt,
 			); err != nil {
-				return 1, err
+				return true, err
 			}
-			return 1, nil
+			return true, nil
 		}
 		if commandID != "" &&
 			!commandCreatedAt.After(checkedAt.Add(-safeProviderRetryWindow)) {
@@ -493,25 +540,25 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 				ctx, commandID, legID, commandAction,
 				string(commandAction)+"_EVENT_ABSENT",
 			); err != nil {
-				return 1, err
+				return true, err
 			}
 		}
-		return 1, nil
+		return true, nil
 	}
 	if controlID == "" || providerLegID == "" {
 		if commandID == "" {
-			return 1, nil
+			return true, nil
 		}
 		if err := m.rejectUnobservedCommand(
 			ctx, commandID, legID, commandAction, "PROVIDER_EFFECT_ABSENT",
 		); err != nil {
-			return 1, err
+			return true, err
 		}
-		return 1, nil
+		return true, nil
 	}
 	// A bridged CallLeg needs explicit hangup evidence or committed Hangup intent.
 	if legState == "BRIDGED" && commandID == "" {
-		return 1, nil
+		return true, nil
 	}
 	fact := ProviderFact{
 		EventID:           "reconcile-absent-" + legID + "-" + fmt.Sprint(checkedAt.UnixNano()),
@@ -525,9 +572,9 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		TerminationSource: "RECONCILER",
 	}
 	if err := m.ApplyProviderFact(ctx, fact); err != nil {
-		return 1, err
+		return true, err
 	}
-	return 1, nil
+	return true, nil
 }
 
 func (m *Module) markUnobservedStopRingWindowAmbiguous(

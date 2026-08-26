@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestReconcileStaleCallsDoesNotStarveRealtimeCommandsAtProductionCardinality(
+func TestOutgoingCallLegMaintenanceDoesNotStarveRealtimeCommandsAtProductionCardinality(
 	t *testing.T,
 ) {
 	pool := testdb.Open(t)
@@ -177,7 +177,7 @@ func TestReconcileStaleCallsDoesNotStarveRealtimeCommandsAtProductionCardinality
 
 	reconcileDone := make(chan error, 1)
 	go func() {
-		_, err := calling.ReconcileStaleCalls(context.Background())
+		_, err := calling.MaintainOutgoingCallLegs(context.Background())
 		reconcileDone <- err
 	}()
 	select {

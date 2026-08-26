@@ -615,11 +615,8 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		connectedCall.DispositionDeadline != nil {
 		t.Fatalf("auto-resolved connected Call = %#v, %v", connectedCall, err)
 	}
-	if err := calling.RecoverInterruptedCommands(context.Background()); err != nil {
+	if _, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("recover interrupted commands: %v", err)
-	}
-	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
-		t.Fatalf("reconcile stale CallLegs: %v", err)
 	}
 	var connectedTasks, connectedAcknowledgements int
 	if err := pool.QueryRow(context.Background(), `
@@ -945,6 +942,68 @@ func TestOutboundCallEndIsIdempotentAfterProviderControlExists(t *testing.T) {
 	}
 }
 
+func TestExactLegHangupConvergesAbsentTargetWithoutProviderTerminationEvidence(t *testing.T) {
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "end-absent-staff-control",
+			CallLegID:     "end-absent-staff-leg",
+		}},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandHangupLeg: {&humancalling.ProviderError{
+				SafeCode:     "TELNYX_CALL_ENDED",
+				Definitive:   true,
+				TargetAbsent: true,
+			}},
+		},
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-absent-outbound",
+		time.Date(2026, time.August, 26, 14, 30, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-absent-outbound-call")
+	processAllCommands(t, fixture.calling)
+
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("commit exact-leg Hangup: %v", err)
+	}
+	processAllCommands(t, fixture.calling)
+
+	current, err := fixture.calling.ReadCall(
+		context.Background(), fixture.identity, call.ID,
+	)
+	if err != nil {
+		t.Fatalf("read converged outbound Call: %v", err)
+	}
+	var legState, commandState, commandError string
+	var endedEvidence int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state, COALESCE(command.last_error_code, ''),
+			(SELECT count(*) FROM human_calling_timeline timeline
+			 WHERE timeline.call_id = call.id AND timeline.kind = 'call_leg.ended')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg
+			ON leg.call_id = call.id AND leg.role = 'STAFF'
+		JOIN human_calling_provider_commands command
+			ON command.call_leg_id = leg.id AND command.action = 'HANGUP_LEG'
+		WHERE call.id = $1
+	`, call.ID).Scan(&legState, &commandState, &commandError, &endedEvidence); err != nil {
+		t.Fatalf("read absent-target durable outcome: %v", err)
+	}
+	if current.State != humancalling.CallRinging || legState != "ENDED" ||
+		commandState != "SENT" || commandError != "" || endedEvidence != 0 ||
+		provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf(
+			"absent-target Hangup = Call:%s leg:%s command:%s/%s evidence:%d effects:%d",
+			current.State, legState, commandState, commandError, endedEvidence,
+			provider.count(humancalling.CommandHangupLeg),
+		)
+	}
+}
+
 func TestOutboundCallEndCleansUpProviderControlThatArrivesLate(t *testing.T) {
 	provider := &recordingProvider{
 		dialResults: []humancalling.ProviderResult{{
@@ -1153,7 +1212,7 @@ func TestOutboundCallEndDoesNotRecoverInterruptedDialForRetry(t *testing.T) {
 	); err != nil {
 		t.Fatalf("end interrupted outbound Dial: %v", err)
 	}
-	if err := fixture.calling.RecoverInterruptedCommands(context.Background()); err != nil {
+	if _, err := fixture.calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("recover interrupted outbound Dial after End: %v", err)
 	}
 
@@ -1168,6 +1227,199 @@ func TestOutboundCallEndDoesNotRecoverInterruptedDialForRetry(t *testing.T) {
 		t.Fatalf("recovered outbound Dial after End = state:%s error:%s",
 			dialState, errorCode)
 	}
+}
+
+func TestInterruptedBridgeCommandRecoveryNeverDuplicatesProviderEffect(t *testing.T) {
+	type fixture struct {
+		pool      *pgxpool.Pool
+		calling   *humancalling.Module
+		provider  *deduplicatingProvider
+		commandID string
+		now       time.Time
+	}
+	prepare := func(t *testing.T, prefix string, provider *deduplicatingProvider) *fixture {
+		t.Helper()
+		startedAt := time.Date(2026, time.August, 26, 16, 0, 0, 0, time.UTC)
+		provider.dialResults = []humancalling.ProviderResult{{
+			CallControlID: prefix + "-staff-control",
+			CallLegID:     prefix + "-staff-leg",
+		}}
+		pool, initialCalling, _, _ := prepareInboundFanout(
+			t, startedAt, prefix, provider.recordingProvider, 1,
+		)
+		processAllCommands(t, initialCalling)
+		dial := provider.last(humancalling.CommandDialStaff)
+		dialState, _ := dial.Payload["client_state"].(string)
+		staff := humancalling.ProviderFact{
+			EventID:       prefix + "-staff-initiated",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    startedAt.Add(2 * time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: prefix + "-staff-control",
+			CallLegID:     prefix + "-staff-leg",
+			CallSessionID: prefix + "-staff-session",
+			ClientState:   dialState,
+		}
+		if err := initialCalling.ApplyProviderFact(context.Background(), staff); err != nil {
+			t.Fatalf("project Staff initiation: %v", err)
+		}
+		staff.EventID = prefix + "-staff-answered"
+		staff.Type = humancalling.FactCallAnswered
+		staff.OccurredAt = startedAt.Add(3 * time.Second)
+		if err := initialCalling.ApplyProviderFact(context.Background(), staff); err != nil {
+			t.Fatalf("project Staff answer: %v", err)
+		}
+		item := &fixture{pool: pool, provider: provider, now: startedAt}
+		if err := pool.QueryRow(context.Background(), `
+			SELECT id::text
+			FROM human_calling_provider_commands
+			WHERE action = 'BRIDGE' AND state = 'PENDING'
+		`).Scan(&item.commandID); err != nil {
+			t.Fatalf("read pending Bridge command: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(), `
+			UPDATE human_calling_provider_commands
+			SET created_at = $2, updated_at = $2, next_attempt_at = $2
+			WHERE id = $1
+		`, item.commandID, startedAt); err != nil {
+			t.Fatalf("align Bridge command clock: %v", err)
+		}
+		accessModule := access.New(pool, func() time.Time { return item.now })
+		item.calling = humancalling.New(
+			pool,
+			accessModule,
+			provider,
+			humancalling.Config{RingWindowDuration: 20 * time.Second},
+			func() time.Time { return item.now },
+		)
+		return item
+	}
+	commandState := func(t *testing.T, item *fixture) string {
+		t.Helper()
+		var state string
+		if err := item.pool.QueryRow(context.Background(), `
+			SELECT state FROM human_calling_provider_commands WHERE id = $1
+		`, item.commandID).Scan(&state); err != nil {
+			t.Fatalf("read Bridge command state: %v", err)
+		}
+		return state
+	}
+	retryAcceptedBridge := func(t *testing.T, item *fixture) {
+		t.Helper()
+		maintained, err := item.calling.MaintainOutgoingCallLegs(context.Background())
+		if err != nil || !maintained {
+			t.Fatalf("recover accepted Bridge for safe retry = %t, %v", maintained, err)
+		}
+		if state := commandState(t, item); state != "PENDING" {
+			t.Fatalf("safe-retry Bridge command state = %s", state)
+		}
+		processAllCommands(t, item.calling)
+		requests := item.provider.requestsFor(humancalling.CommandBridge)
+		if len(requests) != 2 || requests[0].ID != item.commandID ||
+			requests[1].ID != item.commandID {
+			t.Fatalf("safe-retry Bridge requests = %#v", requests)
+		}
+		if state := commandState(t, item); state != "SENT" ||
+			item.provider.count(humancalling.CommandBridge) != 1 {
+			t.Fatalf("safe-retry Bridge = state:%s logical effects:%d",
+				state, item.provider.count(humancalling.CommandBridge))
+		}
+	}
+
+	t.Run("after claim before provider execution", func(t *testing.T) {
+		item := prepare(t, "interrupted-bridge-claim",
+			newDeduplicatingProvider(&recordingProvider{}))
+		effect, claimed, err := item.calling.ClaimNextCommand(context.Background())
+		if err != nil || !claimed || effect == nil {
+			t.Fatalf("claim Bridge = effect:%t claimed:%t err:%v", effect != nil, claimed, err)
+		}
+		item.now = item.now.Add(31 * time.Second)
+		maintained, err := item.calling.MaintainOutgoingCallLegs(context.Background())
+		if err != nil || !maintained || commandState(t, item) != "PENDING" ||
+			item.provider.count(humancalling.CommandBridge) != 0 {
+			t.Fatalf("recover unexecuted Bridge = maintained:%t state:%s effects:%d err:%v",
+				maintained, commandState(t, item),
+				item.provider.count(humancalling.CommandBridge), err)
+		}
+		processAllCommands(t, item.calling)
+		if state := commandState(t, item); state != "SENT" ||
+			item.provider.count(humancalling.CommandBridge) != 1 ||
+			len(item.provider.requestsFor(humancalling.CommandBridge)) != 1 {
+			t.Fatalf("retried unexecuted Bridge = state:%s effects:%d",
+				state, item.provider.count(humancalling.CommandBridge))
+		}
+	})
+
+	t.Run("after provider acceptance before result recording", func(t *testing.T) {
+		provider := newDeduplicatingProvider(&recordingProvider{
+			blockAction:  humancalling.CommandBridge,
+			blockStarted: make(chan struct{}),
+			blockRelease: make(chan struct{}),
+		})
+		item := prepare(t, "interrupted-bridge-acceptance", provider)
+		effect, claimed, err := item.calling.ClaimNextCommand(context.Background())
+		if err != nil || !claimed {
+			t.Fatalf("claim Bridge = %t, %v", claimed, err)
+		}
+		effectContext, cancel := context.WithCancel(context.Background())
+		effectResult := make(chan error, 1)
+		go func() { effectResult <- effect(effectContext) }()
+		<-provider.blockStarted
+		cancel()
+		close(provider.blockRelease)
+		if err := <-effectResult; err == nil {
+			t.Fatal("interrupted accepted Bridge unexpectedly recorded a durable result")
+		}
+		if state := commandState(t, item); state != "SENDING" ||
+			provider.count(humancalling.CommandBridge) != 1 {
+			t.Fatalf("interrupted accepted Bridge = state:%s effects:%d",
+				state, provider.count(humancalling.CommandBridge))
+		}
+		item.now = item.now.Add(31 * time.Second)
+		retryAcceptedBridge(t, item)
+	})
+
+	t.Run("before durable result commit", func(t *testing.T) {
+		item := prepare(t, "interrupted-bridge-result",
+			newDeduplicatingProvider(&recordingProvider{}))
+		effect, claimed, err := item.calling.ClaimNextCommand(context.Background())
+		if err != nil || !claimed {
+			t.Fatalf("claim Bridge = %t, %v", claimed, err)
+		}
+		installPostgresTestTrigger(t, item.pool, fmt.Sprintf(`
+			CREATE FUNCTION fail_interrupted_bridge_result() RETURNS trigger
+			LANGUAGE plpgsql AS $function$
+			BEGIN
+				RAISE EXCEPTION 'synthetic result recording interruption';
+			END
+			$function$;
+			CREATE TRIGGER fail_interrupted_bridge_result
+			BEFORE UPDATE ON human_calling_provider_commands
+			FOR EACH ROW WHEN (NEW.id = '%s'::uuid AND NEW.state = 'SENT')
+			EXECUTE FUNCTION fail_interrupted_bridge_result()
+		`, item.commandID), `
+			DROP TRIGGER IF EXISTS fail_interrupted_bridge_result
+				ON human_calling_provider_commands;
+			DROP FUNCTION IF EXISTS fail_interrupted_bridge_result()
+		`)
+		if err := effect(context.Background()); err == nil {
+			t.Fatal("interrupted Bridge result unexpectedly committed")
+		}
+		if state := commandState(t, item); state != "SENDING" ||
+			item.provider.count(humancalling.CommandBridge) != 1 {
+			t.Fatalf("uncommitted Bridge result = state:%s effects:%d",
+				state, item.provider.count(humancalling.CommandBridge))
+		}
+		if _, err := item.pool.Exec(context.Background(), `
+			DROP TRIGGER fail_interrupted_bridge_result
+				ON human_calling_provider_commands;
+			DROP FUNCTION fail_interrupted_bridge_result()
+		`); err != nil {
+			t.Fatalf("remove result interruption: %v", err)
+		}
+		item.now = item.now.Add(31 * time.Second)
+		retryAcceptedBridge(t, item)
+	})
 }
 
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
@@ -1454,7 +1706,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		t.Fatalf("age bridged Staff CallLeg: %v", err)
 	}
 
-	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
+	if _, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("reconcile stale bridged Staff CallLeg: %v", err)
 	}
 	callingState, err = calling.ReadCallingState(context.Background(), staff[0])
@@ -1489,8 +1741,8 @@ func TestTerminalStaffHangupReconciliationReleasesSoftphone(t *testing.T) {
 	if err != nil || before.Softphone.Available || before.Softphone.ActiveCallID != callID {
 		t.Fatalf("terminal Staff occupancy before reconciliation = %#v, %v", before.Softphone, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal inactive Staff leg = %d, %v", reconciled, err)
+	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !maintained {
+		t.Fatalf("maintain terminal inactive Staff leg = %t, %v", maintained, err)
 	}
 
 	var legState, commandState string
@@ -1518,11 +1770,11 @@ func TestTerminalNeverStartedCallerReconciliationFailsOnce(t *testing.T) {
 			t, now, "terminal-never-started-caller", provider,
 		)
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal never-started caller = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile terminal never-started caller = %t, %v", reconciled, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat terminal never-started caller = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat terminal never-started caller = %t, %v", reconciled, err)
 	}
 
 	var terminalOutcome, terminalLegState, terminalError, activeLegState string
@@ -1595,11 +1847,11 @@ func TestTerminalNeverStartedCallerCleanupDoesNotRequireProviderObservation(t *t
 			t, now, "terminal-cleanup-without-observation", commandOnlyProvider{},
 		)
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("cleanup without provider observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("cleanup without provider observation = %t, %v", reconciled, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat cleanup without provider observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat cleanup without provider observation = %t, %v", reconciled, err)
 	}
 
 	var terminalLegState, terminalError, activeLegState string
@@ -1822,8 +2074,8 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	`, commandID); err != nil {
 		t.Fatal(err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("mismatched terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("mismatched terminal Stop ring-window = %t, %v", reconciled, err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_provider_commands command
@@ -1840,8 +2092,8 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	`, commandID); err != nil {
 		t.Fatal(err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("malformed terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("malformed terminal Stop ring-window = %t, %v", reconciled, err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_provider_commands command
@@ -1860,11 +2112,11 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile terminal Stop ring-window = %t, %v", reconciled, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat terminal Stop ring-window = %t, %v", reconciled, err)
 	}
 
 	var commandState, commandReason, terminalOutcome, callerState string
@@ -1985,8 +2237,8 @@ func TestTerminalCallerReconcilesPreviouslyRejectedStopRingWindowWithoutProvider
 		t.Fatal(err)
 	}
 
-	if reconciled, err := fixture.calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile rejected terminal Stop = %d, %v", reconciled, err)
+	if reconciled, err := fixture.calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile rejected terminal Stop = %t, %v", reconciled, err)
 	}
 	var commandState, commandError string
 	var convergedAudio, terminalized int
@@ -2063,9 +2315,9 @@ func TestStopRingWindowCompletionAndTerminalReconciliationUseConsistentLockOrder
 
 	reconciliationResult := make(chan error, 1)
 	go func() {
-		reconciled, err := calling.ReconcileStaleCalls(context.Background())
-		if reconciled != 1 && err == nil {
-			err = fmt.Errorf("reconciled %d terminal Calls, want 1", reconciled)
+		reconciled, err := calling.MaintainOutgoingCallLegs(context.Background())
+		if !reconciled && err == nil {
+			err = fmt.Errorf("reconciled %t terminal Calls, want 1", reconciled)
 		}
 		reconciliationResult <- err
 	}()
@@ -2119,8 +2371,8 @@ func TestTerminalActiveStaffHangupRetriesExactCleanup(t *testing.T) {
 		prepareTerminalStaffHangup(t, true)
 	dialCount := provider.count(humancalling.CommandDialStaff)
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal active Staff leg = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile terminal active Staff leg = %t, %v", reconciled, err)
 	}
 
 	var terminal, originalState, retryLegID, retryTarget string
@@ -2979,6 +3231,96 @@ func TestCredentialReconciliationExpiresWithoutProviderLookup(t *testing.T) {
 	}
 }
 
+func TestCredentialReconciliationOwnsInterruptedCredentialRecovery(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 30, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(
+		t, accessModule, now, "interrupted-credential-recovery", 1,
+	)
+	provider := &credentialFailureProvider{
+		lookupErr: errors.New("synthetic credential lookup interruption"),
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', created_at = $2, updated_at = $2
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || maintained {
+		t.Fatalf("outgoing maintenance claimed credential recovery = %t, %v", maintained, err)
+	}
+	var state string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "SENDING" {
+		t.Fatalf("outgoing maintenance changed credential command to %s", state)
+	}
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if !processed || err == nil {
+		t.Fatalf("credential recovery = processed:%t err:%v", processed, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "AMBIGUOUS" || provider.lookupCalls != 1 {
+		t.Fatalf("credential-owned recovery = state:%s lookups:%d", state, provider.lookupCalls)
+	}
+}
+
+func TestCredentialReconciliationRecoversWithoutObservationAdapter(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 45, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(
+		t, accessModule, now, "credential-recovery-without-observation", 1,
+	)
+	calling := humancalling.New(pool, accessModule, commandOnlyProvider{}, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', created_at = $2, updated_at = $2
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("recover credential without observation adapter = %t, %v", processed, err)
+	}
+	var state, errorCode string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code
+		FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject).Scan(&state, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if state != "AMBIGUOUS" || errorCode != "PROVIDER_EFFECT_UNCERTAIN" {
+		t.Fatalf("recovered credential = state:%s error:%s", state, errorCode)
+	}
+}
+
 func TestCredentialReconciliationRetriesLookupFailureBeforeDeadline(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
@@ -3269,12 +3611,12 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	}
 
 	now = now.Add(21 * time.Second)
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("early outbound media expiry = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("early outbound media expiry = %t, %v", reconciled, err)
 	}
 	now = now.Add(2 * time.Second)
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("expire unconfirmed outbound media = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("expire unconfirmed outbound media = %t, %v", reconciled, err)
 	}
 	var outcome, termination, staffState, staffError, hangupTarget string
 	var destinationLegs int
@@ -3708,8 +4050,8 @@ func TestUnresolvedBridgeFencesVoicemailUntilReconciled(t *testing.T) {
 		}},
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile delayed Bridge = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile delayed Bridge = %t, %v", reconciled, err)
 	}
 	var terminal string
 	if err := pool.QueryRow(context.Background(), `
@@ -3784,8 +4126,8 @@ func TestAbsentBridgeReconciliationReleasesVoicemailFence(t *testing.T) {
 	provider.mu.Lock()
 	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile absent Bridge = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile absent Bridge = %t, %v", reconciled, err)
 	}
 	processAllCommands(t, calling)
 	var bridgeState string
@@ -3962,8 +4304,8 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 		CallLegID: prefix + "-late-leg", CallSessionID: prefix + "-late-session",
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile uncertain losing Dial = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile uncertain losing Dial = %t, %v", reconciled, err)
 	}
 	var hangupID, hangupTarget string
 	if err := pool.QueryRow(context.Background(), `
@@ -3994,8 +4336,8 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 		CallLegID: prefix + "-late-leg", CallSessionID: prefix + "-late-session",
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile accepted Hangup without webhook = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile accepted Hangup without webhook = %t, %v", reconciled, err)
 	}
 	var failedHangups, pendingHangups int
 	if err := pool.QueryRow(context.Background(), `
@@ -4392,9 +4734,9 @@ func TestCommandFailureAndAbsentReconciliationUseConsistentLockOrder(t *testing.
 
 	reconciliationResult := make(chan error, 1)
 	go func() {
-		reconciled, err := calling.ReconcileStaleCalls(context.Background())
-		if reconciled != 1 && err == nil {
-			err = fmt.Errorf("reconciled %d stale Calls, want 1", reconciled)
+		reconciled, err := calling.MaintainOutgoingCallLegs(context.Background())
+		if !reconciled && err == nil {
+			err = fmt.Errorf("reconciled %t stale Calls, want 1", reconciled)
 		}
 		reconciliationResult <- err
 	}()
@@ -4603,6 +4945,93 @@ func TestBridgeFailureAfterRingCompletionStartsVoicemailOnce(t *testing.T) {
 	}
 }
 
+func TestBridgeFailureBeforeRingCompletionPreservesAnotherStaffAnswer(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 10, 0, 0, time.UTC)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{
+			{CallControlID: "first-bridge-staff-control", CallLegID: "first-bridge-staff-leg"},
+			{CallControlID: "second-bridge-staff-control", CallLegID: "second-bridge-staff-leg"},
+		},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandBridge: {
+				fmt.Errorf("%w: synthetic rejected Bridge", humancalling.ErrDefinitiveProviderFailure),
+			},
+		},
+	}
+	pool, calling, _, staffIdentities := prepareInboundFanout(
+		t, now, "call-leg-bridge-failure-retry", provider, 2,
+	)
+	processAllCommands(t, calling)
+	dials := provider.all(humancalling.CommandDialStaff)
+	if len(dials) != 2 {
+		t.Fatalf("Staff Dial commands = %d, want 2", len(dials))
+	}
+	staffFacts := make([]humancalling.ProviderFact, 2)
+	for index, dial := range dials {
+		clientState, _ := dial.Payload["client_state"].(string)
+		staffFacts[index] = humancalling.ProviderFact{
+			EventID:       fmt.Sprintf("bridge-retry-staff-%d-initiated", index+1),
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    now.Add(time.Duration(index+2) * time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: fmt.Sprintf("%s-bridge-staff-control", []string{"first", "second"}[index]),
+			CallLegID:     fmt.Sprintf("%s-bridge-staff-leg", []string{"first", "second"}[index]),
+			CallSessionID: fmt.Sprintf("bridge-retry-staff-%d-session", index+1),
+			ClientState:   clientState,
+		}
+	}
+	answer := func(index int) {
+		t.Helper()
+		fact := staffFacts[index]
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project Staff %d initiation: %v", index+1, err)
+		}
+		fact.EventID = fmt.Sprintf("bridge-retry-staff-%d-answered", index+1)
+		fact.Type = humancalling.FactCallAnswered
+		fact.OccurredAt = fact.OccurredAt.Add(time.Second)
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project Staff %d answer: %v", index+1, err)
+		}
+	}
+
+	answer(0)
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 1 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("first rejected Bridge ended ring window: %#v", provider.commands)
+	}
+	answer(1)
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 2 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("replacement Bridge commands = %#v", provider.commands)
+	}
+	replacement := provider.last(humancalling.CommandBridge)
+	replacementState, _ := replacement.Payload["client_state"].(string)
+	second := staffFacts[1]
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "bridge-retry-second-confirmed",
+		Type:          humancalling.FactCallBridged,
+		OccurredAt:    now.Add(6 * time.Second),
+		CallControlID: second.CallControlID,
+		CallLegID:     second.CallLegID,
+		CallSessionID: second.CallSessionID,
+		ClientState:   replacementState,
+	}); err != nil {
+		t.Fatalf("confirm replacement Bridge: %v", err)
+	}
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs WHERE id = $1
+	`, replacement.CallLegID).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	connected, err := calling.ReadCall(context.Background(), staffIdentities[1], callID)
+	if err != nil || connected.State != humancalling.CallConnected {
+		t.Fatalf("replacement Staff answer = %#v, %v", connected, err)
+	}
+}
+
 func TestPlaybackStartedReconcilesStartRingWindow(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 15, 20, 0, 0, time.UTC)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
@@ -4676,8 +5105,8 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile ambiguous Start ring window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile ambiguous Start ring window = %t, %v", reconciled, err)
 	}
 	var commandState string
 	var terminalOutcome *string
@@ -4708,8 +5137,8 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("repeat ambiguous Start ring window reconciliation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("repeat ambiguous Start ring window reconciliation = %t, %v", reconciled, err)
 	}
 	if count := strings.Count(metrics.String(), `"outcome":"ambiguous"`); count != 1 {
 		t.Fatalf("repeat reconciliation emitted %d ambiguous metrics, want 1", count)
@@ -4911,8 +5340,8 @@ func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
 	})
 	provider.mu.Unlock()
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile active unobserved Stop = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile active unobserved Stop = %t, %v", reconciled, err)
 	}
 	var commandState string
 	var degradedAudio int
@@ -4944,8 +5373,8 @@ func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
 	`, stop.CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("terminalize unobserved Stop = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("terminalize unobserved Stop = %t, %v", reconciled, err)
 	}
 	var convergedAudio, terminalized int
 	if err := pool.QueryRow(context.Background(), `
@@ -5068,8 +5497,8 @@ func TestStaleCallReconciliationQuarantinesContradictoryProviderObservation(t *t
 	})
 	provider.mu.Unlock()
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("quarantine contradictory stale observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("quarantine contradictory stale observation = %t, %v", reconciled, err)
 	}
 	var terminalOutcome, legState, legCode, commandState, commandCode string
 	if err := pool.QueryRow(context.Background(), `
@@ -5090,8 +5519,8 @@ func TestStaleCallReconciliationQuarantinesContradictoryProviderObservation(t *t
 		t.Fatalf("stale observation quarantine = Call:%s leg:%s/%s command:%s/%s",
 			terminalOutcome, legState, legCode, commandState, commandCode)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat contradictory stale observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat contradictory stale observation = %t, %v", reconciled, err)
 	}
 }
 
@@ -5751,6 +6180,51 @@ type recordingProvider struct {
 	blockStarted      chan struct{}
 	blockRelease      chan struct{}
 	blockError        error
+}
+
+type deduplicatingProvider struct {
+	*recordingProvider
+	requestMu sync.Mutex
+	requests  []humancalling.ProviderCommand
+	results   map[string]humancalling.ProviderResult
+}
+
+func newDeduplicatingProvider(provider *recordingProvider) *deduplicatingProvider {
+	return &deduplicatingProvider{
+		recordingProvider: provider,
+		results:           map[string]humancalling.ProviderResult{},
+	}
+}
+
+func (provider *deduplicatingProvider) Execute(
+	ctx context.Context,
+	command humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	provider.requestMu.Lock()
+	defer provider.requestMu.Unlock()
+	provider.requests = append(provider.requests, command)
+	if result, exists := provider.results[command.ID]; exists {
+		return result, nil
+	}
+	result, err := provider.recordingProvider.Execute(ctx, command)
+	if err == nil {
+		provider.results[command.ID] = result
+	}
+	return result, err
+}
+
+func (provider *deduplicatingProvider) requestsFor(
+	action humancalling.CommandAction,
+) []humancalling.ProviderCommand {
+	provider.requestMu.Lock()
+	defer provider.requestMu.Unlock()
+	requests := []humancalling.ProviderCommand{}
+	for _, command := range provider.requests {
+		if command.Action == action {
+			requests = append(requests, command)
+		}
+	}
+	return requests
 }
 
 func (provider *recordingProvider) DeleteRecording(

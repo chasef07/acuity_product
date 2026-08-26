@@ -1341,8 +1341,8 @@ func TestVoicemailRecordingSavedAfterRoutingFailureWithCompletedTaskAppliesImmed
 	`, reconciliationTime); err != nil {
 		t.Fatalf("keep unrelated CallLegs out of reconciliation: %v", err)
 	}
-	if reconciled, err := reconciliationCalling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile absent voicemail recording event = %d, %v", reconciled, err)
+	if reconciled, err := reconciliationCalling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile absent voicemail recording event = %t, %v", reconciled, err)
 	}
 	processAllCommands(t, reconciliationCalling)
 

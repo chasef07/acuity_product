@@ -19,9 +19,8 @@ type CallingWork interface {
 	ProcessNextRecoveryReconciliation(context.Context) (bool, error)
 	ProcessNextRecordingReconciliation(context.Context) (bool, error)
 	ProcessNextRecordingRetention(context.Context) (bool, error)
-	ReconcileStaleCalls(context.Context) (int, error)
+	MaintainOutgoingCallLegs(context.Context) (bool, error)
 	ExpireDispositions(context.Context) (int, error)
-	RecoverInterruptedCommands(context.Context) error
 	ReconcileCredentials(context.Context) error
 }
 
@@ -434,8 +433,8 @@ func (runner *Runner) runMaintenanceAndDelay(
 
 func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	failed := false
-	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ReconcileStaleCalls); err != nil {
-		warn(ctx, "calling_stale_reconciliation_failed", err)
+	if _, err := runBoolWork(ctx, runner.config.WorkTimeout, runner.work.MaintainOutgoingCallLegs); err != nil {
+		warn(ctx, "outgoing_call_leg_maintenance_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
@@ -443,13 +442,6 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	}
 	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireDispositions); err != nil {
 		warn(ctx, "calling_disposition_expiry_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if err := runWork(ctx, runner.config.WorkTimeout, runner.work.RecoverInterruptedCommands); err != nil {
-		warn(ctx, "provider_command_recovery_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
