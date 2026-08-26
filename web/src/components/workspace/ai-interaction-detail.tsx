@@ -98,7 +98,7 @@ export function AIInteractionContext({
     return (
       <div className="flex min-h-48 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
         <Spinner />
-        Loading appointment
+        Loading AI call
       </div>
     )
   }
@@ -106,7 +106,7 @@ export function AIInteractionContext({
     return (
       <div className="p-4">
         <Alert variant="destructive">
-          <AlertTitle>Appointment unavailable</AlertTitle>
+          <AlertTitle>AI call unavailable</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       </div>
