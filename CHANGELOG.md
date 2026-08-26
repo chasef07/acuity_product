@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/chasef07/acuity_product/compare/v0.4.0...v0.4.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **web-calling:** gate Answer on matching media invite ([#192](https://github.com/chasef07/acuity_product/issues/192)) ([d7cf3de](https://github.com/chasef07/acuity_product/commit/d7cf3de1f2d48f2747dae63411511740ce57a098))
+
 ## [0.4.0](https://github.com/chasef07/acuity_product/compare/v0.3.0...v0.4.0) (2026-08-22)
 
 
