@@ -8,7 +8,10 @@ export function MarketingPage({
   initiallyOpen?: boolean
 }) {
   return (
-    <SignInDialog initiallyOpen={initiallyOpen}>
+    <SignInDialog
+      key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
+      initiallyOpen={initiallyOpen}
+    >
       <EnterpriseHome />
     </SignInDialog>
   )
