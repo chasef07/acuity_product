@@ -1,15 +1,12 @@
-import type { Metadata } from "next"
-import { connection } from "next/server"
-
 import { MarketingPage } from "@/components/marketing/marketing-page"
+import { createPublicPageMetadata, siteConfig } from "@/lib/site"
 
-export const metadata: Metadata = {
-  title: "Acuity Health | AI agents for patient management",
-  description:
-    "Acuity carries patient work across calls, texts, faxes, referrals, EHR updates, and spreadsheets through completion.",
-}
+export const metadata = createPublicPageMetadata({
+  path: "/",
+  title: siteConfig.title,
+  description: siteConfig.description,
+})
 
-export default async function Home() {
-  await connection()
+export default function Home() {
   return <MarketingPage />
 }

@@ -1,0 +1,67 @@
+.field {
+  min-height: 100%;
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  isolation: isolate;
+  overflow: hidden;
+  color: #25334a;
+}
+
+.field canvas {
+  width: 76%;
+  height: 116%;
+  position: absolute;
+  top: -8%;
+  left: 30%;
+  cursor: crosshair;
+}
+
+.caption {
+  max-width: 450px;
+  margin: 0;
+  position: absolute;
+  z-index: 2;
+  right: 1%;
+  bottom: 6.5%;
+  display: grid;
+  justify-items: end;
+  color: #25334a;
+  text-align: right;
+}
+
+.caption span {
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.caption strong {
+  margin-top: 5px;
+  font-family: var(--font-acuity-display), Georgia, serif;
+  font-size: clamp(1.65rem, 2.4vw, 2.65rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .field {
+    min-height: 410px;
+    margin: 0 -14px;
+    position: relative;
+    inset: auto;
+  }
+
+  .caption {
+    right: 5%;
+    bottom: 6%;
+  }
+
+  .caption strong {
+    max-width: 270px;
+    font-size: 1.75rem;
+  }
+}
