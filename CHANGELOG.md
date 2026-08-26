@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/chasef07/acuity_product/compare/v0.4.1...v0.4.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **calling:** require hangup evidence for bridged calls ([#194](https://github.com/chasef07/acuity_product/issues/194)) ([cf5aebe](https://github.com/chasef07/acuity_product/commit/cf5aebe9dd60d5f98135ffe5b058e6504bfaa571))
+
 ## [0.4.1](https://github.com/chasef07/acuity_product/compare/v0.4.0...v0.4.1) (2026-08-26)
 
 
