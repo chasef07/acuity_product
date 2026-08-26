@@ -13,7 +13,7 @@ Only `ACUITY_RUNTIME_ROLE` changes.
 | `portal-api` | service | 20 | 0 | 3 | 4 | 0 | 1500 ms |
 | `provider-ingress` | service | 20 | 0 | 2 | 2 | 0 | 1500 ms |
 | `realtime` | service | 50 | 0 | 2 | 3 | 1 direct `LISTEN` | 1500 ms |
-| `worker` | worker pool | 16 lanes / instance (10 provider-command) | 2 | 2 | 2 | 0 | 1500 ms |
+| `worker` | worker pool | 17 lanes / instance (1 provider-command coordinator + 10 effect executors) | 2 | 2 | 2 | 0 | 1500 ms |
 | `migrate` | job | one task | 0 | 1 | 2 | 0 | 5000 ms |
 
 One fully scaled revision can use at most:
@@ -33,19 +33,21 @@ The worker pool is fixed at two instances in this non-production contract.
 Worker pools do not expose request concurrency or autoscale from zero; rollout
 uses an instance split between revisions while keeping the total fixed.
 Each instance runs six fixed receipt, recovery, messaging, AI, and maintenance
-lanes plus ten provider-command lanes. Its two-connection pool remains the hard
-database-concurrency bound. Command claims lock a Call only while committing
-one command as `SENDING`; provider I/O happens after commit. Independent
-`DIAL_STAFF` commands for distinct Staff CallLegs may therefore overlap, while
-all other commands for the same Call remain serialized. Provider-command lanes
-poll every 250 milliseconds to keep newly committed Calls inside the checked
-latency envelope. Other empty queue lanes back off deterministically through 500
-milliseconds and one second to a two-second ceiling; any progress resets them
-immediately. Queue and maintenance failures use independent equal-jitter
-exponential backoff from 250 milliseconds to 10 seconds and reset after
-successful work. Ten provider-command lanes cover the checked 5–10 logged-in
-Staff envelope. Exceeding that envelope requires a new capacity review before
-the environment is represented as ready.
+lanes plus one provider-command claim coordinator and ten effect executors. Its
+two-connection pool remains the hard database-concurrency bound. The single
+coordinator polls every 250 milliseconds, claims at most eight commands before
+yielding, and dispatches each committed claim to an available executor. Command
+claims lock a Call only while committing one command as `SENDING`; provider I/O
+happens in the executor after commit and never occupies a coordinator or
+database transaction. Independent `DIAL_STAFF` commands for distinct Staff
+CallLegs may therefore overlap across all ten executors, while all other
+commands for the same Call remain serialized by HumanCalling. Other empty queue
+lanes back off deterministically through 500 milliseconds and one second to a
+two-second ceiling; any progress resets them immediately. Claim, executor, and
+maintenance failures use bounded equal-jitter exponential backoff from 250
+milliseconds to 10 seconds and reset after successful work. Ten executors cover
+the checked 5–10 logged-in Staff envelope. Exceeding that envelope requires a
+new capacity review before the environment is represented as ready.
 
 Each runtime gets a distinct service account. Only `migrate` receives schema
 DDL authority and provisioning-file access.

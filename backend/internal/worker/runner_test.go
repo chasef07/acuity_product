@@ -8,85 +8,101 @@ import (
 	"time"
 )
 
-func TestProviderCommandLaneCapsIdlePollingAtWorkInterval(t *testing.T) {
-	var delays []time.Duration
-	eligible := false
-	processed := 0
+func TestProviderCommandWorkersShareOneIdlePoll(t *testing.T) {
+	work := &idleProviderCommandWork{controlledWork: newControlledWork()}
 	runner := &Runner{
 		config: Config{
-			WorkInterval:   10 * time.Millisecond,
-			WorkTimeout:    time.Second,
-			IdleBackoffMax: 100 * time.Millisecond,
+			WorkInterval:             250 * time.Millisecond,
+			WorkTimeout:              10 * time.Second,
+			ProviderCommandBatchSize: 8,
+			CommandWorkers:           10,
+			IdleBackoffMax:           2 * time.Second,
 		},
+		work: work,
+		wait: func(context.Context, time.Duration) bool {
+			return false
+		},
+	}
+
+	runner.runProviderCommands(context.Background())
+
+	got := work.commandCalls.Load()
+	if got > 1 {
+		t.Fatalf("idle provider-command acquisition attempts = %d, want at most 1 per polling interval", got)
+	}
+	reduction := 1 - float64(got)/float64(runner.config.CommandWorkers)
+	if reduction < 0.75 {
+		t.Fatalf("idle provider-command acquisition reduction = %.0f%%, want at least 75%%", reduction*100)
+	}
+	t.Logf("idle provider-command acquisition attempts per interval = %d (%.0f%% reduction from %d workers)",
+		got, reduction*100, runner.config.CommandWorkers)
+}
+
+func TestProviderCommandCoordinatorKeepsPickupInsideWorkInterval(t *testing.T) {
+	var delays []time.Duration
+	work := &eligibleProviderCommandWork{}
+	runner := &Runner{
+		config: Config{
+			WorkInterval:             250 * time.Millisecond,
+			WorkTimeout:              time.Second,
+			ProviderCommandBatchSize: 8,
+			CommandWorkers:           10,
+			IdleBackoffMax:           2 * time.Second,
+		},
+		work: work,
 		wait: func(_ context.Context, delay time.Duration) bool {
 			delays = append(delays, delay)
-			if len(delays) == 4 {
-				eligible = true
+			if len(delays) == 1 {
+				work.eligible.Store(true)
 				return true
 			}
-			return len(delays) < 5
+			return false
 		},
 	}
 
-	runner.runProviderCommandLane(
-		context.Background(),
-		1,
-		"provider_command_processing_failed",
-		func(context.Context) (bool, error) {
-			if !eligible {
-				return false, nil
-			}
-			processed++
-			return true, nil
-		},
-	)
+	runner.runProviderCommands(context.Background())
 
-	want := []time.Duration{
-		10 * time.Millisecond,
-		10 * time.Millisecond,
-		10 * time.Millisecond,
-		10 * time.Millisecond,
-		10 * time.Millisecond,
-	}
+	want := []time.Duration{250 * time.Millisecond, 250 * time.Millisecond}
 	if len(delays) != len(want) {
-		t.Fatalf("provider command polling delays = %v, want %v", delays, want)
+		t.Fatalf("provider-command polling delays = %v, want %v", delays, want)
 	}
 	for index := range want {
 		if delays[index] != want[index] {
-			t.Fatalf("provider command polling delays = %v, want %v", delays, want)
+			t.Fatalf("provider-command polling delays = %v, want %v", delays, want)
 		}
 	}
-	if processed != 1 {
-		t.Fatalf("newly eligible provider commands processed = %d, want 1", processed)
+	if got := work.executed.Load(); got != 1 {
+		t.Fatalf("newly eligible provider-command effects = %d, want 1", got)
+	}
+	if pickupBound := delays[0]; pickupBound >= time.Second {
+		t.Fatalf("provider-command pickup bound = %s, want under 1s", pickupBound)
 	}
 }
 
-func TestProviderCommandLaneDrainsExactBatchBeforeYielding(t *testing.T) {
-	processed := 0
+func TestProviderCommandCoordinatorClaimsExactBatchBeforeYielding(t *testing.T) {
+	work := &readyProviderCommandWork{}
 	var delays []time.Duration
 	runner := &Runner{
 		config: Config{
-			WorkInterval: 50 * time.Millisecond,
-			WorkTimeout:  time.Second,
+			WorkInterval:             50 * time.Millisecond,
+			WorkTimeout:              time.Second,
+			ProviderCommandBatchSize: 8,
+			CommandWorkers:           10,
 		},
+		work: work,
 		wait: func(_ context.Context, delay time.Duration) bool {
 			delays = append(delays, delay)
 			return false
 		},
 	}
 
-	runner.runProviderCommandLane(
-		context.Background(),
-		8,
-		"provider_command_processing_failed",
-		func(context.Context) (bool, error) {
-			processed++
-			return true, nil
-		},
-	)
+	runner.runProviderCommands(context.Background())
 
-	if processed != 8 {
-		t.Fatalf("provider commands processed before yield = %d, want 8", processed)
+	if got := work.claimed.Load(); got != 8 {
+		t.Fatalf("provider commands claimed before yield = %d, want 8", got)
+	}
+	if got := work.executed.Load(); got != 8 {
+		t.Fatalf("provider-command effects before yield = %d, want 8", got)
 	}
 	want := []time.Duration{50 * time.Millisecond}
 	if len(delays) != len(want) || delays[0] != want[0] {
@@ -404,6 +420,144 @@ func TestQueueLaneBacksOffConsecutiveErrorsAndResetsAfterProgress(t *testing.T) 
 	}
 }
 
+func TestProviderCommandCoordinatorBoundsClaimFailuresAndResetsAfterSuccess(t *testing.T) {
+	work := &sequencedProviderCommandWork{results: []providerCommandClaimResult{
+		{err: errors.New("first claim failure")},
+		{err: errors.New("second claim failure")},
+		{claimed: true},
+		{},
+	}}
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval:             10 * time.Millisecond,
+			WorkTimeout:              time.Second,
+			ProviderCommandBatchSize: 1,
+			CommandWorkers:           1,
+			ErrorBackoffMin:          100 * time.Millisecond,
+			ErrorBackoffMax:          400 * time.Millisecond,
+		},
+		work: work,
+		jitter: func(delay time.Duration) time.Duration {
+			return delay - time.Millisecond
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return len(delays) < 4
+		},
+	}
+
+	runner.runProviderCommands(context.Background())
+
+	want := []time.Duration{
+		99 * time.Millisecond,
+		199 * time.Millisecond,
+		10 * time.Millisecond,
+		10 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("provider-command claim delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("provider-command claim delays = %v, want %v", delays, want)
+		}
+	}
+	if got := work.executed.Load(); got != 1 {
+		t.Fatalf("provider-command effects after claim recovery = %d, want 1", got)
+	}
+}
+
+func TestProviderCommandExecutorBoundsFailuresAndResetsAfterSuccess(t *testing.T) {
+	providerErrors := []error{
+		errors.New("first provider failure"),
+		errors.New("second provider failure"),
+		errors.New("third provider failure"),
+		errors.New("bounded provider failure"),
+		nil,
+		errors.New("provider failure after success"),
+	}
+	commands := make(chan func(context.Context) error, len(providerErrors))
+	for _, providerErr := range providerErrors {
+		commands <- func(context.Context) error { return providerErr }
+	}
+	close(commands)
+	available := make(chan struct{}, len(providerErrors))
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkTimeout:     time.Second,
+			ErrorBackoffMin: 100 * time.Millisecond,
+			ErrorBackoffMax: 400 * time.Millisecond,
+		},
+		jitter: func(delay time.Duration) time.Duration {
+			return delay - time.Millisecond
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return true
+		},
+	}
+
+	runner.runProviderCommandExecutor(context.Background(), commands, available)
+
+	want := []time.Duration{
+		99 * time.Millisecond,
+		199 * time.Millisecond,
+		399 * time.Millisecond,
+		399 * time.Millisecond,
+		99 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("provider-command executor delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("provider-command executor delays = %v, want %v", delays, want)
+		}
+	}
+}
+
+func TestProviderCommandsStopCleanlyWhenEffectsAreCanceled(t *testing.T) {
+	const workerCount = 10
+	work := &cancelableProviderCommandWork{
+		controlledWork: newControlledWork(),
+		started:        make(chan struct{}, workerCount),
+	}
+	runner := &Runner{
+		config: Config{
+			WorkInterval:             time.Millisecond,
+			WorkTimeout:              time.Second,
+			ProviderCommandBatchSize: 8,
+			CommandWorkers:           workerCount,
+			ErrorBackoffMin:          time.Millisecond,
+			ErrorBackoffMax:          10 * time.Millisecond,
+		},
+		work:   work,
+		jitter: func(delay time.Duration) time.Duration { return delay },
+		wait:   wait,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runner.runProviderCommands(ctx)
+		close(done)
+	}()
+	for index := 1; index <= workerCount; index++ {
+		waitForSignal(t, work.started, "provider-command effect")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("provider-command coordinator and executors did not stop after cancellation")
+	}
+	if got := work.executed.Load(); got != workerCount {
+		t.Fatalf("provider-command effects started before cancellation = %d, want %d", got, workerCount)
+	}
+}
+
 func TestQueueLaneBacksOffConsecutiveEmptyClaimsAndResetsAfterProgress(t *testing.T) {
 	var delays []time.Duration
 	runner := &Runner{
@@ -506,6 +660,98 @@ type controlledWork struct {
 	blockStaleReconciliation   bool
 }
 
+type idleProviderCommandWork struct {
+	*controlledWork
+}
+
+func (work *idleProviderCommandWork) ClaimNextCommand(
+	context.Context,
+) (func(context.Context) error, bool, error) {
+	work.commandCalls.Add(1)
+	return nil, false, nil
+}
+
+type eligibleProviderCommandWork struct {
+	*controlledWork
+	eligible atomic.Bool
+	executed atomic.Int32
+}
+
+func (work *eligibleProviderCommandWork) ClaimNextCommand(
+	context.Context,
+) (func(context.Context) error, bool, error) {
+	if !work.eligible.CompareAndSwap(true, false) {
+		return nil, false, nil
+	}
+	return func(context.Context) error {
+		work.executed.Add(1)
+		return nil
+	}, true, nil
+}
+
+type readyProviderCommandWork struct {
+	*controlledWork
+	claimed  atomic.Int32
+	executed atomic.Int32
+}
+
+type providerCommandClaimResult struct {
+	claimed bool
+	err     error
+}
+
+type sequencedProviderCommandWork struct {
+	*controlledWork
+	results  []providerCommandClaimResult
+	next     int
+	executed atomic.Int32
+}
+
+type cancelableProviderCommandWork struct {
+	*controlledWork
+	started  chan struct{}
+	claimed  atomic.Int32
+	executed atomic.Int32
+}
+
+func (work *cancelableProviderCommandWork) ClaimNextCommand(
+	context.Context,
+) (func(context.Context) error, bool, error) {
+	if work.claimed.Add(1) > 10 {
+		return nil, false, nil
+	}
+	return func(ctx context.Context) error {
+		work.executed.Add(1)
+		work.started <- struct{}{}
+		<-ctx.Done()
+		return ctx.Err()
+	}, true, nil
+}
+
+func (work *sequencedProviderCommandWork) ClaimNextCommand(
+	context.Context,
+) (func(context.Context) error, bool, error) {
+	result := work.results[work.next]
+	work.next++
+	if !result.claimed || result.err != nil {
+		return nil, result.claimed, result.err
+	}
+	return func(context.Context) error {
+		work.executed.Add(1)
+		return nil
+	}, true, nil
+}
+
+func (work *readyProviderCommandWork) ClaimNextCommand(
+	context.Context,
+) (func(context.Context) error, bool, error) {
+	work.claimed.Add(1)
+	return func(context.Context) error {
+		work.executed.Add(1)
+		return nil
+	}, true, nil
+}
+
 type credentialReconciliationFailureWork struct {
 	*controlledWork
 	reconciliationCalls int
@@ -562,20 +808,34 @@ func (work *hotReceiptWork) ProcessNextReceipt(context.Context) (bool, error) {
 }
 
 func (work *controlledWork) ProcessNextCommand(ctx context.Context) (bool, error) {
+	command, claimed, err := work.ClaimNextCommand(ctx)
+	if err != nil || !claimed {
+		return claimed, err
+	}
+	return true, command(ctx)
+}
+
+func (work *controlledWork) ClaimNextCommand(
+	context.Context,
+) (func(context.Context) error, bool, error) {
 	switch work.commandCalls.Add(1) {
 	case 1:
-		work.slowCommandStarted <- struct{}{}
-		select {
-		case <-ctx.Done():
-			return true, ctx.Err()
-		case <-work.releaseSlowCommand:
-			return true, nil
-		}
+		return func(ctx context.Context) error {
+			work.slowCommandStarted <- struct{}{}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-work.releaseSlowCommand:
+				return nil
+			}
+		}, true, nil
 	case 2:
-		work.readyCommandFinished <- struct{}{}
-		return true, nil
+		return func(context.Context) error {
+			work.readyCommandFinished <- struct{}{}
+			return nil
+		}, true, nil
 	default:
-		return false, nil
+		return nil, false, nil
 	}
 }
 

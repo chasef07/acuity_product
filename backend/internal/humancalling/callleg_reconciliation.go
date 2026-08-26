@@ -112,12 +112,27 @@ const staleCallLegCandidateQuery = `
 `
 
 func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
-	commandID, ok, err := m.claimNextCallLegCommand(ctx)
+	command, ok, err := m.ClaimNextCommand(ctx)
 	if err != nil || !ok {
 		return ok, err
 	}
-	_, err = m.executeCallLegCommand(ctx, commandID)
-	return true, err
+	return true, command(ctx)
+}
+
+// ClaimNextCommand commits ownership before returning the provider effect.
+// The returned effect must be invoked at most once and always outside a
+// database transaction.
+func (m *Module) ClaimNextCommand(
+	ctx context.Context,
+) (func(context.Context) error, bool, error) {
+	commandID, ok, err := m.claimNextCallLegCommand(ctx)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return func(executeContext context.Context) error {
+		_, executeErr := m.executeCallLegCommand(executeContext, commandID)
+		return executeErr
+	}, true, nil
 }
 
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
