@@ -466,7 +466,7 @@ func expectedAlerts() map[string]expectedAlert {
 		"Webhook acknowledgement p99 above one second":              {"acuity_call_center_webhook_acknowledgement_seconds", 1, "0s"},
 		"Oldest receipt above 30 seconds":                           {"acuity_call_center_receipt_queue_oldest_age_seconds", 30, "60s"},
 		"Receipt depth above 64 for five minutes":                   {"acuity_call_center_receipt_queue_depth", 64, "300s"},
-		"Any quarantined provider receipt":                          {"acuity_call_center_receipt_quarantine_depth", 0, "0s"},
+		"Any quarantined provider receipt":                          {"acuity_call_center_receipt_quarantine_depth", 1, "0s"},
 		"Dial command queue p95 above one second":                   {"acuity_call_center_provider_command_queue_seconds", 1, "60s"},
 		"Rejected start ring-window command":                        {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Degraded caller audio after stop ring-window failure":      {"acuity_call_center_provider_command_count", 0, "0s"},
@@ -481,7 +481,7 @@ func expectedAlerts() map[string]expectedAlert {
 		"Lost Staff answer race ratio above 0.5":                    {"acuity_call_center_staff_answer_count", 0.5, "0s"},
 		"At least ten Staff answers in five minutes":                {"acuity_call_center_staff_answer_count", 9, "0s"},
 		"Answer-to-Bridge p95 above eight seconds":                  {"acuity_call_center_answer_to_bridge_seconds", 8, "60s"},
-		"Any terminal Staff occupancy beyond reconciliation window": {"acuity_call_center_terminal_staff_occupancy", 0, "60s"},
+		"Any terminal Staff occupancy beyond reconciliation window": {"acuity_call_center_terminal_staff_occupancy", 1, "60s"},
 	}
 }
 
