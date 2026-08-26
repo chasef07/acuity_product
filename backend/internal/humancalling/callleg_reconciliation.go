@@ -443,6 +443,10 @@ func (m *Module) ReconcileStaleCalls(ctx context.Context) (int, error) {
 		}
 		return 1, nil
 	}
+	// A bridged CallLeg needs explicit hangup evidence or committed Hangup intent.
+	if legState == "BRIDGED" && commandID == "" {
+		return 1, nil
+	}
 	fact := ProviderFact{
 		EventID:           "reconcile-absent-" + legID + "-" + fmt.Sprint(checkedAt.UnixNano()),
 		Type:              FactCallHangup,

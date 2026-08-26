@@ -860,6 +860,147 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}
 }
 
+func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "stale-bridged-outbound", 1,
+	)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{
+			{CallControlID: "stale-bridged-staff-control", CallLegID: "stale-bridged-staff-leg"},
+			{CallControlID: "stale-bridged-destination-control", CallLegID: "stale-bridged-destination-leg"},
+		},
+		observations: []humancalling.ProviderCallObservation{{Active: false}},
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "stale-bridged-outbound-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "stale-bridged-outbound-practice",
+			LocationKey: "stale-bridged-outbound-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: "stale-bridged-outbound-browser-1",
+			IdempotencyKey: "stale-bridged-outbound-call",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
+	staffClientState, _ := staffDial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: "stale-bridged-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "stale-bridged-staff-control", CallLegID: "stale-bridged-staff-leg",
+		CallSessionID: "stale-bridged-staff-session", ClientState: staffClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	staffFact.EventID = "stale-bridged-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(2 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff answer: %v", err)
+	}
+	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(callingState.Ringing) != 1 {
+		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[0], SessionID: "stale-bridged-outbound-browser-1",
+			CallID: call.ID, MediaToken: callingState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm outbound Staff media: %v", err)
+	}
+	processAllCommands(t, calling)
+	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
+	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
+	destinationFact := humancalling.ProviderFact{
+		EventID: "stale-bridged-destination-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(3 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "stale-bridged-destination-control", CallLegID: "stale-bridged-destination-leg",
+		CallSessionID: "stale-bridged-destination-session", ClientState: destinationClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination initiation: %v", err)
+	}
+	destinationFact.EventID = "stale-bridged-destination-answered"
+	destinationFact.Type = humancalling.FactCallAnswered
+	destinationFact.OccurredAt = now.Add(4 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination answer: %v", err)
+	}
+	processAllCommands(t, calling)
+	for _, fact := range []humancalling.ProviderFact{
+		{
+			EventID: "stale-bridged-destination-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: destinationFact.CallControlID,
+			CallLegID: destinationFact.CallLegID, CallSessionID: destinationFact.CallSessionID,
+		},
+		{
+			EventID: "stale-bridged-staff-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(5 * time.Second), CallControlID: staffFact.CallControlID,
+			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+		},
+	} {
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project outbound Bridge: %v", err)
+		}
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET updated_at = $2
+		WHERE id = $1
+	`, staffDial.CallLegID, now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("age bridged Staff CallLeg: %v", err)
+	}
+
+	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
+		t.Fatalf("reconcile stale bridged Staff CallLeg: %v", err)
+	}
+	callingState, err = calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil {
+		t.Fatalf("read connected Call after reconciliation: %v", err)
+	}
+	var connected bool
+	var bridgedLegs, cleanupCommands int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT terminal_outcome IS NULL,
+			(SELECT count(*) FROM human_calling_call_legs
+			 WHERE call_id = call.id AND state = 'BRIDGED'),
+			(SELECT count(*) FROM human_calling_provider_commands
+			 WHERE call_id = call.id AND action = 'HANGUP_LEG')
+		FROM human_calling_calls call WHERE id = $1
+	`, call.ID).Scan(&connected, &bridgedLegs, &cleanupCommands); err != nil {
+		t.Fatal(err)
+	}
+	if !connected || bridgedLegs != 2 || cleanupCommands != 0 ||
+		callingState.Bridged == nil || callingState.Bridged.CallID != call.ID ||
+		callingState.Softphone.ActiveCallID != call.ID {
+		t.Fatalf("inactive observation ended bridged Call = connected:%t bridged legs:%d cleanup:%d state:%#v",
+			connected, bridgedLegs, cleanupCommands, callingState)
+	}
+}
+
 func TestTerminalStaffHangupReconciliationReleasesSoftphone(t *testing.T) {
 	pool, calling, provider, staff, callID, legID, commandID :=
 		prepareTerminalStaffHangup(t, false)
