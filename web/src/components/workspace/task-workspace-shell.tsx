@@ -119,7 +119,7 @@ const OperatorAnalytics = dynamic(
 
 type LoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type View = "none" | "engagement" | "analytics"
-type ContextView = "task" | "call" | "appointment"
+type ContextView = "task" | "call" | "ai-call"
 
 const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
@@ -1113,7 +1113,7 @@ export function TaskWorkspaceShell() {
   function openAIInteractionContext(interactionID: string) {
     callDetailGenerationRef.current += 1
     setSelectedAIInteractionID(interactionID)
-    setContextView("appointment")
+    setContextView("ai-call")
     setContextPanelOpen(true)
   }
 
@@ -1321,9 +1321,9 @@ export function TaskWorkspaceShell() {
       ? "Task context"
       : contextView === "call"
         ? "Call context"
-        : "Appointment context"
+        : "AI call context"
   const contextPanelTitle =
-    contextView === "appointment" ? "Appointment details" : contextPanelLabel
+    contextView === "ai-call" ? "AI call details" : contextPanelLabel
   const callingShell = (children: ReactNode) => (
     <SidebarProvider>
       <CallingDock
@@ -1454,6 +1454,21 @@ export function TaskWorkspaceShell() {
                   practiceID={practiceID}
                   canMutate
                   revision={workspaceRevision}
+                  selectedTaskID={
+                    contextPanelOpen && contextView === "task"
+                      ? selectedTask?.id
+                      : undefined
+                  }
+                  selectedCallID={
+                    contextPanelOpen && contextView === "call"
+                      ? (historicalCall ?? activeCall)?.id
+                      : undefined
+                  }
+                  selectedAIInteractionID={
+                    contextPanelOpen && contextView === "ai-call"
+                      ? selectedAIInteractionID
+                      : undefined
+                  }
                   headerLeading={<SidebarTrigger collapsedOnly />}
                   onTaskCreated={(task) => updateTaskProjection(task, false)}
                   onTaskOpen={openTaskContext}
@@ -1495,7 +1510,7 @@ export function TaskWorkspaceShell() {
                   </Button>
                 </div>
                 <div className="flex min-h-0 flex-1">
-                  {contextView === "appointment" ? (
+                  {contextView === "ai-call" ? (
                     <AIInteractionContext
                       interactionID={selectedAIInteractionID}
                       onReview={reviewAIOutcome}

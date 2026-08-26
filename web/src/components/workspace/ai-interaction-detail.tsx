@@ -72,7 +72,7 @@ export function AIInteractionContext({
         return
       }
       setRequest({ interactionID, detail: result.data })
-      if (!onReview) return
+      if (!onReview || result.data.appointmentOutcome === "INDETERMINATE") return
       setReviewRequest({ interactionID, state: "saving" })
       const reviewed = await onReview(interactionID).catch(() => false)
       if (controller.signal.aborted) return
@@ -116,6 +116,9 @@ export function AIInteractionContext({
   const reviewFailed =
     reviewRequest.interactionID === interactionID &&
     reviewRequest.state === "failed"
+  const hasAppointmentOutcome = detail.appointmentOutcome !== "INDETERMINATE"
+  const showCallStatus =
+    hasAppointmentOutcome || detail.status !== "COMPLETED"
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       {reviewFailed && (
@@ -139,57 +142,64 @@ export function AIInteractionContext({
           </Alert>
         </div>
       )}
-      <div className="flex flex-wrap gap-2 border-b px-4 py-3">
-        <Badge
-          variant={detail.status === "ESCALATED" ? "outline" : "secondary"}
-        >
-          {detail.status === "ESCALATED" ? (
-            <PhoneForwardedIcon aria-hidden="true" />
-          ) : (
-            <BotIcon aria-hidden="true" />
+      {showCallStatus && (
+        <div className="flex flex-wrap gap-2 border-b px-4 py-3">
+          <Badge
+            variant={detail.status === "ESCALATED" ? "outline" : "secondary"}
+          >
+            {detail.status === "ESCALATED" ? (
+              <PhoneForwardedIcon aria-hidden="true" />
+            ) : (
+              <BotIcon aria-hidden="true" />
+            )}
+            {aiCallCompletionLabel(detail.status)}
+          </Badge>
+          {hasAppointmentOutcome && (
+            <Badge variant="outline">
+              <CalendarCheck2Icon aria-hidden="true" />
+              {appointmentOutcomeLabel(detail.appointmentOutcome)}
+            </Badge>
           )}
-          {aiCallCompletionLabel(detail.status)}
-        </Badge>
-        <Badge variant="outline">
-          <CalendarCheck2Icon aria-hidden="true" />
-          {appointmentOutcomeLabel(detail.appointmentOutcome)}
-        </Badge>
-      </div>
+        </div>
+      )}
       <AIInteractionDetailView detail={detail} />
     </div>
   )
 }
 
 function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
+  const hasAppointmentOutcome = detail.appointmentOutcome !== "INDETERMINATE"
   return (
     <div>
-      <section className="border-b px-4 py-4">
-        <AppointmentSummary
-          facts={detail.appointment}
-          label={primaryAppointmentLabel(detail.appointmentOutcome)}
-          title={appointmentOutcomeTitle(detail.appointmentOutcome)}
-        />
-        {detail.previousAppointment &&
-          hasAppointmentFacts(detail.previousAppointment) && (
-            <div className="mt-3 border-t pt-3">
-              <p className="text-xs font-medium text-muted-foreground">
-                Previous appointment
-              </p>
-              <p className="mt-1 text-sm font-medium">
-                {formatAppointmentDateTime(detail.previousAppointment) ??
-                  "Appointment details unavailable"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {[
-                  detail.previousAppointment.providerName,
-                  detail.previousAppointment.locationName,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            </div>
-          )}
-      </section>
+      {hasAppointmentOutcome && (
+        <section className="border-b px-4 py-4">
+          <AppointmentSummary
+            facts={detail.appointment}
+            label={primaryAppointmentLabel(detail.appointmentOutcome)}
+            title={appointmentOutcomeTitle(detail.appointmentOutcome)}
+          />
+          {detail.previousAppointment &&
+            hasAppointmentFacts(detail.previousAppointment) && (
+              <div className="mt-3 border-t pt-3">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Previous appointment
+                </p>
+                <p className="mt-1 text-sm font-medium">
+                  {formatAppointmentDateTime(detail.previousAppointment) ??
+                    "Appointment details unavailable"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    detail.previousAppointment.providerName,
+                    detail.previousAppointment.locationName,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+            )}
+        </section>
+      )}
 
       {detail.summary && (
         <section className="border-b px-4 py-4">
@@ -318,7 +328,7 @@ function primaryAppointmentLabel(
   if (outcome === "RESCHEDULE") return "New appointment"
   if (outcome === "BOOKING") return "Appointment"
   if (outcome === "PARTIAL") return "Appointment review"
-  return "No appointment actions"
+  return "Appointment"
 }
 
 function hasAppointmentFacts(facts: AiAppointmentFacts) {

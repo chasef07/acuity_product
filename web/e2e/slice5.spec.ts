@@ -98,6 +98,53 @@ test("appointment reviews are nested and leave the queue when opened", async ({
   await expect(appointmentsSection).toContainText("0")
 })
 
+test("an AI call without appointment actions stays call-first", async ({
+  page,
+}) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+  await createAINoAppointmentCall(page)
+
+  const searchInput = page.getByLabel("Search tasks, names, or phone")
+  await searchInput.fill("7275550187")
+  await searchInput.press("Enter")
+
+  const outboundText = "We’re open until 4:30 PM today."
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill(outboundText)
+  await page.getByRole("button", { name: "Send message" }).click()
+  const outboundMessage = page
+    .getByRole("article")
+    .filter({ hasText: outboundText })
+  await expect(outboundMessage.getByText("Sent", { exact: true })).toBeVisible()
+
+  const inboundText = "Perfect, thank you!"
+  await sendInbound(page, "slice-5-no-appointment-inbound", inboundText, "+17275550187")
+  const inboundMessage = page
+    .getByRole("article")
+    .filter({ hasText: inboundText })
+  await expect(inboundMessage).toBeVisible()
+
+  const callRow = page.getByRole("button", { name: "View AI call: AI call" })
+  await expect(callRow).toContainText("AI call")
+  await expect(callRow).not.toContainText("No appointment actions")
+  await callRow.click()
+  await expect(callRow).toHaveAttribute("aria-current", "true")
+  await expect(callRow).toHaveAttribute("data-selected", "true")
+
+  const callContext = page.getByRole("complementary", {
+    name: "AI call context",
+  })
+  await expect(callContext).toBeVisible()
+  await expect(callContext).toContainText("AI call details")
+  await expect(callContext).toContainText("Caller asked about office hours.")
+  await expect(callContext).toContainText("Call details")
+  await expect(callContext).not.toContainText("No appointment actions")
+  await expect(callContext).not.toContainText("Patient")
+})
+
 test("rail hover details and the message composer preserve compact context", async ({
   page,
 }) => {
@@ -282,6 +329,10 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("article")
     .filter({ hasText: outgoingText })
   await expect(outgoing).toBeVisible()
+  await expect(outgoing.locator('[data-slot="bubble"]')).toHaveAttribute(
+    "data-variant",
+    "muted",
+  )
   await expect(outgoing.getByText("Sending", { exact: true })).toBeVisible()
   await expect(outgoing.getByText("Sent", { exact: true })).toBeVisible()
   await expect(
@@ -371,6 +422,10 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     .getByRole("article")
     .filter({ hasText: inboundText })
   await expect(inbound).toBeVisible()
+  await expect(inbound.locator('[data-slot="bubble"]')).toHaveAttribute(
+    "data-variant",
+    "outline",
+  )
   await expect(page.getByText("Today", { exact: true }).first()).toBeVisible()
   await expect(
     page
@@ -856,7 +911,12 @@ async function openNumberInbox(
   await expect(page.getByRole("heading", { name: /\(727\) 555-01\d\d/ })).toBeVisible()
 }
 
-async function sendInbound(page: Page, eventID: string, text: string) {
+async function sendInbound(
+  page: Page,
+  eventID: string,
+  text: string,
+  from = "+17275550199",
+) {
   const response = await page.request.post(
     `${telnyxFixtureURL}/fixture/message-inbound`,
     {
@@ -864,7 +924,7 @@ async function sendInbound(page: Page, eventID: string, text: string) {
       data: {
         eventId: eventID,
         providerMessageId: `provider-${eventID}`,
-        from: "+17275550199",
+        from,
         to: "+17275550101",
         text,
       },
@@ -923,6 +983,27 @@ async function createAIAppointmentReview(page: Page) {
           appointmentId: "slice-5-booking",
         },
       },
+    },
+  })
+  expect([200, 201]).toContain(response.status())
+}
+
+async function createAINoAppointmentCall(page: Page) {
+  const endedAt = new Date()
+  const startedAt = new Date(endedAt.getTime() - 90_000)
+  const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
+    headers: { authorization: "Bearer synthetic-production-token" },
+    data: {
+      kind: "CLOSEOUT",
+      officeKey: "spring-hill",
+      sourceCallId: "slice-5-no-appointment-call",
+      callerPhone: "+17275550187",
+      officePhone: "+17275550101",
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      status: "COMPLETED",
+      summary: "Caller asked about office hours.",
+      closeoutPayload: { callId: "slice-5-no-appointment-call" },
     },
   })
   expect([200, 201]).toContain(response.status())

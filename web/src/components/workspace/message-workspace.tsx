@@ -120,6 +120,9 @@ export function EngagementWorkspace({
   practiceID,
   canMutate,
   revision,
+  selectedTaskID,
+  selectedCallID,
+  selectedAIInteractionID,
   headerLeading,
   headerTrailing,
   onTaskCreated,
@@ -131,6 +134,9 @@ export function EngagementWorkspace({
   practiceID: string
   canMutate: boolean
   revision: number
+  selectedTaskID?: string
+  selectedCallID?: string
+  selectedAIInteractionID?: string
   headerLeading?: ReactNode
   headerTrailing?: ReactNode
   onTaskCreated: (task: Task) => void
@@ -262,6 +268,9 @@ export function EngagementWorkspace({
         initialDestination={engagement.phone}
         canMutate={canMutate}
         revision={revision}
+        selectedTaskID={selectedTaskID}
+        selectedCallID={selectedCallID}
+        selectedAIInteractionID={selectedAIInteractionID}
         onTaskCreated={onTaskCreated}
         onTaskOpen={onTaskOpen}
         onCallOpen={onCallOpen}
@@ -278,6 +287,9 @@ function MessageConversation({
   initialDestination,
   canMutate,
   revision,
+  selectedTaskID,
+  selectedCallID,
+  selectedAIInteractionID,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
@@ -289,6 +301,9 @@ function MessageConversation({
   initialDestination?: string
   canMutate: boolean
   revision: number
+  selectedTaskID?: string
+  selectedCallID?: string
+  selectedAIInteractionID?: string
   onTaskCreated: (task: Task) => void
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
@@ -494,6 +509,9 @@ function MessageConversation({
                         onTaskOpen={onTaskOpen}
                         onCallOpen={onCallOpen}
                         onAIInteractionOpen={onAIInteractionOpen}
+                        selectedTaskID={selectedTaskID}
+                        selectedCallID={selectedCallID}
+                        selectedAIInteractionID={selectedAIInteractionID}
                         recoveryFollowUp={
                           item.type === "CALL" &&
                           followUpCallIDs.has(item.call?.id ?? "")
@@ -588,6 +606,9 @@ function TimelineEntry({
   onTaskOpen,
   onCallOpen,
   onAIInteractionOpen,
+  selectedTaskID,
+  selectedCallID,
+  selectedAIInteractionID,
   recoveryFollowUp,
 }: {
   item: ConversationTimelineItem
@@ -598,6 +619,9 @@ function TimelineEntry({
   onTaskOpen?: (task: Task) => void
   onCallOpen?: (callID: string) => void
   onAIInteractionOpen?: (interactionID: string) => void
+  selectedTaskID?: string
+  selectedCallID?: string
+  selectedAIInteractionID?: string
   recoveryFollowUp: boolean
 }) {
   if (item.type === "MESSAGE" && item.message) {
@@ -615,6 +639,7 @@ function TimelineEntry({
     const touchpoint = callTouchpoint(item.call)
     return (
       <ActivityItem
+        selected={item.call.id === selectedCallID}
         title={item.call.transferReason || touchpoint.label}
         metadata={[
           item.call.transferReason ? touchpoint.label : "",
@@ -640,6 +665,7 @@ function TimelineEntry({
     )
     return (
       <ActivityItem
+        selected={interaction.id === selectedAIInteractionID}
         title={presentation.title}
         metadata={[
           presentation.detail,
@@ -661,6 +687,7 @@ function TimelineEntry({
     const task = item.task
     return (
       <ActivityItem
+        selected={task.id === selectedTaskID}
         title={task.title}
         metadata={[
           taskActivityDetail(item.taskActivity, task),
@@ -788,7 +815,7 @@ function MessageEntry({
       }}
     >
       <MessageContent>
-        <Bubble variant={outbound ? "default" : "muted"}>
+        <Bubble variant={outbound ? "muted" : "outline"}>
           <BubbleContent>
             {message.body && (
               <p className="whitespace-pre-wrap">{message.body}</p>
@@ -798,7 +825,6 @@ function MessageEntry({
                 attachment={message.attachment}
                 canMutate={canMutate}
                 onChanged={onChanged}
-                inverse={outbound}
               />
             )}
           </BubbleContent>
@@ -922,19 +948,21 @@ function ActivityItem({
   title,
   metadata,
   actionLabel,
+  selected,
   onOpen,
 }: {
   title: string
   metadata: string[]
   actionLabel: string
+  selected: boolean
   onOpen?: () => void
 }) {
   const content = (
-    <span className="flex flex-1 flex-col gap-1">
-      <span className="line-clamp-1 w-fit text-xs/relaxed font-medium leading-snug">
+    <span className="flex flex-1 flex-col gap-0.5">
+      <span className="line-clamp-1 w-fit text-sm font-semibold leading-5 tracking-[-0.01em] text-foreground">
         {title}
       </span>
-      <span className="line-clamp-2 text-left text-xs/relaxed font-normal text-muted-foreground">
+      <span className="line-clamp-2 text-left text-xs font-normal leading-5 text-muted-foreground">
         {metadata.filter(Boolean).join(" · ")}
       </span>
     </span>
@@ -942,7 +970,7 @@ function ActivityItem({
 
   if (!onOpen) {
     return (
-      <Item size="sm" className="mx-auto max-w-xl">
+      <Item size="sm" className="mx-auto max-w-xl px-3 py-2.5">
         {content}
       </Item>
     )
@@ -951,10 +979,12 @@ function ActivityItem({
   return (
     <Item
       size="sm"
-      className="mx-auto max-w-xl cursor-pointer text-left hover:bg-muted"
+      data-selected={selected || undefined}
+      className="mx-auto max-w-xl cursor-pointer px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:bg-muted/50 data-[selected=true]:bg-muted/50"
       render={
         <button
           type="button"
+          aria-current={selected ? "true" : undefined}
           aria-label={`${actionLabel}: ${title}`}
           onClick={onOpen}
         />
@@ -969,12 +999,10 @@ function AttachmentCard({
   attachment,
   canMutate,
   onChanged,
-  inverse,
 }: {
   attachment: MessageAttachment
   canMutate: boolean
   onChanged: () => void
-  inverse: boolean
 }) {
   const [objectURL, setObjectURL] = useState("")
   const [pending, setPending] = useState(false)
@@ -1047,12 +1075,7 @@ function AttachmentCard({
   }
 
   return (
-    <div
-      className={cn(
-        "mt-2 overflow-hidden rounded-lg border",
-        inverse ? "border-primary-foreground/25" : "border-border",
-      )}
-    >
+    <div className="mt-2 overflow-hidden rounded-lg border border-border">
       {objectURL && !isPDF ? (
         // eslint-disable-next-line @next/next/no-img-element -- private object URL
         <img
@@ -1061,12 +1084,7 @@ function AttachmentCard({
           className="max-h-44 w-full bg-background object-contain"
         />
       ) : (
-        <div
-          className={cn(
-            "flex items-center gap-2 px-3 py-2 text-xs",
-            inverse ? "bg-primary-foreground/10" : "bg-muted/50",
-          )}
-        >
+        <div className="flex items-center gap-2 bg-muted/50 px-3 py-2 text-xs">
           <FileTextIcon className="size-4" />
           <span className="min-w-0 flex-1 truncate">{attachment.fileName}</span>
           <span className="tabular-nums">{formatBytes(attachment.byteSize)}</span>
