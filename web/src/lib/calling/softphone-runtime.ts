@@ -620,7 +620,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     }
   }
 
-  function purgeSettledMedia(
+  function purgeAttachedMedia(
     attachment: RuntimeMediaCorrelation,
     leg: IncomingMediaLeg,
   ) {
@@ -689,7 +689,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         : undefined
     if (settledMedia) {
       if (settledLeg) {
-        purgeSettledMedia(settledMedia, settledLeg)
+        purgeAttachedMedia(settledMedia, settledLeg)
       } else if (answeredInbound?.callID === settledMedia.callID) {
         answeredInbound = undefined
       }
@@ -923,10 +923,17 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         if (answeredLegLost) {
           ignoredCallIDs.add(answeredInbound.callID)
           const losingLeg = attachedLeg
-          attachedLeg = undefined
+          const losingAttachment = snapshot.mediaAttachment
+          const losingMedia =
+            losingLeg &&
+            losingAttachment &&
+            losingLeg.providerLegID === losingAttachment.providerLegID &&
+            losingLeg.mediaToken === losingAttachment.mediaToken
+              ? { attachment: losingAttachment, leg: losingLeg }
+              : undefined
+          if (!losingMedia) attachedLeg = undefined
           answeredInbound = undefined
           expectedCallID = ""
-          if (losingLeg) void rejectSafely(losingLeg)
           publish({
             activeCall: undefined,
             pendingCall: undefined,
@@ -934,13 +941,29 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             activeCallLegID: "",
             expectedMedia: undefined,
             recoveryMedia: persistMediaCorrelation(undefined),
-            mediaAttachment: undefined,
-            muted: false,
+            mediaAttachment: losingMedia?.attachment,
+            muted: losingMedia ? snapshot.muted : false,
           })
+          if (losingMedia) {
+            purgeAttachedMedia(losingMedia.attachment, losingMedia.leg)
+          } else if (losingLeg) {
+            void rejectSafely(losingLeg)
+          }
         } else if (exactDisposition) {
-          attachedLeg = undefined
-          answeredInbound = undefined
-          publish({ mediaAttachment: undefined, muted: false })
+          const dispositionAttachment = snapshot.mediaAttachment
+          const dispositionLeg = attachedLeg
+          if (
+            dispositionLeg &&
+            dispositionAttachment &&
+            dispositionLeg.providerLegID === dispositionAttachment.providerLegID &&
+            dispositionLeg.mediaToken === dispositionAttachment.mediaToken
+          ) {
+            purgeAttachedMedia(dispositionAttachment, dispositionLeg)
+          } else {
+            attachedLeg = undefined
+            answeredInbound = undefined
+            publish({ mediaAttachment: undefined, muted: false })
+          }
         }
       }
       const offers =
@@ -1672,7 +1695,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         attachedLeg = leg
         publish({ mediaAttachment })
         if (!applyCall(call)) {
-          purgeSettledMedia(mediaAttachment, leg)
+          purgeAttachedMedia(mediaAttachment, leg)
         }
         return
       }

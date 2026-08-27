@@ -1518,6 +1518,8 @@ test("an incoming Call attaches by media token then requires the exact durable b
   assert.equal(runtime.getSnapshot().controls.canMute, true)
   assert.equal(runtime.getSnapshot().controls.canEnd, true)
 
+  const losingPurge = deferred<void>()
+  exact.rejectDeferred = losingPurge
   backend.state = callingState({
     softphone: lease({ owner: true }),
     bridged: {
@@ -1533,13 +1535,97 @@ test("an incoming Call attaches by media token then requires the exact durable b
   await runtime.signalRefresh()
 
   assert.equal(exact.rejections, 1)
-  assert.equal(runtime.getSnapshot().mediaAttachment, undefined)
+  assert.notEqual(runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().expectedCallID, "")
+  assert.equal(runtime.getSnapshot().occupied, true)
+  assert.equal(backend.readinessWrites.at(-1)?.available, false)
+
+  losingPurge.resolve()
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().mediaAttachment, undefined),
+  )
 
   await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().expectedCallID, "")
+})
+
+test("inbound disposition stays occupied until exact media purge completes", async () => {
+  const backend = new DeterministicBackend()
+  const incoming = offer({
+    callId: "call-inbound-disposition-purge",
+    callLegId: "leg-inbound-disposition-purge",
+    mediaToken: "media-inbound-disposition-purge",
+  })
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease, ringing: [incoming] })
+  backend.calls.set(
+    incoming.callId,
+    call({
+      id: incoming.callId,
+      direction: "INBOUND",
+      state: "CONNECTING",
+      version: 1,
+    }),
+  )
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const exact = mediaLeg({
+    providerLegID: "provider-inbound-disposition-purge",
+    mediaToken: incoming.mediaToken,
+  })
+  media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+  await runtime.answer(incoming.callLegId)
+  assert.notEqual(runtime.getSnapshot().mediaAttachment, undefined)
+
+  const purge = deferred<void>()
+  exact.rejectDeferred = purge
+  const terminal = call({
+    id: incoming.callId,
+    direction: "INBOUND",
+    state: "NEEDS_DISPOSITION",
+    version: 2,
+  })
+  backend.lease = lease({
+    owner: true,
+    available: false,
+    pendingOutcomeCallId: terminal.id,
+  })
+  backend.state = callingState({
+    softphone: backend.lease,
+    disposition: {
+      ...stateCall(terminal.id, incoming.callLegId, terminal.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  backend.calls.set(terminal.id, terminal)
+
+  await runtime.signalRefresh()
+
+  assert.equal(runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  assert.notEqual(runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(runtime.getSnapshot().occupied, true)
+  assert.equal(backend.readinessWrites.at(-1)?.available, false)
+
+  purge.resolve()
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().mediaAttachment, undefined),
+  )
+  assert.equal(exact.rejections, 1)
+  assert.equal(media.disconnects, 0)
+  assert.equal(runtime.getSnapshot().failure, undefined)
 })
 
 test("ended answered media keeps its durable leg correlation until a different winner resolves", async () => {
