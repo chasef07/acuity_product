@@ -629,7 +629,7 @@ test("settled non-disposition Outcomes always offer Close", () => {
   )
 })
 
-test("Close waits while a retry is pending", () => {
+test("Close waits while a retry or terminal media purge is pending", () => {
   const view = projectCallingCard(
     {
       ...snapshot({
@@ -652,5 +652,23 @@ test("Close waits while a retry is pending", () => {
   assert.deepEqual(view?.kind === "call" ? view.actions : undefined, {
     dispositions: [],
     retry: { label: "Preparing…", disabled: true },
+  })
+
+  const purging = projectCallingCard(
+    {
+      ...snapshot({ ...outboundCall, state: "UNANSWERED" }),
+      mediaAttachment: {},
+      controls: {
+        canEnd: false,
+        canMute: false,
+        canKeypad: false,
+        canRetry: false,
+        canDispose: false,
+      },
+    },
+    now,
+  )
+  assert.deepEqual(purging?.kind === "call" ? purging.actions : undefined, {
+    dispositions: [],
   })
 })

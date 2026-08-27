@@ -41,11 +41,11 @@ export type CallingCardSnapshot = {
   pendingDisposition?: CallingCardCall
   offers: readonly CallingCardOffer[]
   endingCallID: string
+  mediaAttachment?: unknown
   muted: boolean
   failure?: CallingCardFailure
   pending?: {
     retry?: boolean
-    outbound?: boolean
     disposition?: boolean
   }
   controls: {
@@ -243,17 +243,14 @@ function projectActions(
     : []
   const retry = snapshot.controls.canRetry && call.retryAllowed
     ? {
-        label:
-          snapshot.pending?.retry || snapshot.pending?.outbound
-            ? "Preparing…"
-            : "Try again",
-        disabled: Boolean(snapshot.pending?.retry || snapshot.pending?.outbound),
+        label: snapshot.pending?.retry ? "Preparing…" : "Try again",
+        disabled: Boolean(snapshot.pending?.retry),
       }
     : undefined
   const close =
     settledOutcomeCanClose(call.state) &&
+    !snapshot.mediaAttachment &&
     !snapshot.pending?.retry &&
-    !snapshot.pending?.outbound &&
     !snapshot.pending?.disposition
       ? { label: "Close" as const }
       : undefined

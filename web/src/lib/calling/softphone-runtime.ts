@@ -78,7 +78,6 @@ export type SoftphoneRuntimeSnapshot = {
   endingCallID: string
   pending: {
     availability: boolean
-    outbound: boolean
     retry: boolean
     disposition: boolean
   }
@@ -245,7 +244,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   const incomingMediaDeadlines = new WeakMap<IncomingMediaLeg, number>()
   const authoritativeRingingMedia = new Map<string, number>()
   const confirmationWaits = new Map<number, () => void>()
-  const rejectedMedia = new WeakSet<IncomingMediaLeg>()
+  const rejectedMedia = new WeakMap<IncomingMediaLeg, Promise<boolean>>()
   const backendRequests = new Set<AbortController>()
   const mediaEffectControllers = new Set<AbortController>()
   const notificationStops = new Map<string, () => void>()
@@ -303,7 +302,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     endingCallID: "",
     pending: {
       availability: false,
-      outbound: false,
       retry: false,
       disposition: false,
     },
@@ -458,16 +456,24 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     confirmationWaits.clear()
   }
 
-  async function rejectSafely(leg: IncomingMediaLeg) {
-    if (rejectedMedia.has(leg)) return false
-    rejectedMedia.add(leg)
-    try {
-      await boundedMediaEffect(leg.reject())
-      return true
-    } catch {
-      rejectedMedia.delete(leg)
-      return false
-    }
+  function rejectSafely(leg: IncomingMediaLeg) {
+    const existing = rejectedMedia.get(leg)
+    if (existing) return existing
+    const operation = (async () => {
+      try {
+        await boundedMediaEffect(leg.reject())
+        return true
+      } catch {
+        return false
+      }
+    })()
+    rejectedMedia.set(leg, operation)
+    void operation.then((released) => {
+      if (!released && rejectedMedia.get(leg) === operation) {
+        rejectedMedia.delete(leg)
+      }
+    })
+    return operation
   }
 
   function answerMediaLeg(leg: IncomingMediaLeg) {
@@ -536,7 +542,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       endingCallID: "",
       pending: {
         availability: false,
-        outbound: false,
         retry: false,
         disposition: false,
       },
@@ -949,7 +954,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           ? snapshot.pending
           : {
               availability: false,
-              outbound: false,
               retry: false,
               disposition: false,
             },
@@ -1947,7 +1951,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           endingCallID: "",
           pending: {
             availability: false,
-            outbound: false,
             retry: false,
             disposition: false,
           },
@@ -2017,7 +2020,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       const generation = lifecycleGeneration
       publish({
         pendingCall: pendingOutboundCall(input),
-        pending: { ...snapshot.pending, outbound: true },
         failure: undefined,
       })
       signalStaffIntent()
@@ -2038,7 +2040,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         publish({
           expectedCallID: call.id,
           pendingCall: undefined,
-          pending: { ...snapshot.pending, outbound: false },
         })
         applyCall(call)
         await commitReadiness(false)
@@ -2055,7 +2056,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         )
         publish({
           pendingCall: undefined,
-          pending: { ...snapshot.pending, outbound: false },
         })
         if (committed) return
       }
@@ -2309,6 +2309,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         !call ||
         !callSettled(call) ||
         snapshot.expectedCallID ||
+        snapshot.mediaAttachment ||
         snapshot.pending.retry
       ) {
         return
@@ -2414,7 +2415,6 @@ function derive(
       snapshot.mediaAttachment ||
       snapshot.pendingDisposition ||
       snapshot.offers.length > 0 ||
-      snapshot.pending.outbound ||
       snapshot.pending.retry ||
       snapshot.pending.disposition,
   )
@@ -2530,7 +2530,6 @@ function refreshDelay(snapshot: SoftphoneRuntimeSnapshot, hidden: boolean) {
   if (snapshot.offers.length > 0) return 250
   if (
     snapshot.pendingCall ||
-    snapshot.pending.outbound ||
     snapshot.pending.retry ||
     snapshot.pending.disposition
   ) {

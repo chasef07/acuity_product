@@ -247,6 +247,74 @@ test("terminal media purge failure or timeout fails calling closed", async (cont
     assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
     assert.equal(fixture.backend.readinessWrites.at(-1)?.available, false)
   })
+
+  await context.test("disposition while purge is pending", async () => {
+    const fixture = await attachedOutboundMediaFixture(
+      "provider-terminal-disposition-race",
+    )
+    const purge = deferred<void>()
+    fixture.exact.rejectDeferred = purge
+    const terminal = setAttachedOutboundTerminal(fixture)
+    const resolved = call({
+      id: terminal.id,
+      direction: "OUTBOUND",
+      state: "RESOLVED",
+      version: terminal.version + 1,
+    })
+    fixture.backend.disposeHandler = async () => {
+      fixture.backend.lease = lease({ owner: true, available: false })
+      fixture.backend.state = callingState({ softphone: fixture.backend.lease })
+      fixture.backend.calls.set(resolved.id, resolved)
+      return { call: resolved }
+    }
+
+    await fixture.runtime.signalRefresh()
+    await fixture.runtime.dispose("RESOLVED")
+
+    assert.equal(fixture.exact.rejections, 1)
+    assert.equal(fixture.media.disconnects, 0)
+    assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+    assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+
+    purge.resolve()
+    await eventually(() =>
+      assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined),
+    )
+    assert.equal(fixture.exact.rejections, 1)
+    assert.equal(fixture.media.disconnects, 0)
+    assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+  })
+})
+
+test("Close cannot bypass a pending terminal media purge", async () => {
+  const fixture = await attachedOutboundMediaFixture(
+    "provider-terminal-close-race",
+  )
+  const purge = deferred<void>()
+  fixture.exact.rejectDeferred = purge
+  const terminal = call({
+    id: fixture.connected.id,
+    direction: "OUTBOUND",
+    state: "UNANSWERED",
+    version: fixture.connected.version + 1,
+  })
+  fixture.backend.lease = lease({ owner: true, available: false })
+  fixture.backend.state = callingState({ softphone: fixture.backend.lease })
+  fixture.backend.calls.set(terminal.id, terminal)
+
+  await fixture.runtime.signalRefresh()
+  fixture.runtime.dismissOutcome()
+
+  assert.equal(fixture.runtime.getSnapshot().activeCall?.id, terminal.id)
+  assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(fixture.backend.readinessWrites.at(-1)?.available, false)
+
+  purge.resolve()
+  await eventually(() =>
+    assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined),
+  )
+  fixture.runtime.dismissOutcome()
+  assert.equal(fixture.runtime.getSnapshot().activeCall, undefined)
 })
 
 test("failed terminal media confirmation purge fails calling closed", async () => {
@@ -1104,7 +1172,7 @@ test("stop discards local Call projections and abandoned command state", async (
     locationId: "location-1",
     destination: "+15551234567",
   })
-  await eventually(() => assert.equal(runtime.getSnapshot().pending.outbound, true))
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
   await runtime.stop()
   await starting
   await runtime.start()
@@ -1112,7 +1180,6 @@ test("stop discards local Call projections and abandoned command state", async (
   assert.equal(runtime.getSnapshot().pendingCall, undefined)
   assert.deepEqual(runtime.getSnapshot().pending, {
     availability: false,
-    outbound: false,
     retry: false,
     disposition: false,
   })
@@ -3658,7 +3725,7 @@ test("a delayed outbound response cannot repaint a Call after lease loss", async
     locationId: "location-1",
     destination: "+15551234567",
   })
-  await eventually(() => assert.equal(runtime.getSnapshot().pending.outbound, true))
+  await eventually(() => assert.notEqual(runtime.getSnapshot().pendingCall, undefined))
   backend.lease = lease({ sessionId: "other-session", owner: true })
   backend.state = callingState({ softphone: backend.lease })
   await runtime.signalRefresh()
@@ -3670,7 +3737,6 @@ test("a delayed outbound response cannot repaint a Call after lease loss", async
   assert.equal(runtime.getSnapshot().expectedCallID, "")
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().pendingCall, undefined)
-  assert.equal(runtime.getSnapshot().pending.outbound, false)
   assert.equal(runtime.getSnapshot().failure?.kind, "ownership")
   assert.equal(repaintedAfterLeaseLoss, false)
 })
@@ -3724,7 +3790,6 @@ test("a lost outbound response reconciles the committed Call without a false fai
   assert.equal(runtime.getSnapshot().activeCall?.id, committed.id)
   assert.equal(runtime.getSnapshot().expectedCallID, committed.id)
   assert.equal(runtime.getSnapshot().pendingCall, undefined)
-  assert.equal(runtime.getSnapshot().pending.outbound, false)
   assert.equal(runtime.getSnapshot().failure, undefined)
 })
 

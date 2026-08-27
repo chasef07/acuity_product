@@ -150,7 +150,6 @@ function snapshot(
     endingCallID: "",
     pending: {
       availability: false,
-      outbound: false,
       retry: false,
       disposition: false,
     },

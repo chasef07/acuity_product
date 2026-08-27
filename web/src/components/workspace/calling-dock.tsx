@@ -244,7 +244,8 @@ export function CallingDock({
         availabilityPending: snapshot.pending.availability,
         available: snapshot.lease?.available ?? false,
         ownsSoftphone: snapshot.lease?.owner ?? false,
-        outboundPending: snapshot.pending.outbound || snapshot.pending.retry,
+        outboundPending:
+          snapshot.pendingCall?.direction === "OUTBOUND" || snapshot.pending.retry,
         callingEnabled,
         recoverCalling: () => void runtime.recover(),
         setAvailability: (available) => void runtime.setAvailability(available),
