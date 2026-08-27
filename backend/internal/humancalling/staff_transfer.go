@@ -291,22 +291,21 @@ func (m *Module) RequestStaffTransfer(
 	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
 		return StaffTransfer{}, err
 	}
-	transfer, err := readStaffTransfer(ctx, tx, transferID)
-	if err != nil {
-		return StaffTransfer{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return StaffTransfer{}, fmt.Errorf("commit staff transfer request: %w", err)
 	}
 	// Transfer is latency-sensitive. The stable command is issued immediately;
 	// any interruption or uncertain response remains durable for worker repair.
 	_, _ = m.processCommand(ctx, commandID)
-	if current, err := scanStaffTransfer(m.database.QueryRow(
+	current, err := scanStaffTransfer(m.database.QueryRow(
 		ctx, staffTransferSelect+` WHERE transfer.id = $1`, transferID,
-	)); err == nil {
-		return current, nil
+	))
+	if err != nil {
+		return StaffTransfer{}, fmt.Errorf(
+			"read transfer after immediate command: %w", err,
+		)
 	}
-	return transfer, nil
+	return current, nil
 }
 
 func (m *Module) idempotentStaffTransfer(
