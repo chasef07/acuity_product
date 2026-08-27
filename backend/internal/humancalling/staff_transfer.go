@@ -130,43 +130,29 @@ func (m *Module) RequestStaffTransfer(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var existingID, existingSession string
-	err = tx.QueryRow(ctx, `
-		SELECT id::text, requested_by_session_id
-		FROM human_calling_staff_transfers
-		WHERE requested_by_subject = $1 AND idempotency_key = $2
-	`, command.Identity.Subject, command.IdempotencyKey).Scan(
-		&existingID, &existingSession,
-	)
-	if err == nil {
-		existing, readErr := readStaffTransfer(ctx, tx, existingID)
-		if readErr != nil {
-			return StaffTransfer{}, readErr
-		}
-		if existing.CallID != command.CallID ||
-			existing.RecipientSubject != command.RecipientSubject ||
-			existing.HandoffNote != command.HandoffNote ||
-			existingSession != command.SessionID {
-			return StaffTransfer{}, ErrConflict
-		}
-		if _, authErr := m.access.LockMembershipAuthorization(
-			ctx, tx, command.Identity, existing.PracticeID, existing.LocationID,
-		); authErr != nil {
-			return StaffTransfer{}, ErrDenied
-		}
+	if existing, found, err := m.idempotentStaffTransfer(ctx, tx, command); err != nil {
+		return StaffTransfer{}, err
+	} else if found {
 		if err := tx.Commit(ctx); err != nil {
 			return StaffTransfer{}, err
 		}
 		return existing, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return StaffTransfer{}, fmt.Errorf("read idempotent staff transfer: %w", err)
 	}
 	practiceID, locationID, currentVersion, err := m.lockTransferSource(
 		ctx, tx, command.Identity, command.CallID, command.SessionID,
 	)
 	if err != nil {
 		return StaffTransfer{}, err
+	}
+	// A same-key request can commit while this transaction waits for the Call.
+	// Re-read behind the Call lock before applying the stale expected version.
+	if existing, found, err := m.idempotentStaffTransfer(ctx, tx, command); err != nil {
+		return StaffTransfer{}, err
+	} else if found {
+		if err := tx.Commit(ctx); err != nil {
+			return StaffTransfer{}, err
+		}
+		return existing, nil
 	}
 	if currentVersion != command.ExpectedVersion {
 		return StaffTransfer{}, ErrConflict
@@ -254,6 +240,7 @@ func (m *Module) RequestStaffTransfer(
 		command.RecipientSubject, CommandTransferStaff, customerControlID,
 		map[string]any{
 			"to":           managedSIPDestination(sipUsername, m.config.StaffSIPDomain),
+			"early_media":  false,
 			"timeout_secs": int(m.config.StaffTransferDuration.Seconds()),
 			"client_state": encodeCallLegClientState(
 				command.CallID, customerLegID, customerRole, staffTransferSourceKind,
@@ -310,7 +297,47 @@ func (m *Module) RequestStaffTransfer(
 	if err := tx.Commit(ctx); err != nil {
 		return StaffTransfer{}, fmt.Errorf("commit staff transfer request: %w", err)
 	}
+	// Transfer is latency-sensitive. The stable command is issued immediately;
+	// any interruption or uncertain response remains durable for worker repair.
+	_, _ = m.processCommand(ctx, commandID)
 	return transfer, nil
+}
+
+func (m *Module) idempotentStaffTransfer(
+	ctx context.Context,
+	tx pgx.Tx,
+	command RequestStaffTransferCommand,
+) (StaffTransfer, bool, error) {
+	var existingID, existingSession string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, requested_by_session_id
+		FROM human_calling_staff_transfers
+		WHERE requested_by_subject = $1 AND idempotency_key = $2
+	`, command.Identity.Subject, command.IdempotencyKey).Scan(
+		&existingID, &existingSession,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return StaffTransfer{}, false, nil
+	}
+	if err != nil {
+		return StaffTransfer{}, false, fmt.Errorf("read idempotent staff transfer: %w", err)
+	}
+	existing, err := readStaffTransfer(ctx, tx, existingID)
+	if err != nil {
+		return StaffTransfer{}, false, err
+	}
+	if existing.CallID != command.CallID ||
+		existing.RecipientSubject != command.RecipientSubject ||
+		existing.HandoffNote != command.HandoffNote ||
+		existingSession != command.SessionID {
+		return StaffTransfer{}, false, ErrConflict
+	}
+	if _, err := m.access.LockMembershipAuthorization(
+		ctx, tx, command.Identity, existing.PracticeID, existing.LocationID,
+	); err != nil {
+		return StaffTransfer{}, false, ErrDenied
+	}
+	return existing, true, nil
 }
 
 func (m *Module) DeclineStaffTransfer(
@@ -410,11 +437,13 @@ func (m *Module) ExpireStaffTransfers(ctx context.Context) (int, error) {
 	defer func() { _ = tx.Rollback(ctx) }()
 	var transferID string
 	err = tx.QueryRow(ctx, `
-		SELECT id::text
-		FROM human_calling_staff_transfers
-		WHERE state IN ('REQUESTED', 'ACCEPTED') AND expires_at <= $1
-		ORDER BY expires_at, id
-		FOR UPDATE SKIP LOCKED
+		SELECT transfer.id::text
+		FROM human_calling_staff_transfers transfer
+		JOIN human_calling_calls call ON call.id = transfer.call_id
+		WHERE transfer.state IN ('REQUESTED', 'ACCEPTED')
+			AND transfer.expires_at <= $1
+		ORDER BY transfer.expires_at, transfer.id
+		FOR UPDATE OF call SKIP LOCKED
 		LIMIT 1
 	`, m.now()).Scan(&transferID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -422,6 +451,18 @@ func (m *Module) ExpireStaffTransfers(ctx context.Context) (int, error) {
 	}
 	if err != nil {
 		return 0, fmt.Errorf("lock expired staff transfer: %w", err)
+	}
+	var stillExpired bool
+	if err := tx.QueryRow(ctx, `
+		SELECT state IN ('REQUESTED', 'ACCEPTED') AND expires_at <= $2
+		FROM human_calling_staff_transfers
+		WHERE id = $1
+		FOR UPDATE
+	`, transferID, m.now()).Scan(&stillExpired); err != nil {
+		return 0, fmt.Errorf("lock expired staff transfer state: %w", err)
+	}
+	if !stillExpired {
+		return 0, tx.Commit(ctx)
 	}
 	if err := m.failStaffTransferTx(
 		ctx, tx, transferID, StaffTransferExpired, "TRANSFER_TIMEOUT", true,

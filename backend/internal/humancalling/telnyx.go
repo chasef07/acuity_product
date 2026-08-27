@@ -220,6 +220,7 @@ func (adapter *TelnyxAdapter) Execute(
 	case CommandTransferStaff:
 		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
 		if command.TargetID == "" || emptyString(payload["to"]) ||
+			payload["early_media"] != false ||
 			emptyString(payload["client_state"]) ||
 			emptyString(payload["target_leg_client_state"]) ||
 			!validMediaTokenHeader(payload["custom_headers"]) ||

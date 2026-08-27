@@ -4351,6 +4351,47 @@ test("a lost transfer response reconciles the committed transfer", async () => {
   assert.equal(fixture.runtime.getSnapshot().failure, undefined)
 })
 
+test("a lost transfer cancellation response reconciles terminal state", async () => {
+  const fixture = await attachedOutboundMediaFixture(
+    "provider-transfer-lost-cancel",
+  )
+  const transfer = staffTransfer({
+    callId: fixture.connected.id,
+    sourceCallLegId: fixture.expected.callLegId,
+  })
+  fixture.backend.state = callingState({
+    softphone: fixture.backend.lease,
+    bridged: stateCall(
+      fixture.connected.id,
+      fixture.expected.callLegId,
+      fixture.connected.version,
+    ),
+    staffTransfers: [transfer],
+  })
+  await fixture.runtime.signalRefresh()
+  fixture.backend.cancelTransferHandler = async () => {
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(
+        fixture.connected.id,
+        fixture.expected.callLegId,
+        fixture.connected.version + 1,
+      ),
+    })
+    throw new SoftphoneAdapterError(
+      "temporary-request",
+      "The cancellation response was lost after commit.",
+      true,
+    )
+  }
+
+  await fixture.runtime.cancelTransfer()
+
+  assert.deepEqual(fixture.runtime.getSnapshot().staffTransfers, [])
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
 test("declining a Staff transfer rejects only its exact media offer", async () => {
   const backend = new DeterministicBackend()
   const transfer = staffTransfer()
@@ -4397,6 +4438,57 @@ test("declining a Staff transfer rejects only its exact media offer", async () =
   assert.equal(exact.rejections, 1)
   assert.deepEqual(runtime.getSnapshot().offers, [])
   assert.deepEqual(runtime.getSnapshot().staffTransfers, [])
+})
+
+test("a lost decline response still clears the exact transfer media", async () => {
+  const backend = new DeterministicBackend()
+  const transfer = staffTransfer()
+  const transferOffer = offer({
+    callId: transfer.callId,
+    callLegId: transfer.targetCallLegId,
+    mediaToken: "lost-decline-media-token",
+    offerKind: "STAFF_TRANSFER",
+    staffTransferId: transfer.id,
+  })
+  backend.lease = lease({ owner: true, available: true })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [transferOffer],
+    staffTransfers: [transfer],
+  })
+  backend.declineTransferHandler = async () => {
+    backend.state = callingState({ softphone: backend.lease })
+    throw new SoftphoneAdapterError(
+      "temporary-request",
+      "The decline response was lost after commit.",
+      true,
+    )
+  }
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const exact = mediaLeg({
+    providerLegID: "lost-decline-provider-leg",
+    mediaToken: transferOffer.mediaToken,
+  })
+  media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+
+  await runtime.declineTransfer(transferOffer.callLegId)
+
+  assert.equal(exact.rejections, 1)
+  assert.deepEqual(runtime.getSnapshot().offers, [])
+  assert.deepEqual(runtime.getSnapshot().staffTransfers, [])
+  assert.equal(runtime.getSnapshot().failure, undefined)
 })
 
 test("target controls wait for the exact transferred bridge", async () => {

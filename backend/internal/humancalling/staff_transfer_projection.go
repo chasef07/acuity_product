@@ -169,17 +169,36 @@ func (m *Module) applyStaffTransferBridge(
 		}
 		return tx.Commit(ctx)
 	}
-	var transferID, callID, practiceID string
+	var lockedCallID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text FROM human_calling_calls WHERE id = $1 FOR UPDATE
+	`, state.CallID).Scan(&lockedCallID); err != nil {
+		return errRelatedFactPending
+	}
+	var transferID, callID, practiceID, transferState string
 	err = tx.QueryRow(ctx, `
-		SELECT transfer.id::text, transfer.call_id::text, transfer.practice_id::text
+		SELECT transfer.id::text, transfer.call_id::text,
+			transfer.practice_id::text, transfer.state
 		FROM human_calling_staff_transfers transfer
 		WHERE transfer.call_id = $1
-			AND transfer.state IN ('REQUESTED', 'ACCEPTED')
 			AND ($2 = transfer.customer_leg_id OR $2 = transfer.target_staff_leg_id)
+		ORDER BY transfer.created_at DESC, transfer.id DESC
+		LIMIT 1
 		FOR UPDATE
-	`, state.CallID, state.CallLegID).Scan(&transferID, &callID, &practiceID)
+	`, state.CallID, state.CallLegID).Scan(
+		&transferID, &callID, &practiceID, &transferState,
+	)
 	if err != nil {
 		return errRelatedFactPending
+	}
+	if transferState != string(StaffTransferRequested) &&
+		transferState != string(StaffTransferAccepted) {
+		if err := m.advanceStaffTransferProjection(
+			ctx, tx, callID, practiceID, fact,
+		); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	}
 	if err := m.recordStaffTransferBridge(ctx, tx, transferID, fact.OccurredAt); err != nil {
 		return err
@@ -477,6 +496,12 @@ func (m *Module) lockStaffTransferTarget(
 	callID string,
 	targetLegID string,
 ) (StaffTransfer, string, string, string, string, error) {
+	var lockedCallID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text FROM human_calling_calls WHERE id = $1 FOR UPDATE
+	`, callID).Scan(&lockedCallID); err != nil {
+		return StaffTransfer{}, "", "", "", "", errRelatedFactPending
+	}
 	var transferID, targetState, controlID, providerLegID, sessionID string
 	if err := tx.QueryRow(ctx, `
 		SELECT transfer.id::text, target.state,
@@ -484,10 +509,9 @@ func (m *Module) lockStaffTransferTarget(
 			COALESCE(target.provider_call_leg_id, ''),
 			COALESCE(target.provider_call_session_id, '')
 		FROM human_calling_staff_transfers transfer
-		JOIN human_calling_calls call ON call.id = transfer.call_id
 		JOIN human_calling_call_legs target ON target.id = transfer.target_staff_leg_id
 		WHERE transfer.call_id = $1 AND transfer.target_staff_leg_id = $2
-		FOR UPDATE OF call, transfer, target
+		FOR UPDATE OF transfer, target
 	`, callID, targetLegID).Scan(
 		&transferID, &targetState, &controlID, &providerLegID, &sessionID,
 	); err != nil {
@@ -594,7 +618,9 @@ func (m *Module) handleStaffTransferHangupTx(
 		return true, nil
 	}
 	if state != string(StaffTransferRequested) && state != string(StaffTransferAccepted) {
-		return true, nil
+		// A terminal failed transfer leaves the source as owner. Target cleanup is
+		// transfer-local, while loss of that source must end the connected Call.
+		return legID == targetLegID, nil
 	}
 	if legID == sourceLegID {
 		if _, err := tx.Exec(ctx, `

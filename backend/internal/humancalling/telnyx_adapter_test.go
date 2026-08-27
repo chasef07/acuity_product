@@ -835,6 +835,7 @@ func TestTelnyxAdapterTransfersCustomerLegWithDistinctTargetIdentity(t *testing.
 		TargetID: "customer-control",
 		Payload: map[string]any{
 			"to": "sip:target-staff@sip.telnyx.com", "timeout_secs": float64(20),
+			"early_media":              false,
 			"client_state":             "customer-source-state",
 			"target_leg_client_state":  "exact-target-state",
 			"webhook_retries_policies": telnyxTransferRetries(),
@@ -851,6 +852,7 @@ func TestTelnyxAdapterTransfersCustomerLegWithDistinctTargetIdentity(t *testing.
 		request["command_id"] != "stable-transfer-command" ||
 		request["client_state"] != "customer-source-state" ||
 		request["target_leg_client_state"] != "exact-target-state" ||
+		request["early_media"] != false ||
 		request["prevent_double_bridge"] != nil || request["record"] != nil {
 		t.Fatalf("Telnyx transfer request = %#v", request)
 	}

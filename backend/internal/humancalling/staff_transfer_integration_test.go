@@ -353,11 +353,15 @@ func TestStaffTransferRequiresTargetAnswerAndBridgeEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 1 {
+				t.Fatalf("immediate transfer executions = %d, want 1", got)
+			}
 			processAllCommands(t, fixture.calling)
 			command := fixture.provider.last(humancalling.CommandTransferStaff)
 			if command.TargetID == "" || command.CallLegID != transfer.TargetCallLegID ||
 				command.PeerCallLegID != transfer.CustomerCallLegID ||
 				command.Payload["client_state"] == command.Payload["target_leg_client_state"] ||
+				command.Payload["early_media"] != false ||
 				command.Payload["record"] != nil || command.Payload["prevent_double_bridge"] != nil {
 				t.Fatalf("transfer provider command = %#v", command)
 			}
@@ -456,7 +460,7 @@ func TestStaffTransferDeclineLeavesSourceOwner(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	assertTransferLegStates(t, fixture.pool, transfer.ID, "DECLINED", "BRIDGED", "FAILED")
+	assertTransferLegStates(t, fixture.pool, transfer.ID, "DECLINED", "BRIDGED", "ENDING")
 	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[0])
 	if err != nil || state.Bridged == nil || state.Bridged.CallLegID != fixture.sourceLeg {
 		t.Fatalf("source after decline = %#v, %v", state, err)
@@ -526,6 +530,38 @@ func TestStaffTransferSourceCanCancelAfterTargetAnswerBeforeBridge(t *testing.T)
 		WHERE user_subject = $1
 	`, fixture.staff[1].Subject).Scan(&available); err != nil || !available {
 		t.Fatalf("recipient availability after accepted cancel = %t, %v", available, err)
+	}
+	// Provider bridge and source cleanup can have happened before cancellation
+	// while their webhooks were delayed. That reorder must fail closed instead of
+	// leaving a nonterminal Call with no current Staff owner.
+	target.EventID = "staff-transfer-accepted-cancel-delayed-bridge"
+	target.Type = humancalling.FactCallBridged
+	target.OccurredAt = fixture.now.Add(8 * time.Second)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
+		t.Fatalf("apply delayed transfer bridge: %v", err)
+	}
+	var sourceControl, sourceProviderLeg, sourceSession string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT provider_call_control_id, provider_call_leg_id, provider_call_session_id
+		FROM human_calling_call_legs WHERE id = $1
+	`, fixture.sourceLeg).Scan(
+		&sourceControl, &sourceProviderLeg, &sourceSession,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "staff-transfer-accepted-cancel-delayed-source-hangup",
+		Type:    humancalling.FactCallHangup, OccurredAt: fixture.now.Add(9 * time.Second),
+		CallControlID: sourceControl, CallLegID: sourceProviderLeg,
+		CallSessionID: sourceSession, HangupCause: "NORMAL_CLEARING",
+	}); err != nil {
+		t.Fatalf("apply delayed source Hangup: %v", err)
+	}
+	var terminalOutcome string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(terminal_outcome, '') FROM human_calling_calls WHERE id = $1
+	`, fixture.callID).Scan(&terminalOutcome); err != nil || terminalOutcome != "ENDED" {
+		t.Fatalf("Call after canceled transfer race = %q, %v", terminalOutcome, err)
 	}
 }
 
@@ -690,6 +726,67 @@ func TestStaffTransferFailurePathsPreserveSourceOwnership(t *testing.T) {
 	}
 }
 
+func TestStaffTransferExpiryAndCancellationShareCallFirstLockOrder(t *testing.T) {
+	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-expiry-cancel-lock")
+	transfer, _ := requestFixtureTransfer(t, fixture, "expiry-cancel-lock")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_staff_transfers SET expires_at = $2 WHERE id = $1
+	`, transfer.ID, fixture.now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	const barrierKey int64 = 827270002
+	barrier := holdPostgresAdvisoryLock(t, fixture.pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_staff_transfer_expiry"
+	const functionName = "test_wait_for_staff_transfer_expiry"
+	installPostgresTestTrigger(t, fixture.pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON human_calling_staff_transfers
+		FOR EACH ROW WHEN (NEW.id = '%s'::uuid AND NEW.state = 'EXPIRED')
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, transfer.ID, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_staff_transfers;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+	expiryResult := make(chan error, 1)
+	go func() {
+		expired, err := fixture.calling.ExpireStaffTransfers(context.Background())
+		if err == nil && expired != 1 {
+			err = fmt.Errorf("expired transfers = %d, want 1", expired)
+		}
+		expiryResult <- err
+	}()
+	expiryPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+	cancelResult := make(chan error, 1)
+	go func() {
+		_, err := fixture.calling.CancelStaffTransfer(
+			context.Background(), humancalling.RespondStaffTransferCommand{
+				Identity: fixture.staff[0], TransferID: transfer.ID,
+				SessionID: "staff-transfer-expiry-cancel-lock-browser-1",
+			},
+		)
+		cancelResult <- err
+	}()
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", expiryPID,
+	)
+	barrier.release()
+	if err := <-expiryResult; err != nil {
+		t.Fatalf("expire Staff transfer: %v", err)
+	}
+	if err := <-cancelResult; !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("cancel expired Staff transfer = %v, want conflict", err)
+	}
+}
+
 func TestStaffTransferDefinitiveProviderFailurePreservesSource(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-provider-failure")
 	fixture.provider.actionErrors = map[humancalling.CommandAction][]error{
@@ -749,6 +846,74 @@ func TestStaffTransferIsIdempotentAcrossReplaysAndCompletion(t *testing.T) {
 	}
 	if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 1 {
 		t.Fatalf("replayed transfer executions = %d, want 1", got)
+	}
+}
+
+func TestConcurrentStaffTransferRequestsShareOneIdempotentResult(t *testing.T) {
+	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-concurrent-idempotent")
+	call, err := fixture.calling.ReadCall(
+		context.Background(), fixture.staff[0], fixture.callID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := humancalling.RequestStaffTransferCommand{
+		Identity: fixture.staff[0], CallID: fixture.callID,
+		SessionID:        "staff-transfer-concurrent-idempotent-browser-1",
+		RecipientSubject: fixture.staff[1].Subject,
+		IdempotencyKey:   "concurrent-idempotent",
+		HandoffNote:      "one concurrent request",
+		ExpectedVersion:  call.Version,
+	}
+	const barrierKey int64 = 827270001
+	barrier := holdPostgresAdvisoryLock(t, fixture.pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_concurrent_staff_transfer_insert"
+	const functionName = "test_wait_for_concurrent_staff_transfer_insert"
+	installPostgresTestTrigger(t, fixture.pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON human_calling_staff_transfers
+		FOR EACH ROW WHEN (NEW.idempotency_key = 'concurrent-idempotent')
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_staff_transfers;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+	type result struct {
+		transfer humancalling.StaffTransfer
+		err      error
+	}
+	results := make(chan result, 2)
+	requestTransfer := func() {
+		transfer, err := fixture.calling.RequestStaffTransfer(
+			context.Background(), request,
+		)
+		results <- result{transfer: transfer, err: err}
+	}
+	go requestTransfer()
+	firstPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+	go requestTransfer()
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", firstPID,
+	)
+	barrier.release()
+
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil || first.transfer.ID == "" ||
+		second.transfer.ID != first.transfer.ID {
+		t.Fatalf("concurrent transfer results = %#v / %#v", first, second)
+	}
+	if got := fixture.provider.count(humancalling.CommandTransferStaff); got != 1 {
+		t.Fatalf("concurrent transfer executions = %d, want 1", got)
 	}
 }
 

@@ -1977,6 +1977,29 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     )
   }
 
+  async function reconcileSettledTransfer(transferID: string) {
+    await requestRefresh(true)
+    return !snapshot.staffTransfers.some(
+      (transfer) => transfer.id === transferID,
+    )
+  }
+
+  async function removeTransferOffer(offer: RuntimeOffer) {
+    const leg = exactIncomingLeg(offer)
+    incomingMedia.delete(offer.mediaToken)
+    publish({
+      offers: snapshot.offers.filter(
+        (candidate) => candidate.callLegId !== offer.callLegId,
+      ),
+      staffTransfers: snapshot.staffTransfers.filter(
+        (transfer) => transfer.id !== offer.staffTransferId,
+      ),
+      pending: { ...snapshot.pending, transfer: false },
+    })
+    syncAttention(snapshot.offers)
+    if (leg) await rejectSafely(leg)
+  }
+
   async function signalRefresh() {
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
     refreshTimer = undefined
@@ -2455,8 +2478,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         })
         await signalRefresh()
       } catch (error) {
+        const committed = await reconcileSettledTransfer(transfer.id)
         publish({ pending: { ...snapshot.pending, transfer: false } })
-        await setRequestFailure(error)
+        if (!committed) await setRequestFailure(error)
       }
     },
     async declineTransfer(callLegID) {
@@ -2481,23 +2505,15 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             signal,
           ),
         )
-        const leg = exactIncomingLeg(offer)
-        incomingMedia.delete(offer.mediaToken)
-        publish({
-          offers: snapshot.offers.filter(
-            (candidate) => candidate.callLegId !== callLegID,
-          ),
-          staffTransfers: snapshot.staffTransfers.filter(
-            (transfer) => transfer.id !== offer.staffTransferId,
-          ),
-          pending: { ...snapshot.pending, transfer: false },
-        })
-        syncAttention(snapshot.offers)
-        if (leg) await rejectSafely(leg)
+        await removeTransferOffer(offer)
         await signalRefresh()
       } catch (error) {
-        publish({ pending: { ...snapshot.pending, transfer: false } })
-        await setRequestFailure(error)
+        const committed = await reconcileSettledTransfer(offer.staffTransferId)
+        if (committed) await removeTransferOffer(offer)
+        else {
+          publish({ pending: { ...snapshot.pending, transfer: false } })
+          await setRequestFailure(error)
+        }
       }
     },
     async hangup() {
