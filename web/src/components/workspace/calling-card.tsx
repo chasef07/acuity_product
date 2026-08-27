@@ -24,7 +24,9 @@ import {
 } from "@/components/ui/card"
 import {
   projectCallingCard,
+  projectCallingFailure,
   type CallingCardCallView,
+  type CallingCardFailure,
   type CallingCardFailureView,
   type CallingCardOfferView,
   type CallingDispositionOutcome,
@@ -78,7 +80,9 @@ export function CallingCard({
       ) : null}
 
       {view.failure && (
-        <CallingFailure failure={view.failure} onRecover={onRecover} />
+        <CardContent>
+          <CallingFailure failure={view.failure} onRecover={onRecover} />
+        </CardContent>
       )}
 
       {view.kind === "call" && (
@@ -209,6 +213,21 @@ function LifecycleStatus({ status }: { status: string }) {
   )
 }
 
+export function CallingFailureNotice({
+  failure,
+  onRecover,
+}: {
+  failure: CallingCardFailure
+  onRecover: () => void
+}) {
+  return (
+    <CallingFailure
+      failure={projectCallingFailure(failure)}
+      onRecover={onRecover}
+    />
+  )
+}
+
 function CallingFailure({
   failure,
   onRecover,
@@ -217,19 +236,17 @@ function CallingFailure({
   onRecover: () => void
 }) {
   return (
-    <CardContent>
-      <Alert variant="destructive">
-        <AlertTitle>{failure.title}</AlertTitle>
-        <AlertDescription className="space-y-3">
-          <p>{failure.message}</p>
-          {failure.action && (
-            <Button size="sm" variant="outline" onClick={onRecover}>
-              {failure.action.label}
-            </Button>
-          )}
-        </AlertDescription>
-      </Alert>
-    </CardContent>
+    <Alert variant="destructive">
+      <AlertTitle>{failure.title}</AlertTitle>
+      <AlertDescription className="space-y-3">
+        <p>{failure.message}</p>
+        {failure.action && (
+          <Button size="sm" variant="outline" onClick={onRecover}>
+            {failure.action.label}
+          </Button>
+        )}
+      </AlertDescription>
+    </Alert>
   )
 }
 

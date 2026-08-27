@@ -73,6 +73,7 @@ import {
   getAccessToken,
   getAccessTokenResult,
 } from "@/lib/auth-client"
+import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import {
   applyOutcomePages,
   appointmentActionForFolder,
@@ -1232,7 +1233,23 @@ export function PortalWorkspace() {
     setContextPanelOpen(false)
   }
 
-  const handleCallConnected = useCallback((call: CallingCall) => {
+  function handleCallScope(
+    call: Pick<CallingCall, "practiceId" | "locationId">,
+  ) {
+    const callScope = discovery
+      ? workspaceScopeForCall(
+          discovery,
+          practiceID,
+          locationScopeID,
+          call,
+        )
+      : undefined
+    if (callScope) {
+      selectWorkspaceScope(callScope.practiceID, callScope.locationID)
+    }
+  }
+
+  function handleCallConnected(call: CallingCall) {
     if (call.id === focusedCallIDRef.current) return
     callDetailGenerationRef.current += 1
     setHistoricalCall(undefined)
@@ -1244,7 +1261,7 @@ export function PortalWorkspace() {
     setContextView("call")
     setContextPanelOpen(true)
     setView("engagement")
-  }, [])
+  }
 
   async function handleDisposition(result: CallingDispositionResult) {
     focusedCallIDRef.current = ""
@@ -1308,6 +1325,9 @@ export function PortalWorkspace() {
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
   const callingEnabled = practice.callingEnabled
+  const callingRuntimeEnabled = discovery.practices.some(
+    (item) => item.callingEnabled,
+  )
   const contextPanelLabel =
     contextView === "task"
       ? "Task context"
@@ -1322,7 +1342,10 @@ export function PortalWorkspace() {
   ) => (
     <SidebarProvider>
       <CallingDock
+        key={discovery.actor.subject}
+        actorSubject={discovery.actor.subject}
         callingEnabled={callingEnabled}
+        callingRuntimeEnabled={callingRuntimeEnabled}
         practiceID={practiceID}
         taskCallRequest={taskCallRequest}
         onTaskCallHandled={(requestID, requestError) => {
@@ -1331,6 +1354,7 @@ export function PortalWorkspace() {
           )
           setTaskCallError(requestError ?? "")
         }}
+        onCallScope={handleCallScope}
         onCallConnected={handleCallConnected}
         onDisposition={(result) => void handleDisposition(result)}
       >
@@ -1368,6 +1392,7 @@ export function PortalWorkspace() {
               discovery={discovery}
               practiceID={practiceID}
               locationScopeID={locationScopeID}
+              disabled={callingOccupied}
               onSelect={selectWorkspaceScope}
             />
           }
@@ -1580,11 +1605,13 @@ function WorkspaceSelector({
   discovery,
   practiceID,
   locationScopeID,
+  disabled,
   onSelect,
 }: {
   discovery: AccessDiscovery
   practiceID: string
   locationScopeID: string
+  disabled: boolean
   onSelect: (practiceID: string, locationID: string) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -1604,13 +1631,19 @@ function WorkspaceSelector({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={!disabled && open}
+      onOpenChange={(nextOpen) => {
+        if (!disabled) setOpen(nextOpen)
+      }}
+    >
       <PopoverTrigger
         render={
           <Button
             aria-label="Workspace selector"
             variant="ghost"
             size="sm"
+            disabled={disabled}
             className="h-auto w-full min-w-0 justify-start gap-2 px-1 py-1 text-left"
           />
         }

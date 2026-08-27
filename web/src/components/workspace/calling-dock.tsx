@@ -9,15 +9,19 @@ import {
   useState,
   useSyncExternalStore,
 } from "react"
-import { ShieldAlertIcon } from "lucide-react"
 
-import { CallingCard } from "@/components/workspace/calling-card"
+import {
+  CallingCard,
+  CallingFailureNotice,
+} from "@/components/workspace/calling-card"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import type {
   CallingCall,
   CallingDispositionResult,
 } from "@/lib/api/generated/types.gen"
+import { createBrowserCallRecoveryStore } from "@/lib/calling/browser-call-recovery"
+import { createBrowserMicrophone } from "@/lib/calling/browser-microphone"
 import {
   createCallingMediaAdapter,
   type CallingMediaAdapter,
@@ -28,8 +32,8 @@ import {
   type RuntimeMediaCorrelation,
   type RuntimeOffer,
   type SoftphoneAttention,
-  type SoftphoneMicrophone,
   type SoftphoneRuntime,
+  type SoftphoneRuntimeSnapshot,
 } from "@/lib/calling/softphone-runtime"
 
 type CallingDockProps = {
@@ -38,9 +42,14 @@ type CallingDockProps = {
     callingOccupied: boolean,
   ) => ReactNode
   callingEnabled: boolean
+  callingRuntimeEnabled: boolean
+  actorSubject: string
   practiceID: string
   taskCallRequest?: { id: string; taskID: string }
   onTaskCallHandled: (requestID: string, error?: string) => void
+  onCallScope: (
+    call: Pick<CallingCall, "practiceId" | "locationId">,
+  ) => void
   onCallConnected: (call: CallingCall) => void
   onDisposition: (result: CallingDispositionResult) => void
 }
@@ -48,12 +57,13 @@ type CallingDockProps = {
 type CallingNavigationContext = {
   activeCall: CallingCall | undefined
   callingOccupied: boolean
-  availabilityError: string
+  callingFailure?: SoftphoneRuntimeSnapshot["failure"]
   availabilityPending: boolean
   available: boolean
   ownsSoftphone: boolean
   outboundPending: boolean
   callingEnabled: boolean
+  recoverCalling: () => void
   setAvailability: (available: boolean) => void
   startOutbound: (
     locationID: string,
@@ -80,35 +90,48 @@ export function useCallingNavigation() {
 export function CallingAvailabilityControl() {
   const {
     activeCall,
-    availabilityError,
     availabilityPending,
     available,
+    callingFailure,
     ownsSoftphone,
     callingEnabled,
+    recoverCalling,
     setAvailability,
   } = useCallingNavigation()
-  if (!callingEnabled) return null
-  return (
-    <div className="flex w-full shrink-0 items-center gap-2">
-      <span className="min-w-0 flex-1 text-sm font-medium">
-        Available for calls
-      </span>
-      {availabilityPending ? (
-        <Spinner aria-label="Updating availability" />
-      ) : availabilityError ? (
-        <ShieldAlertIcon
-          aria-label={availabilityError}
-          className="text-destructive"
-        />
-      ) : null}
-      <Switch
-        aria-label="Availability"
-        className="data-checked:bg-success"
-        size="sm"
-        checked={available}
-        disabled={availabilityPending || (Boolean(activeCall) && ownsSoftphone)}
-        onCheckedChange={setAvailability}
+  if (!callingEnabled) {
+    return callingFailure ? (
+      <CallingFailureNotice
+        failure={callingFailure}
+        onRecover={recoverCalling}
       />
+    ) : null
+  }
+  return (
+    <div className="flex w-full shrink-0 flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 text-sm font-medium">
+          Available for calls
+        </span>
+        {availabilityPending && (
+          <Spinner aria-label="Updating availability" />
+        )}
+        <Switch
+          aria-label="Availability"
+          className="data-checked:bg-success"
+          size="sm"
+          checked={available}
+          disabled={
+            availabilityPending || (Boolean(activeCall) && ownsSoftphone)
+          }
+          onCheckedChange={setAvailability}
+        />
+      </div>
+      {callingFailure && (
+        <CallingFailureNotice
+          failure={callingFailure}
+          onRecover={recoverCalling}
+        />
+      )}
     </div>
   )
 }
@@ -116,22 +139,39 @@ export function CallingAvailabilityControl() {
 export function CallingDock({
   children,
   callingEnabled,
+  callingRuntimeEnabled,
+  actorSubject,
   practiceID,
   taskCallRequest,
   onTaskCallHandled,
+  onCallScope,
   onCallConnected,
   onDisposition,
 }: CallingDockProps) {
-  const [runtime] = useState(createBrowserSoftphoneRuntime)
+  const [runtime] = useState(() => createBrowserSoftphoneRuntime(actorSubject))
   const snapshot = useSyncExternalStore(
     runtime.subscribe,
     runtime.getSnapshot,
     runtime.getSnapshot,
   )
   const handledTaskCallRef = useRef("")
+  const keepRuntimeRunning = callingRuntimeEnabled || snapshot.occupied
+  const callingCardVisible = Boolean(
+    snapshot.activeCall ??
+      snapshot.pendingCall ??
+      snapshot.pendingDisposition ??
+      snapshot.offers[0],
+  )
+  const scopedCall =
+    snapshot.activeCall ??
+    snapshot.pendingDisposition ??
+    snapshot.pendingCall ??
+    snapshot.offers[0]
+  const scopedPracticeID = scopedCall?.practiceId
+  const scopedLocationID = scopedCall?.locationId
 
   useEffect(() => {
-    if (!callingEnabled) {
+    if (!keepRuntimeRunning) {
       void runtime.stop()
       return
     }
@@ -139,7 +179,16 @@ export function CallingDock({
     return () => {
       void runtime.stop()
     }
-  }, [callingEnabled, runtime])
+  }, [keepRuntimeRunning, runtime])
+
+  useEffect(() => {
+    if (scopedPracticeID && scopedLocationID) {
+      onCallScope({
+        practiceId: scopedPracticeID,
+        locationId: scopedLocationID,
+      })
+    }
+  }, [onCallScope, scopedLocationID, scopedPracticeID])
 
   useEffect(() => {
     if (snapshot.activeCall?.state === "CONNECTED") {
@@ -191,19 +240,20 @@ export function CallingDock({
       value={{
         activeCall: snapshot.activeCall,
         callingOccupied: snapshot.occupied,
-        availabilityError: snapshot.failure?.message ?? "",
+        callingFailure: callingCardVisible ? undefined : snapshot.failure,
         availabilityPending: snapshot.pending.availability,
         available: snapshot.lease?.available ?? false,
         ownsSoftphone: snapshot.lease?.owner ?? false,
         outboundPending: snapshot.pending.outbound || snapshot.pending.retry,
         callingEnabled,
+        recoverCalling: () => void runtime.recover(),
         setAvailability: (available) => void runtime.setAvailability(available),
         startOutbound: startNumberCall,
       }}
     >
       {children(snapshot.activeCall, snapshot.occupied)}
       <audio id={remoteAudioElementID} autoPlay className="hidden" />
-      {(callingEnabled || snapshot.lease?.owner) && (
+      {(callingEnabled || snapshot.lease?.owner) && callingCardVisible && (
         <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
           <CallingCard
             snapshot={snapshot}
@@ -222,12 +272,16 @@ export function CallingDock({
   )
 }
 
-function createBrowserSoftphoneRuntime() {
+function createBrowserSoftphoneRuntime(actorSubject: string) {
+  const callRecovery =
+    typeof window === "undefined"
+      ? undefined
+      : createBrowserCallRecoveryStore(window.sessionStorage, actorSubject)
   return createSoftphoneRuntime({
     sessionID: browserSessionID(),
     backend: createSoftphoneHTTPAdapter(),
     media: browserMediaAdapter(),
-    microphone: browserMicrophone(),
+    microphone: createBrowserMicrophone(),
     attention: browserAttention(),
     remoteElementID: remoteAudioElementID,
     availabilityIntent: availabilityIntent(),
@@ -251,6 +305,8 @@ function createBrowserSoftphoneRuntime() {
         JSON.stringify(correlation),
       )
     },
+    loadCallRecoveryID: callRecovery?.load,
+    persistCallRecoveryID: callRecovery?.persist,
   })
 }
 
@@ -276,52 +332,6 @@ function browserMediaAdapter(): CallingMediaAdapter {
   return {
     connect: async () => undefined,
     disconnect: async () => undefined,
-  }
-}
-
-function browserMicrophone(): SoftphoneMicrophone {
-  return {
-    async start(onUnavailable) {
-      const mediaDevices = navigator.mediaDevices
-      if (!mediaDevices?.getUserMedia) {
-        throw new Error("browser microphone is unavailable")
-      }
-      const stream = await mediaDevices.getUserMedia({ audio: true })
-      const microphone = stream.getAudioTracks()[0]
-      if (!microphone || microphone.readyState !== "live") {
-        stream.getTracks().forEach((track) => track.stop())
-        throw new Error("browser microphone is unavailable")
-      }
-      let unavailable = false
-      const reportUnavailable = () => {
-        if (unavailable) return
-        unavailable = true
-        onUnavailable()
-      }
-      microphone.addEventListener("ended", reportUnavailable, { once: true })
-      const verifyDevices = async () => {
-        const devices = await mediaDevices.enumerateDevices().catch(() => [])
-        if (!devices.some((device) => device.kind === "audioinput")) {
-          reportUnavailable()
-        }
-      }
-      mediaDevices.addEventListener?.("devicechange", verifyDevices)
-      try {
-        const audioContext = new AudioContext()
-        await audioContext.resume()
-        await audioContext.close()
-      } catch (error) {
-        mediaDevices.removeEventListener?.("devicechange", verifyDevices)
-        stream.getTracks().forEach((track) => track.stop())
-        throw error
-      }
-      return {
-        stop() {
-          mediaDevices.removeEventListener?.("devicechange", verifyDevices)
-          stream.getTracks().forEach((track) => track.stop())
-        },
-      }
-    },
   }
 }
 

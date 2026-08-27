@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   projectCallingCard,
+  projectCallingFailure,
   type CallingCardCall,
   type CallingCardOffer,
   type CallingCardSnapshot,
@@ -271,6 +272,23 @@ test("expired inbound offers are never visible or answerable", () => {
       : [],
     [{ callLegId: "leg-current", countdown: "1s", eligible: true }],
   )
+  assert.equal(
+    projectCallingCard(
+      {
+        ...snapshot(outboundCall, {
+          failure: {
+            kind: "temporary-request",
+            message: "refresh failed",
+            recoverable: true,
+          },
+        }),
+        activeCall: undefined,
+        offers: [offers[0]],
+      },
+      now,
+    ),
+    undefined,
+  )
 })
 
 test("inbound Connecting, Connected, Ending, and Outcome keep one identity and control hierarchy", () => {
@@ -429,7 +447,44 @@ test("typed failures replace provider details with concise Staff recovery copy",
   ])
 })
 
-test("a recoverable failure remains visible without a Call or incoming offer", () => {
+test("active Call ownership stays visible without offering an unsafe takeover", () => {
+  const view = projectCallingCard(
+    snapshot(outboundCall, {
+      failure: {
+        kind: "ownership",
+        message: "technical active Call detail",
+        recoverable: false,
+      },
+    }),
+    now,
+  )
+
+  assert.deepEqual(view?.failure, {
+    role: "alert",
+    title: "Calling needs attention",
+    message:
+      "An active Call is using calling in another browser. Finish it there before using this device.",
+  })
+})
+
+test("failed stop cleanup preserves its specific warning without a false action", () => {
+  const message =
+    "Calling stopped locally, but backend readiness could not be cleared. Calling could not reach the service."
+  assert.deepEqual(
+    projectCallingFailure({
+      kind: "temporary-request",
+      message,
+      recoverable: false,
+    }),
+    {
+      role: "alert",
+      title: "Calling needs attention",
+      message,
+    },
+  )
+})
+
+test("a failure without a Call or incoming offer does not project a Calling Card", () => {
   const view = projectCallingCard(
     {
       ...snapshot(outboundCall),
@@ -444,17 +499,7 @@ test("a recoverable failure remains visible without a Call or incoming offer", (
     now,
   )
 
-  assert.deepEqual(view, {
-    shell: "calling-card",
-    kind: "failure",
-    failure: {
-      role: "alert",
-      title: "Calling needs attention",
-      message:
-        "Calling is active in another browser. Take over here to use this device.",
-      action: { label: "Take over" },
-    },
-  })
+  assert.equal(view, undefined)
 })
 
 test("Outcome exposes only the Staff actions supported by the committed Call", () => {

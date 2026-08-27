@@ -45,7 +45,7 @@ export type RuntimePendingCall = Pick<
   | "connectedAt"
   | "retryAllowed"
   | "endRequested"
->
+> & Partial<Pick<CallingCall, "practiceId" | "locationId">>
 
 export type RuntimeMediaCorrelation = {
   callID: string
@@ -101,28 +101,40 @@ export interface SoftphoneBackend {
   acquireLease(input: {
     sessionID: string
     takeover: boolean
-  }): Promise<SoftphoneState>
-  writeReadiness(input: CallingReadinessRequest): Promise<SoftphoneState>
-  issueMediaToken(input: { sessionID: string }): Promise<string>
-  readState(input: { etag?: string }): Promise<StateRead>
-  readCall(callID: string): Promise<CallingCall>
+  }, signal?: AbortSignal): Promise<SoftphoneState>
+  writeReadiness(
+    input: CallingReadinessRequest,
+    signal?: AbortSignal,
+  ): Promise<SoftphoneState>
+  issueMediaToken(
+    input: { sessionID: string },
+    signal?: AbortSignal,
+  ): Promise<string>
+  readState(input: { etag?: string }, signal?: AbortSignal): Promise<StateRead>
+  readCall(callID: string, signal?: AbortSignal): Promise<CallingCall>
   confirmMedia(input: {
     callID: string
     sessionID: string
     mediaToken: string
-  }): Promise<CallingCall>
-  startOutbound(input: StartOutboundCallRequest): Promise<CallingCall>
-  hangup(input: { callID: string; sessionID: string }): Promise<CallingCall>
+  }, signal?: AbortSignal): Promise<CallingCall>
+  startOutbound(
+    input: StartOutboundCallRequest,
+    signal?: AbortSignal,
+  ): Promise<CallingCall>
+  hangup(
+    input: { callID: string; sessionID: string },
+    signal?: AbortSignal,
+  ): Promise<CallingCall>
   retry(input: {
     callID: string
     sessionID: string
     idempotencyKey: string
-  }): Promise<CallingCall>
+  }, signal?: AbortSignal): Promise<CallingCall>
   dispose(input: {
     callID: string
     sessionID: string
     outcome: CallingDispositionRequest["outcome"]
-  }): Promise<CallingDispositionResult>
+  }, signal?: AbortSignal): Promise<CallingDispositionResult>
 }
 
 export interface SoftphoneClock {
@@ -132,7 +144,10 @@ export interface SoftphoneClock {
 }
 
 export interface SoftphoneMicrophone {
-  start(onUnavailable: () => void): Promise<{ stop(): void }>
+  start(
+    onUnavailable: () => void,
+    signal?: AbortSignal,
+  ): Promise<{ stop(): void }>
 }
 
 export interface SoftphoneVisibility {
@@ -180,6 +195,8 @@ type RuntimeOptions = {
   persistMediaCorrelation?: (
     correlation: RuntimeMediaCorrelation | undefined,
   ) => void
+  loadCallRecoveryID?: () => string | undefined
+  persistCallRecoveryID?: (callID: string | undefined) => void
   attention?: SoftphoneAttention
   clock?: SoftphoneClock
   visibility?: SoftphoneVisibility
@@ -192,6 +209,13 @@ const defaultClock: SoftphoneClock = {
   setTimeout: (callback, milliseconds) => window.setTimeout(callback, milliseconds),
   clearTimeout: (id) => window.clearTimeout(id),
 }
+
+const backendRequestTimeoutMilliseconds = 5_000
+const mediaOperationTimeoutMilliseconds = 10_000
+const mediaConfirmationRetryMilliseconds = 250
+const mediaCorrelationWindowMilliseconds = 5_000
+const mediaEffectTimeoutMessage =
+  "Call audio did not respond. Reconnect calling and try again."
 
 const browserVisibility: SoftphoneVisibility = {
   isHidden: () => document.hidden,
@@ -221,6 +245,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   const visibility = options.visibility ?? browserVisibility
   const listeners = new Set<() => void>()
   const incomingMedia = new Map<string, IncomingMediaLeg>()
+  const incomingMediaDeadlines = new WeakMap<IncomingMediaLeg, number>()
+  const authoritativeRingingMedia = new Map<string, number>()
+  const confirmationWaits = new Map<number, () => void>()
+  const rejectedMedia = new WeakSet<IncomingMediaLeg>()
+  const backendRequests = new Set<AbortController>()
+  const mediaEffectControllers = new Set<AbortController>()
   const notificationStops = new Map<string, () => void>()
   let stopRingtone: (() => void) | undefined
   let microphone: { stop(): void } | undefined
@@ -229,15 +259,23 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let refreshInFlight: Promise<void> | undefined
   let refreshQueued = false
   let stopped = true
+  let stopInFlight: Promise<void> | undefined
   let lifecycleGeneration = 0
   let etag: string | undefined
   let temporaryFailures = 0
   let readinessGeneration = 0
+  let readinessConfirmedGeneration = 0
   let readinessInFlight: Promise<void> | undefined
   let requestedReadiness: CallingReadinessRequest | undefined
+  let readinessFailClosed = false
+  let accessFailureClosing = false
+  let accessBlocked = false
   let unsubscribeVisibility: (() => void) | undefined
   let microphoneGeneration = 0
   let mediaConnectInFlight: Promise<void> | undefined
+  let mediaConnectController: AbortController | undefined
+  let mediaReleaseInFlight: Promise<void> | undefined
+  let mediaFailureInFlight: Promise<void> | undefined
   let attachedLeg: IncomingMediaLeg | undefined
   let answeredInbound:
     | {
@@ -249,6 +287,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     | undefined
   const ignoredCallIDs = new Set<string>()
   const restoredMedia = options.loadMediaCorrelation?.()
+  let recoveryCallID = options.loadCallRecoveryID?.() ?? ""
   let snapshot: SoftphoneRuntimeSnapshot = derive({
     phase: "stopped",
     availabilityIntent: options.availabilityIntent ?? false,
@@ -259,8 +298,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       sessionHealthy: false,
     },
     offers: [],
-    expectedCallID: "",
-    activeCallLegID: "",
+    expectedCallID: recoveryCallID,
+    activeCallLegID: restoredMedia?.callLegID ?? "",
     terminalVersions: {},
     recoveryMedia: restoredMedia,
     muted: false,
@@ -278,10 +317,269 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     for (const listener of listeners) listener()
   }
 
+  function backendRequest<T>(
+    request: (signal: AbortSignal) => Promise<T>,
+    timeoutMilliseconds = backendRequestTimeoutMilliseconds,
+  ) {
+    const controller = new AbortController()
+    backendRequests.add(controller)
+    let timeoutID: number | undefined
+    const result = new Promise<T>((resolve, reject) => {
+      const rejectUnavailable = () =>
+        reject(
+          new SoftphoneAdapterError(
+            "temporary-request",
+            "Calling could not reach the service. Check your connection and try again.",
+            true,
+          ),
+        )
+      controller.signal.addEventListener("abort", rejectUnavailable, {
+        once: true,
+      })
+      timeoutID = clock.setTimeout(() => {
+        controller.abort()
+      }, timeoutMilliseconds)
+      void Promise.resolve()
+        .then(() => request(controller.signal))
+        .then(resolve, reject)
+    })
+    return result.finally(() => {
+      backendRequests.delete(controller)
+      if (timeoutID !== undefined) clock.clearTimeout(timeoutID)
+    })
+  }
+
+  function abortableOperation<T>(
+    operation: Promise<T>,
+    signal: AbortSignal,
+    onLateValue?: (value: T) => void,
+    timeoutFailure = new SoftphoneAdapterError(
+      "technical-readiness",
+      "Calling media did not respond. Reconnect calling and try again.",
+      true,
+    ),
+  ) {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false
+      const cleanup = () => signal.removeEventListener("abort", onAbort)
+      const onAbort = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(timeoutFailure)
+      }
+      signal.addEventListener("abort", onAbort, { once: true })
+      if (signal.aborted) {
+        onAbort()
+        void operation.then(onLateValue, () => undefined)
+        return
+      }
+      void operation.then(
+        (value) => {
+          if (settled) {
+            try {
+              onLateValue?.(value)
+            } catch {
+              // The stale lifecycle already finished; cleanup is best effort.
+            }
+            return
+          }
+          settled = true
+          cleanup()
+          resolve(value)
+        },
+        (error) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          reject(error)
+        },
+      )
+    })
+  }
+
+  async function disconnectMedia() {
+    const controller = new AbortController()
+    const timeoutID = clock.setTimeout(
+      () => controller.abort(),
+      mediaOperationTimeoutMilliseconds,
+    )
+    try {
+      await abortableOperation(
+        options.media.disconnect(controller.signal),
+        controller.signal,
+      )
+    } catch {
+      // Local lifecycle cleanup must finish even when the provider SDK stalls.
+    } finally {
+      clock.clearTimeout(timeoutID)
+    }
+  }
+
+  async function boundedMediaEffect<T>(
+    operation: Promise<T>,
+    onLateValue?: (value: T) => void,
+  ) {
+    const controller = new AbortController()
+    mediaEffectControllers.add(controller)
+    const timeoutID = clock.setTimeout(
+      () => controller.abort(),
+      mediaOperationTimeoutMilliseconds,
+    )
+    try {
+      return await abortableOperation(
+        operation,
+        controller.signal,
+        onLateValue,
+        new SoftphoneAdapterError(
+          "media",
+          mediaEffectTimeoutMessage,
+          true,
+        ),
+      )
+    } finally {
+      mediaEffectControllers.delete(controller)
+      clock.clearTimeout(timeoutID)
+    }
+  }
+
+  function wait(milliseconds: number) {
+    return new Promise<void>((resolve) => {
+      const id = clock.setTimeout(() => {
+        confirmationWaits.delete(id)
+        resolve()
+      }, milliseconds)
+      confirmationWaits.set(id, resolve)
+    })
+  }
+
+  function clearConfirmationWaits() {
+    for (const [id, resolve] of confirmationWaits) {
+      clock.clearTimeout(id)
+      resolve()
+    }
+    confirmationWaits.clear()
+  }
+
+  async function rejectSafely(leg: IncomingMediaLeg) {
+    if (rejectedMedia.has(leg)) return
+    rejectedMedia.add(leg)
+    try {
+      await boundedMediaEffect(leg.reject())
+    } catch {
+      rejectedMedia.delete(leg)
+    }
+  }
+
+  function answerMediaLeg(leg: IncomingMediaLeg) {
+    return boundedMediaEffect(leg.answer(), (lateOutcome) => {
+      if (lateOutcome === "attached") void rejectSafely(leg)
+    })
+  }
+
+  function mediaEffectTimedOut(error: unknown) {
+    return (
+      error instanceof SoftphoneAdapterError &&
+      error.kind === "media" &&
+      error.message === mediaEffectTimeoutMessage
+    )
+  }
+
   function setFailure(error: unknown, fallback: SoftphoneFailureKind = "temporary-request") {
     const failure = failureFrom(error, fallback)
     publish({ failure })
     return failure
+  }
+
+  function persistCallRecoveryID(callID: string | undefined) {
+    recoveryCallID = callID ?? ""
+    options.persistCallRecoveryID?.(callID)
+  }
+
+  function hideLeaseAfterAccessFailure(lease: SoftphoneState | undefined) {
+    return lease
+      ? {
+          ...lease,
+          owner: false,
+          available: false,
+          activeCallId: "",
+          pendingOutcomeCallId: "",
+        }
+      : undefined
+  }
+
+  async function failClosedAccess(failure: SoftphoneFailure) {
+    etag = undefined
+    authoritativeRingingMedia.clear()
+    persistCallRecoveryID(undefined)
+    accessBlocked = true
+    readinessFailClosed = true
+    if (!accessFailureClosing) {
+      accessFailureClosing = true
+      queueReadiness(false, true)
+      const closing = readinessInFlight ?? drainReadiness()
+      void closing.finally(() => {
+        accessFailureClosing = false
+      })
+    }
+    publish({
+      lease: hideLeaseAfterAccessFailure(snapshot.lease),
+      offers: [],
+      activeCall: undefined,
+      pendingCall: undefined,
+      pendingDisposition: undefined,
+      expectedCallID: "",
+      activeCallLegID: "",
+      expectedMedia: undefined,
+      recoveryMedia: persistMediaCorrelation(undefined),
+      mediaAttachment: undefined,
+      muted: false,
+      endingCallID: "",
+      pending: {
+        availability: false,
+        outbound: false,
+        retry: false,
+        disposition: false,
+      },
+      readiness: {
+        mediaState: "unavailable",
+        microphoneReady: false,
+        audioReady: false,
+        sessionHealthy: false,
+      },
+      failure,
+    })
+    await releaseLocalMedia()
+  }
+
+  async function setRequestFailure(
+    error: unknown,
+    fallback: SoftphoneFailureKind = "temporary-request",
+  ) {
+    const failure = failureFrom(error, fallback)
+    if (failure.kind === "access") {
+      await failClosedAccess(failure)
+      return failure
+    }
+    publish({ failure })
+    return failure
+  }
+
+  function ownershipFailure(lease: SoftphoneState, moved = false): SoftphoneFailure {
+    if (lease.activeCallId) {
+      return {
+        kind: "ownership",
+        message: "An active Call is using calling in another browser.",
+        recoverable: false,
+      }
+    }
+    return {
+      kind: "ownership",
+      message: moved
+        ? "Calling ownership moved to another browser. Reconnect to continue."
+        : "Calling is active in another browser. Take over to continue.",
+      recoverable: true,
+    }
   }
 
   async function setCommandFailure(
@@ -290,8 +588,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   ) {
     const failure = failureFrom(error, fallback)
     if (failure.kind === "access") {
-      await signalRefresh("backend")
-      if (snapshot.failure?.kind === "ownership") return
+      await failClosedAccess(failure)
+      return
     }
     publish({ failure })
   }
@@ -320,6 +618,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   function applyCall(call: CallingCall | undefined) {
     const current = snapshot.activeCall
     const observed = newestObservedCall(snapshot, call?.id)
+    if (call && ignoredCallIDs.has(call.id)) return false
     if (call && snapshot.expectedCallID && call.id !== snapshot.expectedCallID) return false
     if (
       call &&
@@ -342,6 +641,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     const needsDisposition = call?.state === "NEEDS_DISPOSITION"
     const closed =
       call?.state === "RESOLVED" || call?.state === "FOLLOW_UP_REQUIRED"
+    persistCallRecoveryID(call && !closed ? call.id : undefined)
     const terminalVersions =
       call && settled
         ? {
@@ -376,10 +676,103 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     return true
   }
 
+  async function discardUnprojectedInboundCall(callID: string) {
+    ignoredCallIDs.add(callID)
+    persistCallRecoveryID(undefined)
+    const losingLegs = new Set<IncomingMediaLeg>()
+    if (attachedLeg) losingLegs.add(attachedLeg)
+    attachedLeg = undefined
+    if (answeredInbound?.callID === callID) answeredInbound = undefined
+    const mediaTokens = [
+      snapshot.expectedMedia?.callId === callID
+        ? snapshot.expectedMedia.mediaToken
+        : undefined,
+      snapshot.recoveryMedia?.callID === callID
+        ? snapshot.recoveryMedia.mediaToken
+        : undefined,
+    ]
+    for (const mediaToken of mediaTokens) {
+      if (!mediaToken) continue
+      const leg = incomingMedia.get(mediaToken)
+      if (leg) losingLegs.add(leg)
+      incomingMedia.delete(mediaToken)
+    }
+    const offers = snapshot.offers.filter((offer) => offer.callId !== callID)
+    publish({
+      offers,
+      activeCall: undefined,
+      pendingCall: undefined,
+      pendingDisposition: undefined,
+      expectedCallID: "",
+      activeCallLegID: "",
+      expectedMedia: undefined,
+      recoveryMedia: persistMediaCorrelation(undefined),
+      mediaAttachment: undefined,
+      muted: false,
+      endingCallID: "",
+    })
+    syncAttention(offers)
+    await Promise.all([
+      releaseLocalMedia(),
+      ...[...losingLegs].map(rejectSafely),
+    ])
+    if (!stopped && snapshot.lease?.owner) {
+      await commitReadiness(false, true)
+    }
+  }
+
+  function expireOffers() {
+    const offers = snapshot.offers.filter(
+      (offer) => new Date(offer.deadline).getTime() > clock.now,
+    )
+    if (offers.length === snapshot.offers.length) return
+    publish({ offers })
+    syncAttention(offers)
+  }
+
+  function rejectExpiredUnmatchedMedia(
+    correlatedMediaTokens: ReadonlySet<string>,
+  ) {
+    const expired = [...incomingMedia.values()].filter(
+      (leg) =>
+        !correlatedMediaTokens.has(leg.mediaToken) &&
+        (incomingMediaDeadlines.get(leg) ?? 0) <= clock.now,
+    )
+    for (const leg of expired) incomingMedia.delete(leg.mediaToken)
+    for (const leg of expired) void rejectSafely(leg)
+  }
+
+  function rememberAuthoritativeRingingMedia(
+    owner: boolean,
+    ringing: CallingState["ringing"],
+  ) {
+    authoritativeRingingMedia.clear()
+    if (!owner) return
+    for (const leg of ringing) {
+      const deadline = new Date(leg.deadline).getTime()
+      if (deadline > clock.now) {
+        authoritativeRingingMedia.set(leg.mediaToken, deadline)
+      }
+    }
+  }
+
+  function correlatedMediaTokens() {
+    const tokens = new Set<string>()
+    for (const [mediaToken, deadline] of authoritativeRingingMedia) {
+      if (deadline > clock.now) tokens.add(mediaToken)
+      else authoritativeRingingMedia.delete(mediaToken)
+    }
+    if (snapshot.expectedMedia) tokens.add(snapshot.expectedMedia.mediaToken)
+    return tokens
+  }
+
   async function refreshOnce() {
     const generation = lifecycleGeneration
+    expireOffers()
     try {
-      const result = await options.backend.readState({ etag })
+      const result = await backendRequest((signal) =>
+        options.backend.readState({ etag }, signal),
+      )
       if (result.etag) etag = result.etag
       if (stopped || generation !== lifecycleGeneration) return
       if (result.status === "not-modified") {
@@ -387,20 +780,31 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           publish({ failure: undefined })
         }
         if (snapshot.expectedCallID) {
-          const call = await options.backend.readCall(snapshot.expectedCallID)
+          const call = await backendRequest((signal) =>
+            options.backend.readCall(snapshot.expectedCallID, signal),
+          )
           if (!stopped && generation === lifecycleGeneration) applyCall(call)
         }
+        rejectExpiredUnmatchedMedia(correlatedMediaTokens())
         temporaryFailures = 0
         return
       }
       const state = result.state
-      const lease = leaseForSession(state.softphone, options.sessionID)
+      const authoritativeLease = leaseForSession(
+        state.softphone,
+        options.sessionID,
+      )
+      const lease = accessBlocked
+        ? hideLeaseAfterAccessFailure(authoritativeLease)!
+        : authoritativeLease
+      rememberAuthoritativeRingingMedia(lease.owner, state.ringing)
+      const ownershipAcquired = snapshot.lease?.owner !== true && lease.owner
       const ownershipLost = snapshot.lease?.owner && !lease.owner
+      const authoritativeCallID =
+        state.bridged?.callId || lease.activeCallId
       let expectedCallID =
         lease.owner
-          ? state.bridged?.callId ||
-            lease.activeCallId ||
-            snapshot.expectedCallID
+          ? authoritativeCallID || snapshot.expectedCallID
           : ""
       if (ignoredCallIDs.has(expectedCallID)) expectedCallID = ""
       if (
@@ -412,6 +816,31 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       const expectedMedia = expectedCallID
         ? state.ringing.find((leg) => leg.callId === expectedCallID)
         : undefined
+      const expectedCallProjected = Boolean(
+        expectedCallID &&
+          (authoritativeCallID === expectedCallID ||
+            expectedMedia ||
+            state.disposition?.callId === expectedCallID ||
+            lease.pendingOutcomeCallId === expectedCallID),
+      )
+      const retainedInboundCall = [
+        snapshot.activeCall,
+        snapshot.pendingCall,
+        snapshot.pendingDisposition,
+      ].some(
+        (call) =>
+          call?.id === expectedCallID && call.direction === "INBOUND",
+      )
+      if (
+        expectedCallID &&
+        !expectedCallProjected &&
+        retainedInboundCall &&
+        (!answeredInbound || state.ringing.length === 0)
+      ) {
+        await discardUnprojectedInboundCall(expectedCallID)
+        if (stopped || generation !== lifecycleGeneration) return
+        expectedCallID = ""
+      }
       const activeCallLegID =
         expectedCallID && state.bridged?.callId === expectedCallID
           ? state.bridged.callLegId
@@ -430,14 +859,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             leg.callLegId === answeredInbound!.callLegID,
         )
         answeredLegLost = !exactBridge && !exactDisposition && !stillRinging
+        if ((exactBridge || exactDisposition) && !stillRinging) {
+          const losingLegs = [...incomingMedia.values()]
+          incomingMedia.clear()
+          void Promise.all(losingLegs.map(rejectSafely))
+        }
         if (answeredLegLost) {
           ignoredCallIDs.add(answeredInbound.callID)
           const losingLeg = attachedLeg
           attachedLeg = undefined
           answeredInbound = undefined
           expectedCallID = ""
-          incomingMedia.clear()
-          if (losingLeg) await rejectSafely(losingLeg)
+          if (losingLeg) void rejectSafely(losingLeg)
           publish({
             activeCall: undefined,
             pendingCall: undefined,
@@ -454,9 +887,16 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           publish({ mediaAttachment: undefined, muted: false })
         }
       }
-      const offers = lease.owner
+      const offers =
+        lease.owner &&
+        !expectedCallID &&
+        !snapshot.pendingCall &&
+        !snapshot.activeCall &&
+        !snapshot.pendingDisposition
         ? state.ringing
-            .filter((offer) => offer.callId !== expectedCallID)
+            .filter(
+              (offer) => new Date(offer.deadline).getTime() > clock.now,
+            )
             .map((offer) => ({
               ...offer,
               answerReady: exactIncomingLeg(offer) !== undefined,
@@ -483,14 +923,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         recoveryMedia: lease.owner
           ? snapshot.recoveryMedia
           : persistMediaCorrelation(undefined),
-        failure: !lease.owner
-          ? {
-              kind: "ownership",
-              message: ownershipLost
-                ? "Calling ownership moved to another browser. Reconnect to continue."
-                : "Calling is active in another browser. Take over to continue.",
-              recoverable: true,
-            }
+        failure: accessBlocked
+          ? snapshot.failure
+          : !lease.owner
+          ? ownershipFailure(lease, ownershipLost)
           : snapshot.failure?.kind === "temporary-request" ||
               snapshot.failure?.kind === "ownership"
             ? undefined
@@ -502,7 +938,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ? lease.pendingOutcomeCallId || state.disposition?.callId
         : ""
       if (pendingID) {
-        const pending = await options.backend.readCall(pendingID)
+        const pending = await backendRequest((signal) =>
+          options.backend.readCall(pendingID, signal),
+        )
         if (
           !stopped &&
           generation === lifecycleGeneration &&
@@ -514,8 +952,16 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         publish({ pendingDisposition: undefined })
       }
       if (expectedCallID && !answeredLegLost) {
-        const call = await options.backend.readCall(expectedCallID)
-        if (!stopped && generation === lifecycleGeneration) applyCall(call)
+        const call = await backendRequest((signal) =>
+          options.backend.readCall(expectedCallID, signal),
+        )
+        if (!stopped && generation === lifecycleGeneration) {
+          if (!expectedCallProjected && call.direction === "INBOUND") {
+            await discardUnprojectedInboundCall(call.id)
+          } else {
+            applyCall(call)
+          }
+        }
       }
       const queuedExpectedLeg = snapshot.expectedMedia
         ? incomingMedia.get(snapshot.expectedMedia.mediaToken)
@@ -523,28 +969,37 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       if (queuedExpectedLeg && !attachedLeg) {
         await attachExpectedMedia(queuedExpectedLeg)
       }
+      rejectExpiredUnmatchedMedia(correlatedMediaTokens())
+      if (ownershipAcquired) {
+        void connectMedia().then(() => scheduleHeartbeat())
+      }
       temporaryFailures = 0
     } catch (error) {
+      if (stopped || generation !== lifecycleGeneration) return
       temporaryFailures += 1
-      setFailure(error)
+      await setRequestFailure(error)
     }
   }
 
-  function requestRefresh(queueIfBusy: boolean) {
+  function requestRefresh(queueIfBusy: boolean): Promise<void> {
     if (stopped) return Promise.resolve()
     if (refreshInFlight) {
       if (queueIfBusy) refreshQueued = true
-      return refreshInFlight
+      return refreshInFlight.then(() => {
+        if (!stopped && refreshQueued) return requestRefresh(false)
+      })
     }
-    refreshInFlight = (async () => {
+    const operation = (async () => {
       do {
         refreshQueued = false
         await refreshOnce()
       } while (!stopped && refreshQueued)
-    })().finally(() => {
-      refreshInFlight = undefined
+    })()
+    const inFlight = operation.finally(() => {
+      if (refreshInFlight === inFlight) refreshInFlight = undefined
     })
-    return refreshInFlight
+    refreshInFlight = inFlight
+    return inFlight
   }
 
   function scheduleRefresh() {
@@ -555,7 +1010,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           visibility.isHidden() ? 12_000 : 8_000,
           500 * 2 ** (temporaryFailures - 1),
         )
-      : refreshDelay(snapshot, visibility.isHidden())
+      : incomingMedia.size > 0
+        ? mediaConfirmationRetryMilliseconds
+        : refreshDelay(snapshot, visibility.isHidden())
     refreshTimer = clock.setTimeout(() => {
       refreshTimer = undefined
       void requestRefresh(false).finally(scheduleRefresh)
@@ -563,7 +1020,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }
 
   function scheduleHeartbeat(delay = 3_500) {
-    if (stopped || !snapshot.lease?.owner) return
+    if (stopped || accessBlocked || !snapshot.lease?.owner) return
     if (heartbeatTimer !== undefined) clock.clearTimeout(heartbeatTimer)
     heartbeatTimer = clock.setTimeout(() => {
       heartbeatTimer = undefined
@@ -574,17 +1031,21 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ) {
           await connectMedia()
         }
-        await commitReadiness(snapshot.availabilityIntent)
+        await commitReadiness()
       })().finally(() =>
         scheduleHeartbeat(snapshot.failure?.kind === "temporary-request" ? 500 : 3_500),
       )
     }, delay)
   }
 
-  async function commitReadiness(availableIntent: boolean) {
-    readinessGeneration += 1
+  function queueReadiness(
+    permitAvailability: boolean,
+    forceUnregistered = false,
+  ) {
+    const generation = ++readinessGeneration
     publish({ pending: { ...snapshot.pending, availability: true } })
     const technicallyReady =
+      !forceUnregistered &&
       snapshot.lease?.owner === true &&
       snapshot.readiness.mediaState === "ready" &&
       snapshot.readiness.microphoneReady &&
@@ -603,73 +1064,126 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       microphoneReady: technicallyReady,
       audioReady: technicallyReady,
       sessionHealthy: technicallyReady,
-      available: availableIntent && technicallyReady && !occupied,
+      available:
+        permitAvailability &&
+        !readinessFailClosed &&
+        snapshot.availabilityIntent &&
+        technicallyReady &&
+        !occupied,
     }
-    if (!readinessInFlight) {
-      readinessInFlight = (async () => {
-        while (!stopped && requestedReadiness) {
-          const request = requestedReadiness
-          const generation = readinessGeneration
-          requestedReadiness = undefined
-          try {
-            const lease = leaseForSession(
-              await options.backend.writeReadiness(request),
-              options.sessionID,
-            )
-            if (stopped) return
-            if (generation !== readinessGeneration) continue
-            publish({
-              lease,
-              activeCall: lease.owner ? snapshot.activeCall : undefined,
-              pendingCall: lease.owner ? snapshot.pendingCall : undefined,
-              pendingDisposition: lease.owner
-                ? snapshot.pendingDisposition
-                : undefined,
-              expectedCallID: lease.owner ? snapshot.expectedCallID : "",
-              activeCallLegID: lease.owner ? snapshot.activeCallLegID : "",
-              expectedMedia: lease.owner ? snapshot.expectedMedia : undefined,
-              recoveryMedia: lease.owner
-                ? snapshot.recoveryMedia
-                : persistMediaCorrelation(undefined),
-              pending: { ...snapshot.pending, availability: false },
-              failure: lease.owner
-                ? request.registered &&
-                  request.microphoneReady &&
-                  request.audioReady &&
-                  request.sessionHealthy
-                  ? undefined
-                  : snapshot.failure
-                : {
-                    kind: "ownership",
-                    message: "Calling is active in another browser.",
-                    recoverable: true,
-                  },
-            })
-            if (!lease.owner) await releaseLocalMedia()
-          } catch (error) {
-            if (stopped) return
-            if (generation !== readinessGeneration) continue
-            publish({ pending: { ...snapshot.pending, availability: false } })
-            await setCommandFailure(error)
-          }
+    return generation
+  }
+
+  async function commitReadiness(
+    permitAvailability = true,
+    forceUnregistered = false,
+  ) {
+    const generation = queueReadiness(permitAvailability, forceUnregistered)
+    await drainReadiness()
+    return readinessConfirmedGeneration >= generation
+  }
+
+  async function drainReadiness(): Promise<void> {
+    if (readinessInFlight) {
+      await readinessInFlight
+      if (!stopped && requestedReadiness) await drainReadiness()
+      return
+    }
+    const operation = (async () => {
+      while (!stopped && requestedReadiness) {
+        const request = requestedReadiness
+        const generation = readinessGeneration
+        requestedReadiness = undefined
+        try {
+          const lease = leaseForSession(
+            await backendRequest((signal) =>
+              options.backend.writeReadiness(request, signal),
+            ),
+            options.sessionID,
+          )
+          readinessConfirmedGeneration = Math.max(
+            readinessConfirmedGeneration,
+            generation,
+          )
+          if (stopped) return
+          if (generation !== readinessGeneration) continue
+          const visibleLease = accessBlocked
+            ? hideLeaseAfterAccessFailure(lease)!
+            : lease
+          publish({
+            lease: visibleLease,
+            activeCall: visibleLease.owner ? snapshot.activeCall : undefined,
+            pendingCall: visibleLease.owner ? snapshot.pendingCall : undefined,
+            pendingDisposition: visibleLease.owner
+              ? snapshot.pendingDisposition
+              : undefined,
+            expectedCallID: visibleLease.owner ? snapshot.expectedCallID : "",
+            activeCallLegID: visibleLease.owner ? snapshot.activeCallLegID : "",
+            expectedMedia: visibleLease.owner ? snapshot.expectedMedia : undefined,
+            recoveryMedia: visibleLease.owner
+              ? snapshot.recoveryMedia
+              : persistMediaCorrelation(undefined),
+            pending: { ...snapshot.pending, availability: false },
+            failure: accessBlocked
+              ? snapshot.failure
+              : visibleLease.owner
+              ? request.registered &&
+                request.microphoneReady &&
+                request.audioReady &&
+                request.sessionHealthy &&
+                !readinessFailClosed
+                ? undefined
+                : snapshot.failure
+              : ownershipFailure(visibleLease),
+          })
+          if (!visibleLease.owner) await releaseLocalMedia()
+        } catch (error) {
+          if (stopped) return
+          if (generation !== readinessGeneration) continue
+          publish({ pending: { ...snapshot.pending, availability: false } })
+          await setCommandFailure(error)
         }
-      })().finally(() => {
-        readinessInFlight = undefined
-      })
-    }
-    await readinessInFlight
-  }
-
-  function connectMedia() {
-    if (mediaConnectInFlight) return mediaConnectInFlight
-    mediaConnectInFlight = connectMediaOnce().finally(() => {
-      mediaConnectInFlight = undefined
+      }
+    })()
+    const inFlight = operation.finally(() => {
+      if (readinessInFlight === inFlight) readinessInFlight = undefined
     })
-    return mediaConnectInFlight
+    readinessInFlight = inFlight
+    await inFlight
+    if (!stopped && requestedReadiness) await drainReadiness()
   }
 
-  async function connectMediaOnce() {
-    if (!snapshot.lease?.owner || snapshot.readiness.mediaState !== "unavailable") return
+  function connectMedia(): Promise<void> {
+    if (mediaReleaseInFlight) {
+      return mediaReleaseInFlight.then(() => connectMedia())
+    }
+    if (mediaConnectInFlight) return mediaConnectInFlight
+    const controller = new AbortController()
+    const timeoutID = clock.setTimeout(
+      () => controller.abort(),
+      mediaOperationTimeoutMilliseconds,
+    )
+    mediaConnectController = controller
+    const operation = connectMediaOnce(controller.signal)
+    const inFlight = operation.finally(() => {
+      clock.clearTimeout(timeoutID)
+      if (mediaConnectController === controller) {
+        mediaConnectController = undefined
+      }
+      if (mediaConnectInFlight === inFlight) mediaConnectInFlight = undefined
+    })
+    mediaConnectInFlight = inFlight
+    return inFlight
+  }
+
+  async function connectMediaOnce(signal: AbortSignal) {
+    if (
+      accessBlocked ||
+      !snapshot.lease?.owner ||
+      snapshot.readiness.mediaState !== "unavailable"
+    ) {
+      return
+    }
     const generation = ++microphoneGeneration
     try {
       publish({
@@ -681,23 +1195,27 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           sessionHealthy: false,
         },
       })
-      const acquiredMicrophone = await options.microphone.start(() => {
-        if (stopped || generation !== microphoneGeneration) return
-        publish({
-          readiness: {
-            ...snapshot.readiness,
-            microphoneReady: false,
-          },
-          failure: {
-            kind: "technical-readiness",
-            message: "Your microphone became unavailable. Reconnect it and try again.",
-            recoverable: true,
-          },
-        })
-        void releaseLocalMedia()
-          .then(() => commitReadiness(false))
-          .then(() => signalRefresh("media"))
-      })
+      const acquiredMicrophone = await abortableOperation(
+        options.microphone.start(() => {
+          if (stopped || generation !== microphoneGeneration) return
+          publish({
+            readiness: {
+              ...snapshot.readiness,
+              microphoneReady: false,
+            },
+            failure: {
+              kind: "technical-readiness",
+              message: "Your microphone became unavailable. Reconnect it and try again.",
+              recoverable: true,
+            },
+          })
+          void releaseLocalMedia()
+            .then(() => commitReadiness(false))
+            .then(() => signalRefresh("media"))
+        }, signal),
+        signal,
+        (lateMicrophone) => lateMicrophone.stop(),
+      )
       if (stopped || generation !== microphoneGeneration) {
         acquiredMicrophone.stop()
         return
@@ -712,7 +1230,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           mediaState: "registering",
         },
       })
-      const token = await options.backend.issueMediaToken({ sessionID: options.sessionID })
+      const token = await backendRequest((signal) =>
+        options.backend.issueMediaToken(
+          { sessionID: options.sessionID },
+          signal,
+        ),
+      )
       if (
         stopped ||
         generation !== microphoneGeneration ||
@@ -724,96 +1247,112 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         !stopped &&
         generation === microphoneGeneration &&
         snapshot.lease?.owner === true
-      await options.media.connect(token, options.remoteElementID ?? "calling-remote-audio", {
-        onState: (mediaState) => {
-          if (!connectionCurrent()) return
-          publish({
-            readiness: {
-              ...snapshot.readiness,
-              mediaState,
-              audioReady: mediaState === "ready",
-              sessionHealthy: mediaState === "ready",
+      let mediaStateSynchronization = Promise.resolve()
+      await abortableOperation(
+        options.media.connect(
+          token,
+          options.remoteElementID ?? "calling-remote-audio",
+          {
+            onState: (mediaState) => {
+              if (!connectionCurrent()) return
+              publish({
+                readiness: {
+                  ...snapshot.readiness,
+                  mediaState,
+                  audioReady: mediaState === "ready",
+                  sessionHealthy: mediaState === "ready",
+                },
+                failure:
+                  mediaState === "reconnecting"
+                    ? {
+                        kind: "media",
+                        message: "Call audio is reconnecting. Reconnect calling if it does not recover.",
+                        recoverable: true,
+                      }
+                    : mediaState === "ready" &&
+                        snapshot.failure?.kind === "media"
+                      ? undefined
+                      : snapshot.failure,
+              })
+              mediaStateSynchronization = commitReadiness(
+                mediaState === "ready",
+              ).then(() => signalRefresh("media"))
             },
-            failure:
-              mediaState === "reconnecting"
-                ? {
-                    kind: "media",
-                    message: "Call audio is reconnecting. Reconnect calling if it does not recover.",
-                    recoverable: true,
-                  }
-                : mediaState === "ready" && snapshot.failure?.kind === "media"
-                  ? undefined
-                  : snapshot.failure,
-          })
-          void commitReadiness(
-            mediaState === "ready" ? snapshot.availabilityIntent : false,
-          )
-          void signalRefresh("media")
-        },
-        onIncoming: (leg) => {
-          if (connectionCurrent()) void handleIncomingMedia(leg, generation)
-          else void rejectSafely(leg)
-        },
-        onEnded: (leg) => {
-          if (!connectionCurrent()) return
-          const remembered = incomingMedia.get(leg.mediaToken)
-          if (remembered?.providerLegID === leg.providerLegID) {
-            incomingMedia.delete(leg.mediaToken)
-            publish({
-              offers: snapshot.offers.map((offer) =>
-                offer.mediaToken === leg.mediaToken
-                  ? { ...offer, answerReady: false }
-                  : offer,
-              ),
-            })
-          }
-          if (
-            attachedLeg?.providerLegID === leg.providerLegID &&
-            attachedLeg.mediaToken === leg.mediaToken
-          ) {
-            attachedLeg = undefined
-            publish({ mediaAttachment: undefined, muted: false })
-          }
-          void signalRefresh("media")
-        },
-        onAudioIssue: () => {
-          if (!connectionCurrent()) return
-          setFailure(
-            new SoftphoneAdapterError(
-              "media",
-              "Call audio was interrupted. Reconnect calling and try again.",
-            ),
-          )
-        },
-        onFailure: (failure) => {
-          if (connectionCurrent()) void handleMediaFailure(failure)
-        },
-        refreshToken: async () => {
-          if (!connectionCurrent()) return undefined
-          try {
-            const token = await options.backend.issueMediaToken({
-              sessionID: options.sessionID,
-            })
-            return connectionCurrent() ? token : undefined
-          } catch (error) {
-            if (connectionCurrent()) setFailure(error, "authentication")
-            return undefined
-          }
-        },
-      })
-      if (!connectionCurrent()) {
-        await options.media.disconnect().catch(() => undefined)
-        return
-      }
+            onIncoming: (leg) => {
+              if (connectionCurrent()) void handleIncomingMedia(leg, generation)
+              else void rejectSafely(leg)
+            },
+            onEnded: (leg) => {
+              if (!connectionCurrent()) return
+              const remembered = incomingMedia.get(leg.mediaToken)
+              if (remembered?.providerLegID === leg.providerLegID) {
+                incomingMedia.delete(leg.mediaToken)
+                publish({
+                  offers: snapshot.offers.map((offer) =>
+                    offer.mediaToken === leg.mediaToken
+                      ? { ...offer, answerReady: false }
+                      : offer,
+                  ),
+                })
+              }
+              if (
+                attachedLeg?.providerLegID === leg.providerLegID &&
+                attachedLeg.mediaToken === leg.mediaToken
+              ) {
+                attachedLeg = undefined
+                publish({ mediaAttachment: undefined, muted: false })
+              }
+              void signalRefresh("media")
+            },
+            onAudioIssue: () => {
+              if (!connectionCurrent()) return
+              setFailure(
+                new SoftphoneAdapterError(
+                  "media",
+                  "Call audio was interrupted. Reconnect calling and try again.",
+                ),
+              )
+            },
+            onFailure: (failure) => {
+              if (connectionCurrent()) void handleMediaFailure(failure)
+            },
+            refreshToken: async () => {
+              if (!connectionCurrent()) return undefined
+              try {
+                const token = await backendRequest((signal) =>
+                  options.backend.issueMediaToken(
+                    { sessionID: options.sessionID },
+                    signal,
+                  ),
+                )
+                return connectionCurrent() ? token : undefined
+              } catch (error) {
+                if (connectionCurrent()) {
+                  await setRequestFailure(error, "authentication")
+                }
+                return undefined
+              }
+            },
+          },
+          signal,
+        ),
+        signal,
+      )
+      await mediaStateSynchronization
+      if (!connectionCurrent()) return
       scheduleHeartbeat()
     } catch (error) {
       const attemptCurrent =
         !stopped &&
         generation === microphoneGeneration &&
         snapshot.lease?.owner === true
-      if (attemptCurrent) microphoneGeneration += 1
-      await options.media.disconnect().catch(() => undefined)
       if (!attemptCurrent) return
+      if (failureFrom(error, "technical-readiness").kind === "access") {
+        await setRequestFailure(error, "technical-readiness")
+        return
+      }
+      microphoneGeneration += 1
+      await disconnectMedia()
       microphone?.stop()
       microphone = undefined
       publish({
@@ -851,6 +1390,24 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     }
   }
 
+  function signalStaffIntent() {
+    void signalRefresh("staff-intent")
+  }
+
+  async function reconcileCommandFailure(
+    error: unknown,
+    generation: number,
+    committed: () => boolean,
+  ) {
+    const failure = failureFrom(error, "temporary-request")
+    if (failure.kind === "conflict" || failure.kind === "temporary-request") {
+      await signalRefresh("staff-intent")
+      if (!commandContinuationCurrent(generation) || committed()) return true
+    }
+    await setCommandFailure(error)
+    return false
+  }
+
   async function discardStaleMedia(leg: IncomingMediaLeg) {
     if (incomingMedia.get(leg.mediaToken) === leg) {
       incomingMedia.delete(leg.mediaToken)
@@ -879,12 +1436,52 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await rejectSafely(leg)
         return
       }
-      const outcome = await leg.answer().catch(() => "ended" as const)
+      let outcome: "attached" | "ended"
+      try {
+        outcome = await answerMediaLeg(leg)
+      } catch {
+        if (!mediaContinuationCurrent(generation)) {
+          await discardStaleMedia(leg)
+          return
+        }
+        attachedLeg = undefined
+        await rejectSafely(leg)
+        publish({
+          mediaAttachment: undefined,
+          muted: false,
+          failure: {
+            kind: "media",
+            message: "Call audio could not reconnect. Reconnect calling to restore audio.",
+            recoverable: true,
+          },
+        })
+        await signalRefresh("incoming-media")
+        return
+      }
       if (!mediaContinuationCurrent(generation)) {
         await discardStaleMedia(leg)
         return
       }
-      if (outcome === "attached") attachedLeg = leg
+      if (outcome !== "attached") {
+        attachedLeg = undefined
+        publish({
+          mediaAttachment: undefined,
+          muted: false,
+          failure: {
+            kind: "media",
+            message: "Call audio could not reconnect. Reconnect calling to restore audio.",
+            recoverable: true,
+          },
+        })
+        await signalRefresh("incoming-media")
+        return
+      }
+      attachedLeg = leg
+      publish({
+        mediaAttachment: snapshot.mediaAttachment,
+        failure:
+          snapshot.failure?.kind === "media" ? undefined : snapshot.failure,
+      })
       await signalRefresh("incoming-media")
       if (!mediaContinuationCurrent(generation)) {
         await discardStaleMedia(leg)
@@ -897,12 +1494,27 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       return
     }
     incomingMedia.set(leg.mediaToken, leg)
+    incomingMediaDeadlines.set(
+      leg,
+      clock.now + mediaCorrelationWindowMilliseconds,
+    )
     await signalRefresh("incoming-media")
     if (!mediaContinuationCurrent(generation)) {
       await discardStaleMedia(leg)
       return
     }
-    if (snapshot.expectedCallID) {
+    if (
+      answeredInbound &&
+      (answeredInbound.providerLegID !== leg.providerLegID ||
+        answeredInbound.mediaToken !== leg.mediaToken)
+    ) {
+      return
+    }
+    if (attachedLeg && attachedLeg !== leg) return
+    if (
+      snapshot.expectedCallID &&
+      (snapshot.expectedMedia || leg.recovery)
+    ) {
       await attachExpectedMedia(leg, generation)
       return
     }
@@ -917,11 +1529,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             : offer,
         ),
       })
-      return
-    }
-    if (snapshot.offers.length > 0) {
-      incomingMedia.delete(leg.mediaToken)
-      await rejectSafely(leg)
       return
     }
     return
@@ -947,27 +1554,48 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       snapshot.recoveryMedia.callLegID === snapshot.activeCallLegID &&
       snapshot.recoveryMedia.providerLegID === leg.providerLegID &&
       snapshot.recoveryMedia.mediaToken === leg.mediaToken
-    if (!callID || (!exactTransientLeg && !restoredRecovery)) {
+    if (!callID) {
+      incomingMedia.delete(leg.mediaToken)
+      await rejectSafely(leg)
+      return
+    }
+    if (!expectedMedia && !restoredRecovery) return
+    if (!exactTransientLeg && !restoredRecovery) {
       incomingMedia.delete(leg.mediaToken)
       await rejectSafely(leg)
       return
     }
     if (incomingMedia.get(leg.mediaToken) !== leg) return
     incomingMedia.delete(leg.mediaToken)
-    const outcome = await leg.answer().catch(() => "ended" as const)
+    let outcome: "attached" | "ended"
+    try {
+      outcome = await answerMediaLeg(leg)
+    } catch (error) {
+      if (!mediaContinuationCurrent(generation)) {
+        await discardStaleMedia(leg)
+        return
+      }
+      await rejectSafely(leg)
+      setFailure(error, "media")
+      await signalRefresh("media")
+      return
+    }
     if (!mediaContinuationCurrent(generation)) {
       await discardStaleMedia(leg)
       return
     }
-    if (outcome !== "attached") return
+    if (outcome !== "attached") {
+      await signalRefresh("media")
+      return
+    }
     try {
       const call = restoredRecovery
         ? snapshot.activeCall!
-        : await options.backend.confirmMedia({
-            callID,
-            sessionID: options.sessionID,
-            mediaToken: leg.mediaToken,
-          })
+        : await confirmExpectedMedia(callID, leg, generation)
+      if (!call) {
+        await discardStaleMedia(leg)
+        return
+      }
       if (
         !mediaContinuationCurrent(generation) ||
         snapshot.expectedCallID !== callID
@@ -997,11 +1625,80 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       })
     } catch (error) {
       await rejectSafely(leg)
-      if (mediaContinuationCurrent(generation)) setFailure(error, "conflict")
+      if (mediaContinuationCurrent(generation)) {
+        await setRequestFailure(error, "conflict")
+      }
     }
   }
 
-  async function handleMediaFailure(failure: MediaFailure) {
+  async function confirmExpectedMedia(
+    callID: string,
+    leg: IncomingMediaLeg,
+    generation: number,
+  ) {
+    const deadline = clock.now + backendRequestTimeoutMilliseconds
+    let lastError: unknown
+    while (
+      mediaContinuationCurrent(generation) &&
+      snapshot.expectedCallID === callID &&
+      clock.now < deadline
+    ) {
+      try {
+        return await backendRequest(
+          (signal) =>
+            options.backend.confirmMedia(
+              {
+                callID,
+                sessionID: options.sessionID,
+                mediaToken: leg.mediaToken,
+              },
+              signal,
+            ),
+          Math.max(1, deadline - clock.now),
+        )
+      } catch (error) {
+        lastError = error
+        const failure = failureFrom(error, "conflict")
+        if (
+          failure.kind !== "conflict" &&
+          failure.kind !== "temporary-request"
+        ) {
+          throw error
+        }
+      }
+      if (
+        !mediaContinuationCurrent(generation) ||
+        snapshot.expectedCallID !== callID
+      ) {
+        break
+      }
+      if (clock.now + mediaConfirmationRetryMilliseconds >= deadline) break
+      await wait(mediaConfirmationRetryMilliseconds)
+    }
+    if (lastError) throw lastError
+  }
+
+  function handleMediaFailure(failure: MediaFailure) {
+    if (mediaFailureInFlight) return mediaFailureInFlight
+    const operation = handleMediaFailureOnce(failure)
+    const inFlight = operation.finally(() => {
+      if (mediaFailureInFlight === inFlight) mediaFailureInFlight = undefined
+    })
+    mediaFailureInFlight = inFlight
+    return inFlight
+  }
+
+  async function handleMediaFailureOnce(failure: MediaFailure) {
+    const visibleFailure: SoftphoneFailure = {
+      kind: failure === "authentication" ? "authentication" : "media",
+      message:
+        failure === "network"
+          ? "Call audio lost its connection. Check your network and reconnect calling."
+          : failure === "authentication"
+            ? "Calling authentication expired. Refresh access and reconnect calling."
+            : "Call audio is unavailable. Reconnect calling and try again.",
+      recoverable: true,
+    }
     attachedLeg = undefined
     answeredInbound = undefined
     publish({
@@ -1013,30 +1710,41 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       },
       mediaAttachment: undefined,
       muted: false,
-      failure: {
-        kind: failure === "authentication" ? "authentication" : "media",
-        message:
-          failure === "network"
-            ? "Call audio lost its connection. Check your network and reconnect calling."
-            : failure === "authentication"
-              ? "Calling authentication expired. Refresh access and reconnect calling."
-              : "Call audio is unavailable. Reconnect calling and try again.",
-        recoverable: true,
-      },
+      failure: visibleFailure,
     })
     await releaseLocalMedia()
+    if (stopped) return
     await commitReadiness(false)
+    if (!stopped && snapshot.lease?.owner) {
+      publish({ failure: visibleFailure })
+      scheduleHeartbeat(500)
+    }
   }
 
-  async function releaseLocalMedia() {
+  function releaseLocalMedia() {
+    if (mediaReleaseInFlight) return mediaReleaseInFlight
+    const operation = releaseLocalMediaOnce()
+    const inFlight = operation.finally(() => {
+      if (mediaReleaseInFlight === inFlight) mediaReleaseInFlight = undefined
+    })
+    mediaReleaseInFlight = inFlight
+    return inFlight
+  }
+
+  async function releaseLocalMediaOnce() {
     if (heartbeatTimer !== undefined) clock.clearTimeout(heartbeatTimer)
     heartbeatTimer = undefined
+    mediaConnectController?.abort()
+    mediaConnectController = undefined
+    mediaConnectInFlight = undefined
     readinessGeneration += 1
     microphoneGeneration += 1
+    clearConfirmationWaits()
+    for (const controller of mediaEffectControllers) controller.abort()
     incomingMedia.clear()
     attachedLeg = undefined
     answeredInbound = undefined
-    await options.media.disconnect().catch(() => undefined)
+    const disconnecting = disconnectMedia()
     microphone?.stop()
     microphone = undefined
     publish({
@@ -1051,6 +1759,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       },
     })
     syncAttention([])
+    await disconnecting
   }
 
   async function signalRefresh(
@@ -1064,29 +1773,33 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }
 
   async function takeOver() {
+    if (accessBlocked) return
+    if (!snapshot.lease?.owner && snapshot.lease?.activeCallId) {
+      publish({ failure: ownershipFailure(snapshot.lease) })
+      return
+    }
     try {
       const lease = leaseForSession(
-        await options.backend.acquireLease({
-          sessionID: options.sessionID,
-          takeover: true,
-        }),
+        await backendRequest((signal) =>
+          options.backend.acquireLease(
+            {
+              sessionID: options.sessionID,
+              takeover: true,
+            },
+            signal,
+          ),
+        ),
         options.sessionID,
       )
       if (stopped) return
       publish({
         lease,
-        failure: undefined,
-        expectedCallID: lease.owner ? lease.activeCallId : "",
+        failure: lease.owner ? undefined : ownershipFailure(lease),
+        expectedCallID: lease.owner
+          ? lease.activeCallId || snapshot.expectedCallID || recoveryCallID
+          : "",
       })
-      if (!lease.owner) {
-        setFailure(
-          new SoftphoneAdapterError(
-            "ownership",
-            "This browser could not take over calling.",
-          ),
-        )
-        return
-      }
+      if (!lease.owner) return
       await signalRefresh("staff-intent")
       await connectMedia()
     } catch (error) {
@@ -1101,10 +1814,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       return () => listeners.delete(listener)
     },
     async start() {
+      if (stopInFlight) await stopInFlight
       if (!stopped) return
+      recoveryCallID = options.loadCallRecoveryID?.() ?? ""
+      readinessFailClosed = false
+      accessBlocked = false
       stopped = false
       const generation = ++lifecycleGeneration
-      publish({ phase: "starting", failure: undefined })
+      publish({
+        phase: "starting",
+        activeCallLegID: snapshot.recoveryMedia?.callLegID ?? "",
+        failure: undefined,
+      })
       unsubscribeVisibility = visibility.subscribe(() => {
         if (!stopped) {
           syncAttention(snapshot.offers)
@@ -1113,23 +1834,26 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       })
       try {
         const lease = leaseForSession(
-          await options.backend.acquireLease({
-            sessionID: options.sessionID,
-            takeover: false,
-          }),
+          await backendRequest((signal) =>
+            options.backend.acquireLease(
+              {
+                sessionID: options.sessionID,
+                takeover: false,
+              },
+              signal,
+            ),
+          ),
           options.sessionID,
         )
         if (stopped || generation !== lifecycleGeneration) return
         publish({
           lease,
-          expectedCallID: lease.owner ? lease.activeCallId : "",
+          expectedCallID: lease.owner
+            ? lease.activeCallId || snapshot.expectedCallID || recoveryCallID
+            : "",
           failure: lease.owner
             ? undefined
-            : {
-                kind: "ownership",
-                message: "Calling is active in another browser. Take over to continue.",
-                recoverable: true,
-              },
+            : ownershipFailure(lease),
         })
         await requestRefresh(true)
         if (stopped || generation !== lifecycleGeneration) return
@@ -1144,37 +1868,96 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         scheduleRefresh()
       }
     },
-    async stop() {
-      if (stopped) return
-      stopped = true
-      lifecycleGeneration += 1
-      if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
-      if (heartbeatTimer !== undefined) clock.clearTimeout(heartbeatTimer)
-      refreshTimer = undefined
-      heartbeatTimer = undefined
-      refreshQueued = false
-      requestedReadiness = undefined
-      unsubscribeVisibility?.()
-      unsubscribeVisibility = undefined
-      await releaseLocalMedia()
-      publish({
-        ...snapshot,
-        phase: "stopped",
-        lease: undefined,
-        offers: [],
-        failure: undefined,
+    stop() {
+      if (stopInFlight) return stopInFlight
+      if (stopped) return Promise.resolve()
+      const ownedLease =
+        snapshot.lease?.owner === true &&
+        snapshot.lease.sessionId === options.sessionID
+      stopInFlight = (async () => {
+        stopped = true
+        lifecycleGeneration += 1
+        if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
+        if (heartbeatTimer !== undefined) clock.clearTimeout(heartbeatTimer)
+        refreshTimer = undefined
+        heartbeatTimer = undefined
+        refreshQueued = false
+        refreshInFlight = undefined
+        requestedReadiness = undefined
+        etag = undefined
+        authoritativeRingingMedia.clear()
+        temporaryFailures = 0
+        for (const request of backendRequests) request.abort()
+        unsubscribeVisibility?.()
+        unsubscribeVisibility = undefined
+        await releaseLocalMedia()
+        publish({
+          phase: "stopped",
+          lease: undefined,
+          offers: [],
+          activeCall: undefined,
+          pendingCall: undefined,
+          pendingDisposition: undefined,
+          expectedCallID: "",
+          activeCallLegID: "",
+          expectedMedia: undefined,
+          mediaAttachment: undefined,
+          muted: false,
+          endingCallID: "",
+          pending: {
+            availability: false,
+            outbound: false,
+            retry: false,
+            disposition: false,
+          },
+          failure: undefined,
+        })
+        await readinessInFlight
+        if (!ownedLease) return
+        try {
+          await backendRequest((signal) =>
+            options.backend.writeReadiness(
+              {
+                sessionId: options.sessionID,
+                registered: false,
+                microphoneReady: false,
+                audioReady: false,
+                sessionHealthy: false,
+                available: false,
+              },
+              signal,
+            ),
+          )
+        } catch (error) {
+          const failure = failureFrom(error, "temporary-request")
+          publish({
+            failure: {
+              ...failure,
+              message: `Calling stopped locally, but backend readiness could not be cleared. ${failure.message}`,
+              recoverable: false,
+            },
+          })
+        }
+      })().finally(() => {
+        stopInFlight = undefined
       })
+      return stopInFlight
     },
     signalRefresh,
     takeOver,
     async setAvailability(available) {
+      if (accessBlocked) {
+        publish({ availabilityIntent: available })
+        options.persistAvailabilityIntent?.(available)
+        return
+      }
       publish({ availabilityIntent: available, failure: undefined })
       options.persistAvailabilityIntent?.(available)
       if (!snapshot.lease?.owner && available) await takeOver()
       if (snapshot.lease?.owner && snapshot.readiness.mediaState === "unavailable") {
         await connectMedia()
       }
-      await commitReadiness(available)
+      await commitReadiness()
       await signalRefresh("staff-intent")
     },
     async startOutbound(input) {
@@ -1197,11 +1980,17 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         pending: { ...snapshot.pending, outbound: true },
         failure: undefined,
       })
+      signalStaffIntent()
       try {
-        const call = await options.backend.startOutbound({
-          ...input,
-          sessionId: options.sessionID,
-        })
+        const call = await backendRequest((signal) =>
+          options.backend.startOutbound(
+            {
+              ...input,
+              sessionId: options.sessionID,
+            },
+            signal,
+          ),
+        )
         if (!commandContinuationCurrent(generation)) {
           await reconcileStaleCommand(generation)
           return
@@ -1219,11 +2008,16 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await reconcileStaleCommand(generation)
           return
         }
+        const committed = await reconcileCommandFailure(
+          error,
+          generation,
+          () => Boolean(snapshot.expectedCallID),
+        )
         publish({
           pendingCall: undefined,
           pending: { ...snapshot.pending, outbound: false },
         })
-        await setCommandFailure(error)
+        if (committed) return
       }
     },
     async answer(callLegID) {
@@ -1256,9 +2050,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         failure: undefined,
       })
       syncAttention(snapshot.offers)
+      signalStaffIntent()
       let outcome
       try {
-        outcome = await leg.answer()
+        outcome = await answerMediaLeg(leg)
       } catch (error) {
         if (
           !mediaContinuationCurrent(generation) ||
@@ -1268,6 +2063,22 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           return
         }
         if (answeredInbound === answering) answeredInbound = undefined
+        if (mediaEffectTimedOut(error)) {
+          publish({
+            pendingCall: undefined,
+            offers: [
+              ...snapshot.offers.filter(
+                (candidate) => candidate.callLegId !== offer.callLegId,
+              ),
+              { ...offer, answerReady: false },
+            ],
+          })
+          await commitReadiness(false)
+          setFailure(error, "media")
+          await signalRefresh("media")
+          void rejectSafely(leg)
+          return
+        }
         incomingMedia.set(offer.mediaToken, leg)
         publish({
           pendingCall: undefined,
@@ -1311,11 +2122,20 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       publish({
         expectedCallID: offer.callId,
+        activeCallLegID: offer.callLegId,
+        offers: [],
         recoveryMedia: persistMediaCorrelation(mediaAttachment),
         mediaAttachment,
         failure: undefined,
       })
       syncAttention(snapshot.offers)
+      if (
+        !mediaContinuationCurrent(generation) ||
+        answeredInbound !== answering ||
+        attachedLeg !== leg
+      ) {
+        return
+      }
       await commitReadiness(false)
       await signalRefresh("staff-intent")
     },
@@ -1324,11 +2144,17 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       if (!call || snapshot.endingCallID) return
       const generation = lifecycleGeneration
       publish({ endingCallID: call.id, failure: undefined })
+      signalStaffIntent()
       try {
-        const committed = await options.backend.hangup({
-          callID: call.id,
-          sessionID: options.sessionID,
-        })
+        const committed = await backendRequest((signal) =>
+          options.backend.hangup(
+            {
+              callID: call.id,
+              sessionID: options.sessionID,
+            },
+            signal,
+          ),
+        )
         if (!commandContinuationCurrent(generation)) {
           await reconcileStaleCommand(generation)
           return
@@ -1363,12 +2189,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       const generation = lifecycleGeneration
       publish({ pending: { ...snapshot.pending, retry: true }, failure: undefined })
+      signalStaffIntent()
       try {
-        const retried = await options.backend.retry({
-          callID: call.id,
-          sessionID: options.sessionID,
-          idempotencyKey,
-        })
+        const retried = await backendRequest((signal) =>
+          options.backend.retry(
+            {
+              callID: call.id,
+              sessionID: options.sessionID,
+              idempotencyKey,
+            },
+            signal,
+          ),
+        )
         if (!commandContinuationCurrent(generation)) {
           await reconcileStaleCommand(generation)
           return
@@ -1393,11 +2225,20 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await reconcileStaleCommand(generation)
           return
         }
+        const committed = await reconcileCommandFailure(
+          error,
+          generation,
+          () =>
+            Boolean(
+              snapshot.expectedCallID && snapshot.expectedCallID !== call.id,
+            ),
+        )
         publish({ pending: { ...snapshot.pending, retry: false } })
-        await setCommandFailure(error)
+        if (committed) return
       }
     },
     async recover() {
+      if (mediaFailureInFlight) await mediaFailureInFlight
       const failure = snapshot.failure
       if (!snapshot.lease?.owner || failure?.kind === "ownership") {
         await takeOver()
@@ -1409,8 +2250,16 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         failure?.kind === "technical-readiness" ||
         failure?.kind === "authentication"
       ) {
+        if (heartbeatTimer !== undefined) clock.clearTimeout(heartbeatTimer)
+        heartbeatTimer = undefined
+        readinessFailClosed = true
+        if (!(await commitReadiness(false, true))) return
         await releaseLocalMedia()
         await connectMedia()
+        if (snapshot.readiness.mediaState === "ready") {
+          readinessFailClosed = false
+          await commitReadiness()
+        }
       }
       await signalRefresh("staff-intent")
     },
@@ -1426,25 +2275,32 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       attachedLeg = undefined
       answeredInbound = undefined
+      persistCallRecoveryID(undefined)
       publish({
         activeCall: undefined,
         mediaAttachment: undefined,
         muted: false,
         failure: undefined,
       })
-      void commitReadiness(snapshot.availabilityIntent)
+      void commitReadiness()
     },
     async dispose(outcome) {
       const call = snapshot.pendingDisposition
       if (!call || snapshot.pending.disposition) return
       const generation = lifecycleGeneration
       publish({ pending: { ...snapshot.pending, disposition: true }, failure: undefined })
+      signalStaffIntent()
       try {
-        const result = await options.backend.dispose({
-          callID: call.id,
-          sessionID: options.sessionID,
-          outcome,
-        })
+        const result = await backendRequest((signal) =>
+          options.backend.dispose(
+            {
+              callID: call.id,
+              sessionID: options.sessionID,
+              outcome,
+            },
+            signal,
+          ),
+        )
         if (!commandContinuationCurrent(generation)) {
           await reconcileStaleCommand(generation)
           return
@@ -1454,7 +2310,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           pendingDisposition: undefined,
           pending: { ...snapshot.pending, disposition: false },
         })
-        await commitReadiness(snapshot.availabilityIntent)
+        await commitReadiness()
         await signalRefresh("staff-intent")
         return result
       } catch (error) {
@@ -1462,8 +2318,13 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await reconcileStaleCommand(generation)
           return
         }
+        const committed = await reconcileCommandFailure(
+          error,
+          generation,
+          () => !snapshot.pendingDisposition,
+        )
         publish({ pending: { ...snapshot.pending, disposition: false } })
-        await setCommandFailure(error)
+        if (committed) return
       }
     },
     toggleMute() {
@@ -1522,10 +2383,7 @@ function derive(
       ? ["PREPARING", "RINGING", "CONNECTING", "CONNECTED"].includes(
           call.state,
         )
-      : call?.direction === "INBOUND" &&
-        connected &&
-        mediaAttached &&
-        mediaControlsReady
+      : call?.direction === "INBOUND" && connected
   return {
     ...snapshot,
     occupied,
@@ -1583,9 +2441,11 @@ function newestObservedCall(
 }
 
 function leaseForSession(lease: SoftphoneState, sessionID: string): SoftphoneState {
+  const owner = lease.owner && lease.sessionId === sessionID
   return {
     ...lease,
-    owner: lease.owner && lease.sessionId === sessionID,
+    owner,
+    available: owner && lease.available,
   }
 }
 
@@ -1603,6 +2463,8 @@ function pendingOutboundCall(
     transferReason: "",
     retryAllowed: false,
     endRequested: false,
+    ...(input.practiceId ? { practiceId: input.practiceId } : {}),
+    ...(input.locationId ? { locationId: input.locationId } : {}),
   }
 }
 
@@ -1618,12 +2480,22 @@ function pendingInboundCall(offer: RuntimeOffer): RuntimePendingCall {
     transferReason: offer.transferReason,
     retryAllowed: false,
     endRequested: false,
+    practiceId: offer.practiceId,
+    locationId: offer.locationId,
   }
 }
 
 function refreshDelay(snapshot: SoftphoneRuntimeSnapshot, hidden: boolean) {
   if (hidden) return 8_000
   if (snapshot.offers.length > 0) return 250
+  if (
+    snapshot.pendingCall ||
+    snapshot.pending.outbound ||
+    snapshot.pending.retry ||
+    snapshot.pending.disposition
+  ) {
+    return 250
+  }
   if (snapshot.endingCallID || snapshot.activeCall?.endRequested) return 250
   switch (snapshot.activeCall?.state) {
     case "PREPARING":
@@ -1657,8 +2529,4 @@ function failureFrom(error: unknown, fallback: SoftphoneFailureKind): SoftphoneF
         : "Calling could not refresh. Check your connection and try again.",
     recoverable: true,
   }
-}
-
-async function rejectSafely(leg: IncomingMediaLeg) {
-  await leg.reject().catch(() => undefined)
 }

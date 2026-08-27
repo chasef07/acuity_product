@@ -99,9 +99,9 @@ func (m *Module) ReadCallingState(
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
-		JOIN access_calling_scopes calling_scope
-			ON calling_scope.practice_id = call.practice_id
-			AND calling_scope.user_subject = leg.staff_subject
+		JOIN access_operational_scopes operational_scope
+			ON operational_scope.practice_id = call.practice_id
+			AND operational_scope.user_subject = leg.staff_subject
 		LEFT JOIN human_calling_handoffs handoff
 			ON handoff.id = call.source_handoff_id
 		JOIN LATERAL (
@@ -125,10 +125,15 @@ func (m *Module) ReadCallingState(
 			AND leg.staff_subject = $1
 			AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING')
 			AND (
-				calling_scope.location_scope = 'ALL'
+				call.direction = 'OUTBOUND'
+				OR operational_scope.role = 'STAFF'
+				OR operational_scope.role IS NULL
+			)
+			AND (
+				operational_scope.location_scope = 'ALL'
 				OR EXISTS (
 					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = calling_scope.membership_id
+					WHERE allowed.membership_id = operational_scope.membership_id
 						AND allowed.location_id = call.location_id
 				)
 			)
@@ -200,15 +205,20 @@ func (m *Module) readStaffStateCall(
 		JOIN access_locations location
 			ON location.practice_id = call.practice_id
 			AND location.id = call.location_id
-		JOIN access_calling_scopes calling_scope
-			ON calling_scope.practice_id = call.practice_id
-			AND calling_scope.user_subject = leg.staff_subject
+		JOIN access_operational_scopes operational_scope
+			ON operational_scope.practice_id = call.practice_id
+			AND operational_scope.user_subject = leg.staff_subject
 		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
 			AND (
-				calling_scope.location_scope = 'ALL'
+				call.direction = 'OUTBOUND'
+				OR operational_scope.role = 'STAFF'
+				OR operational_scope.role IS NULL
+			)
+			AND (
+				operational_scope.location_scope = 'ALL'
 				OR EXISTS (
 					SELECT 1 FROM access_membership_locations allowed
-					WHERE allowed.membership_id = calling_scope.membership_id
+					WHERE allowed.membership_id = operational_scope.membership_id
 						AND allowed.location_id = call.location_id
 				)
 			)
@@ -295,8 +305,9 @@ func (m *Module) readScopedVoicemailState(
 }
 
 func callingStateETag(state CallingState, leaseVersion int64) string {
-	value := fmt.Sprintf("lease:%d:%s:%t:%t", leaseVersion,
-		state.Softphone.SessionID, state.Softphone.Owner, state.Softphone.Available)
+	value := fmt.Sprintf("lease:%d:%s:%t:%t:%s:%s", leaseVersion,
+		state.Softphone.SessionID, state.Softphone.Owner, state.Softphone.Available,
+		state.Softphone.ActiveCallID, state.Softphone.PendingOutcomeCallID)
 	for _, leg := range state.Ringing {
 		value += fmt.Sprintf("|ring:%s:%s:%s:%s:%s:%d", leg.CallID, leg.CallLegID,
 			leg.Phone, leg.Deadline.UTC().Format(time.RFC3339Nano), leg.State, leg.Version)

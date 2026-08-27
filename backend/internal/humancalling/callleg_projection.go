@@ -359,11 +359,19 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			AND credential.state = 'ACTIVE'
 			AND credential.provider_sip_username IS NOT NULL
 			AND NOT EXISTS (
-				SELECT 1 FROM human_calling_call_legs occupied
+				SELECT 1
+				FROM human_calling_call_legs occupied
+				JOIN human_calling_calls occupied_call
+					ON occupied_call.id = occupied.call_id
 				WHERE occupied.staff_subject = calling_scope.user_subject
 					AND (
 						occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
 						OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
+						OR (occupied_call.direction = 'OUTBOUND'
+							AND occupied_call.terminal_outcome IS NULL
+							AND occupied.state IN (
+								'PENDING', 'DIALING', 'RINGING', 'ENDING'
+							))
 					)
 			)
 		ORDER BY calling_scope.user_subject
@@ -569,19 +577,24 @@ func (m *Module) applyStaffInitiated(
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM access_calling_scopes calling_scope
-				WHERE calling_scope.practice_id = $1
-					AND calling_scope.user_subject = $2
+				FROM access_operational_scopes operational_scope
+				WHERE operational_scope.practice_id = $1
+					AND operational_scope.user_subject = $2
 					AND (
-						calling_scope.location_scope = 'ALL'
+						$4 = 'OUTBOUND'
+						OR operational_scope.role = 'STAFF'
+						OR operational_scope.role IS NULL
+					)
+					AND (
+						operational_scope.location_scope = 'ALL'
 						OR EXISTS (
 							SELECT 1 FROM access_membership_locations allowed
-							WHERE allowed.membership_id = calling_scope.membership_id
+							WHERE allowed.membership_id = operational_scope.membership_id
 								AND allowed.location_id = $3
 						)
 					)
 			)
-		`, practiceID, staffSubject, locationID).Scan(&staffEligible); err != nil {
+		`, practiceID, staffSubject, locationID, direction).Scan(&staffEligible); err != nil {
 			return fmt.Errorf("revalidate Staff answer authorization: %w", err)
 		}
 		if priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {

@@ -33,10 +33,26 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, ErrDenied
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT call.id
+		SELECT leg.state
 		FROM human_calling_calls call
 		JOIN human_calling_call_legs leg ON leg.call_id = call.id
+		JOIN access_operational_scopes operational_scope
+			ON operational_scope.practice_id = call.practice_id
+			AND operational_scope.user_subject = leg.staff_subject
 		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
+			AND (
+				call.direction = 'OUTBOUND'
+				OR operational_scope.role = 'STAFF'
+				OR operational_scope.role IS NULL
+			)
+			AND (
+				operational_scope.location_scope = 'ALL'
+				OR EXISTS (
+					SELECT 1 FROM access_membership_locations allowed
+					WHERE allowed.membership_id = operational_scope.membership_id
+						AND allowed.location_id = call.location_id
+				)
+			)
 			AND leg.state NOT IN ('ENDED', 'FAILED')
 		ORDER BY call.id
 		FOR UPDATE OF call
@@ -44,7 +60,16 @@ func (m *Module) AcquireSoftphone(
 	if err != nil {
 		return SoftphoneState{}, fmt.Errorf("lock active Calls for lease acquisition: %w", err)
 	}
+	connectedCall := false
 	for rows.Next() {
+		var legState string
+		if err := rows.Scan(&legState); err != nil {
+			rows.Close()
+			return SoftphoneState{}, fmt.Errorf("scan active Call lock: %w", err)
+		}
+		if legState == "BRIDGE_PENDING" || legState == "BRIDGED" {
+			connectedCall = true
+		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -60,6 +85,16 @@ func (m *Module) AcquireSoftphone(
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return SoftphoneState{}, fmt.Errorf("lock existing softphone lease: %w", err)
 	}
+	if connectedCall && previousSessionID != "" && previousSessionID != sessionID {
+		if err := tx.Commit(ctx); err != nil {
+			return SoftphoneState{}, fmt.Errorf("commit connected Call lease refusal: %w", err)
+		}
+		var state SoftphoneState
+		if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state); err != nil {
+			return SoftphoneState{}, err
+		}
+		return state, nil
+	}
 	var state SoftphoneState
 	err = tx.QueryRow(ctx, `
 		INSERT INTO human_calling_softphone_leases (
@@ -69,25 +104,12 @@ func (m *Module) AcquireSoftphone(
 		ON CONFLICT (user_subject) DO UPDATE SET
 			session_id = EXCLUDED.session_id,
 			lease_expires_at = EXCLUDED.lease_expires_at,
-			desired_available = CASE
-				WHEN human_calling_softphone_leases.session_id = EXCLUDED.session_id
-				THEN human_calling_softphone_leases.desired_available ELSE false END,
-			registered = CASE
-				WHEN human_calling_softphone_leases.session_id = EXCLUDED.session_id
-				THEN human_calling_softphone_leases.registered ELSE false END,
-			microphone_ready = CASE
-				WHEN human_calling_softphone_leases.session_id = EXCLUDED.session_id
-				THEN human_calling_softphone_leases.microphone_ready ELSE false END,
-			audio_ready = CASE
-				WHEN human_calling_softphone_leases.session_id = EXCLUDED.session_id
-				THEN human_calling_softphone_leases.audio_ready ELSE false END,
-			session_healthy = CASE
-				WHEN human_calling_softphone_leases.session_id = EXCLUDED.session_id
-				THEN human_calling_softphone_leases.session_healthy ELSE false END,
-			readiness_updated_at = CASE
-				WHEN human_calling_softphone_leases.session_id = EXCLUDED.session_id
-				THEN human_calling_softphone_leases.readiness_updated_at
-				ELSE EXCLUDED.readiness_updated_at END,
+			desired_available = false,
+			registered = false,
+			microphone_ready = false,
+			audio_ready = false,
+			session_healthy = false,
+			readiness_updated_at = EXCLUDED.readiness_updated_at,
 			version = human_calling_softphone_leases.version + 1,
 			updated_at = EXCLUDED.readiness_updated_at
 		WHERE human_calling_softphone_leases.session_id = EXCLUDED.session_id
@@ -109,11 +131,28 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, fmt.Errorf("acquire softphone lease: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_call_legs
+		UPDATE human_calling_call_legs leg
 		SET staff_session_id = $2, updated_at = $3
-		WHERE role = 'STAFF' AND staff_subject = $1
-			AND state NOT IN ('ENDED', 'FAILED')
-			AND staff_session_id IS DISTINCT FROM $2
+		FROM human_calling_calls call, access_operational_scopes operational_scope
+		WHERE leg.call_id = call.id
+			AND operational_scope.practice_id = call.practice_id
+			AND operational_scope.user_subject = leg.staff_subject
+			AND leg.role = 'STAFF' AND leg.staff_subject = $1
+			AND (
+				call.direction = 'OUTBOUND'
+				OR operational_scope.role = 'STAFF'
+				OR operational_scope.role IS NULL
+			)
+			AND (
+				operational_scope.location_scope = 'ALL'
+				OR EXISTS (
+					SELECT 1 FROM access_membership_locations allowed
+					WHERE allowed.membership_id = operational_scope.membership_id
+						AND allowed.location_id = call.location_id
+				)
+			)
+			AND leg.state NOT IN ('ENDED', 'FAILED')
+			AND leg.staff_session_id IS DISTINCT FROM $2
 	`, identity.Subject, sessionID, now); err != nil {
 		return SoftphoneState{}, fmt.Errorf("transfer Staff CallLeg ownership: %w", err)
 	}
@@ -150,26 +189,27 @@ func (m *Module) SetReadiness(
 	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
 		return SoftphoneState{}, ErrDenied
 	}
-	rows, err := tx.Query(ctx, `
-		SELECT call.id
-		FROM human_calling_calls call
-		JOIN human_calling_call_legs leg ON leg.call_id = call.id
-		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
-			AND leg.state IN ('BRIDGE_PENDING', 'BRIDGED', 'ENDING')
-		ORDER BY call.id
-		FOR UPDATE OF call
-	`, command.Identity.Subject)
+	var ownsLease bool
+	err = tx.QueryRow(ctx, `
+		SELECT session_id = $2 AND lease_expires_at > $3
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+		FOR UPDATE
+	`, command.Identity.Subject, command.SessionID, now).Scan(&ownsLease)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SoftphoneState{}, ErrDenied
+	}
 	if err != nil {
-		return SoftphoneState{}, fmt.Errorf("lock occupied Calls for readiness: %w", err)
+		return SoftphoneState{}, fmt.Errorf("lock calling readiness lease: %w", err)
 	}
-	for rows.Next() {
+	if !ownsLease {
+		return SoftphoneState{}, ErrDenied
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return SoftphoneState{}, fmt.Errorf("iterate occupied Call locks: %w", err)
-	}
-	rows.Close()
 
+	// Staff occupancy remains global even when access to its Practice is revoked:
+	// the database permits only one occupied Staff Call at a time. The scoped
+	// projection below withholds the revoked Call ID without inventing capacity
+	// for a second provider Call.
 	var state SoftphoneState
 	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_softphone_leases SET
@@ -178,10 +218,15 @@ func (m *Module) SetReadiness(
 			audio_ready = $5,
 			session_healthy = $6,
 			desired_available = CASE WHEN EXISTS (
-				SELECT 1 FROM human_calling_call_legs leg
+				SELECT 1
+				FROM human_calling_call_legs leg
+				JOIN human_calling_calls call ON call.id = leg.call_id
 				WHERE leg.staff_subject = $1 AND leg.role = 'STAFF'
 					AND (leg.state IN ('BRIDGE_PENDING', 'BRIDGED')
-						OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL))
+						OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
+						OR (call.direction = 'OUTBOUND'
+							AND call.terminal_outcome IS NULL
+							AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ENDING')))
 			) THEN false ELSE $7 END,
 			readiness_updated_at = $8,
 			lease_expires_at = $8 + $9::interval,
@@ -217,20 +262,55 @@ func (m *Module) loadCurrentCallCapacity(
 	subject string,
 	state *SoftphoneState,
 ) error {
+	var globallyOccupied bool
 	if err := m.database.QueryRow(ctx, `
-		SELECT COALESCE((
-			SELECT call.id::text
+		WITH occupied AS (
+			SELECT call.id, call.practice_id, call.location_id, call.direction,
+				leg.staff_session_id, leg.state, leg.answered_at, leg.updated_at
 			FROM human_calling_calls call
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
 			WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
-				AND (leg.state IN ('BRIDGE_PENDING', 'BRIDGED')
-					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL))
-			ORDER BY leg.updated_at DESC, call.id LIMIT 1
-		), '')
-	`, subject).Scan(&state.ActiveCallID); err != nil {
+				AND (
+					leg.state IN ('BRIDGE_PENDING', 'BRIDGED')
+					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
+					OR (
+						call.direction = 'OUTBOUND'
+						AND call.terminal_outcome IS NULL
+						AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ENDING')
+					)
+				)
+		)
+		SELECT COALESCE((
+			SELECT occupied.id::text
+			FROM occupied
+			JOIN access_operational_scopes operational_scope
+				ON operational_scope.practice_id = occupied.practice_id
+				AND operational_scope.user_subject = $1
+			WHERE (
+					occupied.direction = 'OUTBOUND'
+					OR operational_scope.role = 'STAFF'
+					OR operational_scope.role IS NULL
+				)
+				AND (
+					operational_scope.location_scope = 'ALL'
+					OR EXISTS (
+						SELECT 1 FROM access_membership_locations allowed
+						WHERE allowed.membership_id = operational_scope.membership_id
+							AND allowed.location_id = occupied.location_id
+					)
+				)
+				AND (
+					occupied.direction <> 'OUTBOUND'
+					OR occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
+					OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
+					OR occupied.staff_session_id = $2
+				)
+			ORDER BY occupied.updated_at DESC, occupied.id LIMIT 1
+		), ''), EXISTS (SELECT 1 FROM occupied)
+	`, subject, state.SessionID).Scan(&state.ActiveCallID, &globallyOccupied); err != nil {
 		return fmt.Errorf("read occupied Call: %w", err)
 	}
-	if state.ActiveCallID != "" {
+	if globallyOccupied {
 		state.Available = false
 	}
 	if err := m.database.QueryRow(ctx, `
@@ -238,7 +318,23 @@ func (m *Module) loadCurrentCallCapacity(
 			SELECT call.id::text
 			FROM human_calling_calls call
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
+			JOIN access_operational_scopes operational_scope
+				ON operational_scope.practice_id = call.practice_id
+				AND operational_scope.user_subject = leg.staff_subject
 			WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
+				AND (
+					call.direction = 'OUTBOUND'
+					OR operational_scope.role = 'STAFF'
+					OR operational_scope.role IS NULL
+				)
+				AND (
+					operational_scope.location_scope = 'ALL'
+					OR EXISTS (
+						SELECT 1 FROM access_membership_locations allowed
+						WHERE allowed.membership_id = operational_scope.membership_id
+							AND allowed.location_id = call.location_id
+					)
+				)
 				AND leg.bridged_at IS NOT NULL
 				AND call.terminal_outcome = 'ENDED'
 				AND call.disposition_at IS NULL

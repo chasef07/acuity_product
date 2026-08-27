@@ -105,16 +105,9 @@ export type CallingCardOfferView = {
   failure?: CallingCardFailureView
 }
 
-export type CallingCardFailureOnlyView = {
-  shell: "calling-card"
-  kind: "failure"
-  failure: CallingCardFailureView
-}
-
 export type CallingCardView =
   | CallingCardCallView
   | CallingCardOfferView
-  | CallingCardFailureOnlyView
 
 export type CallingCardIdentity = {
   primary: string
@@ -172,20 +165,15 @@ export function projectCallingCard(
     const activeOffers = snapshot.offers.filter(
       (offer) => new Date(offer.deadline).getTime() > _now,
     )
-    if (activeOffers.length === 0) {
-      if (!snapshot.failure) return undefined
-      return {
-        shell: "calling-card",
-        kind: "failure",
-        failure: projectFailure(snapshot.failure),
-      }
-    }
+    if (activeOffers.length === 0) return undefined
     return {
       shell: "calling-card",
       kind: "offers",
       status: "Incoming call",
       trayLabel: "Incoming calls",
-      ...(snapshot.failure ? { failure: projectFailure(snapshot.failure) } : {}),
+      ...(snapshot.failure
+        ? { failure: projectCallingFailure(snapshot.failure) }
+        : {}),
       offers: activeOffers.map((offer) => {
         const phone = formatPhone(offer.phone) || "Phone unavailable"
         return {
@@ -236,7 +224,9 @@ export function projectCallingCard(
       ],
     },
     actions: projectActions(call, snapshot),
-    ...(snapshot.failure ? { failure: projectFailure(snapshot.failure) } : {}),
+    ...(snapshot.failure
+      ? { failure: projectCallingFailure(snapshot.failure) }
+      : {}),
   }
 }
 
@@ -317,13 +307,15 @@ function dispositionChoices(
   ]
 }
 
-function projectFailure(
+export function projectCallingFailure(
   failure: CallingCardFailure,
 ): CallingCardFailureView {
   return {
     role: "alert",
     title: "Calling needs attention",
-    message: failureCopy(failure.kind),
+    message: failure.message.startsWith("Calling stopped locally")
+      ? failure.message
+      : failureCopy(failure),
     ...(failure.recoverable
       ? {
           action: {
@@ -340,14 +332,16 @@ function projectFailure(
   }
 }
 
-function failureCopy(kind: CallingCardFailure["kind"]) {
-  switch (kind) {
+function failureCopy(failure: CallingCardFailure) {
+  switch (failure.kind) {
     case "authentication":
       return "Sign in again to keep calling."
     case "access":
       return "You do not have calling access for this practice."
     case "ownership":
-      return "Calling is active in another browser. Take over here to use this device."
+      return failure.recoverable
+        ? "Calling is active in another browser. Take over here to use this device."
+        : "An active Call is using calling in another browser. Finish it there before using this device."
     case "technical-readiness":
       return "Allow microphone access, then reconnect calling."
     case "media":

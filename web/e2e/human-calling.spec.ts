@@ -75,12 +75,8 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       .toBe(2)
 
     await Promise.all([
-      expect(
-        selectedPage.getByRole("switch", { name: "Availability" }),
-      ).toBeChecked({ timeout: 40_000 }),
-      expect(
-        secondaryPage.getByRole("switch", { name: "Availability" }),
-      ).toBeChecked({ timeout: 40_000 }),
+      ensureCallingAvailability(selectedPage),
+      ensureCallingAvailability(secondaryPage),
     ])
     await signInAs(
       sameUserPage,
@@ -88,7 +84,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       "Fixture Selected Staff",
     )
     await expect(
-      callCenter(sameUserPage).getByRole("button", { name: "Take over" }),
+      sameUserPage.getByRole("button", { name: "Take over" }),
     ).toBeVisible({ timeout: 40_000 })
     await sameUserContext.close()
 
@@ -498,6 +494,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toBeVisible()
     await expect(
+      selectedPage.getByRole("button", { name: "Workspace selector" }),
+    ).toBeDisabled()
+    await expect(
       callCenter(selectedPage).getByText("waiting for exact leg", {
         exact: false,
       }),
@@ -524,6 +523,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     ).toHaveText(/^Connected \d{2}:\d{2}$/, { timeout: 20_000 })
     await expect(
       selectedPage.getByRole("button", { name: "End", exact: true }),
+    ).toBeVisible()
+    await expect(
+      selectedPage.getByRole("button", { name: "Mute", exact: true }),
     ).toHaveCount(0)
     await sendIncomingLeg(
       selectedPage,
@@ -639,6 +641,19 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     ).toHaveCount(0)
     await outcome.getByRole("button", { name: "Resolved", exact: true }).click()
     await expect(outcome).toHaveCount(0)
+    const navigationContext = selectedPage.getByRole("complementary", {
+      name: "Task context",
+    })
+    await expect(
+      navigationContext.getByRole("heading", {
+        name: navigationTaskTitle,
+        exact: true,
+      }),
+    ).toBeVisible()
+    await navigationContext
+      .getByRole("button", { name: "Complete", exact: true })
+      .click()
+    await expect(navigationTask).toHaveCount(0)
   } finally {
     await database.end()
     await secondaryContext.close()
@@ -989,7 +1004,10 @@ async function startAndEndOutboundWhileVoicemail(
   const outboundCallID = outbound.rows[0]!.id
   const callURL = `${portalURL}/v1/calling/calls/${outboundCallID}`
   const hangupURL = `${callURL}/hangup`
-  await expect(callCenter(page).getByRole("status")).toHaveText("Calling…")
+  const initialCall = callCenter(page)
+  await expect(initialCall.getByRole("status")).toHaveText("Calling…")
+  const outboundIdentity = await initialCall.getByRole("heading").textContent()
+  expect(outboundIdentity).toBeTruthy()
   const initialEnd = page.getByRole("button", { name: "End", exact: true })
   await expect(initialEnd).toBeVisible()
   await expect(initialEnd).toHaveClass(/rounded-full/)
@@ -1003,6 +1021,35 @@ async function startAndEndOutboundWhileVoicemail(
     "STAFF",
     "DIAL_OUTBOUND_STAFF",
   )
+  await expect
+    .poll(async () => {
+      const result = await database.query<{ state: string }>(
+        `SELECT state
+           FROM human_calling_call_legs
+          WHERE call_id = $1 AND role = 'STAFF'`,
+        [outboundCallID],
+      )
+      return result.rows[0]?.state ?? ""
+    })
+    .toMatch(/^(PENDING|DIALING|RINGING)$/)
+
+  await page.reload()
+  const restoredCall = callCenter(page)
+  await expect(restoredCall.getByRole("status")).toHaveText("Calling…")
+  await expect(restoredCall.getByRole("heading")).toHaveText(outboundIdentity!)
+  await expect(
+    restoredCall.getByRole("button", { name: /^Answer/ }),
+  ).toHaveCount(0)
+  const restoredEnd = restoredCall.getByRole("button", {
+    name: "End",
+    exact: true,
+  })
+  await expect(restoredEnd).toBeEnabled()
+  await expect(restoredEnd.locator("..")).toHaveAttribute(
+    "data-control-slot",
+    stableEndPosition,
+  )
+
   const staffSessionID = staffLeg.session_id || "voicemail-concurrent-staff-session"
   await deliverProviderEvent(page, {
     eventType: "call.initiated",
@@ -1589,6 +1636,24 @@ async function prepareBrowser(context: BrowserContext) {
 
 function callCenter(page: Page) {
   return page.getByRole("region", { name: "Call controls" })
+}
+
+async function ensureCallingAvailability(page: Page) {
+  const availability = page.getByRole("switch", { name: "Availability" })
+  const takeOver = page.getByRole("button", { name: "Take over" })
+
+  await expect
+    .poll(async () => {
+      if (await availability.isChecked().catch(() => false)) return "available"
+      if (await takeOver.isVisible().catch(() => false)) return "takeover"
+      return "waiting"
+    }, { timeout: 40_000 })
+    .not.toBe("waiting")
+
+  if (!(await availability.isChecked().catch(() => false))) {
+    await takeOver.click()
+  }
+  await expect(availability).toBeChecked({ timeout: 40_000 })
 }
 
 async function deliverProviderEvent(

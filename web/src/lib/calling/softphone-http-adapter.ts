@@ -25,11 +25,12 @@ type FailedResponse = {
 
 export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
   return {
-    async acquireLease(input) {
+    async acquireLease(input, signal) {
       const client = await authenticatedClient()
       const result = await acquireSoftphone({
         client,
         body: { sessionId: input.sessionID, takeover: input.takeover },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
@@ -38,11 +39,13 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async writeReadiness(input) {
+    async writeReadiness(input, signal) {
       const client = await authenticatedClient()
-      const result = await setCallingReadiness({ client, body: input }).catch(
-        networkFailure,
-      )
+      const result = await setCallingReadiness({
+        client,
+        body: input,
+        signal,
+      }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
         conflict: "Calling ownership moved to another browser.",
@@ -52,11 +55,12 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async issueMediaToken(input) {
+    async issueMediaToken(input, signal) {
       const client = await authenticatedClient()
       const result = await issueCallingMediaToken({
         client,
         body: { sessionId: input.sessionID },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data.token
       if (result.response?.status === 409) {
@@ -72,11 +76,12 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async readState(input) {
+    async readState(input, signal) {
       const client = await authenticatedClient()
       const result = await getCallingState({
         client,
         headers: input.etag ? { "If-None-Match": input.etag } : undefined,
+        signal,
       }).catch(networkFailure)
       const etag = result.response?.headers.get("ETag") ?? undefined
       if (result.response?.status === 304) {
@@ -89,11 +94,12 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async readCall(callID) {
+    async readCall(callID, signal) {
       const client = await authenticatedClient()
       const result = await getCallingCall({
         client,
         path: { callId: callID },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
@@ -102,12 +108,13 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async confirmMedia(input) {
+    async confirmMedia(input, signal) {
       const client = await authenticatedClient()
       const result = await confirmCallingMediaReady({
         client,
         path: { callId: input.callID },
         body: { sessionId: input.sessionID, mediaToken: input.mediaToken },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
@@ -116,11 +123,13 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async startOutbound(input) {
+    async startOutbound(input, signal) {
       const client = await authenticatedClient()
-      const result = await startOutboundCall({ client, body: input }).catch(
-        networkFailure,
-      )
+      const result = await startOutboundCall({
+        client,
+        body: input,
+        signal,
+      }).catch(networkFailure)
       if (result.data) return result.data
       if (result.response?.status === 400) {
         throw new SoftphoneAdapterError(
@@ -134,12 +143,13 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async hangup(input) {
+    async hangup(input, signal) {
       const client = await authenticatedClient()
       const result = await requestCallingHangup({
         client,
         path: { callId: input.callID },
         body: { sessionId: input.sessionID },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
@@ -148,7 +158,7 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async retry(input) {
+    async retry(input, signal) {
       const client = await authenticatedClient()
       const result = await retryOutboundCall({
         client,
@@ -157,6 +167,7 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
           sessionId: input.sessionID,
           idempotencyKey: input.idempotencyKey,
         },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {
@@ -165,12 +176,13 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       })
     },
 
-    async dispose(input) {
+    async dispose(input, signal) {
       const client = await authenticatedClient()
       const result = await recordCallingDisposition({
         client,
         path: { callId: input.callID },
         body: { sessionId: input.sessionID, outcome: input.outcome },
+        signal,
       }).catch(networkFailure)
       if (result.data) return result.data
       throw requestFailure(result, {

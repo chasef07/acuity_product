@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 
-import { CallingCard } from "./calling-card.tsx"
+import { CallingCard, CallingFailureNotice } from "./calling-card.tsx"
 import type { CallingCall } from "../../lib/api/generated/types.gen.ts"
 import type { SoftphoneRuntimeSnapshot } from "../../lib/calling/softphone-runtime.ts"
 
@@ -37,6 +37,7 @@ test("rendered Call states keep one accessible status and stable control order",
 test("rendered ownership and media failures expose their exact recovery actions", () => {
   const ownership = render(
     snapshot({
+      activeCall: call({ state: "CONNECTED" }),
       lease: { ...lease(), owner: false, sessionId: "other-session" },
       failure: {
         kind: "ownership",
@@ -49,8 +50,22 @@ test("rendered ownership and media failures expose their exact recovery actions"
   assert.match(ownership, />Take over</)
   assert.doesNotMatch(ownership, /technical lease detail/)
 
+  const activeOwnership = renderToStaticMarkup(
+    <CallingFailureNotice
+      failure={{
+        kind: "ownership",
+        message: "technical active Call detail",
+        recoverable: false,
+      }}
+      onRecover={() => undefined}
+    />,
+  )
+  assert.match(activeOwnership, /Finish it there/)
+  assert.doesNotMatch(activeOwnership, />Take over</)
+
   const media = render(
     snapshot({
+      activeCall: call({ state: "CONNECTED" }),
       failure: {
         kind: "media",
         message: "provider implementation detail",
@@ -60,6 +75,23 @@ test("rendered ownership and media failures expose their exact recovery actions"
   )
   assert.match(media, />Reconnect calling</)
   assert.doesNotMatch(media, /provider implementation detail/)
+})
+
+test("a failure without a Call or incoming offer does not render a Calling Card", () => {
+  const failure = {
+    kind: "ownership" as const,
+    message: "technical lease detail",
+    recoverable: true,
+  }
+  const html = render(snapshot({ failure }))
+  const recovery = renderToStaticMarkup(
+    <CallingFailureNotice failure={failure} onRecover={() => undefined} />,
+  )
+
+  assert.equal(html, "")
+  assert.match(recovery, /role="alert"/)
+  assert.match(recovery, />Take over</)
+  assert.doesNotMatch(recovery, /technical lease detail/)
 })
 
 test("rendered simultaneous offers stay in one tray with exact CallLeg actions", () => {
