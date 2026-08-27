@@ -1,6 +1,6 @@
 {
   "Environment": "development",
-  "RequestedBy": "local-slice-1-fixture",
+  "RequestedBy": "local-development-fixture",
   "PlatformOperators": [
     "founder@acuity.test"
   ],

@@ -307,7 +307,7 @@ func TestProvisioningOwnsAbitaOfficeToLocationRoutes(t *testing.T) {
 			context.Background(),
 			access.Provisioning{
 				Environment: "test",
-				RequestedBy: "slice-4-access-test",
+				RequestedBy: "ai-task-access-test",
 				Practices: []access.PracticeProvision{{
 					Key:       "abita-eye-group",
 					Name:      "Abita Eye Group",
@@ -499,7 +499,7 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 
 	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-1-integration-test",
+		RequestedBy: "access-integration-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "abita-eye-group",
 			Name: "Abita Eye Group",
@@ -550,7 +550,7 @@ func TestLocationScopeIsDynamicForAdminAndAllButExplicitForSelectedStaff(t *test
 
 	_, err = module.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-1-integration-test",
+		RequestedBy: "access-integration-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "abita-eye-group",
 			Name: "Abita Eye Group",
@@ -622,7 +622,7 @@ func TestPlatformOperatorMutatesAcrossPracticesAndKeepsRealActor(t *testing.T) {
 
 	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
-		RequestedBy:       "slice-1-integration-test",
+		RequestedBy:       "access-integration-test",
 		PlatformOperators: []string{"founder@acuity.test"},
 		Practices: []access.PracticeProvision{
 			{
@@ -704,7 +704,7 @@ func TestAccessGrantDiscoveryAndRequestedLocationStayInsideAccess(t *testing.T) 
 
 	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
-		RequestedBy:       "slice-1-integration-test",
+		RequestedBy:       "access-integration-test",
 		PlatformOperators: []string{"founder@acuity.test"},
 		Practices: []access.PracticeProvision{{
 			Key:  "abita-eye-group",
@@ -1108,7 +1108,7 @@ func TestMembershipRevocationTakesEffectOnNextResolutionAndIsAudited(t *testing.
 
 	_, err := module.Provision(ctx, access.Provisioning{
 		Environment:       "test",
-		RequestedBy:       "slice-1-revocation-test",
+		RequestedBy:       "access-revocation-test",
 		PlatformOperators: []string{operator.Email},
 		Practices: []access.PracticeProvision{{
 			Key:       "abita-eye-group",

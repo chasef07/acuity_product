@@ -44,7 +44,7 @@ func TestGeneratedHTTPSInterfaceLoadsOnlyTheAuthorizedEmptyWorkspace(t *testing.
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
-		RequestedBy:       "slice-1-http-test",
+		RequestedBy:       "access-http-test",
 		PlatformOperators: []string{"founder@acuity.test"},
 		Practices: []access.PracticeProvision{{
 			Key:  "abita-eye-group",
@@ -635,7 +635,7 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-3-http-test",
+		RequestedBy: "work-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "task-practice",
 			Name:      "Task Practice",
@@ -891,7 +891,7 @@ func TestPortalAPIBoundsPoolAcquisitionAndReturnsRetryableUnavailable(t *testing
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-1-pool-test",
+		RequestedBy: "portal-pool-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "pool-practice",
 			Name:      "Pool Fixture Practice",
@@ -1119,7 +1119,7 @@ func TestStaffTaskHTTPInterfaceAcceptsCurrentAbitaToolContract(t *testing.T) {
 		context.Background(),
 		access.Provisioning{
 			Environment: "test",
-			RequestedBy: "slice-4-http-test",
+			RequestedBy: "ai-task-http-test",
 			Practices: []access.PracticeProvision{{
 				Key:  "calling-practice",
 				Name: "Calling Practice",
@@ -1435,7 +1435,7 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-2-http-test",
+		RequestedBy: "human-calling-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "calling-practice",
 			Name: "Calling Practice",

@@ -811,7 +811,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-5-send-test",
+		RequestedBy: "messaging-send-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "message-practice",
 			Name: "Message Practice",
@@ -1736,7 +1736,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 					created_at
 				)
 				VALUES (
-					'slice-5-timeline',
+					'messaging-timeline',
 					$1,
 					$2,
 					$3,
@@ -1770,7 +1770,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 				$5
 			FROM handoff
 		`, authorization.Practice.ID, locationID,
-			fmt.Sprintf("slice-5-timeline-call-%d", index),
+			fmt.Sprintf("messaging-timeline-call-%d", index),
 			bytes.Repeat([]byte{byte(index + 1)}, 32),
 			callAt,
 		); err != nil {
@@ -1790,7 +1790,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			WHERE source_handoff_id = (
 				SELECT id FROM human_calling_handoffs WHERE source_call_id = $1
 			)
-		`, fmt.Sprintf("slice-5-timeline-call-%d", index), callAt); err != nil {
+		`, fmt.Sprintf("messaging-timeline-call-%d", index), callAt); err != nil {
 			t.Fatalf("seed exact-phone Caller CallLeg %d: %v", index, err)
 		}
 		if _, err := pool.Exec(context.Background(), `
@@ -1808,7 +1808,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 			WHERE source_handoff_id = (
 				SELECT id FROM human_calling_handoffs WHERE source_call_id = $1
 			)
-		`, fmt.Sprintf("slice-5-timeline-call-%d", index), callAt,
+		`, fmt.Sprintf("messaging-timeline-call-%d", index), callAt,
 			identity.Subject); err != nil {
 			t.Fatalf("seed unbridged Staff CallLeg %d: %v", index, err)
 		}
@@ -2101,7 +2101,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-5-attachment-test",
+		RequestedBy: "messaging-attachment-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "attachment-practice",
 			Name: "Attachment Practice",

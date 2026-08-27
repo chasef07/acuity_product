@@ -35,7 +35,7 @@ import type {
 import { getAccessToken } from "@/lib/auth-client"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
-type InteractionWorkspaceProps = {
+type TaskCallContextProps = {
   task: Task | undefined
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
@@ -49,7 +49,7 @@ type InteractionWorkspaceProps = {
   onReturnToCall: () => void
 }
 
-export function InteractionWorkspace({
+export function TaskCallContext({
   task,
   activeCall,
   view,
@@ -61,7 +61,7 @@ export function InteractionWorkspace({
   onTaskUpdated,
   onStartTaskCall,
   onReturnToCall,
-}: InteractionWorkspaceProps) {
+}: TaskCallContextProps) {
   const openRecoveryTask = useCallback(
     async (taskID: string) => {
       const token = await getAccessToken()

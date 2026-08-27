@@ -37,13 +37,13 @@ import {
   CallingAvailabilityControl,
   CallingDock,
 } from "@/components/workspace/calling-dock"
-import { AIInteractionContext } from "@/components/workspace/ai-interaction-detail"
-import { InteractionWorkspace } from "@/components/workspace/interaction-workspace"
-import { EngagementWorkspace } from "@/components/workspace/message-workspace"
+import { AIInteractionContext } from "@/components/workspace/ai-interaction-context"
+import { EngagementWorkspace } from "@/components/workspace/engagement-workspace"
+import { TaskCallContext } from "@/components/workspace/task-call-context"
 import {
   type ConnectionState,
-  TaskRail,
-} from "@/components/workspace/task-rail"
+  WorkspaceRail,
+} from "@/components/workspace/workspace-rail"
 import { portalClient, realtimeURL } from "@/lib/api/client"
 import {
   discoverAccess,
@@ -125,7 +125,7 @@ const practiceStorageKey = "acuity.selectedPractice"
 const locationStorageKey = "acuity.selectedLocation"
 const taskScopeStorageKey = "acuity.taskLocationScope"
 
-export function TaskWorkspaceShell() {
+export function PortalWorkspace() {
   const router = useRouter()
   const session = authClient.useSession()
   const [loadState, setLoadState] = useState<LoadState>("loading")
@@ -1363,7 +1363,7 @@ export function TaskWorkspaceShell() {
   }
   return callingShell(
     <>
-        <TaskRail
+        <WorkspaceRail
           discovery={discovery}
           practice={practice}
           workspaceControl={
@@ -1509,7 +1509,7 @@ export function TaskWorkspaceShell() {
                       onReview={reviewAIOutcome}
                     />
                   ) : (
-                    <InteractionWorkspace
+                    <TaskCallContext
                       task={selectedTask}
                       activeCall={historicalCall ?? activeCall}
                       view={contextView}

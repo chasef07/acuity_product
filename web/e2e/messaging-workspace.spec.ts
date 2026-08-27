@@ -134,7 +134,7 @@ test("an AI call without appointment actions stays call-first", async ({
   await expect(outboundMessage.getByText("Sent", { exact: true })).toBeVisible()
 
   const inboundText = "Perfect, thank you!"
-  await sendInbound(page, "slice-5-no-appointment-inbound", inboundText, "+17275550187")
+  await sendInbound(page, "messaging-no-appointment-inbound", inboundText, "+17275550187")
   const inboundMessage = page
     .getByRole("article")
     .filter({ hasText: inboundText })
@@ -275,7 +275,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await expect(taskRow).toHaveCount(0)
 })
 
-test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox", async ({
+test("messaging sends, receives, and keeps exact-phone correspondence in one workspace", async ({
   context,
   page,
 }, testInfo) => {
@@ -475,7 +475,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   ).toBeVisible()
 
   const inboundText = "Please call me about the pickup time."
-  await sendInbound(page, "slice-5-inbound", inboundText)
+  await sendInbound(page, "messaging-inbound", inboundText)
   const textsSection = page.getByRole("button", { name: /^Texts/ })
   if ((await textsSection.getAttribute("aria-expanded")) === "false") {
     await textsSection.click()
@@ -702,7 +702,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
     completedTaskContext.getByRole("button", { name: "Complete" }),
   ).toBeVisible()
 
-  await sendInbound(page, "slice-5-stop", "STOP")
+  await sendInbound(page, "messaging-stop", "STOP")
   await expect(
     page.getByText("Outbound messaging is blocked after STOP"),
   ).toBeVisible()
@@ -715,7 +715,7 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
       .filter({ hasText: "(727) 555-0199" }),
   ).toHaveCount(0)
 
-  await sendInbound(page, "slice-5-start", "START")
+  await sendInbound(page, "messaging-start", "START")
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled()
@@ -1017,10 +1017,10 @@ async function createAIStaffTask(
   const response = await page.request.post(`${portalURL}/v1/tasks`, {
     headers: { authorization: "Bearer synthetic-service-token" },
     data: {
-      callId: `slice-5-${suffix}`,
+      callId: `messaging-${suffix}`,
       callerPhone: category === "billing" ? "+17275550196" : "+17275550195",
       category,
-      idempotencyKey: `slice-5-${suffix}`,
+      idempotencyKey: `messaging-${suffix}`,
       message: summary,
       officeKey: "spring-hill",
       officePhone: "+17275550101",
@@ -1040,21 +1040,21 @@ async function createAIAppointmentReview(page: Page) {
     data: {
       kind: "CLOSEOUT",
       officeKey: "spring-hill",
-      sourceCallId: "slice-5-booking-review",
+      sourceCallId: "messaging-booking-review",
       callerPhone: "+17275550188",
       officePhone: "+17275550101",
       startedAt: startedAt.toISOString(),
       endedAt: occurredAt.toISOString(),
       status: "COMPLETED",
       summary: "Caller booked an appointment.",
-      closeoutPayload: { callId: "slice-5-booking-review" },
+      closeoutPayload: { callId: "messaging-booking-review" },
       appointmentOutcome: {
         action: "BOOKED",
         occurredAt: occurredAt.toISOString(),
-        newAppointmentId: "slice-5-booking",
+        newAppointmentId: "messaging-booking",
         bookingResult: {
           status: "booked",
-          appointmentId: "slice-5-booking",
+          appointmentId: "messaging-booking",
         },
       },
     },
@@ -1070,14 +1070,14 @@ async function createAINoAppointmentCall(page: Page) {
     data: {
       kind: "CLOSEOUT",
       officeKey: "spring-hill",
-      sourceCallId: "slice-5-no-appointment-call",
+      sourceCallId: "messaging-no-appointment-call",
       callerPhone: "+17275550187",
       officePhone: "+17275550101",
       startedAt: startedAt.toISOString(),
       endedAt: endedAt.toISOString(),
       status: "COMPLETED",
       summary: "Caller asked about office hours.",
-      closeoutPayload: { callId: "slice-5-no-appointment-call" },
+      closeoutPayload: { callId: "messaging-no-appointment-call" },
     },
   })
   expect([200, 201]).toContain(response.status())

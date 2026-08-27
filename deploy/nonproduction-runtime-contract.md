@@ -1,4 +1,4 @@
-# Slice 1 through 6 non-production runtime contract
+# Non-production runtime contract
 
 This is a deployable contract, not a claim that an external environment exists.
 Project, image, domain, service accounts, and database capacity remain

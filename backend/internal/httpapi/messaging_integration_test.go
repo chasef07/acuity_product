@@ -33,7 +33,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-5-http-test",
+		RequestedBy: "messaging-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "message-http-practice",
 			Name:      "Message HTTP Practice",
