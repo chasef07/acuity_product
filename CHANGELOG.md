@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.6](https://github.com/chasef07/acuity_product/compare/v0.4.5...v0.4.6) (2026-08-26)
+
+
+### Bug Fixes
+
+* **workspace:** clarify activity and visual hierarchy ([#209](https://github.com/chasef07/acuity_product/issues/209)) ([2d6250b](https://github.com/chasef07/acuity_product/commit/2d6250b1aea7812a559bb76361fd1dcb6a4763bb))
+
 ## [0.4.5](https://github.com/chasef07/acuity_product/compare/v0.4.4...v0.4.5) (2026-08-26)
 
 
