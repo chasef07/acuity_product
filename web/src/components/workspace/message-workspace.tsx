@@ -19,6 +19,7 @@ import {
   DownloadIcon,
   EllipsisIcon,
   FileTextIcon,
+  ImageIcon,
   PaperclipIcon,
   PhoneCallIcon,
   RefreshCwIcon,
@@ -26,6 +27,15 @@ import {
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
@@ -799,7 +809,7 @@ function MessageEntry({
   }
 
   const actionClassName = cn(
-    "sm:opacity-0 sm:group-focus-within/message:opacity-100 sm:group-hover/message:opacity-100",
+    "sm:opacity-0 sm:group-focus-within/message:opacity-100 sm:group-hover/message:opacity-100 motion-reduce:duration-0 motion-reduce:transition-none",
     selected && "sm:opacity-100",
   )
 
@@ -821,7 +831,7 @@ function MessageEntry({
               <p className="whitespace-pre-wrap">{message.body}</p>
             )}
             {message.attachment && (
-              <AttachmentCard
+              <MessageAttachmentView
                 attachment={message.attachment}
                 canMutate={canMutate}
                 onChanged={onChanged}
@@ -857,77 +867,103 @@ function MessageEntry({
               <span>{message.safeFailureCode}</span>
             </>
           )}
-          {error && (
-            <p role="alert" className="basis-full text-destructive">
-              {error}
-            </p>
-          )}
-          <span className="basis-full" aria-hidden="true" />
-          {message.body && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className={actionClassName}
-              onClick={copyMessage}
-            >
-              {copyState === "copied" ? (
-                <CheckIcon data-icon="inline-start" />
-              ) : (
-                <CopyIcon data-icon="inline-start" />
-              )}
-              Copy message
-            </Button>
-          )}
-          {canMutate && !message.taskId && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className={actionClassName}
-              disabled={pending}
-              onClick={() => void createTask()}
-            >
-              <CheckSquareIcon data-icon="inline-start" />
-              Create task
-            </Button>
-          )}
-          {canMutate &&
-            outbound &&
-            (message.delivery === "Failed" ||
-              message.delivery === "Status unknown") && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
+          <span className="flex items-center gap-0.5">
+            {message.body && (
+              <Tooltip>
+                <TooltipTrigger
                   render={
                     <Button
                       type="button"
                       size="icon-sm"
                       variant="ghost"
-                      aria-label="More message actions"
+                      aria-label="Copy message"
                       className={actionClassName}
+                      onClick={copyMessage}
                     />
                   }
                 >
-                  <EllipsisIcon />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align={outbound ? "end" : "start"}>
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      disabled={pending}
-                      onClick={() => void sendAgain()}
-                    >
-                      {message.delivery === "Status unknown" ? (
-                        <AlertTriangleIcon />
-                      ) : (
-                        <RefreshCwIcon />
-                      )}
-                      Send again
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                  {copyState === "copied" ? (
+                    <CheckIcon className="size-3.5" />
+                  ) : (
+                    <CopyIcon className="size-3.5" />
+                  )}
+                </TooltipTrigger>
+                <TooltipContent
+                  data-testid="copy-message-tooltip"
+                  className="bg-black text-white"
+                  arrowClassName="bg-black fill-black"
+                >
+                  Copy message
+                </TooltipContent>
+              </Tooltip>
             )}
-          {pending && <Spinner />}
+            {canMutate && !message.taskId && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label="Create task"
+                      className={actionClassName}
+                      disabled={pending}
+                      onClick={() => void createTask()}
+                    />
+                  }
+                >
+                  <CheckSquareIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent
+                  className="bg-black text-white"
+                  arrowClassName="bg-black fill-black"
+                >
+                  Create task
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {canMutate &&
+              outbound &&
+              (message.delivery === "Failed" ||
+                message.delivery === "Status unknown") && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="More message actions"
+                        className={actionClassName}
+                      />
+                    }
+                  >
+                    <EllipsisIcon />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align={outbound ? "end" : "start"}>
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        disabled={pending}
+                        onClick={() => void sendAgain()}
+                      >
+                        {message.delivery === "Status unknown" ? (
+                          <AlertTriangleIcon />
+                        ) : (
+                          <RefreshCwIcon />
+                        )}
+                        Send again
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            {pending && <Spinner />}
+          </span>
+          {error && (
+            <p role="alert" className="basis-full text-destructive">
+              {error}
+            </p>
+          )}
           <span
             role="status"
             className="sr-only"
@@ -995,7 +1031,7 @@ function ActivityItem({
   )
 }
 
-function AttachmentCard({
+function MessageAttachmentView({
   attachment,
   canMutate,
   onChanged,
@@ -1008,6 +1044,20 @@ function AttachmentCard({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const isPDF = attachment.contentType === "application/pdf"
+  const unavailable =
+    attachment.state === "Attachment unavailable" || Boolean(error)
+  const isPreparing =
+    attachment.state === "Pending" || attachment.state === "Processing"
+  const presentationState = unavailable
+    ? "error"
+    : pending || isPreparing
+      ? "processing"
+      : "done"
+  const description = unavailable
+    ? error || "Attachment unavailable"
+    : isPreparing
+      ? "Preparing attachment"
+      : `${isPDF ? "PDF" : "Image"} · ${formatBytes(attachment.byteSize)}`
 
   const loadBlob = useCallback(async () => {
     if (attachment.state !== "Stored") return
@@ -1063,6 +1113,7 @@ function AttachmentCard({
 
   async function download() {
     setPending(true)
+    setError("")
     const blob = await loadBlob()
     setPending(false)
     if (!blob) return
@@ -1075,50 +1126,106 @@ function AttachmentCard({
   }
 
   return (
-    <div className="mt-2 overflow-hidden rounded-lg border border-border">
-      {objectURL && !isPDF ? (
-        // eslint-disable-next-line @next/next/no-img-element -- private object URL
-        <img
-          src={objectURL}
-          alt={attachment.fileName}
-          className="max-h-44 w-full bg-background object-contain"
-        />
-      ) : (
-        <div className="flex items-center gap-2 bg-muted px-3 py-2 text-xs">
-          <FileTextIcon className="size-4" />
-          <span className="min-w-0 flex-1 truncate">{attachment.fileName}</span>
-          <span className="tabular-nums">{formatBytes(attachment.byteSize)}</span>
-        </div>
-      )}
-      <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
-        <span>{attachment.state}</span>
-        {isPDF && attachment.state === "Stored" && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto h-7 px-2"
+    <Attachment
+      state={presentationState}
+      size="sm"
+      className="mt-2 w-64 max-w-full"
+    >
+      <AttachmentMedia variant={objectURL && !isPDF ? "image" : "icon"}>
+        {objectURL && !isPDF ? (
+          // eslint-disable-next-line @next/next/no-img-element -- private object URL
+          <img src={objectURL} alt={attachment.fileName} />
+        ) : isPDF ? (
+          <FileTextIcon aria-hidden="true" />
+        ) : (
+          <ImageIcon aria-hidden="true" />
+        )}
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{attachment.fileName}</AttachmentTitle>
+        <AttachmentDescription>{description}</AttachmentDescription>
+      </AttachmentContent>
+      <AttachmentActions>
+        {attachment.state === "Stored" && (
+          <AttachmentAction
+            aria-label={`Download ${attachment.fileName}`}
             disabled={pending}
             onClick={() => void download()}
           >
-            <DownloadIcon />
-            Download
-          </Button>
+            {pending ? <Spinner /> : <DownloadIcon data-icon="inline-start" />}
+          </AttachmentAction>
         )}
         {attachment.state === "Attachment unavailable" && canMutate && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto h-7 px-2"
+          <AttachmentAction
+            aria-label={`Retry ${attachment.fileName}`}
             disabled={pending}
             onClick={() => void retry()}
           >
-            {pending ? <Spinner /> : <RefreshCwIcon />}
-            Retry copy
-          </Button>
+            {pending ? <Spinner /> : <RefreshCwIcon data-icon="inline-start" />}
+          </AttachmentAction>
         )}
-      </div>
-      {error && <p className="px-3 pb-2 text-xs">{error}</p>}
-    </div>
+      </AttachmentActions>
+    </Attachment>
+  )
+}
+
+function DraftAttachment({
+  file,
+  pending,
+  onRemove,
+}: {
+  file: File
+  pending: boolean
+  onRemove: () => void
+}) {
+  const isImage = file.type.startsWith("image/")
+  const [objectURL, setObjectURL] = useState("")
+
+  useEffect(() => {
+    if (!isImage) return
+    let nextObjectURL = ""
+    const timeout = window.setTimeout(() => {
+      nextObjectURL = URL.createObjectURL(file)
+      setObjectURL(nextObjectURL)
+    }, 0)
+    return () => {
+      window.clearTimeout(timeout)
+      if (nextObjectURL) URL.revokeObjectURL(nextObjectURL)
+    }
+  }, [file, isImage])
+
+  return (
+    <Attachment
+      state={pending ? "uploading" : "idle"}
+      size="xs"
+      className="w-64 max-w-full"
+    >
+      <AttachmentMedia variant={objectURL ? "image" : "icon"}>
+        {objectURL ? (
+          // eslint-disable-next-line @next/next/no-img-element -- local draft preview
+          <img src={objectURL} alt="" />
+        ) : (
+          <FileTextIcon aria-hidden="true" />
+        )}
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{file.name}</AttachmentTitle>
+        <AttachmentDescription>
+          {file.type === "application/pdf" ? "PDF" : "Image"} ·{" "}
+          {formatBytes(file.size)}
+        </AttachmentDescription>
+      </AttachmentContent>
+      <AttachmentActions>
+        <AttachmentAction
+          type="button"
+          aria-label="Remove attachment"
+          disabled={pending}
+          onClick={onRemove}
+        >
+          <XIcon data-icon="inline-start" />
+        </AttachmentAction>
+      </AttachmentActions>
+    </Attachment>
   )
 }
 
@@ -1327,30 +1434,23 @@ function MessageComposer({
           onChange={chooseFile}
         />
         {(file || body.length >= 1_400) && (
-          <div className="mt-1.5 flex min-h-5 items-center gap-2 text-xs text-muted-foreground">
-          {file && (
-            <span className="flex min-w-0 items-center gap-1 rounded-sm border px-1.5 py-0.5">
-              <span className="max-w-52 truncate">{file.name}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Remove attachment"
-                disabled={pending}
-                onClick={() => {
+          <div className="mt-1.5 flex min-h-5 items-start gap-2 text-xs text-muted-foreground">
+            {file && (
+              <DraftAttachment
+                key={`${file.name}:${file.size}:${file.lastModified}`}
+                file={file}
+                pending={pending}
+                onRemove={() => {
                   draftAttempt.current = undefined
                   setFile(undefined)
                 }}
-              >
-                <XIcon />
-              </Button>
-            </span>
-          )}
-          {body.length >= 1_400 && (
-            <span className="ml-auto tabular-nums">
-              {body.length}/{maximumMessageLength}
-            </span>
-          )}
+              />
+            )}
+            {body.length >= 1_400 && (
+              <span className="ml-auto pt-1 tabular-nums">
+                {body.length}/{maximumMessageLength}
+              </span>
+            )}
           </div>
         )}
         {(disabledReason || error) && (
