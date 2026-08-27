@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   ArrowRightIcon,
   CalendarCheck2Icon,
@@ -25,7 +25,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { portalClient } from "@/lib/api/client"
 import { queryOperatorAiAnalytics } from "@/lib/api/generated/sdk.gen"
@@ -294,16 +310,18 @@ function AnalyticsReady({
       )}
       {tab === "tools" && <AnalyticsTools summary={data.summary} />}
       {tab === "calls" && data.calls.length === 0 ? (
-        <div className="mt-5 flex min-h-72 flex-col items-center justify-center rounded-xl border border-dashed bg-card px-6 text-center sm:mt-6">
-          <span className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <InboxIcon className="size-5" aria-hidden="true" />
-          </span>
-          <h2 className="text-sm font-semibold">No AI calls in this range</h2>
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            Change the time range or workspace office to review another slice of
-            call evidence.
-          </p>
-        </div>
+        <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <InboxIcon aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>No AI calls in this range</EmptyTitle>
+            <EmptyDescription>
+              Change the time range or workspace office to review another slice
+              of call evidence.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : tab === "calls" ? (
         <CallLedger
           calls={data.calls}
@@ -328,25 +346,18 @@ function AnalyticsTabs({
 }) {
   return (
     <div className="mb-5 max-w-full overflow-x-auto pb-1 sm:mb-6">
-      <div
-        role="tablist"
-        aria-label="Analytics section"
-        className="grid min-w-max grid-cols-4 rounded-lg border bg-card p-1"
+      <Tabs
+        value={tab}
+        onValueChange={(value) => onChange(value as AnalyticsTab)}
       >
-        {analyticsTabs.map((item) => (
-          <Button
-            key={item.value}
-            role="tab"
-            aria-selected={tab === item.value}
-            variant={tab === item.value ? "secondary" : "ghost"}
-            size="sm"
-            className="min-w-24"
-            onClick={() => onChange(item.value)}
-          >
-            {item.label}
-          </Button>
-        ))}
-      </div>
+        <TabsList aria-label="Analytics section" className="min-w-max border bg-card">
+          {analyticsTabs.map((item) => (
+            <TabsTrigger key={item.value} value={item.value} className="min-w-24">
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     </div>
   )
 }
@@ -461,27 +472,27 @@ function LatencyPercentiles({
           Median, tail, and worst-tail response timing across measured turns.
         </CardDescription>
       </CardHeader>
-      <CardContent className="overflow-x-auto p-0">
-        <table className="w-full min-w-[38rem] border-collapse text-left text-xs">
-          <thead className="bg-muted text-muted-foreground">
-            <tr>
-              <TableHeading>Pipeline stage</TableHeading>
-              <TableHeading>P50</TableHeading>
-              <TableHeading>P90</TableHeading>
-              <TableHeading>P99</TableHeading>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
+      <CardContent className="p-0">
+        <Table className="min-w-[38rem]">
+          <TableHeader className="bg-muted text-muted-foreground">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="px-4">Pipeline stage</TableHead>
+              <TableHead>P50</TableHead>
+              <TableHead>P90</TableHead>
+              <TableHead>P99</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((row) => (
-              <tr key={row.label}>
-                <td className="px-4 py-3 font-medium">{row.label}</td>
+              <TableRow key={row.label}>
+                <TableCell className="px-4 py-3 font-medium">{row.label}</TableCell>
                 <PercentileCell value={row.p50} />
                 <PercentileCell value={row.p90} />
                 <PercentileCell value={row.p99} emphasized />
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   )
@@ -495,13 +506,11 @@ function PercentileCell({
   emphasized?: boolean
 }) {
   return (
-    <td
-      className={`px-3 py-3 font-mono ${
-        emphasized ? "font-semibold" : ""
-      }`}
+    <TableCell
+      className={emphasized ? "px-3 py-3 font-mono font-semibold" : "px-3 py-3 font-mono"}
     >
       {formatLatency(value)}
-    </td>
+    </TableCell>
   )
 }
 
@@ -679,31 +688,30 @@ function CallLedger({
       </div>
 
       <div className="hidden overflow-hidden rounded-xl border bg-card xl:block">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[78rem] border-collapse text-left text-xs">
-            <thead className="bg-muted text-[0.6875rem] text-muted-foreground">
-              <tr>
-                <TableHeading>Date / time</TableHeading>
-                <TableHeading>Caller</TableHeading>
-                <TableHeading>Office</TableHeading>
-                <TableHeading>Duration</TableHeading>
-                <TableHeading>P50 STT</TableHeading>
-                <TableHeading>P50 TTFT</TableHeading>
-                <TableHeading>P50 TTS</TableHeading>
-                <TableHeading>P50 E2E</TableHeading>
-                <TableHeading>Actions</TableHeading>
-                <TableHeading>Tool errors</TableHeading>
-                <TableHeading>Transfer</TableHeading>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
+          <Table className="min-w-[78rem]">
+            <TableHeader className="bg-muted text-[0.6875rem] text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Date / time</TableHead>
+                <TableHead>Caller</TableHead>
+                <TableHead>Office</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>P50 STT</TableHead>
+                <TableHead>P50 TTFT</TableHead>
+                <TableHead>P50 TTS</TableHead>
+                <TableHead>P50 E2E</TableHead>
+                <TableHead>Actions</TableHead>
+                <TableHead>Tool errors</TableHead>
+                <TableHead>Transfer</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {calls.map((call) => (
-                <tr
+                <TableRow
                   key={call.id}
-                  className="group transition-colors hover:bg-muted"
+                  className="group cursor-pointer hover:bg-muted"
                   onClick={() => onSelect(call.id)}
                 >
-                  <td className="px-3 py-3">
+                  <TableCell className="px-3 py-3">
                     <button
                       type="button"
                       className="rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -715,7 +723,7 @@ function CallLedger({
                     >
                       {formatDateTime(call.startedAt)}
                     </button>
-                  </td>
+                  </TableCell>
                   <TableCell className="font-mono">{formatPhone(call.phone)}</TableCell>
                   <TableCell>{call.locationName}</TableCell>
                   <TableCell className="font-mono">
@@ -738,11 +746,10 @@ function CallLedger({
                   <TableCell>
                     <TransferBadge transferred={call.transferred} />
                   </TableCell>
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
       </div>
 
       <div className="grid gap-3 xl:hidden">
@@ -866,20 +873,6 @@ function AnalyticsFailure({
       </AlertDescription>
     </Alert>
   )
-}
-
-function TableHeading({ children }: { children: ReactNode }) {
-  return <th className="px-3 py-2.5 font-medium whitespace-nowrap">{children}</th>
-}
-
-function TableCell({
-  children,
-  className = "",
-}: {
-  children: ReactNode
-  className?: string
-}) {
-  return <td className={`px-3 py-3 whitespace-nowrap ${className}`}>{children}</td>
 }
 
 function ActionBadges({ actions }: { actions: string[] }) {

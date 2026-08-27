@@ -3,7 +3,6 @@
 import {
   type ReactNode,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -25,10 +24,16 @@ import {
   MoonIcon,
   PhoneIcon,
   SearchIcon,
+  SunMoonIcon,
   SunIcon,
 } from "lucide-react"
 
 import { AcuityMark } from "@/components/acuity-mark"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -232,7 +237,7 @@ export function TaskRail({
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
-  const { resolvedTheme, setTheme, theme } = useTheme()
+  const { setTheme, theme } = useTheme()
   const taskRows = useMemo(
     () => newestFirst(filterTaskQueue(tasks), taskRelativeAt),
     [tasks],
@@ -400,7 +405,7 @@ export function TaskRail({
               onSearchSubmit()
             }}
           >
-            <InputGroup className="h-8 rounded-lg border-sidebar-border bg-sidebar-accent shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
+            <InputGroup className="h-8 rounded-lg border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
               <InputGroupAddon>
                 <SearchIcon />
               </InputGroupAddon>
@@ -580,15 +585,13 @@ export function TaskRail({
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <button
-                      type="button"
-                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm/5 font-medium text-sidebar-foreground outline-hidden transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:bg-sidebar-accent"
+                    <SidebarMenuButton
                       aria-label="Appearance"
-                      title="Appearance"
+                      className="data-popup-open:bg-sidebar-accent"
                     />
                   }
                 >
-                  {resolvedTheme === "dark" ? <MoonIcon /> : <SunIcon />}
+                  <SunMoonIcon />
                   <span>Appearance</span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="right" align="end" className="w-40">
@@ -649,16 +652,22 @@ function AttentionGroup({
   action?: React.ReactNode
   children: React.ReactNode
 }) {
-  const contentID = useId()
   return (
-    <SidebarGroup className="p-0">
+    <Collapsible
+      open={expanded}
+      onOpenChange={(open) => {
+        if (open !== expanded) onToggle()
+      }}
+      render={<SidebarGroup className="p-0" />}
+    >
       <div className="flex min-w-0 items-center gap-0.5">
-        <button
-          type="button"
-          aria-controls={contentID}
-          aria-expanded={expanded}
-          className="group/disclosure flex h-9 min-w-0 flex-1 shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-          onClick={onToggle}
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="group/disclosure flex h-9 min-w-0 flex-1 shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            />
+          }
         >
           <ChevronRightIcon
             aria-hidden="true"
@@ -678,15 +687,17 @@ function AttentionGroup({
               {count}
             </span>
           )}
-        </button>
+        </CollapsibleTrigger>
         {action}
       </div>
-      <SidebarGroupContent id={contentID} hidden={!expanded}>
-        <SidebarMenu className="mx-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2">
-          {children}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+      <CollapsibleContent>
+        <SidebarGroupContent>
+          <SidebarMenu className="mx-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2">
+            {children}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -761,15 +772,21 @@ function AppointmentFolder({
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onLoadMore: () => void
 }) {
-  const contentID = useId()
   return (
-    <SidebarMenuItem>
-      <button
-        type="button"
-        aria-controls={contentID}
-        aria-expanded={expanded}
-        className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-        onClick={onToggle}
+    <Collapsible
+      open={expanded}
+      onOpenChange={(open) => {
+        if (open !== expanded) onToggle()
+      }}
+      render={<SidebarMenuItem />}
+    >
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          />
+        }
       >
         <ChevronRightIcon
           aria-hidden="true"
@@ -782,33 +799,31 @@ function AppointmentFolder({
         <span className="ml-auto text-xs tabular-nums text-muted-foreground">
           {count}
         </span>
-      </button>
-      <SidebarMenu
-        id={contentID}
-        hidden={!expanded}
-        className="ml-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2"
-      >
-        {outcomes.map((interaction) => (
-          <AIOutcomeRow
-            key={interaction.id}
-            interaction={interaction}
-            active={interaction.id === selectedAIInteractionID}
-            onSelect={() => onAIInteractionSelect(interaction)}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <SidebarMenu className="ml-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2">
+          {outcomes.map((interaction) => (
+            <AIOutcomeRow
+              key={interaction.id}
+              interaction={interaction}
+              active={interaction.id === selectedAIInteractionID}
+              onSelect={() => onAIInteractionSelect(interaction)}
+            />
+          ))}
+          {loading && outcomes.length === 0 && (
+            <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
+          )}
+          {!loading && count === 0 && (
+            <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
+          )}
+          <RailShowMore
+            cursor={cursor}
+            loading={loading}
+            onLoadMore={onLoadMore}
           />
-        ))}
-        {loading && outcomes.length === 0 && (
-          <RailLoading inMenu label={`Loading ${title.toLowerCase()}`} />
-        )}
-        {!loading && count === 0 && (
-          <RailEmpty inMenu>{`No ${title.toLowerCase()}`}</RailEmpty>
-        )}
-        <RailShowMore
-          cursor={cursor}
-          loading={loading}
-          onLoadMore={onLoadMore}
-        />
-      </SidebarMenu>
-    </SidebarMenuItem>
+        </SidebarMenu>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -1121,19 +1136,19 @@ function RailHoverDetails({
         data-testid="rail-hover-details"
         side="right"
         align="start"
-        sideOffset={8}
-        arrowClassName="bg-popover fill-popover"
-        className="w-56 max-w-56 flex-col items-stretch gap-0 overflow-hidden rounded-lg border border-border bg-popover px-0 py-0 text-popover-foreground shadow-[0_12px_30px_rgba(0,0,0,0.14)]"
+        sideOffset={4}
+        showArrow={false}
+        className="w-80 max-w-[calc(100vw-1rem)] flex-col items-stretch gap-0 overflow-hidden rounded-xl border border-border bg-popover px-0 py-0 text-popover-foreground shadow-[0_16px_40px_rgba(0,0,0,0.14)]"
       >
-        <div className="px-2.5 pt-2.5 pb-2">
-          <p className="text-[9px] leading-3 font-semibold tracking-[0.1em] text-muted-foreground uppercase">
+        <div className="px-4 pt-4 pb-3.5">
+          <p className="text-[10px] leading-3 font-semibold tracking-[0.1em] text-muted-foreground uppercase">
             {eyebrow}
           </p>
-          <p className="mt-0.5 line-clamp-1 text-[13px] leading-4 font-medium text-popover-foreground">
+          <p className="mt-1 line-clamp-2 text-sm leading-5 font-medium text-popover-foreground">
             {title}
           </p>
         </div>
-        <div className="grid gap-1 border-t border-border px-2.5 py-1.5">
+        <div className="grid gap-2 border-t border-border px-4 py-3">
           <HoverDetail
             icon={<PhoneIcon />}
             label="Phone"
@@ -1142,7 +1157,7 @@ function RailHoverDetails({
           />
           <HoverDetail icon={<Building2Icon />} label="Office" value={office} />
         </div>
-        <p className="truncate border-t border-border px-2.5 py-1.5 text-[10px] leading-3.5 text-muted-foreground">
+        <p className="truncate border-t border-border px-4 py-2.5 text-xs leading-4 text-muted-foreground">
           {meta}
         </p>
       </TooltipContent>
@@ -1162,16 +1177,16 @@ function HoverDetail({
   tabular?: boolean
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <span className="[&_svg]:size-3 [&_svg]:stroke-[1.7] text-muted-foreground">
+    <div className="flex min-w-0 items-center gap-2.5">
+      <span className="[&_svg]:size-4 [&_svg]:stroke-[1.7] text-muted-foreground">
         {icon}
       </span>
-      <span className="w-8 shrink-0 text-[9px] leading-3 font-medium text-muted-foreground">
+      <span className="w-10 shrink-0 text-xs leading-4 font-medium text-muted-foreground">
         {label}
       </span>
       <span
         className={cn(
-          "min-w-0 flex-1 truncate text-[11px] leading-4 text-popover-foreground",
+          "min-w-0 flex-1 truncate text-sm leading-5 text-popover-foreground",
           tabular && "tabular-nums",
         )}
       >

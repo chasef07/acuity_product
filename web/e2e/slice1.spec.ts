@@ -523,7 +523,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
         background: "#fff",
         foreground: "#0d0d0d",
         primary: "#0d0d0d",
-        sidebar: "#f3f3f1",
+        sidebar: "#fafafa",
       })
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
@@ -551,7 +551,7 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
         background: "#0f0f0f",
         foreground: "#f5f5f3",
         primary: "#f5f5f3",
-        sidebar: "#161616",
+        sidebar: "#000",
       })
     await page.screenshot({
       path: testInfo.outputPath("workspace-dark.png"),

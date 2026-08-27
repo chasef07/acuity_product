@@ -192,6 +192,21 @@ test("rail hover details and the message composer preserve compact context", asy
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
 
+  const appearanceButton = page.getByRole("button", { name: "Appearance" })
+  await expect(appearanceButton).toHaveCSS("height", "32px")
+  await expect(appearanceButton.locator("svg")).toHaveCSS("width", "16px")
+  await appearanceButton.click()
+  await expect(page.getByRole("menuitemradio", { name: "System" })).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath("appearance-menu.png"),
+    fullPage: true,
+  })
+  await page.getByRole("menuitemradio", { name: "Light" }).click()
+  await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
+    "background-color",
+    "rgb(250, 250, 250)",
+  )
+
   await createAIStaffTask(
     page,
     "billing",
@@ -211,6 +226,12 @@ test("rail hover details and the message composer preserve compact context", asy
   await expect(hoverDetails).toContainText("(727) 555-0196")
   await expect(hoverDetails).toContainText("Fixture Location 1")
   await expect(hoverDetails).toHaveCSS("opacity", "1")
+  await expect(hoverDetails).toHaveCSS("width", "320px")
+  await expect(hoverDetails.locator('[data-slot="tooltip-arrow"]')).toHaveCount(0)
+  await page.screenshot({
+    path: testInfo.outputPath("rail-hover-details.png"),
+    fullPage: true,
+  })
 
   const searchInput = page.getByLabel("Search tasks, names, or phone")
   await searchInput.fill("7275550199")
@@ -391,6 +412,15 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
       "base64",
     ),
   })
+  const draftAttachment = page
+    .getByRole("form", { name: "Message composer" })
+    .locator('[data-slot="attachment"]')
+  await expect(draftAttachment).toHaveAttribute("data-state", "idle")
+  await expect(draftAttachment.getByText("fixture-photo.png")).toBeVisible()
+  expect(
+    (await draftAttachment.locator('[data-slot="attachment-media"]').boundingBox())
+      ?.width,
+  ).toBeLessThanOrEqual(32)
   await page.getByRole("button", { name: "Send message" }).click()
 
   const outgoing = page
@@ -403,9 +433,19 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   )
   await expect(outgoing.getByText("Sending", { exact: true })).toBeVisible()
   await expect(outgoing.getByText("Sent", { exact: true })).toBeVisible()
+  const sentAttachment = outgoing.locator('[data-slot="attachment"]')
+  await expect(sentAttachment).toHaveAttribute("data-state", "done")
+  await expect(sentAttachment).not.toContainText("Stored")
+  await expect(
+    sentAttachment.getByRole("button", { name: "Download fixture-photo.png" }),
+  ).toBeVisible()
   await expect(
     outgoing.getByRole("img", { name: "fixture-photo.png" }),
   ).toBeVisible()
+  expect(
+    (await sentAttachment.locator('[data-slot="attachment-media"]').boundingBox())
+      ?.width,
+  ).toBeLessThanOrEqual(32)
 
   const providerMessage = await expect
     .poll(async () => {
@@ -585,6 +625,15 @@ test("Slice 5 sends, receives, and keeps exact-phone correspondence in one inbox
   await inbound.hover()
   await expect(copyMessage).toHaveCSS("opacity", "1")
   await expect(createTask).toHaveCSS("opacity", "1")
+  await copyMessage.hover()
+  const copyTooltip = page.getByTestId("copy-message-tooltip")
+  await expect(copyTooltip).toBeVisible()
+  await expect(copyTooltip).toHaveCSS("opacity", "1")
+  await expect(copyTooltip).toHaveCSS("background-color", "rgb(0, 0, 0)")
+  await page.screenshot({
+    path: testInfo.outputPath("message-copy-hover.png"),
+    fullPage: true,
+  })
   await copyMessage.click()
   await expect(inbound.getByRole("status")).toContainText("Message copied")
   await inbound.focus()
