@@ -214,7 +214,7 @@ function OperatorAnalyticsDetailView({
               Conversation and tool timeline
             </h2>
           </div>
-          <span className="font-mono text-[0.6875rem] text-muted-foreground">
+          <span className="text-[0.6875rem] tabular-nums text-muted-foreground">
             {detail.timeline.length} events
           </span>
         </div>
@@ -305,7 +305,7 @@ function OperatorAnalyticsDetailView({
                         {execution.taskId && (
                           <Badge variant="outline">task: {execution.taskId}</Badge>
                         )}
-                        <time className="ml-auto font-mono text-[0.625rem] text-muted-foreground">
+                        <time className="ml-auto text-[0.625rem] tabular-nums text-muted-foreground">
                           {formatTime(execution.occurredAt)}
                         </time>
                       </div>
@@ -451,9 +451,7 @@ function TimelineItem({
             <span className="text-xs font-medium">
               {agent ? "Acuity" : "Caller"}
             </span>
-            <time
-              className="font-mono text-[0.625rem] text-muted-foreground"
-            >
+            <time className="text-[0.625rem] tabular-nums text-muted-foreground">
               {formatTime(item.occurredAt)}
             </time>
           </div>
