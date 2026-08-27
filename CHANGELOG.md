@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7](https://github.com/chasef07/acuity_product/compare/v0.4.6...v0.4.7) (2026-08-27)
+
+
+### Bug Fixes
+
+* **web:** align workspace UI with shadcn primitives ([#213](https://github.com/chasef07/acuity_product/issues/213)) ([3a98d27](https://github.com/chasef07/acuity_product/commit/3a98d270444e54cbb37caf6d11a0301f0625d23c))
+
 ## [0.4.6](https://github.com/chasef07/acuity_product/compare/v0.4.5...v0.4.6) (2026-08-26)
 
 
