@@ -44,8 +44,9 @@ export interface CallingMediaAdapter {
     token: string,
     remoteElement: string,
     callbacks: CallingMediaCallbacks,
+    signal?: AbortSignal,
   ): Promise<void>
-  disconnect(): Promise<void>
+  disconnect(signal?: AbortSignal): Promise<void>
 }
 
 declare global {
@@ -91,6 +92,47 @@ type SDKClient = {
 }
 
 type SDKClientFactory = (token: string) => Promise<SDKClient>
+
+function abortableMediaOperation<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+  onLateValue?: (value: T) => void,
+) {
+  if (!signal) return operation
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const cleanup = () => signal.removeEventListener("abort", onAbort)
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new DOMException("Calling media operation aborted", "AbortError"))
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      void operation.then(onLateValue, () => undefined)
+      return
+    }
+    void operation.then(
+      (value) => {
+        if (settled) {
+          onLateValue?.(value)
+          return
+        }
+        settled = true
+        cleanup()
+        resolve(value)
+      },
+      (error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      },
+    )
+  })
+}
 
 export function createCallingMediaAdapter(
   createClient?: SDKClientFactory,
@@ -190,6 +232,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     token: string,
     remoteElement: string,
     callbacks: CallingMediaCallbacks,
+    signal?: AbortSignal,
   ) {
     callbacks.onState("registering")
     const output = document.getElementById(remoteElement)
@@ -209,10 +252,26 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     document.body.append(quarantine)
     this.output = output
     this.quarantine = quarantine
-    const client = await this.createClient(token)
+    let client: SDKClient | undefined
+    try {
+      client = await abortableMediaOperation(
+        this.createClient(token),
+        signal,
+        (lateClient) => void lateClient.serverDisconnect().catch(() => undefined),
+      )
+    } catch (error) {
+      if (this.quarantine === quarantine) {
+        quarantine.remove()
+        this.quarantine = undefined
+      }
+      throw error
+    }
     client.remoteElement = quarantine
     this.client = client
+    const connectionCurrent = () =>
+      this.client === client && signal?.aborted !== true
     client.on("telnyx.socket.close", () => {
+      if (!connectionCurrent()) return
       const session = this.activeSession
       if (session) {
         session.attachmentCurrent = false
@@ -220,8 +279,11 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       }
       callbacks.onState("reconnecting")
     })
-    client.on("telnyx.ready", () => callbacks.onState("ready"))
+    client.on("telnyx.ready", () => {
+      if (connectionCurrent()) callbacks.onState("ready")
+    })
     client.on("telnyx.warning", (value) => {
+      if (!connectionCurrent()) return
       const warning = value as { warning?: { code?: number } }
       if (
         warning.warning?.code === 32001 &&
@@ -243,6 +305,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       }
     })
     client.on("telnyx.error", (value) => {
+      if (!connectionCurrent()) return
       const session = this.activeSession
       if (session) {
         session.attachmentCurrent = false
@@ -252,6 +315,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
       callbacks.onState("unavailable")
     })
     client.on("telnyx.notification", (value) => {
+      if (!connectionCurrent()) return
       const notification = value as SDKNotification
       const call = notification.call
       if (notification.type !== "callUpdate" || !call) {
@@ -272,7 +336,7 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
             output.srcObject = null
           }
         }
-        const identity = this.mediaIdentity.get(call) ?? session
+        const identity = this.mediaIdentity.get(call)
         if (firstTerminalUpdate && identity) callbacks.onEnded?.(identity)
         return
       }
@@ -379,10 +443,22 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
         },
       })
     })
-    await client.connect()
+    try {
+      await abortableMediaOperation(client.connect(), signal, () => {
+        void client?.serverDisconnect().catch(() => undefined)
+      })
+    } catch (error) {
+      if (this.client === client) this.client = undefined
+      if (this.quarantine === quarantine) {
+        quarantine.remove()
+        this.quarantine = undefined
+      }
+      await client.serverDisconnect().catch(() => undefined)
+      throw error
+    }
   }
 
-  async disconnect() {
+  async disconnect(signal?: AbortSignal) {
     const client = this.client
     this.client = undefined
     this.tokenRefresh = undefined
@@ -394,7 +470,9 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     // TelnyxRTC.disconnect() sends BYE for every active Call. serverDisconnect
     // purges local state without BYE and disables reconnect, so server Call
     // Control remains the sole termination owner.
-    if (client) await client.serverDisconnect()
+    if (client) {
+      await abortableMediaOperation(client.serverDisconnect(), signal)
+    }
   }
 }
 

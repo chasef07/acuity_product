@@ -50,12 +50,14 @@ func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
 	}))
 
 	for _, test := range []struct {
-		origin string
-		want   string
+		origin     string
+		want       string
+		wantAllow  string
+		wantExpose string
 	}{
-		{origin: "https://acuityhealth.io", want: "https://acuityhealth.io"},
-		{origin: "https://acuity-web.example.run.app", want: "https://acuity-web.example.run.app"},
-		{origin: "https://untrusted.example", want: ""},
+		{origin: "https://acuityhealth.io", want: "https://acuityhealth.io", wantAllow: "Authorization, Content-Type, If-None-Match, X-Correlation-ID", wantExpose: "ETag"},
+		{origin: "https://acuity-web.example.run.app", want: "https://acuity-web.example.run.app", wantAllow: "Authorization, Content-Type, If-None-Match, X-Correlation-ID", wantExpose: "ETag"},
+		{origin: "https://untrusted.example", want: "", wantAllow: "", wantExpose: ""},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/health/live", nil)
 		request.Header.Set("Origin", test.origin)
@@ -65,6 +67,12 @@ func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
 
 		if got := response.Header().Get("Access-Control-Allow-Origin"); got != test.want {
 			t.Errorf("origin %q allowed as %q, want %q", test.origin, got, test.want)
+		}
+		if got := response.Header().Get("Access-Control-Allow-Headers"); got != test.wantAllow {
+			t.Errorf("origin %q allows headers %q, want %q", test.origin, got, test.wantAllow)
+		}
+		if got := response.Header().Get("Access-Control-Expose-Headers"); got != test.wantExpose {
+			t.Errorf("origin %q exposes %q, want %q", test.origin, got, test.wantExpose)
 		}
 	}
 }

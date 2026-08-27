@@ -73,6 +73,7 @@ import {
   getAccessToken,
   getAccessTokenResult,
 } from "@/lib/auth-client"
+import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import {
   applyOutcomePages,
   appointmentActionForFolder,
@@ -166,7 +167,6 @@ export function PortalWorkspace() {
   const [view, setView] = useState<View>("none")
   const [contextView, setContextView] = useState<ContextView>("task")
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
-  const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [requestBudget] = useState<WorkspaceRequestBudget>(() =>
@@ -205,7 +205,6 @@ export function PortalWorkspace() {
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
-  const activeCallIDRef = useRef("")
   const callDetailGenerationRef = useRef(0)
 
   useEffect(() => {
@@ -1076,7 +1075,7 @@ export function PortalWorkspace() {
     setSelectedTask(task)
   }
 
-  function selectTask(task: Task) {
+  function selectTask(task: Task, activeCall?: CallingCall) {
     if (activeCall) returnTaskIDRef.current = task.id
     selectEngagement(taskEngagement(task), task)
     setContextView("task")
@@ -1234,16 +1233,26 @@ export function PortalWorkspace() {
     setContextPanelOpen(false)
   }
 
-  const handleCallChanged = useCallback((call: CallingCall | undefined) => {
-    setActiveCall(call)
-    const previousCallID = activeCallIDRef.current
-    activeCallIDRef.current = call?.id ?? ""
-    if (!call) return
-    if (call.state !== "CONNECTED" || call.id === focusedCallIDRef.current) return
-    if (call.id !== previousCallID) {
-      callDetailGenerationRef.current += 1
-      setHistoricalCall(undefined)
+  function handleCallScope(
+    call: Pick<CallingCall, "practiceId" | "locationId">,
+  ) {
+    const callScope = discovery
+      ? workspaceScopeForCall(
+          discovery,
+          practiceID,
+          locationScopeID,
+          call,
+        )
+      : undefined
+    if (callScope) {
+      selectWorkspaceScope(callScope.practiceID, callScope.locationID)
     }
+  }
+
+  function handleCallConnected(call: CallingCall) {
+    if (call.id === focusedCallIDRef.current) return
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
     focusedCallIDRef.current = call.id
     setSelectedAIInteractionID("")
     const returnTask = selectedTaskRef.current
@@ -1252,7 +1261,7 @@ export function PortalWorkspace() {
     setContextView("call")
     setContextPanelOpen(true)
     setView("engagement")
-  }, [])
+  }
 
   async function handleDisposition(result: CallingDispositionResult) {
     focusedCallIDRef.current = ""
@@ -1316,16 +1325,27 @@ export function PortalWorkspace() {
     discovery.practices.find((item) => item.id === practiceID) ??
     discovery.practices[0]
   const callingEnabled = practice.callingEnabled
+  const callingRuntimeEnabled = discovery.practices.some(
+    (item) => item.callingEnabled,
+  )
   const contextPanelLabel =
     contextView === "task"
       ? "Task context"
       : contextView === "call"
         ? "Call context"
         : "AI call context"
-  const callingShell = (children: ReactNode) => (
+  const callingShell = (
+    children: (
+      activeCall: CallingCall | undefined,
+      callingOccupied: boolean,
+    ) => ReactNode,
+  ) => (
     <SidebarProvider>
       <CallingDock
+        key={discovery.actor.subject}
+        actorSubject={discovery.actor.subject}
         callingEnabled={callingEnabled}
+        callingRuntimeEnabled={callingRuntimeEnabled}
         practiceID={practiceID}
         taskCallRequest={taskCallRequest}
         onTaskCallHandled={(requestID, requestError) => {
@@ -1334,7 +1354,8 @@ export function PortalWorkspace() {
           )
           setTaskCallError(requestError ?? "")
         }}
-        onCallChanged={handleCallChanged}
+        onCallScope={handleCallScope}
+        onCallConnected={handleCallConnected}
         onDisposition={(result) => void handleDisposition(result)}
       >
         {children}
@@ -1342,10 +1363,10 @@ export function PortalWorkspace() {
     </SidebarProvider>
   )
   if (loadState === "loading" && !workspace) {
-    return callingShell(<WorkspaceLoading />)
+    return callingShell(() => <WorkspaceLoading />)
   }
   if (loadState === "unavailable" || !workspace) {
-    return callingShell(
+    return callingShell(() =>
       <WorkspaceFailure
         title="Workspace temporarily disconnected"
         description="No data was reconstructed. Retry the authoritative request when the service is available."
@@ -1361,7 +1382,7 @@ export function PortalWorkspace() {
       />,
     )
   }
-  return callingShell(
+  return callingShell((activeCall, callingOccupied) =>
     <>
         <WorkspaceRail
           discovery={discovery}
@@ -1371,6 +1392,7 @@ export function PortalWorkspace() {
               discovery={discovery}
               practiceID={practiceID}
               locationScopeID={locationScopeID}
+              disabled={callingOccupied}
               onSelect={selectWorkspaceScope}
             />
           }
@@ -1407,7 +1429,7 @@ export function PortalWorkspace() {
             setView("analytics")
           }}
           onEngagementSelect={selectEngagement}
-          onTaskSelect={selectTask}
+          onTaskSelect={(task) => selectTask(task, activeCall)}
           onTaskUpdated={(task) => {
             updateTaskProjection(task, false)
             if (selectedTaskRef.current?.id === task.id) {
@@ -1514,7 +1536,7 @@ export function PortalWorkspace() {
                       activeCall={historicalCall ?? activeCall}
                       view={contextView}
                       canMutate
-                      canCall={callingEnabled}
+                      canCall={callingEnabled && !callingOccupied}
                       historyHint={workspaceRevision}
                       taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}
@@ -1583,11 +1605,13 @@ function WorkspaceSelector({
   discovery,
   practiceID,
   locationScopeID,
+  disabled,
   onSelect,
 }: {
   discovery: AccessDiscovery
   practiceID: string
   locationScopeID: string
+  disabled: boolean
   onSelect: (practiceID: string, locationID: string) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -1607,13 +1631,19 @@ function WorkspaceSelector({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={!disabled && open}
+      onOpenChange={(nextOpen) => {
+        if (!disabled) setOpen(nextOpen)
+      }}
+    >
       <PopoverTrigger
         render={
           <Button
             aria-label="Workspace selector"
             variant="ghost"
             size="sm"
+            disabled={disabled}
             className="h-auto w-full min-w-0 justify-start gap-2 px-1 py-1 text-left"
           />
         }

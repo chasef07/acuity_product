@@ -84,6 +84,188 @@ func TestProvisionedGoogleUserReceivesManagedCallingCredential(t *testing.T) {
 	}
 }
 
+func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 12, 30, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	email := "multi-practice-revocation@synthetic.test"
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: "calling-revocation-test",
+		Practices: []access.PracticeProvision{
+			{
+				Key: "calling-revoked-practice", Name: "Revoked Practice",
+				Locations: []access.LocationProvision{{
+					Key: "calling-revoked-location", Name: "Revoked Location",
+				}},
+				AccessGrants: []access.AccessGrantProvision{{
+					Key: "calling-revoked-staff", Email: email,
+					Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+				}},
+			},
+			{
+				Key: "calling-remaining-practice", Name: "Remaining Practice",
+				Locations: []access.LocationProvision{{
+					Key: "calling-remaining-location", Name: "Remaining Location",
+				}},
+				AccessGrants: []access.AccessGrantProvision{{
+					Key: "calling-remaining-staff", Email: email,
+					Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+				}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("provision multi-Practice Staff: %v", err)
+	}
+	identity := access.Identity{
+		Subject: "multi-practice-revocation-subject", Email: email, EmailVerified: true,
+	}
+	discovery, err := accessModule.DiscoverActor(context.Background(), identity)
+	if err != nil || len(discovery.Practices) != 2 {
+		t.Fatalf("discover multi-Practice Staff: practices=%d err=%v",
+			len(discovery.Practices), err)
+	}
+	var revoked, remaining access.PracticeAccess
+	for _, practice := range discovery.Practices {
+		if practice.Name == "Revoked Practice" {
+			revoked = practice
+		} else if practice.Name == "Remaining Practice" {
+			remaining = practice
+		}
+	}
+	if revoked.ID == "" || revoked.Membership == nil || len(revoked.Locations) != 1 ||
+		remaining.ID == "" || len(remaining.Locations) != 1 {
+		t.Fatalf("multi-Practice discovery = revoked:%#v remaining:%#v", revoked, remaining)
+	}
+
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		pool, accessModule, provider, humancalling.Config{
+			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+			StaffSIPDomain:         "sip.telnyx.com",
+			RingWindowDuration:     20 * time.Second,
+			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:          "staff-call-control-connection",
+			CredentialConnectionID: "staff-credential-connection",
+			FromNumber:             "+14843336938",
+			RingbackURL:            "https://media.synthetic.test/ringback.wav",
+		},
+		func() time.Time { return now },
+	)
+	prepareCredentials(t, calling)
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "calling-remaining-practice",
+			LocationKey: "calling-remaining-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision remaining outbound caller ID: %v", err)
+	}
+	const sessionID = "multi-practice-revocation-browser"
+	if _, err := calling.AcquireSoftphone(
+		context.Background(), identity, sessionID, false,
+	); err != nil {
+		t.Fatalf("acquire multi-Practice softphone: %v", err)
+	}
+	if _, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity: identity, SessionID: sessionID, Registered: true,
+		MicrophoneReady: true, AudioReady: true, SessionHealthy: true, Available: true,
+	}); err != nil {
+		t.Fatalf("ready multi-Practice softphone: %v", err)
+	}
+
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point, created_at, updated_at
+		) VALUES ($1, $2, 'OUTBOUND', 'STANDALONE', $3, $3)
+		RETURNING id::text
+	`, revoked.ID, revoked.Locations[0].ID, now).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, state, staff_subject, staff_session_id,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		) VALUES ($1, 'STAFF', 1, 'BRIDGED', $2, $3, $4, $4, $4, $4, $4)
+	`, callID, identity.Subject, sessionID, now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := calling.ReadCallingState(context.Background(), identity)
+	if err != nil || before.Softphone.ActiveCallID != callID || before.Bridged == nil {
+		t.Fatalf("Calling state before revocation = active:%q bridged:%#v err:%v",
+			before.Softphone.ActiveCallID, before.Bridged, err)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET revoked_at = $2 WHERE id = $1
+	`, revoked.Membership.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	after, err := calling.ReadCallingState(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("read remaining Calling access: %v", err)
+	}
+	if after.Softphone.ActiveCallID != "" || after.Softphone.Available ||
+		after.Bridged != nil {
+		t.Fatalf("revoked Call leaked identity or capacity = active:%q available:%t bridged:%#v",
+			after.Softphone.ActiveCallID, after.Softphone.Available, after.Bridged)
+	}
+	ready, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity: identity, SessionID: sessionID, Registered: true,
+		MicrophoneReady: true, AudioReady: true, SessionHealthy: true, Available: true,
+	})
+	if err != nil || ready.Available || ready.ActiveCallID != "" {
+		t.Fatalf("globally occupied Calling readiness = available:%t active:%q err:%v",
+			ready.Available, ready.ActiveCallID, err)
+	}
+	if _, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: identity, SessionID: sessionID,
+			IdempotencyKey: "remaining-practice-outbound",
+			PracticeID:     remaining.ID,
+			LocationID:     remaining.Locations[0].ID,
+			Destination:    "+15555550123",
+		}); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("remaining Practice outbound during revoked active Call = %v, want occupied", err)
+	}
+
+	if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: "abita-remaining-practice", PracticeID: remaining.ID,
+		},
+		LocationID: remaining.Locations[0].ID, SourceCallID: "remaining-inbound-source",
+		IdempotencyKey: "remaining-inbound-handoff",
+		Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+	}); err != nil {
+		t.Fatalf("create remaining Practice handoff: %v", err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: "remaining-inbound-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "remaining-inbound-caller-control",
+		CallLegID:     "remaining-inbound-caller-leg",
+		CallSessionID: "remaining-inbound-caller-session",
+		From:          "+15555550100", To: "+14843989071",
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("admit remaining Practice inbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	caller.EventID = "remaining-inbound-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("fan out remaining Practice inbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	if staffLegs := countStaffLegsForCaller(
+		t, pool, caller.CallControlID,
+	); staffLegs != 0 {
+		t.Fatalf("remaining Practice inbound fanout targeted globally occupied Staff %d times",
+			staffLegs)
+	}
+}
+
 func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)
@@ -130,10 +312,16 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		}
 	}
 
-	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
-		CallControlID: "sweetwater-staff-control",
-		CallLegID:     "sweetwater-staff-leg",
-	}}}
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{
+			CallControlID: "sweetwater-staff-control",
+			CallLegID:     "sweetwater-staff-leg",
+		},
+		{
+			CallControlID: "admin-outbound-control",
+			CallLegID:     "admin-outbound-provider-leg",
+		},
+	}}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
@@ -185,6 +373,129 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	}
 	if len(subjects) != 1 || subjects[0] != "sweetwater-staff-subject" {
 		t.Fatalf("Sweetwater fanout subjects = %#v", subjects)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET role = 'ADMIN', location_scope = 'ALL'
+		WHERE practice_id = $1 AND user_subject = $2
+	`, practiceID, staff[0].Subject); err != nil {
+		t.Fatalf("change offered Staff member to Admin: %v", err)
+	}
+	promotedSession := "location-ring-promoted-admin-browser"
+	if lease, err := calling.AcquireSoftphone(
+		context.Background(), staff[0], promotedSession, true,
+	); err != nil || !lease.Owner {
+		t.Fatalf("acquire promoted Admin softphone = %#v, %v", lease, err)
+	}
+	if lease, err := calling.SetReadiness(context.Background(),
+		humancalling.ReadinessCommand{
+			Identity: staff[0], SessionID: promotedSession, Registered: true,
+			MicrophoneReady: true, AudioReady: true, SessionHealthy: true,
+			Available: true,
+		}); err != nil || !lease.Available {
+		t.Fatalf("ready promoted Admin softphone = %#v, %v", lease, err)
+	}
+	var offeredSession string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT staff_session_id FROM human_calling_call_legs
+		WHERE role = 'STAFF' AND staff_subject = $1
+	`, staff[0].Subject).Scan(&offeredSession); err != nil {
+		t.Fatalf("read offered Staff session after role change: %v", err)
+	}
+	if offeredSession != "location-ring-browser-1" {
+		t.Fatalf("inbound CallLeg transferred to Admin session %q", offeredSession)
+	}
+	adminAfterOffer, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(adminAfterOffer.Ringing) != 0 || adminAfterOffer.Bridged != nil ||
+		adminAfterOffer.Softphone.ActiveCallID != "" {
+		t.Fatalf("inbound Call remained projected after Staff became Admin = %#v, %v",
+			adminAfterOffer, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGED', answered_at = $2, bridge_pending_at = $2,
+			bridged_at = $2, updated_at = $2
+		WHERE role = 'STAFF' AND staff_subject = $1
+	`, staff[0].Subject, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("advance stale inbound Staff leg to Bridged: %v", err)
+	}
+	adminAfterBridge, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || adminAfterBridge.Softphone.ActiveCallID != "" ||
+		adminAfterBridge.Softphone.Available || adminAfterBridge.Bridged != nil {
+		t.Fatalf("Bridged inbound Call leaked after Staff became Admin = %#v, %v",
+			adminAfterBridge, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDED', ended_at = $2, updated_at = $2
+		WHERE role = 'STAFF' AND staff_subject = $1;
+	`, staff[0].Subject, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("end stale inbound Staff leg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'ENDED', ended_at = $2,
+			disposition_deadline = $2::timestamptz + interval '5 minutes', updated_at = $2
+		WHERE id = (
+			SELECT call_id FROM human_calling_call_legs
+			WHERE role = 'STAFF' AND staff_subject = $1 LIMIT 1
+		)
+	`, staff[0].Subject, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("advance stale inbound Call to pending outcome: %v", err)
+	}
+	adminAfterOutcome, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || adminAfterOutcome.Softphone.PendingOutcomeCallID != "" ||
+		adminAfterOutcome.Disposition != nil {
+		t.Fatalf("inbound outcome leaked after Staff became Admin = %#v, %v",
+			adminAfterOutcome, err)
+	}
+
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "location-ring-practice", LocationKey: "sweetwater",
+			Number: "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision Admin outbound caller ID: %v", err)
+	}
+	adminCall, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[2], SessionID: "location-ring-browser-3",
+			IdempotencyKey: "admin-outbound-media",
+			PracticeID:     practiceID, LocationID: sweetwater.ID,
+			Destination: "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start Admin outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	adminDial := provider.last(humancalling.CommandDialOutboundStaff)
+	adminClientState, _ := adminDial.Payload["client_state"].(string)
+	adminStaff := humancalling.ProviderFact{
+		EventID: "admin-outbound-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "admin-outbound-control",
+		CallLegID:     "admin-outbound-provider-leg",
+		CallSessionID: "admin-outbound-session", ClientState: adminClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), adminStaff); err != nil {
+		t.Fatalf("project Admin outbound initiation: %v", err)
+	}
+	adminStaff.EventID = "admin-outbound-answered"
+	adminStaff.Type = humancalling.FactCallAnswered
+	adminStaff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), adminStaff); err != nil {
+		t.Fatalf("project Admin outbound answer: %v", err)
+	}
+	adminState, err := calling.ReadCallingState(context.Background(), staff[2])
+	if err != nil || adminState.Softphone.ActiveCallID != adminCall.ID ||
+		len(adminState.Ringing) != 1 || adminState.Ringing[0].CallID != adminCall.ID {
+		t.Fatalf("Admin outbound media state = %#v, %v", adminState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[2], SessionID: "location-ring-browser-3",
+			CallID: adminCall.ID, MediaToken: adminState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm Admin outbound media: %v", err)
 	}
 }
 
@@ -1420,6 +1731,491 @@ func TestInterruptedBridgeCommandRecoveryNeverDuplicatesProviderEffect(t *testin
 		item.now = item.now.Add(31 * time.Second)
 		retryAcceptedBridge(t, item)
 	})
+}
+
+func TestTransientOutboundCallRestoresThroughCallingState(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 19, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "outbound-restore-control",
+		CallLegID:     "outbound-restore-provider-leg",
+	}}}
+	fixture := newOutboundEndFixture(t, "outbound-restore", now, provider)
+	call := fixture.startCall(t, "outbound-restore-call")
+
+	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.identity)
+	if err != nil {
+		t.Fatalf("restore transient outbound Call: %v", err)
+	}
+	if state.Softphone.ActiveCallID != call.ID || len(state.Ringing) != 0 {
+		t.Fatalf("transient outbound restoration = active:%q ringing:%#v, want active Call only",
+			state.Softphone.ActiveCallID, state.Ringing)
+	}
+	processAllCommands(t, fixture.calling)
+	dial := provider.last(humancalling.CommandDialOutboundStaff)
+	clientState, _ := dial.Payload["client_state"].(string)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "outbound-restore-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "outbound-restore-control", CallLegID: "outbound-restore-provider-leg",
+		CallSessionID: "outbound-restore-provider-session", ClientState: clientState,
+	}); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	state, err = fixture.calling.ReadCallingState(context.Background(), fixture.identity)
+	if err != nil || state.Softphone.ActiveCallID != call.ID ||
+		len(state.Ringing) != 1 || state.Ringing[0].CallID != call.ID {
+		t.Fatalf("restore ringing outbound Call = %#v, %v", state, err)
+	}
+	lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	)
+	if err != nil || !lease.Owner || lease.ActiveCallID != call.ID || lease.Available {
+		t.Fatalf("reacquire outbound softphone = %#v, %v", lease, err)
+	}
+	if lease, err = fixture.calling.SetReadiness(
+		context.Background(), humancalling.ReadinessCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			Registered: true, MicrophoneReady: true, AudioReady: true,
+			SessionHealthy: true, Available: true,
+		},
+	); err != nil || lease.Available || lease.ActiveCallID != call.ID {
+		t.Fatalf("restore outbound softphone readiness = %#v, %v", lease, err)
+	}
+	if _, err := fixture.calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: "outbound-restore-second-call",
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550124",
+		}); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("second outbound Call while transient Call is active = %v, want occupied", err)
+	}
+}
+
+func TestReadinessSerializesBehindTransientOutboundReservation(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(
+		t, "outbound-readiness-race", now, &recordingProvider{},
+	)
+	const barrierKey int64 = 817270001
+	barrier := holdPostgresAdvisoryLock(t, fixture.pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_transient_outbound_reservation"
+	const functionName = "test_wait_for_transient_outbound_reservation"
+	installPostgresTestTrigger(t, fixture.pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON human_calling_call_legs
+		FOR EACH ROW WHEN (
+			NEW.role = 'STAFF'
+			AND NEW.staff_session_id = 'outbound-readiness-race-browser-1'
+			AND NEW.state = 'PENDING'
+		)
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_call_legs;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	type outboundResult struct {
+		call humancalling.Call
+		err  error
+	}
+	outboundResults := make(chan outboundResult, 1)
+	go func() {
+		call, err := fixture.calling.StartOutboundCall(
+			context.Background(), humancalling.StartOutboundCallCommand{
+				Identity: fixture.identity, SessionID: fixture.sessionID,
+				IdempotencyKey: "outbound-readiness-race-call",
+				PracticeID:     fixture.authorization.Practice.ID,
+				LocationID:     fixture.authorization.Locations[0].ID,
+				Destination:    "+15555550123",
+			},
+		)
+		outboundResults <- outboundResult{call: call, err: err}
+	}()
+	outboundPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+
+	type readinessResult struct {
+		state humancalling.SoftphoneState
+		err   error
+	}
+	readinessResults := make(chan readinessResult, 1)
+	go func() {
+		state, err := fixture.calling.SetReadiness(
+			context.Background(), humancalling.ReadinessCommand{
+				Identity: fixture.identity, SessionID: fixture.sessionID,
+				Registered: true, MicrophoneReady: true, AudioReady: true,
+				SessionHealthy: true, Available: true,
+			},
+		)
+		readinessResults <- readinessResult{state: state, err: err}
+	}()
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", outboundPID,
+	)
+	barrier.release()
+
+	var outbound outboundResult
+	select {
+	case outbound = <-outboundResults:
+		if outbound.err != nil {
+			t.Fatalf("start reserved outbound Call: %v", outbound.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reserved outbound Call did not finish")
+	}
+	select {
+	case readiness := <-readinessResults:
+		if readiness.err != nil || readiness.state.Available ||
+			readiness.state.ActiveCallID != outbound.call.ID {
+			t.Fatalf("delayed readiness reopened outbound capacity = %#v, %v",
+				readiness.state, readiness.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delayed readiness did not finish")
+	}
+	var desiredAvailable bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(&desiredAvailable); err != nil {
+		t.Fatal(err)
+	}
+	if desiredAvailable {
+		t.Fatal("delayed readiness persisted desired_available=true during outbound Call")
+	}
+}
+
+func TestSameSessionLeaseAcquisitionResetsReadiness(t *testing.T) {
+	fixture := newOutboundEndFixture(
+		t,
+		"same-session-readiness-reset",
+		time.Date(2026, time.August, 27, 1, 15, 0, 0, time.UTC),
+		&recordingProvider{},
+	)
+	lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	)
+	if err != nil || !lease.Owner || lease.Available || lease.ActiveCallID != "" {
+		t.Fatalf("same-session lease acquisition = %#v, %v", lease, err)
+	}
+	var desired, registered, microphone, audio, healthy bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available, registered, microphone_ready,
+			audio_ready, session_healthy
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(
+		&desired, &registered, &microphone, &audio, &healthy,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if desired || registered || microphone || audio || healthy {
+		t.Fatalf("same-session acquisition retained readiness = %t/%t/%t/%t/%t",
+			desired, registered, microphone, audio, healthy)
+	}
+}
+
+func TestConnectedCallRefusesCrossSessionLeaseTakeover(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 1, 30, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(
+		t, "connected-takeover-refusal", now, &recordingProvider{},
+	)
+	call := fixture.startCall(t, "connected-takeover-refusal-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGED', answered_at = $2,
+			bridge_pending_at = $2, bridged_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'STAFF'
+	`, call.ID, now.Add(time.Second)); err != nil {
+		t.Fatalf("make Staff CallLeg connected: %v", err)
+	}
+
+	refused, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, "connected-takeover-new-browser", true,
+	)
+	if err != nil || refused.Owner || refused.ActiveCallID != call.ID {
+		t.Fatalf("cross-session connected Call takeover = %#v, %v", refused, err)
+	}
+	var sessionID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT session_id
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != fixture.sessionID {
+		t.Fatalf("connected Call lease moved to %q, want %q", sessionID, fixture.sessionID)
+	}
+
+	reloaded, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	)
+	if err != nil || !reloaded.Owner || reloaded.ActiveCallID != call.ID ||
+		reloaded.Available {
+		t.Fatalf("same-session connected Call reload = %#v, %v", reloaded, err)
+	}
+}
+
+func TestUnansweredOutboundEndingKeepsCallingCapacityReserved(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 1, 45, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(
+		t, "unanswered-outbound-ending", now, &recordingProvider{},
+	)
+	call := fixture.startCall(t, "unanswered-outbound-ending-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDING', ending_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'STAFF'
+	`, call.ID, now.Add(time.Second)); err != nil {
+		t.Fatalf("make unanswered outbound CallLeg ENDING: %v", err)
+	}
+	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.identity)
+	if err != nil || state.Softphone.ActiveCallID != call.ID ||
+		state.Softphone.Available {
+		t.Fatalf("restore unanswered outbound ENDING Call = %#v, %v", state, err)
+	}
+	readiness, err := fixture.calling.SetReadiness(
+		context.Background(), humancalling.ReadinessCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			Registered: true, MicrophoneReady: true, AudioReady: true,
+			SessionHealthy: true, Available: true,
+		},
+	)
+	if err != nil || readiness.Available || readiness.ActiveCallID != call.ID {
+		t.Fatalf("unanswered outbound ENDING readiness = %#v, %v", readiness, err)
+	}
+	if _, err := fixture.calling.StartOutboundCall(
+		context.Background(), humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: "unanswered-outbound-ending-second-call",
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550124",
+		},
+	); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("second outbound during unanswered ENDING = %v, want occupied", err)
+	}
+}
+
+func TestInboundFanoutSkipsStaffWithTransientOutboundCall(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 2, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t, "outbound-blocks-inbound-fanout", now, provider,
+	)
+	fixture.startCall(t, "outbound-blocks-inbound-fanout-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET desired_available = true
+		WHERE user_subject = $1
+	`, fixture.identity.Subject); err != nil {
+		t.Fatalf("simulate stale availability during outbound Call: %v", err)
+	}
+
+	inbound, caller := prepareInboundBeforeFanout(
+		t, fixture, provider, now, "outbound-blocks-inbound-fanout",
+	)
+	caller.EventID = "outbound-blocks-inbound-fanout-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := inbound.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("fan out competing inbound Call: %v", err)
+	}
+	if staffLegs := countStaffLegsForCaller(
+		t, fixture.pool, caller.CallControlID,
+	); staffLegs != 0 {
+		t.Fatalf("inbound fanout targeted outbound-occupied Staff %d times", staffLegs)
+	}
+}
+
+func TestInboundFanoutRechecksLeaseAfterWaitingOnOutboundReservation(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 2, 15, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t, "outbound-inbound-fanout-race", now, provider,
+	)
+	inbound, caller := prepareInboundBeforeFanout(
+		t, fixture, provider, now, "outbound-inbound-fanout-race",
+	)
+
+	const barrierKey int64 = 817270002
+	barrier := holdPostgresAdvisoryLock(t, fixture.pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_outbound_during_inbound_fanout"
+	const functionName = "test_wait_outbound_during_inbound_fanout"
+	installPostgresTestTrigger(t, fixture.pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON human_calling_call_legs
+		FOR EACH ROW WHEN (
+			NEW.role = 'STAFF'
+			AND NEW.staff_session_id = 'outbound-inbound-fanout-race-browser-1'
+			AND NEW.state = 'PENDING'
+		)
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_call_legs;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	outboundResult := make(chan error, 1)
+	go func() {
+		_, err := fixture.calling.StartOutboundCall(
+			context.Background(), humancalling.StartOutboundCallCommand{
+				Identity: fixture.identity, SessionID: fixture.sessionID,
+				IdempotencyKey: "outbound-inbound-fanout-race-call",
+				PracticeID:     fixture.authorization.Practice.ID,
+				LocationID:     fixture.authorization.Locations[0].ID,
+				Destination:    "+15555550123",
+			},
+		)
+		outboundResult <- err
+	}()
+	outboundPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+
+	caller.EventID = "outbound-inbound-fanout-race-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	inboundResult := make(chan error, 1)
+	go func() {
+		inboundResult <- inbound.ApplyProviderFact(context.Background(), caller)
+	}()
+	// Fanout has taken its statement snapshot but cannot lock the Staff lease.
+	// When outbound commits, PostgreSQL must recheck the updated lease tuple and
+	// reject its now-false desired_available state before returning the row.
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", outboundPID,
+	)
+	barrier.release()
+
+	select {
+	case err := <-outboundResult:
+		if err != nil {
+			t.Fatalf("finish concurrent outbound reservation: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent outbound reservation did not finish")
+	}
+	select {
+	case err := <-inboundResult:
+		if err != nil {
+			t.Fatalf("finish concurrent inbound fanout: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent inbound fanout did not finish")
+	}
+	var desired, registered, microphone, audio, healthy bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available, registered, microphone_ready,
+			audio_ready, session_healthy
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(
+		&desired, &registered, &microphone, &audio, &healthy,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if desired || !registered || !microphone || !audio || !healthy {
+		t.Fatalf("outbound lease reservation = %t/%t/%t/%t/%t",
+			desired, registered, microphone, audio, healthy)
+	}
+	if staffLegs := countStaffLegsForCaller(
+		t, fixture.pool, caller.CallControlID,
+	); staffLegs != 0 {
+		t.Fatalf("stale inbound fanout admitted outbound-occupied Staff %d times", staffLegs)
+	}
+}
+
+func prepareInboundBeforeFanout(
+	t *testing.T,
+	fixture outboundEndFixture,
+	provider *recordingProvider,
+	now time.Time,
+	prefix string,
+) (*humancalling.Module, humancalling.ProviderFact) {
+	t.Helper()
+	inbound := humancalling.New(
+		fixture.pool,
+		access.New(fixture.pool, func() time.Time { return now }),
+		provider,
+		humancalling.Config{
+			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+			StaffSIPDomain:         "sip.telnyx.com",
+			RingWindowDuration:     20 * time.Second,
+			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:          "staff-call-control-connection",
+			CredentialConnectionID: "staff-credential-connection",
+			FromNumber:             "+14843336938",
+			RingbackURL:            "https://media.synthetic.test/ringback.wav",
+		},
+		func() time.Time { return now },
+	)
+	if _, err := inbound.CreateHandoff(
+		context.Background(), humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject: "abita-" + prefix, PracticeID: fixture.authorization.Practice.ID,
+			},
+			LocationID:   fixture.authorization.Locations[0].ID,
+			SourceCallID: prefix + "-source", IdempotencyKey: prefix + "-handoff",
+			Contact: humancalling.ContactContext{Phone: "+15555550100"},
+		},
+	); err != nil {
+		t.Fatalf("create %s inbound handoff: %v", prefix, err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: prefix + "-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-caller-control", CallLegID: prefix + "-caller-leg",
+		CallSessionID: prefix + "-caller-session",
+		From:          "+15555550100", To: "+14843989071",
+	}
+	if err := inbound.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("admit %s inbound Call: %v", prefix, err)
+	}
+	processAllCommands(t, inbound)
+	return inbound, caller
+}
+
+func countStaffLegsForCaller(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	callerControlID string,
+) int {
+	t.Helper()
+	var staffLegs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_call_legs offered
+		WHERE offered.role = 'STAFF'
+			AND offered.call_id = (
+				SELECT caller.call_id
+				FROM human_calling_call_legs caller
+				WHERE caller.role = 'CALLER'
+					AND caller.provider_call_control_id = $1
+			)
+	`, callerControlID).Scan(&staffLegs); err != nil {
+		t.Fatal(err)
+	}
+	return staffLegs
 }
 
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {

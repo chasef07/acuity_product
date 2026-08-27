@@ -8,6 +8,7 @@ import {
 	classifyTelnyxError,
   createCallingMediaAdapter,
   type IncomingMediaLeg,
+  type MediaState,
   rejectMediaCall,
 } from "./media-adapter.ts"
 
@@ -145,6 +146,52 @@ function fakeCall(
     dtmf: (digit: string) => actions.push(`dtmf:${digit}`),
   }
 }
+
+test("an aborted stale client cannot replace a newer media connection", async () => {
+  const output = installMediaDOM()
+  const staleSDK = fakeClient()
+  const currentSDK = fakeClient()
+  let resolveStale: ((client: typeof staleSDK.client) => void) | undefined
+  const staleClient = new Promise<typeof staleSDK.client>((resolve) => {
+    resolveStale = resolve
+  })
+  let staleDisconnects = 0
+  staleSDK.client.serverDisconnect = async () => {
+    staleDisconnects += 1
+  }
+  let clients = 0
+  const adapter = createCallingMediaAdapter(async () => {
+    clients += 1
+    return clients === 1 ? staleClient : currentSDK.client
+  })
+  const staleStates: MediaState[] = []
+  const currentStates: MediaState[] = []
+  const controller = new AbortController()
+  const staleConnection = adapter.connect(
+    "stale-token",
+    output.id,
+    {
+      onState: (state) => staleStates.push(state),
+      onIncoming: () => {},
+    },
+    controller.signal,
+  )
+
+  controller.abort()
+  await assert.rejects(staleConnection, { name: "AbortError" })
+  await adapter.connect("current-token", output.id, {
+    onState: (state) => currentStates.push(state),
+    onIncoming: () => {},
+  })
+  resolveStale?.(staleSDK.client)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  staleSDK.emit("telnyx.ready")
+  currentSDK.emit("telnyx.ready")
+
+  assert.equal(staleDisconnects, 1)
+  assert.deepEqual(staleStates, ["registering"])
+  assert.deepEqual(currentStates, ["registering", "ready"])
+})
 
 test("media attachment waits for secure peer connectivity", async () => {
   const output = installMediaDOM()
@@ -432,6 +479,35 @@ test("a terminal SDK update detaches the losing media leg", async () => {
   assert.equal(output.srcObject, null)
   assert.equal(legs[0].sendDTMF("5"), false)
   assert.deepEqual(actions, ["answer", "unmute"])
+})
+
+test("an untracked terminal invite cannot detach a different active Call", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const ended: Array<{ providerLegID: string; mediaToken: string }> = []
+  const actions: string[] = []
+  const activeCall = fakeCall("active-leg", "a".repeat(43), actions)
+  const invalidCall = fakeCall("", "", [])
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+    onEnded: (leg) => ended.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call: activeCall })
+  await legs[0].answer()
+  activeCall.state = "active"
+
+  sdk.emit("telnyx.notification", { type: "callUpdate", call: invalidCall })
+  invalidCall.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call: invalidCall })
+
+  assert.deepEqual(ended, [])
+  assert.notEqual(output.srcObject, null)
+  assert.equal(legs[0].sendDTMF("5"), true)
+  assert.deepEqual(actions, ["answer", "unmute", "dtmf:5"])
 })
 
 test("a terminal SDK update during answer never attaches the losing media leg", async () => {
