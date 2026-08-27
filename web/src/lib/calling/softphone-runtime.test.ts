@@ -202,6 +202,105 @@ test("a terminal observation outranks a delayed nonterminal command response", a
   assert.equal(runtime.getSnapshot().pendingDisposition?.state, "NEEDS_DISPOSITION")
 })
 
+test("authoritative terminal state clears attached media without an SDK ended event", async () => {
+  const fixture = await outboundMediaFixture()
+  const connected = call({
+    id: fixture.outbound.id,
+    direction: "OUTBOUND",
+    state: "CONNECTED",
+    version: 2,
+  })
+  fixture.backend.confirmMediaHandler = async () => {
+    fixture.backend.lease = lease({
+      owner: true,
+      available: false,
+      activeCallId: connected.id,
+    })
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(connected.id, fixture.expected.callLegId, connected.version),
+    })
+    fixture.backend.calls.set(connected.id, connected)
+    return connected
+  }
+  const exact = mediaLeg({
+    providerLegID: "provider-terminal-without-sdk-event",
+    mediaToken: fixture.expected.mediaToken,
+  })
+  fixture.media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(
+      fixture.runtime.getSnapshot().mediaAttachment?.mediaToken,
+      exact.mediaToken,
+    ),
+  )
+
+  const terminal = call({
+    id: connected.id,
+    direction: "OUTBOUND",
+    state: "NEEDS_DISPOSITION",
+    version: 3,
+  })
+  fixture.backend.lease = lease({
+    owner: true,
+    available: false,
+    pendingOutcomeCallId: terminal.id,
+  })
+  fixture.backend.state = callingState({
+    softphone: fixture.backend.lease,
+    disposition: {
+      ...stateCall(terminal.id, fixture.expected.callLegId, terminal.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  fixture.backend.calls.set(terminal.id, terminal)
+
+  await fixture.runtime.signalRefresh("backend")
+
+  assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
+  assert.equal(fixture.media.disconnects, 0)
+  await eventually(() => assert.equal(exact.rejections, 1))
+})
+
+test("terminal media confirmation never attaches the provider leg", async () => {
+  const fixture = await outboundMediaFixture()
+  const terminal = call({
+    id: fixture.outbound.id,
+    direction: "OUTBOUND",
+    state: "NEEDS_DISPOSITION",
+    version: 2,
+  })
+  fixture.backend.confirmMediaHandler = async () => {
+    fixture.backend.lease = lease({
+      owner: true,
+      available: false,
+      pendingOutcomeCallId: terminal.id,
+    })
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      disposition: {
+        ...stateCall(terminal.id, fixture.expected.callLegId, terminal.version),
+        state: "NEEDS_DISPOSITION",
+      },
+    })
+    fixture.backend.calls.set(terminal.id, terminal)
+    return terminal
+  }
+  const exact = mediaLeg({
+    providerLegID: "provider-terminal-confirmation",
+    mediaToken: fixture.expected.mediaToken,
+  })
+
+  fixture.media.emitIncoming(exact)
+
+  await eventually(() => assert.equal(exact.rejections, 1))
+  assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
+  assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
+})
+
 test("a terminal watermark survives disposition before a delayed response arrives", async () => {
   const backend = new DeterministicBackend()
   backend.lease = lease({ owner: true, activeCallId: "call-watermark" })

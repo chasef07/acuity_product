@@ -641,6 +641,22 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     const needsDisposition = call?.state === "NEEDS_DISPOSITION"
     const closed =
       call?.state === "RESOLVED" || call?.state === "FOLLOW_UP_REQUIRED"
+    const settledMedia =
+      settled && call && snapshot.mediaAttachment?.callID === call.id
+        ? snapshot.mediaAttachment
+        : undefined
+    if (settledMedia) {
+      incomingMedia.delete(settledMedia.mediaToken)
+      if (
+        attachedLeg?.providerLegID === settledMedia.providerLegID &&
+        attachedLeg.mediaToken === settledMedia.mediaToken
+      ) {
+        const settledLeg = attachedLeg
+        attachedLeg = undefined
+        void rejectSafely(settledLeg)
+      }
+      if (answeredInbound?.callID === settledMedia.callID) answeredInbound = undefined
+    }
     persistCallRecoveryID(call && !closed ? call.id : undefined)
     const terminalVersions =
       call && settled
@@ -668,6 +684,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       expectedCallID: settled ? "" : (call?.id ?? snapshot.expectedCallID),
       activeCallLegID: settled ? "" : snapshot.activeCallLegID,
       expectedMedia: settled ? undefined : snapshot.expectedMedia,
+      mediaAttachment: settledMedia ? undefined : snapshot.mediaAttachment,
+      muted: settledMedia ? false : snapshot.muted,
       endingCallID:
         !call || settled || snapshot.endingCallID !== call.id
           ? ""
@@ -1603,7 +1621,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await discardStaleMedia(leg)
         return
       }
-      if (!applyCall(call)) {
+      if (!applyCall(call) || callSettled(call)) {
         await rejectSafely(leg)
         return
       }
