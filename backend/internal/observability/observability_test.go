@@ -159,6 +159,48 @@ func TestLoggerEmitsFixedConvergenceCapacityAndCoordinationContract(t *testing.T
 		"unavailable_depth", float64(1))
 }
 
+func TestLoggerOmitsSuccessfulDatabaseWorkAndPreservesFailuresAndCapacity(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimeWorker,
+		"worker-00018-a1b",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	)
+
+	observability.Record(observer, observability.DatabasePoolAcquired(
+		observability.PoolAcquireSucceeded,
+		2*time.Millisecond,
+	))
+	observability.Record(observer, observability.DatabaseExecuted(
+		observability.DatabaseSucceeded,
+		3*time.Millisecond,
+	))
+	if output.Len() != 0 {
+		t.Fatalf("successful database work emitted logs: %s", output.String())
+	}
+
+	observability.Record(observer, observability.DatabasePoolAcquired(
+		observability.PoolAcquireTimeout,
+		1500*time.Millisecond,
+	))
+	observability.Record(observer, observability.DatabaseExecuted(
+		observability.DatabaseStatementTimeout,
+		5*time.Second,
+	))
+	observability.Record(observer, observability.DatabasePoolState(2, 0, 2))
+
+	logs := entries(t, output.String())
+	if len(logs) != 3 {
+		t.Fatalf("retained database observations = %d, want 3: %#v", len(logs), logs)
+	}
+	assertField(t, logs, "acuity_call_center_database_pool_acquire",
+		"outcome", "timeout")
+	assertField(t, logs, "acuity_backend_database_execution",
+		"cause", "statement_timeout")
+	assertField(t, logs, "acuity_call_center_database_pool",
+		"saturation_ratio", float64(1))
+}
+
 func TestPoolTracerClassifiesBoundedAcquisitionOutcome(t *testing.T) {
 	var output bytes.Buffer
 	observer := observability.NewLogger(
@@ -204,6 +246,26 @@ func TestPoolTracerClassifiesCanceledAcquisitionSeparatelyFromTimeout(t *testing
 		"acuity_call_center_database_pool_acquire")
 	if entry["outcome"] != "canceled" {
 		t.Fatalf("pool acquisition metric = %#v", entry)
+	}
+}
+
+func TestPoolTracerOmitsSuccessfulAcquisition(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(
+		observability.RuntimePortalAPI,
+		"portal-api-00009",
+		slog.New(slog.NewJSONHandler(&output, nil)),
+	)
+	tracer := observability.NewPoolTracer(observer)
+	ctx := tracer.TraceAcquireStart(
+		context.Background(),
+		nil,
+		pgxpool.TraceAcquireStartData{},
+	)
+	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{})
+
+	if output.Len() != 0 {
+		t.Fatalf("successful pool acquisition emitted logs: %s", output.String())
 	}
 }
 
