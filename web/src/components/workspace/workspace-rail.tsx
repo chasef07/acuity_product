@@ -127,7 +127,7 @@ const taskCategoryOptions: Array<{
   { value: "other", label: "Other" },
 ]
 
-type TaskRailProps = {
+type WorkspaceRailProps = {
   discovery: AccessDiscovery
   practice: PracticeAccess
   workspaceControl: ReactNode
@@ -167,7 +167,7 @@ type TaskRailProps = {
   onOutcomeLoadMore: (folder: AppointmentSection) => void
 }
 
-export function TaskRail({
+export function WorkspaceRail({
   discovery,
   practice,
   workspaceControl,
@@ -205,7 +205,7 @@ export function TaskRail({
   onRecoveryLoadMore,
   onMessageLoadMore,
   onOutcomeLoadMore,
-}: TaskRailProps) {
+}: WorkspaceRailProps) {
   const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
   const [expansion, setExpansion] = useState<{
     stateKey: string

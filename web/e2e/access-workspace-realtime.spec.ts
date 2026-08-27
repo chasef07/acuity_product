@@ -157,7 +157,7 @@ const operatorAnalyticsDetailFixture = {
   ],
 }
 
-test("Slice 1 authority, operator analytics, browser state, and reconnect", async ({
+test("workspace authority, operator analytics, browser state, and reconnect", async ({
   browser,
   page,
 }, testInfo) => {

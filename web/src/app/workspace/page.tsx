@@ -1,5 +1,5 @@
-import { WorkspaceShell } from "@/components/workspace/workspace-shell"
+import { PortalWorkspace } from "@/components/workspace/portal-workspace"
 
 export default function WorkspacePage() {
-  return <WorkspaceShell />
+  return <PortalWorkspace />
 }
