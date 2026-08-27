@@ -115,7 +115,6 @@ export type CallingCardIdentity = {
 }
 
 export type CallingCardFailureView = {
-  role: "alert"
   title: "Calling needs attention"
   message: string
   action?: {
@@ -144,7 +143,6 @@ export type CallingCardActions = {
   }
   close?: {
     label: "Close"
-    disabled: boolean
   }
 }
 
@@ -257,7 +255,7 @@ function projectActions(
     !snapshot.pending?.retry &&
     !snapshot.pending?.outbound &&
     !snapshot.pending?.disposition
-      ? { label: "Close" as const, disabled: false }
+      ? { label: "Close" as const }
       : undefined
   return {
     dispositions,
@@ -311,7 +309,6 @@ export function projectCallingFailure(
   failure: CallingCardFailure,
 ): CallingCardFailureView {
   return {
-    role: "alert",
     title: "Calling needs attention",
     message: failure.message.startsWith("Calling stopped locally")
       ? failure.message

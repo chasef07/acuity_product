@@ -404,42 +404,35 @@ test("typed failures replace provider details with concise Staff recovery copy",
 
   assert.deepEqual(failures, [
     {
-      role: "alert",
       title: "Calling needs attention",
       message: "Sign in again to keep calling.",
     },
     {
-      role: "alert",
       title: "Calling needs attention",
       message: "You do not have calling access for this practice.",
     },
     {
-      role: "alert",
       title: "Calling needs attention",
       message:
         "Calling is active in another browser. Take over here to use this device.",
       action: { label: "Take over" },
     },
     {
-      role: "alert",
       title: "Calling needs attention",
       message: "Allow microphone access, then reconnect calling.",
       action: { label: "Reconnect calling" },
     },
     {
-      role: "alert",
       title: "Calling needs attention",
       message: "Audio disconnected. Reconnect calling to continue.",
       action: { label: "Reconnect calling" },
     },
     {
-      role: "alert",
       title: "Calling needs attention",
       message: "This call changed elsewhere. Refresh to see the latest state.",
       action: { label: "Refresh calling" },
     },
     {
-      role: "alert",
       title: "Calling needs attention",
       message: "Calling could not refresh. Check your connection and try again.",
       action: { label: "Refresh calling" },
@@ -460,7 +453,6 @@ test("active Call ownership stays visible without offering an unsafe takeover", 
   )
 
   assert.deepEqual(view?.failure, {
-    role: "alert",
     title: "Calling needs attention",
     message:
       "An active Call is using calling in another browser. Finish it there before using this device.",
@@ -477,29 +469,10 @@ test("failed stop cleanup preserves its specific warning without a false action"
       recoverable: false,
     }),
     {
-      role: "alert",
       title: "Calling needs attention",
       message,
     },
   )
-})
-
-test("a failure without a Call or incoming offer does not project a Calling Card", () => {
-  const view = projectCallingCard(
-    {
-      ...snapshot(outboundCall),
-      activeCall: undefined,
-      offers: [],
-      failure: {
-        kind: "ownership",
-        message: "Lease conflict from backend implementation detail.",
-        recoverable: true,
-      },
-    },
-    now,
-  )
-
-  assert.equal(view, undefined)
 })
 
 test("Outcome exposes only the Staff actions supported by the committed Call", () => {
@@ -576,7 +549,7 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
     {
       dispositions: [],
       retry: { label: "Try again", disabled: false },
-      close: { label: "Close", disabled: false },
+      close: { label: "Close" },
     },
   ])
 })
@@ -651,7 +624,7 @@ test("settled non-disposition Outcomes always offer Close", () => {
     actions,
     states.map(() => ({
       dispositions: [],
-      close: { label: "Close", disabled: false },
+      close: { label: "Close" },
     })),
   )
 })

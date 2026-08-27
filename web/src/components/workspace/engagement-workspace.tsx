@@ -162,7 +162,6 @@ export function EngagementWorkspace({
     "idle",
   )
   const {
-    activeCall,
     callingOccupied,
     callingEnabled,
     outboundPending,
@@ -224,9 +223,7 @@ export function EngagementWorkspace({
               !callingEnabled ||
               !route ||
               !ownsSoftphone ||
-              Boolean(activeCall) ||
-              callingOccupied ||
-              outboundPending
+              callingOccupied
             }
             onClick={() => {
               setCallError("")

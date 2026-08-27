@@ -297,7 +297,6 @@ function ActiveCallActions({
         <Button
           size="sm"
           variant="ghost"
-          disabled={view.actions.close.disabled}
           onClick={onClose}
         >
           {view.actions.close.label}

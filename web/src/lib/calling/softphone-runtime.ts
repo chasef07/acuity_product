@@ -165,10 +165,7 @@ export type SoftphoneRuntime = {
   subscribe(listener: () => void): () => void
   start(): Promise<void>
   stop(): Promise<void>
-  signalRefresh(
-    reason: "staff-intent" | "incoming-media" | "media" | "visibility" | "backend",
-  ): Promise<void>
-  takeOver(): Promise<void>
+  signalRefresh(): Promise<void>
   setAvailability(available: boolean): Promise<void>
   startOutbound(
     input: Omit<StartOutboundCallRequest, "sessionId">,
@@ -462,12 +459,14 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   }
 
   async function rejectSafely(leg: IncomingMediaLeg) {
-    if (rejectedMedia.has(leg)) return
+    if (rejectedMedia.has(leg)) return false
     rejectedMedia.add(leg)
     try {
       await boundedMediaEffect(leg.reject())
+      return true
     } catch {
       rejectedMedia.delete(leg)
+      return false
     }
   }
 
@@ -645,17 +644,36 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       settled && call && snapshot.mediaAttachment?.callID === call.id
         ? snapshot.mediaAttachment
         : undefined
+    const settledLeg =
+      settledMedia &&
+      attachedLeg?.providerLegID === settledMedia.providerLegID &&
+      attachedLeg.mediaToken === settledMedia.mediaToken
+        ? attachedLeg
+        : undefined
     if (settledMedia) {
       incomingMedia.delete(settledMedia.mediaToken)
-      if (
-        attachedLeg?.providerLegID === settledMedia.providerLegID &&
-        attachedLeg.mediaToken === settledMedia.mediaToken
-      ) {
-        const settledLeg = attachedLeg
-        attachedLeg = undefined
-        void rejectSafely(settledLeg)
+      if (settledLeg) {
+        void rejectSafely(settledLeg).then((released) => {
+          if (attachedLeg !== settledLeg) return
+          if (!released) {
+            void handleMediaFailure("provider")
+            return
+          }
+          attachedLeg = undefined
+          if (answeredInbound?.callID === settledMedia.callID) {
+            answeredInbound = undefined
+          }
+          if (
+            snapshot.mediaAttachment?.callID === settledMedia.callID &&
+            snapshot.mediaAttachment.providerLegID === settledMedia.providerLegID &&
+            snapshot.mediaAttachment.mediaToken === settledMedia.mediaToken
+          ) {
+            publish({ mediaAttachment: undefined, muted: false })
+          }
+        })
+      } else if (answeredInbound?.callID === settledMedia.callID) {
+        answeredInbound = undefined
       }
-      if (answeredInbound?.callID === settledMedia.callID) answeredInbound = undefined
     }
     persistCallRecoveryID(call && !closed ? call.id : undefined)
     const terminalVersions =
@@ -684,8 +702,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       expectedCallID: settled ? "" : (call?.id ?? snapshot.expectedCallID),
       activeCallLegID: settled ? "" : snapshot.activeCallLegID,
       expectedMedia: settled ? undefined : snapshot.expectedMedia,
-      mediaAttachment: settledMedia ? undefined : snapshot.mediaAttachment,
-      muted: settledMedia ? false : snapshot.muted,
+      mediaAttachment:
+        settledMedia && !settledLeg ? undefined : snapshot.mediaAttachment,
+      muted: settledMedia && !settledLeg ? false : snapshot.muted,
       endingCallID:
         !call || settled || snapshot.endingCallID !== call.id
           ? ""
@@ -1229,7 +1248,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           })
           void releaseLocalMedia()
             .then(() => commitReadiness(false))
-            .then(() => signalRefresh("media"))
+            .then(() => signalRefresh())
         }, signal),
         signal,
         (lateMicrophone) => lateMicrophone.stop(),
@@ -1294,7 +1313,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
               })
               mediaStateSynchronization = commitReadiness(
                 mediaState === "ready",
-              ).then(() => signalRefresh("media"))
+              ).then(() => signalRefresh())
             },
             onIncoming: (leg) => {
               if (connectionCurrent()) void handleIncomingMedia(leg, generation)
@@ -1320,7 +1339,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
                 attachedLeg = undefined
                 publish({ mediaAttachment: undefined, muted: false })
               }
-              void signalRefresh("media")
+              void signalRefresh()
             },
             onAudioIssue: () => {
               if (!connectionCurrent()) return
@@ -1404,12 +1423,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
 
   async function reconcileStaleCommand(generation: number) {
     if (!stopped && generation === lifecycleGeneration) {
-      await signalRefresh("staff-intent")
+      await signalRefresh()
     }
   }
 
   function signalStaffIntent() {
-    void signalRefresh("staff-intent")
+    void signalRefresh()
   }
 
   async function reconcileCommandFailure(
@@ -1419,7 +1438,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   ) {
     const failure = failureFrom(error, "temporary-request")
     if (failure.kind === "conflict" || failure.kind === "temporary-request") {
-      await signalRefresh("staff-intent")
+      await signalRefresh()
       if (!commandContinuationCurrent(generation) || committed()) return true
     }
     await setCommandFailure(error)
@@ -1473,7 +1492,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             recoverable: true,
           },
         })
-        await signalRefresh("incoming-media")
+        await signalRefresh()
         return
       }
       if (!mediaContinuationCurrent(generation)) {
@@ -1491,7 +1510,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             recoverable: true,
           },
         })
-        await signalRefresh("incoming-media")
+        await signalRefresh()
         return
       }
       attachedLeg = leg
@@ -1500,7 +1519,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         failure:
           snapshot.failure?.kind === "media" ? undefined : snapshot.failure,
       })
-      await signalRefresh("incoming-media")
+      await signalRefresh()
       if (!mediaContinuationCurrent(generation)) {
         await discardStaleMedia(leg)
       }
@@ -1516,7 +1535,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       leg,
       clock.now + mediaCorrelationWindowMilliseconds,
     )
-    await signalRefresh("incoming-media")
+    await signalRefresh()
     if (!mediaContinuationCurrent(generation)) {
       await discardStaleMedia(leg)
       return
@@ -1595,7 +1614,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       await rejectSafely(leg)
       setFailure(error, "media")
-      await signalRefresh("media")
+      await signalRefresh()
       return
     }
     if (!mediaContinuationCurrent(generation)) {
@@ -1603,7 +1622,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       return
     }
     if (outcome !== "attached") {
-      await signalRefresh("media")
+      await signalRefresh()
       return
     }
     try {
@@ -1621,8 +1640,15 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await discardStaleMedia(leg)
         return
       }
-      if (!applyCall(call) || callSettled(call)) {
+      if (!applyCall(call)) {
         await rejectSafely(leg)
+        return
+      }
+      if (callSettled(call)) {
+        const released = await rejectSafely(leg)
+        if (!released && mediaContinuationCurrent(generation)) {
+          await handleMediaFailure("provider")
+        }
         return
       }
       attachedLeg = leg
@@ -1780,10 +1806,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     await disconnecting
   }
 
-  async function signalRefresh(
-    reason: "staff-intent" | "incoming-media" | "media" | "visibility" | "backend",
-  ) {
-    void reason
+  async function signalRefresh() {
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
     refreshTimer = undefined
     await requestRefresh(true)
@@ -1818,7 +1841,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           : "",
       })
       if (!lease.owner) return
-      await signalRefresh("staff-intent")
+      await signalRefresh()
       await connectMedia()
     } catch (error) {
       await setCommandFailure(error)
@@ -1847,7 +1870,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       unsubscribeVisibility = visibility.subscribe(() => {
         if (!stopped) {
           syncAttention(snapshot.offers)
-          void signalRefresh("visibility")
+          void signalRefresh()
         }
       })
       try {
@@ -1962,7 +1985,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       return stopInFlight
     },
     signalRefresh,
-    takeOver,
     async setAvailability(available) {
       if (accessBlocked) {
         publish({ availabilityIntent: available })
@@ -1976,7 +1998,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await connectMedia()
       }
       await commitReadiness()
-      await signalRefresh("staff-intent")
+      await signalRefresh()
     },
     async startOutbound(input) {
       if (!snapshot.lease?.owner || snapshot.readiness.mediaState !== "ready") {
@@ -2020,7 +2042,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         })
         applyCall(call)
         await commitReadiness(false)
-        await signalRefresh("staff-intent")
+        await signalRefresh()
       } catch (error) {
         if (!commandContinuationCurrent(generation)) {
           await reconcileStaleCommand(generation)
@@ -2093,7 +2115,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           })
           await commitReadiness(false)
           setFailure(error, "media")
-          await signalRefresh("media")
+          await signalRefresh()
           void rejectSafely(leg)
           return
         }
@@ -2119,7 +2141,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           return
         }
         publish({ pendingCall: undefined })
-        await signalRefresh("media")
+        await signalRefresh()
         if (answeredInbound === answering) answeredInbound = undefined
         return
       }
@@ -2155,7 +2177,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         return
       }
       await commitReadiness(false)
-      await signalRefresh("staff-intent")
+      await signalRefresh()
     },
     async hangup() {
       const call = snapshot.activeCall
@@ -2178,10 +2200,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           return
         }
         applyCall(committed)
-        await signalRefresh("staff-intent")
+        await signalRefresh()
       } catch (error) {
         if (stopped || generation !== lifecycleGeneration) return
-        await signalRefresh("staff-intent")
+        await signalRefresh()
         if (!commandContinuationCurrent(generation)) return
         if (
           snapshot.pendingDisposition ||
@@ -2237,7 +2259,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         })
         applyCall(retried)
         await connectMedia()
-        await signalRefresh("staff-intent")
+        await signalRefresh()
       } catch (error) {
         if (!commandContinuationCurrent(generation)) {
           await reconcileStaleCommand(generation)
@@ -2279,7 +2301,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           await commitReadiness()
         }
       }
-      await signalRefresh("staff-intent")
+      await signalRefresh()
     },
     dismissOutcome() {
       const call = snapshot.activeCall
@@ -2329,7 +2351,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           pending: { ...snapshot.pending, disposition: false },
         })
         await commitReadiness()
-        await signalRefresh("staff-intent")
+        await signalRefresh()
         return result
       } catch (error) {
         if (!commandContinuationCurrent(generation)) {

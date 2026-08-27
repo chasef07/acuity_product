@@ -55,7 +55,7 @@ test("start restores the owned lease and never regresses a Call version", async 
 
   await runtime.start()
   backend.calls.set("call-1", call({ id: "call-1", version: 3 }))
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   const snapshot = runtime.getSnapshot()
   assert.equal(snapshot.phase, "running")
@@ -143,7 +143,7 @@ test("an unchanged Calling snapshot still refreshes the known active Call", asyn
     etag: backend.etag,
   })
 
-  await runtime.signalRefresh("visibility")
+  await runtime.signalRefresh()
 
   assert.equal(runtime.getSnapshot().activeCall?.state, "CONNECTED")
   assert.equal(runtime.getSnapshot().activeCall?.version, 2)
@@ -191,7 +191,7 @@ test("a terminal observation outranks a delayed nonterminal command response", a
     },
   })
   backend.calls.set(terminal.id, terminal)
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   delayedHangup.resolve(
     call({ id: terminal.id, state: "CONNECTED", version: 2 }),
   )
@@ -203,68 +203,53 @@ test("a terminal observation outranks a delayed nonterminal command response", a
 })
 
 test("authoritative terminal state clears attached media without an SDK ended event", async () => {
-  const fixture = await outboundMediaFixture()
-  const connected = call({
-    id: fixture.outbound.id,
-    direction: "OUTBOUND",
-    state: "CONNECTED",
-    version: 2,
-  })
-  fixture.backend.confirmMediaHandler = async () => {
-    fixture.backend.lease = lease({
-      owner: true,
-      available: false,
-      activeCallId: connected.id,
-    })
-    fixture.backend.state = callingState({
-      softphone: fixture.backend.lease,
-      bridged: stateCall(connected.id, fixture.expected.callLegId, connected.version),
-    })
-    fixture.backend.calls.set(connected.id, connected)
-    return connected
-  }
-  const exact = mediaLeg({
-    providerLegID: "provider-terminal-without-sdk-event",
-    mediaToken: fixture.expected.mediaToken,
-  })
-  fixture.media.emitIncoming(exact)
-  await eventually(() =>
-    assert.equal(
-      fixture.runtime.getSnapshot().mediaAttachment?.mediaToken,
-      exact.mediaToken,
-    ),
+  const fixture = await attachedOutboundMediaFixture(
+    "provider-terminal-without-sdk-event",
   )
+  const terminal = setAttachedOutboundTerminal(fixture)
 
-  const terminal = call({
-    id: connected.id,
-    direction: "OUTBOUND",
-    state: "NEEDS_DISPOSITION",
-    version: 3,
-  })
-  fixture.backend.lease = lease({
-    owner: true,
-    available: false,
-    pendingOutcomeCallId: terminal.id,
-  })
-  fixture.backend.state = callingState({
-    softphone: fixture.backend.lease,
-    disposition: {
-      ...stateCall(terminal.id, fixture.expected.callLegId, terminal.version),
-      state: "NEEDS_DISPOSITION",
-    },
-  })
-  fixture.backend.calls.set(terminal.id, terminal)
-
-  await fixture.runtime.signalRefresh("backend")
+  await fixture.runtime.signalRefresh()
 
   assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
   assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
   assert.equal(fixture.media.disconnects, 0)
-  await eventually(() => assert.equal(exact.rejections, 1))
+  await eventually(() => assert.equal(fixture.exact.rejections, 1))
 })
 
-test("terminal media confirmation never attaches the provider leg", async () => {
+test("terminal media purge failure or timeout fails calling closed", async (context) => {
+  await context.test("failure", async () => {
+    const fixture = await attachedOutboundMediaFixture("provider-terminal-failure")
+    fixture.exact.failRejects = 1
+    setAttachedOutboundTerminal(fixture)
+
+    await fixture.runtime.signalRefresh()
+
+    await eventually(() => assert.equal(fixture.media.disconnects, 1))
+    assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
+    assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "unavailable")
+    assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+    assert.equal(fixture.backend.readinessWrites.at(-1)?.available, false)
+  })
+
+  await context.test("timeout", async () => {
+    const fixture = await attachedOutboundMediaFixture("provider-terminal-timeout")
+    fixture.exact.rejectDeferred = deferred<void>()
+    setAttachedOutboundTerminal(fixture)
+
+    await fixture.runtime.signalRefresh()
+    assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+    await fixture.clock.advance(10_000)
+
+    await eventually(() => assert.equal(fixture.media.disconnects, 1))
+    assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
+    assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "unavailable")
+    assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+    assert.equal(fixture.backend.readinessWrites.at(-1)?.available, false)
+  })
+})
+
+test("failed terminal media confirmation purge fails calling closed", async () => {
   const fixture = await outboundMediaFixture()
   const terminal = call({
     id: fixture.outbound.id,
@@ -291,14 +276,18 @@ test("terminal media confirmation never attaches the provider leg", async () => 
   const exact = mediaLeg({
     providerLegID: "provider-terminal-confirmation",
     mediaToken: fixture.expected.mediaToken,
+    failRejects: 1,
   })
 
   fixture.media.emitIncoming(exact)
 
   await eventually(() => assert.equal(exact.rejections, 1))
+  await eventually(() => assert.equal(fixture.media.disconnects, 1))
   assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
   assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
+  assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
+  assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "unavailable")
 })
 
 test("a terminal watermark survives disposition before a delayed response arrives", async () => {
@@ -340,7 +329,7 @@ test("a terminal watermark survives disposition before a delayed response arrive
     },
   })
   backend.calls.set(terminal.id, terminal)
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   backend.disposeHandler = async () => {
     const resolved = call({ id: terminal.id, state: "RESOLVED", version: 4 })
@@ -397,7 +386,7 @@ test("a delayed disposition read cannot restore Outcome after its commit", async
   const delayedRead = deferred<CallingCall>()
   backend.readCallHandler = async (callID) =>
     callID === pending.id ? delayedRead.promise : backend.calls.get(callID)!
-  const staleRefresh = runtime.signalRefresh("backend")
+  const staleRefresh = runtime.signalRefresh()
   await drainMicrotasks()
   backend.disposeHandler = async () => {
     const resolved = call({ id: pending.id, state: "RESOLVED", version: 4 })
@@ -615,7 +604,7 @@ test("lease loss disconnects a media client whose connect resolves late", async 
   await eventually(() => assert.equal(media.connects, 1))
   backend.lease = lease({ sessionId: "other-session", owner: true })
   backend.state = callingState({ softphone: backend.lease })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   const mediaTokenRequests = backend.mediaTokenRequests
   assert.equal(await media.refreshCredential(), undefined)
   assert.equal(backend.mediaTokenRequests, mediaTokenRequests)
@@ -973,7 +962,7 @@ test("stop aborts a hung refresh so restart owns a fresh request", async () => {
       )
     })
   }
-  const refreshing = runtime.signalRefresh("backend")
+  const refreshing = runtime.signalRefresh()
   await eventually(() => assert.equal(stalled, true))
   const leaseRequestsBeforeRestart = backend.leaseRequests.length
 
@@ -1069,7 +1058,7 @@ test("polling after a lost lease response restores media and heartbeat", async (
   assert.equal(runtime.getSnapshot().failure?.kind, "temporary-request")
 
   backend.acquireLeaseHandler = undefined
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   await eventually(() => assert.equal(media.connects, 1))
   await eventually(() =>
     assert.equal(runtime.getSnapshot().activeCall?.id, restored.id),
@@ -1266,7 +1255,7 @@ test("media failure stays visible through readiness outage and serializes recove
     await eventually(() =>
       assert.equal(runtime.getSnapshot().failure?.kind, "media"),
     )
-    await runtime.signalRefresh("backend")
+    await runtime.signalRefresh()
     assert.equal(runtime.getSnapshot().failure?.kind, "media")
 
     backend.writeReadinessHandler = undefined
@@ -1346,7 +1335,7 @@ test("an incoming Call attaches by media token then requires the exact durable b
   })
   media.emitIncoming(unrelated)
   await clock.advance(5_000)
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   await eventually(() => assert.equal(unrelated.rejections, 1))
 
   const exact = mediaLeg({
@@ -1415,7 +1404,7 @@ test("an incoming Call attaches by media token then requires the exact durable b
       version: 3,
     }),
   )
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().activeCall?.id, "call-inbound")
   assert.equal(runtime.getSnapshot().controls.canMute, true)
   assert.equal(runtime.getSnapshot().controls.canEnd, true)
@@ -1432,14 +1421,14 @@ test("an incoming Call attaches by media token then requires the exact durable b
       version: 3,
     },
   })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   assert.equal(exact.rejections, 1)
   assert.equal(runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().expectedCallID, "")
 
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().expectedCallID, "")
 })
@@ -1491,10 +1480,10 @@ test("ended answered media keeps its durable leg correlation until a different w
       version: 3,
     },
   })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   losingMedia.answerDeferred!.resolve("ended")
   await answer
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().expectedCallID, "")
@@ -1533,9 +1522,9 @@ test("refresh is single-flight, keeps ETag, adapts cadence, and renders a commit
     if (overlappingReads === 1) await blocked.promise
     return { status: "not-modified", etag: backend.etag }
   }
-  const first = runtime.signalRefresh("media")
-  const second = runtime.signalRefresh("visibility")
-  const third = runtime.signalRefresh("backend")
+  const first = runtime.signalRefresh()
+  const second = runtime.signalRefresh()
+  const third = runtime.signalRefresh()
   await drainMicrotasks()
   assert.equal(overlappingReads, 1)
   blocked.resolve()
@@ -1560,7 +1549,7 @@ test("refresh is single-flight, keeps ETag, adapts cadence, and renders a commit
     "call-fast",
     call({ id: "call-fast", state: "CONNECTING", version: 5 }),
   )
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().activeCall?.version, 5)
 
   const committedAt = clock.now
@@ -1647,7 +1636,7 @@ test("Hangup preserves Ending until committed disposition and disposition clears
     "call-end",
     call({ id: "call-end", state: "NEEDS_DISPOSITION", version: 3 }),
   )
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().endingCallID, "")
   assert.equal(runtime.getSnapshot().activeCall, undefined)
   assert.equal(runtime.getSnapshot().pendingDisposition?.id, "call-end")
@@ -1789,7 +1778,7 @@ test("retry keeps the retryable Outcome visible and cannot create two active Cal
       version: 2,
     }),
   )
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().activeCall?.state, "UNANSWERED")
   assert.equal(runtime.getSnapshot().controls.canRetry, false)
   backend.lease = lease({ owner: true })
@@ -2059,12 +2048,12 @@ test("unmatched media survives failed sync and the bounded correlation window be
   assert.equal(unmatched.rejections, 0)
 
   backend.readStateHandler = undefined
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(unmatched.rejections, 0)
   await clock.advance(4_999)
   assert.equal(unmatched.rejections, 0)
   await clock.advance(1)
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(unmatched.rejections, 1)
 })
 
@@ -2096,7 +2085,7 @@ test("304 refreshes still expire and reject unmatched provider media", async () 
   await drainMicrotasks()
   assert.equal(unmatched.rejections, 0)
   await clock.advance(5_000)
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   assert.equal(unmatched.rejections, 1)
 })
@@ -2183,10 +2172,10 @@ test("bounded provider leg effects cannot wedge Answer or refresh", async (conte
     media.emitIncoming(leg)
     await drainMicrotasks()
     await clock.advance(5_000)
-    await runtime.signalRefresh("backend")
+    await runtime.signalRefresh()
 
     assert.equal(leg.rejections, 1)
-    await assert.doesNotReject(runtime.signalRefresh("backend"))
+    await assert.doesNotReject(runtime.signalRefresh())
     rejectDeferred.resolve()
   })
 })
@@ -2225,7 +2214,7 @@ test("provider media waits for durable correlation in inbound and outbound comma
       softphone: backend.lease,
       ringing: [incoming],
     })
-    await runtime.signalRefresh("backend")
+    await runtime.signalRefresh()
     assert.equal(leg.rejections, 0)
     assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true)
   })
@@ -2281,7 +2270,7 @@ test("provider media waits for durable correlation in inbound and outbound comma
       softphone: backend.lease,
       ringing: [expected],
     })
-    await runtime.signalRefresh("backend")
+    await runtime.signalRefresh()
     await eventually(() => assert.equal(leg.answers, 1))
     assert.equal(runtime.getSnapshot().mediaAttachment?.mediaToken, leg.mediaToken)
   })
@@ -2319,7 +2308,7 @@ test("a refresh completed after stop cannot repaint a restarted runtime", async 
     return { status: "modified" as const, state: backend.state, etag: backend.etag }
   }
   backend.calls.set("stale-call", call({ id: "stale-call", version: 9 }))
-  const staleRefresh = runtime.signalRefresh("backend")
+  const staleRefresh = runtime.signalRefresh()
   await drainMicrotasks()
   assert.equal(reads, 1)
   await runtime.stop()
@@ -2432,7 +2421,7 @@ test("another session's active lease never becomes local ownership on refresh", 
   })
 
   await runtime.start()
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   assert.equal(runtime.getSnapshot().lease?.sessionId, "other-session")
   assert.equal(runtime.getSnapshot().lease?.owner, false)
@@ -2491,7 +2480,7 @@ test("active Practice access revocation tears down attached media and local Call
     )
   }
   fixture.media.disconnectDeferred = deferred<void>()
-  const revoked = fixture.runtime.signalRefresh("backend")
+  const revoked = fixture.runtime.signalRefresh()
   await eventually(() =>
     assert.equal(fixture.runtime.getSnapshot().failure?.kind, "access"),
   )
@@ -2511,7 +2500,7 @@ test("active Practice access revocation tears down attached media and local Call
 
   const connectsAfterRevocation = fixture.media.connects
   const readinessWritesAfterRevocation = fixture.backend.readinessWrites.length
-  await fixture.runtime.signalRefresh("backend")
+  await fixture.runtime.signalRefresh()
   assert.equal(fixture.runtime.getSnapshot().lease?.owner, false)
   assert.equal(fixture.runtime.getSnapshot().failure?.kind, "access")
   assert.equal(fixture.media.connects, connectsAfterRevocation)
@@ -2563,7 +2552,7 @@ test("access fail-close serializes behind an older availability write", async ()
     }
     return { status: "modified" as const, state: backend.state, etag: backend.etag }
   }
-  const revoked = runtime.signalRefresh("backend")
+  const revoked = runtime.signalRefresh()
   await eventually(() =>
     assert.equal(runtime.getSnapshot().failure?.kind, "access"),
   )
@@ -3000,7 +2989,7 @@ test("authoritative state removes a restored inbound Call after Staff becomes Ad
   backend.lease = lease({ owner: true, available: false })
   backend.state = callingState({ softphone: backend.lease })
   backend.etag = '"state-after-admin-role"'
-  const roleChanged = runtime.signalRefresh("backend")
+  const roleChanged = runtime.signalRefresh()
   await eventually(() =>
     assert.equal(runtime.getSnapshot().activeCall, undefined),
   )
@@ -3031,7 +3020,7 @@ test("authoritative state removes a restored inbound Call after Staff becomes Ad
   media.disconnectDeferred.resolve()
   recoveryReject.resolve()
   await Promise.all([roleChanged, hangingUp])
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(runtime.getSnapshot().activeCall, undefined)
 })
 
@@ -3309,7 +3298,7 @@ test("lease loss rejects media whose Answer resolves after ownership moved", asy
 
   backend.lease = lease({ sessionId: "other-session", owner: true })
   backend.state = callingState({ softphone: backend.lease })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   answerDeferred.resolve("attached")
   await eventually(() => assert.equal(stale.rejections, 1))
 
@@ -3394,7 +3383,7 @@ test("a rejected Answer cannot repaint an offer after lease loss", async () => {
   await eventually(() => assert.equal(stale.answers, 1))
   backend.lease = lease({ sessionId: "other-session", owner: true })
   backend.state = callingState({ softphone: backend.lease })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   answerDeferred.reject(new Error("stale media answer failed"))
   await answering
 
@@ -3539,7 +3528,7 @@ test("Answer quarantines simultaneous media until the exact winner commits", asy
     ringing: [losingOffer],
     bridged: stateCall(selectedOffer.callId, selectedOffer.callLegId, 2),
   })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   assert.equal(runtime.getSnapshot().activeCall?.id, selectedOffer.callId)
   assert.equal(runtime.getSnapshot().offers.length, 0)
@@ -3619,7 +3608,7 @@ test("a selected Answer that loses restores another still-ringing exact leg", as
     etag: backend.etag,
   })
   await clock.advance(5_000)
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
   assert.equal(remainingLeg.rejections, 0)
 
   backend.readStateHandler = undefined
@@ -3627,7 +3616,7 @@ test("a selected Answer that loses restores another still-ringing exact leg", as
     softphone: backend.lease,
     ringing: [remainingOffer],
   })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   assert.equal(selectedLeg.rejections, 1)
   assert.equal(runtime.getSnapshot().offers.length, 1)
@@ -3672,7 +3661,7 @@ test("a delayed outbound response cannot repaint a Call after lease loss", async
   await eventually(() => assert.equal(runtime.getSnapshot().pending.outbound, true))
   backend.lease = lease({ sessionId: "other-session", owner: true })
   backend.state = callingState({ softphone: backend.lease })
-  await runtime.signalRefresh("backend")
+  await runtime.signalRefresh()
 
   response.resolve(call({ id: "stale-outbound-call", state: "PREPARING" }))
   await starting
@@ -3766,7 +3755,7 @@ test("pending intent closes capacity without falsifying technical readiness", as
   await drainMicrotasks()
 
   assert.equal(backend.reads.length, readsBeforeIntent + 1)
-  await runtime.signalRefresh("staff-intent")
+  await runtime.signalRefresh()
   const readsAfterSignal = backend.reads.length
   await clock.advance(500)
   await eventually(() =>
@@ -4198,6 +4187,66 @@ async function outboundMediaFixture() {
   return { backend, clock, expected, media, outbound, runtime }
 }
 
+async function attachedOutboundMediaFixture(providerLegID: string) {
+  const fixture = await outboundMediaFixture()
+  const connected = call({
+    id: fixture.outbound.id,
+    direction: "OUTBOUND",
+    state: "CONNECTED",
+    version: 2,
+  })
+  fixture.backend.confirmMediaHandler = async () => {
+    fixture.backend.lease = lease({
+      owner: true,
+      available: false,
+      activeCallId: connected.id,
+    })
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(connected.id, fixture.expected.callLegId, connected.version),
+    })
+    fixture.backend.calls.set(connected.id, connected)
+    return connected
+  }
+  const exact = mediaLeg({
+    providerLegID,
+    mediaToken: fixture.expected.mediaToken,
+  })
+  fixture.media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(
+      fixture.runtime.getSnapshot().mediaAttachment?.mediaToken,
+      exact.mediaToken,
+    ),
+  )
+  return { ...fixture, connected, exact }
+}
+
+function setAttachedOutboundTerminal(
+  fixture: Awaited<ReturnType<typeof attachedOutboundMediaFixture>>,
+) {
+  const terminal = call({
+    id: fixture.connected.id,
+    direction: "OUTBOUND",
+    state: "NEEDS_DISPOSITION",
+    version: fixture.connected.version + 1,
+  })
+  fixture.backend.lease = lease({
+    owner: true,
+    available: false,
+    pendingOutcomeCallId: terminal.id,
+  })
+  fixture.backend.state = callingState({
+    softphone: fixture.backend.lease,
+    disposition: {
+      ...stateCall(terminal.id, fixture.expected.callLegId, terminal.version),
+      state: "NEEDS_DISPOSITION",
+    },
+  })
+  fixture.backend.calls.set(terminal.id, terminal)
+  return terminal
+}
+
 function mediaLeg(overrides: {
   providerLegID: string
   mediaToken: string
@@ -4205,11 +4254,13 @@ function mediaLeg(overrides: {
   failAnswers?: number
   answerDeferred?: ReturnType<typeof deferred<"attached" | "ended">>
   rejectDeferred?: ReturnType<typeof deferred<void>>
+  failRejects?: number
 }) {
   return {
     ...overrides,
     recovery: overrides.recovery ?? false,
     failAnswers: overrides.failAnswers ?? 0,
+    failRejects: overrides.failRejects ?? 0,
     answers: 0,
     rejections: 0,
     mutes: 0,
@@ -4225,6 +4276,10 @@ function mediaLeg(overrides: {
     },
     async reject() {
       this.rejections += 1
+      if (this.failRejects > 0) {
+        this.failRejects -= 1
+        throw new Error("provider media could not purge")
+      }
       if (this.rejectDeferred) await this.rejectDeferred.promise
     },
     mute() {
