@@ -245,7 +245,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   const authoritativeRingingMedia = new Map<string, number>()
   const confirmationWaits = new Map<number, () => void>()
   const rejectedMedia = new WeakMap<IncomingMediaLeg, Promise<boolean>>()
-  const settledMediaPurges = new WeakMap<IncomingMediaLeg, Promise<boolean>>()
   const backendRequests = new Set<AbortController>()
   const mediaEffectControllers = new Set<AbortController>()
   const notificationStops = new Map<string, () => void>()
@@ -626,11 +625,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   ) {
     if (attachedLeg !== leg) return
     incomingMedia.delete(attachment.mediaToken)
-    let purge = settledMediaPurges.get(leg)
-    if (!purge) {
-      purge = rejectSafely(leg)
-      settledMediaPurges.set(leg, purge)
-    }
+    const purge = rejectSafely(leg)
     void purge.then((released) => {
       if (attachedLeg !== leg) return
       if (!released) {
