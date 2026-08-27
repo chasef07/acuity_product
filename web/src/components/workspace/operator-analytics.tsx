@@ -724,9 +724,9 @@ function CallLedger({
                       {formatDateTime(call.startedAt)}
                     </button>
                   </TableCell>
-                  <TableCell className="font-mono">{formatPhone(call.phone)}</TableCell>
+                  <TableCell className="tabular-nums">{formatPhone(call.phone)}</TableCell>
                   <TableCell>{call.locationName}</TableCell>
-                  <TableCell className="font-mono">
+                  <TableCell className="tabular-nums">
                     {formatDuration(call.durationSeconds)}
                   </TableCell>
                   <TableCell className="font-mono">{formatLatency(call.p50SttMs)}</TableCell>
@@ -763,7 +763,7 @@ function CallLedger({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-mono text-sm font-semibold">{formatPhone(call.phone)}</p>
+                <p className="text-sm font-semibold tabular-nums">{formatPhone(call.phone)}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {formatDateTime(call.startedAt)} · {call.locationName}
                 </p>

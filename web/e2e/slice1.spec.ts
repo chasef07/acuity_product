@@ -377,6 +377,13 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
       analyticsRegion.getByText("Rescheduled", { exact: true }),
     ).toBeVisible()
     await expect(analyticsRegion.getByText("4", { exact: true })).toBeVisible()
+    await expect
+      .poll(() =>
+        operatorPage.evaluate(
+          () => getComputedStyle(document.documentElement).fontFamily,
+        ),
+      )
+      .toContain("-apple-system")
     await operatorPage.screenshot({
       path: testInfo.outputPath("operator-analytics-overview.png"),
       fullPage: true,
@@ -386,7 +393,13 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
       name: "Median response pipeline",
     })
     await expect(latencyPipeline.getByText("P50 STT")).toBeVisible()
-    await expect(latencyPipeline.getByText("185 ms", { exact: true })).toBeVisible()
+    const sttLatency = latencyPipeline.getByText("185 ms", { exact: true })
+    await expect(sttLatency).toBeVisible()
+    await expect
+      .poll(() =>
+        sttLatency.evaluate((element) => getComputedStyle(element).fontFamily),
+      )
+      .toContain("SFMono-Regular")
     await expect(latencyPipeline.getByText("P50 LLM TTFT")).toBeVisible()
     await expect(latencyPipeline.getByText("410 ms", { exact: true })).toBeVisible()
     await expect(latencyPipeline.getByText("P50 TTS TTFB")).toBeVisible()
@@ -418,9 +431,13 @@ test("Slice 1 authority, operator analytics, browser state, and reconnect", asyn
     await expect(analyticsRegion.getByText("31", { exact: true })).toBeVisible()
 
     await analyticsRegion.getByRole("tab", { name: "Calls" }).click()
-    await expect(
-      analyticsRegion.getByText("(985) 555-0142").first(),
-    ).toBeVisible()
+    const callerPhone = analyticsRegion.getByText("(985) 555-0142").first()
+    await expect(callerPhone).toBeVisible()
+    await expect
+      .poll(() =>
+        callerPhone.evaluate((element) => getComputedStyle(element).fontFamily),
+      )
+      .toContain("-apple-system")
     await expect
       .poll(() => analyticsRequests.at(-1))
       .toMatchObject({
