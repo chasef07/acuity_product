@@ -510,6 +510,23 @@ func TestStaffTransferSourceCanCancelAfterTargetAnswerBeforeBridge(t *testing.T)
 	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
 		t.Fatalf("answer transfer target: %v", err)
 	}
+	commandsBeforeOutbound := fixture.provider.count(
+		humancalling.CommandDialOutboundStaff,
+	)
+	if _, err := fixture.calling.StartOutboundCall(
+		context.Background(), humancalling.StartOutboundCallCommand{
+			Identity:       fixture.staff[1],
+			SessionID:      "staff-transfer-accepted-cancel-browser-2",
+			IdempotencyKey: "accepted-transfer-recipient-outbound",
+			PracticeID:     transfer.PracticeID, LocationID: transfer.LocationID,
+			Destination: "+15555550123",
+		},
+	); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("accepted transfer recipient outbound = %v, want occupied", err)
+	}
+	if got := fixture.provider.count(humancalling.CommandDialOutboundStaff); got != commandsBeforeOutbound {
+		t.Fatalf("outbound provider effects while transfer occupied = %d, want %d", got, commandsBeforeOutbound)
+	}
 
 	canceled, err := fixture.calling.CancelStaffTransfer(
 		context.Background(),
@@ -1059,7 +1076,7 @@ func TestOutboundStaffTransferTargetsDestinationLeg(t *testing.T) {
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "COMPLETED", "ENDED", "BRIDGED")
 }
 
-func TestInterruptedStaffTransferCommandReconcilesWithoutNewIdentity(t *testing.T) {
+func TestInterruptedStaffTransferCommandReconcilesWithoutDuplicateExecution(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-interrupted")
 	call, err := fixture.calling.ReadCall(context.Background(), fixture.staff[0], fixture.callID)
 	if err != nil {
@@ -1117,7 +1134,7 @@ func TestInterruptedStaffTransferCommandReconcilesWithoutNewIdentity(t *testing.
 		t.Fatal(err)
 	}
 	if projectedState != "RINGING" || projectedClientState != stableClientState ||
-		fixture.provider.count(humancalling.CommandTransferStaff) != 0 {
+		fixture.provider.count(humancalling.CommandTransferStaff) != 1 {
 		t.Fatalf("reconciled stable transfer = state:%s client:%q executions:%d",
 			projectedState, projectedClientState,
 			fixture.provider.count(humancalling.CommandTransferStaff))
@@ -1140,7 +1157,10 @@ func TestChainedStaffTransfersKeepOneCurrentOwnerAndHistoryRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	processAllCommands(t, fixture.calling)
-	completeFixtureTransfer(t, fixture, first, fixture.provider.last(humancalling.CommandTransferStaff), "staff-transfer-chain-first")
+	firstCommand := fixture.provider.last(humancalling.CommandTransferStaff)
+	completeFixtureTransfer(
+		t, fixture, first, firstCommand, "staff-transfer-chain-first",
+	)
 
 	secondCall, err := fixture.calling.ReadCall(context.Background(), fixture.staff[1], fixture.callID)
 	if err != nil {
@@ -1156,7 +1176,39 @@ func TestChainedStaffTransfersKeepOneCurrentOwnerAndHistoryRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	processAllCommands(t, fixture.calling)
-	completeFixtureTransfer(t, fixture, second, fixture.provider.last(humancalling.CommandTransferStaff), "staff-transfer-chain-second")
+	secondCommand := fixture.provider.last(humancalling.CommandTransferStaff)
+	oldSourceState, _ := firstCommand.Payload["client_state"].(string)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "staff-transfer-chain-delayed-first-bridge",
+		Type:    humancalling.FactCallBridged, OccurredAt: fixture.now.Add(10 * time.Second),
+		CallControlID: "staff-transfer-chain-customer-control",
+		CallLegID:     "staff-transfer-chain-customer-leg",
+		CallSessionID: "staff-transfer-chain-customer-session",
+		ClientState:   oldSourceState,
+	}); err != nil {
+		t.Fatalf("apply delayed first transfer bridge: %v", err)
+	}
+	secondTarget := transferTargetFact(
+		second, secondCommand, "staff-transfer-chain-second",
+		humancalling.FactCallInitiated, fixture.now.Add(11*time.Second),
+	)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), secondTarget); err != nil {
+		t.Fatalf("initiate second transfer target: %v", err)
+	}
+	secondTarget.EventID = "staff-transfer-chain-second-answered"
+	secondTarget.Type = humancalling.FactCallAnswered
+	secondTarget.OccurredAt = fixture.now.Add(12 * time.Second)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), secondTarget); err != nil {
+		t.Fatalf("answer second transfer target: %v", err)
+	}
+	assertTransferLegStates(t, fixture.pool, second.ID, "ACCEPTED", "BRIDGED", "ANSWERED")
+	secondTarget.EventID = "staff-transfer-chain-second-bridged"
+	secondTarget.Type = humancalling.FactCallBridged
+	secondTarget.OccurredAt = fixture.now.Add(13 * time.Second)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), secondTarget); err != nil {
+		t.Fatalf("bridge second transfer target: %v", err)
+	}
+	assertTransferLegStates(t, fixture.pool, second.ID, "COMPLETED", "ENDED", "BRIDGED")
 
 	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.staff[2])
 	if err != nil || state.Bridged == nil || state.Bridged.CallLegID != second.TargetCallLegID {

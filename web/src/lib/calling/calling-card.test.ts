@@ -269,6 +269,28 @@ test("Staff transfer offers carry originator context and an exact Decline action
     view.offers[0]?.decline?.label,
     "Decline transfer from source@abita.test",
   )
+
+  const pendingView = projectCallingCard(
+    {
+      ...snapshot(outboundCall),
+      activeCall: undefined,
+      offers: [transferOffer],
+      pending: { transfer: true },
+    },
+    now,
+  )
+  assert.equal(
+    pendingView?.kind === "offers"
+      ? pendingView.offers[0]?.answer.eligible
+      : undefined,
+    false,
+  )
+  assert.equal(
+    pendingView?.kind === "offers"
+      ? pendingView.offers[0]?.decline?.disabled
+      : undefined,
+    true,
+  )
 })
 
 test("the source card projects one active transfer with cancellation", () => {

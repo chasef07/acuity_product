@@ -232,8 +232,8 @@ func (m *Module) RequestStaffTransfer(
 		recipientSession, now); err != nil {
 		return StaffTransfer{}, fmt.Errorf("create transfer target CallLeg: %w", err)
 	}
-	targetClientState := encodeCallLegClientState(
-		command.CallID, targetLegID, "STAFF", staffTransferTargetKind,
+	targetClientState := encodeStaffTransferClientState(
+		command.CallID, targetLegID, "STAFF", staffTransferTargetKind, transferID,
 	)
 	commandID, err := m.insertCallLegCommand(
 		ctx, tx, command.CallID, targetLegID, customerLegID,
@@ -242,8 +242,9 @@ func (m *Module) RequestStaffTransfer(
 			"to":           managedSIPDestination(sipUsername, m.config.StaffSIPDomain),
 			"early_media":  false,
 			"timeout_secs": int(m.config.StaffTransferDuration.Seconds()),
-			"client_state": encodeCallLegClientState(
-				command.CallID, customerLegID, customerRole, staffTransferSourceKind,
+			"client_state": encodeStaffTransferClientState(
+				command.CallID, customerLegID, customerRole,
+				staffTransferSourceKind, transferID,
 			),
 			"target_leg_client_state": targetClientState,
 			"webhook_retries_policies": telnyxWebhookRetryPolicies(
@@ -300,6 +301,11 @@ func (m *Module) RequestStaffTransfer(
 	// Transfer is latency-sensitive. The stable command is issued immediately;
 	// any interruption or uncertain response remains durable for worker repair.
 	_, _ = m.processCommand(ctx, commandID)
+	if current, err := scanStaffTransfer(m.database.QueryRow(
+		ctx, staffTransferSelect+` WHERE transfer.id = $1`, transferID,
+	)); err == nil {
+		return current, nil
+	}
 	return transfer, nil
 }
 

@@ -225,7 +225,8 @@ export function projectCallingCard(
           countdown: `${secondsRemaining(offer.deadline, _now)}s`,
           countdownLabel: `Incoming offer countdown for ${phone}`,
           answer: {
-            eligible: offer.answerReady,
+            eligible:
+              offer.answerReady && !Boolean(snapshot.pending?.transfer),
             label: `Answer ${phone}`,
           },
           ...(offer.offerKind === "STAFF_TRANSFER"

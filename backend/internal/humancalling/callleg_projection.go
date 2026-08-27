@@ -16,11 +16,12 @@ import (
 )
 
 type callLegClientState struct {
-	Version   int    `json:"v"`
-	CallID    string `json:"call"`
-	CallLegID string `json:"call_leg"`
-	Role      string `json:"role"`
-	Kind      string `json:"kind,omitempty"`
+	Version    int    `json:"v"`
+	CallID     string `json:"call"`
+	CallLegID  string `json:"call_leg"`
+	Role       string `json:"role"`
+	Kind       string `json:"kind,omitempty"`
+	TransferID string `json:"transfer,omitempty"`
 }
 
 const callLegClientStateStaffHangup = "staff_hangup"
@@ -37,6 +38,24 @@ func encodeCallLegClientState(
 		CallLegID: callLegID,
 		Role:      role,
 		Kind:      kind,
+	})
+	return base64.StdEncoding.EncodeToString(value)
+}
+
+func encodeStaffTransferClientState(
+	callID string,
+	callLegID string,
+	role string,
+	kind string,
+	transferID string,
+) string {
+	value, _ := json.Marshal(callLegClientState{
+		Version:    2,
+		CallID:     callID,
+		CallLegID:  callLegID,
+		Role:       role,
+		Kind:       kind,
+		TransferID: transferID,
 	})
 	return base64.StdEncoding.EncodeToString(value)
 }
@@ -1110,26 +1129,22 @@ func (m *Module) correlateBridgeFact(
 			// Telnyx may report the replacement bridge on an untagged peer in
 			// the same provider session. Admit that single fact as transfer
 			// evidence without binding the peer as a canonical CallLeg.
-			var targetLegID string
+			var transferID, targetLegID string
 			peerErr := m.database.QueryRow(ctx, `
-				SELECT transfer.call_id::text, transfer.target_staff_leg_id::text
+				SELECT transfer.id::text, transfer.call_id::text,
+					transfer.target_staff_leg_id::text
 				FROM human_calling_staff_transfers transfer
-				JOIN human_calling_call_legs customer
-					ON customer.id = transfer.customer_leg_id
-				LEFT JOIN human_calling_call_legs target
+				JOIN human_calling_call_legs target
 					ON target.id = transfer.target_staff_leg_id
 				WHERE transfer.state IN ('REQUESTED', 'ACCEPTED')
 					AND $1 <> ''
-					AND $1 IN (
-						COALESCE(customer.provider_call_session_id, ''),
-						COALESCE(target.provider_call_session_id, '')
-					)
+					AND $1 = COALESCE(target.provider_call_session_id, '')
 				ORDER BY transfer.created_at DESC, transfer.id DESC
 				LIMIT 1
-			`, fact.CallSessionID).Scan(&callID, &targetLegID)
+			`, fact.CallSessionID).Scan(&transferID, &callID, &targetLegID)
 			if peerErr == nil {
-				fact.ClientState = encodeCallLegClientState(
-					callID, targetLegID, "STAFF", staffTransferPeerKind,
+				fact.ClientState = encodeStaffTransferClientState(
+					callID, targetLegID, "STAFF", staffTransferPeerKind, transferID,
 				)
 				return fact, nil
 			}

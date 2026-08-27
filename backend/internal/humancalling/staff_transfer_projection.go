@@ -15,6 +15,7 @@ func (m *Module) applyStaffTransferTargetFact(
 ) error {
 	state, ok := parseCallLegClientState(fact.ClientState)
 	if !ok || state.Role != "STAFF" || state.Kind != staffTransferTargetKind ||
+		state.TransferID == "" ||
 		fact.CallControlID == "" || fact.CallLegID == "" || fact.CallSessionID == "" {
 		return ErrConflict
 	}
@@ -31,7 +32,9 @@ func (m *Module) applyStaffTransferTargetFact(
 		return tx.Commit(ctx)
 	}
 	transfer, targetState, storedControl, storedLeg, storedSession, err :=
-		m.lockStaffTransferTarget(ctx, tx, state.CallID, state.CallLegID)
+		m.lockStaffTransferTarget(
+			ctx, tx, state.CallID, state.CallLegID, state.TransferID,
+		)
 	if err != nil {
 		return err
 	}
@@ -154,7 +157,7 @@ func (m *Module) applyStaffTransferBridge(
 ) error {
 	state, ok := parseCallLegClientState(fact.ClientState)
 	if !ok || (state.Kind != staffTransferSourceKind &&
-		state.Kind != staffTransferPeerKind) {
+		state.Kind != staffTransferPeerKind) || state.TransferID == "" {
 		return ErrConflict
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -180,12 +183,10 @@ func (m *Module) applyStaffTransferBridge(
 		SELECT transfer.id::text, transfer.call_id::text,
 			transfer.practice_id::text, transfer.state
 		FROM human_calling_staff_transfers transfer
-		WHERE transfer.call_id = $1
+		WHERE transfer.id = $3 AND transfer.call_id = $1
 			AND ($2 = transfer.customer_leg_id OR $2 = transfer.target_staff_leg_id)
-		ORDER BY transfer.created_at DESC, transfer.id DESC
-		LIMIT 1
 		FOR UPDATE
-	`, state.CallID, state.CallLegID).Scan(
+	`, state.CallID, state.CallLegID, state.TransferID).Scan(
 		&transferID, &callID, &practiceID, &transferState,
 	)
 	if err != nil {
@@ -495,6 +496,7 @@ func (m *Module) lockStaffTransferTarget(
 	tx pgx.Tx,
 	callID string,
 	targetLegID string,
+	transferID string,
 ) (StaffTransfer, string, string, string, string, error) {
 	var lockedCallID string
 	if err := tx.QueryRow(ctx, `
@@ -502,7 +504,7 @@ func (m *Module) lockStaffTransferTarget(
 	`, callID).Scan(&lockedCallID); err != nil {
 		return StaffTransfer{}, "", "", "", "", errRelatedFactPending
 	}
-	var transferID, targetState, controlID, providerLegID, sessionID string
+	var lockedTransferID, targetState, controlID, providerLegID, sessionID string
 	if err := tx.QueryRow(ctx, `
 		SELECT transfer.id::text, target.state,
 			COALESCE(target.provider_call_control_id, ''),
@@ -510,14 +512,15 @@ func (m *Module) lockStaffTransferTarget(
 			COALESCE(target.provider_call_session_id, '')
 		FROM human_calling_staff_transfers transfer
 		JOIN human_calling_call_legs target ON target.id = transfer.target_staff_leg_id
-		WHERE transfer.call_id = $1 AND transfer.target_staff_leg_id = $2
+		WHERE transfer.id = $3 AND transfer.call_id = $1
+			AND transfer.target_staff_leg_id = $2
 		FOR UPDATE OF transfer, target
-	`, callID, targetLegID).Scan(
-		&transferID, &targetState, &controlID, &providerLegID, &sessionID,
+	`, callID, targetLegID, transferID).Scan(
+		&lockedTransferID, &targetState, &controlID, &providerLegID, &sessionID,
 	); err != nil {
 		return StaffTransfer{}, "", "", "", "", errRelatedFactPending
 	}
-	transfer, err := readStaffTransfer(ctx, tx, transferID)
+	transfer, err := readStaffTransfer(ctx, tx, lockedTransferID)
 	return transfer, targetState, controlID, providerLegID, sessionID, err
 }
 

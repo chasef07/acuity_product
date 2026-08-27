@@ -4491,6 +4491,56 @@ test("a lost decline response still clears the exact transfer media", async () =
   assert.equal(runtime.getSnapshot().failure, undefined)
 })
 
+test("Answer is fenced while Decline is in flight", async () => {
+  const backend = new DeterministicBackend()
+  const transfer = staffTransfer()
+  const transferOffer = offer({
+    callId: transfer.callId,
+    callLegId: transfer.targetCallLegId,
+    mediaToken: "decline-answer-race-media",
+    offerKind: "STAFF_TRANSFER",
+    staffTransferId: transfer.id,
+  })
+  backend.lease = lease({ owner: true, available: true })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [transferOffer],
+    staffTransfers: [transfer],
+  })
+  const decline = deferred<StaffTransfer>()
+  backend.declineTransferHandler = async () => decline.promise
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const exact = mediaLeg({
+    providerLegID: "decline-answer-race-provider-leg",
+    mediaToken: transferOffer.mediaToken,
+  })
+  media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+
+  const declining = runtime.declineTransfer(transferOffer.callLegId)
+  await drainMicrotasks()
+  assert.equal(runtime.getSnapshot().pending.transfer, true)
+  await runtime.answer(transferOffer.callLegId)
+  assert.equal(exact.answers, 0)
+
+  backend.state = callingState({ softphone: backend.lease })
+  decline.resolve({ ...transfer, state: "DECLINED" })
+  await declining
+  assert.equal(exact.rejections, 1)
+  assert.deepEqual(runtime.getSnapshot().offers, [])
+})
+
 test("target controls wait for the exact transferred bridge", async () => {
   const backend = new DeterministicBackend()
   const transfer = staffTransfer()

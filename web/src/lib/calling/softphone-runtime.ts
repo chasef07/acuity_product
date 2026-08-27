@@ -2262,6 +2262,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         !leg ||
         snapshot.activeCall ||
         snapshot.pendingCall ||
+        snapshot.pending.transfer ||
         attachedLeg ||
         answeredInbound
       ) {
