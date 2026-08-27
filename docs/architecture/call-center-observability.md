@@ -26,7 +26,8 @@ numeric fields.
 | `acuity_call_center_receipt_queue` | `depth`, `oldest_age_seconds`, `projection_retry_depth`, `related_fact_depth`, `quarantined_depth` | None | Receipt worker |
 | `acuity_call_center_receipt_processing` | `queue_seconds`, `processing_seconds` | `outcome` | Receipt worker |
 | `acuity_call_center_provider_command` | `queue_seconds`, `duration_seconds` | `action`, `outcome` | Command worker |
-| `acuity_call_center_database_pool_acquire` | `seconds` | `outcome` | PostgreSQL adapter |
+| `acuity_call_center_database_pool_acquire` | `seconds` | `outcome` | PostgreSQL adapter, non-success only |
+| `acuity_backend_database_execution` | `seconds` | `cause` | PostgreSQL adapter, failures only |
 | `acuity_call_center_database_pool` | `acquired`, `idle`, `max`, `saturation_ratio` | None | Runtime |
 | `acuity_call_center_sse_stream` | `active` | `state`, `reason` | Realtime |
 | `acuity_call_center_sse_listener` | None | `state`, `reconnect` | Realtime |
@@ -36,6 +37,12 @@ numeric fields.
 Allowed outcomes and actions are declared in
 `backend/internal/observability/observability.go`. Unknown values become
 `other`; they never become a new label.
+
+Successful PostgreSQL statements and pool acquisitions are deliberately not
+emitted as individual records. Cloud Run and Cloud SQL native metrics own
+ordinary traffic and resource utilization, while the 30-second database-pool
+snapshot preserves saturation evidence. Every bounded non-success acquisition
+and execution cause remains an individual record for alerting and diagnosis.
 
 Provider-command `queue_seconds` measures creation to claim. It includes
 intentional `next_attempt_at` scheduling, dependency gating, serialization of
