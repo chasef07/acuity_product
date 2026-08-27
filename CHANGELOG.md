@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.8](https://github.com/chasef07/acuity_product/compare/v0.4.7...v0.4.8) (2026-08-27)
+
+
+### Bug Fixes
+
+* **calling:** make the browser softphone runtime authoritative ([#215](https://github.com/chasef07/acuity_product/issues/215)) ([cabbb8f](https://github.com/chasef07/acuity_product/commit/cabbb8f2b63d21209d36e899ccb083722b3102a6))
+
+
+### Performance Improvements
+
+* **observability:** stop logging successful database work ([#217](https://github.com/chasef07/acuity_product/issues/217)) ([daa78a6](https://github.com/chasef07/acuity_product/commit/daa78a6921e171574995bc31916982ae12387ea1))
+
 ## [0.4.7](https://github.com/chasef07/acuity_product/compare/v0.4.6...v0.4.7) (2026-08-27)
 
 
