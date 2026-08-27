@@ -245,6 +245,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   const authoritativeRingingMedia = new Map<string, number>()
   const confirmationWaits = new Map<number, () => void>()
   const rejectedMedia = new WeakMap<IncomingMediaLeg, Promise<boolean>>()
+  const settledMediaPurges = new WeakMap<IncomingMediaLeg, Promise<boolean>>()
   const backendRequests = new Set<AbortController>()
   const mediaEffectControllers = new Set<AbortController>()
   const notificationStops = new Map<string, () => void>()
@@ -619,6 +620,37 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     }
   }
 
+  function purgeSettledMedia(
+    attachment: RuntimeMediaCorrelation,
+    leg: IncomingMediaLeg,
+  ) {
+    if (attachedLeg !== leg) return
+    incomingMedia.delete(attachment.mediaToken)
+    let purge = settledMediaPurges.get(leg)
+    if (!purge) {
+      purge = rejectSafely(leg)
+      settledMediaPurges.set(leg, purge)
+    }
+    void purge.then((released) => {
+      if (attachedLeg !== leg) return
+      if (!released) {
+        void handleMediaFailure("provider")
+        return
+      }
+      attachedLeg = undefined
+      if (answeredInbound?.callID === attachment.callID) {
+        answeredInbound = undefined
+      }
+      if (
+        snapshot.mediaAttachment?.callID === attachment.callID &&
+        snapshot.mediaAttachment.providerLegID === attachment.providerLegID &&
+        snapshot.mediaAttachment.mediaToken === attachment.mediaToken
+      ) {
+        publish({ mediaAttachment: undefined, muted: false })
+      }
+    })
+  }
+
   function applyCall(call: CallingCall | undefined) {
     const current = snapshot.activeCall
     const observed = newestObservedCall(snapshot, call?.id)
@@ -656,26 +688,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ? attachedLeg
         : undefined
     if (settledMedia) {
-      incomingMedia.delete(settledMedia.mediaToken)
       if (settledLeg) {
-        void rejectSafely(settledLeg).then((released) => {
-          if (attachedLeg !== settledLeg) return
-          if (!released) {
-            void handleMediaFailure("provider")
-            return
-          }
-          attachedLeg = undefined
-          if (answeredInbound?.callID === settledMedia.callID) {
-            answeredInbound = undefined
-          }
-          if (
-            snapshot.mediaAttachment?.callID === settledMedia.callID &&
-            snapshot.mediaAttachment.providerLegID === settledMedia.providerLegID &&
-            snapshot.mediaAttachment.mediaToken === settledMedia.mediaToken
-          ) {
-            publish({ mediaAttachment: undefined, muted: false })
-          }
-        })
+        purgeSettledMedia(settledMedia, settledLeg)
       } else if (answeredInbound?.callID === settledMedia.callID) {
         answeredInbound = undefined
       }
@@ -1644,18 +1658,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await discardStaleMedia(leg)
         return
       }
-      if (!applyCall(call)) {
-        await rejectSafely(leg)
-        return
-      }
-      if (callSettled(call)) {
-        const released = await rejectSafely(leg)
-        if (!released && mediaContinuationCurrent(generation)) {
-          await handleMediaFailure("provider")
-        }
-        return
-      }
-      attachedLeg = leg
       const mediaAttachment: RuntimeMediaCorrelation = {
         callID: call.id,
         ...(expectedMedia
@@ -1666,6 +1668,19 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         providerLegID: leg.providerLegID,
         mediaToken: leg.mediaToken,
       }
+      if (callSettled(call)) {
+        attachedLeg = leg
+        publish({ mediaAttachment })
+        if (!applyCall(call)) {
+          purgeSettledMedia(mediaAttachment, leg)
+        }
+        return
+      }
+      if (!applyCall(call)) {
+        await rejectSafely(leg)
+        return
+      }
+      attachedLeg = leg
       publish({
         recoveryMedia: persistMediaCorrelation(mediaAttachment),
         mediaAttachment,

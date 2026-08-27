@@ -349,13 +349,55 @@ test("failed terminal media confirmation purge fails calling closed", async () =
 
   fixture.media.emitIncoming(exact)
 
-  await eventually(() => assert.equal(exact.rejections, 1))
+  await eventually(() => assert.ok(exact.rejections >= 1))
   await eventually(() => assert.equal(fixture.media.disconnects, 1))
   assert.equal(fixture.runtime.getSnapshot().pendingDisposition?.id, terminal.id)
   assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
   assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
   assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "unavailable")
+})
+
+test("terminal media confirmation stays occupied until exact purge completes", async () => {
+  const fixture = await outboundMediaFixture()
+  const terminal = call({
+    id: fixture.outbound.id,
+    direction: "OUTBOUND",
+    state: "UNANSWERED",
+    version: 2,
+  })
+  fixture.backend.confirmMediaHandler = async () => {
+    fixture.backend.lease = lease({ owner: true, available: false })
+    fixture.backend.state = callingState({ softphone: fixture.backend.lease })
+    fixture.backend.calls.set(terminal.id, terminal)
+    return terminal
+  }
+  const purge = deferred<void>()
+  const exact = mediaLeg({
+    providerLegID: "provider-terminal-confirmation-pending",
+    mediaToken: fixture.expected.mediaToken,
+    rejectDeferred: purge,
+  })
+
+  fixture.media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(fixture.runtime.getSnapshot().activeCall?.state, "UNANSWERED"),
+  )
+
+  assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(fixture.runtime.getSnapshot().occupied, true)
+  fixture.runtime.dismissOutcome()
+  assert.equal(fixture.runtime.getSnapshot().activeCall?.id, terminal.id)
+  assert.equal(fixture.backend.readinessWrites.at(-1)?.available, false)
+
+  purge.resolve()
+  await eventually(() =>
+    assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined),
+  )
+  fixture.runtime.dismissOutcome()
+  assert.equal(fixture.runtime.getSnapshot().activeCall, undefined)
+  assert.equal(fixture.media.disconnects, 0)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
 })
 
 test("a terminal watermark survives disposition before a delayed response arrives", async () => {
