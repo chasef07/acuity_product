@@ -600,14 +600,220 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       secondaryPage.getByRole("button", { name: "End", exact: true }),
     ).toHaveCount(0)
 
+    await expect(
+      secondaryPage.getByRole("switch", { name: "Availability" }),
+    ).toBeChecked({ timeout: 20_000 })
+    await selectedPage
+      .getByRole("button", { name: "Transfer", exact: true })
+      .click()
+    await selectedPage
+      .getByLabel("Transfer to")
+      .selectOption({ label: "secondary@abita.test" })
+    await selectedPage
+      .getByLabel("Handoff note (optional)")
+      .fill("Caller needs the secondary desk")
+    await selectedPage
+      .getByRole("button", { name: "Transfer", exact: true })
+      .click()
+
+    type TransferEvidence = {
+      id: string
+      source_leg_id: string
+      target_leg_id: string
+      customer_leg_id: string
+      customer_role: string
+      target_client_state: string
+      media_token: string
+    }
+    const transferEvidence = await expect
+      .poll(async () => {
+        const result = await database.query<TransferEvidence>(
+          `SELECT transfer.id::text,
+                  transfer.source_staff_leg_id::text AS source_leg_id,
+                  transfer.target_staff_leg_id::text AS target_leg_id,
+                  transfer.customer_leg_id::text AS customer_leg_id,
+                  customer.role AS customer_role,
+                  command.payload->>'target_leg_client_state' AS target_client_state,
+                  command.payload->'custom_headers'->0->>'value' AS media_token
+             FROM human_calling_staff_transfers transfer
+             JOIN human_calling_call_legs customer ON customer.id = transfer.customer_leg_id
+             JOIN human_calling_provider_commands command
+               ON command.id = transfer.provider_command_id
+            WHERE transfer.call_id = $1 AND command.state = 'SENT'`,
+          [callID],
+        )
+        return result.rows[0]
+      }, { timeout: 20_000 })
+      .toBeTruthy()
+      .then(async () => {
+        const result = await database.query<TransferEvidence>(
+          `SELECT transfer.id::text,
+                  transfer.source_staff_leg_id::text AS source_leg_id,
+                  transfer.target_staff_leg_id::text AS target_leg_id,
+                  transfer.customer_leg_id::text AS customer_leg_id,
+                  customer.role AS customer_role,
+                  command.payload->>'target_leg_client_state' AS target_client_state,
+                  command.payload->'custom_headers'->0->>'value' AS media_token
+             FROM human_calling_staff_transfers transfer
+             JOIN human_calling_call_legs customer ON customer.id = transfer.customer_leg_id
+             JOIN human_calling_provider_commands command
+               ON command.id = transfer.provider_command_id
+            WHERE transfer.call_id = $1`,
+          [callID],
+        )
+        return result.rows[0]!
+      })
+    expect(transferEvidence.source_leg_id).toBe(selectedLeg.id)
+    expect(transferEvidence.customer_role).toBe("CALLER")
+    expect(transferEvidence.customer_leg_id).toBe(bridge.peer_call_leg_id)
+
+    const transferAnswer = secondaryPage.getByRole("button", {
+      name: "Answer (555) 555-0100",
+      exact: true,
+    })
+    await expect(
+      secondaryPage.getByText("From selected@abita.test"),
+    ).toBeVisible({ timeout: 20_000 })
+    await expect(
+      secondaryPage.getByText("Caller needs the secondary desk"),
+    ).toBeVisible()
+    await sendIncomingLeg(
+      secondaryPage,
+      "fixture-transfer-target-leg",
+      selectedLeg.media_token,
+    )
+    await expect(transferAnswer).toBeDisabled()
+    await endMediaLeg(
+      secondaryPage,
+      "fixture-transfer-target-leg",
+      selectedLeg.media_token,
+    )
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.initiated",
+      eventId: "callleg-browser-transfer-target-initiated",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        connection_id: "fixture-call-control",
+        call_control_id: "fixture-transfer-target-control",
+        call_leg_id: "fixture-transfer-target-leg",
+        call_session_id: "fixture-transfer-target-session",
+        client_state: transferEvidence.target_client_state,
+      },
+    })
+    await sendIncomingLeg(
+      secondaryPage,
+      "fixture-transfer-target-leg",
+      transferEvidence.media_token,
+    )
+    await expect(transferAnswer).toBeEnabled()
+    await transferAnswer.click()
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.answered",
+      eventId: "callleg-browser-transfer-target-answered",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        connection_id: "fixture-call-control",
+        call_control_id: "fixture-transfer-target-control",
+        call_leg_id: "fixture-transfer-target-leg",
+        call_session_id: "fixture-transfer-target-session",
+        client_state: transferEvidence.target_client_state,
+      },
+    })
+    await expect
+      .poll(async () => {
+        const result = await database.query<{
+          transfer: string
+          source: string
+          target: string
+        }>(
+          `SELECT transfer.state AS transfer, source.state AS source, target.state AS target
+             FROM human_calling_staff_transfers transfer
+             JOIN human_calling_call_legs source ON source.id = transfer.source_staff_leg_id
+             JOIN human_calling_call_legs target ON target.id = transfer.target_staff_leg_id
+            WHERE transfer.id = $1`,
+          [transferEvidence.id],
+        )
+        return result.rows[0]
+      })
+      .toEqual({ transfer: "ACCEPTED", source: "BRIDGED", target: "ANSWERED" })
+    await expect(
+      selectedPage.getByRole("button", { name: "End", exact: true }),
+    ).toBeVisible()
+    await expect(
+      secondaryPage.getByRole("button", { name: "End", exact: true }),
+    ).toHaveCount(0)
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.bridged",
+      eventId: "callleg-browser-transfer-target-bridged",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        connection_id: "fixture-call-control",
+        call_control_id: "fixture-transfer-target-control",
+        call_leg_id: "fixture-transfer-target-leg",
+        call_session_id: "fixture-transfer-target-session",
+        client_state: transferEvidence.target_client_state,
+      },
+    })
+    await expect(
+      callCenter(secondaryPage).getByRole("status"),
+    ).toHaveText(/^Connected \d{2}:\d{2}$/, { timeout: 20_000 })
+    await expect(
+      secondaryPage.getByRole("button", { name: "End", exact: true }),
+    ).toBeVisible()
+    await expect(callCenter(selectedPage)).toHaveCount(0)
+    await expect
+      .poll(async () => {
+        const result = await database.query<{
+          current_owners: string
+          recordings: string
+          recording_id: string | null
+        }>(
+          `SELECT
+              (SELECT count(*)::text FROM human_calling_call_legs
+                WHERE call_id = $1 AND role = 'STAFF' AND state = 'BRIDGED') AS current_owners,
+              (SELECT count(*)::text FROM human_calling_call_recordings
+                WHERE call_id = $1) AS recordings,
+              (SELECT provider_recording_id FROM human_calling_call_recordings
+                WHERE call_id = $1 LIMIT 1) AS recording_id`,
+          [callID],
+        )
+        return result.rows[0]
+      })
+      .toEqual({
+        current_owners: "1",
+        recordings: "1",
+        recording_id: "callleg-browser-recording",
+      })
     await deliverProviderEvent(selectedPage, {
       eventType: "call.hangup",
-      eventId: "callleg-browser-remote-hangup",
+      eventId: "callleg-browser-old-source-delayed-hangup",
       occurredAt: new Date().toISOString(),
       payload: {
         call_control_id: selectedLeg.control_id,
         call_leg_id: selectedLeg.provider_leg_id,
         call_session_id: "fixture-staff-session",
+        hangup_cause: "NORMAL_CLEARING",
+        hangup_source: "CALL_CONTROL",
+      },
+    })
+    await expect
+      .poll(async () => {
+        const result = await database.query<{ terminal_outcome: string | null }>(
+          `SELECT terminal_outcome FROM human_calling_calls WHERE id = $1`,
+          [callID],
+        )
+        return result.rows[0]?.terminal_outcome ?? null
+      })
+      .toBeNull()
+
+    await deliverProviderEvent(secondaryPage, {
+      eventType: "call.hangup",
+      eventId: "callleg-browser-remote-hangup",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        call_control_id: "fixture-transfer-target-control",
+        call_leg_id: "fixture-transfer-target-leg",
+        call_session_id: "fixture-transfer-target-session",
         hangup_cause: "NORMAL_CLEARING",
         hangup_source: "STAFF",
       },
@@ -627,7 +833,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       `SELECT updated_at FROM human_calling_calls WHERE id = $1`,
       [callID],
     )
-    const outcome = callCenter(selectedPage)
+    const outcome = callCenter(secondaryPage)
     await expect(outcome.getByRole("status")).toHaveText("Outcome", {
       timeout: 1_000,
     })
@@ -645,6 +851,11 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     ).toHaveCount(0)
     await outcome.getByRole("button", { name: "Resolved", exact: true }).click()
     await expect(outcome).toHaveCount(0)
+    if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
+      await tasksSection.click()
+    }
+    await expect(navigationTask).toBeVisible()
+    await navigationTask.click()
     const navigationContext = selectedPage.getByRole("complementary", {
       name: "Task context",
     })

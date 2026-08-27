@@ -76,6 +76,9 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, fmt.Errorf("iterate active Call locks: %w", err)
 	}
 	rows.Close()
+	if err := m.lockActiveRecipientTransfers(ctx, tx, identity.Subject); err != nil {
+		return SoftphoneState{}, err
+	}
 
 	var previousSessionID string
 	err = tx.QueryRow(ctx, `
@@ -84,13 +87,6 @@ func (m *Module) AcquireSoftphone(
 	`, identity.Subject).Scan(&previousSessionID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return SoftphoneState{}, fmt.Errorf("lock existing softphone lease: %w", err)
-	}
-	if previousSessionID != "" && previousSessionID != sessionID {
-		if err := m.failRecipientTransfersForReadinessLoss(
-			ctx, tx, identity.Subject, previousSessionID,
-		); err != nil {
-			return SoftphoneState{}, err
-		}
 	}
 	if connectedCall && previousSessionID != "" && previousSessionID != sessionID {
 		if err := tx.Commit(ctx); err != nil {
@@ -101,6 +97,13 @@ func (m *Module) AcquireSoftphone(
 			return SoftphoneState{}, err
 		}
 		return state, nil
+	}
+	if previousSessionID != "" && previousSessionID != sessionID {
+		if err := m.failRecipientTransfersForReadinessLoss(
+			ctx, tx, identity.Subject, previousSessionID,
+		); err != nil {
+			return SoftphoneState{}, err
+		}
 	}
 	var state SoftphoneState
 	err = tx.QueryRow(ctx, `
@@ -195,6 +198,30 @@ func (m *Module) SetReadiness(
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
 		return SoftphoneState{}, ErrDenied
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT call.id
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg ON leg.call_id = call.id
+		WHERE leg.role = 'STAFF' AND leg.staff_subject = $1
+			AND leg.state NOT IN ('ENDED', 'FAILED')
+		ORDER BY call.id
+		FOR UPDATE OF call
+	`, command.Identity.Subject)
+	if err != nil {
+		return SoftphoneState{}, fmt.Errorf("lock occupied Calls for readiness: %w", err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return SoftphoneState{}, fmt.Errorf("iterate occupied Call locks: %w", err)
+	}
+	rows.Close()
+	if err := m.lockActiveRecipientTransfers(
+		ctx, tx, command.Identity.Subject,
+	); err != nil {
+		return SoftphoneState{}, err
 	}
 	var ownsLease bool
 	err = tx.QueryRow(ctx, `

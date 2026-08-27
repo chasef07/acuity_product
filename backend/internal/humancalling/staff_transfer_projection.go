@@ -373,6 +373,10 @@ func (m *Module) failStaffTransferTx(
 	uncertainTarget := targetControl == "" &&
 		(targetState == "DIALING" || targetState == "RINGING" ||
 			targetState == "ANSWERED" || targetAnsweredAt != nil)
+	targetSettledAt := now
+	if targetAnsweredAt != nil && targetAnsweredAt.After(targetSettledAt) {
+		targetSettledAt = *targetAnsweredAt
+	}
 	if targetControl != "" || uncertainTarget {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_call_legs
@@ -380,7 +384,7 @@ func (m *Module) failStaffTransferTx(
 				ending_at = COALESCE(ending_at, $2), error_code = COALESCE(error_code, $3),
 				updated_at = $2
 			WHERE id = $1
-		`, transfer.TargetCallLegID, now, errorCode); err != nil {
+		`, transfer.TargetCallLegID, targetSettledAt, errorCode); err != nil {
 			return err
 		}
 		if targetControl != "" {
@@ -399,7 +403,7 @@ func (m *Module) failStaffTransferTx(
 		SET state = 'FAILED', ending_at = COALESCE(ending_at, $2),
 			ended_at = COALESCE(ended_at, $2), error_code = $3, updated_at = $2
 		WHERE id = $1 AND state NOT IN ('ENDED', 'FAILED')
-	`, transfer.TargetCallLegID, now, errorCode); err != nil {
+	`, transfer.TargetCallLegID, targetSettledAt, errorCode); err != nil {
 		return err
 	}
 	if restoreAvailability {
@@ -649,6 +653,31 @@ func (m *Module) failRecipientTransfersForReadinessLoss(
 			return err
 		}
 	}
+	return nil
+}
+
+func (m *Module) lockActiveRecipientTransfers(
+	ctx context.Context,
+	tx pgx.Tx,
+	recipientSubject string,
+) error {
+	rows, err := tx.Query(ctx, `
+		SELECT id
+		FROM human_calling_staff_transfers
+		WHERE recipient_subject = $1 AND state IN ('REQUESTED', 'ACCEPTED')
+		ORDER BY created_at, id
+		FOR UPDATE
+	`, recipientSubject)
+	if err != nil {
+		return fmt.Errorf("lock active recipient transfers: %w", err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate active recipient transfers: %w", err)
+	}
+	rows.Close()
 	return nil
 }
 

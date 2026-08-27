@@ -115,12 +115,33 @@ test("rendered simultaneous offers stay in one tray with exact CallLeg actions",
   assert.match(html, /aria-label="Answer \(555\) 111-0002"/)
 })
 
+test("rendered Staff transfer exposes handoff context, Answer, and Decline", () => {
+  const transferOffer = {
+    ...offer("call-transfer", "target-leg", "+15551110001"),
+    offerKind: "STAFF_TRANSFER" as const,
+    staffTransferId: "transfer-1",
+    originatorEmail: "source@abita.test",
+    handoffNote: "Caller needs the secondary desk",
+  }
+  const html = render(snapshot({ offers: [transferOffer] }))
+
+  assert.match(html, /Incoming transfer/)
+  assert.match(html, /From source@abita.test/)
+  assert.match(html, /Caller needs the secondary desk/)
+  assert.match(html, /aria-label="Decline transfer from source@abita.test"/)
+  assert.match(html, /aria-label="Answer \(555\) 111-0001"/)
+})
+
 function render(snapshot: SoftphoneRuntimeSnapshot) {
   const noop = () => undefined
   return renderToStaticMarkup(
     <CallingCard
       snapshot={snapshot}
       onAnswer={noop}
+      onDecline={noop}
+      onLoadTransferCandidates={noop}
+      onRequestTransfer={noop}
+      onCancelTransfer={noop}
       onEnd={noop}
       onMute={noop}
       onDTMF={noop}
@@ -146,15 +167,19 @@ function snapshot(
       sessionHealthy: true,
     },
     offers: [],
+    staffTransfers: [],
+    transferCandidates: [],
     expectedCallID: "",
     activeCallLegID: "",
     terminalVersions: {},
     muted: false,
     endingCallID: "",
+    committedOwner: true,
     pending: {
       availability: false,
       retry: false,
       disposition: false,
+      transfer: false,
     },
     occupied: false,
     controls: {
@@ -163,6 +188,7 @@ function snapshot(
       canKeypad: true,
       canRetry: false,
       canDispose: false,
+      canTransfer: false,
     },
     ...overrides,
   }
@@ -207,6 +233,10 @@ function offer(callId: string, callLegId: string, phone: string) {
     version: 1,
     createdAt: "2026-08-26T15:00:00Z",
     deadline: "2099-08-26T15:01:00Z",
+    offerKind: "INBOUND_OFFER" as const,
+    staffTransferId: "",
+    originatorEmail: "",
+    handoffNote: "",
     answerReady: true,
   }
 }

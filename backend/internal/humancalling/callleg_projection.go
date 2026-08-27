@@ -640,13 +640,13 @@ func (m *Module) applyStaffInitiated(
 				EXISTS (
 					SELECT 1 FROM human_calling_call_legs
 					WHERE call_id = $1 AND role = 'STAFF'
-						AND state IN ('BRIDGE_PENDING', 'BRIDGED')
+						AND state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 				),
 				EXISTS (
 					SELECT 1 FROM human_calling_call_legs
 					WHERE staff_subject = $2 AND id <> $3
 						AND (
-							state IN ('BRIDGE_PENDING', 'BRIDGED')
+							state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 							OR (state = 'ENDING' AND answered_at IS NOT NULL)
 						)
 				)
@@ -1107,6 +1107,32 @@ func (m *Module) correlateBridgeFact(
 		&callID, &callLegID, &role, &direction,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Telnyx may report the replacement bridge on an untagged peer in
+			// the same provider session. Admit that single fact as transfer
+			// evidence without binding the peer as a canonical CallLeg.
+			var targetLegID string
+			peerErr := m.database.QueryRow(ctx, `
+				SELECT transfer.call_id::text, transfer.target_staff_leg_id::text
+				FROM human_calling_staff_transfers transfer
+				JOIN human_calling_call_legs customer
+					ON customer.id = transfer.customer_leg_id
+				LEFT JOIN human_calling_call_legs target
+					ON target.id = transfer.target_staff_leg_id
+				WHERE transfer.state IN ('REQUESTED', 'ACCEPTED')
+					AND $1 <> ''
+					AND $1 IN (
+						COALESCE(customer.provider_call_session_id, ''),
+						COALESCE(target.provider_call_session_id, '')
+					)
+				ORDER BY transfer.created_at DESC, transfer.id DESC
+				LIMIT 1
+			`, fact.CallSessionID).Scan(&callID, &targetLegID)
+			if peerErr == nil {
+				fact.ClientState = encodeCallLegClientState(
+					callID, targetLegID, "STAFF", staffTransferPeerKind,
+				)
+				return fact, nil
+			}
 			return ProviderFact{}, errRelatedFactPending
 		}
 		return ProviderFact{}, err

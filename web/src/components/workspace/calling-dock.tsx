@@ -259,6 +259,18 @@ export function CallingDock({
           <CallingCard
             snapshot={snapshot}
             onAnswer={(callLegID) => void runtime.answer(callLegID)}
+            onDecline={(callLegID) => void runtime.declineTransfer(callLegID)}
+            onLoadTransferCandidates={() =>
+              void runtime.loadTransferCandidates()
+            }
+            onRequestTransfer={(recipientSubject, handoffNote) =>
+              void runtime.requestTransfer(
+                recipientSubject,
+                handoffNote,
+                window.crypto.randomUUID(),
+              )
+            }
+            onCancelTransfer={() => void runtime.cancelTransfer()}
             onEnd={() => void runtime.hangup()}
             onMute={runtime.toggleMute}
             onDTMF={(digit) => void runtime.sendDTMF(digit)}

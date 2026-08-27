@@ -7,6 +7,7 @@ import type {
   CallingReadinessRequest,
   CallingState,
   SoftphoneState,
+  StaffTransfer,
   StartOutboundCallRequest,
 } from "../api/generated/types.gen.ts"
 import type {
@@ -1274,6 +1275,7 @@ test("stop discards local Call projections and abandoned command state", async (
     availability: false,
     retry: false,
     disposition: false,
+    transfer: false,
   })
   assert.equal(runtime.getSnapshot().occupied, false)
 })
@@ -4253,6 +4255,239 @@ test("the stable pending Call projection spans outbound intent and inbound Answe
   assert.equal(inboundRuntime.getSnapshot().pendingCall, undefined)
 })
 
+test("source transfer intent stays inside the runtime through request and cancel", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-transfer-source")
+  const transfer = staffTransfer({
+    callId: fixture.connected.id,
+    sourceCallLegId: fixture.expected.callLegId,
+  })
+  fixture.backend.listTransferCandidatesHandler = async () => [
+    { subject: transfer.recipientSubject, email: transfer.recipientEmail },
+  ]
+  fixture.backend.requestTransferHandler = async (input) => {
+    assert.equal(input.callID, fixture.connected.id)
+    assert.equal(input.expectedVersion, fixture.connected.version)
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(
+        fixture.connected.id,
+        fixture.expected.callLegId,
+        fixture.connected.version,
+      ),
+      staffTransfers: [transfer],
+    })
+    return transfer
+  }
+  fixture.backend.cancelTransferHandler = async ({ transferID }) => {
+    assert.equal(transferID, transfer.id)
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(
+        fixture.connected.id,
+        fixture.expected.callLegId,
+        fixture.connected.version + 1,
+      ),
+    })
+    return { ...transfer, state: "CANCELED" }
+  }
+
+  assert.equal(fixture.runtime.getSnapshot().controls.canTransfer, true)
+  await fixture.runtime.loadTransferCandidates()
+  assert.deepEqual(fixture.runtime.getSnapshot().transferCandidates, [
+    { subject: transfer.recipientSubject, email: transfer.recipientEmail },
+  ])
+  await fixture.runtime.requestTransfer(
+    transfer.recipientSubject,
+    transfer.handoffNote,
+    "transfer-runtime-key",
+  )
+  assert.equal(fixture.runtime.getSnapshot().staffTransfers[0]?.id, transfer.id)
+  assert.equal(fixture.runtime.getSnapshot().controls.canTransfer, false)
+
+  fixture.backend.state = {
+    ...fixture.backend.state,
+    staffTransfers: [{ ...transfer, state: "ACCEPTED" }],
+  }
+  await fixture.runtime.signalRefresh()
+  await fixture.runtime.cancelTransfer()
+  assert.deepEqual(fixture.runtime.getSnapshot().staffTransfers, [])
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+})
+
+test("a lost transfer response reconciles the committed transfer", async () => {
+  const fixture = await attachedOutboundMediaFixture(
+    "provider-transfer-lost-response",
+  )
+  const transfer = staffTransfer({
+    callId: fixture.connected.id,
+    sourceCallLegId: fixture.expected.callLegId,
+  })
+  fixture.backend.requestTransferHandler = async (input) => {
+    assert.equal(input.idempotencyKey, "transfer-lost-response-key")
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(
+        fixture.connected.id,
+        fixture.expected.callLegId,
+        fixture.connected.version,
+      ),
+      staffTransfers: [transfer],
+    })
+    throw new SoftphoneAdapterError(
+      "temporary-request",
+      "The response was lost after the transfer committed.",
+      true,
+    )
+  }
+
+  await fixture.runtime.requestTransfer(
+    transfer.recipientSubject,
+    transfer.handoffNote,
+    "transfer-lost-response-key",
+  )
+
+  assert.equal(fixture.runtime.getSnapshot().staffTransfers[0]?.id, transfer.id)
+  assert.equal(fixture.runtime.getSnapshot().pending.transfer, false)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+})
+
+test("declining a Staff transfer rejects only its exact media offer", async () => {
+  const backend = new DeterministicBackend()
+  const transfer = staffTransfer()
+  const transferOffer = offer({
+    callId: transfer.callId,
+    callLegId: transfer.targetCallLegId,
+    mediaToken: "transfer-media-token",
+    offerKind: "STAFF_TRANSFER",
+    staffTransferId: transfer.id,
+    originatorEmail: transfer.requestedByEmail,
+    handoffNote: transfer.handoffNote,
+  })
+  backend.lease = lease({ owner: true, available: true })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [transferOffer],
+    staffTransfers: [transfer],
+  })
+  backend.declineTransferHandler = async ({ transferID }) => {
+    assert.equal(transferID, transfer.id)
+    backend.state = callingState({ softphone: backend.lease })
+    return { ...transfer, state: "DECLINED" }
+  }
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const exact = mediaLeg({
+    providerLegID: "transfer-provider-leg",
+    mediaToken: transferOffer.mediaToken,
+  })
+  media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+
+  await runtime.declineTransfer(transferOffer.callLegId)
+  assert.equal(exact.rejections, 1)
+  assert.deepEqual(runtime.getSnapshot().offers, [])
+  assert.deepEqual(runtime.getSnapshot().staffTransfers, [])
+})
+
+test("target controls wait for the exact transferred bridge", async () => {
+  const backend = new DeterministicBackend()
+  const transfer = staffTransfer()
+  const transferOffer = offer({
+    callId: transfer.callId,
+    callLegId: transfer.targetCallLegId,
+    mediaToken: "target-transfer-media",
+    offerKind: "STAFF_TRANSFER",
+    staffTransferId: transfer.id,
+    originatorEmail: transfer.requestedByEmail,
+    handoffNote: transfer.handoffNote,
+  })
+  const connected = call({ id: transfer.callId, state: "CONNECTED", version: 4 })
+  backend.lease = lease({ owner: true, available: true })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [transferOffer],
+    staffTransfers: [transfer],
+  })
+  backend.calls.set(connected.id, connected)
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+  const exact = mediaLeg({
+    providerLegID: "target-provider-leg",
+    mediaToken: transferOffer.mediaToken,
+  })
+  media.emitIncoming(exact)
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+  backend.lease = lease({ owner: true, activeCallId: connected.id })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [{ ...transferOffer, state: "ANSWERED" }],
+    staffTransfers: [{ ...transfer, state: "ACCEPTED" }],
+  })
+  await runtime.answer(transferOffer.callLegId)
+  assert.equal(runtime.getSnapshot().activeCall?.id, connected.id)
+  assert.equal(runtime.getSnapshot().committedOwner, false)
+  assert.equal(runtime.getSnapshot().controls.canMute, false)
+  assert.equal(runtime.getSnapshot().controls.canEnd, false)
+
+  backend.state = callingState({
+    softphone: backend.lease,
+    bridged: stateCall(connected.id, transfer.targetCallLegId, 5),
+  })
+  backend.calls.set(connected.id, { ...connected, version: 5 })
+  await runtime.signalRefresh()
+  assert.equal(runtime.getSnapshot().committedOwner, true)
+  assert.equal(runtime.getSnapshot().controls.canMute, true)
+  assert.equal(runtime.getSnapshot().controls.canEnd, true)
+})
+
+test("an outbound source releases stale media when transfer ownership moves", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-transfer-cleanup")
+  const transfer = staffTransfer({
+    callId: fixture.connected.id,
+    sourceCallLegId: fixture.expected.callLegId,
+  })
+  fixture.backend.state = callingState({
+    softphone: fixture.backend.lease,
+    bridged: stateCall(
+      fixture.connected.id,
+      fixture.expected.callLegId,
+      fixture.connected.version,
+    ),
+    staffTransfers: [transfer],
+  })
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().committedOwner, true)
+
+  fixture.backend.lease = lease({ owner: true })
+  fixture.backend.state = callingState({ softphone: fixture.backend.lease })
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().activeCall, undefined)
+  assert.equal(fixture.runtime.getSnapshot().expectedCallID, "")
+  assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(fixture.runtime.getSnapshot().controls.canEnd, false)
+  assert.ok(fixture.media.disconnects >= 1)
+})
+
 class DeterministicBackend implements SoftphoneBackend {
   lease = lease({ owner: false })
   state = callingState({ softphone: this.lease })
@@ -4279,6 +4514,10 @@ class DeterministicBackend implements SoftphoneBackend {
   hangupHandler?: SoftphoneBackend["hangup"]
   retryHandler?: SoftphoneBackend["retry"]
   disposeHandler?: SoftphoneBackend["dispose"]
+  listTransferCandidatesHandler?: SoftphoneBackend["listTransferCandidates"]
+  requestTransferHandler?: SoftphoneBackend["requestTransfer"]
+  cancelTransferHandler?: SoftphoneBackend["cancelTransfer"]
+  declineTransferHandler?: SoftphoneBackend["declineTransfer"]
 
   async acquireLease(
     input: { sessionID: string; takeover: boolean },
@@ -4359,6 +4598,46 @@ class DeterministicBackend implements SoftphoneBackend {
     outcome: "RESOLVED" | "FOLLOW_UP_REQUIRED" | "COMPLETE_TASK" | "KEEP_OPEN" | "CREATE_TASK" | "NO_FOLLOW_UP"
   }, signal?: AbortSignal): Promise<CallingDispositionResult> {
     if (this.disposeHandler) return this.disposeHandler(input, signal)
+    throw new Error("not implemented")
+  }
+
+  async listTransferCandidates(
+    input: Parameters<SoftphoneBackend["listTransferCandidates"]>[0],
+    signal?: AbortSignal,
+  ) {
+    if (this.listTransferCandidatesHandler) {
+      return this.listTransferCandidatesHandler(input, signal)
+    }
+    return []
+  }
+
+  async requestTransfer(
+    input: Parameters<SoftphoneBackend["requestTransfer"]>[0],
+    signal?: AbortSignal,
+  ) {
+    if (this.requestTransferHandler) {
+      return this.requestTransferHandler(input, signal)
+    }
+    throw new Error("not implemented")
+  }
+
+  async cancelTransfer(
+    input: Parameters<SoftphoneBackend["cancelTransfer"]>[0],
+    signal?: AbortSignal,
+  ) {
+    if (this.cancelTransferHandler) {
+      return this.cancelTransferHandler(input, signal)
+    }
+    throw new Error("not implemented")
+  }
+
+  async declineTransfer(
+    input: Parameters<SoftphoneBackend["declineTransfer"]>[0],
+    signal?: AbortSignal,
+  ) {
+    if (this.declineTransferHandler) {
+      return this.declineTransferHandler(input, signal)
+    }
     throw new Error("not implemented")
   }
 }
@@ -4472,6 +4751,7 @@ function callingState(overrides: Partial<CallingState>): CallingState {
   return {
     softphone: lease({ owner: true }),
     ringing: [],
+    staffTransfers: [],
     ...overrides,
   }
 }
@@ -4527,6 +4807,33 @@ function offer(overrides: Partial<CallingState["ringing"][number]>) {
     version: 1,
     createdAt: "2026-08-27T00:00:00Z",
     deadline: "2026-08-27T00:00:20Z",
+    offerKind: "INBOUND_OFFER" as const,
+    staffTransferId: "",
+    originatorEmail: "",
+    handoffNote: "",
+    ...overrides,
+  }
+}
+
+function staffTransfer(overrides: Partial<StaffTransfer> = {}): StaffTransfer {
+  return {
+    id: "transfer-1",
+    callId: "call-transfer",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    locationName: "Main",
+    sourceCallLegId: "source-leg-1",
+    targetCallLegId: "target-leg-1",
+    customerCallLegId: "customer-leg-1",
+    requestedBySubject: "source-subject",
+    requestedByEmail: "source@abita.test",
+    recipientSubject: "target-subject",
+    recipientEmail: "target@abita.test",
+    handoffNote: "Caller needs the secondary desk",
+    state: "REQUESTED",
+    failureCode: "",
+    expiresAt: "2026-08-27T00:01:00Z",
+    createdAt: "2026-08-27T00:00:00Z",
     ...overrides,
   }
 }

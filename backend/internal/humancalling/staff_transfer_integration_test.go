@@ -463,7 +463,7 @@ func TestStaffTransferDeclineLeavesSourceOwner(t *testing.T) {
 	}
 }
 
-func TestStaffTransferSourceCanCancelAfterSoftphoneTakeover(t *testing.T) {
+func TestStaffTransferSourceCanCancelWhenActiveCallRefusesSoftphoneTakeover(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-takeover-cancel")
 	transfer, _ := requestFixtureTransfer(t, fixture, "takeover-cancel")
 	const takeoverSession = "staff-transfer-takeover-cancel-browser-replacement"
@@ -471,20 +471,62 @@ func TestStaffTransferSourceCanCancelAfterSoftphoneTakeover(t *testing.T) {
 	lease, err := fixture.calling.AcquireSoftphone(
 		context.Background(), fixture.staff[0], takeoverSession, true,
 	)
-	if err != nil || !lease.Owner || lease.SessionID != takeoverSession {
-		t.Fatalf("take over source softphone = %#v, %v", lease, err)
+	if err != nil || lease.Owner || lease.ActiveCallID != fixture.callID {
+		t.Fatalf("refuse active Call takeover = %#v, %v", lease, err)
 	}
 
 	canceled, err := fixture.calling.CancelStaffTransfer(
 		context.Background(), humancalling.RespondStaffTransferCommand{
 			Identity: fixture.staff[0], TransferID: transfer.ID,
-			SessionID: takeoverSession,
+			SessionID: "staff-transfer-takeover-cancel-browser-1",
 		},
 	)
 	if err != nil || canceled.State != humancalling.StaffTransferCanceled {
 		t.Fatalf("cancel transfer from current source browser = %#v, %v", canceled, err)
 	}
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "CANCELED", "BRIDGED", "ENDING")
+}
+
+func TestStaffTransferSourceCanCancelAfterTargetAnswerBeforeBridge(t *testing.T) {
+	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-accepted-cancel")
+	transfer, command := requestFixtureTransfer(t, fixture, "accepted-cancel")
+	target := transferTargetFact(
+		transfer,
+		command,
+		"staff-transfer-accepted-cancel",
+		humancalling.FactCallInitiated,
+		fixture.now.Add(6*time.Second),
+	)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
+		t.Fatalf("initiate transfer target: %v", err)
+	}
+	target.EventID = "staff-transfer-accepted-cancel-answered"
+	target.Type = humancalling.FactCallAnswered
+	target.OccurredAt = fixture.now.Add(7 * time.Second)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
+		t.Fatalf("answer transfer target: %v", err)
+	}
+
+	canceled, err := fixture.calling.CancelStaffTransfer(
+		context.Background(),
+		humancalling.RespondStaffTransferCommand{
+			Identity:   fixture.staff[0],
+			TransferID: transfer.ID,
+			SessionID:  "staff-transfer-accepted-cancel-browser-1",
+		},
+	)
+	if err != nil || canceled.State != humancalling.StaffTransferCanceled {
+		t.Fatalf("cancel accepted transfer = %#v, %v", canceled, err)
+	}
+	assertTransferLegStates(t, fixture.pool, transfer.ID, "CANCELED", "BRIDGED", "ENDING")
+	var available bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.staff[1].Subject).Scan(&available); err != nil || !available {
+		t.Fatalf("recipient availability after accepted cancel = %t, %v", available, err)
+	}
 }
 
 func TestCallingStateHidesActiveStaffTransferAfterLocationAccessLoss(t *testing.T) {
@@ -880,8 +922,13 @@ func TestInterruptedStaffTransferCommandReconcilesWithoutNewIdentity(t *testing.
 	`, old, transfer.TargetCallLegID); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.calling.RecoverInterruptedCommands(context.Background()); err != nil {
-		t.Fatal(err)
+	fixture.provider.observations = []humancalling.ProviderCallObservation{{
+		Active: true, CallControlID: "interrupted-target-control",
+		CallLegID: "interrupted-target-leg", CallSessionID: "interrupted-target-session",
+	}}
+	processed, err := fixture.calling.MaintainOutgoingCallLegs(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("maintain interrupted transfer = %t, %v", processed, err)
 	}
 	var commandState, stableClientState string
 	if err := fixture.pool.QueryRow(context.Background(), `
@@ -892,14 +939,6 @@ func TestInterruptedStaffTransferCommandReconcilesWithoutNewIdentity(t *testing.
 	}
 	if commandState != "AMBIGUOUS" {
 		t.Fatalf("interrupted transfer command state = %s", commandState)
-	}
-	fixture.provider.observations = []humancalling.ProviderCallObservation{{
-		Active: true, CallControlID: "interrupted-target-control",
-		CallLegID: "interrupted-target-leg", CallSessionID: "interrupted-target-session",
-	}}
-	processed, err := fixture.calling.ReconcileStaleCalls(context.Background())
-	if err != nil || processed != 1 {
-		t.Fatalf("reconcile interrupted transfer = %d, %v", processed, err)
 	}
 	var projectedState, projectedClientState string
 	if err := fixture.pool.QueryRow(context.Background(), `

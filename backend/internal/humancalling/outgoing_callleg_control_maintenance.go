@@ -109,7 +109,10 @@ const staleCallLegCandidateQuery = `
 		COALESCE(leg.provider_call_leg_id, ''),
 		COALESCE(leg.provider_call_session_id, ''),
 		COALESCE(command.id::text, ''), COALESCE(command.action, ''),
-		COALESCE(command.payload->>'client_state', ''), leg.updated_at,
+		COALESCE(CASE command.action
+			WHEN 'TRANSFER_STAFF' THEN command.payload->>'target_leg_client_state'
+			ELSE command.payload->>'client_state'
+		END, ''), leg.updated_at,
 		COALESCE(command.created_at, leg.updated_at),
 		COALESCE(call.ended_at, leg.ended_at, leg.updated_at)
 	FROM human_calling_calls call
@@ -399,6 +402,11 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 	clientState := encodeCallLegClientState(callID, legID, role, "reconciled")
 	if providerClientState == "" {
 		providerClientState = clientState
+	} else if commandAction == CommandTransferStaff {
+		clientState = providerClientState
+	}
+	if connectionID == "" && commandAction == CommandTransferStaff {
+		connectionID = m.config.CallControlID
 	}
 	observation, err := provider.ObserveCall(
 		ctx,
@@ -489,7 +497,8 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 	if observation.Active && !observedInitiation &&
 		(commandAction == CommandDialStaff ||
 			commandAction == CommandDialOutboundStaff ||
-			commandAction == CommandDialOutboundDestination) {
+			commandAction == CommandDialOutboundDestination ||
+			commandAction == CommandTransferStaff) {
 		fact := ProviderFact{
 			EventID:       "reconcile-active-" + legID + "-" + fmt.Sprint(checkedAt.UnixNano()),
 			Type:          FactCallInitiated,
@@ -929,6 +938,17 @@ func (m *Module) rejectUnobservedCommand(
 		err = m.failDialCallLeg(ctx, tx, callLegID, action, errorCode)
 	case CommandBridge:
 		err = m.failBridgeCallLeg(ctx, tx, callLegID, errorCode)
+	case CommandTransferStaff:
+		var transferID string
+		if queryErr := tx.QueryRow(ctx, `
+			SELECT id::text FROM human_calling_staff_transfers
+			WHERE provider_command_id = $1
+		`, commandID).Scan(&transferID); queryErr != nil {
+			return queryErr
+		}
+		err = m.failStaffTransferTx(
+			ctx, tx, transferID, StaffTransferFailed, errorCode, true,
+		)
 	case CommandAnswerCaller,
 		CommandSpeakVoicemail, CommandStartVoicemailRecording:
 		var callID string

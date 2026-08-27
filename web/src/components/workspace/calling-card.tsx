@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import {
+  ArrowRightLeftIcon,
   CheckIcon,
   MicIcon,
   MicOffIcon,
@@ -36,6 +37,10 @@ import type { SoftphoneRuntimeSnapshot } from "@/lib/calling/softphone-runtime"
 type CallingCardProps = {
   snapshot: SoftphoneRuntimeSnapshot
   onAnswer: (callLegID: string) => void
+  onDecline: (callLegID: string) => void
+  onLoadTransferCandidates: () => void
+  onRequestTransfer: (recipientSubject: string, handoffNote: string) => void
+  onCancelTransfer: () => void
   onEnd: () => void
   onMute: () => void
   onDTMF: (digit: string) => void
@@ -48,6 +53,10 @@ type CallingCardProps = {
 export function CallingCard({
   snapshot,
   onAnswer,
+  onDecline,
+  onLoadTransferCandidates,
+  onRequestTransfer,
+  onCancelTransfer,
   onEnd,
   onMute,
   onDTMF,
@@ -74,7 +83,11 @@ export function CallingCard({
       size="sm"
     >
       {view.kind === "offers" ? (
-        <IncomingOfferTray view={view} onAnswer={onAnswer} />
+        <IncomingOfferTray
+          view={view}
+          onAnswer={onAnswer}
+          onDecline={onDecline}
+        />
       ) : view.kind === "call" ? (
         <ActiveCallHeader view={view} />
       ) : null}
@@ -92,6 +105,13 @@ export function CallingCard({
             onDisposition={onDisposition}
             onRetry={onRetry}
             onClose={onClose}
+          />
+          <TransferPanel
+            key={view.callId}
+            transfer={view.transfer}
+            onLoadCandidates={onLoadTransferCandidates}
+            onRequest={onRequestTransfer}
+            onCancel={onCancelTransfer}
           />
           <ActiveCallControls
             view={view}
@@ -138,9 +158,11 @@ function ActiveCallHeader({ view }: { view: CallingCardCallView }) {
 function IncomingOfferTray({
   view,
   onAnswer,
+  onDecline,
 }: {
   view: CallingCardOfferView
   onAnswer: (callLegID: string) => void
+  onDecline: (callLegID: string) => void
 }) {
   return (
     <>
@@ -182,6 +204,17 @@ function IncomingOfferTray({
                 >
                   {offer.countdown}
                 </Badge>
+                {offer.decline && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={offer.decline.label}
+                    disabled={offer.decline.disabled}
+                    onClick={() => onDecline(offer.callLegId)}
+                  >
+                    Decline
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   aria-label={offer.answer.label}
@@ -197,6 +230,131 @@ function IncomingOfferTray({
         </ul>
       </CardContent>
     </>
+  )
+}
+
+function TransferPanel({
+  transfer,
+  onLoadCandidates,
+  onRequest,
+  onCancel,
+}: {
+  transfer: CallingCardCallView["transfer"]
+  onLoadCandidates: () => void
+  onRequest: (recipientSubject: string, handoffNote: string) => void
+  onCancel: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [recipient, setRecipient] = useState("")
+  const [note, setNote] = useState("")
+  const selectedRecipient =
+    recipient || transfer.candidates[0]?.subject || ""
+
+  if (transfer.active) {
+    return (
+      <CardContent className="border-t pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{transfer.active.status}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              You own the caller until the transfer is confirmed.
+            </p>
+          </div>
+          {transfer.active.canCancel && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={transfer.pending}
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    )
+  }
+
+  if (!open) {
+    return transfer.canStart ? (
+      <CardContent className="border-t pt-3">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={transfer.pending}
+          onClick={() => {
+            setOpen(true)
+            onLoadCandidates()
+          }}
+        >
+          <ArrowRightLeftIcon />
+          Transfer
+        </Button>
+      </CardContent>
+    ) : null
+  }
+
+  return (
+    <CardContent className="space-y-3 border-t pt-3">
+      {transfer.pending && transfer.candidates.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Loading available staff…</p>
+      ) : transfer.candidates.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No staff are available.</p>
+      ) : (
+        <>
+          <label className="grid gap-1 text-xs font-medium">
+            Transfer to
+            <select
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+              value={selectedRecipient}
+              disabled={transfer.pending}
+              onChange={(event) => setRecipient(event.target.value)}
+            >
+              {transfer.candidates.map((candidate) => (
+                <option key={candidate.subject} value={candidate.subject}>
+                  {candidate.email}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs font-medium">
+            Handoff note (optional)
+            <textarea
+              className="min-h-16 rounded-md border bg-background px-3 py-2 text-sm"
+              maxLength={500}
+              value={note}
+              disabled={transfer.pending}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </label>
+        </>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={transfer.pending}
+          onClick={() => setOpen(false)}
+        >
+          Close
+        </Button>
+        {transfer.candidates.length > 0 && (
+          <Button
+            size="sm"
+            disabled={!selectedRecipient || transfer.pending}
+            onClick={() => {
+              setOpen(false)
+              setRecipient("")
+              setNote("")
+              onRequest(selectedRecipient, note)
+            }}
+          >
+            <ArrowRightLeftIcon />
+            {transfer.pending ? "Committing…" : "Transfer"}
+          </Button>
+        )}
+      </div>
+    </CardContent>
   )
 }
 

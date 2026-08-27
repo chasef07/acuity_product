@@ -343,7 +343,16 @@ func (m *Module) respondStaffTransfer(
 		return StaffTransfer{}, fmt.Errorf("begin staff transfer response: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	transfer, err := readStaffTransferForUpdate(ctx, tx, command.TransferID)
+	transfer, err := readStaffTransfer(ctx, tx, command.TransferID)
+	if err != nil {
+		return StaffTransfer{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
+	`, transfer.CallID); err != nil {
+		return StaffTransfer{}, fmt.Errorf("lock transfer Call response: %w", err)
+	}
+	transfer, err = readStaffTransferForUpdate(ctx, tx, command.TransferID)
 	if err != nil {
 		return StaffTransfer{}, err
 	}
@@ -351,7 +360,9 @@ func (m *Module) respondStaffTransfer(
 	if recipient {
 		actorSubject = transfer.RecipientSubject
 	}
-	if command.Identity.Subject != actorSubject || transfer.State != StaffTransferRequested {
+	respondable := transfer.State == StaffTransferRequested ||
+		(!recipient && transfer.State == StaffTransferAccepted)
+	if command.Identity.Subject != actorSubject || !respondable {
 		return StaffTransfer{}, ErrConflict
 	}
 	if recipient {
@@ -377,7 +388,7 @@ func (m *Module) respondStaffTransfer(
 		return StaffTransfer{}, ErrDenied
 	}
 	if err := m.failStaffTransferTx(
-		ctx, tx, transfer.ID, state, "STAFF_"+string(state), false,
+		ctx, tx, transfer.ID, state, "STAFF_"+string(state), !recipient,
 	); err != nil {
 		return StaffTransfer{}, err
 	}
