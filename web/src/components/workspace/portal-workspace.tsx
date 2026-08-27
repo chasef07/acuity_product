@@ -166,7 +166,6 @@ export function PortalWorkspace() {
   const [view, setView] = useState<View>("none")
   const [contextView, setContextView] = useState<ContextView>("task")
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
-  const [activeCall, setActiveCall] = useState<CallingCall>()
   const [historicalCall, setHistoricalCall] = useState<CallingCall>()
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [requestBudget] = useState<WorkspaceRequestBudget>(() =>
@@ -205,7 +204,6 @@ export function PortalWorkspace() {
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const returnTaskIDRef = useRef("")
   const focusedCallIDRef = useRef("")
-  const activeCallIDRef = useRef("")
   const callDetailGenerationRef = useRef(0)
 
   useEffect(() => {
@@ -1076,7 +1074,7 @@ export function PortalWorkspace() {
     setSelectedTask(task)
   }
 
-  function selectTask(task: Task) {
+  function selectTask(task: Task, activeCall?: CallingCall) {
     if (activeCall) returnTaskIDRef.current = task.id
     selectEngagement(taskEngagement(task), task)
     setContextView("task")
@@ -1234,16 +1232,10 @@ export function PortalWorkspace() {
     setContextPanelOpen(false)
   }
 
-  const handleCallChanged = useCallback((call: CallingCall | undefined) => {
-    setActiveCall(call)
-    const previousCallID = activeCallIDRef.current
-    activeCallIDRef.current = call?.id ?? ""
-    if (!call) return
-    if (call.state !== "CONNECTED" || call.id === focusedCallIDRef.current) return
-    if (call.id !== previousCallID) {
-      callDetailGenerationRef.current += 1
-      setHistoricalCall(undefined)
-    }
+  const handleCallConnected = useCallback((call: CallingCall) => {
+    if (call.id === focusedCallIDRef.current) return
+    callDetailGenerationRef.current += 1
+    setHistoricalCall(undefined)
     focusedCallIDRef.current = call.id
     setSelectedAIInteractionID("")
     const returnTask = selectedTaskRef.current
@@ -1322,7 +1314,12 @@ export function PortalWorkspace() {
       : contextView === "call"
         ? "Call context"
         : "AI call context"
-  const callingShell = (children: ReactNode) => (
+  const callingShell = (
+    children: (
+      activeCall: CallingCall | undefined,
+      callingOccupied: boolean,
+    ) => ReactNode,
+  ) => (
     <SidebarProvider>
       <CallingDock
         callingEnabled={callingEnabled}
@@ -1334,7 +1331,7 @@ export function PortalWorkspace() {
           )
           setTaskCallError(requestError ?? "")
         }}
-        onCallChanged={handleCallChanged}
+        onCallConnected={handleCallConnected}
         onDisposition={(result) => void handleDisposition(result)}
       >
         {children}
@@ -1342,10 +1339,10 @@ export function PortalWorkspace() {
     </SidebarProvider>
   )
   if (loadState === "loading" && !workspace) {
-    return callingShell(<WorkspaceLoading />)
+    return callingShell(() => <WorkspaceLoading />)
   }
   if (loadState === "unavailable" || !workspace) {
-    return callingShell(
+    return callingShell(() =>
       <WorkspaceFailure
         title="Workspace temporarily disconnected"
         description="No data was reconstructed. Retry the authoritative request when the service is available."
@@ -1361,7 +1358,7 @@ export function PortalWorkspace() {
       />,
     )
   }
-  return callingShell(
+  return callingShell((activeCall, callingOccupied) =>
     <>
         <WorkspaceRail
           discovery={discovery}
@@ -1407,7 +1404,7 @@ export function PortalWorkspace() {
             setView("analytics")
           }}
           onEngagementSelect={selectEngagement}
-          onTaskSelect={selectTask}
+          onTaskSelect={(task) => selectTask(task, activeCall)}
           onTaskUpdated={(task) => {
             updateTaskProjection(task, false)
             if (selectedTaskRef.current?.id === task.id) {
@@ -1514,7 +1511,7 @@ export function PortalWorkspace() {
                       activeCall={historicalCall ?? activeCall}
                       view={contextView}
                       canMutate
-                      canCall={callingEnabled}
+                      canCall={callingEnabled && !callingOccupied}
                       historyHint={workspaceRevision}
                       taskCallPending={Boolean(taskCallRequest)}
                       taskCallError={taskCallError}

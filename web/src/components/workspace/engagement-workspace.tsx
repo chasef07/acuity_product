@@ -163,6 +163,7 @@ export function EngagementWorkspace({
   )
   const {
     activeCall,
+    callingOccupied,
     callingEnabled,
     outboundPending,
     ownsSoftphone,
@@ -224,6 +225,7 @@ export function EngagementWorkspace({
               !route ||
               !ownsSoftphone ||
               Boolean(activeCall) ||
+              callingOccupied ||
               outboundPending
             }
             onClick={() => {
