@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.10](https://github.com/chasef07/acuity_product/compare/v0.4.9...v0.4.10) (2026-08-28)
+
+
+### Bug Fixes
+
+* **calling:** give Staff a clear recovery alert ([#221](https://github.com/chasef07/acuity_product/issues/221)) ([c0ca498](https://github.com/chasef07/acuity_product/commit/c0ca498c53c4374a978c21ffbd77160e800762d4))
+* **calling:** keep readiness heartbeats quiet and staggered ([#227](https://github.com/chasef07/acuity_product/issues/227)) ([d979c8d](https://github.com/chasef07/acuity_product/commit/d979c8d2e376110d02b493dc007b78e029b8c0dc))
+* **calling:** recover same-call Hangup receipts ([#224](https://github.com/chasef07/acuity_product/issues/224)) ([01fcc36](https://github.com/chasef07/acuity_product/commit/01fcc36914b7c7dbf96d7ef8a8c9a36abea37348))
+
 ## [0.4.9](https://github.com/chasef07/acuity_product/compare/v0.4.8...v0.4.9) (2026-08-28)
 
 
