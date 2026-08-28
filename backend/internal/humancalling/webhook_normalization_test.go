@@ -1,11 +1,52 @@
 package humancalling
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 )
+
+func TestTelnyxSDKWebhookVerificationRotatesPublicKeys(t *testing.T) {
+	oldPublicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPublicKey, currentPrivateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.answered","id":"rotation-event","occurred_at":%q,"payload":{"call_control_id":"control-1","call_leg_id":"leg-1","call_session_id":"session-1"}}}`,
+		now.Format(time.RFC3339Nano),
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		currentPrivateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	event, err := unwrapTelnyxWebhook(
+		raw,
+		timestamp,
+		signature,
+		[][]byte{oldPublicKey, currentPublicKey},
+	)
+	if err != nil || event.Data.ID != "rotation-event" {
+		t.Fatalf("verify rotated Telnyx key: event=%#v err=%v", event, err)
+	}
+	if _, err := unwrapTelnyxWebhook(
+		raw,
+		timestamp,
+		signature,
+		[][]byte{oldPublicKey},
+	); err == nil {
+		t.Fatal("webhook signed by the current key verified with only the old key")
+	}
+}
 
 func TestRecordingSavedNormalizationKeepsDurableTelnyxIdentity(t *testing.T) {
 	raw := []byte(`{

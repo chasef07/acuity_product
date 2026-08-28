@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,7 +106,7 @@ func run() error {
 			nil,
 			nil,
 			messaging.Config{
-				WebhookPublicKeys: webhookPublicKeys(config.Messaging.WebhookPublicKeys),
+				WebhookPublicKeys: config.Messaging.WebhookPublicKeys,
 				AttachmentStore:   attachmentStore,
 				MediaSigningKey:   config.Messaging.MediaSigningKey,
 			},
@@ -429,17 +428,9 @@ func humanCallingConfig(
 		FromNumber:             config.HumanCalling.FromNumber,
 		RingbackURL:            config.HumanCalling.RingbackURL,
 		PlaybackSigningKey:     config.HumanCalling.PlaybackSigningKey,
-		WebhookPublicKeys:      webhookPublicKeys(config.HumanCalling.WebhookPublicKeys),
+		WebhookPublicKeys:      config.HumanCalling.WebhookPublicKeys,
 		Observer:               observer,
 	}
-}
-
-func webhookPublicKeys(values [][]byte) []ed25519.PublicKey {
-	keys := make([]ed25519.PublicKey, 0, len(values))
-	for _, value := range values {
-		keys = append(keys, ed25519.PublicKey(value))
-	}
-	return keys
 }
 
 func runMigrate(

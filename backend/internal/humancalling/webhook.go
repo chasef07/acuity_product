@@ -3,17 +3,20 @@ package humancalling
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
-	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/team-telnyx/telnyx-go/v4"
+	"github.com/team-telnyx/telnyx-go/v4/option"
 )
 
 type ReceiptState string
@@ -47,54 +50,22 @@ type RequeueQuarantinedReceiptCommand struct {
 	ReceiptReference string
 }
 
-type telnyxEnvelope struct {
-	Data struct {
-		RecordType string          `json:"record_type"`
-		EventType  string          `json:"event_type"`
-		ID         string          `json:"id"`
-		OccurredAt time.Time       `json:"occurred_at"`
-		Payload    json.RawMessage `json:"payload"`
-	} `json:"data"`
-}
-
-type telnyxVoicePayload struct {
-	CallControlID      string         `json:"call_control_id"`
-	CallLegID          string         `json:"call_leg_id"`
-	CallSessionID      string         `json:"call_session_id"`
-	ConnectionID       string         `json:"connection_id"`
-	ClientState        string         `json:"client_state"`
-	From               string         `json:"from"`
-	To                 string         `json:"to"`
-	HangupCause        string         `json:"hangup_cause"`
-	HangupSource       string         `json:"hangup_source"`
-	SIPHangupCause     string         `json:"sip_hangup_cause"`
-	Status             string         `json:"status"`
-	CallQualityStats   map[string]any `json:"call_quality_stats"`
-	RecordingID        string         `json:"recording_id"`
-	RecordingStartedAt time.Time      `json:"recording_started_at"`
-	RecordingEndedAt   time.Time      `json:"recording_ended_at"`
-}
-
 func (m *Module) ReceiveWebhook(
 	ctx context.Context,
 	raw []byte,
 	timestampHeader string,
 	signatureHeader string,
 ) (WebhookReceipt, error) {
-	verifier, valid := telnyxsignature.New(
-		m.config.WebhookPublicKeys, m.config.WebhookTolerance, m.now,
+	event, err := unwrapTelnyxWebhook(
+		raw,
+		timestampHeader,
+		signatureHeader,
+		m.config.WebhookPublicKeys,
 	)
-	if len(raw) == 0 || len(raw) > 256*1024 || !valid {
-		return WebhookReceipt{}, ErrInvalidWebhook
-	}
-	if !verifier.Verify(raw, timestampHeader, signatureHeader) {
-		return WebhookReceipt{}, ErrInvalidWebhook
-	}
-	timestamp, _ := strconv.ParseInt(timestampHeader, 10, 64)
-	envelope, err := decodeTelnyxEnvelope(raw)
 	if err != nil {
 		return WebhookReceipt{}, ErrInvalidWebhook
 	}
+	timestamp, _ := strconv.ParseInt(timestampHeader, 10, 64)
 
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -103,8 +74,8 @@ func (m *Module) ReceiveWebhook(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	result := WebhookReceipt{
-		EventID:   envelope.Data.ID,
-		EventType: envelope.Data.EventType,
+		EventID:   event.Data.ID,
+		EventType: event.Data.EventType,
 		State:     ReceiptPending,
 	}
 	var inserted string
@@ -119,7 +90,7 @@ func (m *Module) ReceiveWebhook(
 	`,
 		result.EventID,
 		result.EventType,
-		envelope.Data.OccurredAt,
+		event.Data.OccurredAt,
 		m.now(),
 		timestamp,
 		raw,
@@ -143,7 +114,7 @@ func (m *Module) ReceiveWebhook(
 			return WebhookReceipt{}, fmt.Errorf("load duplicate provider receipt: %w", err)
 		}
 		if !bytes.Equal(existingRaw, raw) ||
-			result.EventType != envelope.Data.EventType {
+			result.EventType != event.Data.EventType {
 			return WebhookReceipt{}, ErrInvalidWebhook
 		}
 		result.Duplicate = true
@@ -160,6 +131,53 @@ func (m *Module) ReceiveWebhook(
 		return WebhookReceipt{}, fmt.Errorf("commit provider receipt transaction: %w", err)
 	}
 	return result, nil
+}
+
+func unwrapTelnyxWebhook(
+	raw []byte,
+	timestampHeader string,
+	signatureHeader string,
+	publicKeys [][]byte,
+) (*telnyx.UnwrapWebhookEventUnion, error) {
+	if len(raw) == 0 || len(raw) > 256*1024 || len(publicKeys) == 0 {
+		return nil, ErrInvalidWebhook
+	}
+	headers := http.Header{}
+	headers.Set("telnyx-timestamp", timestampHeader)
+	headers.Set("telnyx-signature-ed25519", signatureHeader)
+	webhooks := telnyx.NewWebhookService()
+	for _, publicKey := range publicKeys {
+		if len(publicKey) == 0 {
+			continue
+		}
+		event, err := webhooks.Unwrap(
+			raw,
+			headers,
+			option.WithPublicKey(base64.StdEncoding.EncodeToString(publicKey)),
+		)
+		if err == nil && validTelnyxEvent(
+			event.Data.RecordType,
+			event.Data.ID,
+			event.Data.EventType,
+			event.Data.OccurredAt,
+			event.Data.JSON.Payload.Valid(),
+		) {
+			return event, nil
+		}
+	}
+	return nil, ErrInvalidWebhook
+}
+
+func validTelnyxEvent(
+	recordType string,
+	eventID string,
+	eventType string,
+	occurredAt time.Time,
+	payloadPresent bool,
+) bool {
+	return recordType == "event" && eventID != "" && len(eventID) <= 200 &&
+		eventType != "" && len(eventType) <= 200 && !occurredAt.IsZero() &&
+		payloadPresent
 }
 
 // RequeueQuarantinedReceipt schedules persisted, previously verified evidence
@@ -696,32 +714,25 @@ func (m *Module) attachReceiptCall(
 	return nil
 }
 
-func decodeTelnyxEnvelope(raw []byte) (telnyxEnvelope, error) {
-	var envelope telnyxEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return telnyxEnvelope{}, err
-	}
-	if envelope.Data.RecordType != "event" ||
-		envelope.Data.ID == "" ||
-		len(envelope.Data.ID) > 200 ||
-		envelope.Data.EventType == "" ||
-		len(envelope.Data.EventType) > 200 ||
-		envelope.Data.OccurredAt.IsZero() ||
-		len(envelope.Data.Payload) == 0 {
-		return telnyxEnvelope{}, ErrInvalidWebhook
-	}
-	return envelope, nil
-}
-
 func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
-	envelope, err := decodeTelnyxEnvelope(raw)
+	webhooks := telnyx.NewWebhookService()
+	event, err := webhooks.UnsafeUnwrap(raw)
 	if err != nil {
 		return ProviderFact{}, false, err
 	}
+	if !validTelnyxEvent(
+		event.Data.RecordType,
+		event.Data.ID,
+		event.Data.EventType,
+		event.Data.OccurredAt,
+		event.Data.JSON.Payload.Valid(),
+	) {
+		return ProviderFact{}, false, ErrInvalidWebhook
+	}
 	fact := ProviderFact{
-		EventID:    envelope.Data.ID,
-		Type:       FactType(envelope.Data.EventType),
-		OccurredAt: envelope.Data.OccurredAt,
+		EventID:    event.Data.ID,
+		Type:       FactType(event.Data.EventType),
+		OccurredAt: event.Data.OccurredAt,
 	}
 	switch fact.Type {
 	case FactCallInitiated,
@@ -737,22 +748,24 @@ func normalizeTelnyxFact(raw []byte) (ProviderFact, bool, error) {
 	default:
 		return fact, false, nil
 	}
-	var payload telnyxVoicePayload
-	if err := json.Unmarshal(envelope.Data.Payload, &payload); err != nil {
-		return ProviderFact{}, false, err
-	}
+	payload := event.Data.Payload
 	fact.CallControlID = payload.CallControlID
 	fact.CallLegID = payload.CallLegID
 	fact.CallSessionID = payload.CallSessionID
 	fact.ConnectionID = payload.ConnectionID
 	fact.ClientState = payload.ClientState
-	fact.From = payload.From
-	fact.To = payload.To
+	fact.From = payload.From.OfString
+	fact.To = payload.To.OfString
 	fact.HangupCause = payload.HangupCause
 	fact.TerminationSource = payload.HangupSource
-	fact.SIPCause = payload.SIPHangupCause
+	fact.SIPCause = payload.SipHangupCause
 	fact.PlaybackStatus = payload.Status
-	fact.CallQualityStats = payload.CallQualityStats
+	if payload.JSON.CallQualityStats.Valid() {
+		encoded, err := json.Marshal(payload.CallQualityStats)
+		if err != nil || json.Unmarshal(encoded, &fact.CallQualityStats) != nil {
+			return ProviderFact{}, false, ErrInvalidWebhook
+		}
+	}
 	fact.RecordingID = payload.RecordingID
 	fact.RecordingStartedAt = payload.RecordingStartedAt
 	fact.RecordingEndedAt = payload.RecordingEndedAt

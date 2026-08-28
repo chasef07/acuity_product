@@ -1031,8 +1031,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 		nil,
 		nil,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey, nextPublicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey, nextPublicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -1050,7 +1049,7 @@ func TestProviderIngressVerifiesAndCommitsTheExactSignedBody(t *testing.T) {
 		`{"data":{"record_type":"event","event_type":"call.initiated","id":"http-webhook-event","occurred_at":"%s","payload":{"call_control_id":"caller-control","call_leg_id":"caller-leg","call_session_id":"caller-session","to":"sip:opaque@synthetic.sip.telnyx.com"}}}`,
 		now.Format(time.RFC3339Nano),
 	))
-	timestamp := strconv.FormatInt(now.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),

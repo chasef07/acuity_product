@@ -67,8 +67,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		workModule,
 		messageProvider,
 		messaging.Config{
-			WebhookPublicKeys:  []ed25519.PublicKey{publicKey},
-			WebhookTolerance:   time.Minute,
+			WebhookPublicKeys:  [][]byte{publicKey},
 			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
 			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
 			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
@@ -179,8 +178,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			nil,
 			nil,
 			humancalling.Config{
-				WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-				WebhookTolerance:  time.Minute,
+				WebhookPublicKeys: [][]byte{publicKey},
 			},
 			nil,
 		),
@@ -193,7 +191,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	defer ingress.Close()
 	now = now.Add(time.Minute)
 	delivery := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"http-delivery-event","occurred_at":"%s","payload":{"id":"http-provider-message-1","from":"+17275550100","to":"+17275550199","delivery_status":"delivered"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"http-delivery-event","occurred_at":"%s","payload":{"id":"http-provider-message-1","from":{"phone_number":"+17275550100"},"to":[{"phone_number":"+17275550199","status":"delivered"}]}}}`,
 		now.Format(time.RFC3339),
 	))
 	deliverSignedWebhook(
@@ -211,7 +209,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 
 	now = now.Add(time.Minute)
 	inbound := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"http-inbound-event","occurred_at":"%s","payload":{"id":"http-provider-inbound-1","from":"+17275550199","to":"+17275550100","delivery_status":"delivered","text":"Thank you."}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"http-inbound-event","occurred_at":"%s","payload":{"id":"http-provider-inbound-1","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":"Thank you."}}}`,
 		now.Format(time.RFC3339),
 	))
 	deliverSignedWebhook(
@@ -626,7 +624,7 @@ func deliverSignedWebhook(
 	privateKey ed25519.PrivateKey,
 ) {
 	t.Helper()
-	timestamp := fmt.Sprintf("%d", now.Unix())
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),

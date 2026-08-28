@@ -1,15 +1,16 @@
 package messaging
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/team-telnyx/telnyx-go/v4"
+	"github.com/team-telnyx/telnyx-go/v4/option"
 )
 
 type TelnyxConfig struct {
@@ -20,7 +21,8 @@ type TelnyxConfig struct {
 }
 
 type TelnyxAdapter struct {
-	config TelnyxConfig
+	client         telnyx.Client
+	webhookBaseURL string
 }
 
 func NewTelnyxAdapter(config TelnyxConfig) (*TelnyxAdapter, error) {
@@ -43,12 +45,20 @@ func NewTelnyxAdapter(config TelnyxConfig) (*TelnyxAdapter, error) {
 		return nil, fmt.Errorf("public HTTPS messaging webhook URL is required")
 	}
 	config.APIKey = strings.TrimSpace(config.APIKey)
-	config.BaseURL = strings.TrimRight(config.BaseURL, "/")
 	config.WebhookBaseURL = strings.TrimRight(config.WebhookBaseURL, "/")
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &TelnyxAdapter{config: config}, nil
+	client := telnyx.NewClient(
+		option.WithAPIKey(config.APIKey),
+		option.WithBaseURL(strings.TrimRight(config.BaseURL, "/")+"/"),
+		option.WithHTTPClient(config.HTTPClient),
+		option.WithMaxRetries(0),
+	)
+	return &TelnyxAdapter{
+		client:         client,
+		webhookBaseURL: config.WebhookBaseURL,
+	}, nil
 }
 
 func (adapter *TelnyxAdapter) Send(
@@ -64,39 +74,28 @@ func (adapter *TelnyxAdapter) Send(
 		(command.Body == "" && command.MediaURL == "") {
 		return ProviderResult{}, ErrInvalidInput
 	}
-	payload := map[string]any{
-		"from":                 command.Sender,
-		"to":                   command.Destination,
-		"messaging_profile_id": command.MessagingProfileID,
-		"webhook_url": adapter.config.WebhookBaseURL + "/" +
-			url.PathEscape(command.CallbackToken),
-		"use_profile_webhooks": false,
+	params := telnyx.MessageSendParams{
+		From:               telnyx.String(command.Sender),
+		To:                 command.Destination,
+		MessagingProfileID: telnyx.String(command.MessagingProfileID),
+		WebhookURL: telnyx.String(adapter.webhookBaseURL + "/" +
+			url.PathEscape(command.CallbackToken)),
+		UseProfileWebhooks: telnyx.Bool(false),
 	}
 	if command.Body != "" {
-		payload["text"] = command.Body
+		params.Text = telnyx.String(command.Body)
 	}
 	if command.MediaURL != "" {
-		payload["type"] = "MMS"
-		payload["media_urls"] = []string{command.MediaURL}
+		params.Type = telnyx.MessageSendParamsTypeMms
+		params.MediaURLs = []string{command.MediaURL}
 	} else {
-		payload["type"] = "SMS"
+		params.Type = telnyx.MessageSendParamsTypeSMS
 	}
-	responseBody, err := adapter.request(
-		ctx,
-		http.MethodPost,
-		"/messages",
-		payload,
-	)
+	response, err := adapter.client.Messages.Send(ctx, params)
 	if err != nil {
-		return ProviderResult{}, err
+		return ProviderResult{}, classifyTelnyxError(err)
 	}
-	var response struct {
-		Data struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(responseBody, &response); err != nil ||
-		strings.TrimSpace(response.Data.ID) == "" {
+	if response == nil || strings.TrimSpace(response.Data.ID) == "" {
 		return ProviderResult{}, fmt.Errorf(
 			"%w: invalid Telnyx Message response",
 			ErrAmbiguous,
@@ -112,28 +111,14 @@ func (adapter *TelnyxAdapter) Reconcile(
 	ctx context.Context,
 	providerMessageID string,
 ) (ProviderResult, error) {
-	providerMessageID = strings.TrimSpace(providerMessageID)
-	if providerMessageID == "" {
+	if !validTelnyxResourceID(providerMessageID) {
 		return ProviderResult{}, ErrInvalidInput
 	}
-	responseBody, err := adapter.request(
-		ctx,
-		http.MethodGet,
-		"/messages/"+url.PathEscape(providerMessageID),
-		nil,
-	)
+	response, err := adapter.client.Messages.Get(ctx, providerMessageID)
 	if err != nil {
-		return ProviderResult{}, err
+		return ProviderResult{}, classifyTelnyxError(err)
 	}
-	var response struct {
-		Data struct {
-			ID string `json:"id"`
-			To []struct {
-				Status string `json:"status"`
-			} `json:"to"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(responseBody, &response); err != nil ||
+	if response == nil ||
 		response.Data.ID != providerMessageID {
 		return ProviderResult{}, fmt.Errorf(
 			"%w: invalid Telnyx Message lookup response",
@@ -144,65 +129,28 @@ func (adapter *TelnyxAdapter) Reconcile(
 		MessageID: providerMessageID,
 		State:     DeliverySent,
 	}
-	if len(response.Data.To) > 0 {
-		result.State = providerDeliveryState(response.Data.To[0].Status)
+	to := response.Data.To.OfMessagingOutboundMessagePayloadToArray
+	if len(to) > 0 {
+		result.State = providerDeliveryState(to[0].Status)
 	}
 	return result, nil
 }
 
-func (adapter *TelnyxAdapter) request(
-	ctx context.Context,
-	method string,
-	path string,
-	payload map[string]any,
-) ([]byte, error) {
-	var body io.Reader
-	if payload != nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("encode Telnyx request: %w", err)
-		}
-		body = bytes.NewReader(encoded)
+func validTelnyxResourceID(value string) bool {
+	return value != "" &&
+		value == strings.TrimSpace(value) &&
+		value != "." && value != ".." &&
+		!strings.ContainsAny(value, "/\\?#%")
+}
+
+func classifyTelnyxError(err error) error {
+	var apiError *telnyx.Error
+	if errors.As(err, &apiError) &&
+		apiError.StatusCode >= http.StatusBadRequest &&
+		apiError.StatusCode < http.StatusInternalServerError {
+		return fmt.Errorf("%w: Telnyx rejected the request", ErrRejected)
 	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		method,
-		adapter.config.BaseURL+path,
-		body,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("build Telnyx request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+adapter.config.APIKey)
-	if payload != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := adapter.config.HTTPClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("%w: Telnyx request: %v", ErrAmbiguous, err)
-	}
-	defer response.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 2*1024*1024))
-	if readErr != nil {
-		return nil, fmt.Errorf("%w: read Telnyx response: %v", ErrAmbiguous, readErr)
-	}
-	if response.StatusCode >= http.StatusBadRequest &&
-		response.StatusCode < http.StatusInternalServerError {
-		return nil, fmt.Errorf(
-			"%w: Telnyx returned %s",
-			ErrRejected,
-			response.Status,
-		)
-	}
-	if response.StatusCode < http.StatusOK ||
-		response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf(
-			"%w: Telnyx returned %s",
-			ErrAmbiguous,
-			response.Status,
-		)
-	}
-	return responseBody, nil
+	return fmt.Errorf("%w: Telnyx request outcome is unknown", ErrAmbiguous)
 }
 
 func providerDeliveryState(status string) DeliveryState {
