@@ -507,6 +507,10 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toHaveCount(0)
     const answersBeforeNavigation = await mediaAnswers(selectedPage)
+    if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
+      await tasksSection.click()
+    }
+    await expect(navigationTask).toBeVisible()
     await navigationTask.click()
     await expect(
       callCenter(selectedPage).getByRole("status"),
