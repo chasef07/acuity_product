@@ -908,6 +908,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           : snapshot.activeCallLegID
       let answeredLegLost = false
       if (answeredInbound) {
+        const answeredIdentity = answeredInbound
         const exactBridge =
           state.bridged?.callId === answeredInbound.callID &&
           state.bridged.callLegId === answeredInbound.callLegID
@@ -921,7 +922,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         )
         answeredLegLost = !exactBridge && !exactDisposition && !stillRinging
         if ((exactBridge || exactDisposition) && !stillRinging) {
-          const losingLegs = [...incomingMedia.values()]
+          const losingLegs = [...incomingMedia.values()].filter(
+            (leg) =>
+              !exactBridge || !sameMediaIdentity(answeredIdentity, leg),
+          )
           incomingMedia.clear()
           void Promise.all(losingLegs.map(rejectSafely))
         }
