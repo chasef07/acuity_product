@@ -404,38 +404,38 @@ test("typed failures replace provider details with concise Staff recovery copy",
 
   assert.deepEqual(failures, [
     {
-      title: "Calling needs attention",
-      message: "Sign in again to keep calling.",
+      title: "Calling session expired",
+      message: "Refresh the page to reconnect. You may need to sign in again.",
     },
     {
-      title: "Calling needs attention",
-      message: "You do not have calling access for this practice.",
+      title: "Calling unavailable",
+      message: "Your account doesn’t have access to calling for this practice.",
     },
     {
-      title: "Calling needs attention",
+      title: "Calling is open elsewhere",
       message:
-        "Calling is active in another browser. Take over here to use this device.",
-      action: { label: "Take over" },
+        "Calling is connected in another browser. Use this browser instead.",
+      action: { kind: "recover", label: "Use this browser" },
     },
     {
-      title: "Calling needs attention",
-      message: "Allow microphone access, then reconnect calling.",
-      action: { label: "Reconnect calling" },
+      title: "Calling disconnected",
+      message: "Refresh the page to reconnect. Calls are paused until then.",
+      action: { kind: "reload-page", label: "Refresh page" },
     },
     {
-      title: "Calling needs attention",
-      message: "Audio disconnected. Reconnect calling to continue.",
-      action: { label: "Reconnect calling" },
+      title: "Calling disconnected",
+      message: "Refresh the page to reconnect. Calls are paused until then.",
+      action: { kind: "reload-page", label: "Refresh page" },
     },
     {
-      title: "Calling needs attention",
-      message: "This call changed elsewhere. Refresh to see the latest state.",
-      action: { label: "Refresh calling" },
+      title: "Calling disconnected",
+      message: "Refresh the page to reconnect. Calls are paused until then.",
+      action: { kind: "reload-page", label: "Refresh page" },
     },
     {
-      title: "Calling needs attention",
-      message: "Calling could not refresh. Check your connection and try again.",
-      action: { label: "Refresh calling" },
+      title: "Calling disconnected",
+      message: "Refresh the page to reconnect. Calls are paused until then.",
+      action: { kind: "reload-page", label: "Refresh page" },
     },
   ])
 })
@@ -453,13 +453,13 @@ test("active Call ownership stays visible without offering an unsafe takeover", 
   )
 
   assert.deepEqual(view?.failure, {
-    title: "Calling needs attention",
+    title: "Calling is open elsewhere",
     message:
-      "An active Call is using calling in another browser. Finish it there before using this device.",
+      "A call is active in another browser. Finish it there before using this browser.",
   })
 })
 
-test("failed stop cleanup preserves its specific warning without a false action", () => {
+test("failed stop cleanup uses the same Staff recovery copy without a false action", () => {
   const message =
     "Calling stopped locally, but backend readiness could not be cleared. Calling could not reach the service."
   assert.deepEqual(
@@ -469,8 +469,8 @@ test("failed stop cleanup preserves its specific warning without a false action"
       recoverable: false,
     }),
     {
-      title: "Calling needs attention",
-      message,
+      title: "Calling disconnected",
+      message: "Refresh the page to reconnect. Calls are paused until then.",
     },
   )
 })

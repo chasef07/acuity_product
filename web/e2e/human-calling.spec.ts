@@ -84,7 +84,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       "Fixture Selected Staff",
     )
     await expect(
-      sameUserPage.getByRole("button", { name: "Take over" }),
+      sameUserPage.getByRole("button", { name: "Use this browser" }),
     ).toBeVisible({ timeout: 40_000 })
     await sameUserContext.close()
 
@@ -322,21 +322,21 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       expect(selectedAnswer).toBeEnabled(),
       expect(
         callCenter(selectedPage).getByRole("alert"),
-      ).toContainText(/microphone|audio/i),
+      ).toContainText("Calls are paused until then"),
       expect(
         callCenter(selectedPage).getByRole("button", {
-          name: "Reconnect calling",
+          name: "Refresh page",
         }),
       ).toBeVisible(),
     ])
-    const mediaConnectionsBeforeRecovery = await mediaConnections(selectedPage)
-    await callCenter(selectedPage)
-      .getByRole("button", { name: "Reconnect calling" })
-      .click()
+    await Promise.all([
+      selectedPage.waitForEvent("framenavigated"),
+      callCenter(selectedPage)
+        .getByRole("button", { name: "Refresh page" })
+        .click(),
+    ])
     await expect(callCenter(selectedPage).getByRole("alert")).toHaveCount(0)
-    await expect
-      .poll(() => mediaConnections(selectedPage))
-      .toBe(mediaConnectionsBeforeRecovery + 1)
+    await expect.poll(() => mediaConnections(selectedPage)).toBe(1)
     await sendIncomingLeg(
       selectedPage,
       selectedLeg.provider_leg_id,
@@ -1640,18 +1640,18 @@ function callCenter(page: Page) {
 
 async function ensureCallingAvailability(page: Page) {
   const availability = page.getByRole("switch", { name: "Availability" })
-  const takeOver = page.getByRole("button", { name: "Take over" })
+  const useThisBrowser = page.getByRole("button", { name: "Use this browser" })
 
   await expect
     .poll(async () => {
       if (await availability.isChecked().catch(() => false)) return "available"
-      if (await takeOver.isVisible().catch(() => false)) return "takeover"
+      if (await useThisBrowser.isVisible().catch(() => false)) return "takeover"
       return "waiting"
     }, { timeout: 40_000 })
     .not.toBe("waiting")
 
   if (!(await availability.isChecked().catch(() => false))) {
-    await takeOver.click()
+    await useThisBrowser.click()
   }
   await expect(availability).toBeChecked({ timeout: 40_000 })
 }
