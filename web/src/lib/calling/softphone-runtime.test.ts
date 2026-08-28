@@ -2471,6 +2471,156 @@ test("provider media waits for durable correlation in inbound and outbound comma
   })
 })
 
+test("a repeated Telnyx update cannot purge the attached Call", async () => {
+  const fixture = await outboundMediaFixture()
+  const connected = call({
+    id: fixture.outbound.id,
+    direction: "OUTBOUND",
+    state: "CONNECTED",
+    version: 2,
+  })
+  fixture.backend.confirmMediaHandler = async () => {
+    fixture.backend.lease = lease({
+      owner: true,
+      available: false,
+      activeCallId: connected.id,
+    })
+    fixture.backend.state = callingState({
+      softphone: fixture.backend.lease,
+      bridged: stateCall(connected.id, fixture.expected.callLegId, connected.version),
+    })
+    fixture.backend.calls.set(connected.id, connected)
+    return connected
+  }
+
+  const attachment = deferred<"attached" | "ended">()
+  let sharedCallPurges = 0
+  const purgeSharedCall = async () => {
+    sharedCallPurges += 1
+  }
+  const ringingUpdate = mediaLeg({
+    providerLegID: "provider-repeated-update",
+    mediaToken: fixture.expected.mediaToken,
+    answerDeferred: attachment,
+  })
+  ringingUpdate.reject = purgeSharedCall
+  fixture.media.emitIncoming(ringingUpdate)
+  await eventually(() => assert.equal(ringingUpdate.answers, 1))
+
+  const activeUpdate = mediaLeg({
+    providerLegID: ringingUpdate.providerLegID,
+    mediaToken: ringingUpdate.mediaToken,
+    recovery: true,
+  })
+  activeUpdate.reject = purgeSharedCall
+  fixture.media.emitIncoming(activeUpdate)
+
+  attachment.resolve("attached")
+  await eventually(() =>
+    assert.equal(
+      fixture.runtime.getSnapshot().mediaAttachment?.mediaToken,
+      ringingUpdate.mediaToken,
+    ),
+  )
+  await drainMicrotasks()
+  await fixture.clock.advance(5_000)
+  await fixture.runtime.signalRefresh()
+
+  assert.equal(sharedCallPurges, 0)
+  assert.equal(fixture.runtime.getSnapshot().controls.canMute, true)
+  assert.equal(fixture.runtime.getSnapshot().controls.canKeypad, true)
+})
+
+test("a repeated Telnyx update cannot purge an answered inbound Call", async () => {
+  const backend = new DeterministicBackend()
+  const incoming = offer({
+    callId: "call-repeated-inbound",
+    callLegId: "leg-repeated-inbound",
+    mediaToken: "media-repeated-inbound",
+  })
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({
+    softphone: backend.lease,
+    ringing: [incoming],
+  })
+  const media = new DeterministicMedia()
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+  })
+  await runtime.start()
+
+  const attachment = deferred<"attached" | "ended">()
+  let sharedCallPurges = 0
+  const purgeSharedCall = async () => {
+    sharedCallPurges += 1
+  }
+  const ringingUpdate = mediaLeg({
+    providerLegID: "provider-repeated-inbound",
+    mediaToken: incoming.mediaToken,
+    answerDeferred: attachment,
+  })
+  ringingUpdate.reject = purgeSharedCall
+  media.emitIncoming(ringingUpdate)
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().offers[0]?.answerReady, true),
+  )
+
+  const answering = runtime.answer(incoming.callLegId)
+  await eventually(() => assert.equal(ringingUpdate.answers, 1))
+  await runtime.signalRefresh()
+  const refreshStarted = deferred<void>()
+  const finishRefresh = deferred<void>()
+  backend.readStateHandler = async () => {
+    refreshStarted.resolve(undefined)
+    await finishRefresh.promise
+    return {
+      status: "modified" as const,
+      state: backend.state,
+      etag: backend.etag,
+    }
+  }
+  const activeUpdate = mediaLeg({
+    providerLegID: ringingUpdate.providerLegID,
+    mediaToken: ringingUpdate.mediaToken,
+    recovery: true,
+  })
+  activeUpdate.reject = purgeSharedCall
+  media.emitIncoming(activeUpdate)
+  await refreshStarted.promise
+
+  const connected = call({
+    id: incoming.callId,
+    direction: "INBOUND",
+    state: "CONNECTED",
+    version: 2,
+  })
+  backend.lease = lease({
+    owner: true,
+    available: false,
+    activeCallId: connected.id,
+  })
+  backend.state = callingState({
+    softphone: backend.lease,
+    bridged: stateCall(connected.id, incoming.callLegId, connected.version),
+  })
+  backend.calls.set(connected.id, connected)
+  attachment.resolve("attached")
+  await eventually(() =>
+    assert.equal(runtime.getSnapshot().mediaAttachment?.mediaToken, incoming.mediaToken),
+  )
+  finishRefresh.resolve(undefined)
+  await answering
+
+  assert.equal(sharedCallPurges, 0)
+  assert.equal(runtime.getSnapshot().controls.canMute, true)
+  assert.equal(runtime.getSnapshot().controls.canKeypad, true)
+})
+
 test("a refresh completed after stop cannot repaint a restarted runtime", async () => {
   const backend = new DeterministicBackend()
   backend.lease = lease({ owner: true })

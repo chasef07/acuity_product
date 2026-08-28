@@ -54,6 +54,16 @@ export type RuntimeMediaCorrelation = {
   mediaToken: string
 }
 
+function sameMediaIdentity(
+  left: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
+  right: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">,
+) {
+  return (
+    left.providerLegID === right.providerLegID &&
+    left.mediaToken === right.mediaToken
+  )
+}
+
 export type SoftphoneRuntimeSnapshot = {
   phase: "stopped" | "starting" | "running"
   lease?: SoftphoneState
@@ -898,6 +908,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           : snapshot.activeCallLegID
       let answeredLegLost = false
       if (answeredInbound) {
+        const answeredIdentity = answeredInbound
         const exactBridge =
           state.bridged?.callId === answeredInbound.callID &&
           state.bridged.callLegId === answeredInbound.callLegID
@@ -911,7 +922,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         )
         answeredLegLost = !exactBridge && !exactDisposition && !stillRinging
         if ((exactBridge || exactDisposition) && !stillRinging) {
-          const losingLegs = [...incomingMedia.values()]
+          const losingLegs = [...incomingMedia.values()].filter(
+            (leg) =>
+              !exactBridge || !sameMediaIdentity(answeredIdentity, leg),
+          )
           incomingMedia.clear()
           void Promise.all(losingLegs.map(rejectSafely))
         }
@@ -1502,9 +1516,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     }
     if (attachedLeg) {
       const recoversCurrent =
-        leg.recovery &&
-        attachedLeg.providerLegID === leg.providerLegID &&
-        attachedLeg.mediaToken === leg.mediaToken
+        leg.recovery && sameMediaIdentity(attachedLeg, leg)
       if (!recoversCurrent) {
         await rejectSafely(leg)
         return
@@ -1583,7 +1595,15 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     ) {
       return
     }
-    if (attachedLeg && attachedLeg !== leg) return
+    if (attachedLeg) {
+      if (
+        sameMediaIdentity(attachedLeg, leg) &&
+        incomingMedia.get(leg.mediaToken) === leg
+      ) {
+        incomingMedia.delete(leg.mediaToken)
+      }
+      return
+    }
     if (
       snapshot.expectedCallID &&
       (snapshot.expectedMedia || leg.recovery)
