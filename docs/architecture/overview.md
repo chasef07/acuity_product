@@ -56,6 +56,21 @@ receipt-backed appointment and call details through a typed, transcript-free
 response. Transcript and raw closeout access use a separate endpoint restricted
 to Practice Admins and Platform Operators.
 
+AI Interaction ingestion has one authoritative lifecycle: `START`, an optional
+`OUTCOME_CHECKPOINT`, and terminal `CLOSEOUT`. `CLOSEOUT` is the only terminal
+message and owns terminal status, `endedAt`, the optional call summary, the full
+transcript/session report, appointment outcomes, and rich closeout evidence.
+Within a Practice, `sourceCallId` identifies one Interaction and its source
+phone, office phone, Location, and `startedAt` remain immutable; conflicting
+receipts are quarantined rather than merged.
+
+`SUMMARY` is not an application message kind and is rejected at every runtime
+ingestion path. The original receipt-kind CHECK and `summary_payload` column
+remain solely to preserve immutable historical audit rows. They are storage
+history, not a compatibility contract, replay path, alias, or fallback. Workers
+leave those historical receipts unchanged and select only supported lifecycle
+messages for projection.
+
 When an email-provisioned User first signs in with Google, Access activates the
 Membership and the HumanCalling worker creates one unique Telnyx on-demand
 telephony credential for that User on the shared WebRTC connection. No per-user

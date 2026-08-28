@@ -182,7 +182,6 @@ GRANT UPDATE (
     new_appointment_id,
     booking_result,
     cancellation_result,
-    summary_payload,
     closeout_payload,
     lifecycle_stage,
     updated_at
@@ -352,6 +351,7 @@ GRANT SELECT (
     practice_id,
     location_id,
     source_call_id,
+    kind,
     state,
     interaction_id,
     payload,
@@ -408,7 +408,6 @@ GRANT UPDATE (
     new_appointment_id,
     booking_result,
     cancellation_result,
-    summary_payload,
     closeout_payload,
     lifecycle_stage,
     updated_at
