@@ -449,6 +449,58 @@ func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
 	}
 }
 
+func TestUnrelatedHangupWaitsForRelatedFact(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calling := humancalling.New(
+		pool,
+		nil,
+		nil,
+		humancalling.Config{
+			CallControlID:     "expected-connection",
+			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
+			WebhookTolerance:  5 * time.Minute,
+		},
+		func() time.Time { return now },
+	)
+	raw := []byte(fmt.Sprintf(
+		`{"data":{"record_type":"event","event_type":"call.hangup","id":"orphan-hangup","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"orphan-control","call_leg_id":"orphan-leg","call_session_id":"orphan-session","hangup_cause":"normal_clearing","hangup_source":"callee"}}}`,
+		now.Format(time.RFC3339Nano),
+	))
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+		privateKey,
+		append([]byte(timestamp+"|"), raw...),
+	))
+	if _, err := calling.ReceiveWebhook(
+		context.Background(), raw, timestamp, signature,
+	); err != nil {
+		t.Fatalf("receive unrelated Hangup: %v", err)
+	}
+	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+		t.Fatalf("process unrelated Hangup: processed=%t err=%v", processed, err)
+	}
+
+	var state, errorCode string
+	var attempts int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts
+		WHERE event_id = $1
+	`, "orphan-hangup").Scan(&state, &attempts, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(humancalling.ReceiptPending) || attempts != 1 ||
+		errorCode != "WAITING_FOR_RELATED_FACT" {
+		t.Fatalf("unrelated Hangup = state:%s attempts:%d error:%s",
+			state, attempts, errorCode)
+	}
+}
+
 func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 14, 13, 0, 0, 0, time.UTC)
@@ -2062,29 +2114,36 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 	}
 	processAllCommands(t, calling)
 	localEndingAt := currentTime
+	receiveAndProcessHangup := func(eventID, callSessionID string, occurredAt time.Time) {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(
+			`{"data":{"record_type":"event","event_type":"call.hangup","id":"%s","occurred_at":"%s","payload":{"connection_id":"staff-call-control-connection","call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","client_state":"%s","hangup_cause":"normal_clearing","hangup_source":"staff"}}}`,
+			eventID,
+			occurredAt.Format(time.RFC3339Nano),
+			staffFact.CallControlID,
+			staffFact.CallLegID,
+			callSessionID,
+			staffState,
+		))
+		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey,
+			append([]byte(timestamp+"|"), raw...),
+		))
+		if _, err := calling.ReceiveWebhook(
+			context.Background(), raw, timestamp, signature,
+		); err != nil {
+			t.Fatalf("receive provider Hangup %s: %v", eventID, err)
+		}
+		if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
+			t.Fatalf("process provider Hangup %s: processed=%t err=%v", eventID, processed, err)
+		}
+	}
 	providerOccurredAt := now.Add(7 * time.Second)
 	currentTime = now.Add(8 * time.Second)
-	raw := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"call.hangup","id":"%s","occurred_at":"%s","payload":{"connection_id":"staff-call-control-connection","call_control_id":"%s","call_leg_id":"%s","call_session_id":"%s","hangup_cause":"normal_clearing","hangup_source":"staff"}}}`,
-		prefix+"-delayed-staff-hangup",
-		providerOccurredAt.Format(time.RFC3339Nano),
-		staffFact.CallControlID,
-		staffFact.CallLegID,
-		staffFact.CallSessionID,
-	))
-	timestamp := strconv.FormatInt(currentTime.Unix(), 10)
-	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
-		privateKey,
-		append([]byte(timestamp+"|"), raw...),
-	))
-	if _, err := calling.ReceiveWebhook(
-		context.Background(), raw, timestamp, signature,
-	); err != nil {
-		t.Fatalf("receive delayed provider Hangup: %v", err)
-	}
-	if processed, err := calling.ProcessNextReceipt(context.Background()); err != nil || !processed {
-		t.Fatalf("process delayed provider Hangup: processed=%t err=%v", processed, err)
-	}
+	receiveAndProcessHangup(
+		prefix+"-delayed-staff-hangup", caller.CallSessionID, providerOccurredAt,
+	)
 
 	var receiptState, projectionError, legState, terminalOutcome, hangupCommandState string
 	var projectionAttempts int
@@ -2168,5 +2227,23 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 	if err != nil || !state.Softphone.Available || state.Softphone.ActiveCallID != "" {
 		t.Errorf("Staff availability after delayed Hangup = %#v err=%v",
 			state.Softphone, err)
+	}
+
+	currentTime = now.Add(10 * time.Second)
+	receiveAndProcessHangup(
+		prefix+"-foreign-session-hangup", "foreign-session", now.Add(9*time.Second),
+	)
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, projection_attempts, COALESCE(projection_error_code, '')
+		FROM human_calling_provider_receipts WHERE event_id = $1
+	`, prefix+"-foreign-session-hangup").Scan(
+		&receiptState, &projectionAttempts, &projectionError,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if receiptState != string(humancalling.ReceiptPending) ||
+		projectionAttempts != 1 || projectionError != "PROJECTION_RETRY" {
+		t.Errorf("foreign-session Hangup = state:%s attempts:%d error:%s",
+			receiptState, projectionAttempts, projectionError)
 	}
 }
