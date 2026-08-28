@@ -2806,7 +2806,7 @@ components:
           maxLength: 32
     AIInteractionMessageKind:
       type: string
-      enum: [START, SUMMARY, CLOSEOUT, OUTCOME_CHECKPOINT]
+      enum: [START, CLOSEOUT, OUTCOME_CHECKPOINT]
     AIInteractionCallStatus:
       type: string
       enum: [IN_PROGRESS, COMPLETED, ESCALATED, FAILED]
@@ -2845,10 +2845,10 @@ components:
       type: object
       description: >-
         One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence;
-        OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; SUMMARY uses a
-        terminal status with endedAt and summaryPayload; CLOSEOUT uses a terminal
-        status with endedAt and closeoutPayload. The service validates these
-        kind-specific requirements.
+        OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses
+        a terminal status with endedAt, optional transcript and appointmentOutcome,
+        and required closeoutPayload. The service validates these kind-specific
+        requirements.
       additionalProperties: false
       required:
         - kind
@@ -2891,9 +2891,6 @@ components:
           additionalProperties: true
         appointmentOutcome:
           $ref: "#/components/schemas/AIAppointmentEvidence"
-        summaryPayload:
-          type: object
-          additionalProperties: true
         closeoutPayload:
           type: object
           additionalProperties: true

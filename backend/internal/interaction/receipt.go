@@ -45,7 +45,6 @@ type storedReceiptPayload struct {
 	Summary         string               `json:"summary,omitempty"`
 	Transcript      json.RawMessage      `json:"transcript,omitempty"`
 	Appointment     *AppointmentEvidence `json:"appointmentOutcome,omitempty"`
-	SummaryPayload  json.RawMessage      `json:"summaryPayload,omitempty"`
 	CloseoutPayload json.RawMessage      `json:"closeoutPayload,omitempty"`
 }
 
@@ -71,6 +70,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 			payload
 		FROM ai_interaction_receipts
 		WHERE state = 'PENDING'
+			AND kind IN ('START', 'OUTCOME_CHECKPOINT', 'CLOSEOUT')
 		ORDER BY received_at, id
 		LIMIT 1
 	`).Scan(
@@ -106,7 +106,6 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		Summary:         payload.Summary,
 		Transcript:      payload.Transcript,
 		Appointment:     payload.Appointment,
-		SummaryPayload:  payload.SummaryPayload,
 		CloseoutPayload: payload.CloseoutPayload,
 	}
 	normalizeCommand(&command)
@@ -141,7 +140,6 @@ func receiptPayload(command IngestCommand) ([]byte, [32]byte, error) {
 		Summary:         command.Summary,
 		Transcript:      command.Transcript,
 		Appointment:     command.Appointment,
-		SummaryPayload:  command.SummaryPayload,
 		CloseoutPayload: command.CloseoutPayload,
 	})
 	if err != nil {

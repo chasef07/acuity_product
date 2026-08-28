@@ -859,6 +859,7 @@ func expectedColumnPrivileges() map[string]bool {
 		"practice_id",
 		"location_id",
 		"source_call_id",
+		"kind",
 		"state",
 		"interaction_id",
 		"payload",

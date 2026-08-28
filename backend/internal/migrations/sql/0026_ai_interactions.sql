@@ -53,6 +53,7 @@ CREATE TABLE ai_interactions (
     ),
     booking_result jsonb,
     cancellation_result jsonb,
+    -- Historical SUMMARY-phase audit evidence; the runtime no longer reads or writes it.
     summary_payload jsonb,
     closeout_payload jsonb,
     lifecycle_stage smallint NOT NULL CHECK (lifecycle_stage BETWEEN 1 AND 3),
@@ -89,6 +90,8 @@ CREATE TABLE ai_interaction_receipts (
         AND char_length(source_call_id) BETWEEN 1 AND 255
     ),
     kind text NOT NULL CHECK (
+        -- SUMMARY remains valid storage for immutable historical receipt rows only.
+        -- The application contract rejects every new SUMMARY message.
         kind IN ('START', 'SUMMARY', 'CLOSEOUT', 'OUTCOME_CHECKPOINT')
     ),
     payload_fingerprint bytea NOT NULL CHECK (

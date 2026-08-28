@@ -442,7 +442,7 @@ export type EngagementQueryRequest = {
     phone: string;
 };
 
-export type AiInteractionMessageKind = 'START' | 'SUMMARY' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
+export type AiInteractionMessageKind = 'START' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
 
 export type AiInteractionCallStatus = 'IN_PROGRESS' | 'COMPLETED' | 'ESCALATED' | 'FAILED';
 
@@ -463,7 +463,7 @@ export type AiAppointmentEvidence = {
 };
 
 /**
- * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; SUMMARY uses a terminal status with endedAt and summaryPayload; CLOSEOUT uses a terminal status with endedAt and closeoutPayload. The service validates these kind-specific requirements.
+ * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses a terminal status with endedAt, optional transcript and appointmentOutcome, and required closeoutPayload. The service validates these kind-specific requirements.
  */
 export type AiInteractionIngestRequest = {
     kind: AiInteractionMessageKind;
@@ -479,9 +479,6 @@ export type AiInteractionIngestRequest = {
         [key: string]: unknown;
     };
     appointmentOutcome?: AiAppointmentEvidence;
-    summaryPayload?: {
-        [key: string]: unknown;
-    };
     closeoutPayload?: {
         [key: string]: unknown;
     };

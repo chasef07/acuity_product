@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -15,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestWorkerCanProjectAIInteractionReceiptWithReadOnlyLocationAccess(t *testing.T) {
+func TestWorkerProjectsCloseoutAndPreservesHistoricalSummaryReceipt(t *testing.T) {
 	pool := testdb.Open(t)
 	createDatabaseRoles(t, pool)
 	applyDatabaseGrants(t, pool)
@@ -51,15 +52,19 @@ func TestWorkerCanProjectAIInteractionReceiptWithReadOnlyLocationAccess(t *testi
 		t.Fatalf("seed AI Interaction: %v", err)
 	}
 	payload, err := json.Marshal(map[string]any{
-		"kind":           "SUMMARY",
-		"sourceCallId":   sourceCallID,
-		"callerPhone":    "+17275550111",
-		"officePhone":    "+17275550112",
-		"startedAt":      startedAt,
-		"endedAt":        now,
-		"status":         "COMPLETED",
-		"summary":        "Worker projection completed.",
-		"summaryPayload": map[string]any{"phase": "summary"},
+		"kind":         "CLOSEOUT",
+		"sourceCallId": sourceCallID,
+		"callerPhone":  "+17275550111",
+		"officePhone":  "+17275550112",
+		"startedAt":    startedAt,
+		"endedAt":      now,
+		"status":       "COMPLETED",
+		"summary":      "Worker projection completed.",
+		"transcript":   map[string]any{"items": []map[string]any{{"role": "user"}}},
+		"closeoutPayload": map[string]any{
+			"callId":        sourceCallID,
+			"sessionReport": map[string]any{"items": []map[string]any{{"role": "user"}}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("encode receipt payload: %v", err)
@@ -69,7 +74,7 @@ func TestWorkerCanProjectAIInteractionReceiptWithReadOnlyLocationAccess(t *testi
 		INSERT INTO ai_interaction_receipts (
 			service_subject, practice_id, location_id, source_call_id,
 			kind, payload_fingerprint, payload, received_at
-		) VALUES ($1, $2, $3, $4, 'SUMMARY', $5, $6, $7)
+		) VALUES ($1, $2, $3, $4, 'CLOSEOUT', $5, $6, $7)
 	`, "abita-agent", practiceID, locationID, sourceCallID,
 		fingerprint[:], payload, now); err != nil {
 		t.Fatalf("seed pending receipt: %v", err)
@@ -94,12 +99,87 @@ func TestWorkerCanProjectAIInteractionReceiptWithReadOnlyLocationAccess(t *testi
 		func() time.Time { return now },
 	)
 
-	processed, err := module.ProcessNextReceipt(ctx)
-	if err != nil || !processed {
-		t.Fatalf("project pending receipt as acuity_worker = %t, %v", processed, err)
-	}
-	processed, err = module.ProcessNextReceipt(ctx)
-	if err != nil || processed {
-		t.Fatalf("pending receipt remains after projection = %t, %v", processed, err)
-	}
+	t.Run("projects CLOSEOUT", func(t *testing.T) {
+		processed, err := module.ProcessNextReceipt(ctx)
+		if err != nil || !processed {
+			t.Fatalf("project pending receipt as acuity_worker = %t, %v", processed, err)
+		}
+		processed, err = module.ProcessNextReceipt(ctx)
+		if err != nil || processed {
+			t.Fatalf("pending receipt remains after projection = %t, %v", processed, err)
+		}
+		var status interaction.CallStatus
+		var transcript, closeoutPayload json.RawMessage
+		if err := pool.QueryRow(ctx, `
+			SELECT status, transcript, closeout_payload
+			FROM ai_interactions
+			WHERE practice_id = $1 AND source_call_id = $2
+		`, practiceID, sourceCallID).Scan(&status, &transcript, &closeoutPayload); err != nil {
+			t.Fatalf("read projected CLOSEOUT: %v", err)
+		}
+		if status != interaction.CallCompleted ||
+			!json.Valid(transcript) || !json.Valid(closeoutPayload) {
+			t.Fatalf("projected CLOSEOUT = (%q, %s, %s)", status, transcript, closeoutPayload)
+		}
+	})
+
+	t.Run("preserves historical SUMMARY receipt", func(t *testing.T) {
+		historicalPayload, err := json.Marshal(map[string]any{
+			"kind":           "SUMMARY",
+			"sourceCallId":   "historical-summary-call",
+			"callerPhone":    "+17275550113",
+			"officePhone":    "+17275550112",
+			"startedAt":      startedAt,
+			"endedAt":        now,
+			"status":         "COMPLETED",
+			"summaryPayload": map[string]any{"phase": "summary"},
+		})
+		if err != nil {
+			t.Fatalf("encode historical SUMMARY receipt: %v", err)
+		}
+		historicalFingerprint := sha256.Sum256(historicalPayload)
+		var historicalReceiptID string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO ai_interaction_receipts (
+				service_subject, practice_id, location_id, source_call_id,
+				kind, payload_fingerprint, payload, received_at
+			) VALUES ($1, $2, $3, $4, 'SUMMARY', $5, $6, $7)
+			RETURNING id::text
+		`, "abita-agent", practiceID, locationID, "historical-summary-call",
+			historicalFingerprint[:], historicalPayload, now.Add(time.Second)).Scan(
+			&historicalReceiptID,
+		); err != nil {
+			t.Fatalf("seed historical SUMMARY receipt: %v", err)
+		}
+		var storedPayloadBefore []byte
+		if err := pool.QueryRow(ctx, `
+			SELECT payload
+			FROM ai_interaction_receipts
+			WHERE id = $1
+		`, historicalReceiptID).Scan(&storedPayloadBefore); err != nil {
+			t.Fatalf("read historical SUMMARY receipt before worker: %v", err)
+		}
+		processed, err := module.ProcessNextReceipt(ctx)
+		if err != nil || processed {
+			t.Fatalf("historical SUMMARY receipt was selected = %t, %v", processed, err)
+		}
+		var receiptState, projectionErrorCode string
+		var storedPayload []byte
+		if err := pool.QueryRow(ctx, `
+			SELECT state, COALESCE(projection_error_code, ''), payload
+			FROM ai_interaction_receipts
+			WHERE id = $1
+		`, historicalReceiptID).Scan(
+			&receiptState,
+			&projectionErrorCode,
+			&storedPayload,
+		); err != nil {
+			t.Fatalf("read preserved historical SUMMARY receipt: %v", err)
+		}
+		if receiptState != "PENDING" || projectionErrorCode != "" ||
+			!bytes.Equal(storedPayload, storedPayloadBefore) {
+			t.Fatalf("historical SUMMARY receipt changed = (%q, %q, %s)",
+				receiptState, projectionErrorCode, storedPayload)
+		}
+	})
 }

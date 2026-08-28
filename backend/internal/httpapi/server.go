@@ -539,7 +539,6 @@ func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request
 		Status:          interaction.CallStatus(body.Status),
 		Summary:         stringValue(body.Summary),
 		Transcript:      rawJSON(body.Transcript),
-		SummaryPayload:  rawJSON(body.SummaryPayload),
 		CloseoutPayload: rawJSON(body.CloseoutPayload),
 	}
 	if body.AppointmentOutcome != nil {
