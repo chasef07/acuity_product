@@ -169,6 +169,8 @@ GRANT UPDATE (
 ON TABLE public.ai_interaction_attention
 TO acuity_portal;
 
+-- Keep summary_payload through this expand phase so an overlapping pre-change
+-- portal revision remains rollback-safe. The current runtime never writes it.
 GRANT UPDATE (
     external_patient_id,
     ended_at,
@@ -182,6 +184,7 @@ GRANT UPDATE (
     new_appointment_id,
     booking_result,
     cancellation_result,
+    summary_payload,
     closeout_payload,
     lifecycle_stage,
     updated_at
@@ -395,6 +398,8 @@ GRANT UPDATE (
 ON TABLE public.work_task_acknowledgements
 TO acuity_worker;
 
+-- Keep summary_payload through this expand phase so an overlapping pre-change
+-- worker revision remains rollback-safe. The current runtime never writes it.
 GRANT UPDATE (
     external_patient_id,
     ended_at,
@@ -408,6 +413,7 @@ GRANT UPDATE (
     new_appointment_id,
     booking_result,
     cancellation_result,
+    summary_payload,
     closeout_payload,
     lifecycle_stage,
     updated_at

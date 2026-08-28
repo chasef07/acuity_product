@@ -69,7 +69,11 @@ ingestion path. The original receipt-kind CHECK and `summary_payload` column
 remain solely to preserve immutable historical audit rows. They are storage
 history, not a compatibility contract, replay path, alias, or fallback. Workers
 leave those historical receipts unchanged and select only supported lifecycle
-messages for projection.
+messages for projection. Runtime pending-work indexes and operational backlog
+gates use the same supported-kind predicate, so immutable history cannot appear
+as executable work. The historical column's update grant remains for one
+expand/contract window so overlapping pre-change Product revisions can roll
+back safely; the current application neither reads nor writes that column.
 
 When an email-provisioned User first signs in with Google, Access activates the
 Membership and the HumanCalling worker creates one unique Telnyx on-demand
