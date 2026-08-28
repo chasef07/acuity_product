@@ -1591,7 +1591,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     ) {
       return
     }
-    if (attachedLeg && attachedLeg !== leg) {
+    if (attachedLeg) {
       if (
         sameMediaIdentity(attachedLeg, leg) &&
         incomingMedia.get(leg.mediaToken) === leg

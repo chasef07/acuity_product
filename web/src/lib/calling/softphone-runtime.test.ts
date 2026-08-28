@@ -2528,6 +2528,7 @@ test("a repeated Telnyx update cannot purge the attached Call", async () => {
 
   assert.equal(sharedCallPurges, 0)
   assert.equal(fixture.runtime.getSnapshot().controls.canMute, true)
+  assert.equal(fixture.runtime.getSnapshot().controls.canKeypad, true)
 })
 
 test("a refresh completed after stop cannot repaint a restarted runtime", async () => {
