@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.11](https://github.com/chasef07/acuity_product/compare/v0.4.10...v0.4.11) (2026-08-28)
+
+
+### Miscellaneous Chores
+
+* **release:** trigger v0.4.11 ([a2bd7f2](https://github.com/chasef07/acuity_product/commit/a2bd7f29572e2564131a10ee3ce059229d7c8009))
+
 ## [0.4.10](https://github.com/chasef07/acuity_product/compare/v0.4.9...v0.4.10) (2026-08-28)
 
 
