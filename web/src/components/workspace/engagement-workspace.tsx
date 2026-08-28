@@ -213,10 +213,10 @@ export function EngagementWorkspace({
                 : ""}
           </span>
           <Button
-            className="ml-1 size-10 min-h-10 rounded-full"
+            className="ml-1 bg-background px-3 text-foreground shadow-none hover:bg-muted"
             type="button"
-            size="icon-lg"
-            aria-label="Call"
+            size="default"
+            variant="outline"
             title={`Call ${formatUSPhone(engagement.phone)}`}
             disabled={
               !canMutate ||
@@ -233,9 +233,13 @@ export function EngagementWorkspace({
             }}
           >
             {outboundPending ? (
-              <Spinner />
+              <>
+                <Spinner data-icon="inline-start" /> Calling…
+              </>
             ) : (
-              <PhoneCallIcon className="size-[1.125rem]" />
+              <>
+                <PhoneCallIcon data-icon="inline-start" /> Call
+              </>
             )}
           </Button>
         </div>

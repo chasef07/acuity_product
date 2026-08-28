@@ -40,9 +40,9 @@ test("mobile phone search keeps Call visible across multiple offices", async ({
   await expect(page.getByText("No activity yet", { exact: true })).toBeVisible()
   await page.unroute(/\/v1\/engagements\/[^/]+\/timeline/, delayedTimeline)
   await expect(page.getByLabel("Sender office")).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: "Call", exact: true }),
-  ).toBeInViewport({ ratio: 1 })
+  const callButton = page.getByRole("button", { name: "Call", exact: true })
+  await expect(callButton).toBeInViewport({ ratio: 1 })
+  await expect(callButton).toHaveText("Call")
 
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(page.locator('button[aria-label="Search"]')).toBeHidden()
