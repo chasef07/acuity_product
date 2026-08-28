@@ -46,8 +46,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 		RingWindowDuration:     20 * time.Second,
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-		WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
-		WebhookTolerance:       5 * time.Minute,
+		WebhookPublicKeys:      [][]byte{publicKey},
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
@@ -91,7 +90,7 @@ func TestOutboundStaffAnswerAndProvisioningConvergeWithoutPracticeLockUpgrade(
 	if err != nil {
 		t.Fatal(err)
 	}
-	timestamp := strconv.FormatInt(now.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),
@@ -263,14 +262,13 @@ func TestRejectedHandoffTerminalizesExactProviderLegLifecycleReceipts(t *testing
 		nil,
 		humancalling.Config{
 			CallControlID:     "expected-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
 	receive := func(raw []byte) humancalling.WebhookReceipt {
 		t.Helper()
-		timestamp := strconv.FormatInt(now.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), raw...),
@@ -342,8 +340,7 @@ func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *te
 		nil,
 		humancalling.Config{
 			CallControlID:     "expected-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -355,7 +352,7 @@ func TestRejectedHandoffFinalizedDuringRolloutTerminalizesLifecycleReceipt(t *te
 			eventID,
 			now.Format(time.RFC3339Nano),
 		))
-		timestamp := strconv.FormatInt(now.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), raw...),
@@ -402,8 +399,7 @@ func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
 		nil,
 		humancalling.Config{
 			CallControlID:     "expected-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -411,7 +407,7 @@ func TestUnrelatedProviderReceiptStopsRetryingAfterOneDay(t *testing.T) {
 		`{"data":{"record_type":"event","event_type":"call.answered","id":"expired-related-fact","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"orphan-control","call_leg_id":"orphan-leg","call_session_id":"orphan-session"}}}`,
 		now.Add(-25*time.Hour).Format(time.RFC3339Nano),
 	))
-	timestamp := strconv.FormatInt(now.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),
@@ -462,8 +458,7 @@ func TestUnrelatedHangupWaitsForRelatedFact(t *testing.T) {
 		nil,
 		humancalling.Config{
 			CallControlID:     "expected-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -471,7 +466,7 @@ func TestUnrelatedHangupWaitsForRelatedFact(t *testing.T) {
 		`{"data":{"record_type":"event","event_type":"call.hangup","id":"orphan-hangup","occurred_at":"%s","payload":{"connection_id":"expected-connection","call_control_id":"orphan-control","call_leg_id":"orphan-leg","call_session_id":"orphan-session","hangup_cause":"normal_clearing","hangup_source":"callee"}}}`,
 		now.Format(time.RFC3339Nano),
 	))
-	timestamp := strconv.FormatInt(now.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),
@@ -519,8 +514,7 @@ func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 		humancalling.Config{
 			HandoffSIPDomain:  "synthetic.sip.telnyx.com",
 			CallControlID:     "expected-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 			Observer: observability.NewLogger(
 				observability.RuntimeWorker,
 				"worker-related-receipt-test",
@@ -549,7 +543,7 @@ func TestChildReceiptWakesWhenParentAttachesRelatedCall(t *testing.T) {
 	}
 	receive := func(body []byte) {
 		t.Helper()
-		timestamp := strconv.FormatInt(now.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), body...),
@@ -622,8 +616,7 @@ func TestProviderProjectionConflictRemainsRetryable(t *testing.T) {
 		nil,
 		nil,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return currentTime },
 	)
@@ -634,7 +627,7 @@ func TestProviderProjectionConflictRemainsRetryable(t *testing.T) {
 		`{"data":{"record_type":"event","event_type":"call.playback.ended","id":"projection-conflict","occurred_at":"%s","payload":{"call_control_id":"conflict-control","call_leg_id":"conflict-leg","call_session_id":"conflict-session","client_state":"%s","status":"completed"}}}`,
 		now.Format(time.RFC3339Nano), clientState,
 	))
-	timestamp := strconv.FormatInt(now.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),
@@ -703,8 +696,7 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 			StaffSIPDomain:         "sip.telnyx.com",
 			CallControlID:          "staff-call-control-connection",
 			CredentialConnectionID: "staff-credential-connection",
-			WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
-			WebhookTolerance:       5 * time.Minute,
+			WebhookPublicKeys:      [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -755,7 +747,7 @@ func TestLateAnswerForTerminalCleanupFailedLegIsObsolete(t *testing.T) {
 		`{"data":{"record_type":"event","event_type":"call.answered","id":"terminal-late-answer","occurred_at":"%s","payload":{"connection_id":"late-connection","call_control_id":"late-control","call_leg_id":"late-leg","call_session_id":"late-session","client_state":"%s"}}}`,
 		now.Format(time.RFC3339Nano), clientState,
 	))
-	timestamp := strconv.FormatInt(now.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), raw...),
@@ -813,8 +805,7 @@ func TestTransientProjectionFailureRetriesThenStopsAtAttemptBound(t *testing.T) 
 		access.New(pool, func() time.Time { return currentTime }),
 		provider,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return currentTime },
 	)
@@ -855,7 +846,7 @@ func TestTransientProjectionFailureRetriesThenStopsAtAttemptBound(t *testing.T) 
 			eventID, currentTime.Format(time.RFC3339Nano), caller.CallControlID,
 			caller.CallLegID, caller.CallSessionID,
 		))
-		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), body...),
@@ -983,8 +974,7 @@ func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 		humancalling.Config{
 			HandoffSIPDomain:  "synthetic.sip.telnyx.com",
 			CallControlID:     "expected-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -1010,7 +1000,7 @@ func TestValidHandoffQuickHangupReceiptsRemainApplied(t *testing.T) {
 			callerPhone,
 			"+"+"14843989071",
 		))
-		timestamp := strconv.FormatInt(now.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), raw...),
@@ -1078,8 +1068,7 @@ func TestTerminalCallSpeakEndedReceiptStopsWithoutSlowRetry(t *testing.T) {
 		provider,
 		humancalling.Config{
 			CallControlID:     "staff-call-control-connection",
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 			Observer: observability.NewLogger(
 				observability.RuntimeWorker,
 				"worker-terminal-receipt-test",
@@ -1090,7 +1079,7 @@ func TestTerminalCallSpeakEndedReceiptStopsWithoutSlowRetry(t *testing.T) {
 	)
 	receive := func(raw []byte) humancalling.WebhookReceipt {
 		t.Helper()
-		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), raw...),
@@ -1184,8 +1173,7 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 		access.New(pool, func() time.Time { return currentTime }),
 		provider,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return currentTime },
 	)
@@ -1199,7 +1187,7 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), body...),
@@ -1515,8 +1503,7 @@ func TestVoicemailRecordingSavedAfterRoutingFailureWithCompletedTaskAppliesImmed
 		access.New(pool, func() time.Time { return currentTime }),
 		provider,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return currentTime },
 	)
@@ -1553,7 +1540,7 @@ func TestVoicemailRecordingSavedAfterRoutingFailureWithCompletedTaskAppliesImmed
 	if err != nil {
 		t.Fatal(err)
 	}
-	timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),
@@ -1715,8 +1702,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
 		CallControlID:          "staff-call-control-connection",
 		CredentialConnectionID: "staff-credential-connection",
-		WebhookPublicKeys:      []ed25519.PublicKey{publicKey},
-		WebhookTolerance:       5 * time.Minute,
+		WebhookPublicKeys:      [][]byte{publicKey},
 	}, func() time.Time { return currentTime })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, staff, "outbound-recording-browser")
@@ -1868,7 +1854,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		t.Fatal(err)
 	}
 	currentTime = recordingEndedAt
-	timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),
@@ -2101,8 +2087,7 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 		accessModule,
 		provider,
 		humancalling.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  5 * time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return currentTime },
 	)
@@ -2125,7 +2110,7 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 			callSessionID,
 			staffState,
 		))
-		timestamp := strconv.FormatInt(currentTime.Unix(), 10)
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 			privateKey,
 			append([]byte(timestamp+"|"), raw...),

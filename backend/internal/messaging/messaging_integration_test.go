@@ -170,8 +170,7 @@ func newAutomaticAcknowledgementTestFixture(
 		workModule,
 		provider,
 		messaging.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return *clock },
 	)
@@ -671,11 +670,11 @@ func TestAutomaticTaskAcknowledgementProjectsDuplicateProviderFailureReceiptOnce
 	}
 	providerCommand := fixture.provider.commands[0]
 	rawReceipt := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"automatic-acknowledgement-failed","occurred_at":"%s","payload":{"id":"provider-message-1","from":"+17275550100","to":"%s","delivery_status":"failed","errors":[{"code":"40001"}]}}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"automatic-acknowledgement-failed","occurred_at":"%s","payload":{"id":"provider-message-1","from":{"phone_number":"+17275550100"},"to":[{"phone_number":"%s","status":"delivery_failed"}],"errors":[{"code":"40001"}]}}}`,
 		fixture.now.Format(time.RFC3339),
 		fixture.task.Phone,
 	))
-	timestamp := fmt.Sprintf("%d", fixture.now.Unix())
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		fixture.privateKey,
 		append([]byte(timestamp+"|"), rawReceipt...),
@@ -863,8 +862,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		workModule,
 		provider,
 		messaging.Config{
-			WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-			WebhookTolerance:  time.Minute,
+			WebhookPublicKeys: [][]byte{publicKey},
 		},
 		func() time.Time { return now },
 	)
@@ -1027,10 +1025,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}
 
 	rawReceipt := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"message-event-delivered","occurred_at":"%s","payload":{"id":"provider-message-1","from":"+17275550100","to":"+17275550199","delivery_status":"delivered"}},"meta":{"attempt":1}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"message-event-delivered","occurred_at":"%s","payload":{"id":"provider-message-1","from":{"phone_number":"+17275550100"},"to":[{"phone_number":"+17275550199","status":"delivered"}]}},"meta":{"attempt":1}}`,
 		now.Format(time.RFC3339),
 	))
-	timestamp := fmt.Sprintf("%d", now.Unix())
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawReceipt...),
@@ -1058,9 +1056,9 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	if receipt.Duplicate || !duplicate.Duplicate {
 		t.Fatalf("delivery receipts = %#v, %#v", receipt, duplicate)
 	}
-	retryTimestamp := fmt.Sprintf("%d", now.Add(time.Second).Unix())
+	retryTimestamp := fmt.Sprintf("%d", time.Now().Add(time.Second).Unix())
 	retriedRawReceipt := []byte(fmt.Sprintf(
-		`{"meta":{"attempt":2},"data":{"payload":{"delivery_status":"delivered","to":"+17275550199","from":"+17275550100","id":"provider-message-1"},"occurred_at":"%s","id":"message-event-delivered","event_type":"message.finalized","record_type":"event"}}`,
+		`{"meta":{"attempt":2},"data":{"payload":{"to":[{"status":"delivered","phone_number":"+17275550199"}],"from":{"phone_number":"+17275550100"},"id":"provider-message-1"},"occurred_at":"%s","id":"message-event-delivered","event_type":"message.finalized","record_type":"event"}}`,
 		now.Format(time.RFC3339),
 	))
 	retriedSignature := base64.StdEncoding.EncodeToString(ed25519.Sign(
@@ -1078,7 +1076,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("receive newly signed provider retry = %#v, %v", retriedReceipt, err)
 	}
 	conflictingRawReceipt := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"message-event-delivered","occurred_at":"%s","payload":{"id":"provider-message-1","from":"+17275550100","to":"+17275550199","delivery_status":"failed"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"message-event-delivered","occurred_at":"%s","payload":{"id":"provider-message-1","from":{"phone_number":"+17275550100"},"to":[{"phone_number":"+17275550199","status":"delivery_failed"}]}}}`,
 		now.Format(time.RFC3339),
 	))
 	conflictingSignature := base64.StdEncoding.EncodeToString(ed25519.Sign(
@@ -1128,7 +1126,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("delivered Message = %#v", delivered)
 	}
 	transientRawReceipt := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"message-event-transient-projection","occurred_at":"%s","payload":{"id":"provider-message-1","from":"+17275550100","to":"+17275550199","delivery_status":"delivered"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"message-event-transient-projection","occurred_at":"%s","payload":{"id":"provider-message-1","from":{"phone_number":"+17275550100"},"to":[{"phone_number":"+17275550199","status":"delivered"}]}}}`,
 		now.Format(time.RFC3339),
 	))
 	transientSignature := base64.StdEncoding.EncodeToString(ed25519.Sign(
@@ -1284,10 +1282,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 
 	now = now.Add(time.Minute)
 	rawInbound := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-inbound","occurred_at":"%s","payload":{"id":"provider-inbound-1","from":"+17275550199","to":"+17275550100","delivery_status":"delivered","text":"Thanks, I will pick them up."}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-inbound","occurred_at":"%s","payload":{"id":"provider-inbound-1","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":"Thanks, I will pick them up."}}}`,
 		now.Format(time.RFC3339),
 	))
-	timestamp = fmt.Sprintf("%d", now.Unix())
+	timestamp = fmt.Sprintf("%d", time.Now().Unix())
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawInbound...),
@@ -1444,7 +1442,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-stop","occurred_at":"%s","payload":{"id":"provider-inbound-stop","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"delivered"}],"text":"STOP","record_type":"message","direction":"inbound"}}}`,
 		now.Format(time.RFC3339),
 	))
-	timestamp = fmt.Sprintf("%d", now.Unix())
+	timestamp = fmt.Sprintf("%d", time.Now().Unix())
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawStop...),
@@ -1483,7 +1481,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-start","occurred_at":"%s","payload":{"id":"provider-inbound-start","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"delivered"}],"text":"START"}}}`,
 		now.Format(time.RFC3339),
 	))
-	timestamp = fmt.Sprintf("%d", now.Unix())
+	timestamp = fmt.Sprintf("%d", time.Now().Unix())
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawStart...),
@@ -1504,10 +1502,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	now = now.Add(2 * time.Minute)
 	newerStopAt := now
 	rawNewerStop := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-newer-stop","occurred_at":"%s","payload":{"id":"provider-inbound-newer-stop","from":"+17275550199","to":"+17275550100","text":"STOP"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-newer-stop","occurred_at":"%s","payload":{"id":"provider-inbound-newer-stop","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100"}],"text":"STOP"}}}`,
 		newerStopAt.Format(time.RFC3339),
 	))
-	timestamp = fmt.Sprintf("%d", now.Unix())
+	timestamp = fmt.Sprintf("%d", time.Now().Unix())
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawNewerStop...),
@@ -1527,10 +1525,10 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 	}
 	now = now.Add(time.Minute)
 	rawOlderStart := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-older-start","occurred_at":"%s","payload":{"id":"provider-inbound-older-start","from":"+17275550199","to":"+17275550100","text":"START"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-older-start","occurred_at":"%s","payload":{"id":"provider-inbound-older-start","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100"}],"text":"START"}}}`,
 		newerStopAt.Add(-time.Minute).Format(time.RFC3339),
 	))
-	timestamp = fmt.Sprintf("%d", now.Unix())
+	timestamp = fmt.Sprintf("%d", time.Now().Unix())
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawOlderStart...),
@@ -1561,7 +1559,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("reordered latest Message projection = %#v, %v", reorderedThreads, err)
 	}
 	rawEqualStart := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"zzzz-message-event-equal-start","occurred_at":"%s","payload":{"id":"provider-inbound-equal-start","from":"+17275550199","to":"+17275550100","text":"START"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"zzzz-message-event-equal-start","occurred_at":"%s","payload":{"id":"provider-inbound-equal-start","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100"}],"text":"START"}}}`,
 		newerStopAt.Format(time.RFC3339),
 	))
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
@@ -1592,7 +1590,7 @@ func TestSendCommitsOneLocationScopedMessageBeforeProviderContact(t *testing.T) 
 		t.Fatalf("send after reordered START error = %v, want blocked", err)
 	}
 	rawNewestStart := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-newest-start","occurred_at":"%s","payload":{"id":"provider-inbound-newest-start","from":"+17275550199","to":"+17275550100","text":"START"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"message-event-newest-start","occurred_at":"%s","payload":{"id":"provider-inbound-newest-start","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100"}],"text":"START"}}}`,
 		now.Format(time.RFC3339),
 	))
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
@@ -2155,8 +2153,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		work.New(pool, accessModule, func() time.Time { return now }),
 		provider,
 		messaging.Config{
-			WebhookPublicKeys:  []ed25519.PublicKey{publicKey},
-			WebhookTolerance:   time.Minute,
+			WebhookPublicKeys:  [][]byte{publicKey},
 			AttachmentStore:    store,
 			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
 			MediaSigningKey:    bytes.Repeat([]byte{7}, 32),
@@ -2317,10 +2314,10 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 
 	now = now.Add(10 * time.Second)
 	rawFailed := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"attachment-outbound-failed","occurred_at":"%s","payload":{"id":"provider-message-1","from":"+17275550110","to":"+17275550119","delivery_status":"failed"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"attachment-outbound-failed","occurred_at":"%s","payload":{"id":"provider-message-1","from":{"phone_number":"+17275550110"},"to":[{"phone_number":"+17275550119","status":"delivery_failed"}]}}}`,
 		now.Format(time.RFC3339),
 	))
-	timestamp := fmt.Sprintf("%d", now.Unix())
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawFailed...),
@@ -2429,7 +2426,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 		now.Format(time.RFC3339),
 		mediaServer.URL,
 	))
-	timestamp = fmt.Sprintf("%d", now.Unix())
+	timestamp = fmt.Sprintf("%d", time.Now().Unix())
 	signature = base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), rawInbound...),

@@ -2,7 +2,6 @@ package humancalling
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -159,8 +158,7 @@ type Config struct {
 	RingbackURL            string
 	RecordingAudioProvider RecordingAudioProvider
 	PlaybackSigningKey     []byte
-	WebhookPublicKeys      []ed25519.PublicKey
-	WebhookTolerance       time.Duration
+	WebhookPublicKeys      [][]byte
 	Observer               observability.Observer
 }
 
@@ -438,9 +436,6 @@ func New(
 	}
 	if config.DispositionDuration <= 0 {
 		config.DispositionDuration = 20 * time.Second
-	}
-	if config.WebhookTolerance <= 0 {
-		config.WebhookTolerance = 5 * time.Minute
 	}
 	if config.StaffSIPDomain == "" {
 		config.StaffSIPDomain = config.HandoffSIPDomain

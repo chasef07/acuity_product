@@ -3,7 +3,6 @@ package messaging
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -21,10 +20,11 @@ import (
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
-	"github.com/chasef07/acuity_product/backend/internal/telnyxsignature"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/team-telnyx/telnyx-go/v4"
+	"github.com/team-telnyx/telnyx-go/v4/option"
 )
 
 type Direction string
@@ -206,8 +206,7 @@ type Provider interface {
 }
 
 type Config struct {
-	WebhookPublicKeys  []ed25519.PublicKey
-	WebhookTolerance   time.Duration
+	WebhookPublicKeys  [][]byte
 	AttachmentStore    AttachmentObjectStore
 	MediaPublicBaseURL string
 	MediaSigningKey    []byte
@@ -236,9 +235,6 @@ func New(
 ) *Module {
 	if now == nil {
 		now = time.Now
-	}
-	if config.WebhookTolerance == 0 {
-		config.WebhookTolerance = 5 * time.Minute
 	}
 	if config.MediaURLTTL == 0 {
 		config.MediaURLTTL = 10 * time.Minute
@@ -1674,22 +1670,21 @@ func (m *Module) ReceiveWebhook(
 	signatureTimestamp string,
 	signature string,
 ) (WebhookReceipt, error) {
-	verifier, validVerifier := telnyxsignature.New(
-		m.config.WebhookPublicKeys, m.config.WebhookTolerance, m.now,
-	)
-	if m.database == nil || !validVerifier ||
+	if m.database == nil ||
 		len(rawBody) == 0 ||
 		len(rawBody) > 2*1024*1024 {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
-	if !verifier.Verify(rawBody, signatureTimestamp, signature) {
+	envelope, validWebhook := unwrapTelnyxWebhook(
+		rawBody,
+		signatureTimestamp,
+		signature,
+		m.config.WebhookPublicKeys,
+	)
+	if !validWebhook {
 		return WebhookReceipt{}, ErrInvalidInput
 	}
 	timestamp, _ := strconv.ParseInt(strings.TrimSpace(signatureTimestamp), 10, 64)
-	envelope, err := decodeWebhook(rawBody)
-	if err != nil {
-		return WebhookReceipt{}, ErrInvalidInput
-	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WebhookReceipt{}, fmt.Errorf("begin provider receipt: %w", err)
@@ -1752,9 +1747,36 @@ func (m *Module) ReceiveWebhook(
 	}, nil
 }
 
+func unwrapTelnyxWebhook(
+	rawBody []byte,
+	signatureTimestamp string,
+	signature string,
+	publicKeys [][]byte,
+) (normalizedWebhookEvent, bool) {
+	headers := make(http.Header)
+	headers.Set("telnyx-timestamp", strings.TrimSpace(signatureTimestamp))
+	headers.Set("telnyx-signature-ed25519", strings.TrimSpace(signature))
+	webhooks := telnyx.NewWebhookService()
+	for _, publicKey := range publicKeys {
+		if len(publicKey) == 0 {
+			continue
+		}
+		event, err := webhooks.Unwrap(
+			rawBody,
+			headers,
+			option.WithPublicKey(base64.StdEncoding.EncodeToString(publicKey)),
+		)
+		if err == nil {
+			envelope, decodeErr := normalizeSDKWebhook(event)
+			return envelope, decodeErr == nil
+		}
+	}
+	return normalizedWebhookEvent{}, false
+}
+
 func sameWebhookEventData(left []byte, right []byte) bool {
-	leftEnvelope, leftErr := decodeWebhook(left)
-	rightEnvelope, rightErr := decodeWebhook(right)
+	leftEnvelope, leftErr := decodeNormalizedWebhook(left)
+	rightEnvelope, rightErr := decodeNormalizedWebhook(right)
 	if leftErr != nil || rightErr != nil ||
 		leftEnvelope.Data.RecordType != rightEnvelope.Data.RecordType ||
 		leftEnvelope.Data.EventType != rightEnvelope.Data.EventType ||
@@ -1763,8 +1785,8 @@ func sameWebhookEventData(left []byte, right []byte) bool {
 		return false
 	}
 	var leftPayload, rightPayload any
-	if json.Unmarshal(leftEnvelope.Data.Payload, &leftPayload) != nil ||
-		json.Unmarshal(rightEnvelope.Data.Payload, &rightPayload) != nil {
+	if json.Unmarshal(leftEnvelope.Data.payloadRaw, &leftPayload) != nil ||
+		json.Unmarshal(rightEnvelope.Data.payloadRaw, &rightPayload) != nil {
 		return false
 	}
 	leftCanonical, leftErr := json.Marshal(leftPayload)
@@ -1816,7 +1838,7 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("commit provider receipt claim: %w", err)
 	}
 
-	envelope, err := decodeWebhook(rawBody)
+	envelope, err := decodeNormalizedWebhook(rawBody)
 	if err != nil {
 		if recordErr := m.finishReceipt(
 			ctx,
@@ -2341,114 +2363,141 @@ func (m *Module) CreateFollowUpTask(
 	return task, status, nil
 }
 
-type webhookEnvelope struct {
+type normalizedWebhookEvent struct {
 	Data struct {
-		RecordType string          `json:"record_type"`
-		EventType  string          `json:"event_type"`
-		ID         string          `json:"id"`
-		OccurredAt time.Time       `json:"occurred_at"`
-		Payload    json.RawMessage `json:"payload"`
-	} `json:"data"`
+		RecordType string
+		EventType  string
+		ID         string
+		OccurredAt time.Time
+		Payload    normalizedMessagePayload
+		payloadRaw json.RawMessage
+	}
 }
 
-type messageWebhookPayload struct {
-	ID             string             `json:"id"`
-	From           providerPhone      `json:"from"`
-	To             providerRecipients `json:"to"`
-	DeliveryStatus string             `json:"delivery_status"`
-	Text           string             `json:"text"`
-	Media          []struct {
-		URL         string `json:"url"`
-		ContentType string `json:"content_type"`
-	} `json:"media"`
+type normalizedMessagePayload struct {
+	ID             string
+	From           string
+	To             []normalizedRecipient
+	DeliveryStatus string
+	Text           string
+	Media          []normalizedMedia
 }
 
-type providerPhone string
-
-func (phone *providerPhone) UnmarshalJSON(raw []byte) error {
-	var direct string
-	if err := json.Unmarshal(raw, &direct); err == nil {
-		*phone = providerPhone(direct)
-		return nil
-	}
-	var object struct {
-		PhoneNumber string `json:"phone_number"`
-	}
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return err
-	}
-	*phone = providerPhone(object.PhoneNumber)
-	return nil
-}
-
-type providerRecipient struct {
-	Phone  providerPhone
+type normalizedRecipient struct {
+	Phone  string
 	Status string
 }
 
-type providerRecipients []providerRecipient
-
-func (recipients *providerRecipients) UnmarshalJSON(raw []byte) error {
-	var direct string
-	if err := json.Unmarshal(raw, &direct); err == nil {
-		*recipients = providerRecipients{{Phone: providerPhone(direct)}}
-		return nil
-	}
-	var objects []struct {
-		PhoneNumber string `json:"phone_number"`
-		Status      string `json:"status"`
-	}
-	if err := json.Unmarshal(raw, &objects); err == nil {
-		result := make(providerRecipients, 0, len(objects))
-		for _, object := range objects {
-			result = append(result, providerRecipient{
-				Phone:  providerPhone(object.PhoneNumber),
-				Status: object.Status,
-			})
-		}
-		*recipients = result
-		return nil
-	}
-	var object struct {
-		PhoneNumber string `json:"phone_number"`
-		Status      string `json:"status"`
-	}
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return err
-	}
-	*recipients = providerRecipients{{
-		Phone:  providerPhone(object.PhoneNumber),
-		Status: object.Status,
-	}}
-	return nil
+type normalizedMedia struct {
+	URL         string
+	ContentType string
 }
 
-func decodeWebhook(rawBody []byte) (webhookEnvelope, error) {
-	var envelope webhookEnvelope
-	decoder := json.NewDecoder(bytes.NewReader(rawBody))
-	if err := decoder.Decode(&envelope); err != nil {
-		return webhookEnvelope{}, err
+func decodeNormalizedWebhook(rawBody []byte) (normalizedWebhookEvent, error) {
+	var event telnyx.UnwrapWebhookEventUnion
+	if err := event.UnmarshalJSON(rawBody); err != nil {
+		return normalizedWebhookEvent{}, err
 	}
-	if envelope.Data.RecordType != "event" ||
-		strings.TrimSpace(envelope.Data.EventType) == "" ||
-		strings.TrimSpace(envelope.Data.ID) == "" ||
-		envelope.Data.OccurredAt.IsZero() ||
-		len(envelope.Data.Payload) == 0 {
-		return webhookEnvelope{}, ErrInvalidInput
+	return normalizeSDKWebhook(&event)
+}
+
+func normalizeSDKWebhook(event *telnyx.UnwrapWebhookEventUnion) (normalizedWebhookEvent, error) {
+	if event == nil {
+		return normalizedWebhookEvent{}, ErrInvalidInput
+	}
+	if event.Data.RecordType != "event" ||
+		strings.TrimSpace(event.Data.EventType) == "" ||
+		strings.TrimSpace(event.Data.ID) == "" ||
+		event.Data.OccurredAt.IsZero() {
+		return normalizedWebhookEvent{}, ErrInvalidInput
+	}
+	var envelope normalizedWebhookEvent
+	envelope.Data.RecordType = event.Data.RecordType
+	envelope.Data.EventType = event.Data.EventType
+	envelope.Data.ID = event.Data.ID
+	envelope.Data.OccurredAt = event.Data.OccurredAt
+	switch event.Data.EventType {
+	case "message.sent", "message.finalized":
+		payload := event.AsDeliveryUpdateWebhookEvent().Data.Payload
+		envelope.Data.Payload = normalizeOutboundPayload(payload)
+		envelope.Data.payloadRaw = json.RawMessage(payload.RawJSON())
+	case "message.received":
+		payload := event.AsInboundMessageWebhookEvent().Data.Payload
+		envelope.Data.Payload = normalizeInboundPayload(payload)
+		envelope.Data.payloadRaw = json.RawMessage(payload.RawJSON())
+	default:
+		var rawEnvelope struct {
+			Data struct {
+				Payload json.RawMessage `json:"payload"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(event.RawJSON()), &rawEnvelope); err != nil {
+			return normalizedWebhookEvent{}, err
+		}
+		envelope.Data.payloadRaw = rawEnvelope.Data.Payload
+	}
+	if len(envelope.Data.payloadRaw) == 0 {
+		return normalizedWebhookEvent{}, ErrInvalidInput
 	}
 	return envelope, nil
+}
+
+func normalizeOutboundPayload(payload telnyx.OutboundMessagePayload) normalizedMessagePayload {
+	result := normalizedMessagePayload{
+		ID:   payload.ID,
+		From: payload.From.PhoneNumber,
+		Text: payload.Text,
+	}
+	result.To = make([]normalizedRecipient, 0, len(payload.To))
+	for _, recipient := range payload.To {
+		result.To = append(result.To, normalizedRecipient{
+			Phone:  recipient.PhoneNumber,
+			Status: recipient.Status,
+		})
+	}
+	if len(result.To) > 0 {
+		result.DeliveryStatus = result.To[0].Status
+	}
+	result.Media = make([]normalizedMedia, 0, len(payload.Media))
+	for _, media := range payload.Media {
+		result.Media = append(result.Media, normalizedMedia{
+			URL:         media.URL,
+			ContentType: media.ContentType,
+		})
+	}
+	return result
+}
+
+func normalizeInboundPayload(payload telnyx.MessagingInboundMessagePayload) normalizedMessagePayload {
+	result := normalizedMessagePayload{
+		ID:   payload.ID,
+		From: payload.From.PhoneNumber,
+		Text: payload.Text,
+	}
+	result.To = make([]normalizedRecipient, 0, len(payload.To))
+	for _, recipient := range payload.To {
+		result.To = append(result.To, normalizedRecipient{
+			Phone:  recipient.PhoneNumber,
+			Status: recipient.Status,
+		})
+	}
+	result.Media = make([]normalizedMedia, 0, len(payload.Media))
+	for _, media := range payload.Media {
+		result.Media = append(result.Media, normalizedMedia{
+			URL:         media.URL,
+			ContentType: media.ContentType,
+		})
+	}
+	return result
 }
 
 func (m *Module) projectOutboundReceipt(
 	ctx context.Context,
 	eventID string,
 	callbackToken string,
-	envelope webhookEnvelope,
+	envelope normalizedWebhookEvent,
 ) error {
-	var payload messageWebhookPayload
-	if err := json.Unmarshal(envelope.Data.Payload, &payload); err != nil {
-		return ErrInvalidInput
-	}
+	payload := envelope.Data.Payload
 	payload.ID = strings.TrimSpace(payload.ID)
 	if payload.ID == "" {
 		return ErrInvalidInput
@@ -2578,18 +2627,15 @@ func (m *Module) projectOutboundReceipt(
 func (m *Module) projectInboundReceipt(
 	ctx context.Context,
 	eventID string,
-	envelope webhookEnvelope,
+	envelope normalizedWebhookEvent,
 ) error {
-	var payload messageWebhookPayload
-	if err := json.Unmarshal(envelope.Data.Payload, &payload); err != nil {
-		return ErrInvalidInput
-	}
+	payload := envelope.Data.Payload
 	providerMessageID := strings.TrimSpace(payload.ID)
 	body := strings.TrimSpace(payload.Text)
-	from, fromErr := normalizePhone(string(payload.From))
+	from, fromErr := normalizePhone(payload.From)
 	toValue := ""
 	if len(payload.To) > 0 {
-		toValue = string(payload.To[0].Phone)
+		toValue = payload.To[0].Phone
 	}
 	to, toErr := normalizePhone(toValue)
 	if providerMessageID == "" ||
