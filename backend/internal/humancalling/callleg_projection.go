@@ -1303,9 +1303,11 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	}
 	var legID string
 	var storedControlID, storedProviderLegID, storedSessionID string
+	var clientStateIssued, sessionBelongsToCall bool
 	query := `
 		SELECT leg.id::text, leg.provider_call_control_id,
-			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, '')
+			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
+			false, false
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
 		WHERE leg.provider_call_control_id = $1 AND leg.provider_call_leg_id = $2
@@ -1315,21 +1317,42 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	if hasState {
 		query = `
 			SELECT leg.id::text, leg.provider_call_control_id,
-				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, '')
+				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
+				EXISTS (
+					SELECT 1 FROM human_calling_provider_commands command
+					WHERE command.call_id = call.id
+						AND command.call_leg_id = leg.id
+						AND command.payload->>'client_state' = $3
+						AND command.state IN (
+							'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED'
+						)
+				),
+				$4 <> '' AND EXISTS (
+					SELECT 1 FROM human_calling_call_legs session_leg
+					WHERE session_leg.call_id = call.id
+						AND session_leg.provider_call_session_id = $4
+				)
 			FROM human_calling_calls call
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
 			WHERE call.id = $1 AND leg.id = $2
 			FOR UPDATE OF call, leg
 		`
-		args = []any{state.CallID, state.CallLegID}
+		args = []any{state.CallID, state.CallLegID, fact.ClientState, fact.CallSessionID}
 	}
 	if err := tx.QueryRow(ctx, query, args...).Scan(
 		&legID, &storedControlID, &storedProviderLegID, &storedSessionID,
+		&clientStateIssued, &sessionBelongsToCall,
 	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errRelatedFactPending
+		}
 		return fmt.Errorf("correlate hung-up CallLeg: %w", err)
 	}
-	if fact.CallControlID != storedControlID || fact.CallLegID != storedProviderLegID ||
-		fact.CallSessionID != storedSessionID {
+	if fact.CallControlID != storedControlID || fact.CallLegID != storedProviderLegID {
+		return ErrConflict
+	}
+	if fact.CallSessionID != storedSessionID &&
+		!(clientStateIssued && sessionBelongsToCall) {
 		return ErrConflict
 	}
 	if err := m.finishEndedCallLeg(ctx, tx, legID, fact); err != nil {
