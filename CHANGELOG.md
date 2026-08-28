@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.9](https://github.com/chasef07/acuity_product/compare/v0.4.8...v0.4.9) (2026-08-28)
+
+
+### Bug Fixes
+
+* **calling:** preserve audio across repeated media updates ([#218](https://github.com/chasef07/acuity_product/issues/218)) ([b14990a](https://github.com/chasef07/acuity_product/commit/b14990a370ab0f3cfba0b8a4c66e95c66b7a0141))
+
 ## [0.4.8](https://github.com/chasef07/acuity_product/compare/v0.4.7...v0.4.8) (2026-08-27)
 
 
