@@ -892,7 +892,7 @@ test("a temporarily unavailable media credential retries without losing availabi
   assert.equal(runtime.getSnapshot().failure?.recoverable, true)
   assert.equal(backend.readinessWrites.length, 0)
 
-  await clock.advance(3_500)
+  await clock.advance(4_000)
 
   assert.equal(attempts, 2)
   assert.equal(media.connects, 1)
@@ -1178,6 +1178,56 @@ test("polling after a lost lease response restores media and heartbeat", async (
   await drainMicrotasks()
 
   assert.ok(clock.pendingTimers >= 2)
+})
+
+test("routine heartbeats use a stable per-session stagger without surfacing availability pending", async () => {
+  async function observeHeartbeat(sessionID: string) {
+    const clock = new ManualClock()
+    const backend = new DeterministicBackend()
+    backend.lease = lease({ sessionId: sessionID, owner: true })
+    backend.state = callingState({ softphone: backend.lease })
+    const runtime = createSoftphoneRuntime({
+      sessionID,
+      backend,
+      media: new DeterministicMedia(),
+      microphone: readyMicrophone(),
+      availabilityIntent: true,
+      clock,
+      visibility: visible(),
+    })
+    await runtime.start()
+    const writesBeforeHeartbeat = backend.readinessWrites.length
+    const surfacedPendingAt: number[] = []
+    let availabilityPending = runtime.getSnapshot().pending.availability
+    const unsubscribe = runtime.subscribe(() => {
+      const nextPending = runtime.getSnapshot().pending.availability
+      if (!availabilityPending && nextPending) surfacedPendingAt.push(clock.now)
+      availabilityPending = nextPending
+    })
+
+    await clock.advance(3_499)
+    assert.equal(backend.readinessWrites.length, writesBeforeHeartbeat)
+    while (
+      clock.now < 4_000 &&
+      backend.readinessWrites.length === writesBeforeHeartbeat
+    ) {
+      await clock.advance(1)
+    }
+
+    assert.equal(backend.readinessWrites.length, writesBeforeHeartbeat + 1)
+    assert.equal(runtime.getSnapshot().lease?.available, true)
+    assert.deepEqual(surfacedPendingAt, [])
+    const heartbeatAt = clock.now
+    unsubscribe()
+    await runtime.stop()
+    return heartbeatAt
+  }
+
+  const firstHeartbeatAt = await observeHeartbeat("session-1")
+  const secondHeartbeatAt = await observeHeartbeat("session-2")
+  assert.ok(firstHeartbeatAt >= 3_500 && firstHeartbeatAt <= 4_000)
+  assert.ok(secondHeartbeatAt >= 3_500 && secondHeartbeatAt <= 4_000)
+  assert.notEqual(firstHeartbeatAt, secondHeartbeatAt)
 })
 
 test("stop discards local Call projections and abandoned command state", async () => {
@@ -2734,7 +2784,7 @@ test("a non-owner can take over and a later lease loss fails media and readiness
     backend.state = callingState({ softphone: backend.lease })
     return backend.lease
   }
-  await clock.advance(3_500)
+  await clock.advance(4_000)
 
   assert.equal(runtime.getSnapshot().lease?.owner, false)
   assert.equal(runtime.getSnapshot().readiness.mediaState, "unavailable")

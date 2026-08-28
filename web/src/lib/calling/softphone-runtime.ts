@@ -220,6 +220,8 @@ const backendRequestTimeoutMilliseconds = 5_000
 const mediaOperationTimeoutMilliseconds = 10_000
 const mediaConfirmationRetryMilliseconds = 250
 const mediaCorrelationWindowMilliseconds = 5_000
+const heartbeatMinimumMilliseconds = 3_500
+const heartbeatMaximumMilliseconds = 4_000
 const mediaEffectTimeoutMessage =
   "Call audio did not respond. Reconnect calling and try again."
 
@@ -249,6 +251,7 @@ export class SoftphoneAdapterError extends Error {
 export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntime {
   const clock = options.clock ?? defaultClock
   const visibility = options.visibility ?? browserVisibility
+  const heartbeatDelayMilliseconds = heartbeatDelay(options.sessionID)
   const listeners = new Set<() => void>()
   const incomingMedia = new Map<string, IncomingMediaLeg>()
   const incomingMediaDeadlines = new WeakMap<IncomingMediaLeg, number>()
@@ -1106,7 +1109,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     }, delay)
   }
 
-  function scheduleHeartbeat(delay = 3_500) {
+  function scheduleHeartbeat(delay = heartbeatDelayMilliseconds) {
     if (stopped || accessBlocked || !snapshot.lease?.owner) return
     if (heartbeatTimer !== undefined) clock.clearTimeout(heartbeatTimer)
     heartbeatTimer = clock.setTimeout(() => {
@@ -1118,9 +1121,13 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         ) {
           await connectMedia()
         }
-        await commitReadiness()
+        await commitReadiness(true, false, "silent")
       })().finally(() =>
-        scheduleHeartbeat(snapshot.failure?.kind === "temporary-request" ? 500 : 3_500),
+        scheduleHeartbeat(
+          snapshot.failure?.kind === "temporary-request"
+            ? 500
+            : heartbeatDelayMilliseconds,
+        ),
       )
     }, delay)
   }
@@ -1128,9 +1135,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   function queueReadiness(
     permitAvailability: boolean,
     forceUnregistered = false,
+    pendingVisibility: "visible" | "silent" = "visible",
   ) {
     const generation = ++readinessGeneration
-    publish({ pending: { ...snapshot.pending, availability: true } })
+    if (pendingVisibility === "visible") {
+      publish({ pending: { ...snapshot.pending, availability: true } })
+    }
     const technicallyReady =
       !forceUnregistered &&
       snapshot.lease?.owner === true &&
@@ -1164,8 +1174,13 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   async function commitReadiness(
     permitAvailability = true,
     forceUnregistered = false,
+    pendingVisibility: "visible" | "silent" = "visible",
   ) {
-    const generation = queueReadiness(permitAvailability, forceUnregistered)
+    const generation = queueReadiness(
+      permitAvailability,
+      forceUnregistered,
+      pendingVisibility,
+    )
     await drainReadiness()
     return readinessConfirmedGeneration >= generation
   }
@@ -2599,6 +2614,17 @@ function refreshDelay(snapshot: SoftphoneRuntimeSnapshot, hidden: boolean) {
     default:
       return 4_000
   }
+}
+
+function heartbeatDelay(sessionID: string) {
+  let hash = 0
+  for (let index = 0; index < sessionID.length; index += 1) {
+    hash = (Math.imul(hash, 31) + sessionID.charCodeAt(index)) >>> 0
+  }
+  return (
+    heartbeatMinimumMilliseconds +
+    (hash % (heartbeatMaximumMilliseconds - heartbeatMinimumMilliseconds + 1))
+  )
 }
 
 function failureFrom(error: unknown, fallback: SoftphoneFailureKind): SoftphoneFailure {
