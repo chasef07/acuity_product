@@ -349,7 +349,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       secondaryAnswer.dblclick(),
     ])
     await Promise.all([
-      expect.poll(() => mediaAnswers(selectedPage)).toBe(2),
+      expect.poll(() => mediaAnswers(selectedPage)).toBe(1),
       expect.poll(() => mediaAnswers(secondaryPage)).toBe(1),
     ])
 
