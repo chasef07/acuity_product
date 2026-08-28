@@ -235,13 +235,28 @@ function CallingFailure({
   failure: CallingCardFailureView
   onRecover: () => void
 }) {
+  const handleAction = () => {
+    if (failure.action?.kind === "reload-page") {
+      window.location.reload()
+      return
+    }
+    onRecover()
+  }
+
   return (
-    <Alert variant="destructive">
-      <AlertTitle>{failure.title}</AlertTitle>
-      <AlertDescription className="space-y-3">
+    <Alert className="border-warning/35 bg-warning/10 px-3 py-2.5 text-foreground [&>svg]:text-warning">
+      <PhoneOffIcon aria-hidden />
+      <AlertTitle className="text-sm font-semibold">{failure.title}</AlertTitle>
+      <AlertDescription className="space-y-2.5">
         <p>{failure.message}</p>
         {failure.action && (
-          <Button size="sm" variant="outline" onClick={onRecover}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 bg-background px-2.5 text-xs"
+            onClick={handleAction}
+          >
+            <RotateCcwIcon />
             {failure.action.label}
           </Button>
         )}

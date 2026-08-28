@@ -47,7 +47,7 @@ test("rendered ownership and media failures expose their exact recovery actions"
     }),
   )
   assert.match(ownership, /role="alert"/)
-  assert.match(ownership, />Take over</)
+  assert.match(ownership, />Use this browser</)
   assert.doesNotMatch(ownership, /technical lease detail/)
 
   const activeOwnership = renderToStaticMarkup(
@@ -61,7 +61,7 @@ test("rendered ownership and media failures expose their exact recovery actions"
     />,
   )
   assert.match(activeOwnership, /Finish it there/)
-  assert.doesNotMatch(activeOwnership, />Take over</)
+  assert.doesNotMatch(activeOwnership, />Use this browser</)
 
   const media = render(
     snapshot({
@@ -73,7 +73,10 @@ test("rendered ownership and media failures expose their exact recovery actions"
       },
     }),
   )
-  assert.match(media, />Reconnect calling</)
+  assert.match(media, />Calling disconnected</)
+  assert.match(media, /Calls are paused until then/)
+  assert.match(media, />Refresh page</)
+  assert.match(media, /border-warning\/35/)
   assert.doesNotMatch(media, /provider implementation detail/)
 })
 
@@ -90,7 +93,7 @@ test("a failure without a Call or incoming offer does not render a Calling Card"
 
   assert.equal(html, "")
   assert.match(recovery, /role="alert"/)
-  assert.match(recovery, />Take over</)
+  assert.match(recovery, />Use this browser</)
   assert.doesNotMatch(recovery, /technical lease detail/)
 })
 

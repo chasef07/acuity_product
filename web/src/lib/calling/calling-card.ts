@@ -115,10 +115,15 @@ export type CallingCardIdentity = {
 }
 
 export type CallingCardFailureView = {
-  title: "Calling needs attention"
+  title:
+    | "Calling disconnected"
+    | "Calling session expired"
+    | "Calling unavailable"
+    | "Calling is open elsewhere"
   message: string
   action?: {
-    label: "Take over" | "Reconnect calling" | "Refresh calling"
+    kind: "reload-page" | "recover"
+    label: "Refresh page" | "Use this browser"
   }
 }
 
@@ -305,21 +310,20 @@ function dispositionChoices(
 export function projectCallingFailure(
   failure: CallingCardFailure,
 ): CallingCardFailureView {
+  const copy = failureCopy(failure)
   return {
-    title: "Calling needs attention",
-    message: failure.message.startsWith("Calling stopped locally")
-      ? failure.message
-      : failureCopy(failure),
-    ...(failure.recoverable
+    ...copy,
+    ...(failure.recoverable && failure.kind !== "access"
       ? {
           action: {
+            kind:
+              failure.kind === "ownership"
+                ? ("recover" as const)
+                : ("reload-page" as const),
             label:
               failure.kind === "ownership"
-                ? ("Take over" as const)
-                : failure.kind === "conflict" ||
-                    failure.kind === "temporary-request"
-                  ? ("Refresh calling" as const)
-                  : ("Reconnect calling" as const),
+                ? ("Use this browser" as const)
+                : ("Refresh page" as const),
           },
         }
       : {}),
@@ -329,21 +333,30 @@ export function projectCallingFailure(
 function failureCopy(failure: CallingCardFailure) {
   switch (failure.kind) {
     case "authentication":
-      return "Sign in again to keep calling."
+      return {
+        title: "Calling session expired" as const,
+        message: "Refresh the page to reconnect. You may need to sign in again.",
+      }
     case "access":
-      return "You do not have calling access for this practice."
+      return {
+        title: "Calling unavailable" as const,
+        message: "Your account doesn’t have access to calling for this practice.",
+      }
     case "ownership":
-      return failure.recoverable
-        ? "Calling is active in another browser. Take over here to use this device."
-        : "An active Call is using calling in another browser. Finish it there before using this device."
+      return {
+        title: "Calling is open elsewhere" as const,
+        message: failure.recoverable
+          ? "Calling is connected in another browser. Use this browser instead."
+          : "A call is active in another browser. Finish it there before using this browser.",
+      }
     case "technical-readiness":
-      return "Allow microphone access, then reconnect calling."
     case "media":
-      return "Audio disconnected. Reconnect calling to continue."
     case "conflict":
-      return "This call changed elsewhere. Refresh to see the latest state."
     case "temporary-request":
-      return "Calling could not refresh. Check your connection and try again."
+      return {
+        title: "Calling disconnected" as const,
+        message: "Refresh the page to reconnect. Calls are paused until then.",
+      }
   }
 }
 
