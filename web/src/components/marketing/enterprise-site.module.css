@@ -159,8 +159,7 @@
   text-transform: uppercase;
 }
 
-.hero h1,
-.workHero h1 {
+.hero h1 {
   max-width: 850px;
   margin: 0;
   font-family: var(--font-acuity-display), Georgia, serif;
@@ -258,15 +257,13 @@
   text-transform: uppercase;
 }
 
-.proofSection,
-.fitStatement {
+.proofSection {
   padding: clamp(100px, 13vw, 190px) max(6vw, calc((100vw - 1320px) / 2));
   background: var(--marketing-ink);
   color: white;
 }
 
-.proofSection .eyebrow,
-.fitStatement .eyebrow {
+.proofSection .eyebrow {
   color: var(--marketing-sage);
 }
 
@@ -348,8 +345,7 @@
 .foundingStory h1,
 .missionStatement h2,
 .foundersSection h2,
-.conversationSection h2,
-.fitStatement h2 {
+.inquirySection h1 {
   margin: 0;
   font-family: var(--font-acuity-display), Georgia, serif;
   font-size: clamp(2.8rem, 5.4vw, 5.8rem);
@@ -689,16 +685,6 @@
   font-size: 12px;
 }
 
-.workHero {
-  min-height: 590px;
-  padding: clamp(90px, 12vw, 170px) max(6vw, calc((100vw - 1320px) / 2));
-  display: grid;
-  align-content: end;
-  background:
-    radial-gradient(circle at 82% 20%, rgb(255 255 255 / 0.62), transparent 25%),
-    linear-gradient(140deg, #eef3ef, var(--marketing-sage));
-}
-
 .commitmentSection {
   padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
   display: grid;
@@ -765,65 +751,60 @@
 }
 
 .missionVision {
+  min-height: 100svh;
   position: relative;
-  padding: clamp(100px, 13vw, 190px) max(6vw, calc((100vw - 1320px) / 2));
+  padding: clamp(56px, 7svh, 76px) max(6vw, calc((100vw - 1320px) / 2));
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 84% 18%, rgb(201 216 206 / 0.2), transparent 26%),
-    var(--marketing-ink);
+  background: var(--marketing-ink);
   color: white;
 }
 
-.missionVision::after {
-  width: clamp(220px, 31vw, 470px);
-  aspect-ratio: 1;
-  position: absolute;
-  right: clamp(-180px, -9vw, -90px);
-  bottom: clamp(-240px, -14vw, -130px);
-  border: 1px solid rgb(201 216 206 / 0.22);
-  border-radius: 50%;
-  content: "";
-  pointer-events: none;
+.missionStatement,
+.visionStatement {
+  min-width: 0;
 }
 
 .missionStatement {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.26fr) minmax(0, 1fr);
-  gap: clamp(44px, 8vw, 120px);
+  padding-bottom: clamp(34px, 5svh, 54px);
 }
 
 .missionVision .eyebrow {
+  margin-bottom: clamp(18px, 2.5svh, 26px);
   color: var(--marketing-sage);
 }
 
 .missionStatement h2 {
-  max-width: 1120px;
-  font-size: clamp(3.4rem, 6.7vw, 7.4rem);
-  line-height: 0.93;
+  max-width: 1180px;
+  font-size: clamp(3.2rem, 5.2vw, 5.6rem);
+  line-height: 0.95;
 }
 
 .visionStatement {
-  width: min(74%, 920px);
-  margin: clamp(76px, 10vw, 130px) 0 0 auto;
-  padding: clamp(28px, 4vw, 48px) 0 0 clamp(28px, 4vw, 52px);
+  margin: 0;
+  padding-top: clamp(34px, 5svh, 54px);
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(110px, 0.3fr) minmax(0, 1fr);
-  gap: clamp(28px, 4vw, 58px);
-  border-top: 1px solid rgb(255 255 255 / 0.26);
-  border-left: 1px solid rgb(201 216 206 / 0.48);
+  border-top: 1px solid rgb(201 216 206 / 0.42);
 }
 
 .visionStatement > p:last-child {
-  margin: 0;
+  max-width: 1050px;
+  margin: 0 0 0 clamp(72px, 10vw, 150px);
   color: #e5ebe7;
   font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(2rem, 3.8vw, 4.2rem);
+  font-size: clamp(2.45rem, 3.5vw, 4.15rem);
   font-weight: 400;
-  letter-spacing: -0.045em;
-  line-height: 1.04;
+  letter-spacing: -0.052em;
+  line-height: 1;
   text-wrap: balance;
+}
+
+.visionStatement .eyebrow {
+  margin-left: clamp(72px, 10vw, 150px);
 }
 
 .foundersSection {
@@ -851,8 +832,9 @@
 .founderPortrait {
   --founder-scale: 1;
   --founder-hover-scale: 1.012;
+  --founder-y: 0%;
   width: 100%;
-  height: clamp(250px, 34svh, 330px);
+  aspect-ratio: 4 / 3;
   position: relative;
   overflow: hidden;
   isolation: isolate;
@@ -881,13 +863,14 @@
   z-index: 0;
   object-fit: cover;
   filter: saturate(0.68) contrast(0.98);
-  transform: scale(var(--founder-scale));
+  transform: translateY(var(--founder-y)) scale(var(--founder-scale));
   transition: transform 500ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .founderPortraitKyle {
   --founder-scale: 1.3;
   --founder-hover-scale: 1.315;
+  --founder-y: 5%;
 }
 
 .founderPortraitKyle img {
@@ -897,8 +880,8 @@
 }
 
 .founderPortraitChase {
-  --founder-scale: 1.02;
-  --founder-hover-scale: 1.035;
+  --founder-scale: 1.11;
+  --founder-hover-scale: 1.125;
 }
 
 .founderPortraitChase img {
@@ -906,7 +889,7 @@
 }
 
 .founderPanel:hover .founderPortrait img {
-  transform: scale(var(--founder-hover-scale));
+  transform: translateY(var(--founder-y)) scale(var(--founder-hover-scale));
 }
 
 .founderIdentity,
@@ -986,7 +969,10 @@
 
 .principlesSection > div {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns:
+    minmax(0, 0.92fr)
+    minmax(0, 1.27fr)
+    minmax(0, 0.81fr);
   gap: 1px;
   background: rgb(16 24 32 / 0.18);
 }
@@ -1006,6 +992,7 @@
   font-weight: 400;
   letter-spacing: -0.04em;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .principlesSection small {
@@ -1026,65 +1013,249 @@
   line-height: 1.65;
 }
 
-.workHero {
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.55fr);
-  align-items: end;
-  gap: clamp(70px, 10vw, 150px);
+@media (min-width: 641px) {
+  .principlesSection article:nth-child(2) p {
+    max-width: none;
+    white-space: nowrap;
+  }
 }
 
-.workHero > p {
-  margin: 0 0 8px;
-  color: var(--marketing-sage-deep);
-  font-size: clamp(1.08rem, 1.6vw, 1.35rem);
-  line-height: 1.7;
+@media (max-width: 1150px) {
+  .principlesSection > div {
+    grid-template-columns: 1fr;
+  }
 }
 
-.conversationSection {
-  padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
+@media (max-height: 920px) and (min-width: 861px) {
+  .foundersSection {
+    min-height: 100svh;
+    padding-top: 28px;
+    padding-bottom: 28px;
+  }
+
+  .foundersSection header {
+    margin-bottom: 22px;
+  }
+
+  .foundersSection header h2 {
+    font-size: clamp(3.2rem, 4.4vw, 4.2rem);
+  }
+
+  .founderPortrait {
+    height: clamp(300px, 42svh, 370px);
+    aspect-ratio: auto;
+  }
+
+  .founderIdentity {
+    padding-top: 14px;
+    padding-bottom: 12px;
+  }
+
+  .founderIdentity h2 {
+    font-size: 3.4rem;
+  }
+
+  .founderThought summary {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+}
+
+.collaborationSection {
+  padding: clamp(76px, 8vw, 112px) max(6vw, calc((100vw - 1320px) / 2));
+  background: var(--marketing-ink);
+  color: white;
+}
+
+.collaborationSection .eyebrow {
+  margin-bottom: 0;
+  color: var(--marketing-sage);
+}
+
+.collaborationSteps {
+  margin-top: clamp(34px, 4vw, 52px);
   display: grid;
-  grid-template-columns: minmax(0, 0.82fr) minmax(380px, 1.18fr);
-  gap: clamp(70px, 10vw, 150px);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.collaborationSteps article {
+  min-width: 0;
+  padding: 24px clamp(22px, 2.5vw, 36px) 0;
+  border-left: 1px solid rgb(201 216 206 / 0.22);
+}
+
+.collaborationSteps article:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.collaborationSteps span {
+  display: block;
+  margin-bottom: clamp(38px, 5vw, 68px);
+  color: var(--marketing-sage);
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+
+.collaborationSteps h3 {
+  margin: 0 0 12px;
+  font-family: var(--font-acuity-display), Georgia, serif;
+  font-size: clamp(1.8rem, 2.6vw, 2.7rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.collaborationSteps p {
+  margin: 0;
+  color: #cfd9d2;
+  font-size: 0.96rem;
+  line-height: 1.58;
+}
+
+.inquirySection {
+  min-height: calc(100svh - 76px);
+  padding: clamp(52px, 7svh, 78px) max(6vw, calc((100vw - 1320px) / 2));
+  display: grid;
+  grid-template-columns: minmax(320px, 0.78fr) minmax(520px, 1.22fr);
+  align-items: center;
+  gap: clamp(60px, 8vw, 116px);
+  background: #eef3ef;
   scroll-margin-top: 24px;
 }
 
-.conversationSection > div:first-child > p:not(.eyebrow) {
-  max-width: 560px;
-  margin: 26px 0 30px;
-  color: var(--marketing-ink-soft);
-  font-size: 1.03rem;
-  line-height: 1.7;
+.inquiryIntro {
+  align-self: start;
+  padding-top: clamp(16px, 4svh, 42px);
 }
 
-.conversationPrompts {
-  align-self: end;
+.inquiryIntro h1 {
+  max-width: 610px;
+  font-size: clamp(3.4rem, 5vw, 5.4rem);
 }
 
-.conversationPrompts p {
-  margin: 0;
-  padding: 24px 0;
+.inquiryForm {
+  position: relative;
+  padding: clamp(24px, 3vw, 38px);
+  border: 1px solid rgb(16 24 32 / 0.2);
+  background: rgb(255 255 255 / 0.54);
+  box-shadow: 0 28px 70px rgb(37 55 48 / 0.1);
+}
+
+.formHoneypot {
+  width: 1px;
+  height: 1px;
+  position: absolute;
+  left: -10000px;
+  overflow: hidden;
+}
+
+.inquiryFieldGrid {
   display: grid;
-  grid-template-columns: 52px 1fr;
-  gap: 16px;
-  border-top: 1px solid var(--marketing-line);
-  color: var(--marketing-ink);
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(1.3rem, 2.1vw, 2rem);
-  line-height: 1.15;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px 22px;
 }
 
-.conversationPrompts p:last-child {
-  border-bottom: 1px solid var(--marketing-line);
+.formFieldWide {
+  grid-column: span 2;
 }
 
-.conversationPrompts span {
-  color: var(--marketing-blue);
+.formField {
+  display: grid;
+  gap: 8px;
+}
+
+.formField > span {
+  color: var(--marketing-blue-deep);
   font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
   font-size: 9px;
+  font-weight: 650;
   letter-spacing: 0.12em;
+  line-height: 1.55;
+  text-transform: uppercase;
 }
 
-.fitStatement h2 {
-  max-width: 1180px;
+.formField input,
+.formPrompt textarea {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid rgb(16 24 32 / 0.24);
+  border-radius: 0;
+  outline: none;
+  background: rgb(255 255 255 / 0.38);
+  color: var(--marketing-ink);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.formPrompt textarea {
+  min-height: clamp(112px, 18svh, 126px);
+  resize: vertical;
+}
+
+.formPrompt textarea::placeholder {
+  color: rgb(16 24 32 / 0.42);
+}
+
+.formField input:focus-visible,
+.formPrompt textarea:focus-visible {
+  border-color: var(--marketing-blue-deep);
+  box-shadow: 0 0 0 2px rgb(46 84 128 / 0.18);
+}
+
+.formQuestions {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.formPrompt {
+  display: grid;
+  gap: 10px;
+}
+
+.formPrompt strong {
+  color: var(--marketing-ink);
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.formFooter {
+  padding-top: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 18px;
+}
+
+.formFooter .darkButton {
+  flex: 0 0 auto;
+  border: 0;
+  cursor: pointer;
+}
+
+.formFooter .darkButton:disabled {
+  cursor: wait;
+  opacity: 0.62;
+  transform: none;
+}
+
+.formSuccess,
+.formError {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.formSuccess {
+  color: #2f634b;
+}
+
+.formError {
+  color: #9e2f2f;
 }
 
 @media (max-width: 1100px) {
@@ -1111,8 +1282,7 @@
 
   .enterpriseDifference,
   .proofSection,
-  .commitmentSection,
-  .conversationSection {
+  .commitmentSection {
     gap: 70px;
   }
 }
@@ -1147,6 +1317,19 @@
     font-size: 1.45rem;
   }
 
+  .missionVision {
+    padding-top: 36px;
+    padding-bottom: 36px;
+  }
+
+  .missionStatement h2 {
+    font-size: clamp(3rem, 4.3vw, 4.2rem);
+  }
+
+  .visionStatement > p:last-child {
+    font-size: clamp(2.45rem, 3.2vw, 3.25rem);
+  }
+
   .foundersSection {
     min-height: 100svh;
     padding-top: 28px;
@@ -1159,10 +1342,6 @@
 
   .foundersSection header h2 {
     font-size: clamp(3.2rem, 4.4vw, 4.2rem);
-  }
-
-  .founderPortrait {
-    height: 230px;
   }
 
   .founderIdentity {
@@ -1221,6 +1400,16 @@
     padding-top: 20px;
   }
 
+  .inquirySection {
+    min-height: auto;
+    grid-template-columns: 1fr;
+    gap: 42px;
+  }
+
+  .inquiryIntro {
+    padding-top: 0;
+  }
+
   .sectionHeader,
   .enterpriseDifference,
   .proofSection,
@@ -1228,8 +1417,7 @@
   .partnershipCta,
   .commitmentSection,
   .foundingStory,
-  .workHero,
-  .conversationSection {
+  .inquiryIntro {
     grid-template-columns: 1fr;
   }
 
@@ -1278,13 +1466,24 @@
     grid-template-columns: 1fr;
   }
 
+  .missionVision {
+    min-height: auto;
+  }
+
   .missionStatement {
-    grid-template-columns: 1fr;
-    gap: 24px;
+    padding-bottom: 32px;
   }
 
   .visionStatement {
-    width: min(88%, 760px);
+    width: 100%;
+    padding: 32px 0 0;
+    border-top: 1px solid rgb(201 216 206 / 0.42);
+    border-left: 0;
+  }
+
+  .visionStatement .eyebrow,
+  .visionStatement > p:last-child {
+    margin-left: 0;
   }
 
   .founderGrid,
@@ -1336,8 +1535,7 @@
     padding: 54px 24px 24px;
   }
 
-  .hero h1,
-  .workHero h1 {
+  .hero h1 {
     font-size: clamp(3.6rem, 18vw, 5.3rem);
   }
 
@@ -1346,7 +1544,6 @@
   }
 
   .proofSection,
-  .fitStatement,
   .methodPageVenn,
   .enterpriseDifference,
   .storyPreview,
@@ -1356,7 +1553,8 @@
   .foundersSection,
   .principlesSection,
   .missionVision,
-  .conversationSection {
+  .collaborationSection,
+  .inquirySection {
     padding-right: 24px;
     padding-left: 24px;
   }
@@ -1370,20 +1568,25 @@
     padding-bottom: 96px;
   }
 
-  .venn {
+  .methodPageVenn .venn {
+    --venn-circle: min(calc(100vw - 48px), 330px);
+    --venn-overlap: clamp(88px, 28vw, 108px);
+    width: var(--venn-circle);
     margin-top: 46px;
     display: grid;
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
+    grid-template-rows:
+      calc(var(--venn-circle) - var(--venn-overlap))
+      var(--venn-overlap)
+      calc(var(--venn-circle) - var(--venn-overlap));
     gap: 0;
   }
 
   .vennCircle {
-    width: 100%;
-    aspect-ratio: auto;
-    min-height: 0;
+    width: var(--venn-circle);
+    aspect-ratio: 1;
     justify-content: center;
-    border-radius: 0;
+    border-radius: 50%;
   }
 
   .vennSystem,
@@ -1392,18 +1595,16 @@
   }
 
   .vennSystem {
-    grid-row: 1;
-    border-radius: 999px 999px 0 0;
+    grid-row: 1 / 3;
   }
 
   .vennTransformation {
-    grid-row: 3;
-    border-radius: 0 0 999px 999px;
+    grid-row: 2 / 4;
   }
 
   .vennCopy {
     width: 100%;
-    padding: 64px 44px;
+    padding: 48px 30px;
     text-align: center;
   }
 
@@ -1412,21 +1613,35 @@
   }
 
   .methodPageVenn .vennCopy {
-    padding: 64px 36px;
+    padding: 48px 28px;
+  }
+
+  .methodPageVenn .vennSystem .vennCopy {
+    transform: translateY(calc(var(--venn-overlap) * -0.36));
+  }
+
+  .methodPageVenn .vennTransformation .vennCopy {
+    transform: translateY(calc(var(--venn-overlap) * 0.36));
   }
 
   .methodPageVenn .vennCopy p {
-    font-size: 2.15rem;
+    font-size: clamp(1.85rem, 9vw, 2.15rem);
   }
 
   .vennCenter {
-    width: 100%;
+    width: min(66%, 220px);
     z-index: 4;
     grid-column: 1;
     grid-row: 2;
-    padding: 24px;
-    background: var(--marketing-blue-deep);
-    color: white;
+    place-self: center;
+    padding: 0;
+    background: transparent;
+    color: var(--marketing-ink);
+  }
+
+  .methodPageVenn .vennCenter strong {
+    font-size: clamp(1.08rem, 5.6vw, 1.35rem);
+    line-height: 1.05;
   }
 
   .proofMetrics {
@@ -1452,29 +1667,16 @@
     gap: 12px;
   }
 
-  .workHero {
-    min-height: 500px;
-    padding: 80px 24px 54px;
-  }
-
   .foundingStory {
     gap: 32px;
   }
 
   .missionStatement h2 {
-    font-size: clamp(3rem, 14vw, 5rem);
-  }
-
-  .visionStatement {
-    width: calc(100% - 18px);
-    margin-top: 68px;
-    padding: 28px 0 0 22px;
-    grid-template-columns: 1fr;
-    gap: 12px;
+    font-size: clamp(2.7rem, 12vw, 3.8rem);
   }
 
   .visionStatement > p:last-child {
-    font-size: clamp(2rem, 10vw, 3.15rem);
+    font-size: clamp(2.35rem, 10.5vw, 3.25rem);
   }
 
   .founderPanel {
@@ -1482,8 +1684,41 @@
     padding: 0;
   }
 
-  .conversationPrompts p {
-    grid-template-columns: 40px 1fr;
+  .principlesSection h3 {
+    white-space: normal;
+  }
+
+  .collaborationSteps,
+  .formQuestions {
+    grid-template-columns: 1fr;
+  }
+
+  .inquiryFieldGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .collaborationSteps article,
+  .collaborationSteps article:first-child {
+    padding: 24px 0 28px;
+    border-bottom: 1px solid rgb(201 216 206 / 0.34);
+    border-left: 0;
+  }
+
+  .collaborationSteps article:last-child {
+    border-bottom: 0;
+  }
+
+  .collaborationSteps span {
+    margin-bottom: 24px;
+  }
+
+  .formFieldWide {
+    grid-column: span 2;
+  }
+
+  .formFooter {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

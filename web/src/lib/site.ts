@@ -9,6 +9,36 @@ export const siteConfig = {
     "Acuity Health redesigns patient-access workflows, deploys medical AI agents across the systems you already use, and stays with your team until the new operating model works.",
 } as const
 
+export const siteStructuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${siteConfig.url}/#organization`,
+      name: siteConfig.name,
+      url: siteConfig.url,
+      logo: {
+        "@type": "ImageObject",
+        url: `${siteConfig.url}/icon-512x512.png`,
+        width: 512,
+        height: 512,
+      },
+      description: siteConfig.description,
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${siteConfig.url}/#website`,
+      url: siteConfig.url,
+      name: siteConfig.name,
+      description: siteConfig.description,
+      publisher: {
+        "@id": `${siteConfig.url}/#organization`,
+      },
+      inLanguage: "en-US",
+    },
+  ],
+} as const
+
 export function createPublicPageMetadata({
   path,
   title,
@@ -21,6 +51,17 @@ export function createPublicPageMetadata({
   return {
     title,
     description,
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        "max-image-preview": "large",
+        "max-snippet": -1,
+        "max-video-preview": -1,
+      },
+    },
     alternates: {
       canonical: path,
     },

@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils"
 
 import { PixelWaveField } from "./pixel-wave-field"
+import { WorkWithUsForm } from "./work-with-us-form"
 import styles from "./enterprise-site.module.css"
 
 import chasePortrait from "../../../public/marketing/chase-fagen-v2.png"
@@ -59,7 +60,7 @@ function SiteHeader({ current }: { current: MarketingRoute }) {
 
       <div className={styles.headerActions}>
         <PortalSignInTrigger className={styles.portalLink} />
-        <Link className={styles.workLink} href="/work-with-us#conversation">
+        <Link className={styles.workLink} href="/work-with-us">
           Work With Us
         </Link>
       </div>
@@ -78,7 +79,7 @@ function SiteFooter() {
       <div>
         <Link href="/method">The Acuity Health Method</Link>
         <Link href="/who-we-are">Who We Are</Link>
-        <Link href="/work-with-us#conversation">Work With Us</Link>
+        <Link href="/work-with-us">Work With Us</Link>
         <Link href="/sign-in">Sign in</Link>
       </div>
     </footer>
@@ -181,7 +182,7 @@ function PartnershipCta() {
           We’ll work beside your team from the first diagnostic through rollout.
         </p>
       </div>
-      <Link className={styles.lightButton} href="/work-with-us#conversation">
+      <Link className={styles.lightButton} href="/work-with-us">
         Start the conversation <ArrowRight size={17} aria-hidden="true" />
       </Link>
     </section>
@@ -204,7 +205,7 @@ export function EnterpriseHome({
             until the new operating model works.
           </p>
           <div className={styles.heroActions}>
-            <Link className={styles.darkButton} href="/work-with-us#conversation">
+            <Link className={styles.darkButton} href="/work-with-us">
               Work with us <ArrowRight size={17} aria-hidden="true" />
             </Link>
             <Link className={styles.textLink} href="/method">
@@ -369,26 +370,6 @@ export function WhoWeArePageContent() {
         </div>
       </section>
 
-      <section
-        aria-labelledby="company-mission"
-        className={styles.missionVision}
-      >
-        <div className={styles.missionStatement}>
-          <p className={styles.eyebrow}>Our mission</p>
-          <h2 id="company-mission">
-            Free medical practices from administrative overload so every patient
-            can be treated like a VIP.
-          </h2>
-        </div>
-        <div className={styles.visionStatement}>
-          <p className={styles.eyebrow}>Our vision</p>
-          <p>
-            A future where AI runs the administration, humans elevate the care,
-            and no patient falls through the cracks.
-          </p>
-        </div>
-      </section>
-
       <section className={styles.foundersSection}>
         <header><p className={styles.eyebrow}>Meet the founders + Engineering team</p><h2>The same people stay in the work.</h2></header>
         <div className={styles.founderGrid}>
@@ -421,6 +402,26 @@ export function WhoWeArePageContent() {
         </div>
       </section>
 
+      <section
+        aria-labelledby="company-mission"
+        className={styles.missionVision}
+      >
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Our mission</p>
+          <h2 id="company-mission">
+            Free medical practices from administrative overload so every patient
+            can be treated like a VIP.
+          </h2>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>Our vision</p>
+          <p>
+            A future where AI runs the administration, humans elevate the care,
+            and no patient falls through the cracks.
+          </p>
+        </div>
+      </section>
+
       <section className={styles.principlesSection}>
         <p className={styles.eyebrow}>How we build</p>
         <div>
@@ -433,21 +434,21 @@ export function WhoWeArePageContent() {
           </article>
           <article>
             <div>
+              <h3>Continuous improvement</h3>
+              <small>KAIZEN · 改善</small>
+            </div>
+            <p>
+              We surface problems, learn from them, and strengthen the system.
+            </p>
+          </article>
+          <article>
+            <div>
               <h3>Craft</h3>
               <small>MONOZUKURI · ものづくり</small>
             </div>
             <p>
               We make every interaction, handoff, and outcome precise and
               dependable.
-            </p>
-          </article>
-          <article>
-            <div>
-              <h3>Continuous improvement</h3>
-              <small>KAIZEN · 改善</small>
-            </div>
-            <p>
-              We surface problems, learn from them, and strengthen the system.
             </p>
           </article>
         </div>
@@ -461,41 +462,40 @@ export function WhoWeArePageContent() {
 export function WorkWithUsPageContent() {
   return (
     <MarketingFrame current="/work-with-us">
-      <section className={styles.workHero}>
-        <div>
-          <p className={styles.eyebrow}>Work with us</p>
-          <h1>Let’s build the patient-access operation together.</h1>
+      <section className={styles.inquirySection} id="conversation">
+        <div className={styles.inquiryIntro}>
+          <p className={styles.eyebrow}>Request a working session</p>
+          <h1>Let’s redesign one patient-access workflow together.</h1>
         </div>
-        <p>
-          Bring us the workflow, the complexity, and the outcome that matters.
-          We’ll determine whether it is the right enterprise transformation to
-          take on together.
-        </p>
+        <WorkWithUsForm />
       </section>
 
-      <section className={styles.conversationSection} id="conversation">
-        <div>
-          <p className={styles.eyebrow}>Start the conversation</p>
-          <h2>Tell us what needs to change.</h2>
-          <p>This is an enterprise operating conversation, not a generic software demo.</p>
-          <a
-            className={styles.darkButton}
-            href="mailto:chase@acuityhealth.io?subject=Work%20with%20Acuity"
-          >
-            Work with us <ArrowRight size={17} aria-hidden="true" />
-          </a>
+      <section className={styles.collaborationSection}>
+        <header>
+          <p className={styles.eyebrow}>How we work together</p>
+        </header>
+        <div className={styles.collaborationSteps}>
+          <article>
+            <span>01</span>
+            <h3>Baseline</h3>
+            <p>Agree on volumes, failure modes, handoffs, and the KPIs that matter.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Redesign</h3>
+            <p>Map the rules, exceptions, ownership, and new workflow with the people who run it.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Test</h3>
+            <p>Launch a bounded pilot that tests the highest-risk assumptions in real operations.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Prove</h3>
+            <p>Compare results with the agreed KPIs, strengthen weak points, and expand when the evidence holds.</p>
+          </article>
         </div>
-        <div className={styles.conversationPrompts}>
-          <p><span>01</span> What breaks in patient access today?</p>
-          <p><span>02</span> Which locations and workflows are affected?</p>
-          <p><span>03</span> Which systems, rules, and teams are involved?</p>
-          <p><span>04</span> What proof would justify expansion?</p>
-        </div>
-      </section>
-
-      <section className={styles.fitStatement}>
-        <p className={styles.eyebrow}>A good fit</p>
-        <h2>Multi-site complexity. High-volume work. A committed operator. Real expansion value.</h2>
       </section>
     </MarketingFrame>
   )

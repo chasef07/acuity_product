@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Instrument_Sans, JetBrains_Mono } from "next/font/google"
 
 import { Providers } from "@/components/providers"
-import { siteConfig } from "@/lib/site"
+import { siteConfig, siteStructuredData } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 import "./globals.css"
@@ -45,17 +45,6 @@ export const metadata: Metadata = {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
     shortcut: "/favicon.ico",
   },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-      "max-video-preview": -1,
-    },
-  },
   openGraph: {
     title: siteConfig.title,
     description: siteConfig.description,
@@ -91,6 +80,12 @@ export default function RootLayout({
       className={cn("h-full", sans.variable, mono.variable)}
     >
       <body className="flex min-h-full flex-col">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(siteStructuredData).replace(/</g, "\\u003c"),
+          }}
+          type="application/ld+json"
+        />
         <Providers>{children}</Providers>
       </body>
     </html>
