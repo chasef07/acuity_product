@@ -48,10 +48,6 @@ export function sameConversationDate(left: string, right: string) {
   return sameLocalDate(new Date(left), new Date(right))
 }
 
-export function technicalTimelineItems(items: ConversationTimelineItem[]) {
-  return items.filter(isRecoveryTechnicalEvent)
-}
-
 export function recoveryFollowUpCallIDs(items: ConversationTimelineItem[]) {
   return new Set(
     items

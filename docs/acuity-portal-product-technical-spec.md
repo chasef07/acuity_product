@@ -4,7 +4,7 @@
 **Release:** Full production
 **Release date:** Thursday, August 6, 2026
 **Team:** Two people working daily
-**Status:** Slice 1 ready for implementation
+**Status:** Active product and release contract
 
 ## Problem Statement
 
@@ -346,7 +346,10 @@ all Go roles ── bounded connections ──> PostgreSQL
 
 - HTTP carries staff commands and AI tool requests.
 - Command responses return committed state, stable IDs, and the new row version immediately. The UI renders requested or connecting state without waiting for a provider webhook.
-- SSE carries one-way task and message update hints. Calling state uses one single-flight authoritative poll, every two seconds while visible and approximately ten seconds while hidden.
+- SSE carries one-way task and message update hints. Calling state uses one
+  single-flight authoritative adaptive poll: 250–500 ms while a visible Call
+  is transient or Ending, 1–2 seconds while Connected, 4–6 seconds while
+  visibly idle, and 8–12 seconds while hidden.
 - SSE payloads contain stable IDs and monotonically increasing versions, not authoritative state.
 - SSE streams have a bounded lifetime, heartbeats, and jittered reconnect. Initial connection and every reconnect reload the current authorized snapshot from `portal-api`.
 - PostgreSQL `LISTEN/NOTIFY` may wake `realtime` instances through one dedicated direct connection per instance; committed rows remain the only durable state.

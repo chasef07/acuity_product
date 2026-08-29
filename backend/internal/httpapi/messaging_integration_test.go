@@ -33,7 +33,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	accessModule := access.New(pool, func() time.Time { return now })
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-5-http-test",
+		RequestedBy: "messaging-http-test",
 		Practices: []access.PracticeProvision{{
 			Key:       "message-http-practice",
 			Name:      "Message HTTP Practice",
@@ -67,8 +67,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		workModule,
 		messageProvider,
 		messaging.Config{
-			WebhookPublicKeys:  []ed25519.PublicKey{publicKey},
-			WebhookTolerance:   time.Minute,
+			WebhookPublicKeys:  [][]byte{publicKey},
 			AttachmentStore:    messaging.NewMemoryAttachmentStore(),
 			MediaPublicBaseURL: "https://ingress.example/v1/provider/messaging-media",
 			MediaSigningKey:    bytes.Repeat([]byte{9}, 32),
@@ -159,7 +158,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	}
 	var receipt api.MessageReceipt
 	decode(t, sent, &receipt)
-	if receipt.Message.Delivery != api.Sending ||
+	if receipt.Message.Delivery != api.MessageDeliveryStateSending ||
 		receipt.Message.Sender != "+17275550100" ||
 		receipt.Message.Destination != "+17275550199" {
 		t.Fatalf("durable HTTP Message = %#v", receipt)
@@ -179,8 +178,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 			nil,
 			nil,
 			humancalling.Config{
-				WebhookPublicKeys: []ed25519.PublicKey{publicKey},
-				WebhookTolerance:  time.Minute,
+				WebhookPublicKeys: [][]byte{publicKey},
 			},
 			nil,
 		),
@@ -193,7 +191,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	defer ingress.Close()
 	now = now.Add(time.Minute)
 	delivery := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.finalized","id":"http-delivery-event","occurred_at":"%s","payload":{"id":"http-provider-message-1","from":"+17275550100","to":"+17275550199","delivery_status":"delivered"}}}`,
+		`{"data":{"record_type":"event","event_type":"message.finalized","id":"http-delivery-event","occurred_at":"%s","payload":{"id":"http-provider-message-1","from":{"phone_number":"+17275550100"},"to":[{"phone_number":"+17275550199","status":"delivered"}]}}}`,
 		now.Format(time.RFC3339),
 	))
 	deliverSignedWebhook(
@@ -211,7 +209,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 
 	now = now.Add(time.Minute)
 	inbound := []byte(fmt.Sprintf(
-		`{"data":{"record_type":"event","event_type":"message.received","id":"http-inbound-event","occurred_at":"%s","payload":{"id":"http-provider-inbound-1","from":"+17275550199","to":"+17275550100","delivery_status":"delivered","text":"Thank you."}}}`,
+		`{"data":{"record_type":"event","event_type":"message.received","id":"http-inbound-event","occurred_at":"%s","payload":{"id":"http-provider-inbound-1","from":{"phone_number":"+17275550199"},"to":[{"phone_number":"+17275550100","status":"webhook_delivered"}],"text":"Thank you."}}}`,
 		now.Format(time.RFC3339),
 	))
 	deliverSignedWebhook(
@@ -263,7 +261,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	decode(t, timelineResponse, &timeline)
 	if len(timeline.Items) != 2 ||
 		timeline.Items[0].Message == nil ||
-		timeline.Items[0].Message.Delivery != api.Delivered ||
+		timeline.Items[0].Message.Delivery != api.MessageDeliveryStateDelivered ||
 		timeline.Items[1].Message == nil ||
 		timeline.Items[1].Message.Direction != api.MessageDirectionINBOUND {
 		t.Fatalf("HTTP conversation timeline = %#v", timeline)
@@ -626,7 +624,7 @@ func deliverSignedWebhook(
 	privateKey ed25519.PrivateKey,
 ) {
 	t.Helper()
-	timestamp := fmt.Sprintf("%d", now.Unix())
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(
 		privateKey,
 		append([]byte(timestamp+"|"), body...),

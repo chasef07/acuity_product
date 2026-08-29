@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-import { WorkspaceShell } from "@/components/workspace/workspace-shell"
+import { PortalWorkspace } from "@/components/workspace/portal-workspace"
 
 export const metadata: Metadata = {
   title: "Operations Workspace",
@@ -13,5 +13,5 @@ export const metadata: Metadata = {
 }
 
 export default function WorkspacePage() {
-  return <WorkspaceShell />
+  return <PortalWorkspace />
 }

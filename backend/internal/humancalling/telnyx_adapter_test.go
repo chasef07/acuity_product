@@ -109,11 +109,13 @@ func TestTelnyxAdapterDeletesExpiredRecordingIdempotently(t *testing.T) {
 			return
 		}
 		deleted <- strings.TrimPrefix(request.URL.Path, "/v2/recordings/")
+		writer.Header().Set("Content-Type", "application/json")
 		if len(deleted) == 2 {
-			http.NotFound(writer, request)
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte(`{"errors":[{"code":"404"}]}`))
 			return
 		}
-		writer.WriteHeader(http.StatusNoContent)
+		_, _ = writer.Write([]byte(`{"data":{"id":"expired-recording"}}`))
 	}))
 	defer server.Close()
 	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
@@ -340,6 +342,7 @@ func TestTelnyxAdapterBoundsHeadersWithoutTimingOutVoicemailBody(t *testing.T) {
 	) {
 		switch request.URL.Path {
 		case "/v2/recordings/provider-recording-1":
+			writer.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(
 				writer,
 				`{"data":{"download_urls":{"mp3":%q}}}`,
@@ -399,6 +402,7 @@ func TestTelnyxAdapterRejectsMalformedPartialVoicemailResponse(t *testing.T) {
 			) {
 				switch request.URL.Path {
 				case "/v2/recordings/provider-recording-1":
+					writer.Header().Set("Content-Type", "application/json")
 					_, _ = fmt.Fprintf(
 						writer,
 						`{"data":{"download_urls":{"mp3":%q}}}`,
@@ -520,6 +524,172 @@ func TestTelnyxAdapterAcceptsRawMediaJWT(t *testing.T) {
 	}
 	if result.JWT != token || !result.JWTExpiresAt.Equal(expiresAt) {
 		t.Fatalf("media JWT result = %#v", result)
+	}
+}
+
+func TestTelnyxAdapterUsesSDKForCallActionsAndCredentialLifecycle(t *testing.T) {
+	type observedRequest struct {
+		method  string
+		path    string
+		query   string
+		payload map[string]any
+	}
+	requests := make([]observedRequest, 0, 7)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Header.Get("Authorization") != "Bearer synthetic-key" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		observed := observedRequest{
+			method: request.Method,
+			path:   request.URL.Path,
+			query:  request.URL.RawQuery,
+		}
+		if request.Body != nil &&
+			request.Method != http.MethodGet &&
+			request.Method != http.MethodDelete {
+			observed.payload = make(map[string]any)
+			if err := json.NewDecoder(request.Body).Decode(&observed.payload); err != nil {
+				http.Error(writer, "invalid JSON", http.StatusBadRequest)
+				return
+			}
+		}
+		requests = append(requests, observed)
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "POST /v2/telephony_credentials":
+			_, _ = writer.Write([]byte(`{"data":{"id":"credential-1","name":"credential-name","sip_username":"synthetic-user","expired":false}}`))
+		case "GET /v2/telephony_credentials":
+			_, _ = writer.Write([]byte(`{"data":[{"id":"credential-1","name":"credential-name","sip_username":"synthetic-user","expired":false}],"meta":{"page_number":1,"total_pages":1}}`))
+		case "DELETE /v2/telephony_credentials/credential-1":
+			_, _ = writer.Write([]byte(`{"data":{"id":"credential-1"}}`))
+		default:
+			_, _ = writer.Write([]byte(`{"data":{"result":"ok"}}`))
+		}
+	}))
+	defer server.Close()
+
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey:     "synthetic-key",
+		BaseURL:    server.URL + "/v2/",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create Telnyx adapter: %v", err)
+	}
+	answerRetries := telnyxLifecycleRetries()
+	delete(answerRetries, "call.initiated")
+	commands := []humancalling.ProviderCommand{
+		{
+			ID:       "answer-command",
+			Action:   humancalling.CommandAnswerCaller,
+			TargetID: "caller-control",
+			Payload: map[string]any{
+				"client_state":             "answer-state",
+				"transcription":            false,
+				"webhook_retries_policies": answerRetries,
+			},
+		},
+		{
+			ID:       "play-command",
+			Action:   humancalling.CommandStartRingWindow,
+			TargetID: "caller-control",
+			Payload: map[string]any{
+				"audio_url":    "https://media.example/ringback.wav",
+				"client_state": "play-state",
+			},
+		},
+		{
+			ID:       "stop-command",
+			Action:   humancalling.CommandStopRingWindow,
+			TargetID: "caller-control",
+			Payload: map[string]any{
+				"stop":         "all",
+				"client_state": "stop-state",
+			},
+		},
+		{
+			ID:       "hangup-command",
+			Action:   humancalling.CommandHangupLeg,
+			TargetID: "caller-control",
+			Payload:  map[string]any{},
+		},
+		{
+			ID:     "credential-command",
+			Action: humancalling.CommandCreateCredential,
+			Payload: map[string]any{
+				"connection_id": "credential-connection",
+				"name":          "credential-name",
+				"tag":           "credential-tag",
+			},
+		},
+	}
+	for _, command := range commands {
+		result, err := adapter.Execute(context.Background(), command)
+		if err != nil {
+			t.Fatalf("execute %s: %v", command.Action, err)
+		}
+		if command.Action == humancalling.CommandCreateCredential &&
+			(result.CredentialID != "credential-1" || result.SIPUsername != "synthetic-user") {
+			t.Fatalf("credential result = %#v", result)
+		}
+	}
+	credential, found, err := adapter.FindCredentialByName(context.Background(), "credential-name")
+	if err != nil || !found || credential.CredentialID != "credential-1" ||
+		credential.SIPUsername != "synthetic-user" {
+		t.Fatalf("credential lookup = %#v, found=%t, err=%v", credential, found, err)
+	}
+	if _, err := adapter.Execute(context.Background(), humancalling.ProviderCommand{
+		ID:       "delete-credential-command",
+		Action:   humancalling.CommandDisableCredential,
+		TargetID: "credential-1",
+		Payload:  map[string]any{},
+	}); err != nil {
+		t.Fatalf("delete credential: %v", err)
+	}
+
+	expected := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/v2/calls/caller-control/actions/answer"},
+		{http.MethodPost, "/v2/calls/caller-control/actions/playback_start"},
+		{http.MethodPost, "/v2/calls/caller-control/actions/playback_stop"},
+		{http.MethodPost, "/v2/calls/caller-control/actions/hangup"},
+		{http.MethodPost, "/v2/telephony_credentials"},
+		{http.MethodGet, "/v2/telephony_credentials"},
+		{http.MethodDelete, "/v2/telephony_credentials/credential-1"},
+	}
+	if len(requests) != len(expected) {
+		t.Fatalf("SDK requests = %#v", requests)
+	}
+	for index, want := range expected {
+		if requests[index].method != want.method || requests[index].path != want.path {
+			t.Fatalf("SDK request %d = %#v, want %s %s", index, requests[index], want.method, want.path)
+		}
+	}
+	if requests[0].payload["command_id"] != "answer-command" ||
+		requests[0].payload["transcription"] != false ||
+		requests[1].payload["command_id"] != "play-command" ||
+		requests[1].payload["audio_url"] != "https://media.example/ringback.wav" ||
+		requests[1].payload["loop"] != nil ||
+		requests[2].payload["command_id"] != "stop-command" ||
+		requests[2].payload["stop"] != "all" ||
+		requests[3].payload["command_id"] != "hangup-command" {
+		t.Fatalf("Call Control SDK payloads = %#v", requests[:4])
+	}
+	if requests[4].payload["connection_id"] != "credential-connection" ||
+		requests[4].payload["name"] != "credential-name" ||
+		requests[4].payload["tag"] != "credential-tag" ||
+		requests[4].payload["command_id"] != nil {
+		t.Fatalf("credential SDK payload = %#v", requests[4].payload)
+	}
+	if query := requests[5].query; !strings.Contains(query, "filter%5Bname%5D=credential-name") ||
+		!strings.Contains(query, "page%5Bsize%5D=2") {
+		t.Fatalf("credential SDK query = %q", query)
 	}
 }
 
@@ -742,6 +912,7 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 
 func TestTelnyxAdapterResolvesCanonicalRecordingCallbackIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		if request.URL.Path != "/v2/recordings" ||
 			request.URL.Query().Get("filter[call_leg_id]") != "caller-leg" ||
 			request.URL.Query().Get("filter[call_session_id]") != "caller-session" ||
@@ -773,6 +944,7 @@ func TestTelnyxAdapterResolvesCanonicalRecordingCallbackIdentity(t *testing.T) {
 
 func TestTelnyxAdapterResolvesTerminalRecordingError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/v2/recordings":
 			_, _ = writer.Write([]byte(`{"data":[]}`))
@@ -848,6 +1020,15 @@ func TestTelnyxAdapterRejectsIncompleteDurableCommand(t *testing.T) {
 		t.Fatal("incomplete durable command reached Telnyx")
 	default:
 	}
+	for _, targetID := range []string{"opaque/control", ".", "..", " opaque-control", "opaque-control "} {
+		if _, err := adapter.Execute(context.Background(), humancalling.ProviderCommand{
+			ID:       "unsafe-target-command",
+			Action:   humancalling.CommandHangupLeg,
+			TargetID: targetID,
+		}); err != humancalling.ErrInvalidInput {
+			t.Fatalf("unsafe target %q error = %v, want %v", targetID, err, humancalling.ErrInvalidInput)
+		}
+	}
 }
 
 func TestTelnyxAdapterClassifiesUncertainTransportWithoutBlindRetry(t *testing.T) {
@@ -892,7 +1073,9 @@ func TestTelnyxAdapterClassifiesCallControlFailures(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			requestCount := 0
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				requestCount++
 				writer.Header().Set("Content-Type", "application/json")
 				writer.WriteHeader(test.status)
 				_, _ = fmt.Fprintf(writer, `{"errors":[{"code":%q,"detail":"must not escape"}]}`, test.code)
@@ -918,6 +1101,9 @@ func TestTelnyxAdapterClassifiesCallControlFailures(t *testing.T) {
 				strings.Contains(err.Error(), "must not escape") {
 				t.Fatalf("classified provider error = %#v, err = %v", providerErr, err)
 			}
+			if requestCount != 1 {
+				t.Fatalf("Telnyx SDK requests = %d, want exactly 1 with retries disabled", requestCount)
+			}
 		})
 	}
 }
@@ -935,12 +1121,17 @@ func TestTelnyxAdapterObservesExactActiveCallAndProviderEvents(t *testing.T) {
 				http.Error(writer, "missing active-call bound", http.StatusBadRequest)
 				return
 			}
+			if request.URL.Query().Get("page[number]") == "2" {
+				_, _ = writer.Write([]byte(`{"data":[
+					{"call_control_id":"other-control","call_leg_id":"other-leg",
+					 "call_session_id":"other-session","client_state":"other-state"}
+				],"meta":{"page_number":2,"total_pages":2}}`))
+				return
+			}
 			_, _ = writer.Write([]byte(`{"data":[
 				{"call_control_id":"control-1","call_leg_id":"leg-1",
-				 "call_session_id":"session-1","client_state":"opaque-state"},
-				{"call_control_id":"other-control","call_leg_id":"other-leg",
-				 "call_session_id":"other-session","client_state":"other-state"}
-			]}`))
+				 "call_session_id":"session-1","client_state":"opaque-state"}
+			],"meta":{"page_number":1,"total_pages":2}}`))
 		case "/v2/call_events":
 			if request.URL.Query().Get("filter[leg_id]") != "leg-1" ||
 				request.URL.Query().Get("filter[type]") != "webhook" ||
@@ -948,11 +1139,8 @@ func TestTelnyxAdapterObservesExactActiveCallAndProviderEvents(t *testing.T) {
 				http.Error(writer, "wrong event filter", http.StatusBadRequest)
 				return
 			}
-			_, _ = writer.Write([]byte(`{"data":[
-				{"name":"call.answered","call_leg_id":"leg-1",
-				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:01Z"},
-				{"name":"call.bridged","call_leg_id":"leg-1",
-				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:02Z"},
+			if request.URL.Query().Get("page[number]") == "2" {
+				_, _ = writer.Write([]byte(`{"data":[
 				{"name":"call.playback.ended","call_leg_id":"leg-1",
 				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:03Z",
 				 "metadata":{"raw":{"data":{"record_type":"event",
@@ -962,7 +1150,15 @@ func TestTelnyxAdapterObservesExactActiveCallAndProviderEvents(t *testing.T) {
 				 "call_leg_id":"leg-1","call_session_id":"session-1",
 				 "client_state":"eyJ2IjoyLCJjYWxsIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwiY2FsbF9sZWciOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJyb2xlIjoiQ0FMTEVSIiwia2luZCI6InJpbmdfd2luZG93In0=",
 				 "status":"completed"}}}}}
-			]}`))
+			],"meta":{"page_number":2,"total_pages":2}}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"data":[
+				{"name":"call.answered","call_leg_id":"leg-1",
+				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:01Z"},
+				{"name":"call.bridged","call_leg_id":"leg-1",
+				 "call_session_id":"session-1","event_timestamp":"2026-08-05T12:00:02Z"}
+			],"meta":{"page_number":1,"total_pages":2}}`))
 		default:
 			http.NotFound(writer, request)
 		}

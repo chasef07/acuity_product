@@ -61,7 +61,7 @@ func TestExecutorClassifiesOnlySupportedPostgresCauses(t *testing.T) {
 	}
 }
 
-func TestExecutorRecordsExpectedNoRowsAsSuccessfulTelemetry(t *testing.T) {
+func TestExecutorOmitsExpectedNoRowsSuccessTelemetry(t *testing.T) {
 	var output bytes.Buffer
 	pool := &scriptedPool{
 		queryRow: func(context.Context, string, ...any) pgx.Row {
@@ -85,9 +85,8 @@ func TestExecutorRecordsExpectedNoRowsAsSuccessfulTelemetry(t *testing.T) {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("empty claim error = %v, want pgx.ErrNoRows", err)
 	}
-	entries := decodeLogEntries(t, output.Bytes())
-	if got := entries[len(entries)-1]["cause"]; got != "succeeded" {
-		t.Fatalf("empty claim telemetry cause = %q, want succeeded", got)
+	if output.Len() != 0 {
+		t.Fatalf("empty claim emitted success telemetry: %s", output.String())
 	}
 }
 

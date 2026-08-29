@@ -90,12 +90,20 @@ func TestTelnyxAdapterClassifiesDefiniteRejectionAndAmbiguousResponses(t *testin
 			responseBody:  `{"data":{}}`,
 			expectedError: messaging.ErrAmbiguous,
 		},
+		"provider failure without retry": {
+			status:        http.StatusInternalServerError,
+			responseBody:  `{"errors":[{"code":"unexpected_provider_failure"}]}`,
+			expectedError: messaging.ErrAmbiguous,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(
 				response http.ResponseWriter,
 				_ *http.Request,
 			) {
+				requests++
+				response.Header().Set("Content-Type", "application/json")
 				response.WriteHeader(testCase.status)
 				_, _ = response.Write([]byte(testCase.responseBody))
 			}))
@@ -121,6 +129,9 @@ func TestTelnyxAdapterClassifiesDefiniteRejectionAndAmbiguousResponses(t *testin
 			if !errors.Is(err, testCase.expectedError) {
 				t.Fatalf("error = %v, want %v", err, testCase.expectedError)
 			}
+			if requests != 1 {
+				t.Fatalf("request count = %d, want 1", requests)
+			}
 		})
 	}
 }
@@ -132,8 +143,9 @@ func TestTelnyxAdapterReconcilesOnlyByProviderMessageIdentity(t *testing.T) {
 		request *http.Request,
 	) {
 		path = request.URL.EscapedPath()
+		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write([]byte(
-			`{"data":{"id":"provider/message 1","to":[{"status":"delivered"}]}}`,
+			`{"data":{"id":"provider-message-1","direction":"outbound","to":[{"phone_number":"+17275550199","status":"delivered"}]}}`,
 		))
 	}))
 	defer server.Close()
@@ -146,14 +158,19 @@ func TestTelnyxAdapterReconcilesOnlyByProviderMessageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create adapter: %v", err)
 	}
-	result, err := adapter.Reconcile(context.Background(), "provider/message 1")
+	result, err := adapter.Reconcile(context.Background(), "provider-message-1")
 	if err != nil {
 		t.Fatalf("reconcile Message: %v", err)
 	}
-	if path != "/messages/provider%2Fmessage%201" ||
-		result.MessageID != "provider/message 1" ||
+	if path != "/messages/provider-message-1" ||
+		result.MessageID != "provider-message-1" ||
 		result.State != messaging.DeliveryDelivered {
 		t.Fatalf("reconcile = %q, %#v", path, result)
+	}
+	for _, messageID := range []string{"provider/message-1", ".", "..", " provider-message-1", "provider-message-1 "} {
+		if _, err := adapter.Reconcile(context.Background(), messageID); err != messaging.ErrInvalidInput {
+			t.Fatalf("unsafe provider Message ID %q error = %v, want %v", messageID, err, messaging.ErrInvalidInput)
+		}
 	}
 }
 
@@ -162,8 +179,9 @@ func TestTelnyxAdapterKeepsAcceptedUnconfirmedDeliveryVisibleAsSent(t *testing.T
 		response http.ResponseWriter,
 		_ *http.Request,
 	) {
+		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write([]byte(
-			`{"data":{"id":"provider-message-1","to":[{"status":"delivery_unconfirmed"}]}}`,
+			`{"data":{"id":"provider-message-1","direction":"outbound","to":[{"phone_number":"+17275550199","status":"delivery_unconfirmed"}]}}`,
 		))
 	}))
 	defer server.Close()

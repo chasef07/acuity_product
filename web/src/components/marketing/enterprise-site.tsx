@@ -3,7 +3,7 @@ import type { StaticImageData } from "next/image"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight, Check } from "lucide-react"
-import { Geist, Newsreader } from "next/font/google"
+import { Geist, JetBrains_Mono, Newsreader } from "next/font/google"
 
 import { AcuityMark } from "@/components/acuity-mark"
 import {
@@ -27,6 +27,11 @@ const sans = Geist({
 const display = Newsreader({
   subsets: ["latin"],
   variable: "--font-acuity-display",
+})
+
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
 })
 
 type MarketingRoute = "/" | "/method" | "/who-we-are" | "/work-with-us"
@@ -100,7 +105,7 @@ export function MarketingFrame({
       key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
       initiallyOpen={initiallyOpen}
     >
-      <div className={cn(styles.site, sans.variable, display.variable)}>
+      <div className={cn(styles.site, sans.variable, display.variable, mono.variable)}>
         <a className={styles.skipLink} href="#main-content">
           Skip to main content
         </a>

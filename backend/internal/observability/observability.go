@@ -265,6 +265,9 @@ func ProviderCommandCompleted(
 }
 
 func DatabasePoolAcquired(outcome PoolAcquireOutcome, duration time.Duration) Event {
+	if outcome == PoolAcquireSucceeded {
+		return Event{}
+	}
 	return event("acuity_call_center_database_pool_acquire",
 		"outcome", bounded(string(outcome), "succeeded", "canceled", "timeout", "failed"),
 		"seconds", positive(duration).Seconds())
@@ -272,8 +275,8 @@ func DatabasePoolAcquired(outcome PoolAcquireOutcome, duration time.Duration) Ev
 
 func DatabaseExecuted(cause DatabaseCause, duration time.Duration) Event {
 	value := string(cause)
-	if value == "" {
-		value = string(DatabaseSucceeded)
+	if value == "" || value == string(DatabaseSucceeded) {
+		return Event{}
 	}
 	return event("acuity_backend_database_execution",
 		"cause", bounded(value,
@@ -396,7 +399,7 @@ func recordingPlayback(
 type Observer interface{ Observe(Event) }
 
 func Record(observer Observer, event Event) {
-	if observer != nil {
+	if observer != nil && event.signal != "" {
 		observer.Observe(event)
 	}
 }

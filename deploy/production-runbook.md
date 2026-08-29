@@ -174,8 +174,9 @@ numbers. Unset `TELNYX_API_KEY` after the check.
 The evidence must prove the current REFER route user survives unchanged, both
 webhook signing keys verify, explicit inbound/outbound Bridge and voicemail
 playback work live, and that old revisions, active Calls, in-flight commands,
-pending receipts, and stale credential mappings are all zero. Do not run the
-migration when any gate is missing or false.
+pending supported runtime receipts, and stale credential mappings are all zero.
+Immutable receipts for retired message kinds are audit history, not pending
+runtime work. Do not run the migration when any gate is missing or false.
 
 2. Confirm `us-east1` for Cloud SQL, every Cloud Run service, the worker pool,
    the recording and Messaging attachment buckets, Artifact Registry, and any
@@ -421,7 +422,9 @@ For that scheduled cutover only:
 
 1. Set the legacy portal to reject new handoffs and show calling maintenance.
 2. Drain to zero active Calls, pending/sending/ambiguous commands, every
-   unprojected receipt (including quarantined receipts), and voicemail work.
+   unprojected supported runtime receipt (including quarantined receipts), and
+   voicemail work. Retained immutable receipts for retired message kinds do not
+   count as executable backlog.
 3. Scale the old API, ingress, realtime, and worker revisions to zero; expire
    softphone leases; switch to the pre-proven replacement Staff credentials;
    disable old credentials; and take the final verified Cloud SQL snapshot.

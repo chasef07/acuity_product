@@ -539,7 +539,6 @@ func (server *Server) IngestAIInteraction(w http.ResponseWriter, r *http.Request
 		Status:          interaction.CallStatus(body.Status),
 		Summary:         stringValue(body.Summary),
 		Transcript:      rawJSON(body.Transcript),
-		SummaryPayload:  rawJSON(body.SummaryPayload),
 		CloseoutPayload: rawJSON(body.CloseoutPayload),
 	}
 	if body.AppointmentOutcome != nil {
@@ -2476,7 +2475,8 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 		if origin := r.Header.Get("Origin"); slices.Contains(server.config.AllowedOrigins, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Correlation-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match, X-Correlation-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "ETag")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
@@ -2853,6 +2853,7 @@ func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {
 		TransferReason:      call.TransferReason,
 		ReasonSource:        call.ReasonSource,
 		ProviderTermination: call.ProviderTermination,
+		EndRequested:        call.EndRequested,
 		RetryAllowed:        call.RetryAllowed,
 		Version:             call.Version,
 	}
@@ -3298,15 +3299,15 @@ func conversationTimelineResponse(
 func visibleDelivery(state messaging.DeliveryState) api.MessageDeliveryState {
 	switch state {
 	case messaging.DeliverySent:
-		return api.Sent
+		return api.MessageDeliveryStateSent
 	case messaging.DeliveryDelivered:
-		return api.Delivered
+		return api.MessageDeliveryStateDelivered
 	case messaging.DeliveryFailed:
-		return api.Failed
+		return api.MessageDeliveryStateFailed
 	case messaging.DeliveryUnknown:
-		return api.StatusUnknown
+		return api.MessageDeliveryStateStatusUnknown
 	default:
-		return api.Sending
+		return api.MessageDeliveryStateSending
 	}
 }
 
@@ -3709,14 +3710,25 @@ func operatorAIInteractionAnalyticsResponse(
 	}
 	for _, execution := range detail.ToolExecutions {
 		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
-			CallId:      execution.CallID,
-			Name:        execution.Name,
-			OccurredAt:  execution.OccurredAt,
-			Status:      api.OperatorAIToolExecutionStatus(execution.Status),
-			OutputClass: stringPointer(execution.OutputClass),
+			CallId:        execution.CallID,
+			Name:          execution.Name,
+			OccurredAt:    execution.OccurredAt,
+			Status:        api.OperatorAIToolExecutionStatus(execution.Status),
+			OutputClass:   stringPointer(execution.OutputClass),
+			DomainOutcome: stringPointer(execution.DomainOutcome),
+			DomainStatus:  optionalOperatorAIToolDomainStatus(execution.DomainStatus),
+			TaskId:        stringPointer(execution.TaskID),
 		})
 	}
 	return response, nil
+}
+
+func optionalOperatorAIToolDomainStatus(value string) *api.OperatorAIToolExecutionDomainStatus {
+	if value == "" {
+		return nil
+	}
+	status := api.OperatorAIToolExecutionDomainStatus(value)
+	return &status
 }
 
 func mapPointer(value map[string]any) *map[string]interface{} {

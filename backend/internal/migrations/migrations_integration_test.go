@@ -34,8 +34,22 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 39 {
-		t.Fatalf("migration count = %d, want 39", migrationCount)
+	if migrationCount != 40 {
+		t.Fatalf("migration count = %d, want 40", migrationCount)
+	}
+	var pendingInteractionReceiptIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'ai_interaction_pending_receipts_idx'
+	`).Scan(&pendingInteractionReceiptIndex); err != nil {
+		t.Fatalf("read pending AI Interaction receipt index: %v", err)
+	}
+	for _, fragment := range []string{"kind", "START", "OUTCOME_CHECKPOINT", "CLOSEOUT"} {
+		if !strings.Contains(pendingInteractionReceiptIndex, fragment) {
+			t.Errorf("pending AI Interaction receipt index omits %q: %s",
+				fragment, pendingInteractionReceiptIndex)
+		}
 	}
 	var recordingRetentionIndex string
 	if err := pool.QueryRow(ctx, `
@@ -187,6 +201,77 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	}
 	if legacyVoicemailColumns != 0 {
 		t.Fatalf("legacy voicemail copy columns = %d, want 0", legacyVoicemailColumns)
+	}
+}
+
+func TestRetiredSummaryReceiptMigrationPreservesAuditRowsOutsideBacklog(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0039_automatic_task_acknowledgements.sql")
+	ctx := context.Background()
+	const (
+		historyPractice = "00000000-0000-0000-0000-000000004001"
+		historyLocation = "00000000-0000-0000-0000-000000004002"
+		historyReceipt  = "00000000-0000-0000-0000-000000004003"
+	)
+	if _, err := pool.Exec(ctx, `
+		DROP INDEX ai_interaction_pending_receipts_idx;
+		CREATE INDEX ai_interaction_pending_receipts_idx
+			ON ai_interaction_receipts (received_at, id)
+			WHERE state = 'PENDING'
+				AND kind IN ('START', 'OUTCOME_CHECKPOINT', 'CLOSEOUT', 'SUMMARY');
+	`); err != nil {
+		t.Fatalf("restore unsafe pending receipt index: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_practices (id, provisioning_key, name)
+		VALUES ($1, 'summary-history', 'Summary History')
+	`, historyPractice); err != nil {
+		t.Fatalf("seed historical SUMMARY Practice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO access_locations (id, practice_id, provisioning_key, name)
+		VALUES ($2, $1, 'main', 'Main')
+	`, historyPractice, historyLocation); err != nil {
+		t.Fatalf("seed historical SUMMARY Location: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO ai_interaction_receipts (
+			id, service_subject, practice_id, location_id, source_call_id,
+			kind, payload_fingerprint, payload
+		) VALUES (
+			$3, 'abita-agent', $1, $2, 'historical-summary', 'SUMMARY',
+			decode(repeat('01', 32), 'hex'), '{"historical":true}'::jsonb
+		)
+	`, historyPractice, historyLocation, historyReceipt); err != nil {
+		t.Fatalf("seed historical SUMMARY receipt: %v", err)
+	}
+
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatalf("apply retired SUMMARY backlog migration: %v", err)
+	}
+
+	var receiptState, indexDefinition string
+	if err := pool.QueryRow(ctx, `
+		SELECT state FROM ai_interaction_receipts WHERE id = $1
+	`, historyReceipt).Scan(&receiptState); err != nil {
+		t.Fatalf("read historical SUMMARY receipt: %v", err)
+	}
+	if receiptState != "PENDING" {
+		t.Fatalf("historical SUMMARY receipt state = %q, want PENDING", receiptState)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'ai_interaction_pending_receipts_idx'
+	`).Scan(&indexDefinition); err != nil {
+		t.Fatalf("read upgraded AI Interaction receipt index: %v", err)
+	}
+	for _, fragment := range []string{"START", "OUTCOME_CHECKPOINT", "CLOSEOUT"} {
+		if !strings.Contains(indexDefinition, fragment) {
+			t.Errorf("upgraded pending receipt index omits %q: %s", fragment, indexDefinition)
+		}
+	}
+	if strings.Contains(indexDefinition, "SUMMARY") {
+		t.Fatalf("upgraded pending receipt index includes retired SUMMARY: %s", indexDefinition)
 	}
 }
 

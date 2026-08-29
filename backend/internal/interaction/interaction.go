@@ -24,7 +24,6 @@ type MessageKind string
 
 const (
 	MessageStart             MessageKind = "START"
-	MessageSummary           MessageKind = "SUMMARY"
 	MessageCloseout          MessageKind = "CLOSEOUT"
 	MessageOutcomeCheckpoint MessageKind = "OUTCOME_CHECKPOINT"
 )
@@ -66,9 +65,9 @@ const (
 type LifecycleStage int16
 
 const (
-	LifecycleStarted    LifecycleStage = 1
-	LifecycleSummarized LifecycleStage = 2
-	LifecycleClosed     LifecycleStage = 3
+	LifecycleStarted LifecycleStage = 1
+	// Stage 2 belongs only to stored historical SUMMARY rows.
+	LifecycleClosed LifecycleStage = 3
 )
 
 var (
@@ -101,7 +100,6 @@ type IngestCommand struct {
 	Summary         string
 	Transcript      json.RawMessage
 	Appointment     *AppointmentEvidence
-	SummaryPayload  json.RawMessage
 	CloseoutPayload json.RawMessage
 }
 
@@ -127,7 +125,6 @@ type Interaction struct {
 	NewAppointmentID      string
 	BookingResult         json.RawMessage
 	CancellationResult    json.RawMessage
-	SummaryPayload        json.RawMessage
 	CloseoutPayload       json.RawMessage
 	LifecycleStage        LifecycleStage
 	CreatedAt             time.Time
@@ -667,7 +664,6 @@ func validCommand(command IngestCommand) bool {
 		(command.EndedAt != nil && command.EndedAt.Before(command.StartedAt)) ||
 		!textLengthBetween(command.Summary, 0, 10000) ||
 		!validOptionalJSON(command.Transcript) ||
-		!validOptionalJSON(command.SummaryPayload) ||
 		!validOptionalJSON(command.CloseoutPayload) {
 		return false
 	}
@@ -675,21 +671,16 @@ func validCommand(command IngestCommand) bool {
 	case MessageStart:
 		return command.Status == CallInProgress && command.EndedAt == nil &&
 			command.Summary == "" && len(command.Transcript) == 0 &&
-			command.Appointment == nil && len(command.SummaryPayload) == 0 &&
-			len(command.CloseoutPayload) == 0
-	case MessageSummary:
-		return command.EndedAt != nil && command.Status != CallInProgress &&
-			len(command.SummaryPayload) > 0 && len(command.CloseoutPayload) == 0 &&
-			validOptionalAppointmentEvidence(command.Appointment)
+			command.Appointment == nil && len(command.CloseoutPayload) == 0
 	case MessageCloseout:
 		return command.EndedAt != nil &&
 			command.Status != CallInProgress &&
-			len(command.CloseoutPayload) > 0 && len(command.SummaryPayload) == 0 &&
+			len(command.CloseoutPayload) > 0 &&
 			validOptionalAppointmentEvidence(command.Appointment)
 	case MessageOutcomeCheckpoint:
 		return command.Status == CallInProgress && command.EndedAt == nil &&
 			command.Summary == "" && len(command.Transcript) == 0 &&
-			len(command.SummaryPayload) == 0 && len(command.CloseoutPayload) == 0 &&
+			len(command.CloseoutPayload) == 0 &&
 			validAppointmentEvidence(command.Appointment)
 	default:
 		return false
@@ -744,8 +735,6 @@ func messageLifecycleStage(kind MessageKind) LifecycleStage {
 	switch kind {
 	case MessageStart, MessageOutcomeCheckpoint:
 		return LifecycleStarted
-	case MessageSummary:
-		return LifecycleSummarized
 	case MessageCloseout:
 		return LifecycleClosed
 	default:
@@ -792,13 +781,6 @@ func applyMessage(
 		}
 	}
 	var err error
-	interaction.SummaryPayload, err = richerEvidenceJSON(
-		interaction.SummaryPayload,
-		command.SummaryPayload,
-	)
-	if err != nil {
-		return err
-	}
 	interaction.CloseoutPayload, err = richerEvidenceJSON(
 		interaction.CloseoutPayload,
 		command.CloseoutPayload,
@@ -1071,7 +1053,6 @@ const interactionSelect = `
 		COALESCE(interaction.new_appointment_id, ''),
 		interaction.booking_result,
 		interaction.cancellation_result,
-		interaction.summary_payload,
 		interaction.closeout_payload,
 		interaction.lifecycle_stage,
 		interaction.created_at,
@@ -1109,7 +1090,6 @@ func scanInteraction(row rowScanner) (Interaction, error) {
 		&interaction.NewAppointmentID,
 		&interaction.BookingResult,
 		&interaction.CancellationResult,
-		&interaction.SummaryPayload,
 		&interaction.CloseoutPayload,
 		&interaction.LifecycleStage,
 		&interaction.CreatedAt,
@@ -1133,11 +1113,11 @@ func save(
 				appointment_outcome,
 				appointment_occurred_at, old_appointment_id, new_appointment_id,
 				booking_result, cancellation_result,
-				summary_payload, closeout_payload, lifecycle_stage, created_at, updated_at
+				closeout_payload, lifecycle_stage, created_at, updated_at
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 				$11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-				$21, $22, $23, $24, $25
+				$21, $22, $23, $24
 			)
 		`, interactionValues(interaction)...)
 		if err != nil {
@@ -1159,10 +1139,9 @@ func save(
 			new_appointment_id = $11,
 			booking_result = $12,
 			cancellation_result = $13,
-			summary_payload = $14,
-			closeout_payload = $15,
-			lifecycle_stage = $16,
-			updated_at = $17
+			closeout_payload = $14,
+			lifecycle_stage = $15,
+			updated_at = $16
 		WHERE id = $1
 	`,
 		interaction.ID,
@@ -1178,7 +1157,6 @@ func save(
 		nullIfEmpty(interaction.NewAppointmentID),
 		nullIfEmptyJSON(interaction.BookingResult),
 		nullIfEmptyJSON(interaction.CancellationResult),
-		nullIfEmptyJSON(interaction.SummaryPayload),
 		nullIfEmptyJSON(interaction.CloseoutPayload),
 		interaction.LifecycleStage,
 		interaction.UpdatedAt,
@@ -1211,7 +1189,6 @@ func interactionValues(interaction Interaction) []any {
 		nullIfEmpty(interaction.NewAppointmentID),
 		nullIfEmptyJSON(interaction.BookingResult),
 		nullIfEmptyJSON(interaction.CancellationResult),
-		nullIfEmptyJSON(interaction.SummaryPayload),
 		nullIfEmptyJSON(interaction.CloseoutPayload),
 		interaction.LifecycleStage,
 		interaction.CreatedAt,

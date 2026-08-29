@@ -42,7 +42,7 @@ func TestRealtimeStreamsDisposablePostgresHintsForAuthorizedScope(t *testing.T) 
 	}
 	_, err := accessModule.Provision(context.Background(), access.Provisioning{
 		Environment:       "test",
-		RequestedBy:       "slice-1-realtime-test",
+		RequestedBy:       "workspace-realtime-test",
 		PlatformOperators: []string{operator.Email},
 		Practices: []access.PracticeProvision{{
 			Key:       "abita-eye-group",

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -13,14 +14,13 @@ import (
 type CallingWork interface {
 	ProcessNextReceipt(context.Context) (bool, error)
 	ReportReceiptQueue(context.Context) error
-	ProcessNextCommand(context.Context) (bool, error)
+	ClaimNextCommand(context.Context) (func(context.Context) error, bool, error)
 	ProcessNextCredentialReconciliation(context.Context) (bool, error)
 	ProcessNextRecoveryReconciliation(context.Context) (bool, error)
 	ProcessNextRecordingReconciliation(context.Context) (bool, error)
 	ProcessNextRecordingRetention(context.Context) (bool, error)
-	ReconcileStaleCalls(context.Context) (int, error)
+	MaintainOutgoingCallLegs(context.Context) (bool, error)
 	ExpireDispositions(context.Context) (int, error)
-	RecoverInterruptedCommands(context.Context) error
 	ReconcileCredentials(context.Context) error
 }
 
@@ -134,7 +134,7 @@ func New(
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	lanes.Add(6 + runner.config.CommandWorkers)
+	lanes.Add(7)
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLane(
@@ -144,17 +144,10 @@ func (runner *Runner) Run(ctx context.Context) error {
 			runner.work.ProcessNextReceipt,
 		)
 	}()
-	for range runner.config.CommandWorkers {
-		go func() {
-			defer lanes.Done()
-			runner.runProviderCommandLane(
-				ctx,
-				runner.config.ProviderCommandBatchSize,
-				"provider_command_processing_failed",
-				runner.work.ProcessNextCommand,
-			)
-		}()
-	}
+	go func() {
+		defer lanes.Done()
+		runner.runProviderCommands(ctx)
+	}()
 	go func() {
 		defer lanes.Done()
 		runner.runQueueLane(
@@ -199,6 +192,117 @@ func (runner *Runner) Run(ctx context.Context) error {
 	return nil
 }
 
+func (runner *Runner) runProviderCommands(ctx context.Context) {
+	commands := make(chan func(context.Context) error)
+	available := make(chan struct{}, runner.config.CommandWorkers)
+	for range runner.config.CommandWorkers {
+		available <- struct{}{}
+	}
+
+	var executors sync.WaitGroup
+	executors.Add(runner.config.CommandWorkers)
+	for range runner.config.CommandWorkers {
+		go func() {
+			defer executors.Done()
+			runner.runProviderCommandExecutor(ctx, commands, available)
+		}()
+	}
+
+	runner.coordinateProviderCommands(ctx, commands, available)
+	close(commands)
+	executors.Wait()
+}
+
+func (runner *Runner) coordinateProviderCommands(
+	ctx context.Context,
+	commands chan<- func(context.Context) error,
+	available chan struct{},
+) {
+	backoff := newFailureBackoff(
+		runner.config.ErrorBackoffMin,
+		runner.config.ErrorBackoffMax,
+	)
+	for ctx.Err() == nil {
+		failed := false
+		for range runner.config.ProviderCommandBatchSize {
+			select {
+			case <-ctx.Done():
+				return
+			case <-available:
+			}
+
+			command, claimed, err := runCommandClaim(
+				ctx,
+				runner.config.WorkTimeout,
+				runner.work.ClaimNextCommand,
+			)
+			if err != nil {
+				available <- struct{}{}
+				warn(ctx, "provider_command_claim_failed", err)
+				failed = true
+				break
+			}
+			backoff.reset()
+			if !claimed {
+				available <- struct{}{}
+				break
+			}
+			if command == nil {
+				available <- struct{}{}
+				warn(ctx, "provider_command_claim_failed", errors.New("claimed provider command has no effect"))
+				failed = true
+				break
+			}
+			select {
+			case <-ctx.Done():
+				available <- struct{}{}
+				return
+			case commands <- command:
+			}
+		}
+
+		delay := runner.config.WorkInterval
+		if failed {
+			delay = backoff.fail(runner.jitter)
+		}
+		if !runner.wait(ctx, delay) {
+			return
+		}
+	}
+}
+
+func (runner *Runner) runProviderCommandExecutor(
+	ctx context.Context,
+	commands <-chan func(context.Context) error,
+	available chan<- struct{},
+) {
+	backoff := newFailureBackoff(
+		runner.config.ErrorBackoffMin,
+		runner.config.ErrorBackoffMax,
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case command, ok := <-commands:
+			if !ok {
+				return
+			}
+			err := runWork(ctx, runner.config.WorkTimeout, command)
+			if err == nil {
+				backoff.reset()
+			} else {
+				warn(ctx, "provider_command_processing_failed", err)
+				if !runner.wait(ctx, backoff.fail(runner.jitter)) {
+					available <- struct{}{}
+					return
+				}
+			}
+			available <- struct{}{}
+		}
+	}
+}
+
 func (runner *Runner) processNextMessageCommand(ctx context.Context) (bool, error) {
 	queued, err := runner.messages.QueueNextTaskAcknowledgement(ctx)
 	if err != nil {
@@ -220,21 +324,6 @@ func (runner *Runner) runQueueLane(
 		failureEvent,
 		process,
 		runner.config.IdleBackoffMax,
-	)
-}
-
-func (runner *Runner) runProviderCommandLane(
-	ctx context.Context,
-	batchSize int,
-	failureEvent string,
-	process func(context.Context) (bool, error),
-) {
-	runner.runQueueLaneWithIdleMaximum(
-		ctx,
-		batchSize,
-		failureEvent,
-		process,
-		runner.config.WorkInterval,
 	)
 }
 
@@ -344,8 +433,8 @@ func (runner *Runner) runMaintenanceAndDelay(
 
 func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	failed := false
-	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ReconcileStaleCalls); err != nil {
-		warn(ctx, "calling_stale_reconciliation_failed", err)
+	if _, err := runBoolWork(ctx, runner.config.WorkTimeout, runner.work.MaintainOutgoingCallLegs); err != nil {
+		warn(ctx, "outgoing_call_leg_maintenance_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
@@ -353,13 +442,6 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	}
 	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireDispositions); err != nil {
 		warn(ctx, "calling_disposition_expiry_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if err := runWork(ctx, runner.config.WorkTimeout, runner.work.RecoverInterruptedCommands); err != nil {
-		warn(ctx, "provider_command_recovery_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
@@ -486,6 +568,16 @@ func runBoolWork(
 	workContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return work(workContext)
+}
+
+func runCommandClaim(
+	ctx context.Context,
+	timeout time.Duration,
+	claim func(context.Context) (func(context.Context) error, bool, error),
+) (func(context.Context) error, bool, error) {
+	workContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return claim(workContext)
 }
 
 func runCountWork(

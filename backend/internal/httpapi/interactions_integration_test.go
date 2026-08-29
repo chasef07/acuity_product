@@ -373,81 +373,97 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("concurrent AI Interaction created count = %d", createdCount)
 	}
 
-	checkpointBody, _ := json.Marshal(map[string]any{
-		"kind":         "OUTCOME_CHECKPOINT",
-		"officeKey":    "spring-hill",
-		"sourceCallId": "abita-call-63",
-		"callerPhone":  "+17275550199",
-		"officePhone":  "+17275919997",
-		"startedAt":    startedAt.Format(time.RFC3339Nano),
-		"status":       "IN_PROGRESS",
-		"appointmentOutcome": map[string]any{
-			"action":            "RESCHEDULED",
-			"occurredAt":        now.Add(3 * time.Minute).Format(time.RFC3339),
-			"externalPatientId": "patient-63",
-			"oldAppointmentId":  "appointment-old",
-			"newAppointmentId":  "appointment-new",
-			"bookingResult": map[string]any{
-				"status":          "booked",
-				"appointmentId":   6302,
-				"receiptSequence": json.Number("9007199254740993"),
-			},
-			"cancellationResult": map[string]any{"status": "error", "reason": "middleware_error"},
-		},
-	})
-	checkpoint := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", checkpointBody,
-	)
-	if checkpoint.StatusCode != http.StatusOK {
-		t.Fatalf("checkpoint AI Interaction status = %d, body = %s",
-			checkpoint.StatusCode, readBody(t, checkpoint))
-	}
-	_ = checkpoint.Body.Close()
-	checkpointReplay := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", checkpointBody,
-	)
-	if checkpointReplay.StatusCode != http.StatusOK {
-		t.Fatalf("checkpoint replay AI Interaction status = %d, body = %s",
-			checkpointReplay.StatusCode, readBody(t, checkpointReplay))
-	}
-	_ = checkpointReplay.Body.Close()
-
 	endedAt := now.Add(5 * time.Minute)
-	summaryBody, _ := json.Marshal(map[string]any{
-		"kind":         "SUMMARY",
-		"officeKey":    "spring-hill",
-		"sourceCallId": "abita-call-63",
-		"callerPhone":  "+17275550199",
-		"officePhone":  "+17275919997",
-		"startedAt":    startedAt.Format(time.RFC3339Nano),
-		"endedAt":      endedAt.Format(time.RFC3339),
-		"status":       "COMPLETED",
-		"summary":      "Caller rescheduled an appointment.",
-		"summaryPayload": map[string]any{
-			"callId": "abita-call-63",
-			"phase":  "summary",
-		},
-		"transcript": map[string]any{
-			"phase": "summary",
-			"items": []map[string]any{{
-				"id":   "turn-1",
-				"role": "user",
-				"text": "Please move my appointment.",
-			}},
-		},
-	})
-	for attempt := 1; attempt <= 2; attempt++ {
-		summary := request(
-			t, server.Client(), http.MethodPost,
-			server.URL+"/v1/ai/interactions", "production-interaction-token", summaryBody,
-		)
-		if summary.StatusCode != http.StatusOK {
-			t.Fatalf("summary attempt %d AI Interaction status = %d, body = %s",
-				attempt, summary.StatusCode, readBody(t, summary))
+	t.Run("rejects SUMMARY before durable receipt", func(t *testing.T) {
+		legacySummaryBody, _ := json.Marshal(map[string]any{
+			"kind":           "SUMMARY",
+			"officeKey":      "spring-hill",
+			"sourceCallId":   "abita-call-63",
+			"callerPhone":    "+17275550199",
+			"officePhone":    "+17275919997",
+			"startedAt":      startedAt.Format(time.RFC3339Nano),
+			"endedAt":        endedAt.Format(time.RFC3339),
+			"status":         "COMPLETED",
+			"summary":        "Caller rescheduled an appointment.",
+			"summaryPayload": map[string]any{"phase": "legacy-summary"},
+		})
+		closeoutShapedSummaryBody, _ := json.Marshal(map[string]any{
+			"kind":         "SUMMARY",
+			"officeKey":    "spring-hill",
+			"sourceCallId": "abita-call-63",
+			"callerPhone":  "+17275550199",
+			"officePhone":  "+17275919997",
+			"startedAt":    startedAt.Format(time.RFC3339Nano),
+			"endedAt":      endedAt.Format(time.RFC3339),
+			"status":       "COMPLETED",
+			"summary":      "Caller rescheduled an appointment.",
+			"transcript":   map[string]any{"items": []map[string]any{{"role": "user"}}},
+			"closeoutPayload": map[string]any{
+				"callId": "abita-call-63",
+			},
+		})
+		for name, requestBody := range map[string][]byte{
+			"legacy payload":          legacySummaryBody,
+			"closeout-shaped payload": closeoutShapedSummaryBody,
+		} {
+			response := request(
+				t, server.Client(), http.MethodPost,
+				server.URL+"/v1/ai/interactions", "production-interaction-token", requestBody,
+			)
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("%s SUMMARY AI Interaction status = %d, body = %s",
+					name, response.StatusCode, readBody(t, response))
+			}
+			_ = response.Body.Close()
 		}
-		_ = summary.Body.Close()
+		var summaryReceiptCount int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT count(*)
+			FROM ai_interaction_receipts
+			WHERE practice_id = $1
+				AND source_call_id = 'abita-call-63'
+				AND kind = 'SUMMARY'
+		`, practiceID).Scan(&summaryReceiptCount); err != nil {
+			t.Fatalf("read rejected SUMMARY receipts: %v", err)
+		}
+		if summaryReceiptCount != 0 {
+			t.Fatalf("rejected SUMMARY receipt count = %d, want 0", summaryReceiptCount)
+		}
+	})
+	sessionReport := map[string]any{
+		"chat_history": map[string]any{"items": []map[string]any{
+			{
+				"id":         "turn-1",
+				"type":       "message",
+				"role":       "user",
+				"content":    []string{"Please move my appointment."},
+				"created_at": now.Add(time.Minute).UnixMilli(),
+			},
+			{
+				"id":         "tool-1",
+				"type":       "function_call",
+				"name":       "reschedule_appointment",
+				"call_id":    "reschedule-63",
+				"arguments":  `{"appointmentId":"appointment-old"}`,
+				"created_at": now.Add(2 * time.Minute).UnixMilli(),
+			},
+			{
+				"id":         "result-1",
+				"type":       "function_call_output",
+				"name":       "reschedule_appointment",
+				"call_id":    "reschedule-63",
+				"output":     `"Rescheduled."`,
+				"is_error":   false,
+				"created_at": now.Add(3 * time.Minute).UnixMilli(),
+			},
+			{
+				"id":         "turn-2",
+				"type":       "message",
+				"role":       "assistant",
+				"content":    []string{"Your appointment is rescheduled."},
+				"created_at": now.Add(4 * time.Minute).UnixMilli(),
+			},
+		}},
 	}
 	closeoutBody, _ := json.Marshal(map[string]any{
 		"kind":         "CLOSEOUT",
@@ -458,22 +474,8 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"startedAt":    startedAt.Format(time.RFC3339Nano),
 		"endedAt":      endedAt.Format(time.RFC3339),
 		"status":       "COMPLETED",
-		"summary":      "Caller successfully rescheduled an appointment.",
-		"transcript": map[string]any{
-			"phase": "closeout",
-			"items": []map[string]any{
-				{
-					"id":   "turn-1",
-					"role": "user",
-					"text": "Please move my appointment.",
-				},
-				{
-					"id":   "turn-2",
-					"role": "assistant",
-					"text": "I can help with that.",
-				},
-			},
-		},
+		"summary":      "Caller rescheduled an appointment.",
+		"transcript":   sessionReport,
 		"appointmentOutcome": map[string]any{
 			"action":            "RESCHEDULED",
 			"occurredAt":        now.Add(3 * time.Minute).Format(time.RFC3339),
@@ -488,27 +490,59 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 			"cancellationResult": map[string]any{"status": "cancelled"},
 		},
 		"closeoutPayload": map[string]any{
-			"callId": "abita-call-63",
-			"appointmentActions": []map[string]any{{
-				"action": "rescheduled",
-				"status": "success",
-				"appointment": map[string]any{
-					"patientName":         "Jane Doe",
-					"appointmentDate":     "2026-08-20",
-					"appointmentTime":     "2:30 PM",
-					"providerName":        "Dr. Bach",
-					"locationName":        "Spring Hill",
-					"appointmentTypeName": "Medical follow-up",
-					"careLane":            "medical_md",
+			"callId":      "abita-call-63",
+			"callerPhone": "+17275550199",
+			"officeKey":   "spring-hill",
+			"officePhone": "+17275919997",
+			"startedAt":   startedAt.Format(time.RFC3339Nano),
+			"endedAt":     endedAt.Format(time.RFC3339),
+			"status":      "COMPLETED",
+			"durationSec": 300,
+			"language":    map[string]any{"currentLanguage": "en"},
+			"voiceLanguage": map[string]any{
+				"activeLanguage": "en",
+			},
+			"appointmentOutcome": map[string]any{
+				"action":            "rescheduled",
+				"occurredAt":        now.Add(3 * time.Minute).Format(time.RFC3339),
+				"externalPatientId": "patient-63",
+				"oldAppointmentId":  "appointment-old",
+				"newAppointmentId":  "appointment-new",
+				"bookingResult": map[string]any{
+					"status":          "booked",
+					"appointmentId":   6302,
+					"receiptSequence": json.Number("9007199254740993"),
 				},
-				"cancelledAppointment": map[string]any{
-					"patientName":     "Jane Doe",
-					"appointmentDate": "2026-08-12",
-					"appointmentTime": "9:00 AM",
-					"providerName":    "Dr. Bach",
-					"locationName":    "Spring Hill",
+				"cancellationResult": map[string]any{"status": "cancelled"},
+			},
+			"domainOutcomes": []map[string]any{{
+				"callId":     "reschedule-63",
+				"toolName":   "reschedule_appointment",
+				"outcome":    "rescheduled",
+				"status":     "success",
+				"occurredAt": now.Add(3 * time.Minute).Format(time.RFC3339),
+				"evidence": map[string]any{
+					"action": "rescheduled",
+					"appointment": map[string]any{
+						"patientName":         "Jane Doe",
+						"appointmentDate":     "2026-08-20",
+						"appointmentTime":     "2:30 PM",
+						"providerName":        "Dr. Bach",
+						"locationName":        "Spring Hill",
+						"appointmentTypeName": "Medical follow-up",
+						"careLane":            "medical_md",
+					},
+					"cancelledAppointment": map[string]any{
+						"patientName":     "Jane Doe",
+						"appointmentDate": "2026-08-12",
+						"appointmentTime": "9:00 AM",
+						"providerName":    "Dr. Bach",
+						"locationName":    "Spring Hill",
+					},
 				},
 			}},
+			"sttProfiles":   []map[string]any{},
+			"sessionReport": sessionReport,
 		},
 	})
 	closeout := request(
@@ -590,7 +624,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 	decode(t, detail, &stored)
 	if stored.Status != "COMPLETED" ||
-		stored.Summary != "Caller successfully rescheduled an appointment." ||
+		stored.Summary != "Caller rescheduled an appointment." ||
 		stored.AppointmentAction != "RESCHEDULED" ||
 		stored.AppointmentOutcome != "RESCHEDULE" ||
 		stored.Appointment["patientName"] != "Jane Doe" ||
@@ -632,10 +666,26 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		CloseoutPayload map[string]any `json:"closeoutPayload"`
 	}
 	decode(t, evidence, &storedEvidence)
-	storedTranscript, _ := json.Marshal(storedEvidence.Transcript)
-	if string(storedTranscript) != `{"items":[{"id":"turn-1","role":"user","text":"Please move my appointment."},{"id":"turn-2","role":"assistant","text":"I can help with that."}],"phase":"closeout"}` ||
-		storedEvidence.CloseoutPayload["appointmentActions"] == nil {
+	chatHistory, _ := storedEvidence.Transcript["chat_history"].(map[string]any)
+	chatItems, _ := chatHistory["items"].([]any)
+	if len(chatItems) != 4 || storedEvidence.CloseoutPayload["domainOutcomes"] == nil {
 		t.Fatalf("admin AI Interaction evidence = %#v", storedEvidence)
+	}
+	var interactionCount, transcriptEvidenceCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*),
+			count(*) FILTER (
+				WHERE transcript IS NOT NULL AND closeout_payload IS NOT NULL
+			)
+		FROM ai_interactions
+		WHERE practice_id = $1 AND source_call_id = 'abita-call-63'
+	`, practiceID).Scan(&interactionCount, &transcriptEvidenceCount); err != nil {
+		t.Fatalf("read START to CLOSEOUT persistence: %v", err)
+	}
+	if interactionCount != 1 || transcriptEvidenceCount != 1 {
+		t.Fatalf("START to CLOSEOUT persistence = (%d, %d), want (1, 1)",
+			interactionCount, transcriptEvidenceCount)
 	}
 	staffEvidence := request(
 		t, server.Client(), http.MethodGet,
@@ -659,8 +709,8 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	`, practiceID).Scan(&receiptCount, &duplicateCount, &quarantinedCount); err != nil {
 		t.Fatalf("read AI Interaction receipts: %v", err)
 	}
-	if receiptCount != 5 || duplicateCount != 5 || quarantinedCount != 1 {
-		t.Fatalf("AI Interaction receipt counts = (%d, %d, %d), want (5, 5, 1)",
+	if receiptCount != 3 || duplicateCount != 3 || quarantinedCount != 1 {
+		t.Fatalf("AI Interaction receipt counts = (%d, %d, %d), want (3, 3, 1)",
 			receiptCount, duplicateCount, quarantinedCount)
 	}
 	deniedDetail := request(
@@ -1265,125 +1315,6 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 	if receiptCount != 4 {
 		t.Fatalf("sequence AI Interaction receipt count = %d, want 4", receiptCount)
 	}
-
-	lateEvidenceEndedAt := endedAt.Add(10 * time.Minute)
-	closeoutFirstBody, _ := json.Marshal(map[string]any{
-		"kind":            "CLOSEOUT",
-		"officeKey":       "spring-hill",
-		"sourceCallId":    "abita-closeout-first-63",
-		"callerPhone":     "+17275550211",
-		"officePhone":     "+17275919997",
-		"startedAt":       startedAt.Format(time.RFC3339Nano),
-		"endedAt":         lateEvidenceEndedAt.Format(time.RFC3339Nano),
-		"status":          "COMPLETED",
-		"closeoutPayload": map[string]any{"callId": "abita-closeout-first-63"},
-	})
-	closeoutFirst := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", closeoutFirstBody,
-	)
-	if closeoutFirst.StatusCode != http.StatusCreated {
-		t.Fatalf("closeout-first AI Interaction status = %d, body = %s",
-			closeoutFirst.StatusCode, readBody(t, closeoutFirst))
-	}
-	var closeoutFirstReceipt struct {
-		InteractionID string `json:"interactionId"`
-	}
-	decode(t, closeoutFirst, &closeoutFirstReceipt)
-	lateSummaryBody, _ := json.Marshal(map[string]any{
-		"kind":         "SUMMARY",
-		"officeKey":    "spring-hill",
-		"sourceCallId": "abita-closeout-first-63",
-		"callerPhone":  "+17275550211",
-		"officePhone":  "+17275919997",
-		"startedAt":    startedAt.Format(time.RFC3339Nano),
-		"endedAt":      lateEvidenceEndedAt.Format(time.RFC3339Nano),
-		"status":       "COMPLETED",
-		"summary":      "Late durable summary.",
-		"transcript":   map[string]any{"items": []map[string]any{{"id": "late-turn"}}},
-		"summaryPayload": map[string]any{
-			"phase": "summary",
-		},
-	})
-	lateSummary := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", lateSummaryBody,
-	)
-	if lateSummary.StatusCode != http.StatusOK {
-		t.Fatalf("late summary AI Interaction status = %d, body = %s",
-			lateSummary.StatusCode, readBody(t, lateSummary))
-	}
-	_ = lateSummary.Body.Close()
-	lateEvidenceDetail := request(
-		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/ai/interactions/"+closeoutFirstReceipt.InteractionID+"/evidence",
-		"admin-token", nil,
-	)
-	var lateEvidenceStored struct {
-		Transcript map[string]any `json:"transcript"`
-	}
-	decode(t, lateEvidenceDetail, &lateEvidenceStored)
-	if lateEvidenceStored.Transcript["items"] == nil {
-		t.Fatalf("late summary evidence = %#v", lateEvidenceStored)
-	}
-	lateOperationalDetail := request(
-		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/ai/interactions/"+closeoutFirstReceipt.InteractionID,
-		"admin-token", nil,
-	)
-	var lateOperationalStored struct {
-		Summary string `json:"summary"`
-	}
-	decode(t, lateOperationalDetail, &lateOperationalStored)
-	if lateOperationalStored.Summary != "Late durable summary." {
-		t.Fatalf("late summary operational detail = %#v", lateOperationalStored)
-	}
-
-	conflictEndedAt := lateEvidenceEndedAt.Add(time.Minute)
-	firstSummaryBody, _ := json.Marshal(map[string]any{
-		"kind":           "SUMMARY",
-		"officeKey":      "spring-hill",
-		"sourceCallId":   "abita-incomparable-summary-63",
-		"callerPhone":    "+17275550212",
-		"officePhone":    "+17275919997",
-		"startedAt":      startedAt.Format(time.RFC3339Nano),
-		"endedAt":        conflictEndedAt.Format(time.RFC3339Nano),
-		"status":         "COMPLETED",
-		"summary":        "Stable summary.",
-		"transcript":     map[string]any{"items": []map[string]any{{"id": "first"}}},
-		"summaryPayload": map[string]any{"phase": "summary"},
-	})
-	firstSummary := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", firstSummaryBody,
-	)
-	if firstSummary.StatusCode != http.StatusCreated {
-		t.Fatalf("first incomparable summary status = %d, body = %s",
-			firstSummary.StatusCode, readBody(t, firstSummary))
-	}
-	_ = firstSummary.Body.Close()
-	secondSummaryBody, _ := json.Marshal(map[string]any{
-		"kind":           "SUMMARY",
-		"officeKey":      "spring-hill",
-		"sourceCallId":   "abita-incomparable-summary-63",
-		"callerPhone":    "+17275550212",
-		"officePhone":    "+17275919997",
-		"startedAt":      startedAt.Format(time.RFC3339Nano),
-		"endedAt":        conflictEndedAt.Format(time.RFC3339Nano),
-		"status":         "COMPLETED",
-		"summary":        "Stable summary.",
-		"transcript":     map[string]any{"items": []map[string]any{{"id": "second"}}},
-		"summaryPayload": map[string]any{"phase": "summary"},
-	})
-	secondSummary := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", secondSummaryBody,
-	)
-	if secondSummary.StatusCode != http.StatusConflict {
-		t.Fatalf("incomparable summary status = %d, body = %s",
-			secondSummary.StatusCode, readBody(t, secondSummary))
-	}
-	_ = secondSummary.Body.Close()
 
 	if _, err := pool.Exec(context.Background(), `
 		CREATE FUNCTION reject_ai_interaction_projection() RETURNS trigger

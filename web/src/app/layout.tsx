@@ -1,20 +1,10 @@
 import type { Metadata, Viewport } from "next"
-import { Instrument_Sans, JetBrains_Mono } from "next/font/google"
 
 import { Providers } from "@/components/providers"
 import { siteConfig, siteStructuredData } from "@/lib/site"
-import { cn } from "@/lib/utils"
 
 import "./globals.css"
 
-const sans = Instrument_Sans({
-  subsets: ["latin"],
-  variable: "--font-instrument-sans",
-})
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-jetbrains-mono",
-})
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
   title: {
@@ -77,7 +67,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("h-full", sans.variable, mono.variable)}
+      className="h-full"
     >
       <body className="flex min-h-full flex-col">
         <script

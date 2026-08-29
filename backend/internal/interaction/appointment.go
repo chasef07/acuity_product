@@ -24,13 +24,14 @@ type AppointmentDetails struct {
 }
 
 func ProjectAppointmentDetails(value Interaction) AppointmentDetails {
-	action := latestAppointmentAction(value.CloseoutPayload, value.AppointmentOutcome)
+	expectedOutcome := appointmentDomainOutcomeFor(value)
+	action := latestAppointmentAction(value.CloseoutPayload, expectedOutcome)
 	appointment := recordValue(action["appointment"])
 	cancelledAppointment := recordValue(action["cancelledAppointment"])
 	bookingResult := decodeRecord(value.BookingResult)
 	cancellationResult := decodeRecord(value.CancellationResult)
 
-	if value.AppointmentOutcome == OutcomeCancellation {
+	if expectedOutcome == "cancelled" {
 		return AppointmentDetails{Appointment: appointmentFacts(
 			[]map[string]any{
 				cancelledAppointment,
@@ -50,7 +51,7 @@ func ProjectAppointmentDetails(value Interaction) AppointmentDetails {
 		},
 		value.NewAppointmentID,
 	)}
-	if value.AppointmentOutcome != OutcomeReschedule {
+	if expectedOutcome != "rescheduled" {
 		return result
 	}
 	previous := appointmentFacts(
@@ -67,14 +68,14 @@ func ProjectAppointmentDetails(value Interaction) AppointmentDetails {
 
 func latestAppointmentAction(
 	closeoutPayload json.RawMessage,
-	outcome AppointmentOutcome,
+	expected string,
 ) map[string]any {
-	actions, _ := decodeRecord(closeoutPayload)["appointmentActions"].([]any)
-	expected := map[AppointmentOutcome]string{
-		OutcomeBooking:      "booked",
-		OutcomeCancellation: "cancelled",
-		OutcomeReschedule:   "rescheduled",
-	}[outcome]
+	closeout := decodeRecord(closeoutPayload)
+	if outcomes, present := closeout["domainOutcomes"]; present {
+		return latestAppointmentOutcomeEvidence(arrayValue(outcomes), expected)
+	}
+
+	actions := arrayValue(closeout["appointmentActions"])
 	for index := len(actions) - 1; index >= 0; index-- {
 		action := recordValue(actions[index])
 		if action == nil {
@@ -85,6 +86,46 @@ func latestAppointmentAction(
 		}
 	}
 	return map[string]any{}
+}
+
+func appointmentDomainOutcomeFor(value Interaction) string {
+	switch value.AppointmentAction {
+	case AppointmentBooked:
+		return "booked"
+	case AppointmentCancelled:
+		return "cancelled"
+	case AppointmentRescheduled:
+		return "rescheduled"
+	}
+	return map[AppointmentOutcome]string{
+		OutcomeBooking:      "booked",
+		OutcomeCancellation: "cancelled",
+		OutcomeReschedule:   "rescheduled",
+	}[value.AppointmentOutcome]
+}
+
+func latestAppointmentOutcomeEvidence(outcomes []any, expected string) map[string]any {
+	for index := len(outcomes) - 1; index >= 0; index-- {
+		receipt := recordValue(outcomes[index])
+		status := strings.ToLower(stringValue(receipt["status"]))
+		receiptOutcome := strings.ToLower(stringValue(receipt["outcome"]))
+		if receipt == nil ||
+			(status != "success" && status != "partial") ||
+			(expected != "" && receiptOutcome != expected) ||
+			(expected == "" && !appointmentDomainOutcome(receiptOutcome)) {
+			continue
+		}
+		evidence := recordValue(receipt["evidence"])
+		if evidence == nil || boolValue(evidence["replayed"]) {
+			continue
+		}
+		return evidence
+	}
+	return map[string]any{}
+}
+
+func appointmentDomainOutcome(outcome string) bool {
+	return outcome == "booked" || outcome == "cancelled" || outcome == "rescheduled"
 }
 
 func appointmentFacts(sources []map[string]any, appointmentID string) AppointmentFacts {

@@ -1610,7 +1610,7 @@ func TestPlatformOperatorReadsAndMutatesGloballyWithAuditedIdentity(t *testing.T
 		context.Background(),
 		access.Provisioning{
 			Environment:       "test",
-			RequestedBy:       "slice-3-operator-test",
+			RequestedBy:       "work-operator-test",
 			PlatformOperators: []string{"operator@acuity.test"},
 			Practices: []access.PracticeProvision{{
 				Key:       "operator-practice",
@@ -1956,7 +1956,7 @@ func provisionStaff(
 	t.Helper()
 	_, err := module.Provision(context.Background(), access.Provisioning{
 		Environment: "test",
-		RequestedBy: "slice-3-work-test",
+		RequestedBy: "work-lifecycle-test",
 		Practices: []access.PracticeProvision{{
 			Key:  "synthetic-practice",
 			Name: "Synthetic Practice",

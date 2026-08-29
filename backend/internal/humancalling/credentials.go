@@ -126,15 +126,24 @@ func (m *Module) ReconcileCredentials(ctx context.Context) error {
 func (m *Module) ProcessNextCredentialReconciliation(
 	ctx context.Context,
 ) (bool, error) {
-	provider, ok := m.provider.(CredentialStateProvider)
-	if !ok {
-		return false, nil
-	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin credential state reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	recovered, err := m.recoverInterruptedCommandOwnership(
+		ctx, tx, credentialCommandOwner, m.now(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("recover interrupted credential commands: %w", err)
+	}
+	provider, canObserve := m.provider.(CredentialStateProvider)
+	if !canObserve {
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit interrupted credential recovery: %w", err)
+		}
+		return recovered, nil
+	}
 	var command ProviderCommand
 	var subject string
 	var createdAt time.Time
@@ -150,7 +159,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 		&command.ID, &subject, &command.Action, &command.TargetID, &createdAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, tx.Commit(ctx)
+		return recovered, tx.Commit(ctx)
 	}
 	if err != nil {
 		return false, fmt.Errorf("claim credential reconciliation: %w", err)

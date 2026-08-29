@@ -283,6 +283,7 @@ export type CallingCall = {
     transferReason: string;
     reasonSource: string;
     providerTermination: string;
+    endRequested: boolean;
     callerId: string;
     retryOfCallId?: string;
     retryAllowed: boolean;
@@ -441,7 +442,7 @@ export type EngagementQueryRequest = {
     phone: string;
 };
 
-export type AiInteractionMessageKind = 'START' | 'SUMMARY' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
+export type AiInteractionMessageKind = 'START' | 'CLOSEOUT' | 'OUTCOME_CHECKPOINT';
 
 export type AiInteractionCallStatus = 'IN_PROGRESS' | 'COMPLETED' | 'ESCALATED' | 'FAILED';
 
@@ -462,7 +463,7 @@ export type AiAppointmentEvidence = {
 };
 
 /**
- * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; SUMMARY uses a terminal status with endedAt and summaryPayload; CLOSEOUT uses a terminal status with endedAt and closeoutPayload. The service validates these kind-specific requirements.
+ * One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence; OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses a terminal status with endedAt, optional transcript and appointmentOutcome, and required closeoutPayload. The service validates these kind-specific requirements.
  */
 export type AiInteractionIngestRequest = {
     kind: AiInteractionMessageKind;
@@ -478,9 +479,6 @@ export type AiInteractionIngestRequest = {
         [key: string]: unknown;
     };
     appointmentOutcome?: AiAppointmentEvidence;
-    summaryPayload?: {
-        [key: string]: unknown;
-    };
     closeoutPayload?: {
         [key: string]: unknown;
     };
@@ -670,8 +668,26 @@ export type OperatorAiToolExecution = {
     callId: string;
     name: string;
     occurredAt: string;
-    status: 'SUCCESS' | 'ERROR';
+    /**
+     * Native LiveKit tool execution status.
+     */
+    status: 'SUCCESS' | 'ERROR' | 'INCOMPLETE';
+    /**
+     * Historical Agent output classification, retained for legacy rows only.
+     */
     outputClass?: string;
+    /**
+     * Correlated Acuity domain outcome when one was recorded.
+     */
+    domainOutcome?: string;
+    /**
+     * Correlated Acuity business-result status when one was recorded.
+     */
+    domainStatus?: 'success' | 'blocked' | 'partial' | 'ambiguous' | 'failed';
+    /**
+     * Durable Product Task proving Staff Task follow-up.
+     */
+    taskId?: string;
 };
 
 export type OperatorAiInteractionAnalytics = {
@@ -1564,7 +1580,7 @@ export type RequestCallingHangupError = RequestCallingHangupErrors[keyof Request
 
 export type RequestCallingHangupResponses = {
     /**
-     * Hangup intent committed.
+     * Call end intent committed.
      */
     202: CallingCall;
 };

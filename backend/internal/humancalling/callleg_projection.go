@@ -359,11 +359,19 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 			AND credential.state = 'ACTIVE'
 			AND credential.provider_sip_username IS NOT NULL
 			AND NOT EXISTS (
-				SELECT 1 FROM human_calling_call_legs occupied
+				SELECT 1
+				FROM human_calling_call_legs occupied
+				JOIN human_calling_calls occupied_call
+					ON occupied_call.id = occupied.call_id
 				WHERE occupied.staff_subject = calling_scope.user_subject
 					AND (
 						occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
 						OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
+						OR (occupied_call.direction = 'OUTBOUND'
+							AND occupied_call.terminal_outcome IS NULL
+							AND occupied.state IN (
+								'PENDING', 'DIALING', 'RINGING', 'ENDING'
+							))
 					)
 			)
 		ORDER BY calling_scope.user_subject
@@ -569,19 +577,24 @@ func (m *Module) applyStaffInitiated(
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM access_calling_scopes calling_scope
-				WHERE calling_scope.practice_id = $1
-					AND calling_scope.user_subject = $2
+				FROM access_operational_scopes operational_scope
+				WHERE operational_scope.practice_id = $1
+					AND operational_scope.user_subject = $2
 					AND (
-						calling_scope.location_scope = 'ALL'
+						$4 = 'OUTBOUND'
+						OR operational_scope.role = 'STAFF'
+						OR operational_scope.role IS NULL
+					)
+					AND (
+						operational_scope.location_scope = 'ALL'
 						OR EXISTS (
 							SELECT 1 FROM access_membership_locations allowed
-							WHERE allowed.membership_id = calling_scope.membership_id
+							WHERE allowed.membership_id = operational_scope.membership_id
 								AND allowed.location_id = $3
 						)
 					)
 			)
-		`, practiceID, staffSubject, locationID).Scan(&staffEligible); err != nil {
+		`, practiceID, staffSubject, locationID, direction).Scan(&staffEligible); err != nil {
 			return fmt.Errorf("revalidate Staff answer authorization: %w", err)
 		}
 		if priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {
@@ -1288,25 +1301,13 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 		}
 		return tx.Commit(ctx)
 	}
-	var callID, legID, practiceID, role, direction, legState, terminalOutcome string
+	var legID string
 	var storedControlID, storedProviderLegID, storedSessionID string
-	var bridgedAt *time.Time
-	var callBridged, voicemailStarted bool
+	var clientStateIssued, sessionBelongsToCall bool
 	query := `
-		SELECT call.id::text, leg.id::text, call.practice_id::text, leg.role,
-			leg.bridged_at, call.direction, leg.state,
-			COALESCE(call.terminal_outcome, ''), leg.provider_call_control_id,
+		SELECT leg.id::text, leg.provider_call_control_id,
 			leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
-			EXISTS (
-				SELECT 1 FROM human_calling_call_legs bridged
-				WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
-			),
-			EXISTS (
-				SELECT 1 FROM human_calling_provider_commands voicemail
-				WHERE voicemail.call_id = call.id
-					AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
-					AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
-			)
+			false, false
 		FROM human_calling_call_legs leg
 		JOIN human_calling_calls call ON call.id = leg.call_id
 		WHERE leg.provider_call_control_id = $1 AND leg.provider_call_leg_id = $2
@@ -1315,62 +1316,47 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 	args := []any{fact.CallControlID, fact.CallLegID}
 	if hasState {
 		query = `
-			SELECT call.id::text, leg.id::text, call.practice_id::text, leg.role,
-				leg.bridged_at, call.direction, leg.state,
-				COALESCE(call.terminal_outcome, ''), leg.provider_call_control_id,
+			SELECT leg.id::text, leg.provider_call_control_id,
 				leg.provider_call_leg_id, COALESCE(leg.provider_call_session_id, ''),
 				EXISTS (
-					SELECT 1 FROM human_calling_call_legs bridged
-					WHERE bridged.call_id = call.id AND bridged.bridged_at IS NOT NULL
+					SELECT 1 FROM human_calling_provider_commands command
+					WHERE command.call_id = call.id
+						AND command.call_leg_id = leg.id
+						AND command.payload->>'client_state' = $3
+						AND command.state IN (
+							'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED'
+						)
 				),
-				EXISTS (
-					SELECT 1 FROM human_calling_provider_commands voicemail
-					WHERE voicemail.call_id = call.id
-						AND voicemail.action IN ('SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING')
-						AND voicemail.state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+				$4 <> '' AND EXISTS (
+					SELECT 1 FROM human_calling_call_legs session_leg
+					WHERE session_leg.call_id = call.id
+						AND session_leg.provider_call_session_id = $4
 				)
 			FROM human_calling_calls call
 			JOIN human_calling_call_legs leg ON leg.call_id = call.id
 			WHERE call.id = $1 AND leg.id = $2
 			FOR UPDATE OF call, leg
 		`
-		args = []any{state.CallID, state.CallLegID}
+		args = []any{state.CallID, state.CallLegID, fact.ClientState, fact.CallSessionID}
 	}
 	if err := tx.QueryRow(ctx, query, args...).Scan(
-		&callID, &legID, &practiceID, &role, &bridgedAt, &direction, &legState,
-		&terminalOutcome, &storedControlID, &storedProviderLegID, &storedSessionID,
-		&callBridged, &voicemailStarted,
+		&legID, &storedControlID, &storedProviderLegID, &storedSessionID,
+		&clientStateIssued, &sessionBelongsToCall,
 	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errRelatedFactPending
+		}
 		return fmt.Errorf("correlate hung-up CallLeg: %w", err)
 	}
-	if fact.CallControlID != storedControlID || fact.CallLegID != storedProviderLegID ||
-		fact.CallSessionID != storedSessionID {
+	if fact.CallControlID != storedControlID || fact.CallLegID != storedProviderLegID {
 		return ErrConflict
 	}
-	quality, err := json.Marshal(fact.CallQualityStats)
-	if err != nil {
-		return fmt.Errorf("encode Call quality stats: %w", err)
+	if fact.CallSessionID != storedSessionID &&
+		!(clientStateIssued && sessionBelongsToCall) {
+		return ErrConflict
 	}
-	if fact.CallQualityStats == nil {
-		quality = nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_call_legs
-		SET state = 'ENDED',
-			ending_at = COALESCE(
-				ending_at, GREATEST($2, COALESCE(answered_at, $2))
-			),
-			ended_at = GREATEST(
-				$2, COALESCE(ending_at, $2), COALESCE(answered_at, $2),
-				COALESCE(ended_at, $2)
-			),
-			hangup_cause = NULLIF($3, ''), termination_source = NULLIF($4, ''),
-			sip_cause = NULLIF($5, ''), call_quality_stats = COALESCE($6, call_quality_stats),
-			updated_at = $7
-		WHERE id = $1
-	`, legID, fact.OccurredAt, fact.HangupCause, fact.TerminationSource,
-		fact.SIPCause, quality, m.now()); err != nil {
-		return fmt.Errorf("project CallLeg Hangup: %w", err)
+	if err := m.finishEndedCallLeg(ctx, tx, legID, fact); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands
@@ -1379,85 +1365,6 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, legID, fact.OccurredAt, m.now()); err != nil {
 		return fmt.Errorf("reconcile CallLeg Hangup: %w", err)
-	}
-	providerTermination := fact.HangupCause
-	if direction == string(CallOutbound) {
-		providerTermination = outboundTermination(fact.HangupCause)
-	}
-	authoritativeTermination := role == "CALLER" ||
-		(direction == string(CallInbound) && bridgedAt != nil) ||
-		(direction == string(CallOutbound) && role == "DESTINATION")
-	if authoritativeTermination {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET provider_termination = COALESCE(NULLIF($2, ''), provider_termination),
-				updated_at = $3
-			WHERE id = $1
-		`, callID, providerTermination, m.now()); err != nil {
-			return fmt.Errorf("record provider Call termination: %w", err)
-		}
-	}
-	if terminalOutcome != "" {
-		// Recovery/disposition already owns the terminal outcome.
-	} else if role == "CALLER" && !callBridged {
-		if direction == string(CallInbound) && voicemailStarted {
-			if _, err := m.ensureRecoveryOutcome(
-				ctx, tx, callID, RecoveryMissedCall, "MISSED", fact,
-			); err != nil {
-				return fmt.Errorf("create voicemail caller recovery: %w", err)
-			}
-		} else {
-			if _, err := tx.Exec(ctx, `
-				UPDATE human_calling_calls
-				SET terminal_outcome = COALESCE(terminal_outcome, 'ABANDONED'),
-					ended_at = COALESCE(ended_at, $2), version = version + 1, updated_at = $3
-				WHERE id = $1
-			`, callID, fact.OccurredAt, m.now()); err != nil {
-				return fmt.Errorf("mark caller abandonment: %w", err)
-			}
-		}
-		if err := m.endRemainingCallLegs(ctx, tx, callID); err != nil {
-			return err
-		}
-	} else if callBridged &&
-		(role == "CALLER" || bridgedAt != nil || legState == "BRIDGE_PENDING") {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET terminal_outcome = COALESCE(terminal_outcome, 'ENDED'),
-				ended_at = COALESCE(ended_at, $2),
-				disposition_deadline = COALESCE(disposition_deadline, $4),
-				version = version + 1, updated_at = $3
-			WHERE id = $1
-		`, callID, fact.OccurredAt, m.now(), m.now().Add(m.config.DispositionDuration)); err != nil {
-			return fmt.Errorf("end connected Call: %w", err)
-		}
-		if err := m.endConnectedCallLegs(ctx, tx, callID); err != nil {
-			return err
-		}
-	} else if direction == string(CallOutbound) {
-		if _, err := tx.Exec(ctx, `
-			UPDATE human_calling_calls
-			SET terminal_outcome = 'UNANSWERED', ended_at = COALESCE(ended_at, $2),
-				version = version + 1, updated_at = $3
-			WHERE id = $1 AND terminal_outcome IS NULL
-		`, callID, fact.OccurredAt, m.now()); err != nil {
-			return fmt.Errorf("end unanswered outbound Call: %w", err)
-		}
-		if err := m.endRemainingCallLegs(ctx, tx, callID); err != nil {
-			return err
-		}
-	} else if role == "STAFF" && legState == "BRIDGE_PENDING" {
-		if err := m.maybeStartVoicemailAfterRingCompleted(ctx, tx, callID); err != nil {
-			return err
-		}
-	}
-	if err := appendTimeline(ctx, tx, callID, practiceID, "call_leg.ended", "",
-		fact.EventID, "", opaqueReference(fact.CallLegID),
-		sanitizeCode(fact.HangupCause), fact.OccurredAt); err != nil {
-		return err
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
-		return err
 	}
 	return tx.Commit(ctx)
 }

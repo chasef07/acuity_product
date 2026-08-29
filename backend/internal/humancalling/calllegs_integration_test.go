@@ -84,6 +84,188 @@ func TestProvisionedGoogleUserReceivesManagedCallingCredential(t *testing.T) {
 	}
 }
 
+func TestRevokedPracticeCallRemainsGlobalCapacityWithoutLeakingScope(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 8, 12, 30, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	email := "multi-practice-revocation@synthetic.test"
+	if _, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test", RequestedBy: "calling-revocation-test",
+		Practices: []access.PracticeProvision{
+			{
+				Key: "calling-revoked-practice", Name: "Revoked Practice",
+				Locations: []access.LocationProvision{{
+					Key: "calling-revoked-location", Name: "Revoked Location",
+				}},
+				AccessGrants: []access.AccessGrantProvision{{
+					Key: "calling-revoked-staff", Email: email,
+					Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+				}},
+			},
+			{
+				Key: "calling-remaining-practice", Name: "Remaining Practice",
+				Locations: []access.LocationProvision{{
+					Key: "calling-remaining-location", Name: "Remaining Location",
+				}},
+				AccessGrants: []access.AccessGrantProvision{{
+					Key: "calling-remaining-staff", Email: email,
+					Role: access.RoleStaff, LocationScope: access.LocationScopeAll,
+				}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("provision multi-Practice Staff: %v", err)
+	}
+	identity := access.Identity{
+		Subject: "multi-practice-revocation-subject", Email: email, EmailVerified: true,
+	}
+	discovery, err := accessModule.DiscoverActor(context.Background(), identity)
+	if err != nil || len(discovery.Practices) != 2 {
+		t.Fatalf("discover multi-Practice Staff: practices=%d err=%v",
+			len(discovery.Practices), err)
+	}
+	var revoked, remaining access.PracticeAccess
+	for _, practice := range discovery.Practices {
+		if practice.Name == "Revoked Practice" {
+			revoked = practice
+		} else if practice.Name == "Remaining Practice" {
+			remaining = practice
+		}
+	}
+	if revoked.ID == "" || revoked.Membership == nil || len(revoked.Locations) != 1 ||
+		remaining.ID == "" || len(remaining.Locations) != 1 {
+		t.Fatalf("multi-Practice discovery = revoked:%#v remaining:%#v", revoked, remaining)
+	}
+
+	provider := &recordingProvider{}
+	calling := humancalling.New(
+		pool, accessModule, provider, humancalling.Config{
+			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+			StaffSIPDomain:         "sip.telnyx.com",
+			RingWindowDuration:     20 * time.Second,
+			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:          "staff-call-control-connection",
+			CredentialConnectionID: "staff-credential-connection",
+			FromNumber:             "+14843336938",
+			RingbackURL:            "https://media.synthetic.test/ringback.wav",
+		},
+		func() time.Time { return now },
+	)
+	prepareCredentials(t, calling)
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "calling-remaining-practice",
+			LocationKey: "calling-remaining-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision remaining outbound caller ID: %v", err)
+	}
+	const sessionID = "multi-practice-revocation-browser"
+	if _, err := calling.AcquireSoftphone(
+		context.Background(), identity, sessionID, false,
+	); err != nil {
+		t.Fatalf("acquire multi-Practice softphone: %v", err)
+	}
+	if _, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity: identity, SessionID: sessionID, Registered: true,
+		MicrophoneReady: true, AudioReady: true, SessionHealthy: true, Available: true,
+	}); err != nil {
+		t.Fatalf("ready multi-Practice softphone: %v", err)
+	}
+
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point, created_at, updated_at
+		) VALUES ($1, $2, 'OUTBOUND', 'STANDALONE', $3, $3)
+		RETURNING id::text
+	`, revoked.ID, revoked.Locations[0].ID, now).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_call_legs (
+			call_id, role, sequence, state, staff_subject, staff_session_id,
+			answered_at, bridge_pending_at, bridged_at, created_at, updated_at
+		) VALUES ($1, 'STAFF', 1, 'BRIDGED', $2, $3, $4, $4, $4, $4, $4)
+	`, callID, identity.Subject, sessionID, now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := calling.ReadCallingState(context.Background(), identity)
+	if err != nil || before.Softphone.ActiveCallID != callID || before.Bridged == nil {
+		t.Fatalf("Calling state before revocation = active:%q bridged:%#v err:%v",
+			before.Softphone.ActiveCallID, before.Bridged, err)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET revoked_at = $2 WHERE id = $1
+	`, revoked.Membership.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	after, err := calling.ReadCallingState(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("read remaining Calling access: %v", err)
+	}
+	if after.Softphone.ActiveCallID != "" || after.Softphone.Available ||
+		after.Bridged != nil {
+		t.Fatalf("revoked Call leaked identity or capacity = active:%q available:%t bridged:%#v",
+			after.Softphone.ActiveCallID, after.Softphone.Available, after.Bridged)
+	}
+	ready, err := calling.SetReadiness(context.Background(), humancalling.ReadinessCommand{
+		Identity: identity, SessionID: sessionID, Registered: true,
+		MicrophoneReady: true, AudioReady: true, SessionHealthy: true, Available: true,
+	})
+	if err != nil || ready.Available || ready.ActiveCallID != "" {
+		t.Fatalf("globally occupied Calling readiness = available:%t active:%q err:%v",
+			ready.Available, ready.ActiveCallID, err)
+	}
+	if _, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: identity, SessionID: sessionID,
+			IdempotencyKey: "remaining-practice-outbound",
+			PracticeID:     remaining.ID,
+			LocationID:     remaining.Locations[0].ID,
+			Destination:    "+15555550123",
+		}); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("remaining Practice outbound during revoked active Call = %v, want occupied", err)
+	}
+
+	if _, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		Service: humancalling.ServiceIdentity{
+			Subject: "abita-remaining-practice", PracticeID: remaining.ID,
+		},
+		LocationID: remaining.Locations[0].ID, SourceCallID: "remaining-inbound-source",
+		IdempotencyKey: "remaining-inbound-handoff",
+		Contact:        humancalling.ContactContext{Phone: "+15555550100"},
+	}); err != nil {
+		t.Fatalf("create remaining Practice handoff: %v", err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: "remaining-inbound-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: "remaining-inbound-caller-control",
+		CallLegID:     "remaining-inbound-caller-leg",
+		CallSessionID: "remaining-inbound-caller-session",
+		From:          "+15555550100", To: "+14843989071",
+	}
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("admit remaining Practice inbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	caller.EventID = "remaining-inbound-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("fan out remaining Practice inbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	if staffLegs := countStaffLegsForCaller(
+		t, pool, caller.CallControlID,
+	); staffLegs != 0 {
+		t.Fatalf("remaining Practice inbound fanout targeted globally occupied Staff %d times",
+			staffLegs)
+	}
+}
+
 func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)
@@ -130,10 +312,16 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 		}
 	}
 
-	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
-		CallControlID: "sweetwater-staff-control",
-		CallLegID:     "sweetwater-staff-leg",
-	}}}
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{
+			CallControlID: "sweetwater-staff-control",
+			CallLegID:     "sweetwater-staff-leg",
+		},
+		{
+			CallControlID: "admin-outbound-control",
+			CallLegID:     "admin-outbound-provider-leg",
+		},
+	}}
 	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
 		HandoffSIPDomain:       "synthetic.sip.telnyx.com",
 		StaffSIPDomain:         "sip.telnyx.com",
@@ -185,6 +373,129 @@ func TestInboundTransferFansOutToStaffButNotAdminForItsLocation(t *testing.T) {
 	}
 	if len(subjects) != 1 || subjects[0] != "sweetwater-staff-subject" {
 		t.Fatalf("Sweetwater fanout subjects = %#v", subjects)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_memberships SET role = 'ADMIN', location_scope = 'ALL'
+		WHERE practice_id = $1 AND user_subject = $2
+	`, practiceID, staff[0].Subject); err != nil {
+		t.Fatalf("change offered Staff member to Admin: %v", err)
+	}
+	promotedSession := "location-ring-promoted-admin-browser"
+	if lease, err := calling.AcquireSoftphone(
+		context.Background(), staff[0], promotedSession, true,
+	); err != nil || !lease.Owner {
+		t.Fatalf("acquire promoted Admin softphone = %#v, %v", lease, err)
+	}
+	if lease, err := calling.SetReadiness(context.Background(),
+		humancalling.ReadinessCommand{
+			Identity: staff[0], SessionID: promotedSession, Registered: true,
+			MicrophoneReady: true, AudioReady: true, SessionHealthy: true,
+			Available: true,
+		}); err != nil || !lease.Available {
+		t.Fatalf("ready promoted Admin softphone = %#v, %v", lease, err)
+	}
+	var offeredSession string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT staff_session_id FROM human_calling_call_legs
+		WHERE role = 'STAFF' AND staff_subject = $1
+	`, staff[0].Subject).Scan(&offeredSession); err != nil {
+		t.Fatalf("read offered Staff session after role change: %v", err)
+	}
+	if offeredSession != "location-ring-browser-1" {
+		t.Fatalf("inbound CallLeg transferred to Admin session %q", offeredSession)
+	}
+	adminAfterOffer, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(adminAfterOffer.Ringing) != 0 || adminAfterOffer.Bridged != nil ||
+		adminAfterOffer.Softphone.ActiveCallID != "" {
+		t.Fatalf("inbound Call remained projected after Staff became Admin = %#v, %v",
+			adminAfterOffer, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGED', answered_at = $2, bridge_pending_at = $2,
+			bridged_at = $2, updated_at = $2
+		WHERE role = 'STAFF' AND staff_subject = $1
+	`, staff[0].Subject, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("advance stale inbound Staff leg to Bridged: %v", err)
+	}
+	adminAfterBridge, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || adminAfterBridge.Softphone.ActiveCallID != "" ||
+		adminAfterBridge.Softphone.Available || adminAfterBridge.Bridged != nil {
+		t.Fatalf("Bridged inbound Call leaked after Staff became Admin = %#v, %v",
+			adminAfterBridge, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDED', ended_at = $2, updated_at = $2
+		WHERE role = 'STAFF' AND staff_subject = $1;
+	`, staff[0].Subject, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("end stale inbound Staff leg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET terminal_outcome = 'ENDED', ended_at = $2,
+			disposition_deadline = $2::timestamptz + interval '5 minutes', updated_at = $2
+		WHERE id = (
+			SELECT call_id FROM human_calling_call_legs
+			WHERE role = 'STAFF' AND staff_subject = $1 LIMIT 1
+		)
+	`, staff[0].Subject, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("advance stale inbound Call to pending outcome: %v", err)
+	}
+	adminAfterOutcome, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || adminAfterOutcome.Softphone.PendingOutcomeCallID != "" ||
+		adminAfterOutcome.Disposition != nil {
+		t.Fatalf("inbound outcome leaked after Staff became Admin = %#v, %v",
+			adminAfterOutcome, err)
+	}
+
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "location-ring-practice", LocationKey: "sweetwater",
+			Number: "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision Admin outbound caller ID: %v", err)
+	}
+	adminCall, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[2], SessionID: "location-ring-browser-3",
+			IdempotencyKey: "admin-outbound-media",
+			PracticeID:     practiceID, LocationID: sweetwater.ID,
+			Destination: "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start Admin outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	adminDial := provider.last(humancalling.CommandDialOutboundStaff)
+	adminClientState, _ := adminDial.Payload["client_state"].(string)
+	adminStaff := humancalling.ProviderFact{
+		EventID: "admin-outbound-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(2 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "admin-outbound-control",
+		CallLegID:     "admin-outbound-provider-leg",
+		CallSessionID: "admin-outbound-session", ClientState: adminClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), adminStaff); err != nil {
+		t.Fatalf("project Admin outbound initiation: %v", err)
+	}
+	adminStaff.EventID = "admin-outbound-answered"
+	adminStaff.Type = humancalling.FactCallAnswered
+	adminStaff.OccurredAt = now.Add(3 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), adminStaff); err != nil {
+		t.Fatalf("project Admin outbound answer: %v", err)
+	}
+	adminState, err := calling.ReadCallingState(context.Background(), staff[2])
+	if err != nil || adminState.Softphone.ActiveCallID != adminCall.ID ||
+		len(adminState.Ringing) != 1 || adminState.Ringing[0].CallID != adminCall.ID {
+		t.Fatalf("Admin outbound media state = %#v, %v", adminState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[2], SessionID: "location-ring-browser-3",
+			CallID: adminCall.ID, MediaToken: adminState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm Admin outbound media: %v", err)
 	}
 }
 
@@ -615,11 +926,8 @@ func TestInboundReferFansOutCallLegsAndBridgesOneStaffWinner(t *testing.T) {
 		connectedCall.DispositionDeadline != nil {
 		t.Fatalf("auto-resolved connected Call = %#v, %v", connectedCall, err)
 	}
-	if err := calling.RecoverInterruptedCommands(context.Background()); err != nil {
+	if _, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("recover interrupted commands: %v", err)
-	}
-	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
-		t.Fatalf("reconcile stale CallLegs: %v", err)
 	}
 	var connectedTasks, connectedAcknowledgements int
 	if err := pool.QueryRow(context.Background(), `
@@ -688,6 +996,1226 @@ func TestInboundReferRejectsAmbiguousCallerReservations(t *testing.T) {
 	if calls != 0 || consumed != 0 {
 		t.Fatalf("ambiguous REFER mutated calls=%d consumed=%d", calls, consumed)
 	}
+}
+
+func TestInboundHangupLeavesUnstartedFanoutLegToInboundLifecycle(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC)
+	prefix := "inbound-hangup-pending-fanout"
+	pool, calling, caller, staff := prepareInboundFanout(
+		t, now, prefix, &recordingProvider{}, 2,
+	)
+
+	var callID, winnerLegID, pendingLegID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs
+		WHERE provider_call_control_id = $1
+	`, caller.CallControlID).Scan(&callID); err != nil {
+		t.Fatalf("read inbound Call: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
+	`, callID, staff[0].Subject).Scan(&winnerLegID); err != nil {
+		t.Fatalf("read inbound winning Staff CallLeg: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2
+	`, callID, staff[1].Subject).Scan(&pendingLegID); err != nil {
+		t.Fatalf("read inbound pending Staff CallLeg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET answered_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'CALLER'
+	`, callID, now); err != nil {
+		t.Fatalf("align inbound caller evidence time: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGE_PENDING',
+			provider_call_control_id = $2,
+			provider_call_leg_id = $3,
+			provider_call_session_id = $4,
+			answered_at = $5,
+			bridge_pending_at = $5,
+			updated_at = $5
+		WHERE id = $1
+	`, winnerLegID, prefix+"-winner-control", prefix+"-winner-leg",
+		prefix+"-winner-session", now); err != nil {
+		t.Fatalf("prepare inbound winning Staff CallLeg: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENT', updated_at = $2
+		WHERE call_leg_id = $1 AND action = 'DIAL_STAFF'
+	`, winnerLegID, now); err != nil {
+		t.Fatalf("complete inbound winning Staff Dial: %v", err)
+	}
+
+	if _, err := calling.RequestHangup(
+		context.Background(), staff[0], prefix+"-browser-1", callID,
+	); err != nil {
+		t.Fatalf("request inbound Hangup with pending fanout: %v", err)
+	}
+
+	var pendingLegState, pendingDialState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state
+		FROM human_calling_call_legs leg
+		JOIN human_calling_provider_commands command ON command.call_leg_id = leg.id
+		WHERE leg.id = $1 AND command.action = 'DIAL_STAFF'
+	`, pendingLegID).Scan(&pendingLegState, &pendingDialState); err != nil {
+		t.Fatalf("read pending inbound fanout after Hangup: %v", err)
+	}
+	if pendingLegState != "PENDING" || pendingDialState != "PENDING" {
+		t.Fatalf(
+			"pending inbound fanout after Hangup = leg:%s Dial:%s, want PENDING/PENDING",
+			pendingLegState, pendingDialState,
+		)
+	}
+}
+
+type outboundEndFixture struct {
+	pool          *pgxpool.Pool
+	calling       *humancalling.Module
+	authorization access.Authorization
+	identity      access.Identity
+	sessionID     string
+}
+
+func newOutboundEndFixture(
+	t *testing.T,
+	prefix string,
+	now time.Time,
+	provider humancalling.Provider,
+) outboundEndFixture {
+	t.Helper()
+	pool := testdb.Open(t)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, prefix, 1,
+	)
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: prefix + "-practice",
+			LocationKey: prefix + "-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+	return outboundEndFixture{
+		pool: pool, calling: calling, authorization: authorization,
+		identity: staff[0], sessionID: prefix + "-browser-1",
+	}
+}
+
+func (fixture outboundEndFixture) startCall(t *testing.T, idempotencyKey string) humancalling.Call {
+	t.Helper()
+	call, err := fixture.calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: idempotencyKey,
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	return call
+}
+
+func TestOutboundCallCanEndBeforeProviderControlExists(t *testing.T) {
+	fixture := newOutboundEndFixture(
+		t,
+		"end-preparing-outbound",
+		time.Date(2026, time.August, 26, 14, 0, 0, 0, time.UTC),
+		&recordingProvider{},
+	)
+
+	call := fixture.startCall(t, "end-preparing-outbound-call")
+	if call.State != humancalling.CallRinging {
+		t.Fatalf("start preparing outbound Call = %#v", call)
+	}
+
+	ended, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	)
+	if err != nil || ended.State != humancalling.CallUnanswered {
+		t.Fatalf("end preparing outbound Call = %#v, %v", ended, err)
+	}
+
+	var terminal string
+	var activeLegs, failedLegs, pendingDials, canceledDials, requestedEvents int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			call.terminal_outcome,
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = call.id
+					AND leg.state IN ('PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED')),
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = call.id AND leg.state = 'FAILED'
+					AND leg.error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
+			(SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action = 'DIAL_OUTBOUND_STAFF' AND command.state = 'PENDING'),
+			(SELECT count(*) FROM human_calling_provider_commands command
+				WHERE command.call_id = call.id
+					AND command.action = 'DIAL_OUTBOUND_STAFF' AND command.state = 'FAILED'
+					AND command.last_error_code = 'STAFF_ENDED_BEFORE_PROVIDER_START'),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = call.id AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_calls call
+		WHERE call.id = $1
+	`, call.ID).Scan(
+		&terminal, &activeLegs, &failedLegs, &pendingDials, &canceledDials,
+		&requestedEvents,
+	); err != nil {
+		t.Fatalf("read ended preparing outbound Call: %v", err)
+	}
+	if terminal != "UNANSWERED" || activeLegs != 0 || failedLegs != 2 ||
+		pendingDials != 0 || canceledDials != 1 || requestedEvents != 1 {
+		t.Fatalf(
+			"ended preparing outbound Call = terminal:%s active:%d failed:%d pending dials:%d canceled dials:%d events:%d",
+			terminal, activeLegs, failedLegs, pendingDials, canceledDials, requestedEvents,
+		)
+	}
+}
+
+func TestOutboundCallEndIsIdempotentAfterProviderControlExists(t *testing.T) {
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "end-ringing-staff-control",
+		CallLegID:     "end-ringing-staff-leg",
+	}}}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-ringing-outbound",
+		time.Date(2026, time.August, 26, 14, 15, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-ringing-outbound-call")
+	processAllCommands(t, fixture.calling)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		current, err := fixture.calling.RequestHangup(
+			context.Background(), fixture.identity, fixture.sessionID, call.ID,
+		)
+		if err != nil || current.State != humancalling.CallRinging {
+			t.Fatalf("end ringing outbound Call attempt %d = %#v, %v", attempt, current, err)
+		}
+		if !current.EndRequested {
+			t.Fatalf("end ringing outbound Call attempt %d omitted durable End intent", attempt)
+		}
+	}
+
+	var hangups, endingLegs, requestedEvents int
+	var targetID, clientState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT
+			count(*)::int,
+			min(command.target_id),
+			min(command.payload->>'client_state'),
+			(SELECT count(*) FROM human_calling_call_legs leg
+				WHERE leg.call_id = $1 AND leg.state = 'ENDING'),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = $1 AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'HANGUP_LEG'
+	`, call.ID).Scan(
+		&hangups, &targetID, &clientState, &endingLegs, &requestedEvents,
+	); err != nil {
+		t.Fatalf("read ringing outbound End intent: %v", err)
+	}
+	if hangups != 1 || targetID != "end-ringing-staff-control" ||
+		clientState == "" || endingLegs != 1 || requestedEvents != 1 {
+		t.Fatalf(
+			"ringing outbound End intent = hangups:%d target:%q client state:%q ending:%d events:%d",
+			hangups, targetID, clientState, endingLegs, requestedEvents,
+		)
+	}
+	processAllCommands(t, fixture.calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("provider Hangup executions = %d, want 1",
+			provider.count(humancalling.CommandHangupLeg))
+	}
+	current, err := fixture.calling.ReadCall(context.Background(), fixture.identity, call.ID)
+	if err != nil || current.State != humancalling.CallRinging {
+		t.Fatalf("provider acceptance projected terminal Call = %#v, %v", current, err)
+	}
+}
+
+func TestExactLegHangupConvergesAbsentTargetWithoutProviderTerminationEvidence(t *testing.T) {
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "end-absent-staff-control",
+			CallLegID:     "end-absent-staff-leg",
+		}},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandHangupLeg: {&humancalling.ProviderError{
+				SafeCode:     "TELNYX_CALL_ENDED",
+				Definitive:   true,
+				TargetAbsent: true,
+			}},
+		},
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-absent-outbound",
+		time.Date(2026, time.August, 26, 14, 30, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-absent-outbound-call")
+	processAllCommands(t, fixture.calling)
+
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("commit exact-leg Hangup: %v", err)
+	}
+	processAllCommands(t, fixture.calling)
+
+	current, err := fixture.calling.ReadCall(
+		context.Background(), fixture.identity, call.ID,
+	)
+	if err != nil {
+		t.Fatalf("read converged outbound Call: %v", err)
+	}
+	var legState, commandState, commandError string
+	var endedEvidence int
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT leg.state, command.state, COALESCE(command.last_error_code, ''),
+			(SELECT count(*) FROM human_calling_timeline timeline
+			 WHERE timeline.call_id = call.id AND timeline.kind = 'call_leg.ended')
+		FROM human_calling_calls call
+		JOIN human_calling_call_legs leg
+			ON leg.call_id = call.id AND leg.role = 'STAFF'
+		JOIN human_calling_provider_commands command
+			ON command.call_leg_id = leg.id AND command.action = 'HANGUP_LEG'
+		WHERE call.id = $1
+	`, call.ID).Scan(&legState, &commandState, &commandError, &endedEvidence); err != nil {
+		t.Fatalf("read absent-target durable outcome: %v", err)
+	}
+	if current.State != humancalling.CallRinging || legState != "ENDED" ||
+		commandState != "SENT" || commandError != "" || endedEvidence != 0 ||
+		provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf(
+			"absent-target Hangup = Call:%s leg:%s command:%s/%s evidence:%d effects:%d",
+			current.State, legState, commandState, commandError, endedEvidence,
+			provider.count(humancalling.CommandHangupLeg),
+		)
+	}
+}
+
+func TestOutboundCallEndCleansUpProviderControlThatArrivesLate(t *testing.T) {
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{{
+			CallControlID: "end-late-provider-staff-control",
+			CallLegID:     "end-late-provider-staff-leg",
+		}},
+		blockAction:  humancalling.CommandDialOutboundStaff,
+		blockStarted: make(chan struct{}),
+		blockRelease: make(chan struct{}),
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		"end-late-provider-outbound",
+		time.Date(2026, time.August, 26, 14, 30, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, "end-late-provider-outbound-call")
+	processed := make(chan error, 1)
+	go func() {
+		worked, err := fixture.calling.ProcessNextCommand(context.Background())
+		if err == nil && !worked {
+			err = errors.New("late-provider Dial command was not processed")
+		}
+		processed <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("late-provider Dial did not start")
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		current, err := fixture.calling.RequestHangup(
+			context.Background(), fixture.identity, fixture.sessionID, call.ID,
+		)
+		if err != nil || current.State != humancalling.CallRinging {
+			t.Fatalf("end in-flight outbound Dial attempt %d = %#v, %v", attempt, current, err)
+		}
+	}
+	close(provider.blockRelease)
+	if err := <-processed; err != nil {
+		t.Fatalf("complete late-provider Dial: %v", err)
+	}
+
+	current, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	)
+	if err != nil || current.State != humancalling.CallRinging {
+		t.Fatalf("replay End after late provider identity = %#v, %v", current, err)
+	}
+	var hangups, requestedEvents int
+	var targetID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT count(*)::int, min(command.target_id),
+			(SELECT count(*) FROM human_calling_timeline timeline
+				WHERE timeline.call_id = $1 AND timeline.kind = 'call.hangup.requested')
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'HANGUP_LEG'
+	`, call.ID).Scan(&hangups, &targetID, &requestedEvents); err != nil {
+		t.Fatalf("read late-provider End cleanup: %v", err)
+	}
+	if hangups != 1 || targetID != "end-late-provider-staff-control" ||
+		requestedEvents != 1 {
+		t.Fatalf("late-provider End cleanup = hangups:%d target:%q events:%d",
+			hangups, targetID, requestedEvents)
+	}
+	processAllCommands(t, fixture.calling)
+	if provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf("late-provider Hangup executions = %d, want 1",
+			provider.count(humancalling.CommandHangupLeg))
+	}
+}
+
+func TestOutboundCallEndBindsLateControlAfterRejectedAmbiguousDial(t *testing.T) {
+	prefix := "end-rejected-ambiguous-outbound"
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t,
+		prefix,
+		time.Date(2026, time.August, 26, 14, 45, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, prefix+"-call")
+
+	var dialID, staffLegID, clientState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT command.id::text, command.call_leg_id::text,
+			command.payload->>'client_state'
+		FROM human_calling_provider_commands command
+		WHERE command.call_id = $1 AND command.action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialID, &staffLegID, &clientState); err != nil {
+		t.Fatalf("read ambiguous outbound Dial: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'AMBIGUOUS', last_error_code = 'SYNTHETIC_TIMEOUT'
+		WHERE id = $1
+	`, dialID); err != nil {
+		t.Fatalf("make outbound Dial ambiguous: %v", err)
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end ambiguous outbound Dial: %v", err)
+	}
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'FAILED', last_error_code = 'DIAL_OUTBOUND_STAFF_EVENT_ABSENT'
+		WHERE id = $1
+	`, dialID); err != nil {
+		t.Fatalf("reject absent ambiguous outbound Dial: %v", err)
+	}
+
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: prefix + "-late-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt:    time.Date(2026, time.August, 26, 14, 46, 0, 0, time.UTC),
+		ConnectionID:  "staff-call-control-connection",
+		CallControlID: prefix + "-late-control",
+		CallLegID:     prefix + "-late-leg", CallSessionID: prefix + "-late-session",
+		ClientState: clientState,
+	}); err != nil {
+		t.Fatalf("project late ambiguous outbound Dial: %v", err)
+	}
+	processAllCommands(t, fixture.calling)
+
+	var hangupState, hangupTarget string
+	var dependencyID *string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, target_id, depends_on_command_id::text
+		FROM human_calling_provider_commands
+		WHERE call_leg_id = $1 AND action = 'HANGUP_LEG'
+	`, staffLegID).Scan(&hangupState, &hangupTarget, &dependencyID); err != nil {
+		t.Fatalf("read rebound exact Hangup: %v", err)
+	}
+	if hangupState != "SENT" || hangupTarget != prefix+"-late-control" ||
+		dependencyID != nil || provider.count(humancalling.CommandHangupLeg) != 1 {
+		t.Fatalf(
+			"rebound exact Hangup = state:%s target:%s dependency:%v executions:%d",
+			hangupState, hangupTarget, dependencyID,
+			provider.count(humancalling.CommandHangupLeg),
+		)
+	}
+}
+
+func TestOutboundCallEndDoesNotRetryTransientInFlightDial(t *testing.T) {
+	prefix := "end-transient-inflight-outbound"
+	provider := &recordingProvider{
+		blockAction:  humancalling.CommandDialOutboundStaff,
+		blockStarted: make(chan struct{}), blockRelease: make(chan struct{}),
+		blockError: errors.New("synthetic transient provider failure"),
+	}
+	fixture := newOutboundEndFixture(
+		t,
+		prefix,
+		time.Date(2026, time.August, 26, 15, 0, 0, 0, time.UTC),
+		provider,
+	)
+	call := fixture.startCall(t, prefix+"-call")
+	processed := make(chan error, 1)
+	go func() {
+		_, err := fixture.calling.ProcessNextCommand(context.Background())
+		processed <- err
+	}()
+	select {
+	case <-provider.blockStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight outbound Dial did not start")
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end in-flight transient outbound Dial: %v", err)
+	}
+	close(provider.blockRelease)
+	if err := <-processed; err == nil {
+		t.Fatal("transient outbound Dial unexpectedly succeeded")
+	}
+
+	var dialState string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialState); err != nil {
+		t.Fatalf("read transient outbound Dial after End: %v", err)
+	}
+	if dialState != "AMBIGUOUS" || provider.count(humancalling.CommandDialOutboundStaff) != 1 {
+		t.Fatalf("transient outbound Dial after End = state:%s executions:%d",
+			dialState, provider.count(humancalling.CommandDialOutboundStaff))
+	}
+}
+
+func TestOutboundCallEndDoesNotRecoverInterruptedDialForRetry(t *testing.T) {
+	prefix := "end-interrupted-outbound"
+	now := time.Date(2026, time.August, 26, 15, 15, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(t, prefix, now, &recordingProvider{})
+	call := fixture.startCall(t, prefix+"-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', updated_at = $2
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("interrupt outbound Dial: %v", err)
+	}
+	if _, err := fixture.calling.RequestHangup(
+		context.Background(), fixture.identity, fixture.sessionID, call.ID,
+	); err != nil {
+		t.Fatalf("end interrupted outbound Dial: %v", err)
+	}
+	if _, err := fixture.calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
+		t.Fatalf("recover interrupted outbound Dial after End: %v", err)
+	}
+
+	var dialState, errorCode string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code FROM human_calling_provider_commands
+		WHERE call_id = $1 AND action = 'DIAL_OUTBOUND_STAFF'
+	`, call.ID).Scan(&dialState, &errorCode); err != nil {
+		t.Fatalf("read recovered outbound Dial after End: %v", err)
+	}
+	if dialState != "AMBIGUOUS" || errorCode != "PROVIDER_EFFECT_UNCERTAIN" {
+		t.Fatalf("recovered outbound Dial after End = state:%s error:%s",
+			dialState, errorCode)
+	}
+}
+
+func TestInterruptedBridgeCommandRecoveryNeverDuplicatesProviderEffect(t *testing.T) {
+	type fixture struct {
+		pool      *pgxpool.Pool
+		calling   *humancalling.Module
+		provider  *deduplicatingProvider
+		commandID string
+		now       time.Time
+	}
+	prepare := func(t *testing.T, prefix string, provider *deduplicatingProvider) *fixture {
+		t.Helper()
+		startedAt := time.Date(2026, time.August, 26, 16, 0, 0, 0, time.UTC)
+		provider.dialResults = []humancalling.ProviderResult{{
+			CallControlID: prefix + "-staff-control",
+			CallLegID:     prefix + "-staff-leg",
+		}}
+		pool, initialCalling, _, _ := prepareInboundFanout(
+			t, startedAt, prefix, provider.recordingProvider, 1,
+		)
+		processAllCommands(t, initialCalling)
+		dial := provider.last(humancalling.CommandDialStaff)
+		dialState, _ := dial.Payload["client_state"].(string)
+		staff := humancalling.ProviderFact{
+			EventID:       prefix + "-staff-initiated",
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    startedAt.Add(2 * time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: prefix + "-staff-control",
+			CallLegID:     prefix + "-staff-leg",
+			CallSessionID: prefix + "-staff-session",
+			ClientState:   dialState,
+		}
+		if err := initialCalling.ApplyProviderFact(context.Background(), staff); err != nil {
+			t.Fatalf("project Staff initiation: %v", err)
+		}
+		staff.EventID = prefix + "-staff-answered"
+		staff.Type = humancalling.FactCallAnswered
+		staff.OccurredAt = startedAt.Add(3 * time.Second)
+		if err := initialCalling.ApplyProviderFact(context.Background(), staff); err != nil {
+			t.Fatalf("project Staff answer: %v", err)
+		}
+		item := &fixture{pool: pool, provider: provider, now: startedAt}
+		if err := pool.QueryRow(context.Background(), `
+			SELECT id::text
+			FROM human_calling_provider_commands
+			WHERE action = 'BRIDGE' AND state = 'PENDING'
+		`).Scan(&item.commandID); err != nil {
+			t.Fatalf("read pending Bridge command: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(), `
+			UPDATE human_calling_provider_commands
+			SET created_at = $2, updated_at = $2, next_attempt_at = $2
+			WHERE id = $1
+		`, item.commandID, startedAt); err != nil {
+			t.Fatalf("align Bridge command clock: %v", err)
+		}
+		accessModule := access.New(pool, func() time.Time { return item.now })
+		item.calling = humancalling.New(
+			pool,
+			accessModule,
+			provider,
+			humancalling.Config{RingWindowDuration: 20 * time.Second},
+			func() time.Time { return item.now },
+		)
+		return item
+	}
+	commandState := func(t *testing.T, item *fixture) string {
+		t.Helper()
+		var state string
+		if err := item.pool.QueryRow(context.Background(), `
+			SELECT state FROM human_calling_provider_commands WHERE id = $1
+		`, item.commandID).Scan(&state); err != nil {
+			t.Fatalf("read Bridge command state: %v", err)
+		}
+		return state
+	}
+	retryAcceptedBridge := func(t *testing.T, item *fixture) {
+		t.Helper()
+		maintained, err := item.calling.MaintainOutgoingCallLegs(context.Background())
+		if err != nil || !maintained {
+			t.Fatalf("recover accepted Bridge for safe retry = %t, %v", maintained, err)
+		}
+		if state := commandState(t, item); state != "PENDING" {
+			t.Fatalf("safe-retry Bridge command state = %s", state)
+		}
+		processAllCommands(t, item.calling)
+		requests := item.provider.requestsFor(humancalling.CommandBridge)
+		if len(requests) != 2 || requests[0].ID != item.commandID ||
+			requests[1].ID != item.commandID {
+			t.Fatalf("safe-retry Bridge requests = %#v", requests)
+		}
+		if state := commandState(t, item); state != "SENT" ||
+			item.provider.count(humancalling.CommandBridge) != 1 {
+			t.Fatalf("safe-retry Bridge = state:%s logical effects:%d",
+				state, item.provider.count(humancalling.CommandBridge))
+		}
+	}
+
+	t.Run("after claim before provider execution", func(t *testing.T) {
+		item := prepare(t, "interrupted-bridge-claim",
+			newDeduplicatingProvider(&recordingProvider{}))
+		effect, claimed, err := item.calling.ClaimNextCommand(context.Background())
+		if err != nil || !claimed || effect == nil {
+			t.Fatalf("claim Bridge = effect:%t claimed:%t err:%v", effect != nil, claimed, err)
+		}
+		item.now = item.now.Add(31 * time.Second)
+		maintained, err := item.calling.MaintainOutgoingCallLegs(context.Background())
+		if err != nil || !maintained || commandState(t, item) != "PENDING" ||
+			item.provider.count(humancalling.CommandBridge) != 0 {
+			t.Fatalf("recover unexecuted Bridge = maintained:%t state:%s effects:%d err:%v",
+				maintained, commandState(t, item),
+				item.provider.count(humancalling.CommandBridge), err)
+		}
+		processAllCommands(t, item.calling)
+		if state := commandState(t, item); state != "SENT" ||
+			item.provider.count(humancalling.CommandBridge) != 1 ||
+			len(item.provider.requestsFor(humancalling.CommandBridge)) != 1 {
+			t.Fatalf("retried unexecuted Bridge = state:%s effects:%d",
+				state, item.provider.count(humancalling.CommandBridge))
+		}
+	})
+
+	t.Run("after provider acceptance before result recording", func(t *testing.T) {
+		provider := newDeduplicatingProvider(&recordingProvider{
+			blockAction:  humancalling.CommandBridge,
+			blockStarted: make(chan struct{}),
+			blockRelease: make(chan struct{}),
+		})
+		item := prepare(t, "interrupted-bridge-acceptance", provider)
+		effect, claimed, err := item.calling.ClaimNextCommand(context.Background())
+		if err != nil || !claimed {
+			t.Fatalf("claim Bridge = %t, %v", claimed, err)
+		}
+		effectContext, cancel := context.WithCancel(context.Background())
+		effectResult := make(chan error, 1)
+		go func() { effectResult <- effect(effectContext) }()
+		<-provider.blockStarted
+		cancel()
+		close(provider.blockRelease)
+		if err := <-effectResult; err == nil {
+			t.Fatal("interrupted accepted Bridge unexpectedly recorded a durable result")
+		}
+		if state := commandState(t, item); state != "SENDING" ||
+			provider.count(humancalling.CommandBridge) != 1 {
+			t.Fatalf("interrupted accepted Bridge = state:%s effects:%d",
+				state, provider.count(humancalling.CommandBridge))
+		}
+		item.now = item.now.Add(31 * time.Second)
+		retryAcceptedBridge(t, item)
+	})
+
+	t.Run("before durable result commit", func(t *testing.T) {
+		item := prepare(t, "interrupted-bridge-result",
+			newDeduplicatingProvider(&recordingProvider{}))
+		effect, claimed, err := item.calling.ClaimNextCommand(context.Background())
+		if err != nil || !claimed {
+			t.Fatalf("claim Bridge = %t, %v", claimed, err)
+		}
+		installPostgresTestTrigger(t, item.pool, fmt.Sprintf(`
+			CREATE FUNCTION fail_interrupted_bridge_result() RETURNS trigger
+			LANGUAGE plpgsql AS $function$
+			BEGIN
+				RAISE EXCEPTION 'synthetic result recording interruption';
+			END
+			$function$;
+			CREATE TRIGGER fail_interrupted_bridge_result
+			BEFORE UPDATE ON human_calling_provider_commands
+			FOR EACH ROW WHEN (NEW.id = '%s'::uuid AND NEW.state = 'SENT')
+			EXECUTE FUNCTION fail_interrupted_bridge_result()
+		`, item.commandID), `
+			DROP TRIGGER IF EXISTS fail_interrupted_bridge_result
+				ON human_calling_provider_commands;
+			DROP FUNCTION IF EXISTS fail_interrupted_bridge_result()
+		`)
+		if err := effect(context.Background()); err == nil {
+			t.Fatal("interrupted Bridge result unexpectedly committed")
+		}
+		if state := commandState(t, item); state != "SENDING" ||
+			item.provider.count(humancalling.CommandBridge) != 1 {
+			t.Fatalf("uncommitted Bridge result = state:%s effects:%d",
+				state, item.provider.count(humancalling.CommandBridge))
+		}
+		if _, err := item.pool.Exec(context.Background(), `
+			DROP TRIGGER fail_interrupted_bridge_result
+				ON human_calling_provider_commands;
+			DROP FUNCTION fail_interrupted_bridge_result()
+		`); err != nil {
+			t.Fatalf("remove result interruption: %v", err)
+		}
+		item.now = item.now.Add(31 * time.Second)
+		retryAcceptedBridge(t, item)
+	})
+}
+
+func TestTransientOutboundCallRestoresThroughCallingState(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 19, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
+		CallControlID: "outbound-restore-control",
+		CallLegID:     "outbound-restore-provider-leg",
+	}}}
+	fixture := newOutboundEndFixture(t, "outbound-restore", now, provider)
+	call := fixture.startCall(t, "outbound-restore-call")
+
+	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.identity)
+	if err != nil {
+		t.Fatalf("restore transient outbound Call: %v", err)
+	}
+	if state.Softphone.ActiveCallID != call.ID || len(state.Ringing) != 0 {
+		t.Fatalf("transient outbound restoration = active:%q ringing:%#v, want active Call only",
+			state.Softphone.ActiveCallID, state.Ringing)
+	}
+	processAllCommands(t, fixture.calling)
+	dial := provider.last(humancalling.CommandDialOutboundStaff)
+	clientState, _ := dial.Payload["client_state"].(string)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "outbound-restore-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "outbound-restore-control", CallLegID: "outbound-restore-provider-leg",
+		CallSessionID: "outbound-restore-provider-session", ClientState: clientState,
+	}); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	state, err = fixture.calling.ReadCallingState(context.Background(), fixture.identity)
+	if err != nil || state.Softphone.ActiveCallID != call.ID ||
+		len(state.Ringing) != 1 || state.Ringing[0].CallID != call.ID {
+		t.Fatalf("restore ringing outbound Call = %#v, %v", state, err)
+	}
+	lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	)
+	if err != nil || !lease.Owner || lease.ActiveCallID != call.ID || lease.Available {
+		t.Fatalf("reacquire outbound softphone = %#v, %v", lease, err)
+	}
+	if lease, err = fixture.calling.SetReadiness(
+		context.Background(), humancalling.ReadinessCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			Registered: true, MicrophoneReady: true, AudioReady: true,
+			SessionHealthy: true, Available: true,
+		},
+	); err != nil || lease.Available || lease.ActiveCallID != call.ID {
+		t.Fatalf("restore outbound softphone readiness = %#v, %v", lease, err)
+	}
+	if _, err := fixture.calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: "outbound-restore-second-call",
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550124",
+		}); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("second outbound Call while transient Call is active = %v, want occupied", err)
+	}
+}
+
+func TestReadinessSerializesBehindTransientOutboundReservation(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(
+		t, "outbound-readiness-race", now, &recordingProvider{},
+	)
+	const barrierKey int64 = 817270001
+	barrier := holdPostgresAdvisoryLock(t, fixture.pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_transient_outbound_reservation"
+	const functionName = "test_wait_for_transient_outbound_reservation"
+	installPostgresTestTrigger(t, fixture.pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON human_calling_call_legs
+		FOR EACH ROW WHEN (
+			NEW.role = 'STAFF'
+			AND NEW.staff_session_id = 'outbound-readiness-race-browser-1'
+			AND NEW.state = 'PENDING'
+		)
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_call_legs;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	type outboundResult struct {
+		call humancalling.Call
+		err  error
+	}
+	outboundResults := make(chan outboundResult, 1)
+	go func() {
+		call, err := fixture.calling.StartOutboundCall(
+			context.Background(), humancalling.StartOutboundCallCommand{
+				Identity: fixture.identity, SessionID: fixture.sessionID,
+				IdempotencyKey: "outbound-readiness-race-call",
+				PracticeID:     fixture.authorization.Practice.ID,
+				LocationID:     fixture.authorization.Locations[0].ID,
+				Destination:    "+15555550123",
+			},
+		)
+		outboundResults <- outboundResult{call: call, err: err}
+	}()
+	outboundPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+
+	type readinessResult struct {
+		state humancalling.SoftphoneState
+		err   error
+	}
+	readinessResults := make(chan readinessResult, 1)
+	go func() {
+		state, err := fixture.calling.SetReadiness(
+			context.Background(), humancalling.ReadinessCommand{
+				Identity: fixture.identity, SessionID: fixture.sessionID,
+				Registered: true, MicrophoneReady: true, AudioReady: true,
+				SessionHealthy: true, Available: true,
+			},
+		)
+		readinessResults <- readinessResult{state: state, err: err}
+	}()
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", outboundPID,
+	)
+	barrier.release()
+
+	var outbound outboundResult
+	select {
+	case outbound = <-outboundResults:
+		if outbound.err != nil {
+			t.Fatalf("start reserved outbound Call: %v", outbound.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reserved outbound Call did not finish")
+	}
+	select {
+	case readiness := <-readinessResults:
+		if readiness.err != nil || readiness.state.Available ||
+			readiness.state.ActiveCallID != outbound.call.ID {
+			t.Fatalf("delayed readiness reopened outbound capacity = %#v, %v",
+				readiness.state, readiness.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delayed readiness did not finish")
+	}
+	var desiredAvailable bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(&desiredAvailable); err != nil {
+		t.Fatal(err)
+	}
+	if desiredAvailable {
+		t.Fatal("delayed readiness persisted desired_available=true during outbound Call")
+	}
+}
+
+func TestSameSessionLeaseAcquisitionResetsReadiness(t *testing.T) {
+	fixture := newOutboundEndFixture(
+		t,
+		"same-session-readiness-reset",
+		time.Date(2026, time.August, 27, 1, 15, 0, 0, time.UTC),
+		&recordingProvider{},
+	)
+	lease, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	)
+	if err != nil || !lease.Owner || lease.Available || lease.ActiveCallID != "" {
+		t.Fatalf("same-session lease acquisition = %#v, %v", lease, err)
+	}
+	var desired, registered, microphone, audio, healthy bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available, registered, microphone_ready,
+			audio_ready, session_healthy
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(
+		&desired, &registered, &microphone, &audio, &healthy,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if desired || registered || microphone || audio || healthy {
+		t.Fatalf("same-session acquisition retained readiness = %t/%t/%t/%t/%t",
+			desired, registered, microphone, audio, healthy)
+	}
+}
+
+func TestConnectedCallRefusesCrossSessionLeaseTakeover(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 1, 30, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(
+		t, "connected-takeover-refusal", now, &recordingProvider{},
+	)
+	call := fixture.startCall(t, "connected-takeover-refusal-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'BRIDGED', answered_at = $2,
+			bridge_pending_at = $2, bridged_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'STAFF'
+	`, call.ID, now.Add(time.Second)); err != nil {
+		t.Fatalf("make Staff CallLeg connected: %v", err)
+	}
+
+	refused, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, "connected-takeover-new-browser", true,
+	)
+	if err != nil || refused.Owner || refused.ActiveCallID != call.ID {
+		t.Fatalf("cross-session connected Call takeover = %#v, %v", refused, err)
+	}
+	var sessionID string
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT session_id
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != fixture.sessionID {
+		t.Fatalf("connected Call lease moved to %q, want %q", sessionID, fixture.sessionID)
+	}
+
+	reloaded, err := fixture.calling.AcquireSoftphone(
+		context.Background(), fixture.identity, fixture.sessionID, false,
+	)
+	if err != nil || !reloaded.Owner || reloaded.ActiveCallID != call.ID ||
+		reloaded.Available {
+		t.Fatalf("same-session connected Call reload = %#v, %v", reloaded, err)
+	}
+}
+
+func TestUnansweredOutboundEndingKeepsCallingCapacityReserved(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 1, 45, 0, 0, time.UTC)
+	fixture := newOutboundEndFixture(
+		t, "unanswered-outbound-ending", now, &recordingProvider{},
+	)
+	call := fixture.startCall(t, "unanswered-outbound-ending-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs
+		SET state = 'ENDING', ending_at = $2, updated_at = $2
+		WHERE call_id = $1 AND role = 'STAFF'
+	`, call.ID, now.Add(time.Second)); err != nil {
+		t.Fatalf("make unanswered outbound CallLeg ENDING: %v", err)
+	}
+	state, err := fixture.calling.ReadCallingState(context.Background(), fixture.identity)
+	if err != nil || state.Softphone.ActiveCallID != call.ID ||
+		state.Softphone.Available {
+		t.Fatalf("restore unanswered outbound ENDING Call = %#v, %v", state, err)
+	}
+	readiness, err := fixture.calling.SetReadiness(
+		context.Background(), humancalling.ReadinessCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			Registered: true, MicrophoneReady: true, AudioReady: true,
+			SessionHealthy: true, Available: true,
+		},
+	)
+	if err != nil || readiness.Available || readiness.ActiveCallID != call.ID {
+		t.Fatalf("unanswered outbound ENDING readiness = %#v, %v", readiness, err)
+	}
+	if _, err := fixture.calling.StartOutboundCall(
+		context.Background(), humancalling.StartOutboundCallCommand{
+			Identity: fixture.identity, SessionID: fixture.sessionID,
+			IdempotencyKey: "unanswered-outbound-ending-second-call",
+			PracticeID:     fixture.authorization.Practice.ID,
+			LocationID:     fixture.authorization.Locations[0].ID,
+			Destination:    "+15555550124",
+		},
+	); !errors.Is(err, humancalling.ErrOccupied) {
+		t.Fatalf("second outbound during unanswered ENDING = %v, want occupied", err)
+	}
+}
+
+func TestInboundFanoutSkipsStaffWithTransientOutboundCall(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 2, 0, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t, "outbound-blocks-inbound-fanout", now, provider,
+	)
+	fixture.startCall(t, "outbound-blocks-inbound-fanout-call")
+	if _, err := fixture.pool.Exec(context.Background(), `
+		UPDATE human_calling_softphone_leases
+		SET desired_available = true
+		WHERE user_subject = $1
+	`, fixture.identity.Subject); err != nil {
+		t.Fatalf("simulate stale availability during outbound Call: %v", err)
+	}
+
+	inbound, caller := prepareInboundBeforeFanout(
+		t, fixture, provider, now, "outbound-blocks-inbound-fanout",
+	)
+	caller.EventID = "outbound-blocks-inbound-fanout-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	if err := inbound.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("fan out competing inbound Call: %v", err)
+	}
+	if staffLegs := countStaffLegsForCaller(
+		t, fixture.pool, caller.CallControlID,
+	); staffLegs != 0 {
+		t.Fatalf("inbound fanout targeted outbound-occupied Staff %d times", staffLegs)
+	}
+}
+
+func TestInboundFanoutRechecksLeaseAfterWaitingOnOutboundReservation(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 2, 15, 0, 0, time.UTC)
+	provider := &recordingProvider{}
+	fixture := newOutboundEndFixture(
+		t, "outbound-inbound-fanout-race", now, provider,
+	)
+	inbound, caller := prepareInboundBeforeFanout(
+		t, fixture, provider, now, "outbound-inbound-fanout-race",
+	)
+
+	const barrierKey int64 = 817270002
+	barrier := holdPostgresAdvisoryLock(t, fixture.pool, barrierKey)
+	defer barrier.close()
+	const triggerName = "test_block_outbound_during_inbound_fanout"
+	const functionName = "test_wait_outbound_during_inbound_fanout"
+	installPostgresTestTrigger(t, fixture.pool, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+			RETURN NEW;
+		END
+		$function$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON human_calling_call_legs
+		FOR EACH ROW WHEN (
+			NEW.role = 'STAFF'
+			AND NEW.staff_session_id = 'outbound-inbound-fanout-race-browser-1'
+			AND NEW.state = 'PENDING'
+		)
+		EXECUTE FUNCTION %s('%d')
+	`, functionName, triggerName, functionName, barrierKey), fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS %s ON human_calling_call_legs;
+		DROP FUNCTION IF EXISTS %s()
+	`, triggerName, functionName))
+
+	outboundResult := make(chan error, 1)
+	go func() {
+		_, err := fixture.calling.StartOutboundCall(
+			context.Background(), humancalling.StartOutboundCallCommand{
+				Identity: fixture.identity, SessionID: fixture.sessionID,
+				IdempotencyKey: "outbound-inbound-fanout-race-call",
+				PracticeID:     fixture.authorization.Practice.ID,
+				LocationID:     fixture.authorization.Locations[0].ID,
+				Destination:    "+15555550123",
+			},
+		)
+		outboundResult <- err
+	}()
+	outboundPID := waitForPostgresLockWaiter(
+		t, barrier.connection, "advisory", barrier.pid,
+	)
+
+	caller.EventID = "outbound-inbound-fanout-race-answered"
+	caller.Type = humancalling.FactCallAnswered
+	caller.OccurredAt = now.Add(time.Second)
+	inboundResult := make(chan error, 1)
+	go func() {
+		inboundResult <- inbound.ApplyProviderFact(context.Background(), caller)
+	}()
+	// Fanout has taken its statement snapshot but cannot lock the Staff lease.
+	// When outbound commits, PostgreSQL must recheck the updated lease tuple and
+	// reject its now-false desired_available state before returning the row.
+	waitForPostgresLockWaiter(
+		t, barrier.connection, "transactionid", outboundPID,
+	)
+	barrier.release()
+
+	select {
+	case err := <-outboundResult:
+		if err != nil {
+			t.Fatalf("finish concurrent outbound reservation: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent outbound reservation did not finish")
+	}
+	select {
+	case err := <-inboundResult:
+		if err != nil {
+			t.Fatalf("finish concurrent inbound fanout: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent inbound fanout did not finish")
+	}
+	var desired, registered, microphone, audio, healthy bool
+	if err := fixture.pool.QueryRow(context.Background(), `
+		SELECT desired_available, registered, microphone_ready,
+			audio_ready, session_healthy
+		FROM human_calling_softphone_leases
+		WHERE user_subject = $1
+	`, fixture.identity.Subject).Scan(
+		&desired, &registered, &microphone, &audio, &healthy,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if desired || !registered || !microphone || !audio || !healthy {
+		t.Fatalf("outbound lease reservation = %t/%t/%t/%t/%t",
+			desired, registered, microphone, audio, healthy)
+	}
+	if staffLegs := countStaffLegsForCaller(
+		t, fixture.pool, caller.CallControlID,
+	); staffLegs != 0 {
+		t.Fatalf("stale inbound fanout admitted outbound-occupied Staff %d times", staffLegs)
+	}
+}
+
+func prepareInboundBeforeFanout(
+	t *testing.T,
+	fixture outboundEndFixture,
+	provider *recordingProvider,
+	now time.Time,
+	prefix string,
+) (*humancalling.Module, humancalling.ProviderFact) {
+	t.Helper()
+	inbound := humancalling.New(
+		fixture.pool,
+		access.New(fixture.pool, func() time.Time { return now }),
+		provider,
+		humancalling.Config{
+			HandoffSIPDomain:       "synthetic.sip.telnyx.com",
+			StaffSIPDomain:         "sip.telnyx.com",
+			RingWindowDuration:     20 * time.Second,
+			HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+			CallControlID:          "staff-call-control-connection",
+			CredentialConnectionID: "staff-credential-connection",
+			FromNumber:             "+14843336938",
+			RingbackURL:            "https://media.synthetic.test/ringback.wav",
+		},
+		func() time.Time { return now },
+	)
+	if _, err := inbound.CreateHandoff(
+		context.Background(), humancalling.CreateHandoffCommand{
+			Service: humancalling.ServiceIdentity{
+				Subject: "abita-" + prefix, PracticeID: fixture.authorization.Practice.ID,
+			},
+			LocationID:   fixture.authorization.Locations[0].ID,
+			SourceCallID: prefix + "-source", IdempotencyKey: prefix + "-handoff",
+			Contact: humancalling.ContactContext{Phone: "+15555550100"},
+		},
+	); err != nil {
+		t.Fatalf("create %s inbound handoff: %v", prefix, err)
+	}
+	caller := humancalling.ProviderFact{
+		EventID: prefix + "-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now, ConnectionID: "staff-call-control-connection",
+		CallControlID: prefix + "-caller-control", CallLegID: prefix + "-caller-leg",
+		CallSessionID: prefix + "-caller-session",
+		From:          "+15555550100", To: "+14843989071",
+	}
+	if err := inbound.ApplyProviderFact(context.Background(), caller); err != nil {
+		t.Fatalf("admit %s inbound Call: %v", prefix, err)
+	}
+	processAllCommands(t, inbound)
+	return inbound, caller
+}
+
+func countStaffLegsForCaller(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	callerControlID string,
+) int {
+	t.Helper()
+	var staffLegs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM human_calling_call_legs offered
+		WHERE offered.role = 'STAFF'
+			AND offered.call_id = (
+				SELECT caller.call_id
+				FROM human_calling_call_legs caller
+				WHERE caller.role = 'CALLER'
+					AND caller.provider_call_control_id = $1
+			)
+	`, callerControlID).Scan(&staffLegs); err != nil {
+		t.Fatal(err)
+	}
+	return staffLegs
 }
 
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
@@ -974,7 +2502,7 @@ func TestStaleBridgedOutboundLegRequiresExplicitTerminationEvidence(t *testing.T
 		t.Fatalf("age bridged Staff CallLeg: %v", err)
 	}
 
-	if _, err := calling.ReconcileStaleCalls(context.Background()); err != nil {
+	if _, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil {
 		t.Fatalf("reconcile stale bridged Staff CallLeg: %v", err)
 	}
 	callingState, err = calling.ReadCallingState(context.Background(), staff[0])
@@ -1009,8 +2537,8 @@ func TestTerminalStaffHangupReconciliationReleasesSoftphone(t *testing.T) {
 	if err != nil || before.Softphone.Available || before.Softphone.ActiveCallID != callID {
 		t.Fatalf("terminal Staff occupancy before reconciliation = %#v, %v", before.Softphone, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal inactive Staff leg = %d, %v", reconciled, err)
+	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !maintained {
+		t.Fatalf("maintain terminal inactive Staff leg = %t, %v", maintained, err)
 	}
 
 	var legState, commandState string
@@ -1038,11 +2566,11 @@ func TestTerminalNeverStartedCallerReconciliationFailsOnce(t *testing.T) {
 			t, now, "terminal-never-started-caller", provider,
 		)
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal never-started caller = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile terminal never-started caller = %t, %v", reconciled, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat terminal never-started caller = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat terminal never-started caller = %t, %v", reconciled, err)
 	}
 
 	var terminalOutcome, terminalLegState, terminalError, activeLegState string
@@ -1115,11 +2643,11 @@ func TestTerminalNeverStartedCallerCleanupDoesNotRequireProviderObservation(t *t
 			t, now, "terminal-cleanup-without-observation", commandOnlyProvider{},
 		)
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("cleanup without provider observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("cleanup without provider observation = %t, %v", reconciled, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat cleanup without provider observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat cleanup without provider observation = %t, %v", reconciled, err)
 	}
 
 	var terminalLegState, terminalError, activeLegState string
@@ -1342,8 +2870,8 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	`, commandID); err != nil {
 		t.Fatal(err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("mismatched terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("mismatched terminal Stop ring-window = %t, %v", reconciled, err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_provider_commands command
@@ -1360,8 +2888,8 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	`, commandID); err != nil {
 		t.Fatal(err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("malformed terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("malformed terminal Stop ring-window = %t, %v", reconciled, err)
 	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_provider_commands command
@@ -1380,11 +2908,11 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile terminal Stop ring-window = %t, %v", reconciled, err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat terminal Stop ring-window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat terminal Stop ring-window = %t, %v", reconciled, err)
 	}
 
 	var commandState, commandReason, terminalOutcome, callerState string
@@ -1505,8 +3033,8 @@ func TestTerminalCallerReconcilesPreviouslyRejectedStopRingWindowWithoutProvider
 		t.Fatal(err)
 	}
 
-	if reconciled, err := fixture.calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile rejected terminal Stop = %d, %v", reconciled, err)
+	if reconciled, err := fixture.calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile rejected terminal Stop = %t, %v", reconciled, err)
 	}
 	var commandState, commandError string
 	var convergedAudio, terminalized int
@@ -1583,9 +3111,9 @@ func TestStopRingWindowCompletionAndTerminalReconciliationUseConsistentLockOrder
 
 	reconciliationResult := make(chan error, 1)
 	go func() {
-		reconciled, err := calling.ReconcileStaleCalls(context.Background())
-		if reconciled != 1 && err == nil {
-			err = fmt.Errorf("reconciled %d terminal Calls, want 1", reconciled)
+		reconciled, err := calling.MaintainOutgoingCallLegs(context.Background())
+		if !reconciled && err == nil {
+			err = fmt.Errorf("reconciled %t terminal Calls, want 1", reconciled)
 		}
 		reconciliationResult <- err
 	}()
@@ -1639,8 +3167,8 @@ func TestTerminalActiveStaffHangupRetriesExactCleanup(t *testing.T) {
 		prepareTerminalStaffHangup(t, true)
 	dialCount := provider.count(humancalling.CommandDialStaff)
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile terminal active Staff leg = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile terminal active Staff leg = %t, %v", reconciled, err)
 	}
 
 	var terminal, originalState, retryLegID, retryTarget string
@@ -1841,27 +3369,35 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 		accessModule,
 		provider,
 		humancalling.Config{},
-		func() time.Time { return now },
+		time.Now,
 	)
 	runner, err := worker.New(worker.Config{
-		WorkInterval:                  5 * time.Millisecond,
-		WorkTimeout:                   time.Second,
+		WorkInterval:                  250 * time.Millisecond,
+		WorkTimeout:                   10 * time.Second,
 		CredentialInterval:            time.Hour,
 		CredentialTimeout:             time.Second,
 		HealthInterval:                time.Hour,
 		HealthTimeout:                 time.Second,
 		MetricInterval:                time.Hour,
 		MetricTimeout:                 time.Second,
-		ReceiptBatchSize:              1,
+		ReceiptBatchSize:              8,
 		RecoveryAndMessagingBatchSize: 1,
-		ProviderCommandBatchSize:      1,
+		ProviderCommandBatchSize:      8,
 		CommandWorkers:                staffCount,
-		IdleBackoffMax:                20 * time.Millisecond,
-		ErrorBackoffMin:               5 * time.Millisecond,
-		ErrorBackoffMax:               20 * time.Millisecond,
+		IdleBackoffMax:                2 * time.Second,
+		ErrorBackoffMin:               250 * time.Millisecond,
+		ErrorBackoffMax:               10 * time.Second,
 	}, calling, idleMessagingWork{}, idleInteractionWork{}, workerPool)
 	if err != nil {
 		t.Fatal(err)
+	}
+	committedAt := time.Now()
+	if _, err := workerPool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET created_at = $1, updated_at = $1, next_attempt_at = $1
+		WHERE action = 'DIAL_STAFF'
+	`, committedAt); err != nil {
+		t.Fatalf("commit production-shaped Staff Dial queue: %v", err)
 	}
 	runnerContext, cancelRunner := context.WithCancel(context.Background())
 	runnerDone := make(chan error, 1)
@@ -1881,12 +3417,30 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	for index := 1; index <= staffCount; index++ {
 		select {
 		case <-provider.started:
-		case <-time.After(time.Second):
+		case <-time.After(2 * time.Second):
 			t.Fatalf("Staff Dial %d did not start while prior Dials remained in flight", index)
 		}
 	}
+	claimLatency := time.Since(committedAt)
+	t.Logf("ten committed Staff Dials reached the provider in %s", claimLatency)
+	if claimLatency >= 500*time.Millisecond {
+		t.Fatalf("committed Staff Dial claim latency = %s, want < 500ms", claimLatency)
+	}
 	if got := workerPool.Stat().MaxConns(); got != 2 {
 		t.Fatalf("worker pool maximum connections = %d, want 2", got)
+	}
+	var practiceID string
+	if err := workerPool.QueryRow(context.Background(), `
+		SELECT practice_id::text FROM human_calling_calls ORDER BY created_at LIMIT 1
+	`).Scan(&practiceID); err != nil {
+		t.Fatalf("read concurrent Staff Dial Practice: %v", err)
+	}
+	if _, err := workerPool.Exec(context.Background(), `
+		INSERT INTO work_recovery_reconciliation_queue (
+			practice_id, phone, enqueued_at
+		) VALUES ($1, '+15555550999', $2)
+	`, practiceID, now); err != nil {
+		t.Fatalf("seed recovery reconciliation during concurrent Staff Dials: %v", err)
 	}
 	receiptBody := []byte(`{"data":{"record_type":"event","event_type":"call.synthetic_unknown","id":"concurrent-staff-dial-receipt","occurred_at":"2026-08-19T18:30:00Z","payload":{}}}`)
 	if _, err := workerPool.Exec(context.Background(), `
@@ -1900,19 +3454,25 @@ func TestConcurrentCommandWorkersDialIndependentStaffCallLegsForSameCall(t *test
 	`, now, now.Unix(), receiptBody); err != nil {
 		t.Fatalf("seed receipt during concurrent Staff Dials: %v", err)
 	}
-	receiptDeadline := time.Now().Add(500 * time.Millisecond)
+	mixedLaneDeadline := time.Now().Add(time.Second)
 	for {
 		var receiptState string
+		var recoveryDepth int
 		err := workerPool.QueryRow(context.Background(), `
-			SELECT state FROM human_calling_provider_receipts
-			WHERE event_id = 'concurrent-staff-dial-receipt'
-		`).Scan(&receiptState)
-		if err == nil && receiptState == "UNKNOWN" {
+			SELECT
+				COALESCE((
+					SELECT state FROM human_calling_provider_receipts
+					WHERE event_id = 'concurrent-staff-dial-receipt'
+				), ''),
+				(SELECT count(*) FROM work_recovery_reconciliation_queue
+					WHERE practice_id = $1 AND phone = '+15555550999')
+		`, practiceID).Scan(&receiptState, &recoveryDepth)
+		if err == nil && receiptState == "UNKNOWN" && recoveryDepth == 0 {
 			break
 		}
-		if time.Now().After(receiptDeadline) {
-			t.Fatalf("receipt did not progress while Staff Dials were in flight: state=%q err=%v",
-				receiptState, err)
+		if time.Now().After(mixedLaneDeadline) {
+			t.Fatalf("receipt/recovery lanes did not progress during Staff Dials: receipt=%q recovery_depth=%d err=%v",
+				receiptState, recoveryDepth, err)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -2467,6 +4027,96 @@ func TestCredentialReconciliationExpiresWithoutProviderLookup(t *testing.T) {
 	}
 }
 
+func TestCredentialReconciliationOwnsInterruptedCredentialRecovery(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 30, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(
+		t, accessModule, now, "interrupted-credential-recovery", 1,
+	)
+	provider := &credentialFailureProvider{
+		lookupErr: errors.New("synthetic credential lookup interruption"),
+	}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', created_at = $2, updated_at = $2
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if maintained, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || maintained {
+		t.Fatalf("outgoing maintenance claimed credential recovery = %t, %v", maintained, err)
+	}
+	var state string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "SENDING" {
+		t.Fatalf("outgoing maintenance changed credential command to %s", state)
+	}
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if !processed || err == nil {
+		t.Fatalf("credential recovery = processed:%t err:%v", processed, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "AMBIGUOUS" || provider.lookupCalls != 1 {
+		t.Fatalf("credential-owned recovery = state:%s lookups:%d", state, provider.lookupCalls)
+	}
+}
+
+func TestCredentialReconciliationRecoversWithoutObservationAdapter(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 45, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(
+		t, accessModule, now, "credential-recovery-without-observation", 1,
+	)
+	calling := humancalling.New(pool, accessModule, commandOnlyProvider{}, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', created_at = $2, updated_at = $2
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("recover credential without observation adapter = %t, %v", processed, err)
+	}
+	var state, errorCode string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, last_error_code
+		FROM human_calling_provider_commands
+		WHERE user_subject = $1 AND action = 'CREATE_CREDENTIAL'
+	`, staff[0].Subject).Scan(&state, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if state != "AMBIGUOUS" || errorCode != "PROVIDER_EFFECT_UNCERTAIN" {
+		t.Fatalf("recovered credential = state:%s error:%s", state, errorCode)
+	}
+}
+
 func TestCredentialReconciliationRetriesLookupFailureBeforeDeadline(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
@@ -2757,12 +4407,12 @@ func TestUnconfirmedOutboundMediaExpiresAndReleasesSoftphone(t *testing.T) {
 	}
 
 	now = now.Add(21 * time.Second)
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("early outbound media expiry = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("early outbound media expiry = %t, %v", reconciled, err)
 	}
 	now = now.Add(2 * time.Second)
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("expire unconfirmed outbound media = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("expire unconfirmed outbound media = %t, %v", reconciled, err)
 	}
 	var outcome, termination, staffState, staffError, hangupTarget string
 	var destinationLegs int
@@ -3196,8 +4846,8 @@ func TestUnresolvedBridgeFencesVoicemailUntilReconciled(t *testing.T) {
 		}},
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile delayed Bridge = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile delayed Bridge = %t, %v", reconciled, err)
 	}
 	var terminal string
 	if err := pool.QueryRow(context.Background(), `
@@ -3272,8 +4922,8 @@ func TestAbsentBridgeReconciliationReleasesVoicemailFence(t *testing.T) {
 	provider.mu.Lock()
 	provider.observations = append(provider.observations, humancalling.ProviderCallObservation{})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile absent Bridge = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile absent Bridge = %t, %v", reconciled, err)
 	}
 	processAllCommands(t, calling)
 	var bridgeState string
@@ -3450,8 +5100,8 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 		CallLegID: prefix + "-late-leg", CallSessionID: prefix + "-late-session",
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile uncertain losing Dial = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile uncertain losing Dial = %t, %v", reconciled, err)
 	}
 	var hangupID, hangupTarget string
 	if err := pool.QueryRow(context.Background(), `
@@ -3482,8 +5132,8 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 		CallLegID: prefix + "-late-leg", CallSessionID: prefix + "-late-session",
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile accepted Hangup without webhook = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile accepted Hangup without webhook = %t, %v", reconciled, err)
 	}
 	var failedHangups, pendingHangups int
 	if err := pool.QueryRow(context.Background(), `
@@ -3880,9 +5530,9 @@ func TestCommandFailureAndAbsentReconciliationUseConsistentLockOrder(t *testing.
 
 	reconciliationResult := make(chan error, 1)
 	go func() {
-		reconciled, err := calling.ReconcileStaleCalls(context.Background())
-		if reconciled != 1 && err == nil {
-			err = fmt.Errorf("reconciled %d stale Calls, want 1", reconciled)
+		reconciled, err := calling.MaintainOutgoingCallLegs(context.Background())
+		if !reconciled && err == nil {
+			err = fmt.Errorf("reconciled %t stale Calls, want 1", reconciled)
 		}
 		reconciliationResult <- err
 	}()
@@ -4091,6 +5741,93 @@ func TestBridgeFailureAfterRingCompletionStartsVoicemailOnce(t *testing.T) {
 	}
 }
 
+func TestBridgeFailureBeforeRingCompletionPreservesAnotherStaffAnswer(t *testing.T) {
+	now := time.Date(2026, time.August, 5, 15, 10, 0, 0, time.UTC)
+	provider := &recordingProvider{
+		dialResults: []humancalling.ProviderResult{
+			{CallControlID: "first-bridge-staff-control", CallLegID: "first-bridge-staff-leg"},
+			{CallControlID: "second-bridge-staff-control", CallLegID: "second-bridge-staff-leg"},
+		},
+		actionErrors: map[humancalling.CommandAction][]error{
+			humancalling.CommandBridge: {
+				fmt.Errorf("%w: synthetic rejected Bridge", humancalling.ErrDefinitiveProviderFailure),
+			},
+		},
+	}
+	pool, calling, _, staffIdentities := prepareInboundFanout(
+		t, now, "call-leg-bridge-failure-retry", provider, 2,
+	)
+	processAllCommands(t, calling)
+	dials := provider.all(humancalling.CommandDialStaff)
+	if len(dials) != 2 {
+		t.Fatalf("Staff Dial commands = %d, want 2", len(dials))
+	}
+	staffFacts := make([]humancalling.ProviderFact, 2)
+	for index, dial := range dials {
+		clientState, _ := dial.Payload["client_state"].(string)
+		staffFacts[index] = humancalling.ProviderFact{
+			EventID:       fmt.Sprintf("bridge-retry-staff-%d-initiated", index+1),
+			Type:          humancalling.FactCallInitiated,
+			OccurredAt:    now.Add(time.Duration(index+2) * time.Second),
+			ConnectionID:  "staff-call-control-connection",
+			CallControlID: fmt.Sprintf("%s-bridge-staff-control", []string{"first", "second"}[index]),
+			CallLegID:     fmt.Sprintf("%s-bridge-staff-leg", []string{"first", "second"}[index]),
+			CallSessionID: fmt.Sprintf("bridge-retry-staff-%d-session", index+1),
+			ClientState:   clientState,
+		}
+	}
+	answer := func(index int) {
+		t.Helper()
+		fact := staffFacts[index]
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project Staff %d initiation: %v", index+1, err)
+		}
+		fact.EventID = fmt.Sprintf("bridge-retry-staff-%d-answered", index+1)
+		fact.Type = humancalling.FactCallAnswered
+		fact.OccurredAt = fact.OccurredAt.Add(time.Second)
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project Staff %d answer: %v", index+1, err)
+		}
+	}
+
+	answer(0)
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 1 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("first rejected Bridge ended ring window: %#v", provider.commands)
+	}
+	answer(1)
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 2 ||
+		provider.count(humancalling.CommandSpeakVoicemail) != 0 {
+		t.Fatalf("replacement Bridge commands = %#v", provider.commands)
+	}
+	replacement := provider.last(humancalling.CommandBridge)
+	replacementState, _ := replacement.Payload["client_state"].(string)
+	second := staffFacts[1]
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID:       "bridge-retry-second-confirmed",
+		Type:          humancalling.FactCallBridged,
+		OccurredAt:    now.Add(6 * time.Second),
+		CallControlID: second.CallControlID,
+		CallLegID:     second.CallLegID,
+		CallSessionID: second.CallSessionID,
+		ClientState:   replacementState,
+	}); err != nil {
+		t.Fatalf("confirm replacement Bridge: %v", err)
+	}
+	var callID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT call_id::text FROM human_calling_call_legs WHERE id = $1
+	`, replacement.CallLegID).Scan(&callID); err != nil {
+		t.Fatal(err)
+	}
+	connected, err := calling.ReadCall(context.Background(), staffIdentities[1], callID)
+	if err != nil || connected.State != humancalling.CallConnected {
+		t.Fatalf("replacement Staff answer = %#v, %v", connected, err)
+	}
+}
+
 func TestPlaybackStartedReconcilesStartRingWindow(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 15, 20, 0, 0, time.UTC)
 	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{{
@@ -4164,8 +5901,8 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile ambiguous Start ring window = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile ambiguous Start ring window = %t, %v", reconciled, err)
 	}
 	var commandState string
 	var terminalOutcome *string
@@ -4196,8 +5933,8 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 		CallLegID: caller.CallLegID, CallSessionID: caller.CallSessionID,
 	})
 	provider.mu.Unlock()
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("repeat ambiguous Start ring window reconciliation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("repeat ambiguous Start ring window reconciliation = %t, %v", reconciled, err)
 	}
 	if count := strings.Count(metrics.String(), `"outcome":"ambiguous"`); count != 1 {
 		t.Fatalf("repeat reconciliation emitted %d ambiguous metrics, want 1", count)
@@ -4399,8 +6136,8 @@ func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
 	})
 	provider.mu.Unlock()
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("reconcile active unobserved Stop = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("reconcile active unobserved Stop = %t, %v", reconciled, err)
 	}
 	var commandState string
 	var degradedAudio int
@@ -4432,8 +6169,8 @@ func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
 	`, stop.CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("terminalize unobserved Stop = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("terminalize unobserved Stop = %t, %v", reconciled, err)
 	}
 	var convergedAudio, terminalized int
 	if err := pool.QueryRow(context.Background(), `
@@ -4556,8 +6293,8 @@ func TestStaleCallReconciliationQuarantinesContradictoryProviderObservation(t *t
 	})
 	provider.mu.Unlock()
 
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 1 {
-		t.Fatalf("quarantine contradictory stale observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || !reconciled {
+		t.Fatalf("quarantine contradictory stale observation = %t, %v", reconciled, err)
 	}
 	var terminalOutcome, legState, legCode, commandState, commandCode string
 	if err := pool.QueryRow(context.Background(), `
@@ -4578,8 +6315,8 @@ func TestStaleCallReconciliationQuarantinesContradictoryProviderObservation(t *t
 		t.Fatalf("stale observation quarantine = Call:%s leg:%s/%s command:%s/%s",
 			terminalOutcome, legState, legCode, commandState, commandCode)
 	}
-	if reconciled, err := calling.ReconcileStaleCalls(context.Background()); err != nil || reconciled != 0 {
-		t.Fatalf("repeat contradictory stale observation = %d, %v", reconciled, err)
+	if reconciled, err := calling.MaintainOutgoingCallLegs(context.Background()); err != nil || reconciled {
+		t.Fatalf("repeat contradictory stale observation = %t, %v", reconciled, err)
 	}
 }
 
@@ -5239,6 +6976,51 @@ type recordingProvider struct {
 	blockStarted      chan struct{}
 	blockRelease      chan struct{}
 	blockError        error
+}
+
+type deduplicatingProvider struct {
+	*recordingProvider
+	requestMu sync.Mutex
+	requests  []humancalling.ProviderCommand
+	results   map[string]humancalling.ProviderResult
+}
+
+func newDeduplicatingProvider(provider *recordingProvider) *deduplicatingProvider {
+	return &deduplicatingProvider{
+		recordingProvider: provider,
+		results:           map[string]humancalling.ProviderResult{},
+	}
+}
+
+func (provider *deduplicatingProvider) Execute(
+	ctx context.Context,
+	command humancalling.ProviderCommand,
+) (humancalling.ProviderResult, error) {
+	provider.requestMu.Lock()
+	defer provider.requestMu.Unlock()
+	provider.requests = append(provider.requests, command)
+	if result, exists := provider.results[command.ID]; exists {
+		return result, nil
+	}
+	result, err := provider.recordingProvider.Execute(ctx, command)
+	if err == nil {
+		provider.results[command.ID] = result
+	}
+	return result, err
+}
+
+func (provider *deduplicatingProvider) requestsFor(
+	action humancalling.CommandAction,
+) []humancalling.ProviderCommand {
+	provider.requestMu.Lock()
+	defer provider.requestMu.Unlock()
+	requests := []humancalling.ProviderCommand{}
+	for _, command := range provider.requests {
+		if command.Action == action {
+			requests = append(requests, command)
+		}
+	}
+	return requests
 }
 
 func (provider *recordingProvider) DeleteRecording(

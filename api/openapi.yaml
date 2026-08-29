@@ -461,7 +461,7 @@ paths:
   /v1/calling/calls/{callId}/hangup:
     post:
       operationId: requestCallingHangup
-      summary: Commit a provider hangup command without claiming termination.
+      summary: Commit owned Call end intent without claiming provider termination.
       parameters:
         - name: callId
           in: path
@@ -477,7 +477,7 @@ paths:
               $ref: "#/components/schemas/CallingControlRequest"
       responses:
         "202":
-          description: Hangup intent committed.
+          description: Call end intent committed.
           content:
             application/json:
               schema:
@@ -2329,6 +2329,7 @@ components:
         - transferReason
         - reasonSource
         - providerTermination
+        - endRequested
         - callerId
         - retryAllowed
         - version
@@ -2385,6 +2386,8 @@ components:
           type: string
         providerTermination:
           type: string
+        endRequested:
+          type: boolean
         callerId:
           type: string
         retryOfCallId:
@@ -2803,7 +2806,7 @@ components:
           maxLength: 32
     AIInteractionMessageKind:
       type: string
-      enum: [START, SUMMARY, CLOSEOUT, OUTCOME_CHECKPOINT]
+      enum: [START, CLOSEOUT, OUTCOME_CHECKPOINT]
     AIInteractionCallStatus:
       type: string
       enum: [IN_PROGRESS, COMPLETED, ESCALATED, FAILED]
@@ -2842,10 +2845,10 @@ components:
       type: object
       description: >-
         One lifecycle envelope. START uses IN_PROGRESS without lifecycle evidence;
-        OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; SUMMARY uses a
-        terminal status with endedAt and summaryPayload; CLOSEOUT uses a terminal
-        status with endedAt and closeoutPayload. The service validates these
-        kind-specific requirements.
+        OUTCOME_CHECKPOINT uses IN_PROGRESS with appointmentOutcome; CLOSEOUT uses
+        a terminal status with endedAt, optional transcript and appointmentOutcome,
+        and required closeoutPayload. The service validates these kind-specific
+        requirements.
       additionalProperties: false
       required:
         - kind
@@ -2888,9 +2891,6 @@ components:
           additionalProperties: true
         appointmentOutcome:
           $ref: "#/components/schemas/AIAppointmentEvidence"
-        summaryPayload:
-          type: object
-          additionalProperties: true
         closeoutPayload:
           type: object
           additionalProperties: true
@@ -3361,9 +3361,21 @@ components:
           format: date-time
         status:
           type: string
-          enum: [SUCCESS, ERROR]
+          enum: [SUCCESS, ERROR, INCOMPLETE]
+          description: Native LiveKit tool execution status.
         outputClass:
           type: string
+          description: Historical Agent output classification, retained for legacy rows only.
+        domainOutcome:
+          type: string
+          description: Correlated Acuity domain outcome when one was recorded.
+        domainStatus:
+          type: string
+          enum: [success, blocked, partial, ambiguous, failed]
+          description: Correlated Acuity business-result status when one was recorded.
+        taskId:
+          type: string
+          description: Durable Product Task proving Staff Task follow-up.
     OperatorAIInteractionAnalytics:
       type: object
       additionalProperties: false

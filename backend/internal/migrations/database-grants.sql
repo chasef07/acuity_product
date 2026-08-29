@@ -133,6 +133,8 @@ GRANT INSERT ON TABLE
 TO acuity_portal;
 
 GRANT UPDATE (
+    target_id,
+    depends_on_command_id,
     state,
     attempts,
     sent_at,
@@ -167,6 +169,8 @@ GRANT UPDATE (
 ON TABLE public.ai_interaction_attention
 TO acuity_portal;
 
+-- Keep summary_payload through this expand phase so an overlapping pre-change
+-- portal revision remains rollback-safe. The current runtime never writes it.
 GRANT UPDATE (
     external_patient_id,
     ended_at,
@@ -350,6 +354,7 @@ GRANT SELECT (
     practice_id,
     location_id,
     source_call_id,
+    kind,
     state,
     interaction_id,
     payload,
@@ -393,6 +398,8 @@ GRANT UPDATE (
 ON TABLE public.work_task_acknowledgements
 TO acuity_worker;
 
+-- Keep summary_payload through this expand phase so an overlapping pre-change
+-- worker revision remains rollback-safe. The current runtime never writes it.
 GRANT UPDATE (
     external_patient_id,
     ended_at,
@@ -469,6 +476,8 @@ GRANT DELETE ON TABLE
 TO acuity_worker;
 
 GRANT UPDATE (
+    target_id,
+    depends_on_command_id,
     state,
     attempts,
     sent_at,
