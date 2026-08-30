@@ -1,7 +1,8 @@
-import { writeFile } from "node:fs/promises"
 import { spawn } from "node:child_process"
+import { writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type BrowserContext, type Page } from "@playwright/test"
 
 import { signInAs } from "./support"
 
@@ -13,6 +14,9 @@ const realtimeURL =
 const provisioningOutput = process.env.E2E_PROVISIONING_OUTPUT
 const replacementRealtimePIDFile =
   process.env.E2E_REALTIME_REPLACEMENT_PID_FILE
+const browserReconnectMaximumMilliseconds = 30_000
+const browserReconnectAssertionMilliseconds =
+  browserReconnectMaximumMilliseconds + 5_000
 
 const operatorAnalyticsFixture = {
   summary: {
@@ -163,6 +167,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
 }, testInfo) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
 
+  await installControlledReconnectBackoff(page)
   const customerContext = page.context()
   await abortFirstRealtimeRequest(page)
   await test.step("provisioned Admin receives an authenticated session", async () => {
@@ -205,6 +210,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
   const secondCustomerContext = await browser.newContext({
     storageState: customerState,
   })
+  await installControlledReconnectBackoff(secondCustomerContext)
   const secondCustomerPage = await secondCustomerContext.newPage()
   await abortFirstRealtimeRequest(secondCustomerPage)
   await secondCustomerPage.goto("/workspace")
@@ -230,11 +236,25 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       }
     })
 
+    await Promise.all(
+      [page, secondCustomerPage].map(enableDelayedReconnectBackoff),
+    )
+
     process.kill(realtimePID, "SIGKILL")
     await expect(page.getByLabel("Live updates delayed")).toBeVisible()
     await expect(
       secondCustomerPage.getByLabel("Live updates delayed"),
     ).toBeVisible()
+
+    const realtimeEndpoint = new URL(realtimeURL)
+    const realtimePort = Number(realtimeEndpoint.port)
+    expect(Number.isInteger(realtimePort)).toBeTruthy()
+    await expect
+      .poll(() => canListen(realtimeEndpoint.hostname, realtimePort), {
+        message: `realtime port ${realtimeEndpoint.hostname}:${realtimePort} was not released`,
+        timeout: 5_000,
+      })
+      .toBe(true)
 
     const replacementRealtime = spawn(runtimeBinary!, [], {
       env: {
@@ -243,7 +263,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
         DATABASE_URL: process.env.E2E_DATABASE_URL,
         DATABASE_POOL_MAX: "3",
         DATABASE_ACQUIRE_TIMEOUT_MS: "1500",
-        HTTP_PORT: "18081",
+        HTTP_PORT: String(realtimePort),
         BROWSER_ORIGIN: webURL,
         BETTER_AUTH_JWKS_URL: `${webURL}/api/auth/jwks`,
         BETTER_AUTH_ISSUER: webURL,
@@ -255,7 +275,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
         REALTIME_RECONNECT_MIN_MS: "100",
         REALTIME_RECONNECT_MAX_SECONDS: "2",
       },
-      stdio: "ignore",
+      stdio: ["ignore", "inherit", "inherit"],
     })
     expect(replacementRealtime.pid).toBeTruthy()
     expect(replacementRealtimePIDFile).toBeTruthy()
@@ -265,11 +285,38 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       "utf8",
     )
     replacementRealtime.unref()
+    const readinessURL = new URL("/health/ready", realtimeEndpoint).toString()
+    await expect
+      .poll(
+        async () => {
+          if (
+            replacementRealtime.exitCode !== null ||
+            replacementRealtime.signalCode !== null
+          ) {
+            return `exited: ${replacementRealtime.exitCode ?? replacementRealtime.signalCode}`
+          }
+          try {
+            const response = await fetch(readinessURL)
+            return response.ok ? "ready" : `HTTP ${response.status}`
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error)
+          }
+        },
+        {
+          message: "replacement realtime runtime did not become ready",
+          timeout: 10_000,
+        },
+      )
+      .toBe("ready")
 
-    await expect(page.getByLabel("Live updates connected")).toBeVisible()
-    await expect(
-      secondCustomerPage.getByLabel("Live updates connected"),
-    ).toBeVisible()
+    await Promise.all([
+      expect(page.getByLabel("Live updates connected")).toBeVisible({
+        timeout: browserReconnectAssertionMilliseconds,
+      }),
+      expect(
+        secondCustomerPage.getByLabel("Live updates connected"),
+      ).toBeVisible({ timeout: browserReconnectAssertionMilliseconds }),
+    ])
     expect(firstBrowserRefetches).toBeGreaterThan(0)
     expect(secondBrowserRefetches).toBeGreaterThan(0)
   })
@@ -663,5 +710,48 @@ async function abortFirstRealtimeRequest(page: Page) {
       return
     }
     await route.continue()
+  })
+}
+
+async function installControlledReconnectBackoff(
+  target: Page | BrowserContext,
+) {
+  await target.addInitScript(() => {
+    const state = globalThis as typeof globalThis & {
+      __acuityReconnectBackoff?: { enabled: boolean }
+    }
+    const originalRandom = Math.random
+    let reconnectRandomCalls = 0
+    state.__acuityReconnectBackoff = { enabled: false }
+    // Exhaust the short jitter windows, then hold one retry in the 16-second
+    // window that exposed the former 10-second assertion race.
+    Math.random = () =>
+      state.__acuityReconnectBackoff?.enabled
+        ? reconnectRandomCalls++ < 5
+          ? 0
+          : 0.999
+        : originalRandom()
+  })
+}
+
+async function enableDelayedReconnectBackoff(page: Page) {
+  await page.evaluate(() => {
+    const state = globalThis as typeof globalThis & {
+      __acuityReconnectBackoff?: { enabled: boolean }
+    }
+    if (!state.__acuityReconnectBackoff) {
+      throw new Error("reconnect backoff control is unavailable")
+    }
+    state.__acuityReconnectBackoff.enabled = true
+  })
+}
+
+function canListen(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer()
+    server.once("error", () => resolve(false))
+    server.listen({ host, port, exclusive: true }, () => {
+      server.close((error) => resolve(!error))
+    })
   })
 }
