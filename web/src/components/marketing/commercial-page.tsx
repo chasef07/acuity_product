@@ -58,6 +58,13 @@ export type CommercialPageSpec = {
     secondColumn: string
     rows: ComparisonRow[]
   }
+  validation?: {
+    eyebrow: string
+    title: string
+    description: string
+    href: `https://${string}`
+    label: string
+  }
   questions: Array<{ question: string; answer: string }>
   related: RelatedPage[]
 }
@@ -204,6 +211,26 @@ export function CommercialPage({ spec }: { spec: CommercialPageSpec }) {
                 <span role="cell">{row.second}</span>
               </div>
             ))}
+          </div>
+        </section>
+      ) : null}
+
+      {spec.validation ? (
+        <section className={styles.relatedSection}>
+          <div>
+            <p className={styles.eyebrow}>{spec.validation.eyebrow}</p>
+            <h2>{spec.validation.title}</h2>
+          </div>
+          <div className={styles.relatedGrid}>
+            <a
+              href={spec.validation.href}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <span>{spec.validation.label}</span>
+              <p>{spec.validation.description}</p>
+              <ArrowRight aria-hidden="true" size={17} />
+            </a>
           </div>
         </section>
       ) : null}

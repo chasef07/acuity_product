@@ -43,10 +43,15 @@ export type MarketingRoute =
   | "/advancedmd-ai-receptionist"
   | "/ai-receptionist-for-ophthalmology"
   | "/ai-receptionist-vs-medical-answering-service"
+  | "/privacy-policy"
+  | "/terms-of-service"
+  | "/security"
+  | "/case-studies/ophthalmology-patient-access"
+  | "/faq"
 
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
-  { href: "/ai-receptionist-for-ophthalmology", label: "Patient Access" },
+  { href: "/ai-receptionist-for-ophthalmology", label: "Ophthalmology" },
   { href: "/method", label: "Our Method" },
   { href: "/who-we-are", label: "Who We Are" },
 ]
@@ -95,8 +100,18 @@ function SiteFooter() {
         <Link href="/ai-receptionist-for-ophthalmology">Ophthalmology patient access</Link>
         <Link href="/advancedmd-ai-receptionist">AdvancedMD integration</Link>
         <Link href="/ai-receptionist-vs-medical-answering-service">Compare operating models</Link>
+        <Link href="/case-studies/ophthalmology-patient-access">
+          Ophthalmology case study
+        </Link>
+        <Link href="/faq">FAQ</Link>
+        <Link href="/security">Security, Privacy & HIPAA</Link>
+        <Link href="/privacy-policy">Privacy Policy</Link>
+        <Link href="/terms-of-service">Terms of Service</Link>
         <Link href="/who-we-are">Who We Are</Link>
         <Link href="/work-with-us">Work With Us</Link>
+        <a href="https://www.linkedin.com/company/acuityhealth/" rel="noreferrer" target="_blank">
+          LinkedIn
+        </a>
         <Link href="/sign-in">Sign in</Link>
       </div>
     </footer>
@@ -179,6 +194,12 @@ function CaseStudySection() {
         <p className={styles.eyebrow}>{ophthalmologyDeploymentProof.eyebrow}</p>
         <h2>{ophthalmologyDeploymentProof.title}</h2>
         <p>{ophthalmologyDeploymentProof.description}</p>
+        <Link
+          className={styles.proofLink}
+          href="/case-studies/ophthalmology-patient-access"
+        >
+          Read the ophthalmology case study <ArrowRight aria-hidden="true" size={16} />
+        </Link>
       </div>
       <dl className={styles.proofMetrics}>
         {ophthalmologyDeploymentProof.metrics.map((metric) => (
@@ -355,15 +376,17 @@ export function MethodPageContent() {
 }
 
 function FounderPanel({
-  name,
   fullName,
+  role,
+  linkedinHref,
   location,
   imageSrc,
   portraitClassName,
   children,
 }: {
-  name: string
   fullName: string
+  role: string
+  linkedinHref: `https://${string}`
   location: string
   imageSrc: StaticImageData
   portraitClassName?: string
@@ -382,7 +405,13 @@ function FounderPanel({
       </div>
       <div className={styles.founderIdentity}>
         <p className={styles.eyebrow}>Co-founder</p>
-        <h2>{name}</h2>
+        <h2>{fullName}</h2>
+        <div className={styles.founderProfile}>
+          <p>{role}</p>
+          <a href={linkedinHref} rel="noreferrer" target="_blank">
+            LinkedIn <ArrowRight aria-hidden="true" size={14} />
+          </a>
+        </div>
       </div>
       <details className={styles.founderThought} open>
         <summary>Currently on my mind</summary>
@@ -398,10 +427,36 @@ function FounderPanel({
 export function WhoWeArePageContent() {
   return (
     <MarketingFrame current="/who-we-are">
+      <script
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": "Person",
+                "@id": "https://acuityhealth.io/who-we-are#kyle-shechtman",
+                name: "Kyle Shechtman",
+                jobTitle: "Co-founder and CEO",
+                sameAs: ["https://www.linkedin.com/in/kyle-shechtman"],
+                worksFor: { "@id": "https://acuityhealth.io/#organization" },
+              },
+              {
+                "@type": "Person",
+                "@id": "https://acuityhealth.io/who-we-are#chase-fagen",
+                name: "Chase Fagen",
+                jobTitle: "Co-founder",
+                sameAs: ["https://www.linkedin.com/in/chase-fagen-198947180"],
+                worksFor: { "@id": "https://acuityhealth.io/#organization" },
+              },
+            ],
+          }).replace(/</g, "\\u003c"),
+        }}
+        type="application/ld+json"
+      />
       <section className={styles.foundingStory}>
         <p className={styles.eyebrow}>The founding story</p>
         <div>
-          <h1>Acuity Health began as a consulting relationship.</h1>
+          <h1>Acuity Health began close to the patient-access work.</h1>
           <div className={styles.storyColumns}>
             <p>
               Working closely with medical practices taught us that the hard part
@@ -424,14 +479,15 @@ export function WhoWeArePageContent() {
       </section>
 
       <section className={styles.foundersSection}>
-        <header><p className={styles.eyebrow}>Meet the founders + Engineering team</p><h2>The same people stay in the work.</h2></header>
+        <header><p className={styles.eyebrow}>Meet the founders</p><h2>The same people stay in the work.</h2></header>
         <div className={styles.founderGrid}>
           <FounderPanel
             fullName="Kyle Shechtman"
             imageSrc={kylePortrait}
+            linkedinHref="https://www.linkedin.com/in/kyle-shechtman"
             location="August 2026"
-            name="Kyle"
             portraitClassName={styles.founderPortraitKyle}
+            role="Co-founder & CEO"
           >
             <p>
               Enterprise AI requires a forward-deployed approach because the real
@@ -442,9 +498,10 @@ export function WhoWeArePageContent() {
           <FounderPanel
             fullName="Chase Fagen"
             imageSrc={chasePortrait}
+            linkedinHref="https://www.linkedin.com/in/chase-fagen-198947180"
             location="August 2026"
-            name="Chase"
             portraitClassName={styles.founderPortraitChase}
+            role="Co-founder"
           >
             <p>
               When intelligence has negligible marginal cost and is abundant,

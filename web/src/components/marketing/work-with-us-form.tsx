@@ -2,6 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react"
 import { ArrowRight } from "lucide-react"
+import Link from "next/link"
 
 import styles from "./enterprise-site.module.css"
 
@@ -122,6 +123,10 @@ export function WorkWithUsForm() {
           </p>
         )}
       </div>
+      <p className={styles.formPrivacyNotice}>
+        By submitting, you agree that Acuity Health may use this information to
+        respond to your request. See our <Link href="/privacy-policy">Privacy Policy</Link>.
+      </p>
     </form>
   )
 }

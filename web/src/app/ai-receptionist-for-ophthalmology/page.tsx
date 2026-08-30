@@ -160,10 +160,10 @@ const ophthalmologyPage = {
         "Compare completion, evidence, and exception handling before you choose an operating model.",
     },
     {
-      href: "/method",
-      label: "The Acuity Health Method",
+      href: "/case-studies/ophthalmology-patient-access",
+      label: "Ophthalmology patient access case study",
       description:
-        "See how workflow redesign and medical AI deployment move together.",
+        "Review the implementation path, measurement method, reported outcomes, and limitations.",
     },
   ],
 } satisfies CommercialPageSpec

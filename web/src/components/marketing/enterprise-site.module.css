@@ -604,6 +604,24 @@
   font-size: clamp(2.7rem, 4.7vw, 5rem);
 }
 
+.proofLink {
+  min-height: 44px;
+  margin-top: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--marketing-sage);
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.proofLink:hover,
+.proofLink:focus-visible {
+  color: white;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
 .proofMetrics {
   margin: 0;
   display: grid;
@@ -993,6 +1011,36 @@
   line-height: 0.9;
 }
 
+.founderProfile {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.founderProfile p {
+  margin: 0;
+  color: var(--marketing-ink-soft);
+  font-size: 0.88rem;
+}
+
+.founderProfile a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--marketing-blue-deep);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.founderProfile a:hover,
+.founderProfile a:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
 .founderThought {
   max-width: none;
   border-top: 1px solid rgb(16 24 32 / 0.28);
@@ -1325,6 +1373,24 @@
   transform: none;
 }
 
+.formPrivacyNotice {
+  max-width: 700px;
+  margin: 18px 0 0;
+  color: var(--marketing-ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.formPrivacyNotice a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--marketing-blue-deep);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .formSuccess,
 .formError {
   margin: 0;
@@ -1442,6 +1508,19 @@
 }
 
 @media (max-width: 860px) {
+  .brand,
+  .footerBrand,
+  .navLink,
+  .portalLink,
+  .workLink,
+  .siteFooter > div a {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .siteHeader {
     width: min(100% - 32px, 1440px);
     min-height: 108px;

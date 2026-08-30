@@ -41,6 +41,9 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
   for (const metric of ["500+", "0", "500", "$100K+"]) {
     await expect(proof.getByText(metric, { exact: true })).toBeVisible()
   }
+  await expect(
+    proof.getByRole("link", { name: "Read the ophthalmology case study" }),
+  ).toHaveAttribute("href", "/case-studies/ophthalmology-patient-access")
 })
 
 test("marketing navigation exposes the enterprise pages", async ({ page }) => {
@@ -59,8 +62,17 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await page.getByRole("link", { name: "Who We Are" }).first().click()
   await expect(page).toHaveURL(/\/who-we-are$/)
   await expect(
-    page.getByRole("heading", { name: "Acuity Health began as a consulting relationship." }),
+    page.getByRole("heading", {
+      name: "Acuity Health began close to the patient-access work.",
+    }),
   ).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Kyle Shechtman" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Chase Fagen" })).toBeVisible()
+  await expect(
+    page.getByRole("link", { name: "LinkedIn" }).filter({
+      has: page.locator('svg'),
+    }),
+  ).toHaveCount(2)
   await expect(
     page.getByRole("heading", {
       name: "Free medical practices from administrative overload so every patient can be treated like a VIP.",
@@ -113,6 +125,12 @@ test("commercial pages connect search intent to accountable work", async ({ page
   }
 
   await page.goto("/advancedmd-ai-receptionist")
+  await expect(
+    page.getByRole("link", { name: "View the AdvancedMD listing" }),
+  ).toHaveAttribute(
+    "href",
+    "https://www.advancedmd.com/integrations/marketplace/acuity-health/",
+  )
   for (const stage of [
     "Inbound signal",
     "Practice rules",
@@ -221,6 +239,150 @@ test("commercial pages remain usable without document overflow on mobile", async
   expect(await comparison.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
 })
 
+test("trust, FAQ, and case-study pages publish bounded evidence", async ({ page }) => {
+  const pages = [
+    {
+      route: "/security",
+      heading: "Security, privacy, and HIPAA at Acuity Health.",
+    },
+    {
+      route: "/privacy-policy",
+      heading: "How Acuity Health handles information.",
+    },
+    {
+      route: "/terms-of-service",
+      heading: "The terms for using Acuity Health.",
+    },
+    {
+      route: "/faq",
+      heading: "Questions to answer before changing patient access.",
+    },
+    {
+      route: "/case-studies/ophthalmology-patient-access",
+      heading: "From roughly 200 dropped calls a month to zero reported.",
+    },
+  ]
+
+  for (const { route, heading } of pages) {
+    await page.goto(route)
+    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible()
+    await expect(page.locator("h1")).toHaveCount(1)
+  }
+
+  await page.goto("/security")
+  await expect(page.getByText("A public overview, not a compliance badge.")).toBeVisible()
+  await expect(page.getByText(/not a third-party certification/)).toBeVisible()
+  await expect(page.getByText("Data Buddies Solutions LLC", { exact: true })).toBeVisible()
+
+  await page.goto("/faq")
+  const faqSchemas = await page
+    .locator('script[type="application/ld+json"]')
+    .allTextContents()
+  expect(faqSchemas.map((value) => JSON.parse(value)["@type"])).toContain("FAQPage")
+
+  await page.goto("/case-studies/ophthalmology-patient-access")
+  await expect(page.getByText("not independently audited", { exact: false })).toBeVisible()
+  await expect(page.getByText("not a universal promise", { exact: false })).toBeVisible()
+})
+
+test("legacy SEO routes redirect only to equivalent current pages", async ({ request }) => {
+  const redirects = [
+    ["/about", "/who-we-are"],
+    ["/specialties/ophthalmology", "/ai-receptionist-for-ophthalmology"],
+    ["/ophthalmology-answering-service", "/ai-receptionist-for-ophthalmology"],
+    ["/after-hours-answering-service-ophthalmology", "/ai-receptionist-for-ophthalmology"],
+    [
+      "/insights/best-ai-answering-service-ophthalmology",
+      "/ai-receptionist-for-ophthalmology",
+    ],
+    [
+      "/insights/ai-receptionist-vs-traditional-answering-service",
+      "/ai-receptionist-vs-medical-answering-service",
+    ],
+    ["/partners/advancedmd", "/advancedmd-ai-receptionist"],
+  ] as const
+
+  for (const [source, destination] of redirects) {
+    const response = await request.get(source, { maxRedirects: 0 })
+    expect(response.status()).toBe(308)
+    expect(response.headers().location).toBe(destination)
+  }
+
+  for (const route of [
+    "/insights",
+    "/press",
+    "/blog/database-is-your-brain",
+    "/insights/how-ai-can-improve-front-desk-efficiency",
+    "/insights/hidden-cost-of-missed-calls-ophthalmology",
+    "/insights/after-hours-call-capture-ophthalmology",
+    "/insights/ai-receptionists-first-layer-of-triage-eye-care",
+  ]) {
+    expect((await request.get(route, { maxRedirects: 0 })).status()).toBe(404)
+  }
+})
+
+test("public responses include conservative browser security headers", async ({ request }) => {
+  const response = await request.get("/")
+  expect(response.headers()["strict-transport-security"]).toBe("max-age=31536000")
+  expect(response.headers()["x-content-type-options"]).toBe("nosniff")
+  expect(response.headers()["referrer-policy"]).toBe("strict-origin-when-cross-origin")
+  expect(response.headers()["permissions-policy"]).toBe(
+    "camera=(), geolocation=(), payment=()",
+  )
+})
+
+test("new public pages and navigation remain usable on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  for (const route of [
+    "/faq",
+    "/case-studies/ophthalmology-patient-access",
+    "/security",
+    "/privacy-policy",
+    "/terms-of-service",
+  ]) {
+    await page.goto(route)
+    const dimensions = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      content: document.documentElement.scrollWidth,
+    }))
+    expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
+  }
+
+  await page.goto("/")
+  const linkHeights = await page.locator("header a:visible, footer a:visible").evaluateAll(
+    (links) =>
+      links.map((link) => {
+        const bounds = link.getBoundingClientRect()
+        return { height: bounds.height, width: bounds.width }
+      }),
+  )
+  expect(linkHeights.length).toBeGreaterThan(0)
+  expect(
+    linkHeights.every(({ height, width }) => height >= 44 && width >= 44),
+  ).toBe(true)
+
+  for (const target of [
+    {
+      route: "/advancedmd-ai-receptionist",
+      locator: page.getByRole("link", { name: "See how Acuity deploys" }),
+    },
+    {
+      route: "/security",
+      locator: page.getByRole("navigation", { name: "On this page" }).getByRole("link").first(),
+    },
+    {
+      route: "/work-with-us",
+      locator: page.locator("#conversation").getByRole("link", { name: "Privacy Policy" }),
+    },
+  ]) {
+    await page.goto(target.route)
+    const bounds = await target.locator.boundingBox()
+    expect(bounds?.height).toBeGreaterThanOrEqual(44)
+    expect(bounds?.width).toBeGreaterThanOrEqual(44)
+  }
+})
+
 test("public pages expose canonical metadata and browser identity assets", async ({
   page,
   request,
@@ -265,16 +427,51 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/who-we-are",
       canonical: "https://acuityhealth.io/who-we-are",
-      title: "Who We Are | Acuity Health",
+      title: "Patient Access AI Company & Founders | Acuity Health",
       description:
         "Acuity Health is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
     },
     {
       route: "/work-with-us",
       canonical: "https://acuityhealth.io/work-with-us",
-      title: "Work With Us | Acuity Health",
+      title: "Patient Access AI Working Session | Acuity Health",
       description:
         "Work with Acuity Health to baseline patient-access KPIs, redesign workflows, and test operational improvements before scaling.",
+    },
+    {
+      route: "/case-studies/ophthalmology-patient-access",
+      canonical: "https://acuityhealth.io/case-studies/ophthalmology-patient-access",
+      title: "Ophthalmology Patient Access Case Study | Acuity Health",
+      description:
+        "See how a six-location eye-care group reports moving from roughly 200 monthly dropped calls to zero in an operating snapshot with Acuity.",
+    },
+    {
+      route: "/faq",
+      canonical: "https://acuityhealth.io/faq",
+      title: "Medical AI Receptionist FAQ | Acuity Health",
+      description:
+        "Answers about Acuity Health AI agents, patient-access workflows, AdvancedMD scheduling, staff handoffs, implementation, security review, and measurement.",
+    },
+    {
+      route: "/security",
+      canonical: "https://acuityhealth.io/security",
+      title: "Security, Privacy & HIPAA | Acuity Health",
+      description:
+        "Review Acuity Health's public security, privacy, and HIPAA posture, including safeguards, service boundaries, BAAs, and shared responsibilities.",
+    },
+    {
+      route: "/privacy-policy",
+      canonical: "https://acuityhealth.io/privacy-policy",
+      title: "Privacy Policy | Acuity Health",
+      description:
+        "Read how Data Buddies Solutions LLC, doing business as Acuity Health, collects, uses, protects, and shares information through its website and services.",
+    },
+    {
+      route: "/terms-of-service",
+      canonical: "https://acuityhealth.io/terms-of-service",
+      title: "Terms of Service | Acuity Health",
+      description:
+        "Read the terms governing use of the Acuity Health website and general services offered by Data Buddies Solutions LLC.",
     },
   ]
 
@@ -339,6 +536,7 @@ test("public pages expose canonical metadata and browser identity assets", async
     const sitemapUrl = route === "/" ? `${canonical}/` : canonical
     expect(sitemapXml).toContain(`<loc>${sitemapUrl}</loc>`)
   }
+  expect(sitemapXml).toContain("<lastmod>2026-08-30</lastmod>")
   expect(sitemapXml).not.toContain("/sign-in")
   expect(sitemapXml).not.toContain("/workspace")
 
@@ -379,7 +577,12 @@ test("public pages expose canonical metadata and browser identity assets", async
       expect.objectContaining({
         "@type": "Organization",
         name: "Acuity Health",
+        legalName: "Data Buddies Solutions LLC",
         url: "https://acuityhealth.io",
+        sameAs: expect.arrayContaining([
+          "https://www.linkedin.com/company/acuityhealth/",
+          "https://www.advancedmd.com/integrations/marketplace/acuity-health/",
+        ]),
       }),
       expect.objectContaining({
         "@type": "WebSite",
@@ -403,6 +606,11 @@ test("working-session form submits to Formspree and confirms in place", async ({
   })
 
   await page.goto("/work-with-us")
+
+  await expect(page.getByText(/may use this information to respond/)).toBeVisible()
+  await expect(
+    page.locator("#conversation").getByRole("link", { name: "Privacy Policy" }),
+  ).toHaveAttribute("href", "/privacy-policy")
 
   await page.getByLabel("Your name").fill("Taylor Example")
   await page.getByLabel("Work email").fill("taylor@example.com")

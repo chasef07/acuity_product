@@ -121,6 +121,14 @@ const pageSpec: CommercialPageSpec = {
       },
     ],
   },
+  validation: {
+    eyebrow: "Independent marketplace validation",
+    title: "Acuity Health is listed in the AdvancedMD Marketplace.",
+    description:
+      "Review AdvancedMD’s public Acuity Health listing for an external description of the partnership, supported workflows, and system-of-record relationship.",
+    href: "https://www.advancedmd.com/integrations/marketplace/acuity-health/",
+    label: "View the AdvancedMD listing",
+  },
   questions: [
     {
       question: "Is this an AI phone agent that integrates with AdvancedMD?",

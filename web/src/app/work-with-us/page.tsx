@@ -3,7 +3,7 @@ import { createPublicPageMetadata } from "@/lib/site"
 
 export const metadata = createPublicPageMetadata({
   path: "/work-with-us",
-  title: "Work With Us",
+  title: "Patient Access AI Working Session",
   description:
     "Work with Acuity Health to baseline patient-access KPIs, redesign workflows, and test operational improvements before scaling.",
 })

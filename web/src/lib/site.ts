@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 export const siteConfig = {
   name: "Acuity Health",
   shortName: "Acuity Health",
+  legalName: "Data Buddies Solutions LLC",
   url: "https://acuityhealth.io",
   title: "AI Agents for Patient Access | Acuity Health",
   description:
@@ -16,7 +17,12 @@ export const siteStructuredData = {
       "@type": "Organization",
       "@id": `${siteConfig.url}/#organization`,
       name: siteConfig.name,
+      legalName: siteConfig.legalName,
       url: siteConfig.url,
+      sameAs: [
+        "https://www.linkedin.com/company/acuityhealth/",
+        "https://www.advancedmd.com/integrations/marketplace/acuity-health/",
+      ],
       logo: {
         "@type": "ImageObject",
         url: `${siteConfig.url}/icon-512x512.png`,
