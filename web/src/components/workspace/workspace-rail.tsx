@@ -5,7 +5,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
 } from "react"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
@@ -66,15 +65,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { portalClient } from "@/lib/api/client"
-import { completeTask } from "@/lib/api/generated/sdk.gen"
+import { WorkspaceWindowFailure } from "@/components/workspace/workspace-window-failure"
 import type {
-  AccessDiscovery,
-  AiOutcomeCounts,
   AiOutcomeItem,
   EngagementSummary,
   MessageThreadSummary,
-  PracticeAccess,
   Task,
   TaskFolderCounts,
 } from "@/lib/api/generated/types.gen"
@@ -86,14 +81,19 @@ import {
   appointmentOutcomeFolderKeys,
   appointmentOutcomeFolders,
   categorizeAIOutcomes,
-  type AppointmentOutcomeCursors,
   type AppointmentOutcomeFolder,
 } from "@/lib/ai-outcome-attention"
-import { authClient, getAccessTokenResult } from "@/lib/auth-client"
+import { authClient } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { newestFirst } from "@/lib/workspace-ordering"
 import { resolveWorkspaceSearch } from "@/lib/workspace-search"
+import type {
+  WorkspaceConnectionState,
+  WorkspaceProjectionIntent,
+  WorkspaceProjectionState,
+  WorkspaceRailSection,
+} from "@/lib/workspace-projection"
 import {
   filterTasksByCategory,
   filterTaskQueue,
@@ -103,13 +103,7 @@ import {
   type TaskCategoryFilter,
 } from "@/lib/workspace-triage"
 
-export type ConnectionState = "connecting" | "connected" | "degraded"
-
-type AttentionSection =
-  | "tasks"
-  | "calls"
-  | "appointments"
-  | "texts"
+export type ConnectionState = WorkspaceConnectionState
 
 type AppointmentSection = AppointmentOutcomeFolder
 
@@ -128,112 +122,59 @@ const taskCategoryOptions: Array<{
 ]
 
 type WorkspaceRailProps = {
-  discovery: AccessDiscovery
-  practice: PracticeAccess
+  projection: WorkspaceProjectionState
   workspaceControl: ReactNode
   availabilityControl: ReactNode
-  tasks: Task[]
-  recoveryTasks: Task[]
-  taskCounts: TaskFolderCounts
-  aiOutcomes: AiOutcomeItem[]
-  outcomeCounts: AiOutcomeCounts
-  messages: MessageThreadSummary[]
-  selectedTaskID: string
-  selectedAIInteractionID: string
-  selectedPhone: string
-  search: string
-  engagementError: string
-  loading: boolean
-  recoveryLoading: boolean
-  outcomesLoading: boolean
-  outcomesError: string
-  outcomeNextCursors: AppointmentOutcomeCursors
-  messageLoading: boolean
-  nextCursor: string
-  recoveryNextCursor: string
-  messageNextCursor: string
-  connection: ConnectionState
-  analyticsActive: boolean
-  onSearchChange: (search: string) => void
-  onSearchSubmit: () => void
-  onAnalyticsSelect: () => void
-  onEngagementSelect: (engagement: EngagementSummary) => void
-  onAIInteractionSelect: (interaction: AiOutcomeItem) => void
-  onTaskSelect: (task: Task) => void
-  onTaskUpdated: (task: Task) => void
-  onLoadMore: () => void
-  onRecoveryLoadMore: () => void
-  onMessageLoadMore: () => void
-  onOutcomeLoadMore: (folder: AppointmentSection) => void
+  onIntent: (intent: WorkspaceProjectionIntent) => void
 }
 
 export function WorkspaceRail({
-  discovery,
-  practice,
+  projection,
   workspaceControl,
   availabilityControl,
-  tasks,
-  recoveryTasks,
-  taskCounts,
-  aiOutcomes,
-  outcomeCounts,
-  messages,
-  selectedTaskID,
-  selectedAIInteractionID,
-  selectedPhone,
-  search,
-  engagementError,
-  loading,
-  recoveryLoading,
-  outcomesLoading,
-  outcomesError,
-  outcomeNextCursors,
-  messageLoading,
-  nextCursor,
-  recoveryNextCursor,
-  messageNextCursor,
-  connection,
-  analyticsActive,
-  onSearchChange,
-  onSearchSubmit,
-  onAnalyticsSelect,
-  onEngagementSelect,
-  onAIInteractionSelect,
-  onTaskSelect,
-  onTaskUpdated,
-  onLoadMore,
-  onRecoveryLoadMore,
-  onMessageLoadMore,
-  onOutcomeLoadMore,
+  onIntent,
 }: WorkspaceRailProps) {
-  const stateKey = sidebarStateKey(discovery.actor.subject, practice.id)
-  const [expansion, setExpansion] = useState<{
-    stateKey: string
-    sections: AttentionSection[]
-  }>()
-  const expanded = expansion?.stateKey === stateKey ? expansion.sections : []
-  const [appointmentExpansion, setAppointmentExpansion] = useState<{
-    stateKey: string
-    sections: AppointmentSection[]
-  }>()
-  const expandedAppointment =
-    appointmentExpansion?.stateKey === stateKey
-      ? appointmentExpansion.sections
-      : []
-  const [taskCategoryState, setTaskCategoryState] = useState<{
-    stateKey: string
-    value: TaskCategoryFilter
-  }>()
-  const taskCategory =
-    taskCategoryState?.stateKey === stateKey
-      ? taskCategoryState.value
-      : "all"
-  const [pendingTaskID, setPendingTaskID] = useState("")
-  const [completionError, setCompletionError] = useState<{
-    taskID: string
-    message: string
-  }>()
-  const currentStateKey = useRef(stateKey)
+  const discovery = projection.discovery!
+  const practice =
+    discovery.practices.find(
+      (item) => item.id === projection.scope.practiceID,
+    ) ?? discovery.practices[0]!
+  const tasks = projection.tasks.items
+  const recoveryTasks = projection.recoveryTasks.items
+  const taskCounts = projection.tasks.counts
+  const aiOutcomes = projection.aiOutcomes.items
+  const outcomeCounts = projection.aiOutcomes.counts
+  const messages = projection.messages.items
+  const selectedTaskID = projection.selection.task?.id ?? ""
+  const selectedAIInteractionID = projection.selection.aiInteractionID
+  const selectedPhone = projection.selection.engagement?.phone ?? ""
+  const search = projection.search.input
+  const engagementError = projection.search.error
+  const loading = projection.tasks.loading
+  const taskError = projection.tasks.error
+  const recoveryLoading = projection.recoveryTasks.loading
+  const recoveryError = projection.recoveryTasks.error
+  const outcomesLoading = projection.aiOutcomes.loading
+  const outcomesError = projection.aiOutcomes.error
+  const outcomeNextCursors = projection.aiOutcomes.nextCursors
+  const messageLoading = projection.messages.loading
+  const messageError = projection.messages.error
+  const nextCursor = projection.tasks.nextCursor
+  const recoveryNextCursor = projection.recoveryTasks.nextCursor
+  const messageNextCursor = projection.messages.nextCursor
+  const connection = projection.connection
+  const analyticsActive = projection.selection.view === "analytics"
+  const railStateKey = `${discovery.actor.subject}:${practice.id}`
+  const expanded = projection.rail.expanded
+  const expandedAppointment = projection.rail.expandedAppointments
+  const taskCategory = projection.rail.taskCategory
+  const pendingTaskID = projection.completion.pendingTaskID
+  const completionError = projection.completion.error
+    ? {
+        taskID: projection.completion.errorTaskID,
+        message: projection.completion.error,
+      }
+    : undefined
   const scrollContainer = useRef<HTMLDivElement | null>(null)
   const searchInput = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
@@ -283,98 +224,29 @@ export function WorkspaceRail({
   }, [])
 
   useEffect(() => {
-    currentStateKey.current = stateKey
-    const restored = readSidebarState(stateKey)
     const frame = window.requestAnimationFrame(() => {
-      setTaskCategoryState({
-        stateKey,
-        value: restored?.taskCategory ?? "all",
-      })
-      setPendingTaskID("")
-      setCompletionError(undefined)
-      scrollContainer.current?.scrollTo({ top: restored?.scrollTop ?? 0 })
+      scrollContainer.current?.scrollTo({ top: projection.rail.scrollTop })
     })
-    return () => {
-      if (currentStateKey.current === stateKey) currentStateKey.current = ""
-      window.cancelAnimationFrame(frame)
-    }
-  }, [stateKey])
+    return () => window.cancelAnimationFrame(frame)
+  }, [projection.rail.scrollTop, railStateKey])
 
-  function toggle(section: AttentionSection) {
-    setExpansion((current) => {
-      const sections = current?.stateKey === stateKey ? current.sections : []
-      return {
-        stateKey,
-        sections: sections.includes(section)
-          ? sections.filter((candidate) => candidate !== section)
-          : [...sections, section],
-      }
-    })
+  function toggle(section: WorkspaceRailSection) {
+    onIntent({ type: "toggle-rail-section", section })
   }
 
   function toggleAppointment(section: AppointmentSection) {
-    setAppointmentExpansion((current) => {
-      const sections = current?.stateKey === stateKey ? current.sections : []
-      return {
-        stateKey,
-        sections: sections.includes(section)
-          ? sections.filter((candidate) => candidate !== section)
-          : [...sections, section],
-      }
-    })
+    onIntent({ type: "toggle-appointment-section", section })
   }
 
   function rememberScroll() {
-    writeSidebarState(stateKey, {
+    onIntent({
+      type: "remember-rail-scroll",
       scrollTop: scrollContainer.current?.scrollTop ?? 0,
-      taskCategory,
     })
   }
 
   function selectTaskCategory(value: TaskCategoryFilter) {
-    setTaskCategoryState({ stateKey, value })
-    writeSidebarState(stateKey, {
-      scrollTop: scrollContainer.current?.scrollTop ?? 0,
-      taskCategory: value,
-    })
-  }
-
-  async function complete(task: Task) {
-    if (pendingTaskID) return
-    const requestStateKey = stateKey
-    setPendingTaskID(task.id)
-    setCompletionError(undefined)
-    const authentication = await getAccessTokenResult()
-    if (currentStateKey.current !== requestStateKey) return
-    if (authentication.status !== "authenticated") {
-      setPendingTaskID("")
-      setCompletionError({
-        taskID: task.id,
-        message:
-          authentication.status === "unauthenticated"
-            ? "Your session expired. Sign in again, then retry."
-            : "Task completion is temporarily unavailable. Retry in a moment.",
-      })
-      return
-    }
-    const result = await completeTask({
-      client: portalClient(authentication.token),
-      path: { taskId: task.id },
-      body: { expectedVersion: task.version },
-    }).catch(() => undefined)
-    if (currentStateKey.current !== requestStateKey) return
-    setPendingTaskID("")
-    if (result?.data) {
-      onTaskUpdated(result.data)
-      return
-    }
-    setCompletionError({
-      taskID: task.id,
-      message:
-        result?.response?.status === 409
-          ? "This Task changed elsewhere. Open it to review the latest state, then retry."
-          : "This Task could not be completed. Retry from the row or open its details.",
-    })
+    onIntent({ type: "set-task-category", category: value })
   }
 
   return (
@@ -390,19 +262,13 @@ export function WorkspaceRail({
           <form
             onSubmit={(event) => {
               event.preventDefault()
-              if (resolveWorkspaceSearch(search).kind === "tasks") {
-                setExpansion((current) => {
-                  const sections =
-                    current?.stateKey === stateKey ? current.sections : []
-                  return {
-                    stateKey,
-                    sections: sections.includes("tasks")
-                      ? sections
-                      : [...sections, "tasks"],
-                  }
-                })
+              if (
+                resolveWorkspaceSearch(search).kind === "tasks" &&
+                !expanded.includes("tasks")
+              ) {
+                onIntent({ type: "toggle-rail-section", section: "tasks" })
               }
-              onSearchSubmit()
+              onIntent({ type: "submit-search" })
             }}
           >
             <InputGroup className="h-8 rounded-lg border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
@@ -417,7 +283,9 @@ export function WorkspaceRail({
                 enterKeyHint="go"
                 placeholder="Search"
                 value={search}
-                onChange={(event) => onSearchChange(event.target.value)}
+                onChange={(event) =>
+                  onIntent({ type: "set-search", value: event.target.value })
+                }
               />
               <InputGroupAddon align="inline-end" className="md:hidden">
                 <InputGroupButton
@@ -459,7 +327,7 @@ export function WorkspaceRail({
                 key={task.id}
                 task={task}
                 active={task.id === selectedTaskID}
-                onSelect={() => onTaskSelect(task)}
+                onSelect={() => onIntent({ type: "select-task", task })}
                 completionDisabled={Boolean(pendingTaskID)}
                 completionPending={pendingTaskID === task.id}
                 completionError={
@@ -467,7 +335,7 @@ export function WorkspaceRail({
                     ? completionError.message
                     : ""
                 }
-                onComplete={() => void complete(task)}
+                onComplete={() => onIntent({ type: "complete-task", task })}
               />
             ))}
             {loading && filteredTasks.length === 0 && (
@@ -480,6 +348,12 @@ export function WorkspaceRail({
                   : "No Tasks of this type"}
               </RailEmpty>
             )}
+            {taskError && (
+              <WorkspaceWindowFailure
+                message={taskError}
+                onRetry={() => onIntent({ type: "retry" })}
+              />
+            )}
             <RailShowMore
               cursor={taskFolderCursor(
                 nextCursor,
@@ -487,7 +361,9 @@ export function WorkspaceRail({
                 selectedTaskCount,
               )}
               loading={loading}
-              onLoadMore={onLoadMore}
+              onLoadMore={() =>
+                onIntent({ type: "load-more", window: "tasks" })
+              }
             />
           </AttentionGroup>
 
@@ -499,15 +375,24 @@ export function WorkspaceRail({
             expanded={expanded.includes("calls")}
             selectedTaskID={selectedTaskID}
             onToggle={() => toggle("calls")}
-            onSelect={onTaskSelect}
+            onSelect={(task) => onIntent({ type: "select-task", task })}
             cursor={recoveryNextCursor}
             loading={recoveryLoading}
-            onLoadMore={onRecoveryLoadMore}
+            onLoadMore={() =>
+              onIntent({ type: "load-more", window: "recoveryTasks" })
+            }
           />
+          {recoveryError && (
+            <WorkspaceWindowFailure
+              message={recoveryError}
+              onRetry={() => onIntent({ type: "retry" })}
+            />
+          )}
           {outcomesError && (
-            <p role="alert" className="px-6 py-1 text-xs text-destructive">
-              AI appointment updates are unavailable.
-            </p>
+            <WorkspaceWindowFailure
+              message={outcomesError}
+              onRetry={() => onIntent({ type: "retry" })}
+            />
           )}
           <AttentionGroup
             title="Appointments"
@@ -530,8 +415,12 @@ export function WorkspaceRail({
                   folder.count,
                 )}
                 onToggle={() => toggleAppointment(folder.key)}
-                onAIInteractionSelect={onAIInteractionSelect}
-                onLoadMore={() => onOutcomeLoadMore(folder.key)}
+                onAIInteractionSelect={(interaction) =>
+                  onIntent({ type: "select-ai-interaction", interaction })
+                }
+                onLoadMore={() =>
+                  onIntent({ type: "load-more-outcomes", folder: folder.key })
+                }
               />
             ))}
           </AttentionGroup>
@@ -546,7 +435,12 @@ export function WorkspaceRail({
                 key={row.engagement.phone}
                 row={row}
                 active={row.engagement.phone === selectedPhone}
-                onSelect={() => onEngagementSelect(row.engagement)}
+                onSelect={() =>
+                  onIntent({
+                    type: "select-engagement",
+                    engagement: row.engagement,
+                  })
+                }
               />
             ))}
             {messageLoading && textRows.length === 0 && (
@@ -555,10 +449,18 @@ export function WorkspaceRail({
             {!messageLoading && textRows.length === 0 && (
               <RailEmpty inMenu>No unread Texts</RailEmpty>
             )}
+            {messageError && (
+              <WorkspaceWindowFailure
+                message={messageError}
+                onRetry={() => onIntent({ type: "retry" })}
+              />
+            )}
             <RailShowMore
               cursor={messageNextCursor}
               loading={messageLoading}
-              onLoadMore={onMessageLoadMore}
+              onLoadMore={() =>
+                onIntent({ type: "load-more", window: "messages" })
+              }
             />
           </AttentionGroup>
         </SidebarContent>
@@ -574,7 +476,7 @@ export function WorkspaceRail({
                 <SidebarMenuButton
                   isActive={analyticsActive}
                   tooltip="Analytics"
-                  onClick={onAnalyticsSelect}
+                  onClick={() => onIntent({ type: "select-analytics" })}
                 >
                   <ChartNoAxesCombinedIcon />
                   <span>Analytics</span>
@@ -1307,39 +1209,6 @@ function ConnectionMark({ state }: { state: ConnectionState }) {
       )}
     />
   )
-}
-
-type SidebarState = {
-  scrollTop: number
-  taskCategory?: TaskCategoryFilter
-}
-
-function sidebarStateKey(userSubject: string, practiceID: string) {
-  return `acuity.attentionRail.${userSubject}.${practiceID}`
-}
-
-function readSidebarState(key: string): SidebarState | undefined {
-  if (typeof window === "undefined") return undefined
-  try {
-    const value = JSON.parse(window.localStorage.getItem(key) ?? "") as SidebarState
-    if (!Number.isFinite(value?.scrollTop)) return undefined
-    return {
-      scrollTop: value.scrollTop,
-      ...(isTaskCategoryFilter(value.taskCategory)
-        ? { taskCategory: value.taskCategory }
-        : {}),
-    }
-  } catch {
-    return undefined
-  }
-}
-
-function isTaskCategoryFilter(value: unknown): value is TaskCategoryFilter {
-  return taskCategoryOptions.some((option) => option.value === value)
-}
-
-function writeSidebarState(key: string, value: SidebarState) {
-  window.localStorage.setItem(key, JSON.stringify(value))
 }
 
 function relativeTime(value: string) {

@@ -750,6 +750,17 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(
     completedTaskContext.getByRole("button", { name: "Complete" }),
   ).toBeVisible()
+  await expect(
+    page
+      .getByTestId("task-row")
+      .filter({ hasText: "Follow up on text" }),
+  ).toBeVisible()
+  await expect(
+    completedTaskContext.getByRole("heading", {
+      name: "Follow up on text",
+      exact: true,
+    }),
+  ).toBeVisible()
 
   await sendInbound(page, "messaging-stop", "STOP")
   await expect(
