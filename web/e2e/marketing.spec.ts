@@ -1,4 +1,23 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Page } from "@playwright/test"
+
+async function expectPinnedGlassNavigation(page: Page, expectedTop: number) {
+  const navigation = page.getByRole("banner")
+  const glass = await navigation.evaluate((element) => {
+    const styles = getComputedStyle(element)
+    return {
+      backdropFilter: styles.backdropFilter,
+      position: styles.position,
+      top: styles.top,
+    }
+  })
+
+  expect(glass.position).toBe("sticky")
+  expect(glass.top).toBe(`${expectedTop}px`)
+  expect(glass.backdropFilter).toContain("blur(24px)")
+
+  await page.evaluate(() => window.scrollTo(0, 700))
+  expect((await navigation.boundingBox())?.y).toBe(expectedTop)
+}
 
 test("enterprise story leads from medical voice to the Acuity Health Method", async ({ page }) => {
   await page.goto("/")
@@ -164,7 +183,7 @@ test("commercial pages connect search intent to accountable work", async ({ page
   )
 })
 
-test("work with us links land at the top with the full navigation visible", async ({
+test("work with us links land at the top with the pinned glass navigation visible", async ({
   page,
 }) => {
   await page.goto("/")
@@ -182,8 +201,11 @@ test("work with us links land at the top with the full navigation visible", asyn
 
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
   const navigation = await page.getByRole("banner").boundingBox()
-  expect(navigation?.y).toBe(0)
+  expect(navigation?.y).toBe(12)
   expect(navigation?.height).toBe(76)
+
+  await expect(page.getByRole("banner")).toHaveCSS("border-radius", "24px")
+  await expectPinnedGlassNavigation(page, 12)
 })
 
 test("mobile homepage does not overflow horizontally", async ({ page }) => {
@@ -198,6 +220,7 @@ test("mobile homepage does not overflow horizontally", async ({ page }) => {
   })
 
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
+  await expectPinnedGlassNavigation(page, 8)
   await expect(
     page.getByRole("heading", {
       name: "Redesign patient access with medical AI agents.",

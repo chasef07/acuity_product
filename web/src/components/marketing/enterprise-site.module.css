@@ -38,18 +38,29 @@
 }
 
 .site main {
-  scroll-margin-top: 16px;
+  scroll-margin-top: 104px;
 }
 
 .siteHeader {
   width: min(100% - 48px, 1440px);
   min-height: 76px;
   margin: 0 auto;
+  padding: 8px 10px 8px 16px;
+  position: sticky;
+  z-index: 40;
+  top: 12px;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 42px;
-  background: var(--marketing-paper);
+  border: 1px solid rgb(37 51 74 / 0.1);
+  border-radius: 24px;
+  background: rgb(251 250 247 / 0.78);
+  box-shadow:
+    0 14px 40px rgb(37 51 74 / 0.12),
+    inset 0 1px 0 rgb(255 255 255 / 0.78);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  backdrop-filter: blur(24px) saturate(135%);
 }
 
 .brand,
@@ -70,10 +81,15 @@
 }
 
 .primaryNav {
+  padding: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 34px;
+  gap: 3px;
+  border: 1px solid rgb(37 51 74 / 0.07);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.42);
+  box-shadow: 0 4px 16px rgb(37 51 74 / 0.05);
 }
 
 .navLink,
@@ -87,7 +103,19 @@
   font-family: inherit;
   font-size: 13px;
   font-weight: 520;
-  transition: color 180ms ease;
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.navLink {
+  min-height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
 }
 
 .navLink:hover,
@@ -99,20 +127,32 @@
 }
 
 .navLink[aria-current="page"] {
-  text-decoration: underline;
-  text-decoration-color: var(--marketing-blue);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 6px;
+  background: rgb(255 255 255 / 0.76);
+  box-shadow: 0 3px 12px rgb(37 51 74 / 0.08);
+}
+
+.navLink:hover,
+.navLink:focus-visible {
+  background: rgb(255 255 255 / 0.58);
 }
 
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
+}
+
+.portalLink {
+  min-height: 40px;
+  padding: 0 10px;
 }
 
 .workLink {
-  padding: 10px 17px;
+  min-height: 44px;
+  padding: 0 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
   background: var(--marketing-ink);
   color: white;
@@ -1412,7 +1452,7 @@
   }
 
   .primaryNav {
-    gap: 20px;
+    gap: 2px;
   }
 
   .portalLink {
@@ -1524,7 +1564,9 @@
   .siteHeader {
     width: min(100% - 32px, 1440px);
     min-height: 108px;
-    padding: 10px 0 0;
+    padding: 8px 10px 7px;
+    top: 8px;
+    border-radius: 20px;
     grid-template-columns: auto 1fr;
     align-content: center;
     row-gap: 8px;
@@ -1532,13 +1574,11 @@
 
   .primaryNav {
     min-width: 0;
-    padding: 10px 0 13px;
+    padding: 4px;
     grid-row: 2;
     grid-column: 1 / -1;
     justify-content: flex-start;
-    gap: 24px;
     overflow-x: auto;
-    border-top: 1px solid var(--marketing-line);
     scrollbar-width: none;
   }
 
@@ -1682,10 +1722,6 @@
 
   .headerActions {
     gap: 12px;
-  }
-
-  .primaryNav {
-    gap: 18px;
   }
 
   .navLink {
