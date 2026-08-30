@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/chasef07/acuity_product/compare/v0.4.11...v0.5.0) (2026-08-30)
+
+
+### Features
+
+* **marketing:** redesign the Acuity Health public site ([#197](https://github.com/chasef07/acuity_product/issues/197)) ([ee046ab](https://github.com/chasef07/acuity_product/commit/ee046ab0fa32c3de4b90a0b19525beb3ac979cf0))
+
 ## [0.4.11](https://github.com/chasef07/acuity_product/compare/v0.4.10...v0.4.11) (2026-08-28)
 
 
