@@ -31,12 +31,14 @@ GRANT SELECT ON TABLE
     public.ai_interactions,
     public.human_calling_call_legs,
     public.human_calling_calls,
+    public.human_calling_current_staff_owners,
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_location_voice_numbers,
     public.human_calling_outbound_voice_fallbacks,
     public.human_calling_provider_commands,
     public.human_calling_softphone_leases,
+    public.human_calling_staff_transfers,
     public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
@@ -120,6 +122,7 @@ GRANT INSERT ON TABLE
     public.human_calling_handoffs,
     public.human_calling_provider_commands,
     public.human_calling_softphone_leases,
+    public.human_calling_staff_transfers,
     public.human_calling_timeline,
     public.messaging_attachments,
     public.messaging_messages,
@@ -155,6 +158,7 @@ GRANT UPDATE ON TABLE
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_softphone_leases,
+    public.human_calling_staff_transfers,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_portal;
@@ -331,6 +335,7 @@ GRANT SELECT ON TABLE
     public.human_calling_provider_commands,
     public.human_calling_provider_receipts,
     public.human_calling_softphone_leases,
+    public.human_calling_staff_transfers,
     public.human_calling_timeline,
     public.human_calling_voicemails,
     public.messaging_attachments,
@@ -460,6 +465,7 @@ GRANT UPDATE ON TABLE
     public.human_calling_handoffs,
     public.human_calling_provider_receipts,
     public.human_calling_softphone_leases,
+    public.human_calling_staff_transfers,
 	public.work_recovery_resolution_checkpoints,
     public.work_tasks
 TO acuity_worker;

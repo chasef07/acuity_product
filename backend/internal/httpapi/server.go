@@ -931,6 +931,136 @@ func (server *Server) GetCallingCall(
 	server.writeJSON(w, http.StatusOK, response)
 }
 
+func (server *Server) ListStaffTransferCandidates(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+	params api.ListStaffTransferCandidatesParams,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	candidates, err := server.calling.ListTransferCandidates(
+		ctx, identity, callID.String(), params.SessionId,
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response := api.StaffTransferCandidateList{
+		Items: make([]api.StaffTransferCandidate, 0, len(candidates)),
+	}
+	for _, candidate := range candidates {
+		response.Items = append(response.Items, api.StaffTransferCandidate{
+			Subject: candidate.Subject,
+			Email:   openapi_types.Email(candidate.Email),
+		})
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) RequestStaffTransfer(
+	w http.ResponseWriter,
+	r *http.Request,
+	callID openapi_types.UUID,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.StaffTransferRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	transfer, err := server.calling.RequestStaffTransfer(
+		ctx, humancalling.RequestStaffTransferCommand{
+			Identity: identity, CallID: callID.String(), SessionID: body.SessionId,
+			RecipientSubject: body.RecipientSubject, IdempotencyKey: body.IdempotencyKey,
+			HandoffNote: stringValue(body.HandoffNote), ExpectedVersion: body.ExpectedVersion,
+		},
+	)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := staffTransferResponse(transfer)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusAccepted, response)
+}
+
+func (server *Server) DeclineStaffTransfer(
+	w http.ResponseWriter,
+	r *http.Request,
+	transferID openapi_types.UUID,
+) {
+	server.respondStaffTransfer(w, r, transferID, staffTransferDecline)
+}
+
+func (server *Server) CancelStaffTransfer(
+	w http.ResponseWriter,
+	r *http.Request,
+	transferID openapi_types.UUID,
+) {
+	server.respondStaffTransfer(w, r, transferID, staffTransferCancel)
+}
+
+type staffTransferResponseAction uint8
+
+const (
+	staffTransferDecline staffTransferResponseAction = iota
+	staffTransferCancel
+)
+
+func (server *Server) respondStaffTransfer(
+	w http.ResponseWriter,
+	r *http.Request,
+	transferID openapi_types.UUID,
+	action staffTransferResponseAction,
+) {
+	identity, ok := server.callingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.StaffTransferResponseRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	command := humancalling.RespondStaffTransferCommand{
+		Identity: identity, TransferID: transferID.String(), SessionID: body.SessionId,
+	}
+	var transfer humancalling.StaffTransfer
+	var err error
+	switch action {
+	case staffTransferDecline:
+		transfer, err = server.calling.DeclineStaffTransfer(ctx, command)
+	case staffTransferCancel:
+		transfer, err = server.calling.CancelStaffTransfer(ctx, command)
+	default:
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
+	}
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	response, err := staffTransferResponse(transfer)
+	if err != nil {
+		server.writeCallingError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) GetCallingEngagementHistory(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2755,8 +2885,9 @@ func softphoneResponse(state humancalling.SoftphoneState) api.SoftphoneState {
 
 func callingStateResponse(state humancalling.CallingState) (api.CallingState, error) {
 	response := api.CallingState{
-		Softphone: softphoneResponse(state.Softphone),
-		Ringing:   make([]api.RingingCallLeg, 0, len(state.Ringing)),
+		Softphone:      softphoneResponse(state.Softphone),
+		Ringing:        make([]api.RingingCallLeg, 0, len(state.Ringing)),
+		StaffTransfers: make([]api.StaffTransfer, 0, len(state.Transfers)),
 	}
 	for _, leg := range state.Ringing {
 		callID, err := uuid.Parse(leg.CallID)
@@ -2783,7 +2914,18 @@ func callingStateResponse(state humancalling.CallingState) (api.CallingState, er
 			TransferReason: leg.TransferReason,
 			State:          api.RingingCallLegState(leg.State), Version: leg.Version,
 			CreatedAt: leg.CreatedAt, Deadline: leg.Deadline,
+			OfferKind:       api.RingingCallLegOfferKind(leg.OfferKind),
+			StaffTransferId: leg.StaffTransferID,
+			OriginatorEmail: leg.OriginatorEmail,
+			HandoffNote:     leg.HandoffNote,
 		})
+	}
+	for _, transfer := range state.Transfers {
+		converted, err := staffTransferResponse(transfer)
+		if err != nil {
+			return api.CallingState{}, err
+		}
+		response.StaffTransfers = append(response.StaffTransfers, converted)
 	}
 	convert := func(call *humancalling.CallingStateCall) (*api.CallingStateCall, error) {
 		if call == nil {
@@ -2822,6 +2964,51 @@ func callingStateResponse(state humancalling.CallingState) (api.CallingState, er
 		return api.CallingState{}, err
 	}
 	return response, nil
+}
+
+func staffTransferResponse(transfer humancalling.StaffTransfer) (api.StaffTransfer, error) {
+	parse := func(value string) (uuid.UUID, error) { return uuid.Parse(value) }
+	id, err := parse(transfer.ID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	callID, err := parse(transfer.CallID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	practiceID, err := parse(transfer.PracticeID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	locationID, err := parse(transfer.LocationID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	sourceLegID, err := parse(transfer.SourceCallLegID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	targetLegID, err := parse(transfer.TargetCallLegID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	customerLegID, err := parse(transfer.CustomerCallLegID)
+	if err != nil {
+		return api.StaffTransfer{}, err
+	}
+	return api.StaffTransfer{
+		Id: id, CallId: callID, PracticeId: practiceID, LocationId: locationID,
+		LocationName: transfer.LocationName, SourceCallLegId: sourceLegID,
+		TargetCallLegId: targetLegID, CustomerCallLegId: customerLegID,
+		RequestedBySubject: transfer.RequestedBySubject,
+		RequestedByEmail:   transfer.RequestedByEmail,
+		RecipientSubject:   transfer.RecipientSubject,
+		RecipientEmail:     transfer.RecipientEmail,
+		HandoffNote:        transfer.HandoffNote, State: api.StaffTransferState(transfer.State),
+		FailureCode: transfer.FailureCode, ExpiresAt: transfer.ExpiresAt,
+		CreatedAt: transfer.CreatedAt, TargetAnsweredAt: transfer.TargetAnsweredAt,
+		BridgeObservedAt: transfer.BridgeObservedAt, CompletedAt: transfer.CompletedAt,
+	}, nil
 }
 
 func callingCallResponse(call humancalling.Call) (api.CallingCall, error) {

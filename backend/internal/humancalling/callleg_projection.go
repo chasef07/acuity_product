@@ -16,11 +16,12 @@ import (
 )
 
 type callLegClientState struct {
-	Version   int    `json:"v"`
-	CallID    string `json:"call"`
-	CallLegID string `json:"call_leg"`
-	Role      string `json:"role"`
-	Kind      string `json:"kind,omitempty"`
+	Version    int    `json:"v"`
+	CallID     string `json:"call"`
+	CallLegID  string `json:"call_leg"`
+	Role       string `json:"role"`
+	Kind       string `json:"kind,omitempty"`
+	TransferID string `json:"transfer,omitempty"`
 }
 
 const callLegClientStateStaffHangup = "staff_hangup"
@@ -37,6 +38,24 @@ func encodeCallLegClientState(
 		CallLegID: callLegID,
 		Role:      role,
 		Kind:      kind,
+	})
+	return base64.StdEncoding.EncodeToString(value)
+}
+
+func encodeStaffTransferClientState(
+	callID string,
+	callLegID string,
+	role string,
+	kind string,
+	transferID string,
+) string {
+	value, _ := json.Marshal(callLegClientState{
+		Version:    2,
+		CallID:     callID,
+		CallLegID:  callLegID,
+		Role:       role,
+		Kind:       kind,
+		TransferID: transferID,
 	})
 	return base64.StdEncoding.EncodeToString(value)
 }
@@ -365,7 +384,7 @@ func (m *Module) applyCallerAnswered(ctx context.Context, fact ProviderFact) err
 					ON occupied_call.id = occupied.call_id
 				WHERE occupied.staff_subject = calling_scope.user_subject
 					AND (
-						occupied.state IN ('BRIDGE_PENDING', 'BRIDGED')
+						occupied.state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 						OR (occupied.state = 'ENDING' AND occupied.answered_at IS NOT NULL)
 						OR (occupied_call.direction = 'OUTBOUND'
 							AND occupied_call.terminal_outcome IS NULL
@@ -597,7 +616,7 @@ func (m *Module) applyStaffInitiated(
 		`, practiceID, staffSubject, locationID, direction).Scan(&staffEligible); err != nil {
 			return fmt.Errorf("revalidate Staff answer authorization: %w", err)
 		}
-		if priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {
+		if priorLegState == "ANSWERED" || priorLegState == "BRIDGE_PENDING" || priorLegState == "BRIDGED" {
 			// Reordered duplicate answer evidence must not create another Bridge.
 		} else if !staffEligible || !leaseEligible || terminalOutcome != nil ||
 			(priorLegState != "PENDING" && priorLegState != "DIALING" &&
@@ -640,13 +659,13 @@ func (m *Module) applyStaffInitiated(
 				EXISTS (
 					SELECT 1 FROM human_calling_call_legs
 					WHERE call_id = $1 AND role = 'STAFF'
-						AND state IN ('BRIDGE_PENDING', 'BRIDGED')
+						AND state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 				),
 				EXISTS (
 					SELECT 1 FROM human_calling_call_legs
 					WHERE staff_subject = $2 AND id <> $3
 						AND (
-							state IN ('BRIDGE_PENDING', 'BRIDGED')
+							state IN ('ANSWERED', 'BRIDGE_PENDING', 'BRIDGED')
 							OR (state = 'ENDING' AND answered_at IS NOT NULL)
 						)
 				)

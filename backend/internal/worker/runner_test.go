@@ -871,6 +871,10 @@ func (*controlledWork) ExpireDispositions(context.Context) (int, error) {
 	return 0, nil
 }
 
+func (*controlledWork) ExpireStaffTransfers(context.Context) (int, error) {
+	return 0, nil
+}
+
 func (work *controlledWork) signalMaintenance() {
 	if work.maintenanceStarted != nil {
 		work.maintenanceStarted <- struct{}{}

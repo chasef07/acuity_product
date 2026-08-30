@@ -206,7 +206,7 @@ func deriveCallState(
 	if staffState == "BRIDGED" || destinationState == "BRIDGED" {
 		return CallConnected
 	}
-	if staffState == "BRIDGE_PENDING" {
+	if staffState == "ANSWERED" || staffState == "BRIDGE_PENDING" {
 		return CallConnecting
 	}
 	if staffState != "" {
@@ -277,14 +277,13 @@ func (m *Module) QueryCallHistory(
 			ON allowed.membership_id = calling_scope.membership_id
 			AND allowed.location_id = call.location_id
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
-		LEFT JOIN human_calling_call_legs bridged_staff
-			ON bridged_staff.call_id = call.id AND bridged_staff.role = 'STAFF'
-			AND bridged_staff.bridged_at IS NOT NULL
+		LEFT JOIN human_calling_current_staff_owners current_staff
+			ON current_staff.call_id = call.id
 		LEFT JOIN access_memberships staff_membership
 			ON staff_membership.practice_id = call.practice_id
-			AND staff_membership.user_subject = bridged_staff.staff_subject
+			AND staff_membership.user_subject = current_staff.staff_subject
 		LEFT JOIN access_platform_operators staff_operator
-			ON staff_operator.user_subject = bridged_staff.staff_subject
+			ON staff_operator.user_subject = current_staff.staff_subject
 		WHERE call.practice_id = $2
 			AND COALESCE(call.caller_phone, call.destination_phone) = $3
 			AND (calling_scope.location_scope = 'ALL' OR allowed.location_id IS NOT NULL)
@@ -575,13 +574,8 @@ func (m *Module) RecordDisposition(
 	var owner bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM human_calling_call_legs leg
-			WHERE leg.call_id = $1 AND leg.role = 'STAFF'
-				AND leg.staff_subject = $2 AND leg.bridged_at IS NOT NULL
-		) OR EXISTS (
-			SELECT 1 FROM human_calling_calls call
-			WHERE call.id = $1 AND call.direction = 'OUTBOUND'
-				AND call.initiating_subject = $2
+			SELECT 1 FROM human_calling_current_staff_owners owner
+			WHERE owner.call_id = $1 AND owner.staff_subject = $2
 		)
 	`, callID, identity.Subject).Scan(&owner); err != nil || !owner {
 		return DispositionResult{}, ErrConflict

@@ -6,6 +6,8 @@ import type {
   CallingState,
   RingingCallLeg,
   SoftphoneState,
+  StaffTransfer,
+  StaffTransferCandidate,
   StartOutboundCallRequest,
 } from "../api/generated/types.gen.ts"
 import type {
@@ -75,6 +77,8 @@ export type SoftphoneRuntimeSnapshot = {
     sessionHealthy: boolean
   }
   offers: RuntimeOffer[]
+  staffTransfers: StaffTransfer[]
+  transferCandidates: StaffTransferCandidate[]
   pendingCall?: RuntimePendingCall
   activeCall?: CallingCall
   pendingDisposition?: CallingCall
@@ -86,10 +90,12 @@ export type SoftphoneRuntimeSnapshot = {
   mediaAttachment?: RuntimeMediaCorrelation
   muted: boolean
   endingCallID: string
+  committedOwner: boolean
   pending: {
     availability: boolean
     retry: boolean
     disposition: boolean
+    transfer: boolean
   }
   occupied: boolean
   controls: {
@@ -98,6 +104,7 @@ export type SoftphoneRuntimeSnapshot = {
     canKeypad: boolean
     canRetry: boolean
     canDispose: boolean
+    canTransfer: boolean
   }
   failure?: SoftphoneFailure
 }
@@ -144,6 +151,26 @@ export interface SoftphoneBackend {
     sessionID: string
     outcome: CallingDispositionRequest["outcome"]
   }, signal?: AbortSignal): Promise<CallingDispositionResult>
+  listTransferCandidates(input: {
+    callID: string
+    sessionID: string
+  }, signal?: AbortSignal): Promise<StaffTransferCandidate[]>
+  requestTransfer(input: {
+    callID: string
+    sessionID: string
+    recipientSubject: string
+    idempotencyKey: string
+    expectedVersion: number
+    handoffNote?: string
+  }, signal?: AbortSignal): Promise<StaffTransfer>
+  cancelTransfer(input: {
+    transferID: string
+    sessionID: string
+  }, signal?: AbortSignal): Promise<StaffTransfer>
+  declineTransfer(input: {
+    transferID: string
+    sessionID: string
+  }, signal?: AbortSignal): Promise<StaffTransfer>
 }
 
 export interface SoftphoneClock {
@@ -180,6 +207,14 @@ export type SoftphoneRuntime = {
     input: Omit<StartOutboundCallRequest, "sessionId">,
   ): Promise<void>
   answer(callLegID: string): Promise<void>
+  loadTransferCandidates(): Promise<void>
+  requestTransfer(
+    recipientSubject: string,
+    handoffNote: string,
+    idempotencyKey: string,
+  ): Promise<void>
+  cancelTransfer(): Promise<void>
+  declineTransfer(callLegID: string): Promise<void>
   hangup(): Promise<void>
   retry(idempotencyKey: string): Promise<void>
   recover(): Promise<void>
@@ -307,16 +342,20 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       sessionHealthy: false,
     },
     offers: [],
+    staffTransfers: [],
+    transferCandidates: [],
     expectedCallID: recoveryCallID,
     activeCallLegID: restoredMedia?.callLegID ?? "",
     terminalVersions: {},
     recoveryMedia: restoredMedia,
     muted: false,
     endingCallID: "",
+    committedOwner: false,
     pending: {
       availability: false,
       retry: false,
       disposition: false,
+      transfer: false,
     },
   })
 
@@ -543,6 +582,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     publish({
       lease: hideLeaseAfterAccessFailure(snapshot.lease),
       offers: [],
+      staffTransfers: [],
+      transferCandidates: [],
       activeCall: undefined,
       pendingCall: undefined,
       pendingDisposition: undefined,
@@ -553,10 +594,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       mediaAttachment: undefined,
       muted: false,
       endingCallID: "",
+      committedOwner: false,
       pending: {
         availability: false,
         retry: false,
         disposition: false,
+        transfer: false,
       },
       readiness: {
         mediaState: "unavailable",
@@ -740,7 +783,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     return true
   }
 
-  async function discardUnprojectedInboundCall(callID: string) {
+  async function discardUnprojectedCall(callID: string) {
     ignoredCallIDs.add(callID)
     persistCallRecoveryID(undefined)
     const losingLegs = new Set<IncomingMediaLeg>()
@@ -780,9 +823,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       releaseLocalMedia(),
       ...[...losingLegs].map(rejectSafely),
     ])
-    if (!stopped && snapshot.lease?.owner) {
-      await commitReadiness(false, true)
-    }
   }
 
   function expireOffers() {
@@ -901,11 +941,14 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         retainedInboundCall &&
         (!answeredInbound || state.ringing.length === 0)
       ) {
-        await discardUnprojectedInboundCall(expectedCallID)
+        await discardUnprojectedCall(expectedCallID)
+        if (!stopped && snapshot.lease?.owner) {
+          await commitReadiness(false, true)
+        }
         if (stopped || generation !== lifecycleGeneration) return
         expectedCallID = ""
       }
-      const activeCallLegID =
+      let activeCallLegID =
         expectedCallID && state.bridged?.callId === expectedCallID
           ? state.bridged.callLegId
           : snapshot.activeCallLegID
@@ -978,6 +1021,22 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           }
         }
       }
+      const ownershipMoved = Boolean(
+        lease.owner &&
+          snapshot.committedOwner &&
+          snapshot.activeCall?.id === expectedCallID &&
+          snapshot.staffTransfers.some(
+            (transfer) =>
+              transfer.callId === expectedCallID &&
+              transfer.sourceCallLegId === snapshot.activeCallLegID,
+          ) &&
+          !expectedCallProjected,
+      )
+      if (ownershipMoved) {
+        expectedCallID = ""
+        activeCallLegID = ""
+        persistCallRecoveryID(undefined)
+      }
       const offers =
         lease.owner &&
         !expectedCallID &&
@@ -996,19 +1055,37 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       publish({
         lease,
         offers,
-        activeCall: lease.owner ? snapshot.activeCall : undefined,
-        pendingCall: lease.owner ? snapshot.pendingCall : undefined,
-        pendingDisposition: lease.owner ? snapshot.pendingDisposition : undefined,
+        staffTransfers: lease.owner ? state.staffTransfers : [],
+        transferCandidates:
+          lease.owner && !ownershipMoved ? snapshot.transferCandidates : [],
+        activeCall:
+          lease.owner && !ownershipMoved ? snapshot.activeCall : undefined,
+        pendingCall:
+          lease.owner && !ownershipMoved ? snapshot.pendingCall : undefined,
+        pendingDisposition:
+          lease.owner && !ownershipMoved
+            ? snapshot.pendingDisposition
+            : undefined,
         pending: lease.owner
-          ? snapshot.pending
+          ? {
+              ...snapshot.pending,
+              transfer: ownershipMoved ? false : snapshot.pending.transfer,
+            }
           : {
               availability: false,
               retry: false,
               disposition: false,
+              transfer: false,
             },
         endingCallID: lease.owner ? snapshot.endingCallID : "",
         expectedCallID,
         activeCallLegID: lease.owner ? activeCallLegID : "",
+        committedOwner: Boolean(
+          lease.owner &&
+            expectedCallID &&
+            state.bridged?.callId === expectedCallID &&
+            state.bridged.callLegId === activeCallLegID,
+        ),
         expectedMedia: lease.owner ? expectedMedia : undefined,
         recoveryMedia: lease.owner
           ? snapshot.recoveryMedia
@@ -1023,7 +1100,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
             : snapshot.failure,
       })
       syncAttention(offers)
-      if (ownershipLost) await releaseLocalMedia()
+      if (ownershipLost || ownershipMoved) await releaseLocalMedia()
+      if (ownershipMoved && !stopped && lease.owner) void connectMedia()
       const pendingID = lease.owner
         ? lease.pendingOutcomeCallId || state.disposition?.callId
         : ""
@@ -1046,8 +1124,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           options.backend.readCall(expectedCallID, signal),
         )
         if (!stopped && generation === lifecycleGeneration) {
-          if (!expectedCallProjected && call.direction === "INBOUND") {
-            await discardUnprojectedInboundCall(call.id)
+          if (
+            !expectedCallProjected &&
+            (call.direction === "INBOUND" || call.state === "CONNECTED")
+          ) {
+            await discardUnprojectedCall(call.id)
+            if (!stopped && snapshot.lease?.owner) {
+              if (call.direction === "INBOUND") {
+                await commitReadiness(false, true)
+              } else {
+                void connectMedia()
+              }
+            }
           } else {
             applyCall(call)
           }
@@ -1734,9 +1822,19 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         return
       }
       attachedLeg = leg
+      const confirmedOwnerLegID =
+        call.state === "CONNECTED" && mediaAttachment.callLegID
+          ? mediaAttachment.callLegID
+          : snapshot.activeCallLegID
       publish({
         recoveryMedia: persistMediaCorrelation(mediaAttachment),
         mediaAttachment,
+        activeCallLegID: confirmedOwnerLegID,
+        committedOwner: Boolean(
+          call.state === "CONNECTED" &&
+            mediaAttachment.callLegID &&
+            mediaAttachment.callLegID === confirmedOwnerLegID,
+        ),
         failure: undefined,
       })
     } catch (error) {
@@ -1878,6 +1976,40 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     await disconnecting
   }
 
+  function activeSourceTransfer() {
+    const callID = snapshot.activeCall?.id
+    if (!callID || !snapshot.activeCallLegID) return undefined
+    return snapshot.staffTransfers.find(
+      (transfer) =>
+        transfer.callId === callID &&
+        transfer.sourceCallLegId === snapshot.activeCallLegID &&
+        (transfer.state === "REQUESTED" || transfer.state === "ACCEPTED"),
+    )
+  }
+
+  async function reconcileSettledTransfer(transferID: string) {
+    await requestRefresh(true)
+    return !snapshot.staffTransfers.some(
+      (transfer) => transfer.id === transferID,
+    )
+  }
+
+  async function removeTransferOffer(offer: RuntimeOffer) {
+    const leg = exactIncomingLeg(offer)
+    incomingMedia.delete(offer.mediaToken)
+    publish({
+      offers: snapshot.offers.filter(
+        (candidate) => candidate.callLegId !== offer.callLegId,
+      ),
+      staffTransfers: snapshot.staffTransfers.filter(
+        (transfer) => transfer.id !== offer.staffTransferId,
+      ),
+      pending: { ...snapshot.pending, transfer: false },
+    })
+    syncAttention(snapshot.offers)
+    if (leg) await rejectSafely(leg)
+  }
+
   async function signalRefresh() {
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
     refreshTimer = undefined
@@ -2008,6 +2140,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           phase: "stopped",
           lease: undefined,
           offers: [],
+          staffTransfers: [],
+          transferCandidates: [],
           activeCall: undefined,
           pendingCall: undefined,
           pendingDisposition: undefined,
@@ -2017,10 +2151,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           mediaAttachment: undefined,
           muted: false,
           endingCallID: "",
+          committedOwner: false,
           pending: {
             availability: false,
             retry: false,
             disposition: false,
+            transfer: false,
           },
           failure: undefined,
         })
@@ -2136,6 +2272,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         !leg ||
         snapshot.activeCall ||
         snapshot.pendingCall ||
+        snapshot.pending.transfer ||
         attachedLeg ||
         answeredInbound
       ) {
@@ -2246,6 +2383,149 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       }
       await commitReadiness(false)
       await signalRefresh()
+    },
+    async loadTransferCandidates() {
+      const call = snapshot.activeCall
+      if (!call || !snapshot.controls.canTransfer) return
+      publish({
+        pending: { ...snapshot.pending, transfer: true },
+        failure: undefined,
+      })
+      try {
+        const candidates = await backendRequest((signal) =>
+          options.backend.listTransferCandidates(
+            { callID: call.id, sessionID: options.sessionID },
+            signal,
+          ),
+        )
+        if (snapshot.activeCall?.id !== call.id) return
+        publish({
+          transferCandidates: candidates,
+          pending: { ...snapshot.pending, transfer: false },
+        })
+      } catch (error) {
+        publish({
+          transferCandidates: [],
+          pending: { ...snapshot.pending, transfer: false },
+        })
+        await setRequestFailure(error)
+      }
+    },
+    async requestTransfer(recipientSubject, handoffNote, idempotencyKey) {
+      const call = snapshot.activeCall
+      if (
+        !call ||
+        !snapshot.controls.canTransfer ||
+        !recipientSubject ||
+        !idempotencyKey
+      ) {
+        return
+      }
+      const normalizedNote = handoffNote.trim()
+      publish({
+        pending: { ...snapshot.pending, transfer: true },
+        failure: undefined,
+      })
+      signalStaffIntent()
+      try {
+        const transfer = await backendRequest((signal) =>
+          options.backend.requestTransfer(
+            {
+              callID: call.id,
+              sessionID: options.sessionID,
+              recipientSubject,
+              idempotencyKey,
+              expectedVersion: call.version,
+              ...(normalizedNote ? { handoffNote: normalizedNote } : {}),
+            },
+            signal,
+          ),
+        )
+        publish({
+          staffTransfers: [
+            ...snapshot.staffTransfers.filter(
+              (current) => current.id !== transfer.id,
+            ),
+            transfer,
+          ],
+          transferCandidates: [],
+          pending: { ...snapshot.pending, transfer: false },
+        })
+        await signalRefresh()
+      } catch (error) {
+        await requestRefresh(true)
+        const committed = snapshot.staffTransfers.some(
+          (transfer) =>
+            transfer.callId === call.id &&
+            transfer.recipientSubject === recipientSubject &&
+            transfer.handoffNote === normalizedNote,
+        )
+        publish({
+          transferCandidates: committed ? [] : snapshot.transferCandidates,
+          pending: { ...snapshot.pending, transfer: false },
+        })
+        if (!committed) await setRequestFailure(error)
+      }
+    },
+    async cancelTransfer() {
+      const transfer = activeSourceTransfer()
+      if (!transfer || snapshot.pending.transfer) return
+      publish({
+        pending: { ...snapshot.pending, transfer: true },
+        failure: undefined,
+      })
+      try {
+        await backendRequest((signal) =>
+          options.backend.cancelTransfer(
+            { transferID: transfer.id, sessionID: options.sessionID },
+            signal,
+          ),
+        )
+        publish({
+          staffTransfers: snapshot.staffTransfers.filter(
+            (current) => current.id !== transfer.id,
+          ),
+          pending: { ...snapshot.pending, transfer: false },
+        })
+        await signalRefresh()
+      } catch (error) {
+        const committed = await reconcileSettledTransfer(transfer.id)
+        publish({ pending: { ...snapshot.pending, transfer: false } })
+        if (!committed) await setRequestFailure(error)
+      }
+    },
+    async declineTransfer(callLegID) {
+      const offer = snapshot.offers.find(
+        (candidate) =>
+          candidate.callLegId === callLegID &&
+          candidate.offerKind === "STAFF_TRANSFER" &&
+          candidate.staffTransferId,
+      )
+      if (!offer || snapshot.pending.transfer) return
+      publish({
+        pending: { ...snapshot.pending, transfer: true },
+        failure: undefined,
+      })
+      try {
+        await backendRequest((signal) =>
+          options.backend.declineTransfer(
+            {
+              transferID: offer.staffTransferId,
+              sessionID: options.sessionID,
+            },
+            signal,
+          ),
+        )
+        await removeTransferOffer(offer)
+        await signalRefresh()
+      } catch (error) {
+        const committed = await reconcileSettledTransfer(offer.staffTransferId)
+        if (committed) await removeTransferOffer(offer)
+        else {
+          publish({ pending: { ...snapshot.pending, transfer: false } })
+          await setRequestFailure(error)
+        }
+      }
     },
     async hangup() {
       const call = snapshot.activeCall
@@ -2484,7 +2764,8 @@ function derive(
       snapshot.pendingDisposition ||
       snapshot.offers.length > 0 ||
       snapshot.pending.retry ||
-      snapshot.pending.disposition,
+      snapshot.pending.disposition ||
+      snapshot.pending.transfer,
   )
   const canEnd =
     call?.direction === "OUTBOUND"
@@ -2498,9 +2779,15 @@ function derive(
     offers: snapshot.offers.map((offer) => ({ ...offer })),
     controls: {
       canEnd:
-        Boolean(snapshot.lease?.owner && canEnd && !ending),
+        Boolean(
+          snapshot.lease?.owner &&
+            canEnd &&
+            !ending &&
+            (call?.state !== "CONNECTED" || snapshot.committedOwner),
+        ),
       canMute: Boolean(
         snapshot.lease?.owner &&
+          snapshot.committedOwner &&
           connected &&
           mediaAttached &&
           mediaControlsReady &&
@@ -2508,6 +2795,7 @@ function derive(
       ),
       canKeypad: Boolean(
         snapshot.lease?.owner &&
+          snapshot.committedOwner &&
           connected &&
           mediaAttached &&
           mediaControlsReady &&
@@ -2515,6 +2803,17 @@ function derive(
       ),
       canRetry: Boolean(snapshot.lease?.owner && call?.retryAllowed && !snapshot.expectedCallID),
       canDispose: Boolean(snapshot.pendingDisposition && !snapshot.pending.disposition),
+      canTransfer: Boolean(
+        snapshot.lease?.owner &&
+          snapshot.committedOwner &&
+          connected &&
+          !snapshot.pending.transfer &&
+          !snapshot.staffTransfers.some(
+            (transfer) =>
+              transfer.callId === call?.id &&
+              transfer.sourceCallLegId === snapshot.activeCallLegID,
+          ),
+      ),
     },
   }
 }

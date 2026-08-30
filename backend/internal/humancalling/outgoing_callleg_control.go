@@ -378,8 +378,19 @@ func (m *Module) finishCallLegCommand(
 	}
 	if command.CallLegID != "" && executeErr == nil &&
 		(command.Action == CommandDialStaff || command.Action == CommandDialOutboundStaff ||
-			command.Action == CommandDialOutboundDestination) {
-		if _, err := tx.Exec(ctx, `
+			command.Action == CommandDialOutboundDestination ||
+			command.Action == CommandTransferStaff) {
+		if command.Action == CommandTransferStaff {
+			if _, err := tx.Exec(ctx, `
+				UPDATE human_calling_call_legs
+				SET state = CASE WHEN state = 'PENDING' THEN 'DIALING' ELSE state END,
+					updated_at = $2
+				WHERE id = $1
+			`, command.CallLegID, m.now()); err != nil {
+				return fmt.Errorf("record accepted Staff transfer: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_call_legs
 			SET state = CASE WHEN state = 'PENDING' THEN 'DIALING' ELSE state END,
 				provider_call_control_id = COALESCE(provider_call_control_id, NULLIF($2, '')),
@@ -387,10 +398,10 @@ func (m *Module) finishCallLegCommand(
 				updated_at = $4
 			WHERE id = $1
 		`, command.CallLegID, result.CallControlID, result.CallLegID, m.now()); err != nil {
-			return fmt.Errorf("record accepted Staff Dial: %w", err)
-		}
-		var callID, role, subject, legState, terminal string
-		if err := tx.QueryRow(ctx, `
+				return fmt.Errorf("record accepted Staff Dial: %w", err)
+			}
+			var callID, role, subject, legState, terminal string
+			if err := tx.QueryRow(ctx, `
 			SELECT leg.call_id::text, leg.role, COALESCE(leg.staff_subject, ''),
 				leg.state,
 				COALESCE(call.terminal_outcome, '')
@@ -399,20 +410,21 @@ func (m *Module) finishCallLegCommand(
 			WHERE leg.id = $1
 			FOR UPDATE OF call, leg
 		`, command.CallLegID).Scan(
-			&callID, &role, &subject, &legState, &terminal,
-		); err != nil {
-			return fmt.Errorf("read accepted Dial Call: %w", err)
-		}
-		if (terminal != "" || legState == "ENDING") && result.CallControlID != "" {
-			if _, err := m.insertCallLegCommand(
-				ctx, tx, callID, command.CallLegID, "", subject, CommandHangupLeg,
-				result.CallControlID,
-				map[string]any{"client_state": encodeCallLegClientState(
-					callID, command.CallLegID, role, "late_dial_cleanup",
-				)},
-				"",
+				&callID, &role, &subject, &legState, &terminal,
 			); err != nil {
-				return err
+				return fmt.Errorf("read accepted Dial Call: %w", err)
+			}
+			if (terminal != "" || legState == "ENDING") && result.CallControlID != "" {
+				if _, err := m.insertCallLegCommand(
+					ctx, tx, callID, command.CallLegID, "", subject, CommandHangupLeg,
+					result.CallControlID,
+					map[string]any{"client_state": encodeCallLegClientState(
+						callID, command.CallLegID, role, "late_dial_cleanup",
+					)},
+					"",
+				); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -435,6 +447,20 @@ func (m *Module) finishCallLegCommand(
 		case CommandBridge:
 			if err := m.failBridgeCallLeg(
 				ctx, tx, command.CallLegID, errorCode,
+			); err != nil {
+				return err
+			}
+		case CommandTransferStaff:
+			var transferID string
+			if err := tx.QueryRow(ctx, `
+				SELECT id::text FROM human_calling_staff_transfers
+				WHERE provider_command_id = $1
+			`, command.ID).Scan(&transferID); err != nil {
+				return fmt.Errorf("read rejected staff transfer: %w", err)
+			}
+			if err := m.failStaffTransferTx(
+				ctx, tx, transferID, StaffTransferFailed, errorCode,
+				restoreTransferTargetAvailability,
 			); err != nil {
 				return err
 			}
@@ -513,7 +539,8 @@ func isCredentialCommand(action CommandAction) bool {
 
 func isOutboundCallWork(action CommandAction) bool {
 	return action == CommandDialOutboundStaff ||
-		action == CommandDialOutboundDestination || action == CommandBridge
+		action == CommandDialOutboundDestination || action == CommandBridge ||
+		action == CommandTransferStaff
 }
 
 func (m *Module) failDialCallLeg(

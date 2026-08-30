@@ -33,6 +33,10 @@ export type CallingCardOffer = {
   transferReason: string
   deadline: string
   answerReady: boolean
+  offerKind?: "INBOUND_OFFER" | "STAFF_TRANSFER"
+  staffTransferId?: string
+  originatorEmail?: string
+  handoffNote?: string
 }
 
 export type CallingCardSnapshot = {
@@ -40,6 +44,15 @@ export type CallingCardSnapshot = {
   activeCall?: CallingCardCall
   pendingDisposition?: CallingCardCall
   offers: readonly CallingCardOffer[]
+  staffTransfers: ReadonlyArray<{
+    id: string
+    callId: string
+    sourceCallLegId: string
+    recipientEmail: string
+    state: "REQUESTED" | "ACCEPTED" | "COMPLETED" | "DECLINED" | "EXPIRED" | "CANCELED" | "FAILED"
+  }>
+  transferCandidates: ReadonlyArray<{ subject: string; email: string }>
+  activeCallLegID: string
   endingCallID: string
   mediaAttachment?: unknown
   muted: boolean
@@ -47,6 +60,7 @@ export type CallingCardSnapshot = {
   pending?: {
     retry?: boolean
     disposition?: boolean
+    transfer?: boolean
   }
   controls: {
     canEnd: boolean
@@ -54,6 +68,7 @@ export type CallingCardSnapshot = {
     canKeypad: boolean
     canRetry: boolean
     canDispose: boolean
+    canTransfer?: boolean
   }
 }
 
@@ -83,13 +98,24 @@ export type CallingCardCallView = {
     slots: [CallingCardControl, CallingCardControl, CallingCardControl]
   }
   actions: CallingCardActions
+  transfer: {
+    pending: boolean
+    canStart: boolean
+    candidates: Array<{ subject: string; email: string }>
+    active?: {
+      id: string
+      recipientEmail: string
+      status: string
+      canCancel: boolean
+    }
+  }
   failure?: CallingCardFailureView
 }
 
 export type CallingCardOfferView = {
   shell: "calling-card"
   kind: "offers"
-  status: "Incoming call"
+  status: "Incoming call" | "Incoming transfer"
   trayLabel: "Incoming calls"
   offers: Array<{
     callId: string
@@ -99,6 +125,10 @@ export type CallingCardOfferView = {
     countdownLabel: string
     answer: {
       eligible: boolean
+      label: string
+    }
+    decline?: {
+      disabled: boolean
       label: string
     }
   }>
@@ -172,23 +202,41 @@ export function projectCallingCard(
     return {
       shell: "calling-card",
       kind: "offers",
-      status: "Incoming call",
+      status: activeOffers.some((offer) => offer.offerKind === "STAFF_TRANSFER")
+        ? "Incoming transfer"
+        : "Incoming call",
       trayLabel: "Incoming calls",
       ...(snapshot.failure
         ? { failure: projectCallingFailure(snapshot.failure) }
         : {}),
       offers: activeOffers.map((offer) => {
         const phone = formatPhone(offer.phone) || "Phone unavailable"
+        const identity = callIdentity(offer, "INBOUND")
+        if (offer.offerKind === "STAFF_TRANSFER") {
+          if (offer.originatorEmail) {
+            identity.details.push(`From ${offer.originatorEmail}`)
+          }
+          if (offer.handoffNote) identity.details.push(offer.handoffNote)
+        }
         return {
           callId: offer.callId,
           callLegId: offer.callLegId,
-          identity: callIdentity(offer, "INBOUND"),
+          identity,
           countdown: `${secondsRemaining(offer.deadline, _now)}s`,
           countdownLabel: `Incoming offer countdown for ${phone}`,
           answer: {
-            eligible: offer.answerReady,
+            eligible:
+              offer.answerReady && !Boolean(snapshot.pending?.transfer),
             label: `Answer ${phone}`,
           },
+          ...(offer.offerKind === "STAFF_TRANSFER"
+            ? {
+                decline: {
+                  disabled: Boolean(snapshot.pending?.transfer),
+                  label: `Decline transfer from ${offer.originatorEmail || "staff"}`,
+                },
+              }
+            : {}),
         }
       }),
     }
@@ -198,6 +246,12 @@ export function projectCallingCard(
     !isOutcomeState(call.state) &&
     (snapshot.endingCallID === call.id || call.endRequested)
 
+  const activeTransfer = snapshot.staffTransfers.find(
+    (transfer) =>
+      transfer.callId === call.id &&
+      transfer.sourceCallLegId === snapshot.activeCallLegID &&
+      (transfer.state === "REQUESTED" || transfer.state === "ACCEPTED"),
+  )
   return {
     shell: "calling-card",
     kind: "call",
@@ -227,6 +281,24 @@ export function projectCallingCard(
       ],
     },
     actions: projectActions(call, snapshot),
+    transfer: {
+      pending: Boolean(snapshot.pending?.transfer),
+      canStart: Boolean(snapshot.controls.canTransfer),
+      candidates: [...snapshot.transferCandidates],
+      ...(activeTransfer
+        ? {
+            active: {
+              id: activeTransfer.id,
+              recipientEmail: activeTransfer.recipientEmail,
+              status:
+                activeTransfer.state === "ACCEPTED"
+                  ? "Staff answered · confirming transfer"
+                  : `Ringing ${activeTransfer.recipientEmail}`,
+              canCancel: true,
+            },
+          }
+        : {}),
+    },
     ...(snapshot.failure
       ? { failure: projectCallingFailure(snapshot.failure) }
       : {}),

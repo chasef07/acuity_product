@@ -1,11 +1,15 @@
 import {
   acquireSoftphone,
+  cancelStaffTransfer,
   confirmCallingMediaReady,
+  declineStaffTransfer,
   getCallingCall,
   getCallingState,
   issueCallingMediaToken,
+  listStaffTransferCandidates,
   recordCallingDisposition,
   requestCallingHangup,
+  requestStaffTransfer,
   retryOutboundCall,
   setCallingReadiness,
   startOutboundCall,
@@ -188,6 +192,72 @@ export function createSoftphoneHTTPAdapter(): SoftphoneBackend {
       throw requestFailure(result, {
         conflict: "The Call outcome changed before it could be saved.",
         fallback: "The Call outcome could not be saved. Try again.",
+      })
+    },
+
+    async listTransferCandidates(input, signal) {
+      const client = await authenticatedClient()
+      const result = await listStaffTransferCandidates({
+        client,
+        path: { callId: input.callID },
+        query: { sessionId: input.sessionID },
+        signal,
+      }).catch(networkFailure)
+      if (result.data) return result.data.items
+      throw requestFailure(result, {
+        conflict: "The Call changed before transfer options loaded.",
+        fallback: "Transfer options could not be loaded. Try again.",
+      })
+    },
+
+    async requestTransfer(input, signal) {
+      const client = await authenticatedClient()
+      const result = await requestStaffTransfer({
+        client,
+        path: { callId: input.callID },
+        body: {
+          sessionId: input.sessionID,
+          recipientSubject: input.recipientSubject,
+          idempotencyKey: input.idempotencyKey,
+          expectedVersion: input.expectedVersion,
+          ...(input.handoffNote ? { handoffNote: input.handoffNote } : {}),
+        },
+        signal,
+      }).catch(networkFailure)
+      if (result.data) return result.data
+      throw requestFailure(result, {
+        conflict: "The Call or recipient availability changed before transfer.",
+        fallback: "Transfer could not be started. Try again.",
+      })
+    },
+
+    async cancelTransfer(input, signal) {
+      const client = await authenticatedClient()
+      const result = await cancelStaffTransfer({
+        client,
+        path: { transferId: input.transferID },
+        body: { sessionId: input.sessionID },
+        signal,
+      }).catch(networkFailure)
+      if (result.data) return result.data
+      throw requestFailure(result, {
+        conflict: "The transfer changed before it could be canceled.",
+        fallback: "Cancel could not be confirmed. Try again.",
+      })
+    },
+
+    async declineTransfer(input, signal) {
+      const client = await authenticatedClient()
+      const result = await declineStaffTransfer({
+        client,
+        path: { transferId: input.transferID },
+        body: { sessionId: input.sessionID },
+        signal,
+      }).catch(networkFailure)
+      if (result.data) return result.data
+      throw requestFailure(result, {
+        conflict: "The transfer offer changed before it could be declined.",
+        fallback: "Decline could not be confirmed. Try again.",
       })
     },
   }

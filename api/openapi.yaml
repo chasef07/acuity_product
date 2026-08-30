@@ -390,6 +390,137 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/calling/calls/{callId}/transfer-candidates:
+    get:
+      operationId: listStaffTransferCandidates
+      summary: List eligible available Staff at the connected Call's Location.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: sessionId
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        "200":
+          description: Current same-Location transfer candidates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTransferCandidateList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/calls/{callId}/transfers:
+    post:
+      operationId: requestStaffTransfer
+      summary: Commit one acceptance-based same-Location Staff transfer.
+      parameters:
+        - name: callId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffTransferRequest"
+      responses:
+        "202":
+          description: Durable transfer request and stable provider command committed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTransfer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/transfers/{transferId}/decline:
+    post:
+      operationId: declineStaffTransfer
+      summary: Decline the exact incoming Staff transfer offer.
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffTransferResponseRequest"
+      responses:
+        "200":
+          description: Terminal declined transfer; source ownership is preserved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTransfer"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/calling/transfers/{transferId}/cancel:
+    post:
+      operationId: cancelStaffTransfer
+      summary: Cancel the source User's pending Staff transfer.
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffTransferResponseRequest"
+      responses:
+        "200":
+          description: Terminal canceled transfer; source ownership is preserved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTransfer"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/calling/calls/{callId}/media-ready:
     post:
       operationId: confirmCallingMediaReady
@@ -2113,7 +2244,7 @@ components:
     CallingState:
       type: object
       additionalProperties: false
-      required: [softphone, ringing]
+      required: [softphone, ringing, staffTransfers]
       properties:
         softphone:
           $ref: "#/components/schemas/SoftphoneState"
@@ -2121,6 +2252,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RingingCallLeg"
+        staffTransfers:
+          type: array
+          items:
+            $ref: "#/components/schemas/StaffTransfer"
         bridged:
           $ref: "#/components/schemas/CallingStateCall"
         voicemail:
@@ -2130,7 +2265,7 @@ components:
     RingingCallLeg:
       type: object
       additionalProperties: false
-      required: [callId, callLegId, mediaToken, practiceId, locationId, locationName, displayName, phone, transferReason, state, version, createdAt, deadline]
+      required: [callId, callLegId, mediaToken, practiceId, locationId, locationName, displayName, phone, transferReason, state, version, createdAt, deadline, offerKind, staffTransferId, originatorEmail, handoffNote]
       properties:
         callId:
           type: string
@@ -2158,7 +2293,7 @@ components:
           type: string
         state:
           type: string
-          enum: [PENDING, DIALING, RINGING, BRIDGE_PENDING]
+          enum: [PENDING, DIALING, RINGING, ANSWERED, BRIDGE_PENDING]
         version:
           type: integer
           format: int64
@@ -2169,6 +2304,16 @@ components:
         deadline:
           type: string
           format: date-time
+        offerKind:
+          type: string
+          enum: [INBOUND_OFFER, STAFF_TRANSFER]
+        staffTransferId:
+          type: string
+          description: Empty for an ordinary inbound offer.
+        originatorEmail:
+          type: string
+        handoffNote:
+          type: string
     CallingStateCall:
       type: object
       additionalProperties: false
@@ -2203,6 +2348,132 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+    StaffTransferCandidate:
+      type: object
+      additionalProperties: false
+      required: [subject, email]
+      properties:
+        subject:
+          type: string
+        email:
+          type: string
+          format: email
+    StaffTransferCandidateList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StaffTransferCandidate"
+    StaffTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, recipientSubject, idempotencyKey, expectedVersion]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        recipientSubject:
+          type: string
+          minLength: 1
+          maxLength: 200
+        idempotencyKey:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        handoffNote:
+          type: string
+          maxLength: 500
+    StaffTransferResponseRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          maxLength: 200
+    StaffTransfer:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - callId
+        - practiceId
+        - locationId
+        - locationName
+        - sourceCallLegId
+        - targetCallLegId
+        - customerCallLegId
+        - requestedBySubject
+        - requestedByEmail
+        - recipientSubject
+        - recipientEmail
+        - handoffNote
+        - state
+        - failureCode
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        callId:
+          type: string
+          format: uuid
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        locationName:
+          type: string
+        sourceCallLegId:
+          type: string
+          format: uuid
+        targetCallLegId:
+          type: string
+          format: uuid
+        customerCallLegId:
+          type: string
+          format: uuid
+        requestedBySubject:
+          type: string
+        requestedByEmail:
+          type: string
+        recipientSubject:
+          type: string
+        recipientEmail:
+          type: string
+        handoffNote:
+          type: string
+        state:
+          type: string
+          enum: [REQUESTED, ACCEPTED, COMPLETED, DECLINED, EXPIRED, CANCELED, FAILED]
+        failureCode:
+          type: string
+        targetAnsweredAt:
+          type: string
+          format: date-time
+        bridgeObservedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
     StartOutboundCallRequest:
       type: object
       additionalProperties: false

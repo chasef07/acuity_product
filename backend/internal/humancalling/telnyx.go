@@ -217,6 +217,25 @@ func (adapter *TelnyxAdapter) Execute(
 		}
 		_, err := adapter.client.Calls.Actions.Bridge(ctx, command.TargetID, params)
 		return ProviderResult{}, classifyTelnyxSDKError(err)
+	case CommandTransferStaff:
+		timeoutSeconds, validTimeout := payload["timeout_secs"].(float64)
+		if command.TargetID == "" || emptyString(payload["to"]) ||
+			payload["early_media"] != false ||
+			emptyString(payload["client_state"]) ||
+			emptyString(payload["target_leg_client_state"]) ||
+			!validMediaTokenHeader(payload["custom_headers"]) ||
+			!validWebhookRetryPolicies(payload["webhook_retries_policies"],
+				FactCallInitiated, FactCallAnswered, FactCallBridged, FactCallHangup) ||
+			!validTimeout || timeoutSeconds <= 0 ||
+			timeoutSeconds != float64(int(timeoutSeconds)) {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		var params telnyx.CallActionTransferParams
+		if err := decodeTelnyxParams(payload, &params); err != nil {
+			return ProviderResult{}, ErrInvalidInput
+		}
+		_, err := adapter.client.Calls.Actions.Transfer(ctx, command.TargetID, params)
+		return ProviderResult{}, classifyTelnyxSDKError(err)
 	case CommandHangupLeg:
 		if command.TargetID == "" {
 			return ProviderResult{}, ErrInvalidInput

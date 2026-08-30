@@ -338,7 +338,8 @@ func (m *Module) StartOutboundCall(
 			WHERE leg.staff_subject = $1 AND leg.role = 'STAFF'
 				AND (
 					leg.state IN (
-						'PENDING', 'DIALING', 'RINGING', 'BRIDGE_PENDING', 'BRIDGED'
+						'PENDING', 'DIALING', 'RINGING', 'ANSWERED',
+						'BRIDGE_PENDING', 'BRIDGED'
 					)
 					OR (leg.state = 'ENDING' AND leg.answered_at IS NOT NULL)
 					OR (call.direction = 'OUTBOUND'

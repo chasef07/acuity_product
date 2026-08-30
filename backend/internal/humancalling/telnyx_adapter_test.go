@@ -27,6 +27,14 @@ func telnyxLifecycleRetries() map[string]any {
 	}
 }
 
+func telnyxTransferRetries() map[string]any {
+	result := telnyxLifecycleRetries()
+	result["call.bridged"] = map[string]any{
+		"retries_ms": []int{1000, 2000, 5000, 15000, 30000},
+	}
+	return result
+}
+
 func TestTelnyxAdapterRefreshesVoicemailRecordingAndStreamsRange(t *testing.T) {
 	audio := []byte("synthetic-mp3")
 	var server *httptest.Server
@@ -797,6 +805,57 @@ func TestTelnyxAdapterUsesExplicitBridgeAfterIndependentStaffDial(t *testing.T) 
 		bridgeRequest["record_format"] != "mp3" ||
 		bridgeRequest["record_track"] != "both" {
 		t.Fatalf("Telnyx Bridge request = %#v", bridgeRequest)
+	}
+}
+
+func TestTelnyxAdapterTransfersCustomerLegWithDistinctTargetIdentity(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(writer, "invalid", http.StatusBadRequest)
+			return
+		}
+		body["_path"] = request.URL.Path
+		requests <- body
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"data":{"result":"ok"}}`))
+	}))
+	defer server.Close()
+	adapter, err := humancalling.NewTelnyxAdapter(humancalling.TelnyxConfig{
+		APIKey: "synthetic-key", BaseURL: server.URL + "/v2", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.Execute(context.Background(), humancalling.ProviderCommand{
+		ID: "stable-transfer-command", Action: humancalling.CommandTransferStaff,
+		TargetID: "customer-control",
+		Payload: map[string]any{
+			"to": "sip:target-staff@sip.telnyx.com", "timeout_secs": float64(20),
+			"early_media":              false,
+			"client_state":             "customer-source-state",
+			"target_leg_client_state":  "exact-target-state",
+			"webhook_retries_policies": telnyxTransferRetries(),
+			"custom_headers": []map[string]string{{
+				"name":  "X-Acuity-Media-Token",
+				"value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := <-requests
+	if request["_path"] != "/v2/calls/customer-control/actions/transfer" ||
+		request["command_id"] != "stable-transfer-command" ||
+		request["client_state"] != "customer-source-state" ||
+		request["target_leg_client_state"] != "exact-target-state" ||
+		request["early_media"] != false ||
+		request["prevent_double_bridge"] != nil || request["record"] != nil {
+		t.Fatalf("Telnyx transfer request = %#v", request)
 	}
 }
 

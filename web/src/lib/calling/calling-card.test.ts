@@ -32,6 +32,9 @@ function snapshot(
   return {
     activeCall: call,
     offers: [],
+    staffTransfers: [],
+    transferCandidates: [],
+    activeCallLegID: "",
     endingCallID: "",
     muted: false,
     controls: {
@@ -227,6 +230,101 @@ test("simultaneous inbound offers share one tray with exact Answer eligibility a
       },
     ],
   })
+})
+
+test("Staff transfer offers carry originator context and an exact Decline action", () => {
+  const transferOffer: CallingCardOffer = {
+    callId: "call-transfer",
+    callLegId: "target-leg",
+    displayName: "Taylor",
+    phone: "+15551234567",
+    locationName: "Downtown",
+    transferReason: "",
+    deadline: "2026-08-26T15:01:00Z",
+    answerReady: true,
+    offerKind: "STAFF_TRANSFER",
+    staffTransferId: "transfer-1",
+    originatorEmail: "source@abita.test",
+    handoffNote: "Caller needs the secondary desk",
+  }
+  const view = projectCallingCard(
+    {
+      ...snapshot(outboundCall),
+      activeCall: undefined,
+      offers: [transferOffer],
+    },
+    now,
+  )
+
+  assert.equal(view?.kind, "offers")
+  if (view?.kind !== "offers") return
+  assert.equal(view.status, "Incoming transfer")
+  assert.deepEqual(view.offers[0]?.identity.details, [
+    "(555) 123-4567",
+    "Downtown",
+    "From source@abita.test",
+    "Caller needs the secondary desk",
+  ])
+  assert.equal(
+    view.offers[0]?.decline?.label,
+    "Decline transfer from source@abita.test",
+  )
+
+  const pendingView = projectCallingCard(
+    {
+      ...snapshot(outboundCall),
+      activeCall: undefined,
+      offers: [transferOffer],
+      pending: { transfer: true },
+    },
+    now,
+  )
+  assert.equal(
+    pendingView?.kind === "offers"
+      ? pendingView.offers[0]?.answer.eligible
+      : undefined,
+    false,
+  )
+  assert.equal(
+    pendingView?.kind === "offers"
+      ? pendingView.offers[0]?.decline?.disabled
+      : undefined,
+    true,
+  )
+})
+
+test("the source card projects one active transfer with cancellation", () => {
+  const connected = {
+    ...outboundCall,
+    id: "call-transfer-source",
+    state: "CONNECTED" as const,
+    connectedAt: "2026-08-26T15:00:00Z",
+  }
+  const view = projectCallingCard(
+    snapshot(connected, {
+      activeCallLegID: "source-leg",
+      staffTransfers: [
+        {
+          id: "transfer-1",
+          callId: connected.id,
+          sourceCallLegId: "source-leg",
+          recipientEmail: "target@abita.test",
+          state: "ACCEPTED",
+        },
+      ],
+    }),
+    now,
+  )
+
+  assert.equal(view?.kind, "call")
+  if (view?.kind !== "call") return
+  assert.deepEqual(view.transfer.active, {
+    id: "transfer-1",
+    recipientEmail: "target@abita.test",
+    status: "Staff answered · confirming transfer",
+    canCancel: true,
+  })
+  assert.equal(view.transfer.canStart, false)
 })
 
 test("expired inbound offers are never visible or answerable", () => {

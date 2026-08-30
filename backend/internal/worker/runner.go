@@ -21,6 +21,7 @@ type CallingWork interface {
 	ProcessNextRecordingRetention(context.Context) (bool, error)
 	MaintainOutgoingCallLegs(context.Context) (bool, error)
 	ExpireDispositions(context.Context) (int, error)
+	ExpireStaffTransfers(context.Context) (int, error)
 	ReconcileCredentials(context.Context) error
 }
 
@@ -442,6 +443,13 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	}
 	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireDispositions); err != nil {
 		warn(ctx, "calling_disposition_expiry_failed", err)
+		failed = true
+	}
+	if ctx.Err() != nil {
+		return failed
+	}
+	if _, err := runCountWork(ctx, runner.config.WorkTimeout, runner.work.ExpireStaffTransfers); err != nil {
+		warn(ctx, "calling_staff_transfer_expiry_failed", err)
 		failed = true
 	}
 	if ctx.Err() != nil {
