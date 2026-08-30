@@ -4,9 +4,9 @@ export const siteConfig = {
   name: "Acuity Health",
   shortName: "Acuity Health",
   url: "https://acuityhealth.io",
-  title: "Acuity Health | AI Agents for Medical Enterprises",
+  title: "AI Agents for Patient Access | Acuity Health",
   description:
-    "Acuity Health redesigns patient-access workflows, deploys medical AI agents across the systems you already use, and stays with your team until the new operating model works.",
+    "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
 } as const
 
 export const siteStructuredData = {
@@ -77,7 +77,7 @@ export function createPublicPageMetadata({
           url: "/opengraph-image",
           width: 1200,
           height: 630,
-          alt: "Acuity Health: AI agents for medical enterprises",
+          alt: "Acuity Health: AI agents for patient access",
         },
       ],
     },

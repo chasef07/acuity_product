@@ -5,6 +5,13 @@ import { siteConfig } from "@/lib/site"
 const publicRoutes = [
   { path: "/", changeFrequency: "weekly", priority: 1 },
   { path: "/method", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/advancedmd-ai-receptionist", changeFrequency: "monthly", priority: 0.9 },
+  { path: "/ai-receptionist-for-ophthalmology", changeFrequency: "monthly", priority: 0.9 },
+  {
+    path: "/ai-receptionist-vs-medical-answering-service",
+    changeFrequency: "monthly",
+    priority: 0.8,
+  },
   { path: "/who-we-are", changeFrequency: "monthly", priority: 0.7 },
   { path: "/work-with-us", changeFrequency: "monthly", priority: 0.8 },
 ] as const

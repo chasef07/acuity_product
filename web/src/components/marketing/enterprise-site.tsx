@@ -10,6 +10,7 @@ import {
   PortalSignInTrigger,
   SignInDialog,
 } from "@/components/auth/sign-in-dialog"
+import { ophthalmologyDeploymentProof } from "@/lib/marketing-proof"
 import { cn } from "@/lib/utils"
 
 import { PixelWaveField } from "./pixel-wave-field"
@@ -34,11 +35,19 @@ const mono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 })
 
-type MarketingRoute = "/" | "/method" | "/who-we-are" | "/work-with-us"
+export type MarketingRoute =
+  | "/"
+  | "/method"
+  | "/who-we-are"
+  | "/work-with-us"
+  | "/advancedmd-ai-receptionist"
+  | "/ai-receptionist-for-ophthalmology"
+  | "/ai-receptionist-vs-medical-answering-service"
 
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
-  { href: "/method", label: "The Acuity Health Method" },
+  { href: "/ai-receptionist-for-ophthalmology", label: "Patient Access" },
+  { href: "/method", label: "Our Method" },
   { href: "/who-we-are", label: "Who We Are" },
 ]
 
@@ -83,6 +92,9 @@ function SiteFooter() {
       <p>Forward-deployed AI for patient access.</p>
       <div>
         <Link href="/method">The Acuity Health Method</Link>
+        <Link href="/ai-receptionist-for-ophthalmology">Ophthalmology patient access</Link>
+        <Link href="/advancedmd-ai-receptionist">AdvancedMD integration</Link>
+        <Link href="/ai-receptionist-vs-medical-answering-service">Compare operating models</Link>
         <Link href="/who-we-are">Who We Are</Link>
         <Link href="/work-with-us">Work With Us</Link>
         <Link href="/sign-in">Sign in</Link>
@@ -164,14 +176,17 @@ function CaseStudySection() {
   return (
     <section className={styles.proofSection}>
       <div>
-        <p className={styles.eyebrow}>Six-location ophthalmology group · first 30 days</p>
-        <h2>A working operation creates measurable capacity.</h2>
+        <p className={styles.eyebrow}>{ophthalmologyDeploymentProof.eyebrow}</p>
+        <h2>{ophthalmologyDeploymentProof.title}</h2>
+        <p>{ophthalmologyDeploymentProof.description}</p>
       </div>
       <dl className={styles.proofMetrics}>
-        <div><dt>500+</dt><dd>appointments booked into the EMR</dd></div>
-        <div><dt>0</dt><dd>missed calls</dd></div>
-        <div><dt>500</dt><dd>staff hours returned</dd></div>
-        <div><dt>$100K+</dt><dd>estimated revenue recovered</dd></div>
+        {ophthalmologyDeploymentProof.metrics.map((metric) => (
+          <div key={metric.label}>
+            <dt>{metric.value}</dt>
+            <dd>{metric.label}</dd>
+          </div>
+        ))}
       </dl>
     </section>
   )
@@ -203,11 +218,11 @@ export function EnterpriseHome({
     <MarketingFrame current="/" initiallyOpen={initiallyOpen}>
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <h1>Redesign patient access.</h1>
+          <h1>Redesign patient access with medical AI agents.</h1>
           <p className={styles.heroBody}>
-            Acuity Health redesigns patient-access workflows, deploys medical AI
-            agents across the systems you already use, and stays with your team
-            until the new operating model works.
+            Acuity answers calls, completes approved work in the systems your
+            team already uses, and brings staff in when judgment or ownership is
+            required. Then we stay until the new operating model works.
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.darkButton} href="/work-with-us">
@@ -219,6 +234,37 @@ export function EnterpriseHome({
           </div>
         </div>
         <PixelWaveField />
+      </section>
+
+      <section className={styles.commercialPaths}>
+        <header>
+          <p className={styles.eyebrow}>Start with the operating constraint</p>
+          <h2>Find where patient demand stops moving.</h2>
+          <p>
+            The category label matters less than the work. Start with the system,
+            specialty, or operating-model decision that is blocking a real outcome.
+          </p>
+        </header>
+        <div>
+          <Link href="/advancedmd-ai-receptionist">
+            <span>AdvancedMD</span>
+            <h3>Complete patient-access work inside the EMR.</h3>
+            <p>See how calls, practice rules, scheduling actions, and evidence connect.</p>
+            <ArrowRight aria-hidden="true" size={17} />
+          </Link>
+          <Link href="/ai-receptionist-for-ophthalmology">
+            <span>Ophthalmology</span>
+            <h3>Design for the rules that make eye care different.</h3>
+            <p>Medical versus vision, location, provider, insurance, and exception paths.</p>
+            <ArrowRight aria-hidden="true" size={17} />
+          </Link>
+          <Link href="/ai-receptionist-vs-medical-answering-service">
+            <span>Evaluation</span>
+            <h3>Choose the operating model, not the demo voice.</h3>
+            <p>Compare message capture with completed work, handoffs, and outcome evidence.</p>
+            <ArrowRight aria-hidden="true" size={17} />
+          </Link>
+        </div>
       </section>
 
       <section className={styles.enterpriseDifference}>
@@ -244,6 +290,8 @@ export function EnterpriseHome({
           </article>
         </div>
       </section>
+
+      <CaseStudySection />
 
       <section className={styles.storyPreview}>
         <div className={styles.storyArtifact} aria-hidden="true">

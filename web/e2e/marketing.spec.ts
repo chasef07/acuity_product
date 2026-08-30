@@ -4,24 +4,56 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
   await page.goto("/")
 
   await expect(
-    page.getByRole("heading", { name: "Redesign patient access." }),
+    page.getByRole("heading", {
+      name: "Redesign patient access with medical AI agents.",
+    }),
   ).toBeVisible()
   await expect(page.getByText("AI agents", { exact: true })).toBeVisible()
-  await expect(page.getByText("for medical enterprises", { exact: true })).toBeVisible()
+  await expect(page.getByText("for patient access", { exact: true })).toBeVisible()
   await expect(page.getByText("Built for enterprise")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Find where patient demand stops moving." }),
+  ).toBeVisible()
+  await expect(
+    page.getByText(
+      "Acuity answers calls, completes approved work in the systems your team already uses, and brings staff in when judgment or ownership is required. Then we stay until the new operating model works.",
+    ),
+  ).toBeVisible()
+
+  const commercialPaths = page.locator("section").filter({
+    has: page.getByRole("heading", {
+      name: "Find where patient demand stops moving.",
+    }),
+  })
+  for (const link of [
+    "/advancedmd-ai-receptionist",
+    "/ai-receptionist-for-ophthalmology",
+    "/ai-receptionist-vs-medical-answering-service",
+  ]) {
+    await expect(commercialPaths.locator(`a[href="${link}"]`)).toBeVisible()
+  }
+
+  const proof = page.locator("section").filter({
+    has: page.getByRole("heading", {
+      name: "A deployed operation created measurable capacity.",
+    }),
+  })
+  for (const metric of ["500+", "0", "500", "$100K+"]) {
+    await expect(proof.getByText(metric, { exact: true })).toBeVisible()
+  }
 })
 
 test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await page.goto("/")
 
-  await page.getByRole("link", { name: "The Acuity Health Method" }).first().click()
+  await page.getByRole("banner").getByRole("link", { name: "Our Method" }).click()
   await expect(page).toHaveURL(/\/method$/)
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
   await expect(page.getByText("Medical AI agents")).toBeVisible()
   await expect(
-    page.getByRole("heading", { name: "A working operation creates measurable capacity." }),
+    page.getByRole("heading", { name: "A deployed operation created measurable capacity." }),
   ).toBeVisible()
 
   await page.getByRole("link", { name: "Who We Are" }).first().click()
@@ -44,6 +76,74 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
     page.getByRole("heading", { name: "Continuous improvement" }),
   ).toBeVisible()
   await expect(page.getByText("KAIZEN · 改善")).toBeVisible()
+})
+
+test("commercial pages connect search intent to accountable work", async ({ page }) => {
+  const commercialPages = [
+    {
+      route: "/advancedmd-ai-receptionist",
+      heading: "An AdvancedMD AI receptionist built to complete the work.",
+      schemaType: "Service",
+    },
+    {
+      route: "/ai-receptionist-for-ophthalmology",
+      heading: "An AI receptionist built for ophthalmology patient access.",
+      schemaType: "Service",
+    },
+    {
+      route: "/ai-receptionist-vs-medical-answering-service",
+      heading:
+        "AI receptionist vs. medical answering service: choose by the work you need done.",
+      schemaType: "WebPage",
+    },
+  ]
+
+  for (const { route, heading, schemaType } of commercialPages) {
+    await page.goto(route)
+    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible()
+    await expect(page.getByText("Operational trace", { exact: true })).toBeVisible()
+    await expect(page.getByRole("link", { name: "Map the workflow" })).toBeVisible()
+    await expect(page.locator("h1")).toHaveCount(1)
+
+    const structuredData = page.locator('script[type="application/ld+json"]')
+    await expect(structuredData).toHaveCount(2)
+    const pageSchema = JSON.parse((await structuredData.nth(1).textContent()) ?? "{}")
+    expect(pageSchema["@type"]).toBe(schemaType)
+    expect(pageSchema.url).toBe(`https://acuityhealth.io${route}`)
+  }
+
+  await page.goto("/advancedmd-ai-receptionist")
+  for (const stage of [
+    "Inbound signal",
+    "Practice rules",
+    "AdvancedMD action",
+    "Evidence + owner",
+  ]) {
+    await expect(page.getByText(stage, { exact: true })).toHaveCount(2)
+  }
+  await expect(
+    page.getByText("Commit supported work", { exact: true }).last(),
+  ).toBeVisible()
+
+  await page.goto("/ai-receptionist-for-ophthalmology")
+  await expect(page.getByText("Patient need", { exact: true })).toHaveCount(2)
+  await expect(
+    page.getByText("Practice-defined medical versus vision routing", {
+      exact: true,
+    }),
+  ).toBeVisible()
+  for (const metric of ["500+", "0", "500", "$100K+"]) {
+    await expect(page.getByText(metric, { exact: true })).toBeVisible()
+  }
+
+  await page.goto("/ai-receptionist-vs-medical-answering-service")
+  const fitQuestion = page.locator("details").filter({
+    hasText: "Is an AI receptionist always better than a medical answering service?",
+  })
+  await fitQuestion.locator("summary").click()
+  await expect(fitQuestion).toContainText(
+    "A traditional service may be the better fit when human-only interaction or message capture is the actual requirement.",
+  )
 })
 
 test("work with us links land at the top with the full navigation visible", async ({
@@ -80,7 +180,45 @@ test("mobile homepage does not overflow horizontally", async ({ page }) => {
   })
 
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
-  await expect(page.getByRole("heading", { name: "Redesign patient access." })).toBeVisible()
+  await expect(
+    page.getByRole("heading", {
+      name: "Redesign patient access with medical AI agents.",
+    }),
+  ).toBeVisible()
+})
+
+test("commercial pages remain usable without document overflow on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  for (const route of [
+    "/advancedmd-ai-receptionist",
+    "/ai-receptionist-for-ophthalmology",
+    "/ai-receptionist-vs-medical-answering-service",
+  ]) {
+    await page.goto(route)
+    const dimensions = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      content: document.documentElement.scrollWidth,
+    }))
+
+    expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
+    await expect(page.locator("h1")).toBeVisible()
+    await expect(page.getByRole("link", { name: "Map the workflow" })).toBeVisible()
+  }
+
+  await page.goto("/ai-receptionist-vs-medical-answering-service")
+  const comparison = page.getByTestId("comparison-table")
+  const tableDimensions = await comparison.evaluate((element) => ({
+    viewport: element.clientWidth,
+    content: element.scrollWidth,
+  }))
+  expect(tableDimensions.content).toBeGreaterThan(tableDimensions.viewport)
+  await comparison.evaluate((element) => {
+    element.scrollLeft = 120
+  })
+  expect(await comparison.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
 })
 
 test("public pages expose canonical metadata and browser identity assets", async ({
@@ -91,9 +229,9 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/",
       canonical: "https://acuityhealth.io",
-      title: "Acuity Health | AI Agents for Medical Enterprises",
+      title: "AI Agents for Patient Access | Acuity Health",
       description:
-        "Acuity Health redesigns patient-access workflows, deploys medical AI agents across the systems you already use, and stays with your team until the new operating model works.",
+        "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
     },
     {
       route: "/method",
@@ -101,6 +239,28 @@ test("public pages expose canonical metadata and browser identity assets", async
       title: "The Acuity Health Method | Acuity Health",
       description:
         "How Acuity Health combines agentic system design with workflow transformation to deploy enterprise medical voice.",
+    },
+    {
+      route: "/advancedmd-ai-receptionist",
+      canonical: "https://acuityhealth.io/advancedmd-ai-receptionist",
+      title: "AdvancedMD AI Receptionist for Practices | Acuity Health",
+      description:
+        "Acuity Health helps AdvancedMD practices answer calls, book supported appointments, apply practice rules, and route exceptions with evidence and ownership.",
+    },
+    {
+      route: "/ai-receptionist-for-ophthalmology",
+      canonical: "https://acuityhealth.io/ai-receptionist-for-ophthalmology",
+      title: "AI Receptionist for Ophthalmology Practices | Acuity Health",
+      description:
+        "Acuity Health deploys an AI receptionist for ophthalmology that completes approved scheduling calls, follows practice rules, and routes exceptions to staff.",
+    },
+    {
+      route: "/ai-receptionist-vs-medical-answering-service",
+      canonical:
+        "https://acuityhealth.io/ai-receptionist-vs-medical-answering-service",
+      title: "AI Receptionist vs Answering Service | Acuity Health",
+      description:
+        "Compare AI receptionists and medical answering services across workflow completion, system integration, handoffs, oversight, and verified outcome evidence.",
     },
     {
       route: "/who-we-are",

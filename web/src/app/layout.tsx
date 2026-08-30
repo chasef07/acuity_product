@@ -19,10 +19,11 @@ export const metadata: Metadata = {
   category: "Healthcare technology",
   keywords: [
     "medical AI agents",
-    "enterprise healthcare AI",
-    "patient access",
+    "AI agents for patient access",
+    "medical AI receptionist",
+    "ophthalmology AI receptionist",
+    "AdvancedMD AI receptionist",
     "healthcare workflow automation",
-    "medical practice operations",
   ],
   manifest: "/manifest.webmanifest",
   icons: {

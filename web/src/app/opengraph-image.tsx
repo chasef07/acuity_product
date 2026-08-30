@@ -3,7 +3,7 @@ import { join } from "node:path"
 
 import { ImageResponse } from "next/og"
 
-export const alt = "Acuity Health: AI agents for medical enterprises"
+export const alt = "Acuity Health: AI agents for patient access"
 export const size = { width: 1200, height: 630 }
 export const contentType = "image/png"
 
@@ -47,7 +47,7 @@ export default function OpenGraphImage() {
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
             <div style={{ display: "flex", flexDirection: "column", maxWidth: 780 }}>
               <span style={{ fontSize: 86, lineHeight: 0.95, letterSpacing: "-4px" }}>
-                Redesign patient access.
+                Redesign patient access with medical AI agents.
               </span>
             </div>
             <span
@@ -61,7 +61,7 @@ export default function OpenGraphImage() {
                 textTransform: "uppercase",
               }}
             >
-              AI agents for medical enterprises
+              AI agents for patient access
             </span>
           </div>
         </div>

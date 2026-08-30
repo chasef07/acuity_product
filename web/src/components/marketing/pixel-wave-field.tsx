@@ -142,7 +142,7 @@ export function PixelWaveField() {
       <canvas ref={canvasRef} />
       <p className={styles.caption}>
         <span>AI agents</span>
-        <strong>for medical enterprises</strong>
+        <strong>for patient access</strong>
       </p>
     </div>
   )
