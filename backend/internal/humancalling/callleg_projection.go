@@ -1126,28 +1126,6 @@ func (m *Module) correlateBridgeFact(
 		&callID, &callLegID, &role, &direction,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Telnyx may report the replacement bridge on an untagged peer in
-			// the same provider session. Admit that single fact as transfer
-			// evidence without binding the peer as a canonical CallLeg.
-			var transferID, targetLegID string
-			peerErr := m.database.QueryRow(ctx, `
-				SELECT transfer.id::text, transfer.call_id::text,
-					transfer.target_staff_leg_id::text
-				FROM human_calling_staff_transfers transfer
-				JOIN human_calling_call_legs target
-					ON target.id = transfer.target_staff_leg_id
-				WHERE transfer.state IN ('REQUESTED', 'ACCEPTED')
-					AND $1 <> ''
-					AND $1 = COALESCE(target.provider_call_session_id, '')
-				ORDER BY transfer.created_at DESC, transfer.id DESC
-				LIMIT 1
-			`, fact.CallSessionID).Scan(&transferID, &callID, &targetLegID)
-			if peerErr == nil {
-				fact.ClientState = encodeStaffTransferClientState(
-					callID, targetLegID, "STAFF", staffTransferPeerKind, transferID,
-				)
-				return fact, nil
-			}
 			return ProviderFact{}, errRelatedFactPending
 		}
 		return ProviderFact{}, err

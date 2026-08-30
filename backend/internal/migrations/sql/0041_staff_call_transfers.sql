@@ -15,6 +15,16 @@ CREATE UNIQUE INDEX human_calling_one_staff_occupancy_idx
         OR (state = 'ENDING' AND answered_at IS NOT NULL)
     );
 
+CREATE VIEW human_calling_current_staff_owners AS
+SELECT DISTINCT ON (call_id)
+    call_id,
+    id AS call_leg_id,
+    staff_subject
+FROM human_calling_call_legs
+WHERE role = 'STAFF' AND bridged_at IS NOT NULL
+ORDER BY call_id, (state = 'BRIDGED') DESC, sequence DESC,
+    bridged_at DESC, id DESC;
+
 ALTER TABLE human_calling_provider_commands
     DROP CONSTRAINT human_calling_provider_commands_action_check;
 

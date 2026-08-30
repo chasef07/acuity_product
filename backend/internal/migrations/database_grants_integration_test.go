@@ -630,6 +630,7 @@ func expectedTablePrivileges() map[string]bool {
 		"ai_interactions",
 		"human_calling_call_legs",
 		"human_calling_calls",
+		"human_calling_current_staff_owners",
 		"human_calling_credentials",
 		"human_calling_handoffs",
 		"human_calling_location_voice_numbers",

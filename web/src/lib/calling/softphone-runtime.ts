@@ -783,7 +783,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     return true
   }
 
-  async function discardUnprojectedInboundCall(callID: string) {
+  async function discardUnprojectedCall(callID: string) {
     ignoredCallIDs.add(callID)
     persistCallRecoveryID(undefined)
     const losingLegs = new Set<IncomingMediaLeg>()
@@ -823,9 +823,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       releaseLocalMedia(),
       ...[...losingLegs].map(rejectSafely),
     ])
-    if (!stopped && snapshot.lease?.owner) {
-      await commitReadiness(false, true)
-    }
   }
 
   function expireOffers() {
@@ -944,7 +941,10 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         retainedInboundCall &&
         (!answeredInbound || state.ringing.length === 0)
       ) {
-        await discardUnprojectedInboundCall(expectedCallID)
+        await discardUnprojectedCall(expectedCallID)
+        if (!stopped && snapshot.lease?.owner) {
+          await commitReadiness(false, true)
+        }
         if (stopped || generation !== lifecycleGeneration) return
         expectedCallID = ""
       }
@@ -1124,8 +1124,18 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           options.backend.readCall(expectedCallID, signal),
         )
         if (!stopped && generation === lifecycleGeneration) {
-          if (!expectedCallProjected && call.direction === "INBOUND") {
-            await discardUnprojectedInboundCall(call.id)
+          if (
+            !expectedCallProjected &&
+            (call.direction === "INBOUND" || call.state === "CONNECTED")
+          ) {
+            await discardUnprojectedCall(call.id)
+            if (!stopped && snapshot.lease?.owner) {
+              if (call.direction === "INBOUND") {
+                await commitReadiness(false, true)
+              } else {
+                void connectMedia()
+              }
+            }
           } else {
             applyCall(call)
           }

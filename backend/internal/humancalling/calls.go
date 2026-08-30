@@ -277,20 +277,13 @@ func (m *Module) QueryCallHistory(
 			ON allowed.membership_id = calling_scope.membership_id
 			AND allowed.location_id = call.location_id
 		LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
-		LEFT JOIN LATERAL (
-			SELECT leg.staff_subject
-			FROM human_calling_call_legs leg
-			WHERE leg.call_id = call.id AND leg.role = 'STAFF'
-				AND leg.bridged_at IS NOT NULL
-			ORDER BY (leg.state = 'BRIDGED') DESC, leg.sequence DESC,
-				leg.bridged_at DESC, leg.id DESC
-			LIMIT 1
-		) bridged_staff ON true
+		LEFT JOIN human_calling_current_staff_owners current_staff
+			ON current_staff.call_id = call.id
 		LEFT JOIN access_memberships staff_membership
 			ON staff_membership.practice_id = call.practice_id
-			AND staff_membership.user_subject = bridged_staff.staff_subject
+			AND staff_membership.user_subject = current_staff.staff_subject
 		LEFT JOIN access_platform_operators staff_operator
-			ON staff_operator.user_subject = bridged_staff.staff_subject
+			ON staff_operator.user_subject = current_staff.staff_subject
 		WHERE call.practice_id = $2
 			AND COALESCE(call.caller_phone, call.destination_phone) = $3
 			AND (calling_scope.location_scope = 'ALL' OR allowed.location_id IS NOT NULL)
@@ -581,21 +574,8 @@ func (m *Module) RecordDisposition(
 	var owner bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM human_calling_call_legs leg
-			WHERE leg.call_id = $1 AND leg.role = 'STAFF'
-				AND leg.staff_subject = $2 AND leg.bridged_at IS NOT NULL
-				AND leg.id = (
-					SELECT owner.id FROM human_calling_call_legs owner
-					WHERE owner.call_id = leg.call_id AND owner.role = 'STAFF'
-						AND owner.bridged_at IS NOT NULL
-					ORDER BY (owner.state = 'BRIDGED') DESC, owner.sequence DESC,
-						owner.bridged_at DESC, owner.id DESC
-					LIMIT 1
-				)
-		) OR EXISTS (
-			SELECT 1 FROM human_calling_calls call
-			WHERE call.id = $1 AND call.direction = 'OUTBOUND'
-				AND call.initiating_subject = $2
+			SELECT 1 FROM human_calling_current_staff_owners owner
+			WHERE owner.call_id = $1 AND owner.staff_subject = $2
 		)
 	`, callID, identity.Subject).Scan(&owner); err != nil || !owner {
 		return DispositionResult{}, ErrConflict

@@ -27,7 +27,20 @@ const (
 const (
 	staffTransferTargetKind = "staff_transfer_target"
 	staffTransferSourceKind = "staff_transfer_source"
-	staffTransferPeerKind   = "staff_transfer_peer_bridge"
+)
+
+type staffTransferResponder uint8
+
+const (
+	staffTransferOriginator staffTransferResponder = iota
+	staffTransferRecipient
+)
+
+type staffTransferAvailability uint8
+
+const (
+	leaveTransferTargetAvailability staffTransferAvailability = iota
+	restoreTransferTargetAvailability
 )
 
 type TransferCandidate struct {
@@ -349,21 +362,25 @@ func (m *Module) DeclineStaffTransfer(
 	ctx context.Context,
 	command RespondStaffTransferCommand,
 ) (StaffTransfer, error) {
-	return m.respondStaffTransfer(ctx, command, StaffTransferDeclined, true)
+	return m.respondStaffTransfer(
+		ctx, command, StaffTransferDeclined, staffTransferRecipient,
+	)
 }
 
 func (m *Module) CancelStaffTransfer(
 	ctx context.Context,
 	command RespondStaffTransferCommand,
 ) (StaffTransfer, error) {
-	return m.respondStaffTransfer(ctx, command, StaffTransferCanceled, false)
+	return m.respondStaffTransfer(
+		ctx, command, StaffTransferCanceled, staffTransferOriginator,
+	)
 }
 
 func (m *Module) respondStaffTransfer(
 	ctx context.Context,
 	command RespondStaffTransferCommand,
 	state StaffTransferState,
-	recipient bool,
+	responder staffTransferResponder,
 ) (StaffTransfer, error) {
 	command.TransferID = strings.TrimSpace(command.TransferID)
 	command.SessionID = strings.TrimSpace(command.SessionID)
@@ -389,15 +406,15 @@ func (m *Module) respondStaffTransfer(
 		return StaffTransfer{}, err
 	}
 	actorSubject := transfer.RequestedBySubject
-	if recipient {
+	if responder == staffTransferRecipient {
 		actorSubject = transfer.RecipientSubject
 	}
 	respondable := transfer.State == StaffTransferRequested ||
-		(!recipient && transfer.State == StaffTransferAccepted)
+		(responder == staffTransferOriginator && transfer.State == StaffTransferAccepted)
 	if command.Identity.Subject != actorSubject || !respondable {
 		return StaffTransfer{}, ErrConflict
 	}
-	if recipient {
+	if responder == staffTransferRecipient {
 		var expectedSession string
 		if err := tx.QueryRow(ctx, `
 			SELECT recipient_session_id
@@ -419,8 +436,12 @@ func (m *Module) respondStaffTransfer(
 	); err != nil {
 		return StaffTransfer{}, ErrDenied
 	}
+	availability := leaveTransferTargetAvailability
+	if responder == staffTransferOriginator {
+		availability = restoreTransferTargetAvailability
+	}
 	if err := m.failStaffTransferTx(
-		ctx, tx, transfer.ID, state, "STAFF_"+string(state), !recipient,
+		ctx, tx, transfer.ID, state, "STAFF_"+string(state), availability,
 	); err != nil {
 		return StaffTransfer{}, err
 	}
@@ -470,7 +491,8 @@ func (m *Module) ExpireStaffTransfers(ctx context.Context) (int, error) {
 		return 0, tx.Commit(ctx)
 	}
 	if err := m.failStaffTransferTx(
-		ctx, tx, transferID, StaffTransferExpired, "TRANSFER_TIMEOUT", true,
+		ctx, tx, transferID, StaffTransferExpired, "TRANSFER_TIMEOUT",
+		restoreTransferTargetAvailability,
 	); err != nil {
 		return 0, err
 	}

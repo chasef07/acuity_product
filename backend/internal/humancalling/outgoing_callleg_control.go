@@ -459,7 +459,8 @@ func (m *Module) finishCallLegCommand(
 				return fmt.Errorf("read rejected staff transfer: %w", err)
 			}
 			if err := m.failStaffTransferTx(
-				ctx, tx, transferID, StaffTransferFailed, errorCode, true,
+				ctx, tx, transferID, StaffTransferFailed, errorCode,
+				restoreTransferTargetAvailability,
 			); err != nil {
 				return err
 			}

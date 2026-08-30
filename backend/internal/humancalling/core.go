@@ -520,7 +520,7 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 		return m.applyCallerAnswered(ctx, fact)
 	case FactCallBridged:
 		if hasState && (state.Kind == staffTransferTargetKind ||
-			state.Kind == staffTransferSourceKind || state.Kind == staffTransferPeerKind) {
+			state.Kind == staffTransferSourceKind) {
 			if state.Kind == staffTransferTargetKind {
 				return m.applyStaffTransferTargetFact(ctx, fact)
 			}

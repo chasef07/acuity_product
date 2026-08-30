@@ -94,7 +94,7 @@ func (m *Module) applyStaffTransferTargetFact(
 		if !eligible || !fact.OccurredAt.Before(transfer.ExpiresAt) {
 			if err := m.failStaffTransferTx(
 				ctx, tx, transfer.ID, StaffTransferFailed,
-				"TRANSFER_TARGET_NOT_READY", false,
+				"TRANSFER_TARGET_NOT_READY", leaveTransferTargetAvailability,
 			); err != nil {
 				return err
 			}
@@ -156,8 +156,7 @@ func (m *Module) applyStaffTransferBridge(
 	fact ProviderFact,
 ) error {
 	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || (state.Kind != staffTransferSourceKind &&
-		state.Kind != staffTransferPeerKind) || state.TransferID == "" {
+	if !ok || state.Kind != staffTransferSourceKind || state.TransferID == "" {
 		return ErrConflict
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -332,12 +331,16 @@ func (m *Module) failStaffTransferTx(
 	transferID string,
 	terminalState StaffTransferState,
 	errorCode string,
-	restoreAvailability bool,
+	availability staffTransferAvailability,
 ) error {
+	timelineSuffix, err := staffTransferTimelineSuffix(terminalState)
+	if err != nil {
+		return err
+	}
 	var transfer StaffTransfer
 	var sourceState, targetState, targetControl, recipientSession, commandState string
 	var targetAnsweredAt *time.Time
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT transfer.id::text, transfer.call_id::text,
 			transfer.practice_id::text, transfer.location_id::text,
 			transfer.source_staff_leg_id::text, transfer.target_staff_leg_id::text,
@@ -426,7 +429,7 @@ func (m *Module) failStaffTransferTx(
 	`, transfer.TargetCallLegID, targetSettledAt, errorCode); err != nil {
 		return err
 	}
-	if restoreAvailability {
+	if availability == restoreTransferTargetAvailability {
 		if _, err := tx.Exec(ctx, `
 			UPDATE human_calling_softphone_leases
 			SET desired_available = true, version = version + 1, updated_at = $3
@@ -443,7 +446,7 @@ func (m *Module) failStaffTransferTx(
 		}
 	}
 	if err := appendTimeline(ctx, tx, transfer.CallID, transfer.PracticeID,
-		"staff_transfer."+stringsForTimeline(terminalState), "", "",
+		"staff_transfer."+timelineSuffix, "", "",
 		transfer.ProviderCommandID, opaqueReference(transfer.ID), errorCode, now); err != nil {
 		return err
 	}
@@ -459,17 +462,19 @@ func (m *Module) failStaffTransferTx(
 	return nil
 }
 
-func stringsForTimeline(state StaffTransferState) string {
+func staffTransferTimelineSuffix(state StaffTransferState) (string, error) {
 	switch state {
 	case StaffTransferCanceled:
-		return "canceled"
+		return "canceled", nil
 	case StaffTransferExpired:
-		return "expired"
+		return "expired", nil
 	case StaffTransferDeclined:
-		return "declined"
-	default:
-		return "failed"
+		return "declined", nil
+	case StaffTransferFailed:
+		return "failed", nil
 	}
+	return "", fmt.Errorf("%w: unsupported staff transfer terminal state %q",
+		ErrInvalidInput, state)
 }
 
 func (m *Module) terminateCallAfterFailedTransfer(
@@ -636,7 +641,8 @@ func (m *Module) handleStaffTransferHangupTx(
 		return true, nil
 	}
 	if err := m.failStaffTransferTx(
-		ctx, tx, transferID, StaffTransferFailed, "TRANSFER_TARGET_HANGUP", true,
+		ctx, tx, transferID, StaffTransferFailed, "TRANSFER_TARGET_HANGUP",
+		restoreTransferTargetAvailability,
 	); err != nil {
 		return false, err
 	}
@@ -677,7 +683,8 @@ func (m *Module) failRecipientTransfersForReadinessLoss(
 	rows.Close()
 	for _, id := range ids {
 		if err := m.failStaffTransferTx(
-			ctx, tx, id, StaffTransferFailed, "TRANSFER_TARGET_NOT_READY", false,
+			ctx, tx, id, StaffTransferFailed, "TRANSFER_TARGET_NOT_READY",
+			leaveTransferTargetAvailability,
 		); err != nil {
 			return err
 		}
@@ -740,7 +747,8 @@ func (m *Module) failCallTransfersTx(
 	rows.Close()
 	for _, id := range ids {
 		if err := m.failStaffTransferTx(
-			ctx, tx, id, StaffTransferCanceled, errorCode, true,
+			ctx, tx, id, StaffTransferCanceled, errorCode,
+			restoreTransferTargetAvailability,
 		); err != nil {
 			return err
 		}

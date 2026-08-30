@@ -1001,7 +1001,7 @@ func (server *Server) DeclineStaffTransfer(
 	r *http.Request,
 	transferID openapi_types.UUID,
 ) {
-	server.respondStaffTransfer(w, r, transferID, true)
+	server.respondStaffTransfer(w, r, transferID, staffTransferDecline)
 }
 
 func (server *Server) CancelStaffTransfer(
@@ -1009,14 +1009,21 @@ func (server *Server) CancelStaffTransfer(
 	r *http.Request,
 	transferID openapi_types.UUID,
 ) {
-	server.respondStaffTransfer(w, r, transferID, false)
+	server.respondStaffTransfer(w, r, transferID, staffTransferCancel)
 }
+
+type staffTransferResponseAction uint8
+
+const (
+	staffTransferDecline staffTransferResponseAction = iota
+	staffTransferCancel
+)
 
 func (server *Server) respondStaffTransfer(
 	w http.ResponseWriter,
 	r *http.Request,
 	transferID openapi_types.UUID,
-	decline bool,
+	action staffTransferResponseAction,
 ) {
 	identity, ok := server.callingIdentity(w, r)
 	if !ok {
@@ -1033,10 +1040,14 @@ func (server *Server) respondStaffTransfer(
 	}
 	var transfer humancalling.StaffTransfer
 	var err error
-	if decline {
+	switch action {
+	case staffTransferDecline:
 		transfer, err = server.calling.DeclineStaffTransfer(ctx, command)
-	} else {
+	case staffTransferCancel:
 		transfer, err = server.calling.CancelStaffTransfer(ctx, command)
+	default:
+		server.writeCallingError(w, r, humancalling.ErrInvalidInput)
+		return
 	}
 	if err != nil {
 		server.writeCallingError(w, r, err)

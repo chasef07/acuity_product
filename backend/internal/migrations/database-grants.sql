@@ -31,6 +31,7 @@ GRANT SELECT ON TABLE
     public.ai_interactions,
     public.human_calling_call_legs,
     public.human_calling_calls,
+    public.human_calling_current_staff_owners,
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_location_voice_numbers,

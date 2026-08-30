@@ -821,6 +821,7 @@ func TestTelnyxAdapterTransfersCustomerLegWithDistinctTargetIdentity(t *testing.
 		}
 		body["_path"] = request.URL.Path
 		requests <- body
+		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"data":{"result":"ok"}}`))
 	}))
 	defer server.Close()

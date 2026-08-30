@@ -18,6 +18,7 @@ import type {
 import {
   createSoftphoneRuntime,
   SoftphoneAdapterError,
+  type RuntimeMediaCorrelation,
   type SoftphoneBackend,
   type SoftphoneClock,
 } from "./softphone-runtime.ts"
@@ -4628,6 +4629,51 @@ test("an outbound source releases stale media when transfer ownership moves", as
   assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(fixture.runtime.getSnapshot().controls.canEnd, false)
   assert.ok(fixture.media.disconnects >= 1)
+})
+
+test("a fresh outbound source discards persisted recovery after transfer ownership moved", async () => {
+  const backend = new DeterministicBackend()
+  const connected = call({
+    id: "call-transferred-before-reload",
+    direction: "OUTBOUND",
+    state: "CONNECTED",
+    version: 5,
+  })
+  backend.lease = lease({ owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  backend.calls.set(connected.id, connected)
+  let persistedCallID: string | undefined = connected.id
+  let persistedMedia: RuntimeMediaCorrelation | undefined = {
+    callID: connected.id,
+    callLegID: "former-source-leg",
+    providerLegID: "former-source-provider-leg",
+    mediaToken: "former-source-media-token",
+  }
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media: new DeterministicMedia(),
+    microphone: readyMicrophone(),
+    clock: new ManualClock(),
+    visibility: visible(),
+    loadCallRecoveryID: () => persistedCallID,
+    persistCallRecoveryID: (callID) => {
+      persistedCallID = callID
+    },
+    loadMediaCorrelation: () => persistedMedia,
+    persistMediaCorrelation: (media) => {
+      persistedMedia = media
+    },
+  })
+
+  await runtime.start()
+
+  assert.equal(runtime.getSnapshot().activeCall, undefined)
+  assert.equal(runtime.getSnapshot().expectedCallID, "")
+  assert.equal(runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(runtime.getSnapshot().controls.canEnd, false)
+  assert.equal(persistedCallID, undefined)
+  assert.equal(persistedMedia, undefined)
 })
 
 class DeterministicBackend implements SoftphoneBackend {

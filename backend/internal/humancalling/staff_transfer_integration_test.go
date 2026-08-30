@@ -1072,8 +1072,27 @@ func TestOutboundStaffTransferTargetsDestinationLeg(t *testing.T) {
 		command.TargetID != customerControl {
 		t.Fatalf("outbound transfer customer target = role:%s command:%#v", customerRole, command)
 	}
-	completeFixtureTransfer(t, fixture, transfer, command, "staff-transfer-outbound")
+	target := completeFixtureTransfer(t, fixture, transfer, command, "staff-transfer-outbound")
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "COMPLETED", "ENDED", "BRIDGED")
+	target.EventID = "staff-transfer-outbound-target-hangup"
+	target.Type = humancalling.FactCallHangup
+	target.OccurredAt = fixture.now.Add(9 * time.Second)
+	target.HangupCause = "NORMAL_CLEARING"
+	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
+		t.Fatalf("end transferred outbound Call: %v", err)
+	}
+	if _, err := fixture.calling.RecordDisposition(
+		context.Background(), fixture.staff[0], "staff-transfer-outbound-browser-1",
+		fixture.callID, humancalling.DispositionResolved,
+	); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("transferred outbound source disposition = %v, want conflict", err)
+	}
+	if _, err := fixture.calling.RecordDisposition(
+		context.Background(), fixture.staff[1], "staff-transfer-outbound-browser-2",
+		fixture.callID, humancalling.DispositionResolved,
+	); err != nil {
+		t.Fatalf("transferred outbound target disposition: %v", err)
+	}
 }
 
 func TestInterruptedStaffTransferCommandReconcilesWithoutDuplicateExecution(t *testing.T) {
@@ -1244,7 +1263,7 @@ func TestChainedStaffTransfersKeepOneCurrentOwnerAndHistoryRow(t *testing.T) {
 	}
 }
 
-func TestUnrecognizedTransferPeerDoesNotPoisonExactTargetCallbacks(t *testing.T) {
+func TestUntaggedTransferPeerCannotCompleteExactTransfer(t *testing.T) {
 	fixture := prepareConnectedStaffTransfer(t, "staff-transfer-peer-admission")
 	transfer, command := requestFixtureTransfer(t, fixture, "peer-admission")
 	targetSession := "staff-transfer-peer-shared-session"
@@ -1268,8 +1287,8 @@ func TestUnrecognizedTransferPeerDoesNotPoisonExactTargetCallbacks(t *testing.T)
 		EventID: "staff-transfer-untagged-peer-bridged", Type: humancalling.FactCallBridged,
 		OccurredAt: fixture.now.Add(8 * time.Second), CallControlID: "bridge-peer-control",
 		CallLegID: "bridge-peer-leg", CallSessionID: targetSession,
-	}); err != nil {
-		t.Fatalf("correlate untagged transfer bridge peer: %v", err)
+	}); err == nil {
+		t.Fatal("untagged transfer bridge peer was admitted")
 	}
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "REQUESTED", "BRIDGED", "RINGING")
 	target.EventID = "staff-transfer-exact-target-answered"
@@ -1277,6 +1296,13 @@ func TestUnrecognizedTransferPeerDoesNotPoisonExactTargetCallbacks(t *testing.T)
 	target.OccurredAt = fixture.now.Add(9 * time.Second)
 	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
 		t.Fatalf("exact target answer after peer bridge: %v", err)
+	}
+	assertTransferLegStates(t, fixture.pool, transfer.ID, "ACCEPTED", "BRIDGED", "ANSWERED")
+	target.EventID = "staff-transfer-exact-target-bridged"
+	target.Type = humancalling.FactCallBridged
+	target.OccurredAt = fixture.now.Add(10 * time.Second)
+	if err := fixture.calling.ApplyProviderFact(context.Background(), target); err != nil {
+		t.Fatalf("exact target bridge after rejected peer: %v", err)
 	}
 	assertTransferLegStates(t, fixture.pool, transfer.ID, "COMPLETED", "ENDED", "BRIDGED")
 }

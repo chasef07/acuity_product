@@ -947,7 +947,8 @@ func (m *Module) rejectUnobservedCommand(
 			return queryErr
 		}
 		err = m.failStaffTransferTx(
-			ctx, tx, transferID, StaffTransferFailed, errorCode, true,
+			ctx, tx, transferID, StaffTransferFailed, errorCode,
+			restoreTransferTargetAvailability,
 		)
 	case CommandAnswerCaller,
 		CommandSpeakVoicemail, CommandStartVoicemailRecording:

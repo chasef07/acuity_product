@@ -191,12 +191,9 @@ func (m *Module) ReadCallingState(
 		leg.bridged_at IS NOT NULL AND call.terminal_outcome = 'ENDED'
 		AND call.disposition_at IS NULL
 		AND leg.id = (
-			SELECT owner.id FROM human_calling_call_legs owner
-			WHERE owner.call_id = call.id AND owner.role = 'STAFF'
-				AND owner.bridged_at IS NOT NULL
-			ORDER BY (owner.state = 'BRIDGED') DESC, owner.sequence DESC,
-				owner.bridged_at DESC, owner.id DESC
-			LIMIT 1
+			SELECT owner.call_leg_id
+			FROM human_calling_current_staff_owners owner
+			WHERE owner.call_id = call.id
 		)
 	`)
 	if err != nil {
