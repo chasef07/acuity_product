@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/chasef07/acuity_product/compare/v0.5.0...v0.6.0) (2026-08-30)
+
+
+### Features
+
+* **calling:** add staff-to-staff call transfer ([#205](https://github.com/chasef07/acuity_product/issues/205)) ([fc80a17](https://github.com/chasef07/acuity_product/commit/fc80a179615a39a75915533864cb1e25d86fd01a))
+
 ## [0.5.0](https://github.com/chasef07/acuity_product/compare/v0.4.11...v0.5.0) (2026-08-30)
 
 
