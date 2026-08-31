@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/chasef07/acuity_product/compare/v1.0.1...v1.0.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **calling:** add ringback and reduce outbound bridge latency ([#243](https://github.com/chasef07/acuity_product/issues/243)) ([a0eaf90](https://github.com/chasef07/acuity_product/commit/a0eaf9095fec08b983a128a7ca075885640ae372))
+
 ## [1.0.1](https://github.com/chasef07/acuity_product/compare/v1.0.0...v1.0.1) (2026-08-31)
 
 
