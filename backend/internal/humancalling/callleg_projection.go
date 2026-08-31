@@ -80,24 +80,24 @@ func (m *Module) prepareConnectedBridgeCommand(
 	callID string,
 	peerCallControlID string,
 	clientState string,
+	reserveRecording bool,
 ) (map[string]any, error) {
 	payload := map[string]any{
 		"call_control_id":       peerCallControlID,
 		"prevent_double_bridge": true,
 		"client_state":          clientState,
 	}
-	var practiceID, locationID string
 	var recordingEnabled bool
-	var retentionDays int
-	if err := tx.QueryRow(ctx, `
-		SELECT call.practice_id::text, call.location_id::text,
-			practice.connected_call_recording_enabled,
-			COALESCE(practice.connected_call_recording_retention_days, 0)
+	recordingPolicyQuery := `
+		SELECT practice.connected_call_recording_enabled
 		FROM human_calling_calls call
 		JOIN access_practices practice ON practice.id = call.practice_id
 		WHERE call.id = $1
-		FOR SHARE OF call, practice
-	`, callID).Scan(&practiceID, &locationID, &recordingEnabled, &retentionDays); err != nil {
+	`
+	if reserveRecording {
+		recordingPolicyQuery += " FOR SHARE OF call, practice"
+	}
+	if err := tx.QueryRow(ctx, recordingPolicyQuery, callID).Scan(&recordingEnabled); err != nil {
 		return nil, fmt.Errorf("read connected Call recording policy: %w", err)
 	}
 	if !recordingEnabled {
@@ -107,16 +107,36 @@ func (m *Module) prepareConnectedBridgeCommand(
 	payload["record_channels"] = "dual"
 	payload["record_format"] = "mp3"
 	payload["record_track"] = "both"
+	if !reserveRecording {
+		return payload, nil
+	}
+	if err := m.reserveConnectedCallRecording(ctx, tx, callID); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func (m *Module) reserveConnectedCallRecording(
+	ctx context.Context,
+	tx pgx.Tx,
+	callID string,
+) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO human_calling_call_recordings (
 			call_id, practice_id, location_id, audio_state, retention_days,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, 'PROCESSING', $4, $5, $5)
+		)
+		SELECT call.id, call.practice_id, call.location_id, 'PROCESSING',
+			practice.connected_call_recording_retention_days, $2, $2
+		FROM human_calling_calls call
+		JOIN access_practices practice ON practice.id = call.practice_id
+		WHERE call.id = $1
+			AND practice.connected_call_recording_enabled
 		ON CONFLICT (call_id) DO NOTHING
-	`, callID, practiceID, locationID, retentionDays, m.now()); err != nil {
-		return nil, fmt.Errorf("prepare connected Call recording: %w", err)
+	`, callID, m.now()); err != nil {
+		return fmt.Errorf("prepare connected Call recording: %w", err)
 	}
-	return payload, nil
+	return nil
 }
 
 func (m *Module) terminalCleanupFailedCallLeg(
@@ -704,6 +724,7 @@ func (m *Module) applyStaffInitiated(
 					encodeCallLegClientState(
 						callID, state.CallLegID, "STAFF", "bridge",
 					),
+					true,
 				)
 				if err != nil {
 					return err

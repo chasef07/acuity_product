@@ -475,11 +475,15 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	if fact.EventID == "" || fact.Type == "" || fact.OccurredAt.IsZero() {
 		return ErrInvalidInput
 	}
-	if fact.Type == FactCallBridged && fact.ClientState == "" {
-		var err error
-		fact, err = m.correlateBridgeFact(ctx, fact)
-		if err != nil {
-			return err
+	if fact.Type == FactCallBridged {
+		state, hasState := parseCallLegClientState(fact.ClientState)
+		if fact.ClientState == "" ||
+			(hasState && state.Role == "STAFF" && state.Kind == "outbound_media") {
+			var err error
+			fact, err = m.correlateBridgeFact(ctx, fact)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	state, hasState := parseCallLegClientState(fact.ClientState)

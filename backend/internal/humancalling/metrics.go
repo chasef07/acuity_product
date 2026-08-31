@@ -71,7 +71,7 @@ func (m *Module) ReportReceiptQueue(ctx context.Context) error {
 		FROM (
 			SELECT count(*) AS depth, min(received_at) AS oldest,
 				count(*) FILTER (
-					WHERE projection_error_code = 'PROJECTION_RETRY'
+					WHERE projection_error_code LIKE 'PROJECTION\_%'
 				) AS projection_retry_depth,
 				count(*) FILTER (
 					WHERE projection_error_code IN (

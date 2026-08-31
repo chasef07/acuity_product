@@ -649,8 +649,26 @@ func (m *Module) applyOutboundDestinationFact(
 		(storedSessionID != "" && fact.CallSessionID != storedSessionID) {
 		return ErrConflict
 	}
+	activeDestination := terminal == "" && priorState != "ENDING" &&
+		priorState != "ENDED" && priorState != "FAILED"
+	bridgeStartState := priorState == "PENDING" || priorState == "DIALING" ||
+		priorState == "RINGING"
+	var bridgeExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM human_calling_provider_commands
+			WHERE (call_leg_id = $1 OR peer_call_leg_id = $1)
+				AND action = 'BRIDGE'
+				AND state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+		)
+	`, state.CallLegID).Scan(&bridgeExists); err != nil {
+		return fmt.Errorf("read outbound Bridge intent: %w", err)
+	}
+	startBridge := activeDestination && bridgeStartState && !bridgeExists &&
+		(fact.Type == FactCallInitiated || fact.Type == FactCallAnswered)
+	answered := activeDestination && fact.Type == FactCallAnswered
 	nextState := "RINGING"
-	if fact.Type == FactCallAnswered {
+	if answered {
 		nextState = "BRIDGE_PENDING"
 	}
 	if _, err := tx.Exec(ctx, `
@@ -665,14 +683,15 @@ func (m *Module) applyOutboundDestinationFact(
 				WHEN $6 = 'RINGING' AND state IN ('PENDING', 'DIALING') THEN 'RINGING'
 				ELSE state
 			END,
-			answered_at = CASE WHEN $6 = 'BRIDGE_PENDING'
+			answered_at = CASE WHEN $10
 				THEN COALESCE(answered_at, $7) ELSE answered_at END,
 			bridge_pending_at = CASE WHEN $6 = 'BRIDGE_PENDING'
 				THEN COALESCE(bridge_pending_at, $7) ELSE bridge_pending_at END,
 			updated_at = $8
 		WHERE id = $1 AND call_id = $9 AND role = 'DESTINATION'
 	`, state.CallLegID, fact.ConnectionID, fact.CallControlID, fact.CallLegID,
-		fact.CallSessionID, nextState, fact.OccurredAt, m.now(), callID); err != nil {
+		fact.CallSessionID, nextState, fact.OccurredAt, m.now(), callID,
+		answered); err != nil {
 		return fmt.Errorf("project outbound destination CallLeg: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -695,8 +714,7 @@ func (m *Module) applyOutboundDestinationFact(
 		); err != nil {
 			return err
 		}
-	} else if fact.Type == FactCallAnswered &&
-		(priorState == "PENDING" || priorState == "DIALING" || priorState == "RINGING") {
+	} else if startBridge {
 		var staffLegID, staffControlID string
 		if err := tx.QueryRow(ctx, `
 			SELECT id::text, provider_call_control_id FROM human_calling_call_legs
@@ -706,16 +724,24 @@ func (m *Module) applyOutboundDestinationFact(
 			return fmt.Errorf("lock outbound Staff CallLeg: %w", err)
 		}
 		bridgePayload, err := m.prepareConnectedBridgeCommand(
-			ctx, tx, callID, staffControlID,
+			ctx, tx, callID, fact.CallControlID,
 			encodeCallLegClientState(
-				callID, state.CallLegID, "DESTINATION", "bridge",
+				callID, staffLegID, "STAFF", "outbound_media",
 			),
+			false,
 		)
 		if err != nil {
 			return err
 		}
-		if _, err := m.insertCallLegCommand(ctx, tx, callID, state.CallLegID,
-			staffLegID, "", CommandBridge, fact.CallControlID, bridgePayload, ""); err != nil {
+		bridgePayload["play_ringtone"] = true
+		bridgePayload["ringtone"] = "us"
+		if _, err := m.insertCallLegCommand(ctx, tx, callID, staffLegID,
+			state.CallLegID, "", CommandBridge, staffControlID, bridgePayload, ""); err != nil {
+			return err
+		}
+	}
+	if answered {
+		if err := m.reserveConnectedCallRecording(ctx, tx, callID); err != nil {
 			return err
 		}
 	}
@@ -737,7 +763,8 @@ func (m *Module) applyOutboundDestinationFact(
 
 func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) error {
 	state, ok := parseCallLegClientState(fact.ClientState)
-	if !ok || state.Role != "DESTINATION" || state.Kind != "bridge" {
+	if !ok || state.Role != "DESTINATION" ||
+		(state.Kind != "bridge" && state.Kind != "dial") {
 		return ErrConflict
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -794,9 +821,12 @@ func (m *Module) applyOutboundBridge(ctx context.Context, fact ProviderFact) err
 	if _, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands SET state = 'RECONCILED',
 			sent_at = COALESCE(sent_at, $2), last_error_code = NULL, updated_at = $3
-		WHERE call_leg_id = $1 AND action = 'BRIDGE'
+		WHERE peer_call_leg_id = $1 AND action = 'BRIDGE'
 			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
 	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
+		return err
+	}
+	if err := m.reserveConnectedCallRecording(ctx, tx, state.CallID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -872,6 +902,17 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 		if err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_provider_commands SET state = 'RECONCILED',
+			sent_at = COALESCE(sent_at, $2), last_error_code = NULL, updated_at = $3
+		WHERE call_leg_id = $1 AND action = 'BRIDGE'
+			AND state IN ('SENDING', 'SENT', 'AMBIGUOUS')
+	`, state.CallLegID, fact.OccurredAt, m.now()); err != nil {
+		return err
+	}
+	if err := m.reserveConnectedCallRecording(ctx, tx, state.CallID); err != nil {
+		return err
 	}
 	if destinationBridged || historicalUpgrade {
 		if err := appendTimeline(ctx, tx, state.CallID, practiceID, "call.connected",

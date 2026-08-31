@@ -245,6 +245,13 @@ func TestCallCenterAlertPoliciesMatchInitialOperatingThresholds(t *testing.T) {
 			if !strings.Contains(threshold.Filter, `resource.type="cloud_run_`) {
 				t.Errorf("%s filter omits monitored resource type", condition.DisplayName)
 			}
+			if strings.Contains(threshold.Filter, " OR metric.label.") {
+				t.Errorf(
+					"%s filter mixes metric-label AND/OR restrictions rejected by Cloud Monitoring: %s",
+					condition.DisplayName,
+					threshold.Filter,
+				)
+			}
 			if threshold.Comparison != "COMPARISON_GT" ||
 				threshold.ThresholdValue != want.threshold ||
 				threshold.Duration != want.duration {
@@ -370,9 +377,11 @@ func TestBackendAvailabilitySLOAndBurnPoliciesAreExplicit(t *testing.T) {
 	total := slo.ServiceLevelIndicator.RequestBased.GoodTotalRatio.TotalServiceFilter
 	if !strings.Contains(good, `metric.label.outcome="available"`) ||
 		!strings.Contains(good, `metric.label.runtime_role="portal-api"`) ||
+		!strings.Contains(good, `resource.type="cloud_run_revision"`) ||
 		!strings.Contains(good, "acuity_backend_availability_count") ||
 		!strings.Contains(total, "acuity_backend_availability_count") ||
 		!strings.Contains(total, `metric.label.runtime_role="portal-api"`) ||
+		!strings.Contains(total, `resource.type="cloud_run_revision"`) ||
 		strings.Contains(total, "health/ready") {
 		t.Fatalf("availability filters do not isolate the customer journey: good=%q total=%q", good, total)
 	}
@@ -387,10 +396,13 @@ func TestBackendAvailabilitySLOAndBurnPoliciesAreExplicit(t *testing.T) {
 		} `json:"conditionThreshold"`
 	}
 	type burnPolicy struct {
-		DisplayName string            `json:"displayName"`
-		Combiner    string            `json:"combiner"`
-		UserLabels  map[string]string `json:"userLabels"`
-		Conditions  []burnCondition   `json:"conditions"`
+		DisplayName   string            `json:"displayName"`
+		Combiner      string            `json:"combiner"`
+		Enabled       bool              `json:"enabled"`
+		UserLabels    map[string]string `json:"userLabels"`
+		Documentation documentation     `json:"documentation"`
+		AlertStrategy alertStrategy     `json:"alertStrategy"`
+		Conditions    []burnCondition   `json:"conditions"`
 	}
 	policies := decodeStrict[[]burnPolicy](
 		t,
@@ -400,8 +412,12 @@ func TestBackendAvailabilitySLOAndBurnPoliciesAreExplicit(t *testing.T) {
 		t.Fatalf("SLO burn policy count = %d, want 2", len(policies))
 	}
 	for _, policy := range policies {
-		if policy.Combiner != "AND" || len(policy.Conditions) != 2 ||
-			policy.UserLabels["acuity_slo"] != slo.ID {
+		if policy.Combiner != "AND" || !policy.Enabled ||
+			len(policy.Conditions) != 2 ||
+			policy.UserLabels["acuity_slo"] != slo.ID ||
+			policy.Documentation.MIMEType != "text/markdown" ||
+			policy.Documentation.Content == "" ||
+			policy.AlertStrategy.AutoClose == "" {
 			t.Errorf("invalid multi-window burn policy: %#v", policy)
 		}
 		for _, condition := range policy.Conditions {
@@ -469,7 +485,8 @@ func expectedAlerts() map[string]expectedAlert {
 		"Any quarantined provider receipt":                          {"acuity_call_center_receipt_quarantine_depth", 1, "0s"},
 		"Dial command queue p95 above one second":                   {"acuity_call_center_provider_command_queue_seconds", 1, "60s"},
 		"Rejected start ring-window command":                        {"acuity_call_center_provider_command_count", 0, "0s"},
-		"Degraded caller audio after stop ring-window failure":      {"acuity_call_center_provider_command_count", 0, "0s"},
+		"Degraded caller audio after rejected stop ring-window":     {"acuity_call_center_provider_command_count", 0, "0s"},
+		"Degraded caller audio after ambiguous stop ring-window":    {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Ambiguous service provider command":                        {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Ambiguous worker provider command":                         {"acuity_call_center_provider_command_count", 0, "0s"},
 		"Service database acquisition timeout":                      {"acuity_call_center_database_pool_acquire_count", 0, "0s"},

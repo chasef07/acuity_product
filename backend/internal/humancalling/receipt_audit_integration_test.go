@@ -61,7 +61,7 @@ func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *tes
 		) VALUES
 			('attached-secret-event', $1, 'call.answered', $2, $2, 1,
 			 '\x736563726574', 'QUARANTINED', 10,
-			 'PROJECTION_RETRY_EXHAUSTED', $3, $3, $3, $3),
+			 'PROJECTION_APPLY_FACT_RETRY', $3, $3, $3, $3),
 			('orphan-secret-event', NULL, 'call.hangup', $4, $4, 1,
 			 '\x70726976617465', 'QUARANTINED', 12,
 			 'PROJECTION_RETRY_EXHAUSTED', $3, $3, $3, $3),
@@ -70,7 +70,7 @@ func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *tes
 			 'WAITING_FOR_RELATED_FACT_SLOW_RETRY', NULL, $3, NULL, NULL),
 			('retry-secret-event', NULL, 'call.answered', $5, $5, 1,
 			 '\x7265747279', 'PENDING', 1,
-			 'PROJECTION_RETRY', $5, $3, NULL, NULL),
+			 'PROJECTION_APPLY_FACT_RETRY', $5, $3, NULL, NULL),
 			('attached-failure-secret', $1, 'call.answered', $6, $6, 1,
 			 '\x61747461636865642d70726976617465', 'PENDING', 0,
 			 NULL, NULL, $6, NULL, NULL),
@@ -125,9 +125,11 @@ func TestProviderReceiptAuditAttributesTerminalFailuresWithoutIdentifiers(t *tes
 	}
 	if len(audit.Quarantine) != 2 ||
 		audit.Quarantine[0].EventType != "call.answered" ||
+		audit.Quarantine[0].ErrorCode != "PROJECTION_APPLY_FACT_RETRY" ||
 		!audit.Quarantine[0].AttachedToCall || audit.Quarantine[0].Receipts != 1 ||
 		audit.Quarantine[0].MinAttempts != 10 || audit.Quarantine[0].MaxAttempts != 10 ||
 		audit.Quarantine[1].EventType != "call.hangup" ||
+		audit.Quarantine[1].ErrorCode != "PROJECTION_RETRY_EXHAUSTED" ||
 		audit.Quarantine[1].AttachedToCall || audit.Quarantine[1].Receipts != 1 ||
 		audit.Quarantine[1].MinAttempts != 12 || audit.Quarantine[1].MaxAttempts != 12 {
 		t.Fatalf("receipt quarantine audit = %#v", audit.Quarantine)

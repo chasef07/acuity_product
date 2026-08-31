@@ -38,7 +38,13 @@ type ProviderReceiptAudit struct {
 var providerReceiptAuditErrorCodes = []string{
 	"HANDOFF_REJECTED",
 	"INVALID_PROVIDER_EVENT",
+	projectionApplyFactConflict,
+	projectionApplyFactRetry,
+	projectionAttachCallRetry,
+	projectionLookupRejectedLegRetry,
+	projectionRecordRejectedLegRetry,
 	"PROJECTION_RETRY_EXHAUSTED",
+	projectionWakeRelatedRetry,
 	"RELATED_FACT_TIMEOUT",
 	"RELATED_HANDOFF_REJECTED",
 	"TERMINAL_OR_OBSOLETE_PROVIDER_FACT",

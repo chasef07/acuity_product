@@ -650,7 +650,7 @@ func TestProviderProjectionConflictRemainsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if state != string(humancalling.ReceiptPending) || attempts != 1 ||
-		errorCode != "PROJECTION_RETRY" {
+		errorCode != "PROJECTION_APPLY_FACT_CONFLICT" {
 		t.Fatalf("projection conflict receipt = state:%s attempts:%d error:%s",
 			state, attempts, errorCode)
 	}
@@ -669,7 +669,7 @@ func TestProviderProjectionConflictRemainsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if state != string(humancalling.ReceiptQuarantined) || attempts != 10 ||
-		errorCode != "PROJECTION_RETRY_EXHAUSTED" {
+		errorCode != "PROJECTION_APPLY_FACT_CONFLICT" {
 		t.Fatalf("bounded projection conflict receipt = state:%s attempts:%d error:%s",
 			state, attempts, errorCode)
 	}
@@ -881,7 +881,7 @@ func TestTransientProjectionFailureRetriesThenStopsAtAttemptBound(t *testing.T) 
 	receiveHangup(prefix + "-recovers")
 	process()
 	if state, attempts, code := readReceipt(prefix + "-recovers"); state != string(humancalling.ReceiptPending) || attempts != 1 ||
-		code != "PROJECTION_RETRY" {
+		code != "PROJECTION_APPLY_FACT_RETRY" {
 		t.Fatalf("transient receipt first attempt = state:%s attempts:%d error:%s",
 			state, attempts, code)
 	}
@@ -925,7 +925,7 @@ func TestTransientProjectionFailureRetriesThenStopsAtAttemptBound(t *testing.T) 
 		}
 	}
 	if state, attempts, code := readReceipt(prefix + "-bounded"); state != string(humancalling.ReceiptQuarantined) || attempts != 10 ||
-		code != "PROJECTION_RETRY_EXHAUSTED" {
+		code != "PROJECTION_APPLY_FACT_RETRY" {
 		t.Fatalf("bounded transient receipt = state:%s attempts:%d error:%s",
 			state, attempts, code)
 	}
@@ -1241,7 +1241,7 @@ func TestTerminalCallRecordingReceiptsDistinguishConflictFromLateEvidence(t *tes
 		identity(recordState, "wrong-session"),
 	)
 	if state, attempts, code := read(prefix + "-recording-wrong-session"); state != string(humancalling.ReceiptPending) || attempts != 1 ||
-		code != "PROJECTION_RETRY" {
+		code != "PROJECTION_APPLY_FACT_CONFLICT" {
 		t.Fatalf("conflicting recording receipt = state:%s attempts:%d error:%s",
 			state, attempts, code)
 	}
@@ -1978,7 +1978,7 @@ func testOutboundRecordingSavedAfterLaterClientStateAppliesImmediately(
 		t.Fatalf("read mismatched recording receipt: %v", err)
 	}
 	if receiptState != string(humancalling.ReceiptPending) || attempts != 1 ||
-		projectionCode != "PROJECTION_RETRY" {
+		projectionCode != "PROJECTION_APPLY_FACT_CONFLICT" {
 		t.Fatalf("mismatched recording receipt = state:%s attempts:%d code:%s",
 			receiptState, attempts, projectionCode)
 	}
@@ -2227,7 +2227,7 @@ func TestDelayedProviderHangupAfterLocalEndingConvergesWithoutRetry(t *testing.T
 		t.Fatal(err)
 	}
 	if receiptState != string(humancalling.ReceiptPending) ||
-		projectionAttempts != 1 || projectionError != "PROJECTION_RETRY" {
+		projectionAttempts != 1 || projectionError != "PROJECTION_APPLY_FACT_CONFLICT" {
 		t.Errorf("foreign-session Hangup = state:%s attempts:%d error:%s",
 			receiptState, projectionAttempts, projectionError)
 	}

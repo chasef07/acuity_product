@@ -33,6 +33,15 @@ const (
 	maxFastReceiptRetryDelay      = time.Minute
 	slowRelatedFactRetryDelay     = 15 * time.Minute
 	maxRelatedFactWait            = 24 * time.Hour
+
+	projectionRetry                  = "PROJECTION_RETRY"
+	projectionRetryExhausted         = "PROJECTION_RETRY_EXHAUSTED"
+	projectionAttachCallRetry        = "PROJECTION_ATTACH_CALL_RETRY"
+	projectionApplyFactConflict      = "PROJECTION_APPLY_FACT_CONFLICT"
+	projectionApplyFactRetry         = "PROJECTION_APPLY_FACT_RETRY"
+	projectionRecordRejectedLegRetry = "PROJECTION_RECORD_REJECTED_LEG_RETRY"
+	projectionLookupRejectedLegRetry = "PROJECTION_LOOKUP_REJECTED_LEG_RETRY"
+	projectionWakeRelatedRetry       = "PROJECTION_WAKE_RELATED_RETRY"
 )
 
 type WebhookReceipt struct {
@@ -432,7 +441,9 @@ func (m *Module) ProcessNextReceipt(ctx context.Context) (bool, error) {
 				nextAttemptAt = completedAt.Add(slowRelatedFactRetryDelay)
 			default:
 				state = ReceiptQuarantined
-				errorCode = "PROJECTION_RETRY_EXHAUSTED"
+				if errorCode == projectionRetry {
+					errorCode = projectionRetryExhausted
+				}
 			}
 		} else {
 			nextAttemptAt = completedAt.Add(receiptRetryDelay(projectionAttempts))
@@ -478,26 +489,33 @@ func (m *Module) replayProviderReceipt(
 	if !known {
 		return ReceiptUnknown, ""
 	}
+	retryCode := projectionAttachCallRetry
 	err = m.attachReceiptCall(ctx, eventID, fact)
 	if err == nil {
+		retryCode = projectionApplyFactRetry
 		err = m.ApplyProviderFact(ctx, fact)
+		if errors.Is(err, ErrConflict) {
+			retryCode = projectionApplyFactConflict
+		}
 		if err == nil {
+			retryCode = projectionAttachCallRetry
 			err = m.attachReceiptCall(ctx, eventID, fact)
 		}
 		if err == nil {
+			retryCode = projectionWakeRelatedRetry
 			err = m.wakeRelatedReceipts(ctx, eventID, fact)
 		}
 	}
 	if errors.Is(err, ErrInvalidHandoff) {
 		if err := m.rememberRejectedProviderLeg(ctx, fact); err != nil {
-			return ReceiptPending, "PROJECTION_RETRY"
+			return ReceiptPending, projectionRecordRejectedLegRetry
 		}
 		return ReceiptFailed, "HANDOFF_REJECTED"
 	}
 	if err != nil && rejectedHandoffLifecycle(fact.Type) {
 		rejected, lookupErr := m.providerLegWasRejected(ctx, fact)
 		if lookupErr != nil {
-			return ReceiptPending, "PROJECTION_RETRY"
+			return ReceiptPending, projectionLookupRejectedLegRetry
 		}
 		if rejected {
 			return ReceiptFailed, "RELATED_HANDOFF_REJECTED"
@@ -510,10 +528,8 @@ func (m *Module) replayProviderReceipt(
 		return ReceiptPending, "WAITING_FOR_RELATED_FACT"
 	case errors.Is(err, errTerminalOrObsoleteProviderFact):
 		return ReceiptFailed, "TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
-	case errors.Is(err, ErrConflict):
-		return ReceiptPending, "PROJECTION_RETRY"
 	default:
-		return ReceiptPending, "PROJECTION_RETRY"
+		return ReceiptPending, retryCode
 	}
 }
 

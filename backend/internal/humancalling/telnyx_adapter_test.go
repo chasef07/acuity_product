@@ -860,7 +860,7 @@ func TestTelnyxAdapterTransfersCustomerLegWithDistinctTargetIdentity(t *testing.
 }
 
 func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
-	requests := make(chan map[string]any, 3)
+	requests := make(chan map[string]any, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
 		request *http.Request,
@@ -934,6 +934,22 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 				"webhook_retries_policies":    telnyxLifecycleRetries(),
 			},
 		},
+		{
+			ID:       "destination-ringback-bridge",
+			Action:   humancalling.CommandBridge,
+			TargetID: "staff-control",
+			Payload: map[string]any{
+				"call_control_id":       "destination-control",
+				"prevent_double_bridge": true,
+				"client_state":          "opaque-staff-bridge",
+				"play_ringtone":         true,
+				"ringtone":              "us",
+				"record":                "record-from-answer",
+				"record_channels":       "dual",
+				"record_format":         "mp3",
+				"record_track":          "both",
+			},
+		},
 	}
 	for _, command := range commands {
 		if _, err := adapter.Execute(context.Background(), command); err != nil {
@@ -943,6 +959,7 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 	greeting := <-requests
 	recording := <-requests
 	destination := <-requests
+	bridge := <-requests
 	if greeting["_path"] != "/v2/calls/caller-control/actions/speak" ||
 		greeting["payload"] != "Please leave a message after the beep." ||
 		greeting["voice"] != "Polly.Matthew" ||
@@ -966,6 +983,14 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 		destination["answering_machine_detection"] != "disabled" ||
 		destination["timeout_secs"] != float64(30) {
 		t.Fatalf("outbound destination request = %#v", destination)
+	}
+	if bridge["_path"] != "/v2/calls/staff-control/actions/bridge" ||
+		bridge["call_control_id"] != "destination-control" ||
+		bridge["command_id"] != "destination-ringback-bridge" ||
+		bridge["play_ringtone"] != true ||
+		bridge["ringtone"] != "us" ||
+		bridge["record"] != "record-from-answer" {
+		t.Fatalf("outbound ringback Bridge request = %#v", bridge)
 	}
 }
 

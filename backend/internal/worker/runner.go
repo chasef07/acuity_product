@@ -138,12 +138,7 @@ func (runner *Runner) Run(ctx context.Context) error {
 	lanes.Add(7)
 	go func() {
 		defer lanes.Done()
-		runner.runQueueLane(
-			ctx,
-			runner.config.ReceiptBatchSize,
-			"provider_receipt_processing_failed",
-			runner.work.ProcessNextReceipt,
-		)
+		runner.runCallingReceipts(ctx)
 	}()
 	go func() {
 		defer lanes.Done()
@@ -191,6 +186,16 @@ func (runner *Runner) Run(ctx context.Context) error {
 	}()
 	lanes.Wait()
 	return nil
+}
+
+func (runner *Runner) runCallingReceipts(ctx context.Context) {
+	runner.runQueueLaneWithIdleMaximum(
+		ctx,
+		runner.config.ReceiptBatchSize,
+		"provider_receipt_processing_failed",
+		runner.work.ProcessNextReceipt,
+		runner.config.WorkInterval,
+	)
 }
 
 func (runner *Runner) runProviderCommands(ctx context.Context) {
