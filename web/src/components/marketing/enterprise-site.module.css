@@ -38,18 +38,29 @@
 }
 
 .site main {
-  scroll-margin-top: 16px;
+  scroll-margin-top: 104px;
 }
 
 .siteHeader {
   width: min(100% - 48px, 1440px);
   min-height: 76px;
   margin: 0 auto;
+  padding: 8px 10px 8px 16px;
+  position: sticky;
+  z-index: 40;
+  top: 12px;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 42px;
-  background: var(--marketing-paper);
+  border: 1px solid rgb(37 51 74 / 0.1);
+  border-radius: 24px;
+  background: rgb(251 250 247 / 0.78);
+  box-shadow:
+    0 14px 40px rgb(37 51 74 / 0.12),
+    inset 0 1px 0 rgb(255 255 255 / 0.78);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  backdrop-filter: blur(24px) saturate(135%);
 }
 
 .brand,
@@ -70,10 +81,15 @@
 }
 
 .primaryNav {
+  padding: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 34px;
+  gap: 3px;
+  border: 1px solid rgb(37 51 74 / 0.07);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.42);
+  box-shadow: 0 4px 16px rgb(37 51 74 / 0.05);
 }
 
 .navLink,
@@ -87,7 +103,19 @@
   font-family: inherit;
   font-size: 13px;
   font-weight: 520;
-  transition: color 180ms ease;
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.navLink {
+  min-height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
 }
 
 .navLink:hover,
@@ -99,20 +127,32 @@
 }
 
 .navLink[aria-current="page"] {
-  text-decoration: underline;
-  text-decoration-color: var(--marketing-blue);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 6px;
+  background: rgb(255 255 255 / 0.76);
+  box-shadow: 0 3px 12px rgb(37 51 74 / 0.08);
+}
+
+.navLink:hover,
+.navLink:focus-visible {
+  background: rgb(255 255 255 / 0.58);
 }
 
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
+}
+
+.portalLink {
+  min-height: 40px;
+  padding: 0 10px;
 }
 
 .workLink {
-  padding: 10px 17px;
+  min-height: 44px;
+  padding: 0 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
   background: var(--marketing-ink);
   color: white;
@@ -453,6 +493,86 @@
   padding-bottom: 6px;
 }
 
+.commercialPaths {
+  padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  gap: clamp(60px, 9vw, 140px);
+}
+
+.commercialPaths header {
+  align-self: start;
+}
+
+.commercialPaths header h2 {
+  margin: 0;
+  font-family: var(--font-acuity-display), Georgia, serif;
+  font-size: clamp(2.8rem, 4.8vw, 5.1rem);
+  font-weight: 400;
+  letter-spacing: -0.06em;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.commercialPaths header > p:last-child {
+  max-width: 620px;
+  margin: 26px 0 0;
+  color: var(--marketing-ink-soft);
+  line-height: 1.72;
+}
+
+.commercialPaths > div {
+  display: grid;
+  gap: 1px;
+  background: var(--marketing-line);
+}
+
+.commercialPaths > div a {
+  min-height: 205px;
+  padding: 30px;
+  position: relative;
+  background: var(--marketing-paper);
+  color: var(--marketing-ink);
+}
+
+.commercialPaths > div a > span {
+  color: var(--marketing-blue);
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.commercialPaths h3 {
+  max-width: 680px;
+  margin: 24px 44px 0 0;
+  font-family: var(--font-acuity-display), Georgia, serif;
+  font-size: clamp(1.9rem, 3vw, 3.1rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.commercialPaths > div a p {
+  max-width: 670px;
+  margin: 18px 44px 0 0;
+  color: var(--marketing-ink-soft);
+  line-height: 1.6;
+}
+
+.commercialPaths > div a svg {
+  position: absolute;
+  right: 30px;
+  bottom: 30px;
+  transition: transform 180ms ease;
+}
+
+.commercialPaths > div a:hover svg,
+.commercialPaths > div a:focus-visible svg {
+  transform: translateX(3px);
+}
+
 .enterpriseDifference {
   padding: clamp(80px, 9vw, 130px) max(6vw, calc((100vw - 1320px) / 2));
   display: grid;
@@ -522,6 +642,24 @@
 
 .proofSection h2 {
   font-size: clamp(2.7rem, 4.7vw, 5rem);
+}
+
+.proofLink {
+  min-height: 44px;
+  margin-top: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--marketing-sage);
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.proofLink:hover,
+.proofLink:focus-visible {
+  color: white;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .proofMetrics {
@@ -677,6 +815,8 @@
 
 .siteFooter > div {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 24px;
 }
 
@@ -909,6 +1049,36 @@
   font-weight: 400;
   letter-spacing: -0.06em;
   line-height: 0.9;
+}
+
+.founderProfile {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.founderProfile p {
+  margin: 0;
+  color: var(--marketing-ink-soft);
+  font-size: 0.88rem;
+}
+
+.founderProfile a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--marketing-blue-deep);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.founderProfile a:hover,
+.founderProfile a:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .founderThought {
@@ -1243,6 +1413,24 @@
   transform: none;
 }
 
+.formPrivacyNotice {
+  max-width: 700px;
+  margin: 18px 0 0;
+  color: var(--marketing-ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.formPrivacyNotice a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--marketing-blue-deep);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .formSuccess,
 .formError {
   margin: 0;
@@ -1264,7 +1452,7 @@
   }
 
   .primaryNav {
-    gap: 20px;
+    gap: 2px;
   }
 
   .portalLink {
@@ -1360,10 +1548,25 @@
 }
 
 @media (max-width: 860px) {
+  .brand,
+  .footerBrand,
+  .navLink,
+  .portalLink,
+  .workLink,
+  .siteFooter > div a {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .siteHeader {
     width: min(100% - 32px, 1440px);
     min-height: 108px;
-    padding: 10px 0 0;
+    padding: 8px 10px 7px;
+    top: 8px;
+    border-radius: 20px;
     grid-template-columns: auto 1fr;
     align-content: center;
     row-gap: 8px;
@@ -1371,13 +1574,11 @@
 
   .primaryNav {
     min-width: 0;
-    padding: 10px 0 13px;
+    padding: 4px;
     grid-row: 2;
     grid-column: 1 / -1;
     justify-content: flex-start;
-    gap: 24px;
     overflow-x: auto;
-    border-top: 1px solid var(--marketing-line);
     scrollbar-width: none;
   }
 
@@ -1411,6 +1612,7 @@
   }
 
   .sectionHeader,
+  .commercialPaths,
   .enterpriseDifference,
   .proofSection,
   .storyPreview,
@@ -1455,11 +1657,15 @@
   }
 
   .siteFooter {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr;
   }
 
   .siteFooter > p {
     display: none;
+  }
+
+  .siteFooter > div {
+    justify-content: flex-start;
   }
 
   .storyColumns {
@@ -1518,10 +1724,6 @@
     gap: 12px;
   }
 
-  .primaryNav {
-    gap: 18px;
-  }
-
   .navLink {
     font-size: 11px;
     white-space: nowrap;
@@ -1544,6 +1746,7 @@
   }
 
   .proofSection,
+  .commercialPaths,
   .methodPageVenn,
   .enterpriseDifference,
   .storyPreview,
@@ -1664,6 +1867,7 @@
   .siteFooter > div {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    justify-content: initial;
     gap: 12px;
   }
 
@@ -1723,6 +1927,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .commercialPaths > div a svg,
   .founderPortrait img {
     transition: none;
   }

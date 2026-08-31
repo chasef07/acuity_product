@@ -10,6 +10,7 @@ import {
   PortalSignInTrigger,
   SignInDialog,
 } from "@/components/auth/sign-in-dialog"
+import { ophthalmologyDeploymentProof } from "@/lib/marketing-proof"
 import { cn } from "@/lib/utils"
 
 import { PixelWaveField } from "./pixel-wave-field"
@@ -34,11 +35,24 @@ const mono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 })
 
-type MarketingRoute = "/" | "/method" | "/who-we-are" | "/work-with-us"
+export type MarketingRoute =
+  | "/"
+  | "/method"
+  | "/who-we-are"
+  | "/work-with-us"
+  | "/advancedmd-ai-receptionist"
+  | "/ai-receptionist-for-ophthalmology"
+  | "/ai-receptionist-vs-medical-answering-service"
+  | "/privacy-policy"
+  | "/terms-of-service"
+  | "/security"
+  | "/case-studies/ophthalmology-patient-access"
+  | "/faq"
 
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
-  { href: "/method", label: "The Acuity Health Method" },
+  { href: "/ai-receptionist-for-ophthalmology", label: "Ophthalmology" },
+  { href: "/method", label: "Our Method" },
   { href: "/who-we-are", label: "Who We Are" },
 ]
 
@@ -83,8 +97,21 @@ function SiteFooter() {
       <p>Forward-deployed AI for patient access.</p>
       <div>
         <Link href="/method">The Acuity Health Method</Link>
+        <Link href="/ai-receptionist-for-ophthalmology">Ophthalmology patient access</Link>
+        <Link href="/advancedmd-ai-receptionist">AdvancedMD integration</Link>
+        <Link href="/ai-receptionist-vs-medical-answering-service">Compare operating models</Link>
+        <Link href="/case-studies/ophthalmology-patient-access">
+          Ophthalmology case study
+        </Link>
+        <Link href="/faq">FAQ</Link>
+        <Link href="/security">Security, Privacy & HIPAA</Link>
+        <Link href="/privacy-policy">Privacy Policy</Link>
+        <Link href="/terms-of-service">Terms of Service</Link>
         <Link href="/who-we-are">Who We Are</Link>
         <Link href="/work-with-us">Work With Us</Link>
+        <a href="https://www.linkedin.com/company/acuityhealth/" rel="noreferrer" target="_blank">
+          LinkedIn
+        </a>
         <Link href="/sign-in">Sign in</Link>
       </div>
     </footer>
@@ -164,14 +191,23 @@ function CaseStudySection() {
   return (
     <section className={styles.proofSection}>
       <div>
-        <p className={styles.eyebrow}>Six-location ophthalmology group · first 30 days</p>
-        <h2>A working operation creates measurable capacity.</h2>
+        <p className={styles.eyebrow}>{ophthalmologyDeploymentProof.eyebrow}</p>
+        <h2>{ophthalmologyDeploymentProof.title}</h2>
+        <p>{ophthalmologyDeploymentProof.description}</p>
+        <Link
+          className={styles.proofLink}
+          href="/case-studies/ophthalmology-patient-access"
+        >
+          Read the ophthalmology case study <ArrowRight aria-hidden="true" size={16} />
+        </Link>
       </div>
       <dl className={styles.proofMetrics}>
-        <div><dt>500+</dt><dd>appointments booked into the EMR</dd></div>
-        <div><dt>0</dt><dd>missed calls</dd></div>
-        <div><dt>500</dt><dd>staff hours returned</dd></div>
-        <div><dt>$100K+</dt><dd>estimated revenue recovered</dd></div>
+        {ophthalmologyDeploymentProof.metrics.map((metric) => (
+          <div key={metric.label}>
+            <dt>{metric.value}</dt>
+            <dd>{metric.label}</dd>
+          </div>
+        ))}
       </dl>
     </section>
   )
@@ -203,11 +239,11 @@ export function EnterpriseHome({
     <MarketingFrame current="/" initiallyOpen={initiallyOpen}>
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <h1>Redesign patient access.</h1>
+          <h1>Redesign patient access with medical AI agents.</h1>
           <p className={styles.heroBody}>
-            Acuity Health redesigns patient-access workflows, deploys medical AI
-            agents across the systems you already use, and stays with your team
-            until the new operating model works.
+            Acuity answers calls, completes approved work in the systems your
+            team already uses, and brings staff in when judgment or ownership is
+            required. Then we stay until the new operating model works.
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.darkButton} href="/work-with-us">
@@ -219,6 +255,37 @@ export function EnterpriseHome({
           </div>
         </div>
         <PixelWaveField />
+      </section>
+
+      <section className={styles.commercialPaths}>
+        <header>
+          <p className={styles.eyebrow}>Start with the operating constraint</p>
+          <h2>Find where patient demand stops moving.</h2>
+          <p>
+            The category label matters less than the work. Start with the system,
+            specialty, or operating-model decision that is blocking a real outcome.
+          </p>
+        </header>
+        <div>
+          <Link href="/advancedmd-ai-receptionist">
+            <span>AdvancedMD</span>
+            <h3>Complete patient-access work inside the EMR.</h3>
+            <p>See how calls, practice rules, scheduling actions, and evidence connect.</p>
+            <ArrowRight aria-hidden="true" size={17} />
+          </Link>
+          <Link href="/ai-receptionist-for-ophthalmology">
+            <span>Ophthalmology</span>
+            <h3>Design for the rules that make eye care different.</h3>
+            <p>Medical versus vision, location, provider, insurance, and exception paths.</p>
+            <ArrowRight aria-hidden="true" size={17} />
+          </Link>
+          <Link href="/ai-receptionist-vs-medical-answering-service">
+            <span>Evaluation</span>
+            <h3>Choose the operating model, not the demo voice.</h3>
+            <p>Compare message capture with completed work, handoffs, and outcome evidence.</p>
+            <ArrowRight aria-hidden="true" size={17} />
+          </Link>
+        </div>
       </section>
 
       <section className={styles.enterpriseDifference}>
@@ -244,6 +311,8 @@ export function EnterpriseHome({
           </article>
         </div>
       </section>
+
+      <CaseStudySection />
 
       <section className={styles.storyPreview}>
         <div className={styles.storyArtifact} aria-hidden="true">
@@ -307,15 +376,17 @@ export function MethodPageContent() {
 }
 
 function FounderPanel({
-  name,
   fullName,
+  role,
+  linkedinHref,
   location,
   imageSrc,
   portraitClassName,
   children,
 }: {
-  name: string
   fullName: string
+  role: string
+  linkedinHref: `https://${string}`
   location: string
   imageSrc: StaticImageData
   portraitClassName?: string
@@ -334,7 +405,13 @@ function FounderPanel({
       </div>
       <div className={styles.founderIdentity}>
         <p className={styles.eyebrow}>Co-founder</p>
-        <h2>{name}</h2>
+        <h2>{fullName}</h2>
+        <div className={styles.founderProfile}>
+          <p>{role}</p>
+          <a href={linkedinHref} rel="noreferrer" target="_blank">
+            LinkedIn <ArrowRight aria-hidden="true" size={14} />
+          </a>
+        </div>
       </div>
       <details className={styles.founderThought} open>
         <summary>Currently on my mind</summary>
@@ -350,10 +427,36 @@ function FounderPanel({
 export function WhoWeArePageContent() {
   return (
     <MarketingFrame current="/who-we-are">
+      <script
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": "Person",
+                "@id": "https://acuityhealth.io/who-we-are#kyle-shechtman",
+                name: "Kyle Shechtman",
+                jobTitle: "Co-founder and CEO",
+                sameAs: ["https://www.linkedin.com/in/kyle-shechtman"],
+                worksFor: { "@id": "https://acuityhealth.io/#organization" },
+              },
+              {
+                "@type": "Person",
+                "@id": "https://acuityhealth.io/who-we-are#chase-fagen",
+                name: "Chase Fagen",
+                jobTitle: "Co-founder",
+                sameAs: ["https://www.linkedin.com/in/chase-fagen-198947180"],
+                worksFor: { "@id": "https://acuityhealth.io/#organization" },
+              },
+            ],
+          }).replace(/</g, "\\u003c"),
+        }}
+        type="application/ld+json"
+      />
       <section className={styles.foundingStory}>
         <p className={styles.eyebrow}>The founding story</p>
         <div>
-          <h1>Acuity Health began as a consulting relationship.</h1>
+          <h1>Acuity Health began close to the patient-access work.</h1>
           <div className={styles.storyColumns}>
             <p>
               Working closely with medical practices taught us that the hard part
@@ -376,14 +479,15 @@ export function WhoWeArePageContent() {
       </section>
 
       <section className={styles.foundersSection}>
-        <header><p className={styles.eyebrow}>Meet the founders + Engineering team</p><h2>The same people stay in the work.</h2></header>
+        <header><p className={styles.eyebrow}>Meet the founders</p><h2>The same people stay in the work.</h2></header>
         <div className={styles.founderGrid}>
           <FounderPanel
             fullName="Kyle Shechtman"
             imageSrc={kylePortrait}
+            linkedinHref="https://www.linkedin.com/in/kyle-shechtman"
             location="August 2026"
-            name="Kyle"
             portraitClassName={styles.founderPortraitKyle}
+            role="Co-founder & CEO"
           >
             <p>
               Enterprise AI requires a forward-deployed approach because the real
@@ -394,9 +498,10 @@ export function WhoWeArePageContent() {
           <FounderPanel
             fullName="Chase Fagen"
             imageSrc={chasePortrait}
+            linkedinHref="https://www.linkedin.com/in/chase-fagen-198947180"
             location="August 2026"
-            name="Chase"
             portraitClassName={styles.founderPortraitChase}
+            role="Co-founder"
           >
             <p>
               When intelligence has negligible marginal cost and is abundant,

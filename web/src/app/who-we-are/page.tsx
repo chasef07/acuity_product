@@ -3,7 +3,7 @@ import { createPublicPageMetadata } from "@/lib/site"
 
 export const metadata = createPublicPageMetadata({
   path: "/who-we-are",
-  title: "Who We Are",
+  title: "Patient Access AI Company & Founders",
   description:
     "Acuity Health is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
 })

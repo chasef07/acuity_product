@@ -3,10 +3,11 @@ import type { Metadata } from "next"
 export const siteConfig = {
   name: "Acuity Health",
   shortName: "Acuity Health",
+  legalName: "Data Buddies Solutions LLC",
   url: "https://acuityhealth.io",
-  title: "Acuity Health | AI Agents for Medical Enterprises",
+  title: "AI Agents for Patient Access | Acuity Health",
   description:
-    "Acuity Health redesigns patient-access workflows, deploys medical AI agents across the systems you already use, and stays with your team until the new operating model works.",
+    "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
 } as const
 
 export const siteStructuredData = {
@@ -16,7 +17,12 @@ export const siteStructuredData = {
       "@type": "Organization",
       "@id": `${siteConfig.url}/#organization`,
       name: siteConfig.name,
+      legalName: siteConfig.legalName,
       url: siteConfig.url,
+      sameAs: [
+        "https://www.linkedin.com/company/acuityhealth/",
+        "https://www.advancedmd.com/integrations/marketplace/acuity-health/",
+      ],
       logo: {
         "@type": "ImageObject",
         url: `${siteConfig.url}/icon-512x512.png`,
@@ -77,7 +83,7 @@ export function createPublicPageMetadata({
           url: "/opengraph-image",
           width: 1200,
           height: 630,
-          alt: "Acuity Health: AI agents for medical enterprises",
+          alt: "Acuity Health: AI agents for patient access",
         },
       ],
     },
