@@ -125,21 +125,7 @@ type TimelineSource = {
   phone: string
 }
 
-export function EngagementWorkspace({
-  engagement,
-  practiceID,
-  canMutate,
-  revision,
-  selectedTaskID,
-  selectedCallID,
-  selectedAIInteractionID,
-  headerLeading,
-  headerTrailing,
-  onTaskCreated,
-  onTaskOpen,
-  onCallOpen,
-  onAIInteractionOpen,
-}: {
+type EngagementWorkspaceProps = {
   engagement: EngagementSummary
   practiceID: string
   canMutate: boolean
@@ -153,7 +139,38 @@ export function EngagementWorkspace({
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
   onAIInteractionOpen: (interactionID: string) => void
-}) {
+}
+
+type EngagementWorkspaceCalling = Pick<
+  ReturnType<typeof useCallingNavigation>,
+  | "callingOccupied"
+  | "callingEnabled"
+  | "outboundPending"
+  | "ownsSoftphone"
+  | "startOutbound"
+>
+
+export function EngagementWorkspace(props: EngagementWorkspaceProps) {
+  const calling = useCallingNavigation()
+  return <EngagementWorkspaceView {...props} calling={calling} />
+}
+
+export function EngagementWorkspaceView({
+  engagement,
+  practiceID,
+  canMutate,
+  revision,
+  selectedTaskID,
+  selectedCallID,
+  selectedAIInteractionID,
+  headerLeading,
+  headerTrailing,
+  onTaskCreated,
+  onTaskOpen,
+  onCallOpen,
+  onAIInteractionOpen,
+  calling,
+}: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
   const [route, setRoute] = useState(defaultRoute)
@@ -167,7 +184,7 @@ export function EngagementWorkspace({
     outboundPending,
     ownsSoftphone,
     startOutbound,
-  } = useCallingNavigation()
+  } = calling
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">

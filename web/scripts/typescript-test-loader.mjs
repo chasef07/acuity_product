@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -10,6 +10,12 @@ const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url))
 const sourceExtensions = [".ts", ".tsx"]
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "next/navigation") {
+    return {
+      url: new URL("./test-stubs/next-navigation.mjs", import.meta.url).href,
+      shortCircuit: true,
+    }
+  }
   const candidate = specifier.startsWith("@/")
     ? path.join(sourceRoot, specifier.slice(2))
     : specifier.startsWith(".") && context.parentURL?.startsWith("file:")
@@ -53,8 +59,8 @@ async function resolveSource(candidate) {
 }
 
 async function exists(candidate) {
-  return access(candidate).then(
-    () => true,
+  return stat(candidate).then(
+    (value) => value.isFile(),
     () => false,
   )
 }

@@ -5,8 +5,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { portalClient } from "@/lib/api/client"
-import { getAiInteraction } from "@/lib/api/generated/sdk.gen"
 import type {
   AiAppointmentFacts,
   AiInteractionDetail,
@@ -15,67 +13,47 @@ import {
   aiCallTimelinePresentation,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
-import { getAccessToken } from "@/lib/auth-client"
 
 export function AIInteractionContext({
   interactionID,
+  detail,
+  loading,
+  error,
   onReview,
 }: {
   interactionID: string
+  detail?: AiInteractionDetail
+  loading: boolean
+  error: string
   onReview?: (interactionID: string) => Promise<boolean>
 }) {
-  const [request, setRequest] = useState<{
-    interactionID: string
-    detail?: AiInteractionDetail
-    error?: string
-  }>({ interactionID: "" })
   const [reviewRequest, setReviewRequest] = useState<{
     interactionID: string
     state: "saving" | "saved" | "failed"
   }>({ interactionID: "", state: "saved" })
-  const currentRequest =
-    request.interactionID === interactionID ? request : undefined
-  const detail = currentRequest?.detail
-  const error = currentRequest?.error ?? ""
-  const loading = Boolean(interactionID) && !currentRequest
-
+  const appointmentOutcome = detail?.appointmentOutcome
   useEffect(() => {
-    if (!interactionID) return
-    const controller = new AbortController()
-    void getAccessToken().then(async (token) => {
-      if (controller.signal.aborted) return
-      if (!token) {
-        setRequest({
-          interactionID,
-          error: "Your session is not authorized to load this AI call.",
-        })
-        return
-      }
-      const result = await getAiInteraction({
-        client: portalClient(token),
-        path: { interactionId: interactionID },
-        signal: controller.signal,
-      }).catch(() => undefined)
-      if (controller.signal.aborted) return
-      if (!result?.data) {
-        setRequest({
-          interactionID,
-          error: "This AI call could not be loaded.",
-        })
-        return
-      }
-      setRequest({ interactionID, detail: result.data })
-      if (!onReview || result.data.appointmentOutcome === "INDETERMINATE") return
+    if (
+      !interactionID ||
+      !appointmentOutcome ||
+      !onReview ||
+      appointmentOutcome === "INDETERMINATE"
+    ) return
+    let cancelled = false
+    void Promise.resolve().then(async () => {
+      if (cancelled) return
       setReviewRequest({ interactionID, state: "saving" })
       const reviewed = await onReview(interactionID).catch(() => false)
-      if (controller.signal.aborted) return
+      if (cancelled) return
       setReviewRequest({
         interactionID,
         state: reviewed ? "saved" : "failed",
       })
     })
-    return () => controller.abort()
-  }, [interactionID, onReview])
+    return () => {
+      cancelled = true
+    }
+  }, [appointmentOutcome, interactionID, onReview])
 
   async function retryReview() {
     if (!onReview) return
