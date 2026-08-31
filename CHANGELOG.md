@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/chasef07/acuity_product/compare/v0.6.0...v0.7.0) (2026-08-31)
+
+
+### Features
+
+* complete patient-access SEO migration and stabilize release CI ([#234](https://github.com/chasef07/acuity_product/issues/234)) ([29f61a1](https://github.com/chasef07/acuity_product/commit/29f61a14e97933dbfc37d268f84eb7a4b47ea6ff))
+
 ## [0.6.0](https://github.com/chasef07/acuity_product/compare/v0.5.0...v0.6.0) (2026-08-30)
 
 
