@@ -182,9 +182,25 @@
         }
       },
       {
-        "displayName": "Degraded caller audio after stop ring-window failure",
+        "displayName": "Degraded caller audio after rejected stop ring-window",
         "conditionThreshold": {
-          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.action=\"stop_ring_window\" AND (metric.label.outcome=\"rejected\" OR metric.label.outcome=\"ambiguous\")",
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.action=\"stop_ring_window\" AND metric.label.outcome=\"rejected\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Degraded caller audio after ambiguous stop ring-window",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_provider_command_count\" AND resource.type=\"cloud_run_worker_pool\" AND metric.label.action=\"stop_ring_window\" AND metric.label.outcome=\"ambiguous\"",
           "aggregations": [
             {
               "alignmentPeriod": "60s",

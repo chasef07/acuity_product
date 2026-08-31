@@ -603,6 +603,40 @@ func TestQueueLaneBacksOffConsecutiveEmptyClaimsAndResetsAfterProgress(t *testin
 	}
 }
 
+func TestCallingReceiptLaneDoesNotIdleBackOff(t *testing.T) {
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval:     250 * time.Millisecond,
+			WorkTimeout:      time.Second,
+			ReceiptBatchSize: 8,
+			IdleBackoffMax:   2 * time.Second,
+		},
+		work: newControlledWork(),
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return len(delays) < 4
+		},
+	}
+
+	runner.runCallingReceipts(context.Background())
+
+	want := []time.Duration{
+		250 * time.Millisecond,
+		250 * time.Millisecond,
+		250 * time.Millisecond,
+		250 * time.Millisecond,
+	}
+	if len(delays) != len(want) {
+		t.Fatalf("calling receipt delays = %v, want %v", delays, want)
+	}
+	for index := range want {
+		if delays[index] != want[index] {
+			t.Fatalf("calling receipt delays = %v, want %v", delays, want)
+		}
+	}
+}
+
 func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
 	work := &credentialReconciliationFailureWork{
 		controlledWork: newControlledWork(),

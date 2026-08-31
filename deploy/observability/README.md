@@ -120,7 +120,8 @@ availability SLO:
 | Any quarantined provider receipt | durable depth above zero in 60 seconds, until audited requeue |
 | Dial command queue p95 above one second | p95 over 10 minutes for 60 seconds |
 | Rejected start ring-window command | any definitive rejection in 60 seconds |
-| Degraded caller audio after stop ring-window failure | any definitive or ambiguous failure in 60 seconds |
+| Degraded caller audio after rejected stop ring-window | any definitive failure in 60 seconds |
+| Degraded caller audio after ambiguous stop ring-window | any ambiguous failure in 60 seconds |
 | Ambiguous service provider command | any in 60 seconds |
 | Ambiguous worker provider command | any in 60 seconds |
 | Service database acquisition timeout | any deadline exhaustion in 60 seconds |

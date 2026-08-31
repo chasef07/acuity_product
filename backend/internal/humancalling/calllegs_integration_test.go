@@ -2218,6 +2218,142 @@ func countStaffLegsForCaller(
 	return staffLegs
 }
 
+func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 31, 15, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, staff := provisionConcurrentStaff(
+		t, accessModule, now, "outbound-ringback", 1,
+	)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE access_practices SET
+			connected_call_recording_retention_days = 30,
+			connected_call_recording_enabled = true
+		WHERE id = $1
+	`, authorization.Practice.ID); err != nil {
+		t.Fatalf("enable outbound connected recording: %v", err)
+	}
+	provider := &recordingProvider{dialResults: []humancalling.ProviderResult{
+		{CallControlID: "ringback-staff-control", CallLegID: "ringback-staff-leg"},
+		{CallControlID: "ringback-destination-control", CallLegID: "ringback-destination-leg"},
+	}}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{
+		StaffSIPDomain:         "sip.telnyx.com",
+		RingWindowDuration:     20 * time.Second,
+		HandoffTokenKey:        []byte("0123456789abcdef0123456789abcdef"),
+		CallControlID:          "staff-call-control-connection",
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	prepareCredentials(t, calling)
+	readyConcurrentStaff(t, calling, staff, "outbound-ringback-browser")
+	if err := calling.ProvisionLocationVoices(context.Background(),
+		[]humancalling.LocationVoiceProvision{{
+			PracticeKey: "outbound-ringback-practice",
+			LocationKey: "outbound-ringback-location",
+			Number:      "+14843336938", Enabled: true,
+		}}); err != nil {
+		t.Fatalf("provision outbound caller ID: %v", err)
+	}
+
+	call, err := calling.StartOutboundCall(context.Background(),
+		humancalling.StartOutboundCallCommand{
+			Identity: staff[0], SessionID: "outbound-ringback-browser-1",
+			IdempotencyKey: "outbound-ringback-call",
+			PracticeID:     authorization.Practice.ID,
+			LocationID:     authorization.Locations[0].ID,
+			Destination:    "+15555550123",
+		})
+	if err != nil {
+		t.Fatalf("start outbound Call: %v", err)
+	}
+	processAllCommands(t, calling)
+	staffDial := provider.last(humancalling.CommandDialOutboundStaff)
+	staffClientState, _ := staffDial.Payload["client_state"].(string)
+	staffFact := humancalling.ProviderFact{
+		EventID: "ringback-staff-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "ringback-staff-control", CallLegID: "ringback-staff-leg",
+		CallSessionID: "ringback-staff-session", ClientState: staffClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff initiation: %v", err)
+	}
+	staffFact.EventID = "ringback-staff-answered"
+	staffFact.Type = humancalling.FactCallAnswered
+	staffFact.OccurredAt = now.Add(2 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), staffFact); err != nil {
+		t.Fatalf("project outbound Staff answer: %v", err)
+	}
+	callingState, err := calling.ReadCallingState(context.Background(), staff[0])
+	if err != nil || len(callingState.Ringing) != 1 {
+		t.Fatalf("read outbound media state: %#v, err = %v", callingState, err)
+	}
+	if _, err := calling.ConfirmOutboundMedia(context.Background(),
+		humancalling.ConfirmOutboundMediaCommand{
+			Identity: staff[0], SessionID: "outbound-ringback-browser-1", CallID: call.ID,
+			MediaToken: callingState.Ringing[0].MediaToken,
+		}); err != nil {
+		t.Fatalf("confirm outbound Staff media: %v", err)
+	}
+	processAllCommands(t, calling)
+	destinationDial := provider.last(humancalling.CommandDialOutboundDestination)
+	destinationClientState, _ := destinationDial.Payload["client_state"].(string)
+	destinationFact := humancalling.ProviderFact{
+		EventID: "ringback-destination-initiated", Type: humancalling.FactCallInitiated,
+		OccurredAt: now.Add(3 * time.Second), ConnectionID: "staff-call-control-connection",
+		CallControlID: "ringback-destination-control", CallLegID: "ringback-destination-leg",
+		CallSessionID: "ringback-destination-session", ClientState: destinationClientState,
+	}
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination initiation: %v", err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 1 {
+		t.Fatalf("outbound ringing Bridge commands = %d, want 1", provider.count(humancalling.CommandBridge))
+	}
+	bridge := provider.last(humancalling.CommandBridge)
+	if bridge.TargetID != "ringback-destination-control" ||
+		bridge.Payload["call_control_id"] != "ringback-staff-control" ||
+		bridge.Payload["play_ringtone"] != true ||
+		bridge.Payload["ringtone"] != "us" ||
+		bridge.Payload["record"] != "record-from-answer" {
+		t.Fatalf("outbound ringing Bridge = %#v", bridge)
+	}
+	var destinationState string
+	var answeredAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state, answered_at FROM human_calling_call_legs
+		WHERE call_id = $1 AND role = 'DESTINATION'
+	`, call.ID).Scan(&destinationState, &answeredAt); err != nil {
+		t.Fatalf("read ringing destination CallLeg: %v", err)
+	}
+	if destinationState != "RINGING" || answeredAt != nil {
+		t.Fatalf("ringing destination CallLeg = state:%s answered:%v", destinationState, answeredAt)
+	}
+	var recordingRows int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_recordings WHERE call_id = $1
+	`, call.ID).Scan(&recordingRows); err != nil || recordingRows != 0 {
+		t.Fatalf("pre-answer connected recording rows = %d, err = %v", recordingRows, err)
+	}
+
+	destinationFact.EventID = "ringback-destination-answered"
+	destinationFact.Type = humancalling.FactCallAnswered
+	destinationFact.OccurredAt = now.Add(4 * time.Second)
+	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
+		t.Fatalf("project outbound destination answer: %v", err)
+	}
+	processAllCommands(t, calling)
+	if provider.count(humancalling.CommandBridge) != 1 {
+		t.Fatalf("destination answer created duplicate Bridge: %#v", provider.commands)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_recordings WHERE call_id = $1
+	`, call.ID).Scan(&recordingRows); err != nil || recordingRows != 1 {
+		t.Fatalf("answered connected recording rows = %d, err = %v", recordingRows, err)
+	}
+}
+
 func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)

@@ -2,9 +2,17 @@
   {
     "displayName": "Acuity backend fast availability burn",
     "combiner": "AND",
+    "enabled": true,
     "userLabels": {
       "acuity_slo": "critical-read-availability",
       "acuity_burn": "fast"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "Portal critical-read availability is consuming the 99.9% rolling 28-day error budget above 14.4x over both five minutes and one hour. Check `/v1/access` and `/v1/calling/state`, then inspect portal-api errors, latency, database dependencies, and the latest revision."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
     },
     "conditions": [
       {
@@ -30,9 +38,17 @@
   {
     "displayName": "Acuity backend slow availability burn",
     "combiner": "AND",
+    "enabled": true,
     "userLabels": {
       "acuity_slo": "critical-read-availability",
       "acuity_burn": "slow"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "Portal critical-read availability is consuming the 99.9% rolling 28-day error budget above 6x over both thirty minutes and six hours. Review sustained portal-api failures and latency before the monthly error budget is exhausted."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
     },
     "conditions": [
       {

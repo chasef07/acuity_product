@@ -1313,21 +1313,34 @@ async function startAndEndOutboundWhileVoicemail(
   )
   const destinationSessionID =
     destinationLeg.session_id || "voicemail-concurrent-destination-session"
-  for (const eventType of ["call.initiated", "call.answered"] as const) {
-    await deliverProviderEvent(page, {
-      eventType,
-      eventId: `voicemail-concurrent-destination-${eventType.split(".")[1]}`,
-      occurredAt: new Date().toISOString(),
-      payload: {
-        connection_id: "fixture-call-control",
-        call_control_id: destinationLeg.control_id,
-        call_leg_id: destinationLeg.leg_id,
-        call_session_id: destinationSessionID,
-        client_state: destinationLeg.client_state,
-      },
-    })
-  }
+  await deliverProviderEvent(page, {
+    eventType: "call.initiated",
+    eventId: "voicemail-concurrent-destination-initiated",
+    occurredAt: new Date().toISOString(),
+    payload: {
+      connection_id: "fixture-call-control",
+      call_control_id: destinationLeg.control_id,
+      call_leg_id: destinationLeg.leg_id,
+      call_session_id: destinationSessionID,
+      client_state: destinationLeg.client_state,
+    },
+  })
   const bridge = await readBridgeCommand(database, outboundCallID)
+  expect(bridge.play_ringtone).toBe(true)
+  expect(bridge.ringtone).toBe("us")
+  await expect(restoredCall.getByRole("status")).toHaveText("Calling…")
+  await deliverProviderEvent(page, {
+    eventType: "call.answered",
+    eventId: "voicemail-concurrent-destination-answered",
+    occurredAt: new Date().toISOString(),
+    payload: {
+      connection_id: "fixture-call-control",
+      call_control_id: destinationLeg.control_id,
+      call_leg_id: destinationLeg.leg_id,
+      call_session_id: destinationSessionID,
+      client_state: destinationLeg.client_state,
+    },
+  })
   await deliverProviderEvent(page, {
     eventType: "call.bridged",
     eventId: "voicemail-concurrent-destination-bridged",
@@ -1688,6 +1701,8 @@ async function readBridgeCommand(database: Pool, callID: string) {
     record_channels: string
     record_format: string
     record_track: string
+    play_ringtone: boolean | null
+    ringtone: string | null
   }>(
     `SELECT target_id, peer_call_leg_id::text,
             (payload->>'prevent_double_bridge')::boolean AS prevent_double_bridge,
@@ -1697,6 +1712,8 @@ async function readBridgeCommand(database: Pool, callID: string) {
             payload->>'record_channels' AS record_channels,
             payload->>'record_format' AS record_format,
             payload->>'record_track' AS record_track,
+            (payload->>'play_ringtone')::boolean AS play_ringtone,
+            payload->>'ringtone' AS ringtone,
             (
               SELECT ring.payload->>'client_state'
               FROM human_calling_provider_commands ring
