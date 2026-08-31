@@ -7,6 +7,7 @@
   --marketing-sage-deep: #476354;
   --marketing-paper: #fbfaf7;
   --marketing-line: #e1e5eb;
+  --marketing-footer-line: rgb(251 250 247 / 0.16);
   min-height: 100%;
   overflow: clip;
   background: var(--marketing-paper);
@@ -42,29 +43,27 @@
 }
 
 .siteHeader {
-  width: min(100% - 48px, 1440px);
+  width: 100%;
   min-height: 76px;
-  margin: 0 auto;
-  padding: 8px 10px 8px 16px;
+  margin: 0;
+  padding: 8px max(24px, calc((100vw - 1440px) / 2 + 24px));
   position: sticky;
   z-index: 40;
-  top: 12px;
+  top: 0;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 42px;
-  border: 1px solid rgb(37 51 74 / 0.1);
-  border-radius: 24px;
-  background: rgb(251 250 247 / 0.78);
-  box-shadow:
-    0 14px 40px rgb(37 51 74 / 0.12),
-    inset 0 1px 0 rgb(255 255 255 / 0.78);
+  border: 0;
+  border-bottom: 1px solid rgb(37 51 74 / 0.1);
+  border-radius: 0;
+  background: rgb(251 250 247 / 0.9);
+  box-shadow: 0 10px 30px rgb(37 51 74 / 0.07);
   -webkit-backdrop-filter: blur(24px) saturate(135%);
   backdrop-filter: blur(24px) saturate(135%);
 }
 
-.brand,
-.footerBrand {
+.brand {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -81,15 +80,15 @@
 }
 
 .primaryNav {
-  padding: 5px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  border: 1px solid rgb(37 51 74 / 0.07);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 0.42);
-  box-shadow: 0 4px 16px rgb(37 51 74 / 0.05);
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .navLink,
@@ -115,7 +114,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 4px;
 }
 
 .navLink:hover,
@@ -127,13 +126,14 @@
 }
 
 .navLink[aria-current="page"] {
-  background: rgb(255 255 255 / 0.76);
-  box-shadow: 0 3px 12px rgb(37 51 74 / 0.08);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 650;
 }
 
 .navLink:hover,
 .navLink:focus-visible {
-  background: rgb(255 255 255 / 0.58);
+  background: rgb(16 24 32 / 0.05);
 }
 
 .headerActions {
@@ -261,8 +261,8 @@
 }
 
 .textLink {
-  border-bottom: 1px solid rgb(16 24 32 / 0.36);
-  padding-bottom: 4px;
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 
 .waveform {
@@ -286,25 +286,6 @@
 
 .waveformCompact i {
   width: 2px;
-}
-
-.enterpriseCommitments article > span {
-  color: var(--marketing-blue);
-  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-}
-
-.proofSection {
-  padding: clamp(100px, 13vw, 190px) max(6vw, calc((100vw - 1320px) / 2));
-  background: var(--marketing-ink);
-  color: white;
-}
-
-.proofSection .eyebrow {
-  color: var(--marketing-sage);
 }
 
 .methodPageVenn {
@@ -377,8 +358,6 @@
 
 .sectionHeader h1,
 .sectionHeader h2,
-.enterpriseDifferenceLead h2,
-.proofSection h2,
 .storyPreview h2,
 .partnershipCta h2,
 .commitmentSection h2,
@@ -493,207 +472,6 @@
   padding-bottom: 6px;
 }
 
-.commercialPaths {
-  padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
-  display: grid;
-  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
-  gap: clamp(60px, 9vw, 140px);
-}
-
-.commercialPaths header {
-  align-self: start;
-}
-
-.commercialPaths header h2 {
-  margin: 0;
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(2.8rem, 4.8vw, 5.1rem);
-  font-weight: 400;
-  letter-spacing: -0.06em;
-  line-height: 0.98;
-  text-wrap: balance;
-}
-
-.commercialPaths header > p:last-child {
-  max-width: 620px;
-  margin: 26px 0 0;
-  color: var(--marketing-ink-soft);
-  line-height: 1.72;
-}
-
-.commercialPaths > div {
-  display: grid;
-  gap: 1px;
-  background: var(--marketing-line);
-}
-
-.commercialPaths > div a {
-  min-height: 205px;
-  padding: 30px;
-  position: relative;
-  background: var(--marketing-paper);
-  color: var(--marketing-ink);
-}
-
-.commercialPaths > div a > span {
-  color: var(--marketing-blue);
-  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.commercialPaths h3 {
-  max-width: 680px;
-  margin: 24px 44px 0 0;
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(1.9rem, 3vw, 3.1rem);
-  font-weight: 400;
-  letter-spacing: -0.045em;
-  line-height: 1;
-}
-
-.commercialPaths > div a p {
-  max-width: 670px;
-  margin: 18px 44px 0 0;
-  color: var(--marketing-ink-soft);
-  line-height: 1.6;
-}
-
-.commercialPaths > div a svg {
-  position: absolute;
-  right: 30px;
-  bottom: 30px;
-  transition: transform 180ms ease;
-}
-
-.commercialPaths > div a:hover svg,
-.commercialPaths > div a:focus-visible svg {
-  transform: translateX(3px);
-}
-
-.enterpriseDifference {
-  padding: clamp(80px, 9vw, 130px) max(6vw, calc((100vw - 1320px) / 2));
-  display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-  gap: clamp(70px, 9vw, 140px);
-  background: var(--marketing-blue-deep);
-  color: white;
-}
-
-.enterpriseDifference .eyebrow {
-  color: var(--marketing-sage);
-}
-
-.enterpriseDifferenceLead {
-  position: sticky;
-  top: 100px;
-  align-self: start;
-}
-
-.enterpriseDifferenceLead > p:last-child {
-  max-width: 650px;
-  margin: 28px 0 0;
-  color: rgb(255 255 255 / 0.67);
-  font-size: 1.02rem;
-  line-height: 1.7;
-}
-
-.enterpriseCommitments {
-  display: grid;
-}
-
-.enterpriseCommitments article {
-  min-height: 190px;
-  padding: 32px 0;
-  border-top: 1px solid rgb(255 255 255 / 0.22);
-}
-
-.enterpriseCommitments article:last-child {
-  border-bottom: 1px solid rgb(255 255 255 / 0.22);
-}
-
-.enterpriseCommitments article > span {
-  color: var(--marketing-sage);
-}
-
-.enterpriseCommitments h3 {
-  margin: 16px 0 12px;
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(1.85rem, 2.7vw, 2.8rem);
-  font-weight: 400;
-  letter-spacing: -0.045em;
-}
-
-.enterpriseCommitments p {
-  max-width: 570px;
-  margin: 0;
-  color: rgb(255 255 255 / 0.65);
-  font-size: 1rem;
-  line-height: 1.65;
-}
-
-.proofSection {
-  display: grid;
-  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
-  gap: clamp(60px, 8vw, 120px);
-}
-
-.proofSection h2 {
-  font-size: clamp(2.7rem, 4.7vw, 5rem);
-}
-
-.proofLink {
-  min-height: 44px;
-  margin-top: 28px;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--marketing-sage);
-  font-size: 0.88rem;
-  font-weight: 650;
-}
-
-.proofLink:hover,
-.proofLink:focus-visible {
-  color: white;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
-
-.proofMetrics {
-  margin: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: rgb(255 255 255 / 0.2);
-}
-
-.proofMetrics div {
-  min-height: 190px;
-  padding: 28px;
-  display: grid;
-  align-content: space-between;
-  background: var(--marketing-ink);
-}
-
-.proofMetrics dt {
-  color: var(--marketing-sage);
-  font-family: var(--font-acuity-display), Georgia, serif;
-  font-size: clamp(3.4rem, 6vw, 6.3rem);
-  font-weight: 400;
-  letter-spacing: -0.06em;
-  line-height: 0.82;
-}
-
-.proofMetrics dd {
-  max-width: 210px;
-  margin: 22px 0 0;
-  color: rgb(255 255 255 / 0.64);
-  line-height: 1.45;
-}
-
 .storyPreview {
   padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
   display: grid;
@@ -793,36 +571,78 @@
 }
 
 .siteFooter {
-  padding: 54px max(4vw, calc((100vw - 1440px) / 2));
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 42px;
-  border-top: 1px solid var(--marketing-line);
+  padding: clamp(68px, 7vw, 108px) max(4vw, calc((100vw - 1440px) / 2));
+  background: var(--marketing-ink);
+  color: var(--marketing-paper);
 }
 
-.footerMark {
-  width: 27px;
-  height: 27px;
-  color: var(--marketing-ink);
-}
-
-.siteFooter > p {
-  margin: 0;
-  color: var(--marketing-ink-soft);
-  font-size: 13px;
-}
-
-.siteFooter > div {
+.footerPrimary {
   display: flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 24px;
 }
 
-.siteFooter > div a {
-  color: var(--marketing-ink-soft);
-  font-size: 12px;
+.footerNavigation {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(28px, 4vw, 64px);
+}
+
+.footerGroup h2 {
+  margin: 0 0 22px;
+  color: rgb(251 250 247 / 0.42);
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.footerGroup ul {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+}
+
+.footerGroup a {
+  color: rgb(251 250 247 / 0.67);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  transition: color 160ms ease;
+}
+
+.footerGroup a:hover,
+.footerGroup a:focus-visible {
+  color: var(--marketing-paper);
+}
+
+.footerClose {
+  min-width: 0;
+  margin-top: clamp(76px, 8vw, 118px);
+}
+
+.footerWordmark {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: clamp(18px, 2.4vw, 38px);
+  color: var(--marketing-paper);
+  font-size: clamp(4.2rem, 10.8vw, 10.2rem);
+  font-weight: 620;
+  letter-spacing: -0.075em;
+  line-height: 0.78;
+  white-space: nowrap;
+}
+
+.footerWordmarkMark {
+  width: clamp(64px, 7.5vw, 116px);
+  height: clamp(64px, 7.5vw, 116px);
+  flex: 0 0 auto;
+  color: var(--marketing-paper);
 }
 
 .commitmentSection {
@@ -1459,6 +1279,10 @@
     display: none;
   }
 
+  .footerNavigation {
+    gap: 24px;
+  }
+
   .hero {
     grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
   }
@@ -1468,8 +1292,6 @@
     width: min(100%, 760px);
   }
 
-  .enterpriseDifference,
-  .proofSection,
   .commitmentSection {
     gap: 70px;
   }
@@ -1549,11 +1371,10 @@
 
 @media (max-width: 860px) {
   .brand,
-  .footerBrand,
   .navLink,
   .portalLink,
   .workLink,
-  .siteFooter > div a {
+  .footerGroup a {
     min-width: 44px;
     min-height: 44px;
     display: inline-flex;
@@ -1562,11 +1383,11 @@
   }
 
   .siteHeader {
-    width: min(100% - 32px, 1440px);
+    width: 100%;
     min-height: 108px;
-    padding: 8px 10px 7px;
-    top: 8px;
-    border-radius: 20px;
+    padding: 8px 16px 7px;
+    top: 0;
+    border-radius: 0;
     grid-template-columns: auto 1fr;
     align-content: center;
     row-gap: 8px;
@@ -1574,7 +1395,7 @@
 
   .primaryNav {
     min-width: 0;
-    padding: 4px;
+    padding: 0;
     grid-row: 2;
     grid-column: 1 / -1;
     justify-content: flex-start;
@@ -1612,9 +1433,6 @@
   }
 
   .sectionHeader,
-  .commercialPaths,
-  .enterpriseDifference,
-  .proofSection,
   .storyPreview,
   .partnershipCta,
   .commitmentSection,
@@ -1640,10 +1458,6 @@
     padding-left: 34px;
   }
 
-  .enterpriseDifferenceLead {
-    position: static;
-  }
-
   .storyArtifact {
     min-height: 390px;
   }
@@ -1656,16 +1470,19 @@
     width: fit-content;
   }
 
-  .siteFooter {
-    grid-template-columns: 1fr;
-  }
-
-  .siteFooter > p {
-    display: none;
-  }
-
-  .siteFooter > div {
+  .footerPrimary {
     justify-content: flex-start;
+  }
+
+  .footerNavigation {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 40px 28px;
+  }
+
+  .footerWordmark {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
 
   .storyColumns {
@@ -1745,10 +1562,7 @@
     font-size: 1rem;
   }
 
-  .proofSection,
-  .commercialPaths,
   .methodPageVenn,
-  .enterpriseDifference,
   .storyPreview,
   .partnershipCta,
   .commitmentSection,
@@ -1847,28 +1661,38 @@
     line-height: 1.05;
   }
 
-  .proofMetrics {
-    grid-template-columns: 1fr;
-  }
-
-  .proofMetrics div {
-    min-height: 160px;
-  }
-
   .storyArtifact {
     min-height: 320px;
   }
 
   .siteFooter {
-    padding: 42px 24px;
-    grid-template-columns: 1fr;
+    padding: 56px 24px;
   }
 
-  .siteFooter > div {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    justify-content: initial;
-    gap: 12px;
+  .footerPrimary {
+    gap: 48px;
+  }
+
+  .footerNavigation {
+    gap: 34px 22px;
+  }
+
+  .footerGroup h2 {
+    margin-bottom: 14px;
+  }
+
+  .footerGroup ul {
+    gap: 6px;
+  }
+
+  .footerWordmark {
+    gap: 14px;
+    font-size: clamp(3.6rem, 13.5vw, 5.2rem);
+  }
+
+  .footerWordmarkMark {
+    width: clamp(44px, 11vw, 58px);
+    height: clamp(44px, 11vw, 58px);
   }
 
   .foundingStory {
@@ -1927,7 +1751,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .commercialPaths > div a svg,
   .founderPortrait img {
     transition: none;
   }
