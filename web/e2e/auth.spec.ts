@@ -135,8 +135,15 @@ test("returning to the portal preserves the loaded workspace across session refr
   ).toBeVisible()
 
   let sessionRefreshes = 0
+  let completeSessionRefresh!: () => void
+  const sessionRefreshCompleted = new Promise<void>((resolve) => {
+    completeSessionRefresh = resolve
+  })
+  await page.exposeFunction(
+    "waitForSessionRefresh",
+    () => sessionRefreshCompleted,
+  )
   await page.context().route("**/api/auth/get-session**", async (route) => {
-    sessionRefreshes += 1
     const response = await route.fetch()
     const session = await response.json()
     await route.fulfill({
@@ -149,6 +156,8 @@ test("returning to the portal preserves the loaded workspace across session refr
         },
       },
     })
+    sessionRefreshes += 1
+    completeSessionRefresh()
   })
 
   const loadingObserved = await page.evaluate(async () => {
@@ -174,7 +183,13 @@ test("returning to the portal preserves the loaded workspace across session refr
     try {
       setVisibility(true)
       setVisibility(false)
-      await new Promise((resolve) => window.setTimeout(resolve, 750))
+      await (
+        window as typeof window & {
+          waitForSessionRefresh: () => Promise<void>
+        }
+      ).waitForSessionRefresh()
+      await new Promise(requestAnimationFrame)
+      await new Promise(requestAnimationFrame)
       return observed
     } finally {
       observer.disconnect()
