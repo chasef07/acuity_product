@@ -78,6 +78,7 @@ const OperatorAnalytics = dynamic(
 export function PortalWorkspace() {
   const router = useRouter()
   const session = authClient.useSession()
+  const sessionID = session.data?.session.id
   const [projection] = useState(() =>
     createWorkspaceProjection({
       authority: createWorkspaceAuthorityAdapter(),
@@ -121,12 +122,12 @@ export function PortalWorkspace() {
 
   useEffect(() => {
     if (session.isPending) return
-    if (!session.data) {
+    if (!sessionID) {
       router.replace("/sign-in?next=%2Fworkspace")
       return
     }
     void projection.start()
-  }, [projection, router, session.data, session.isPending])
+  }, [projection, router, session.isPending, sessionID])
 
   useEffect(() => () => projection.stop(), [projection])
 
