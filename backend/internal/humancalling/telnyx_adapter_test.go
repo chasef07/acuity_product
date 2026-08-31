@@ -937,11 +937,11 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 		{
 			ID:       "destination-ringback-bridge",
 			Action:   humancalling.CommandBridge,
-			TargetID: "destination-control",
+			TargetID: "staff-control",
 			Payload: map[string]any{
-				"call_control_id":       "staff-control",
+				"call_control_id":       "destination-control",
 				"prevent_double_bridge": true,
-				"client_state":          "opaque-destination-bridge",
+				"client_state":          "opaque-staff-bridge",
 				"play_ringtone":         true,
 				"ringtone":              "us",
 				"record":                "record-from-answer",
@@ -984,8 +984,8 @@ func TestTelnyxAdapterSendsVoicemailAndOutboundDestination(t *testing.T) {
 		destination["timeout_secs"] != float64(30) {
 		t.Fatalf("outbound destination request = %#v", destination)
 	}
-	if bridge["_path"] != "/v2/calls/destination-control/actions/bridge" ||
-		bridge["call_control_id"] != "staff-control" ||
+	if bridge["_path"] != "/v2/calls/staff-control/actions/bridge" ||
+		bridge["call_control_id"] != "destination-control" ||
 		bridge["command_id"] != "destination-ringback-bridge" ||
 		bridge["play_ringtone"] != true ||
 		bridge["ringtone"] != "us" ||

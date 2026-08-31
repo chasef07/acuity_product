@@ -2312,8 +2312,11 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		t.Fatalf("outbound ringing Bridge commands = %d, want 1", provider.count(humancalling.CommandBridge))
 	}
 	bridge := provider.last(humancalling.CommandBridge)
-	if bridge.TargetID != "ringback-destination-control" ||
-		bridge.Payload["call_control_id"] != "ringback-staff-control" ||
+	if bridge.CallLegID != staffDial.CallLegID ||
+		bridge.PeerCallLegID != destinationDial.CallLegID ||
+		bridge.TargetID != "ringback-staff-control" ||
+		bridge.Payload["call_control_id"] != "ringback-destination-control" ||
+		bridge.Payload["client_state"] != staffClientState ||
 		bridge.Payload["play_ringtone"] != true ||
 		bridge.Payload["ringtone"] != "us" ||
 		bridge.Payload["record"] != "record-from-answer" {
@@ -2336,10 +2339,58 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 	`, call.ID).Scan(&recordingRows); err != nil || recordingRows != 0 {
 		t.Fatalf("pre-answer connected recording rows = %d, err = %v", recordingRows, err)
 	}
+	for _, fact := range []humancalling.ProviderFact{
+		{
+			EventID: "ringback-staff-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(4 * time.Second), CallControlID: staffFact.CallControlID,
+			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+			ClientState: bridge.Payload["client_state"].(string),
+		},
+		{
+			EventID: "ringback-destination-bridged", Type: humancalling.FactCallBridged,
+			OccurredAt: now.Add(4 * time.Second), CallControlID: destinationFact.CallControlID,
+			CallLegID: destinationFact.CallLegID, CallSessionID: destinationFact.CallSessionID,
+			ClientState: destinationClientState,
+		},
+	} {
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project outbound Bridge without answer webhook: %v", err)
+		}
+	}
+	var bridgeState string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT state FROM human_calling_provider_commands WHERE id = $1
+	`, bridge.ID).Scan(&bridgeState); err != nil || bridgeState != "RECONCILED" {
+		t.Fatalf("provider-confirmed Bridge command = %s, err = %v", bridgeState, err)
+	}
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM human_calling_call_recordings WHERE call_id = $1
+	`, call.ID).Scan(&recordingRows); err != nil || recordingRows != 1 {
+		t.Fatalf("bridged connected recording rows = %d, err = %v", recordingRows, err)
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ringback-recording-saved", Type: humancalling.FactRecordingSaved,
+		OccurredAt: now.Add(8 * time.Second), CallControlID: staffFact.CallControlID,
+		CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+		ClientState: bridge.Payload["client_state"].(string), RecordingID: "ringback-recording",
+		RecordingStartedAt: now.Add(4 * time.Second),
+		RecordingEndedAt:   now.Add(8 * time.Second),
+	}); err != nil {
+		t.Fatalf("project recording after Bridge without answer webhook: %v", err)
+	}
+	var audioState, recordingID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT audio_state, provider_recording_id
+		FROM human_calling_call_recordings WHERE call_id = $1
+	`, call.ID).Scan(&audioState, &recordingID); err != nil ||
+		audioState != "READY" || recordingID != "ringback-recording" {
+		t.Fatalf("bridged connected recording = %s/%s, err = %v",
+			audioState, recordingID, err)
+	}
 
 	destinationFact.EventID = "ringback-destination-answered"
 	destinationFact.Type = humancalling.FactCallAnswered
-	destinationFact.OccurredAt = now.Add(4 * time.Second)
+	destinationFact.OccurredAt = now.Add(9 * time.Second)
 	if err := calling.ApplyProviderFact(context.Background(), destinationFact); err != nil {
 		t.Fatalf("project outbound destination answer: %v", err)
 	}
@@ -2463,8 +2514,9 @@ func TestOutboundCallUsesCallLegEvidenceAndExplicitBridge(t *testing.T) {
 	}
 	processAllCommands(t, calling)
 	bridge := provider.last(humancalling.CommandBridge)
-	if bridge.TargetID != "destination-control" ||
-		bridge.Payload["call_control_id"] != "outbound-staff-control" ||
+	if bridge.TargetID != "outbound-staff-control" ||
+		bridge.Payload["call_control_id"] != "destination-control" ||
+		bridge.Payload["client_state"] != staffClientState ||
 		bridge.Payload["prevent_double_bridge"] != true ||
 		bridge.Payload["record"] != "record-from-answer" ||
 		bridge.Payload["record_channels"] != "dual" ||
