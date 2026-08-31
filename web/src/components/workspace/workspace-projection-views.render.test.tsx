@@ -6,9 +6,13 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
 
 import { SidebarProvider } from "@/components/ui/sidebar"
+import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
-import type { Task } from "../../lib/api/generated/types.gen.ts"
+import type {
+  AiInteractionDetail,
+  Task,
+} from "../../lib/api/generated/types.gen.ts"
 import type {
   WorkspaceProjectionIntent,
   WorkspaceProjectionState,
@@ -82,6 +86,56 @@ test("Task rail and canvas render one supplied projection and the rail emits sel
   assert.ok(taskButton)
   await act(async () => taskButton.click())
   assert.deepEqual(intents, [{ type: "select-task", task }])
+  await act(async () => root.unmount())
+  dom.window.close()
+})
+
+test("failed AI outcome review exposes a retry that can recover", async () => {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  let resolveFirstReview!: (reviewed: boolean) => void
+  const firstReview = new Promise<boolean>((resolve) => {
+    resolveFirstReview = resolve
+  })
+  let attempts = 0
+  const onReview = () => {
+    attempts += 1
+    return attempts === 1 ? firstReview : Promise.resolve(true)
+  }
+
+  await act(async () => {
+    root.render(
+      <AIInteractionContext
+        interactionID="interaction-1"
+        detail={projectedAIInteraction()}
+        loading={false}
+        error=""
+        onReview={onReview}
+      />,
+    )
+  })
+  assert.equal(attempts, 1)
+
+  await act(async () => {
+    resolveFirstReview(false)
+    await firstReview
+  })
+  const failure = host.querySelector<HTMLElement>("[role='alert']")
+  assert.match(failure?.textContent ?? "", /Review status not saved/)
+  const retry = Array.from(failure?.querySelectorAll("button") ?? []).find(
+    (button) => button.textContent === "Try again",
+  )
+  assert.ok(retry)
+
+  await act(async () => {
+    retry.click()
+    await Promise.resolve()
+  })
+  assert.equal(attempts, 2)
+  assert.equal(host.querySelector("[role='alert']"), null)
+
   await act(async () => root.unmount())
   dom.window.close()
 })
@@ -251,5 +305,24 @@ function projectedTask(): Task {
     updatedAt: "2026-08-30T12:00:00Z",
     relatedInteractionCount: 0,
     interactions: [],
+  }
+}
+
+function projectedAIInteraction(): AiInteractionDetail {
+  return {
+    id: "interaction-1",
+    practiceId: "practice-1",
+    locationId: "location-1",
+    locationName: "Downtown",
+    sourceCallId: "call-1",
+    phone: "+15551234567",
+    officePhone: "+15557654321",
+    startedAt: "2026-08-30T12:00:00Z",
+    endedAt: "2026-08-30T12:05:00Z",
+    status: "COMPLETED",
+    appointmentOutcome: "BOOKING",
+    appointment: {},
+    createdAt: "2026-08-30T12:05:00Z",
+    updatedAt: "2026-08-30T12:05:00Z",
   }
 }

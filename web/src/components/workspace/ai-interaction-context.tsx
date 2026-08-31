@@ -13,6 +13,7 @@ import {
   aiCallTimelinePresentation,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
+
 export function AIInteractionContext({
   interactionID,
   detail,
@@ -30,29 +31,29 @@ export function AIInteractionContext({
     interactionID: string
     state: "saving" | "saved" | "failed"
   }>({ interactionID: "", state: "saved" })
+  const appointmentOutcome = detail?.appointmentOutcome
   useEffect(() => {
     if (
       !interactionID ||
-      !detail ||
+      !appointmentOutcome ||
       !onReview ||
-      detail.appointmentOutcome === "INDETERMINATE" ||
-      reviewRequest.interactionID === interactionID
+      appointmentOutcome === "INDETERMINATE"
     ) return
     let cancelled = false
     void Promise.resolve().then(async () => {
       if (cancelled) return
       setReviewRequest({ interactionID, state: "saving" })
       const reviewed = await onReview(interactionID).catch(() => false)
-        if (cancelled) return
-        setReviewRequest({
-          interactionID,
-          state: reviewed ? "saved" : "failed",
-        })
+      if (cancelled) return
+      setReviewRequest({
+        interactionID,
+        state: reviewed ? "saved" : "failed",
+      })
     })
     return () => {
       cancelled = true
     }
-  }, [detail, interactionID, onReview, reviewRequest.interactionID])
+  }, [appointmentOutcome, interactionID, onReview])
 
   async function retryReview() {
     if (!onReview) return
