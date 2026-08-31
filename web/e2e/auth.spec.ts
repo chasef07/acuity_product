@@ -125,3 +125,82 @@ test("one Google popup switches the signed-out browser to the new session", asyn
   expect(popupStarts).toBe(1)
   expect(sessionChecks).toBe(2)
 })
+
+test("returning to the portal preserves the loaded workspace across session refresh", async ({
+  page,
+}) => {
+  await signInAs(page, "admin@abita.test", "Fixture Admin")
+  await expect(
+    page.getByRole("button", { name: "admin@abita.test" }),
+  ).toBeVisible()
+
+  let sessionRefreshes = 0
+  let completeSessionRefresh!: () => void
+  const sessionRefreshCompleted = new Promise<void>((resolve) => {
+    completeSessionRefresh = resolve
+  })
+  await page.exposeFunction(
+    "waitForSessionRefresh",
+    () => sessionRefreshCompleted,
+  )
+  await page.context().route("**/api/auth/get-session**", async (route) => {
+    const response = await route.fetch()
+    const session = await response.json()
+    await route.fulfill({
+      response,
+      json: {
+        ...session,
+        session: {
+          ...session.session,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      },
+    })
+    sessionRefreshes += 1
+    completeSessionRefresh()
+  })
+
+  const loadingObserved = await page.evaluate(async () => {
+    const loading = () =>
+      document.body.innerText.includes("Loading Acuity workspace")
+    let observed = loading()
+    const observer = new MutationObserver(() => {
+      observed ||= loading()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    const setVisibility = (hidden: boolean) => {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => hidden,
+      })
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => (hidden ? "hidden" : "visible"),
+      })
+      document.dispatchEvent(new Event("visibilitychange"))
+    }
+
+    try {
+      setVisibility(true)
+      setVisibility(false)
+      await (
+        window as typeof window & {
+          waitForSessionRefresh: () => Promise<void>
+        }
+      ).waitForSessionRefresh()
+      await new Promise(requestAnimationFrame)
+      await new Promise(requestAnimationFrame)
+      return observed
+    } finally {
+      observer.disconnect()
+      Reflect.deleteProperty(document, "hidden")
+      Reflect.deleteProperty(document, "visibilityState")
+    }
+  })
+
+  expect(sessionRefreshes).toBe(1)
+  expect(loadingObserved).toBe(false)
+  await expect(
+    page.getByRole("button", { name: "admin@abita.test" }),
+  ).toBeVisible()
+})
