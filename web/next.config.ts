@@ -12,36 +12,6 @@ const nextConfig: NextConfig = {
         destination: "/who-we-are",
         permanent: true,
       },
-      {
-        source: "/specialties/ophthalmology",
-        destination: "/ai-receptionist-for-ophthalmology",
-        permanent: true,
-      },
-      {
-        source: "/ophthalmology-answering-service",
-        destination: "/ai-receptionist-for-ophthalmology",
-        permanent: true,
-      },
-      {
-        source: "/after-hours-answering-service-ophthalmology",
-        destination: "/ai-receptionist-for-ophthalmology",
-        permanent: true,
-      },
-      {
-        source: "/insights/best-ai-answering-service-ophthalmology",
-        destination: "/ai-receptionist-for-ophthalmology",
-        permanent: true,
-      },
-      {
-        source: "/insights/ai-receptionist-vs-traditional-answering-service",
-        destination: "/ai-receptionist-vs-medical-answering-service",
-        permanent: true,
-      },
-      {
-        source: "/partners/advancedmd",
-        destination: "/advancedmd-ai-receptionist",
-        permanent: true,
-      },
     ]
   },
   async headers() {

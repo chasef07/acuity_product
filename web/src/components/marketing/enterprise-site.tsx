@@ -10,7 +10,6 @@ import {
   PortalSignInTrigger,
   SignInDialog,
 } from "@/components/auth/sign-in-dialog"
-import { ophthalmologyDeploymentProof } from "@/lib/marketing-proof"
 import { cn } from "@/lib/utils"
 
 import { PixelWaveField } from "./pixel-wave-field"
@@ -40,21 +39,45 @@ export type MarketingRoute =
   | "/method"
   | "/who-we-are"
   | "/work-with-us"
-  | "/advancedmd-ai-receptionist"
-  | "/ai-receptionist-for-ophthalmology"
-  | "/ai-receptionist-vs-medical-answering-service"
   | "/privacy-policy"
   | "/terms-of-service"
   | "/security"
-  | "/case-studies/ophthalmology-patient-access"
-  | "/faq"
 
 const navigation: Array<{ href: MarketingRoute; label: string }> = [
   { href: "/", label: "Home" },
-  { href: "/ai-receptionist-for-ophthalmology", label: "Ophthalmology" },
   { href: "/method", label: "Our Method" },
   { href: "/who-we-are", label: "Who We Are" },
 ]
+
+const footerNavigation = [
+  {
+    label: "Product",
+    links: [
+      { href: "/method", label: "The Acuity Health Method" },
+    ],
+  },
+  {
+    label: "Company",
+    links: [
+      { href: "/who-we-are", label: "Who We Are" },
+      { href: "/work-with-us", label: "Work With Us" },
+      {
+        href: "https://www.linkedin.com/company/acuityhealth/",
+        label: "LinkedIn",
+        external: true,
+      },
+    ],
+  },
+  {
+    label: "Resources",
+    links: [
+      { href: "/sign-in", label: "Sign in" },
+      { href: "/security", label: "Security, Privacy & HIPAA" },
+      { href: "/privacy-policy", label: "Privacy Policy" },
+      { href: "/terms-of-service", label: "Terms of Service" },
+    ],
+  },
+] as const
 
 function SiteHeader({ current }: { current: MarketingRoute }) {
   return (
@@ -90,29 +113,34 @@ function SiteHeader({ current }: { current: MarketingRoute }) {
 function SiteFooter() {
   return (
     <footer className={styles.siteFooter}>
-      <Link className={styles.footerBrand} href="/">
-        <AcuityMark className={styles.footerMark} />
-        <span>Acuity Health</span>
-      </Link>
-      <p>Forward-deployed AI for patient access.</p>
-      <div>
-        <Link href="/method">The Acuity Health Method</Link>
-        <Link href="/ai-receptionist-for-ophthalmology">Ophthalmology patient access</Link>
-        <Link href="/advancedmd-ai-receptionist">AdvancedMD integration</Link>
-        <Link href="/ai-receptionist-vs-medical-answering-service">Compare operating models</Link>
-        <Link href="/case-studies/ophthalmology-patient-access">
-          Ophthalmology case study
+      <div className={styles.footerPrimary}>
+        <nav className={styles.footerNavigation} aria-label="Footer navigation">
+          {footerNavigation.map((section) => (
+            <section className={styles.footerGroup} key={section.label}>
+              <h2>{section.label}</h2>
+              <ul>
+                {section.links.map((link) => (
+                  <li key={link.href}>
+                    {"external" in link ? (
+                      <a href={link.href} rel="noreferrer" target="_blank">
+                        {link.label}
+                      </a>
+                    ) : (
+                      <Link href={link.href}>{link.label}</Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </nav>
+      </div>
+
+      <div className={styles.footerClose}>
+        <Link className={styles.footerWordmark} href="/" aria-label="Acuity Health home">
+          <AcuityMark className={styles.footerWordmarkMark} />
+          <span>Acuity Health</span>
         </Link>
-        <Link href="/faq">FAQ</Link>
-        <Link href="/security">Security, Privacy & HIPAA</Link>
-        <Link href="/privacy-policy">Privacy Policy</Link>
-        <Link href="/terms-of-service">Terms of Service</Link>
-        <Link href="/who-we-are">Who We Are</Link>
-        <Link href="/work-with-us">Work With Us</Link>
-        <a href="https://www.linkedin.com/company/acuityhealth/" rel="noreferrer" target="_blank">
-          LinkedIn
-        </a>
-        <Link href="/sign-in">Sign in</Link>
       </div>
     </footer>
   )
@@ -159,7 +187,7 @@ function Waveform({ compact = false }: { compact?: boolean }) {
 
 export function MethodVenn() {
   return (
-    <div className={styles.venn}>
+    <div className={styles.venn} data-testid="method-venn">
       <div className={cn(styles.vennCircle, styles.vennSystem)}>
         <div className={styles.vennCopy}>
           <p>Agentic<br /><span>system design</span></p>
@@ -184,32 +212,6 @@ export function MethodVenn() {
         <strong>The Acuity Health Method</strong>
       </div>
     </div>
-  )
-}
-
-function CaseStudySection() {
-  return (
-    <section className={styles.proofSection}>
-      <div>
-        <p className={styles.eyebrow}>{ophthalmologyDeploymentProof.eyebrow}</p>
-        <h2>{ophthalmologyDeploymentProof.title}</h2>
-        <p>{ophthalmologyDeploymentProof.description}</p>
-        <Link
-          className={styles.proofLink}
-          href="/case-studies/ophthalmology-patient-access"
-        >
-          Read the ophthalmology case study <ArrowRight aria-hidden="true" size={16} />
-        </Link>
-      </div>
-      <dl className={styles.proofMetrics}>
-        {ophthalmologyDeploymentProof.metrics.map((metric) => (
-          <div key={metric.label}>
-            <dt>{metric.value}</dt>
-            <dd>{metric.label}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
   )
 }
 
@@ -247,7 +249,7 @@ export function EnterpriseHome({
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.darkButton} href="/work-with-us">
-              Work with us <ArrowRight size={17} aria-hidden="true" />
+              Work with us
             </Link>
             <Link className={styles.textLink} href="/method">
               See the Acuity Health Method
@@ -257,62 +259,19 @@ export function EnterpriseHome({
         <PixelWaveField />
       </section>
 
-      <section className={styles.commercialPaths}>
-        <header>
-          <p className={styles.eyebrow}>Start with the operating constraint</p>
-          <h2>Find where patient demand stops moving.</h2>
+      <section className={styles.methodPageVenn}>
+        <header className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>The Acuity Health Method</p>
+            <h2>Two capabilities make enterprise AI work.</h2>
+          </div>
           <p>
-            The category label matters less than the work. Start with the system,
-            specialty, or operating-model decision that is blocking a real outcome.
+            Acuity combines medical voice system design with the workflow expertise
+            needed to deploy it across the enterprise.
           </p>
         </header>
-        <div>
-          <Link href="/advancedmd-ai-receptionist">
-            <span>AdvancedMD</span>
-            <h3>Complete patient-access work inside the EMR.</h3>
-            <p>See how calls, practice rules, scheduling actions, and evidence connect.</p>
-            <ArrowRight aria-hidden="true" size={17} />
-          </Link>
-          <Link href="/ai-receptionist-for-ophthalmology">
-            <span>Ophthalmology</span>
-            <h3>Design for the rules that make eye care different.</h3>
-            <p>Medical versus vision, location, provider, insurance, and exception paths.</p>
-            <ArrowRight aria-hidden="true" size={17} />
-          </Link>
-          <Link href="/ai-receptionist-vs-medical-answering-service">
-            <span>Evaluation</span>
-            <h3>Choose the operating model, not the demo voice.</h3>
-            <p>Compare message capture with completed work, handoffs, and outcome evidence.</p>
-            <ArrowRight aria-hidden="true" size={17} />
-          </Link>
-        </div>
+        <MethodVenn />
       </section>
-
-      <section className={styles.enterpriseDifference}>
-        <div className={styles.enterpriseDifferenceLead}>
-          <p className={styles.eyebrow}>Built for enterprise</p>
-          <h2>Enterprise AI breaks without workflow expertise.</h2>
-        </div>
-        <div className={styles.enterpriseCommitments}>
-          <article>
-            <span>Understand</span>
-            <h3>Experts in the workflow.</h3>
-            <p>Frontline rules and exceptions become the specification.</p>
-          </article>
-          <article>
-            <span>Redesign</span>
-            <h3>Fix the operation before automating it.</h3>
-            <p>We redesign ownership, handoffs, and escalation paths with your team.</p>
-          </article>
-          <article>
-            <span>Adopt</span>
-            <h3>Stay until the change works.</h3>
-            <p>The same people deploy, train, review failures, and improve.</p>
-          </article>
-        </div>
-      </section>
-
-      <CaseStudySection />
 
       <section className={styles.storyPreview}>
         <div className={styles.storyArtifact} aria-hidden="true">
@@ -354,8 +313,6 @@ export function MethodPageContent() {
         </header>
         <MethodVenn />
       </section>
-
-      <CaseStudySection />
 
       <section className={styles.commitmentSection}>
         <div>

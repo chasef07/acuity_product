@@ -18,9 +18,16 @@ export function PixelWaveField() {
     let height = 0
     let frame = 0
     let start = performance.now()
+    let lastFrame = start
     let pointerX = 0.58
     let pointerY = 0.46
+    let pointerTargetX = pointerX
+    let pointerTargetY = pointerY
+    let pointerVelocityX = 0
+    let pointerVelocityY = 0
     let pointerStrength = 0
+    let pointerStrengthTarget = 0
+    let pointerStrengthVelocity = 0
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
     const resize = () => {
@@ -32,20 +39,44 @@ export function PixelWaveField() {
       canvas.height = Math.round(height * ratio)
       context.setTransform(ratio, 0, 0, ratio, 0, 0)
       start = performance.now()
+      lastFrame = start
     }
 
     const onPointerMove = (event: PointerEvent) => {
       const rect = canvas.getBoundingClientRect()
-      pointerX = (event.clientX - rect.left) / rect.width
-      pointerY = (event.clientY - rect.top) / rect.height
-      pointerStrength = 1
+      pointerTargetX = (event.clientX - rect.left) / rect.width
+      pointerTargetY = (event.clientY - rect.top) / rect.height
+      pointerStrengthTarget = 1
     }
 
     const onPointerLeave = () => {
-      pointerStrength = 0
+      pointerStrengthTarget = 0
     }
 
     const draw = (now: number) => {
+      const delta = Math.min(1 / 30, Math.max(1 / 240, (now - lastFrame) / 1000))
+      lastFrame = now
+
+      if (!reducedMotion) {
+        const positionStiffness = 86
+        const positionDamping = 14
+        pointerVelocityX +=
+          (pointerTargetX - pointerX) * positionStiffness * delta -
+          pointerVelocityX * positionDamping * delta
+        pointerVelocityY +=
+          (pointerTargetY - pointerY) * positionStiffness * delta -
+          pointerVelocityY * positionDamping * delta
+        pointerX += pointerVelocityX * delta
+        pointerY += pointerVelocityY * delta
+
+        const strengthStiffness = 74
+        const strengthDamping = 16
+        pointerStrengthVelocity +=
+          (pointerStrengthTarget - pointerStrength) * strengthStiffness * delta -
+          pointerStrengthVelocity * strengthDamping * delta
+        pointerStrength += pointerStrengthVelocity * delta
+      }
+
       const elapsed = (now - start) / 1000
       const time = reducedMotion ? 2.4 : elapsed
       const formation = reducedMotion ? 1 : Math.min(1, elapsed / 2.65)
@@ -81,13 +112,6 @@ export function PixelWaveField() {
           const depth = (Math.sin(twist) * signedV + 1) / 2
           const surfaceRipple =
             Math.sin(signedV * 7.2 + u * 10.8 + time * 0.38) * thickness * 0.075
-          const pointerDistance = Math.hypot(u - pointerX, v - pointerY)
-          const pointerPressure =
-            Math.exp(-pointerDistance * pointerDistance * 22) *
-            pointerStrength *
-            width *
-            0.026 *
-            Math.sign(signedV || 1)
           const seed = column * 917.31 + row * 471.79
           const scatterX =
             width * (0.02 + ((Math.sin(seed) * 43758.5453) % 1 + 1) % 1 * 0.96)
@@ -96,16 +120,29 @@ export function PixelWaveField() {
           const delay = (((Math.sin(seed * 0.371) * 17834.234) % 1 + 1) % 1) * 0.26
           const progress = Math.max(0, Math.min(1, (formation - delay) / (1 - delay)))
           const ease = 1 - Math.pow(1 - progress, 4)
-          const targetX =
+          const baseTargetX =
             centerX +
             signedV * thickness * 0.34 * Math.sin(twist) +
-            surfaceRipple * 0.5 +
-            pointerPressure
-          const targetY =
+            surfaceRipple * 0.5
+          const baseTargetY =
             centerY +
             signedV * thickness * Math.cos(twist) +
             surfaceRipple +
             Math.sin(u * 4.7 + signedV * 2.2 + time * 0.21) * height * 0.009
+          const pointerDeltaX = baseTargetX - pointerX * width
+          const pointerDeltaY = baseTargetY - pointerY * height
+          const pointerDistance = Math.max(0.001, Math.hypot(pointerDeltaX, pointerDeltaY))
+          const pointerRadius = Math.max(72, Math.min(width, height) * 0.2)
+          const pointerInfluence = Math.exp(
+            -(pointerDistance * pointerDistance) /
+              (2 * pointerRadius * pointerRadius),
+          )
+          const pointerPresence = Math.max(0, Math.min(1, pointerStrength))
+          const pointerPush = pointerInfluence * pointerPresence * pointerRadius * 0.18
+          const targetX =
+            baseTargetX + (pointerDeltaX / pointerDistance) * pointerPush
+          const targetY =
+            baseTargetY + (pointerDeltaY / pointerDistance) * pointerPush
           const x = scatterX + (targetX - scatterX) * ease
           const y = scatterY + (targetY - scatterY) * ease
           const pixel = 1.05 + depth * 0.85
@@ -118,7 +155,6 @@ export function PixelWaveField() {
       }
 
       context.globalAlpha = 1
-      pointerStrength *= 0.965
       if (!reducedMotion) frame = requestAnimationFrame(draw)
     }
 
@@ -142,7 +178,7 @@ export function PixelWaveField() {
       <canvas ref={canvasRef} />
       <p className={styles.caption}>
         <span>AI agents</span>
-        <strong>for patient access</strong>
+        <strong>for medical enterprises</strong>
       </p>
     </div>
   )
