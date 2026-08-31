@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/chasef07/acuity_product/compare/v1.0.0...v1.0.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **workspace:** preserve state across session refreshes ([#241](https://github.com/chasef07/acuity_product/issues/241)) ([75c8e6b](https://github.com/chasef07/acuity_product/commit/75c8e6bfc14c97a07b415385adcf077fab5d8a50))
+
 ## [1.0.0](https://github.com/chasef07/acuity_product/compare/v0.7.0...v1.0.0) (2026-08-31)
 
 
