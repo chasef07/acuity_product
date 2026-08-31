@@ -2350,7 +2350,7 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 			EventID: "ringback-destination-bridged", Type: humancalling.FactCallBridged,
 			OccurredAt: now.Add(4 * time.Second), CallControlID: destinationFact.CallControlID,
 			CallLegID: destinationFact.CallLegID, CallSessionID: destinationFact.CallSessionID,
-			ClientState: destinationClientState,
+			ClientState: bridge.Payload["client_state"].(string),
 		},
 	} {
 		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
