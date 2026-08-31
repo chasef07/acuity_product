@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0](https://github.com/chasef07/acuity_product/compare/v0.7.0...v1.0.0) (2026-08-31)
+
+
+### Miscellaneous Chores
+
+* **release:** prepare 1.0.0 ([eb5eae9](https://github.com/chasef07/acuity_product/commit/eb5eae9f25713181167a48bad2db838531a4fd11))
+
 ## [0.7.0](https://github.com/chasef07/acuity_product/compare/v0.6.0...v0.7.0) (2026-08-31)
 
 
