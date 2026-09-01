@@ -2,20 +2,24 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
+import type { ITelnyxErrorEvent } from "@telnyx/webrtc"
+
 import {
   applyMicrophoneFence,
   callingClientOptions,
-	classifyTelnyxError,
+  classifyTelnyxError,
   createCallingMediaAdapter,
   type IncomingMediaLeg,
   type MediaState,
   rejectMediaCall,
 } from "./media-adapter.ts"
 
-test("Telnyx errors distinguish authentication network and provider failures", () => {
-	assert.equal(classifyTelnyxError({ code: 401 }, true), "authentication")
-	assert.equal(classifyTelnyxError(new Error("socket closed"), false), "network")
-	assert.equal(classifyTelnyxError(new Error("unknown"), true), "provider")
+test("Telnyx error codes distinguish authentication browser network and provider failures", () => {
+  assert.equal(classifyTelnyxError({ code: 46002 }, true), "authentication")
+  assert.equal(classifyTelnyxError({ code: 42001 }, true), "browser")
+  assert.equal(classifyTelnyxError({ code: 45002 }, true), "network")
+  assert.equal(classifyTelnyxError({ code: 45004 }, true), "provider")
+  assert.equal(classifyTelnyxError({ code: 49001 }, false), "network")
 })
 
 class FakeAudioElement {
@@ -119,6 +123,85 @@ function fakeClient() {
     emit: (event: string, value?: unknown) => listeners.get(event)?.(value),
   }
 }
+
+test("a recoverable Telnyx error envelope preserves the active media attachment", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const failures: string[] = []
+  const states: MediaState[] = []
+  const actions: string[] = []
+  const call = fakeCall("recovering-leg", "r".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: (state) => states.push(state),
+    onIncoming: (leg) => legs.push(leg),
+    onFailure: (failure) => failures.push(failure),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  await legs[0].answer()
+  call.state = "active"
+
+  const errorEvent = {
+    error: {
+      code: 45002,
+      name: "WEBSOCKET_ERROR",
+      message: "Connection to server lost",
+      description: "The signaling connection was interrupted.",
+      causes: ["Network interruption"],
+      solutions: ["Wait for SDK reconnection"],
+      fatal: false,
+    },
+    sessionId: "session-1",
+  } satisfies ITelnyxErrorEvent
+  sdk.emit("telnyx.error", errorEvent)
+
+  assert.deepEqual(failures, [])
+  assert.deepEqual(states, ["registering"])
+  assert.equal(legs[0].sendDTMF("5"), true)
+  assert.deepEqual(actions, ["answer", "unmute", "dtmf:5"])
+})
+
+test("a fatal Telnyx error envelope follows the terminal media path", async () => {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const failures: string[] = []
+  const states: MediaState[] = []
+  const actions: string[] = []
+  const call = fakeCall("failed-leg", "f".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+
+  await adapter.connect("jwt", output.id, {
+    onState: (state) => states.push(state),
+    onIncoming: (leg) => legs.push(leg),
+    onFailure: (failure) => failures.push(failure),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  await legs[0].answer()
+  call.state = "active"
+
+  const errorEvent = {
+    error: {
+      code: 45003,
+      name: "RECONNECTION_EXHAUSTED",
+      message: "Unable to reconnect to server",
+      description: "All SDK reconnection attempts were exhausted.",
+      causes: ["Prolonged network outage"],
+      solutions: ["Reconnect the client"],
+      fatal: true,
+    },
+    sessionId: "session-1",
+    recoverable: false,
+  } satisfies ITelnyxErrorEvent
+  sdk.emit("telnyx.error", errorEvent)
+
+  assert.deepEqual(failures, ["network"])
+  assert.deepEqual(states, ["registering", "unavailable"])
+  assert.equal(legs[0].sendDTMF("5"), false)
+  assert.deepEqual(actions, ["answer", "unmute", "mute"])
+})
 
 function fakeCall(
   providerLegID: string,

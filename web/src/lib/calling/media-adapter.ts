@@ -1,10 +1,16 @@
+import type { ITelnyxError, ITelnyxErrorEvent } from "@telnyx/webrtc"
+
 export type MediaState =
   | "registering"
   | "reconnecting"
   | "ready"
   | "unavailable"
 
-export type MediaFailure = "authentication" | "network" | "provider"
+export type MediaFailure =
+  | "authentication"
+  | "browser"
+  | "network"
+  | "provider"
 export type MediaAttachmentOutcome = "attached" | "ended"
 
 export type IncomingMediaLeg = {
@@ -30,11 +36,24 @@ type CallingMediaCallbacks = {
 }
 
 export function classifyTelnyxError(value: unknown, online = navigator.onLine) {
-  if (!online) return "network" as const
-  const error = value as { code?: number | string; message?: string }
-  const description = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase()
-  if (/\b(401|403)\b|auth|credential|login|token/.test(description)) {
-    return "authentication" as const
+  const error = value as Partial<ITelnyxError>
+  const code = Number(error.code)
+  if (code >= 46001 && code <= 46003) return "authentication" as const
+  if (
+    (code >= 40001 && code <= 40004) ||
+    (code >= 42001 && code <= 42003) ||
+    code === 44002 ||
+    code === 44005
+  ) {
+    return "browser" as const
+  }
+  if (
+    !online ||
+    (code >= 45001 && code <= 45003) ||
+    code === 47001 ||
+    code === 48001
+  ) {
+    return "network" as const
   }
   return "provider" as const
 }
@@ -306,12 +325,14 @@ class TelnyxMediaAdapter implements CallingMediaAdapter {
     })
     client.on("telnyx.error", (value) => {
       if (!connectionCurrent()) return
+      const event = value as ITelnyxErrorEvent
+      if (event.recoverable === true || event.error.fatal === false) return
       const session = this.activeSession
       if (session) {
         session.attachmentCurrent = false
         applyMicrophoneFence(session.call, false, session.desiredMuted)
       }
-      callbacks.onFailure?.(classifyTelnyxError(value))
+      callbacks.onFailure?.(classifyTelnyxError(event.error))
       callbacks.onState("unavailable")
     })
     client.on("telnyx.notification", (value) => {

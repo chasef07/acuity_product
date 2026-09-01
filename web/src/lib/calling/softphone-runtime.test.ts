@@ -13,6 +13,7 @@ import type {
 import type {
   CallingMediaAdapter,
   IncomingMediaLeg,
+  MediaFailure,
   MediaState,
 } from "./media-adapter.ts"
 import {
@@ -784,6 +785,25 @@ test("socket reconnection is visible and recoverable until media is ready", asyn
   media.emitState("ready")
   assert.equal(runtime.getSnapshot().readiness.mediaState, "ready")
   assert.equal(runtime.getSnapshot().failure, undefined)
+})
+
+test("SDK recovery preserves attached media while a fatal media failure tears it down", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-recovery-boundary")
+  const attachment = fixture.runtime.getSnapshot().mediaAttachment
+
+  fixture.media.emitState("reconnecting")
+
+  assert.deepEqual(fixture.runtime.getSnapshot().mediaAttachment, attachment)
+  assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "reconnecting")
+  assert.equal(fixture.runtime.getSnapshot().failure?.recoverable, true)
+  assert.equal(fixture.media.disconnects, 0)
+
+  fixture.media.emitFailure("network")
+  await eventually(() => assert.equal(fixture.media.disconnects, 1))
+
+  assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+  assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "unavailable")
+  assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
 })
 
 test("failed explicit recovery closes backend availability before media teardown", async () => {
@@ -4841,7 +4861,7 @@ class DeterministicMedia implements CallingMediaAdapter {
     onIncoming: (leg: IncomingMediaLeg) => void
     onEnded?: (leg: Pick<IncomingMediaLeg, "providerLegID" | "mediaToken">) => void
     onAudioIssue?: () => void
-    onFailure?: (failure: "authentication" | "network" | "provider") => void
+    onFailure?: (failure: MediaFailure) => void
     refreshToken?: () => Promise<string | undefined>
   }
 
@@ -4882,7 +4902,7 @@ class DeterministicMedia implements CallingMediaAdapter {
     this.callbacks?.onAudioIssue?.()
   }
 
-  emitFailure(failure: "authentication" | "network" | "provider") {
+  emitFailure(failure: MediaFailure) {
     this.callbacks?.onFailure?.(failure)
   }
 }
