@@ -543,8 +543,14 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 	case FactCallHangup:
 		return m.applyHangup(ctx, fact)
 	case FactPlaybackStarted:
+		if hasState && state.Role == "STAFF" && state.Kind == "outbound_media" {
+			return m.applyOutboundRingtoneFact(ctx, fact, state)
+		}
 		return m.applyRingbackStarted(ctx, fact)
 	case FactPlaybackEnded:
+		if hasState && state.Role == "STAFF" && state.Kind == "outbound_media" {
+			return m.applyOutboundRingtoneFact(ctx, fact, state)
+		}
 		return m.applyRingWindowEnded(ctx, fact)
 	case FactSpeakStarted:
 		return m.applyVoicemailGreetingStarted(ctx, fact)
