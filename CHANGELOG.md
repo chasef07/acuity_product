@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/chasef07/acuity_product/compare/v1.0.3...v1.0.4) (2026-09-01)
+
+
+### Bug Fixes
+
+* **calling:** preserve recoverable Telnyx media errors ([#247](https://github.com/chasef07/acuity_product/issues/247)) ([545e2f2](https://github.com/chasef07/acuity_product/commit/545e2f2a8384af7fc941ae6e87f0171112113325))
+
 ## [1.0.3](https://github.com/chasef07/acuity_product/compare/v1.0.2...v1.0.3) (2026-09-01)
 
 
