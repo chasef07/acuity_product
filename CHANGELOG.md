@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/chasef07/acuity_product/compare/v1.0.2...v1.0.3) (2026-09-01)
+
+
+### Bug Fixes
+
+* **calling:** accept outbound ringtone receipts ([#245](https://github.com/chasef07/acuity_product/issues/245)) ([b26ae77](https://github.com/chasef07/acuity_product/commit/b26ae779a201b68f2d6867a20f8473096c486f1c))
+
 ## [1.0.2](https://github.com/chasef07/acuity_product/compare/v1.0.1...v1.0.2) (2026-08-31)
 
 
