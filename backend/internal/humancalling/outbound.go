@@ -932,6 +932,57 @@ func (m *Module) applyOutboundStaffBridge(ctx context.Context, fact ProviderFact
 	return tx.Commit(ctx)
 }
 
+func (m *Module) applyOutboundRingtoneFact(
+	ctx context.Context,
+	fact ProviderFact,
+	state callLegClientState,
+) error {
+	if fact.Type != FactPlaybackStarted &&
+		(fact.Type != FactPlaybackEnded ||
+			(fact.PlaybackStatus != "completed" && fact.PlaybackStatus != "call_hangup")) {
+		return ErrConflict
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin outbound ringtone projection: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	claimed, err := claimProviderFact(ctx, tx, fact, m.now())
+	if err != nil || !claimed {
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	var expected bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM human_calling_calls call
+			JOIN human_calling_call_legs staff
+				ON staff.call_id = call.id AND staff.id = $2 AND staff.role = 'STAFF'
+			JOIN human_calling_provider_commands bridge
+				ON bridge.call_id = call.id AND bridge.call_leg_id = staff.id
+			WHERE call.id = $1 AND call.direction = 'OUTBOUND'
+				AND staff.provider_call_control_id = $3
+				AND staff.provider_call_leg_id = $4
+				AND COALESCE(staff.provider_call_session_id, '') = $5
+				AND bridge.action = 'BRIDGE'
+				AND bridge.target_id = $3
+				AND bridge.payload->>'client_state' = $6
+				AND bridge.payload->>'play_ringtone' = 'true'
+				AND bridge.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+		)
+	`, state.CallID, state.CallLegID, fact.CallControlID, fact.CallLegID,
+		fact.CallSessionID, fact.ClientState).Scan(&expected); err != nil {
+		return fmt.Errorf("validate outbound ringtone fact: %w", err)
+	}
+	if !expected {
+		return ErrConflict
+	}
+	return tx.Commit(ctx)
+}
+
 func normalizeOutboundCommand(command *StartOutboundCallCommand) {
 	command.SessionID = strings.TrimSpace(command.SessionID)
 	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)

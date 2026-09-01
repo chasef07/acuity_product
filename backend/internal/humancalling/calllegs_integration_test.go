@@ -2322,6 +2322,35 @@ func TestOutboundDestinationInitiationBridgesWithProviderRingbackBeforeAnswer(t 
 		bridge.Payload["record"] != "record-from-answer" {
 		t.Fatalf("outbound ringing Bridge = %#v", bridge)
 	}
+	for _, fact := range []humancalling.ProviderFact{
+		{
+			EventID: "ringback-playback-started", Type: humancalling.FactPlaybackStarted,
+			OccurredAt: now.Add(3500 * time.Millisecond), CallControlID: staffFact.CallControlID,
+			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+			ClientState: bridge.Payload["client_state"].(string),
+		},
+		{
+			EventID: "ringback-playback-ended", Type: humancalling.FactPlaybackEnded,
+			OccurredAt: now.Add(3900 * time.Millisecond), CallControlID: staffFact.CallControlID,
+			CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+			ClientState: bridge.Payload["client_state"].(string), PlaybackStatus: "completed",
+		},
+	} {
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("project outbound ringtone %s: %v", fact.Type, err)
+		}
+		if err := calling.ApplyProviderFact(context.Background(), fact); err != nil {
+			t.Fatalf("replay outbound ringtone %s: %v", fact.Type, err)
+		}
+	}
+	if err := calling.ApplyProviderFact(context.Background(), humancalling.ProviderFact{
+		EventID: "ringback-playback-failed", Type: humancalling.FactPlaybackEnded,
+		OccurredAt: now.Add(3950 * time.Millisecond), CallControlID: staffFact.CallControlID,
+		CallLegID: staffFact.CallLegID, CallSessionID: staffFact.CallSessionID,
+		ClientState: bridge.Payload["client_state"].(string), PlaybackStatus: "failed",
+	}); !errors.Is(err, humancalling.ErrConflict) {
+		t.Fatalf("failed outbound ringtone error = %v, want conflict", err)
+	}
 	var destinationState string
 	var answeredAt *time.Time
 	if err := pool.QueryRow(context.Background(), `
