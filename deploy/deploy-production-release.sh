@@ -2,10 +2,26 @@
 
 set -Eeuo pipefail
 
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Required deployment command is unavailable: $1" >&2
+    exit 1
+  fi
+}
+
+# Check every local dependency before even reading cloud state. In particular,
+# runtime verification must be executable before migration or traffic changes.
+for executable in dirname awk curl gcloud python3; do
+  require_command "$executable"
+done
+
 destructive_cutover="${CALLLEG_DESTRUCTIVE_CUTOVER:-false}"
 schema_cutover_complete="${CALLLEG_SCHEMA_CUTOVER_COMPLETE:-false}"
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+database_contract="$script_directory/production-runtime-contract.json"
+python3 "$script_directory/verify-production-runtime.py" "$database_contract" --check-contract
 if [[ "$destructive_cutover" == true ]]; then
+  require_command node
   evidence_path="${CALLLEG_CUTOVER_EVIDENCE_PATH:-}"
   if [[ "${CALLLEG_CUTOVER_EVIDENCE_VERIFIED:-false}" != true ||
     "${CALLLEG_CUTOVER_WINDOW_CONFIRMED:-false}" != true ||
@@ -53,7 +69,6 @@ if [[ ! "$DEPLOYMENT_ID" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
   exit 1
 fi
 
-database_contract="$script_directory/production-runtime-contract.json"
 runtime_contract_values="$(
   awk '
     /"requiredDatabaseConnections"[[:space:]]*:/ {
@@ -702,8 +717,8 @@ fi
 web_url="$(service_url acuity-web)"
 smoke "$web_url/sign-in"
 smoke "$web_url/api/auth/get-session"
-node \
-  "$script_directory/verify-production-runtime.mjs" \
+python3 \
+  "$script_directory/verify-production-runtime.py" \
   "$database_contract" \
   "$PROJECT_ID" \
   "$REGION"

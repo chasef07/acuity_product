@@ -156,6 +156,7 @@ func TestProductionReleaseFailsClosedOnLiveRuntimeContractDrift(t *testing.T) {
 				"GCLOUD_RUNTIME_DRIFT_SERVICE=acuity-portal-api",
 			)
 			if destructiveCutover {
+				installCutoverEvidenceFake(t, path)
 				environment = append(
 					environment,
 					"CALLLEG_DESTRUCTIVE_CUTOVER=true",
@@ -179,6 +180,28 @@ func TestProductionReleaseFailsClosedOnLiveRuntimeContractDrift(t *testing.T) {
 				"acuity-portal-api runtime contract drift: maximumInstances expected 3, got 20",
 			) {
 				t.Fatalf("runtime drift error = %q", output)
+			}
+			commands := capturedGcloudCommands(t, gcloudCapture)
+			if destructiveCutover {
+				if !strings.Contains(string(output), "Keep handoff admission closed") {
+					t.Fatalf("cutover failure lost its recovery instruction:\n%s", output)
+				}
+				for _, command := range commands {
+					if strings.Contains(command, "-old=100") {
+						t.Fatalf("cutover rolled back across its destructive migration: %s", command)
+					}
+				}
+				return
+			}
+			for _, service := range []string{"acuity-web", "acuity-realtime", "acuity-provider-ingress", "acuity-portal-api"} {
+				promotion := commandIndex(commands, "run\tservices\tupdate-traffic\t"+service)
+				rollback := commandIndex(commands[promotion+1:], "run\tservices\tupdate-traffic\t"+service)
+				if promotion < 0 || rollback < 0 || !strings.Contains(commands[promotion+1+rollback], "--to-revisions\t"+service+"-old=100") {
+					t.Errorf("runtime drift did not restore %s after promotion:\n%s", service, strings.Join(commands, "\n"))
+				}
+			}
+			if !strings.Contains(commands[len(commands)-1], "--to-revisions\tacuity-worker-old=100") {
+				t.Errorf("runtime drift did not restore the worker allocation:\n%s", strings.Join(commands, "\n"))
 			}
 		})
 	}
@@ -218,7 +241,7 @@ func TestProductionReleaseLoadsWorkerCapacityFromRuntimeContract(t *testing.T) {
 	for _, name := range []string{
 		"deploy-production-release.sh",
 		"production-runtime-contract.json",
-		"verify-production-runtime.mjs",
+		"verify-production-runtime.py",
 	} {
 		raw, err := os.ReadFile(filepath.Join(directory, name))
 		if err != nil {
@@ -355,6 +378,7 @@ func TestProductionReleasePausesBeforeCallLegCutover(t *testing.T) {
 func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	installCutoverEvidenceFake(t, path)
 	environment := append(
 		releaseEnvironment(),
 		"CALLLEG_DESTRUCTIVE_CUTOVER=true",
@@ -411,6 +435,7 @@ func TestDestructiveCallLegCutoverStopsLegacyRuntimeBeforeMigration(t *testing.T
 func TestDestructiveCutoverRestoresScalingWhenDisableFails(t *testing.T) {
 	directory := releaseDeployDirectory(t)
 	path, gcloudCapture, curlCapture := installReleaseFakes(t)
+	installCutoverEvidenceFake(t, path)
 	environment := append(
 		releaseEnvironment(),
 		"CALLLEG_DESTRUCTIVE_CUTOVER=true",
@@ -707,7 +732,6 @@ func installReleaseFakes(t *testing.T) (string, string, string) {
 	directory := t.TempDir()
 	gcloudPath := filepath.Join(directory, "gcloud")
 	curlPath := filepath.Join(directory, "curl")
-	nodePath := filepath.Join(directory, "node")
 	evidencePath := filepath.Join(directory, "cutover-evidence.json")
 	gcloudCapture := filepath.Join(directory, "gcloud.tsv")
 	curlCapture := filepath.Join(directory, "curl.tsv")
@@ -846,24 +870,32 @@ esac
 set -eu
 printf '%s\n' "$*" >>"$CURL_CAPTURE"
 `
-	realNode, err := exec.LookPath("node")
-	if err != nil {
-		t.Fatal("locate node:", err)
-	}
-	node := "#!/bin/sh\nset -eu\ncase \"$1\" in\n  *verify-production-runtime.mjs) exec \"" + realNode + "\" \"$@\" ;;\nesac\n"
 	if err := os.WriteFile(gcloudPath, []byte(gcloud), 0o755); err != nil {
 		t.Fatalf("write fake gcloud: %v", err)
 	}
 	if err := os.WriteFile(curlPath, []byte(curl), 0o755); err != nil {
 		t.Fatalf("write fake curl: %v", err)
 	}
-	if err := os.WriteFile(nodePath, []byte(node), 0o755); err != nil {
-		t.Fatalf("write fake node: %v", err)
-	}
 	if err := os.WriteFile(evidencePath, []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write fake cutover evidence: %v", err)
 	}
 	return directory + ":" + os.Getenv("PATH"), gcloudCapture, curlCapture
+}
+
+// These tests own cutover ordering, not the separately tested evidence checker.
+// Ordinary release tests must use the real image's interpreters without shims.
+func installCutoverEvidenceFake(t *testing.T, path string) {
+	t.Helper()
+	node := `#!/bin/sh
+set -eu
+case "$1" in
+  *check-telnyx-callleg-cutover.mjs) exit 0 ;;
+  *) echo "unexpected node invocation: $1" >&2; exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(strings.Split(path, ":")[0], "node"), []byte(node), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func releaseEnvironment() []string {
