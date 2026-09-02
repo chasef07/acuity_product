@@ -28,6 +28,7 @@ import {
   emptyAppointmentOutcomeCursors,
 } from "./ai-outcome-attention.ts"
 import { appendUniqueByID } from "./workspace-ordering.ts"
+import { canViewPracticeAnalytics } from "./booking-analytics.ts"
 import { resolveWorkspaceSearch } from "./workspace-search.ts"
 import {
   createWorkspaceRequestBudget,
@@ -47,7 +48,7 @@ export type WorkspaceConnectionState =
   | "connected"
   | "degraded"
 
-export type WorkspaceView = "none" | "engagement" | "analytics"
+export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
 export type WorkspaceRailSection =
   | "tasks"
@@ -262,6 +263,7 @@ export type WorkspaceProjectionIntent =
   | { type: "select-task"; task: Task; rememberForCall?: boolean }
   | { type: "select-ai-interaction"; interaction: AiOutcomeItem }
   | { type: "select-analytics" }
+  | { type: "select-operator-analytics" }
   | { type: "open-ai-context"; interactionID: string }
   | { type: "open-task-context"; task: Task }
   | { type: "open-call-context"; callID: string }
@@ -826,12 +828,14 @@ export function createWorkspaceProjection({
       ])
       return
     }
-    if (intent.type === "select-analytics") {
+    if (intent.type === "select-analytics" || intent.type === "select-operator-analytics") {
+      const operator = state.discovery?.platformOperator
+      if (intent.type === "select-operator-analytics" ? !operator : !canViewPracticeAnalytics(state.discovery, state.scope.practiceID)) return
       patch((current) => ({
         ...current,
         selection: {
           ...current.selection,
-          view: "analytics",
+          view: intent.type === "select-analytics" ? "analytics" : "operator-analytics",
           contextPanelOpen: false,
         },
       }))
@@ -1030,8 +1034,13 @@ export function createWorkspaceProjection({
       nextScope.practiceID,
     )
     railScrollTop = rail.scrollTop
+    const empty = initialState()
+    const analyticsView = current.selection.view === "analytics" && canViewPracticeAnalytics(discovery, nextScope.practiceID)
+      ? "analytics"
+      : current.selection.view === "operator-analytics" && discovery.platformOperator ? "operator-analytics" : "none"
     publish({
-      ...initialState(),
+      ...empty,
+      selection: { ...empty.selection, view: analyticsView },
       loadState: activeScopeChanged ? "loading" : current.loadState,
       connection: current.connection,
       discovery,

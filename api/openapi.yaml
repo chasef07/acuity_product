@@ -1077,6 +1077,64 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/analytics/bookings/query:
+    post:
+      operationId: queryBookingAnalytics
+      summary: Read aggregate booking performance as a Practice Admin or Platform Operator.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PracticeAnalyticsQueryRequest"
+      responses:
+        "200":
+          description: Complete reporting days with aggregate booking outcomes and evidence coverage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingAnalytics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/analytics/staff/query:
+    post:
+      operationId: queryStaffAnalytics
+      summary: Read staff activity and task completion as a Practice Admin or Platform Operator.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PracticeAnalyticsQueryRequest"
+      responses:
+        "200":
+          description: Staff accounts, connected phone time, and task completion metrics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAnalytics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-analytics/query:
     post:
       operationId: queryOperatorAIAnalytics
@@ -1839,6 +1897,16 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
     Conflict:
       description: The requested transition is no longer available.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    AnalyticsBusy:
+      description: Another analytics request is running on this portal instance. Retry later.
+      headers:
+        Retry-After:
+          schema:
+            type: string
       content:
         application/json:
           schema:
@@ -3397,6 +3465,161 @@ components:
         reschedules:
           type: integer
           minimum: 0
+    StaffPhoneMetrics:
+      type: object
+      additionalProperties: false
+      required: ["inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "inboundSeconds", "outboundSeconds"]
+      properties:
+        inboundCalls: {"type": "integer", "minimum": 0}
+        outboundCalls: {"type": "integer", "minimum": 0}
+        missingInboundDurationCalls: {"type": "integer", "minimum": 0}
+        missingOutboundDurationCalls: {"type": "integer", "minimum": 0}
+        tasksCompleted: {"type": "integer", "minimum": 0}
+        inboundSeconds: {"type": "number", "minimum": 0}
+        outboundSeconds: {"type": "number", "minimum": 0}
+    StaffAccountAnalytics:
+      type: object
+      additionalProperties: false
+      required: ["id", "email", "role", "status", "inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "inboundSeconds", "outboundSeconds"]
+      properties:
+        id: {"type": "string"}
+        email: {"type": "string"}
+        role: {"type": "string"}
+        status: {"type": "string"}
+        inboundCalls: {"type": "integer", "minimum": 0}
+        outboundCalls: {"type": "integer", "minimum": 0}
+        missingInboundDurationCalls: {"type": "integer", "minimum": 0}
+        missingOutboundDurationCalls: {"type": "integer", "minimum": 0}
+        tasksCompleted: {"type": "integer", "minimum": 0}
+        inboundSeconds: {"type": "number", "minimum": 0}
+        outboundSeconds: {"type": "number", "minimum": 0}
+    StaffTaskMetrics:
+      type: object
+      additionalProperties: false
+      required: ["completed", "eligible", "within48Hours", "p50Seconds", "p90Seconds", "within48HoursPercent"]
+      properties:
+        completed: {"type": "integer", "minimum": 0}
+        eligible: {"type": "integer", "minimum": 0}
+        within48Hours: {"type": "integer", "minimum": 0}
+        p50Seconds: {"type": "number", "nullable": true}
+        p90Seconds: {"type": "number", "nullable": true}
+        within48HoursPercent: {"type": "number", "nullable": true}
+    StaffTaskDay:
+      type: object
+      additionalProperties: false
+      required: ["day", "completed", "p50Seconds"]
+      properties:
+        day: {"type": "string"}
+        completed: {"type": "integer", "minimum": 0}
+        p50Seconds: {"type": "number", "nullable": true}
+    StaffAnalytics:
+      type: object
+      additionalProperties: false
+      required: ["from", "through", "tasks", "accounts", "total", "daily"]
+      properties:
+        from: {"type": "string"}
+        through: {"type": "string"}
+        tasks: {"$ref": "#/components/schemas/StaffTaskMetrics"}
+        accounts: {"type": "array", "items": {"$ref": "#/components/schemas/StaffAccountAnalytics"}}
+        total: {"$ref": "#/components/schemas/StaffPhoneMetrics"}
+        daily: {"type": "array", "items": {"$ref": "#/components/schemas/StaffTaskDay"}}
+    PracticeAnalyticsQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, days, timeZone]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
+        days:
+          type: integer
+          enum: [7, 30, 90]
+        timeZone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: IANA timezone used for reporting-day boundaries.
+    BookingMetrics:
+      type: object
+      additionalProperties: false
+      required: [calls, bookings, searched, converted, conversion, p50, p90, durationSamples, searchEvidenceCalls]
+      properties:
+        calls:
+          type: integer
+        bookings:
+          type: integer
+          description: Distinct appointment identifiers backed by a confirmed Product BOOKING outcome and booked result in the selected completed-call cohort.
+        searched:
+          type: integer
+          description: Unique calls with a recorded get_availability invocation, including failed and empty searches.
+        converted:
+          type: integer
+          description: Searched calls with a confirmed booking.
+        conversion:
+          type: number
+          nullable: true
+          description: Converted divided by searched, multiplied by 100. Null without a denominator.
+        p50:
+          type: number
+          nullable: true
+          description: Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+        p90:
+          type: number
+          nullable: true
+          description: 90th percentile duration in seconds using linear interpolation.
+        durationSamples:
+          type: integer
+        searchEvidenceCalls:
+          type: integer
+          description: Calls with recorded availability use or complete tool history.
+    BookingGroups:
+      type: object
+      additionalProperties: false
+      required: [new, existing, unknown]
+      properties:
+        new:
+          $ref: "#/components/schemas/BookingMetrics"
+        existing:
+          $ref: "#/components/schemas/BookingMetrics"
+        unknown:
+          $ref: "#/components/schemas/BookingMetrics"
+    BookingDay:
+      type: object
+      additionalProperties: false
+      required: [day, total, new, existing, unknown]
+      properties:
+        day:
+          type: string
+        total:
+          $ref: "#/components/schemas/BookingMetrics"
+        new:
+          $ref: "#/components/schemas/BookingMetrics"
+        existing:
+          $ref: "#/components/schemas/BookingMetrics"
+        unknown:
+          $ref: "#/components/schemas/BookingMetrics"
+    BookingAnalytics:
+      type: object
+      additionalProperties: false
+      required: [from, through, timeZone, total, groups, daily]
+      properties:
+        from:
+          type: string
+        through:
+          type: string
+        timeZone:
+          type: string
+        total:
+          $ref: "#/components/schemas/BookingMetrics"
+        groups:
+          $ref: "#/components/schemas/BookingGroups"
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/BookingDay"
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]

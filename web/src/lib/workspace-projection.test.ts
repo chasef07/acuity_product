@@ -930,6 +930,29 @@ function accessDiscovery(): AccessDiscovery {
   }
 }
 
+test("booking analytics is Admin-only and operator diagnostics remain separate", async () => {
+  for (const role of ["ADMIN", "STAFF"] as const) {
+    const discovery = accessDiscovery()
+    discovery.practices[0].membership!.role = role
+    const realtime = deterministicRealtime()
+    const projection = createWorkspaceProjection({
+      authority: deterministicAuthority({ discovery, snapshot: workspaceSnapshot(1), tasks: taskPage([]) }),
+      realtime: realtime.adapter,
+      preferences: { read: () => null, write: () => {} },
+    })
+    await projection.start()
+    await projection.dispatch({ type: "select-analytics" })
+    assert.equal(projection.getSnapshot().selection.view, role === "ADMIN" ? "analytics" : "none")
+    await projection.dispatch({ type: "select-operator-analytics" })
+    assert.notEqual(projection.getSnapshot().selection.view, "operator-analytics")
+    if (role === "ADMIN") {
+      await projection.dispatch({ type: "select-scope", practiceID: "practice-1", locationScopeID: "location-2" })
+      assert.equal(projection.getSnapshot().selection.view, "analytics")
+    }
+    projection.stop()
+  }
+})
+
 function practice(): Practice {
   return { id: "practice-1", name: "Example Eye Group", version: 1 }
 }

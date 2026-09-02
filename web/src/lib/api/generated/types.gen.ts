@@ -637,6 +637,120 @@ export type AiOutcomeCounts = {
     reschedules: number;
 };
 
+export type StaffPhoneMetrics = {
+    inboundCalls: number;
+    outboundCalls: number;
+    missingInboundDurationCalls: number;
+    missingOutboundDurationCalls: number;
+    tasksCompleted: number;
+    inboundSeconds: number;
+    outboundSeconds: number;
+};
+
+export type StaffAccountAnalytics = {
+    id: string;
+    email: string;
+    role: string;
+    status: string;
+    inboundCalls: number;
+    outboundCalls: number;
+    missingInboundDurationCalls: number;
+    missingOutboundDurationCalls: number;
+    tasksCompleted: number;
+    inboundSeconds: number;
+    outboundSeconds: number;
+};
+
+export type StaffTaskMetrics = {
+    completed: number;
+    eligible: number;
+    within48Hours: number;
+    p50Seconds: number | null;
+    p90Seconds: number | null;
+    within48HoursPercent: number | null;
+};
+
+export type StaffTaskDay = {
+    day: string;
+    completed: number;
+    p50Seconds: number | null;
+};
+
+export type StaffAnalytics = {
+    from: string;
+    through: string;
+    tasks: StaffTaskMetrics;
+    accounts: Array<StaffAccountAnalytics>;
+    total: StaffPhoneMetrics;
+    daily: Array<StaffTaskDay>;
+};
+
+export type PracticeAnalyticsQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    days: 7 | 30 | 90;
+    /**
+     * IANA timezone used for reporting-day boundaries.
+     */
+    timeZone: string;
+};
+
+export type BookingMetrics = {
+    calls: number;
+    /**
+     * Distinct appointment identifiers backed by a confirmed Product BOOKING outcome and booked result in the selected completed-call cohort.
+     */
+    bookings: number;
+    /**
+     * Unique calls with a recorded get_availability invocation, including failed and empty searches.
+     */
+    searched: number;
+    /**
+     * Searched calls with a confirmed booking.
+     */
+    converted: number;
+    /**
+     * Converted divided by searched, multiplied by 100. Null without a denominator.
+     */
+    conversion: number | null;
+    /**
+     * Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+     */
+    p50: number | null;
+    /**
+     * 90th percentile duration in seconds using linear interpolation.
+     */
+    p90: number | null;
+    durationSamples: number;
+    /**
+     * Calls with recorded availability use or complete tool history.
+     */
+    searchEvidenceCalls: number;
+};
+
+export type BookingGroups = {
+    new: BookingMetrics;
+    existing: BookingMetrics;
+    unknown: BookingMetrics;
+};
+
+export type BookingDay = {
+    day: string;
+    total: BookingMetrics;
+    new: BookingMetrics;
+    existing: BookingMetrics;
+    unknown: BookingMetrics;
+};
+
+export type BookingAnalytics = {
+    from: string;
+    through: string;
+    timeZone: string;
+    total: BookingMetrics;
+    groups: BookingGroups;
+    daily: Array<BookingDay>;
+};
+
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
@@ -2381,6 +2495,88 @@ export type QueryAiInteractionOutcomesResponses = {
 };
 
 export type QueryAiInteractionOutcomesResponse = QueryAiInteractionOutcomesResponses[keyof QueryAiInteractionOutcomesResponses];
+
+export type QueryBookingAnalyticsData = {
+    body: PracticeAnalyticsQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/analytics/bookings/query';
+};
+
+export type QueryBookingAnalyticsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Another analytics request is running on this portal instance. Retry later.
+     */
+    429: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryBookingAnalyticsError = QueryBookingAnalyticsErrors[keyof QueryBookingAnalyticsErrors];
+
+export type QueryBookingAnalyticsResponses = {
+    /**
+     * Complete reporting days with aggregate booking outcomes and evidence coverage.
+     */
+    200: BookingAnalytics;
+};
+
+export type QueryBookingAnalyticsResponse = QueryBookingAnalyticsResponses[keyof QueryBookingAnalyticsResponses];
+
+export type QueryStaffAnalyticsData = {
+    body: PracticeAnalyticsQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/analytics/staff/query';
+};
+
+export type QueryStaffAnalyticsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Another analytics request is running on this portal instance. Retry later.
+     */
+    429: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryStaffAnalyticsError = QueryStaffAnalyticsErrors[keyof QueryStaffAnalyticsErrors];
+
+export type QueryStaffAnalyticsResponses = {
+    /**
+     * Staff accounts, connected phone time, and task completion metrics.
+     */
+    200: StaffAnalytics;
+};
+
+export type QueryStaffAnalyticsResponse = QueryStaffAnalyticsResponses[keyof QueryStaffAnalyticsResponses];
 
 export type QueryOperatorAiAnalyticsData = {
     body: OperatorAiAnalyticsQueryRequest;
