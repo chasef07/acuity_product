@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
@@ -74,19 +75,20 @@ type RealtimeDependencies struct {
 }
 
 type Server struct {
-	role          string
-	config        Config
-	pool          *pgxpool.Pool
-	access        *access.Module
-	authenticator IdentityAuthenticator
-	events        EventStreamer
-	calling       *humancalling.Module
-	interactions  *interaction.Module
-	messaging     *messaging.Module
-	work          *work.Module
-	workspace     *workspace.Module
-	serviceAuth   ServiceAuthenticator
-	observer      observability.Observer
+	role            string
+	config          Config
+	pool            *pgxpool.Pool
+	access          *access.Module
+	authenticator   IdentityAuthenticator
+	events          EventStreamer
+	calling         *humancalling.Module
+	interactions    *interaction.Module
+	messaging       *messaging.Module
+	work            *work.Module
+	workspace       *workspace.Module
+	serviceAuth     ServiceAuthenticator
+	observer        observability.Observer
+	analyticsActive atomic.Bool
 }
 
 type serverDependencies struct {

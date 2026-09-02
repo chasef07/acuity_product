@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -213,8 +215,26 @@ func applyNonTransactional(
 		}
 		firstStatement = 1
 	}
+	// Session settings must apply to the same connection as the statement they
+	// protect. These migrations cannot use a transaction (for example, CALLs
+	// that commit batches and CREATE INDEX CONCURRENTLY).
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire non-transactional migration %s connection: %w", name, err)
+	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			// A failed statement may skip the migration's RESET commands. Never
+			// return that session to the pool with its temporary settings intact.
+			closeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = connection.Conn().Close(closeContext)
+		}
+		connection.Release()
+	}()
 	for index, statement := range statements[firstStatement:] {
-		if _, err := pool.Exec(ctx, statement); err != nil {
+		if _, err := connection.Exec(ctx, statement); err != nil {
 			return fmt.Errorf(
 				"apply non-transactional migration %s statement %d: %w",
 				name,
@@ -223,7 +243,11 @@ func applyNonTransactional(
 			)
 		}
 	}
-	return recordMigration(ctx, pool, name)
+	if err := recordMigration(ctx, connection, name); err != nil {
+		return err
+	}
+	succeeded = true
+	return nil
 }
 
 func migrationCompletionQuery(statement string) (string, bool) {
@@ -238,10 +262,12 @@ func migrationCompletionQuery(statement string) (string, bool) {
 
 func recordMigration(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	database interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	},
 	name string,
 ) error {
-	if _, err := pool.Exec(ctx,
+	if _, err := database.Exec(ctx,
 		`INSERT INTO public.schema_migrations (name) VALUES ($1)`,
 		name,
 	); err != nil {

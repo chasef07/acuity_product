@@ -48,6 +48,7 @@ import type {
 import { authClient } from "@/lib/auth-client"
 import { workspaceScopeForCall } from "@/lib/calling/workspace-scope"
 import { cn } from "@/lib/utils"
+import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import {
   createWorkspaceProjection,
   type WorkspaceProjectionIntent,
@@ -56,6 +57,11 @@ import {
   createWorkspaceAuthorityAdapter,
   createWorkspaceRealtimeAdapter,
 } from "@/lib/workspace-projection-http"
+
+const PracticeAnalytics = dynamic(
+  () => import("@/components/workspace/practice-analytics").then(module => module.PracticeAnalytics),
+  { loading: () => <Skeleton aria-label="Loading booking analytics" className="m-6 h-72" /> },
+)
 
 const OperatorAnalytics = dynamic(
   () =>
@@ -311,13 +317,20 @@ export function PortalWorkspace() {
           data-workspace-version={workspace.version}
           className="h-svh min-h-0 min-w-0 overflow-hidden"
         >
-          {view !== "engagement" && (
+          {view !== "engagement" && view !== "analytics" && (
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
               <SidebarTrigger collapsedOnly />
               <div className="flex-1" />
             </header>
           )}
-          {view === "analytics" ? (
+          {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
+            <PracticeAnalytics
+              key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
+              practiceID={state.scope.practiceID}
+              locationScopeID={state.scope.locationScopeID}
+              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
+            />
+          ) : view === "operator-analytics" && discovery.platformOperator ? (
             <OperatorAnalytics
               practiceID={state.scope.practiceID}
               locationScopeID={state.scope.locationScopeID}

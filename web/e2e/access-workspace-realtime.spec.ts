@@ -181,7 +181,8 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await expect(workspaceSelector).toContainText("Abita Eye Group")
     await expect(workspaceSelector).toContainText("All offices")
     await expect(page.getByLabel("Live updates connected")).toBeVisible()
-    await expect(page.getByRole("button", { name: "Analytics" })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Analytics", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "AI diagnostics", exact: true })).toHaveCount(0)
   })
 
   await test.step("cross-Location expansion is denied without protected data", async () => {
@@ -408,7 +409,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
         }),
     )
 
-    const analytics = operatorPage.getByRole("button", { name: "Analytics" })
+    const analytics = operatorPage.getByRole("button", { name: "AI diagnostics" })
     await expect(analytics).toBeVisible()
     await analytics.click()
     const analyticsRegion = operatorPage.getByRole("region", {
@@ -517,7 +518,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       .getByRole("button", { name: selectedLocation.name, exact: true })
       .click()
     await expectNoOpenTasks(operatorPage)
-    await operatorPage.getByRole("button", { name: "Analytics" }).click()
+    await operatorPage.getByRole("button", { name: "AI diagnostics" }).click()
     await expect
       .poll(() => analyticsRequests.at(-1)?.locationId)
       .toBe(selectedLocation.id)
