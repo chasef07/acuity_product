@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/chasef07/acuity_product/compare/v1.0.4...v1.0.5) (2026-09-02)
+
+
+### Bug Fixes
+
+* **reliability:** prevent database pool saturation ([#249](https://github.com/chasef07/acuity_product/issues/249)) ([a22b96a](https://github.com/chasef07/acuity_product/commit/a22b96a25632f850360d8e057c26c47283158e6a))
+
 ## [1.0.4](https://github.com/chasef07/acuity_product/compare/v1.0.3...v1.0.4) (2026-09-01)
 
 
