@@ -1,6 +1,8 @@
 import type { TaskAutomaticAcknowledgement } from "./api/generated/types.gen.ts"
 
 const safeFailureLabels: Record<string, string> = {
+	ACKNOWLEDGEMENT_EXPIRED: "The five-minute acknowledgement window expired",
+	HISTORICAL_ACKNOWLEDGEMENT_SUPPRESSED: "An operator retired this outdated acknowledgement",
 	SENDER_CONFIGURATION_INACTIVE: "Messaging configuration is inactive",
   SENDER_CONFIGURATION_UNAVAILABLE: "Messaging is not configured",
   TASK_ALREADY_RESOLVED: "Task was already resolved",

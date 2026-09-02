@@ -245,7 +245,7 @@ func TestQueueTaskAcknowledgementRetriesAfterMessagingConfigurationBecomesAvaila
 	}}); err != nil {
 		t.Fatalf("provision acknowledgement sender after visible failure: %v", err)
 	}
-	*fixture.clock = fixture.now.Add(5 * time.Minute)
+	*fixture.clock = fixture.now.Add(time.Minute)
 	processed, err = fixture.module.QueueNextTaskAcknowledgement(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("retry acknowledgement after sender provisioning = %t, %v", processed, err)

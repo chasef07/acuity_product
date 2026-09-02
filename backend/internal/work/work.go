@@ -147,12 +147,14 @@ type TaskAcknowledgement struct {
 }
 
 type TaskAcknowledgementClaim struct {
-	ID         string
-	TaskID     string
-	PracticeID string
-	LocationID string
-	Phone      string
-	TaskState  TaskState
+	ID              string
+	TaskID          string
+	PracticeID      string
+	LocationID      string
+	Phone           string
+	TaskState       TaskState
+	CreatedAt       time.Time
+	SafeFailureCode string
 }
 
 // TaskInteraction is the authorized communication evidence attached to a
@@ -988,7 +990,9 @@ func (m *Module) ClaimNextTaskAcknowledgement(
 			task.practice_id::text,
 			task.location_id::text,
 			task.phone,
-			task.state
+			task.state,
+			acknowledgement.created_at,
+			COALESCE(acknowledgement.safe_failure_code, '')
 		FROM work_task_acknowledgements acknowledgement
 		JOIN work_tasks task ON task.id = acknowledgement.task_id
 		WHERE acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
@@ -1006,6 +1010,8 @@ func (m *Module) ClaimNextTaskAcknowledgement(
 		&claim.LocationID,
 		&claim.Phone,
 		&claim.TaskState,
+		&claim.CreatedAt,
+		&claim.SafeFailureCode,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TaskAcknowledgementClaim{}, false, nil

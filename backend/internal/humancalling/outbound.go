@@ -954,6 +954,13 @@ func (m *Module) applyOutboundRingtoneFact(
 		}
 		return tx.Commit(ctx)
 	}
+	if err := requireOutboundRingtoneFact(ctx, tx, fact, state); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func requireOutboundRingtoneFact(ctx context.Context, tx pgx.Tx, fact ProviderFact, state callLegClientState) error {
 	var expected bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -969,18 +976,28 @@ func (m *Module) applyOutboundRingtoneFact(
 				AND COALESCE(staff.provider_call_session_id, '') = $5
 				AND bridge.action = 'BRIDGE'
 				AND bridge.target_id = $3
-				AND bridge.payload->>'client_state' = $6
+				AND (
+					bridge.payload->>'client_state' = $6
+					OR ($7 AND EXISTS (
+						SELECT 1 FROM human_calling_provider_commands hangup
+						WHERE hangup.call_id = call.id AND hangup.call_leg_id = staff.id
+							AND hangup.action = 'HANGUP_LEG' AND hangup.target_id = $3
+							AND hangup.payload->>'client_state' = $6
+							AND hangup.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
+					))
+				)
 				AND bridge.payload->>'play_ringtone' = 'true'
 				AND bridge.state IN ('SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED')
 		)
 	`, state.CallID, state.CallLegID, fact.CallControlID, fact.CallLegID,
-		fact.CallSessionID, fact.ClientState).Scan(&expected); err != nil {
+		fact.CallSessionID, fact.ClientState,
+		fact.Type == FactPlaybackEnded && fact.PlaybackStatus == "call_hangup").Scan(&expected); err != nil {
 		return fmt.Errorf("validate outbound ringtone fact: %w", err)
 	}
 	if !expected {
 		return ErrConflict
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func normalizeOutboundCommand(command *StartOutboundCallCommand) {

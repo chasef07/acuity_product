@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 50 {
-		t.Fatalf("migration count = %d, want 50", migrationCount)
+	if migrationCount != 51 {
+		t.Fatalf("migration count = %d, want 51", migrationCount)
 	}
 	var pendingInteractionReceiptIndex string
 	if err := pool.QueryRow(ctx, `

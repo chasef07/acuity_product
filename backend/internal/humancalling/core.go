@@ -548,7 +548,9 @@ func (m *Module) ApplyProviderFact(ctx context.Context, fact ProviderFact) error
 		}
 		return m.applyRingbackStarted(ctx, fact)
 	case FactPlaybackEnded:
-		if hasState && state.Role == "STAFF" && state.Kind == "outbound_media" {
+		if hasState && state.Role == "STAFF" && (state.Kind == "outbound_media" ||
+			(fact.PlaybackStatus == "call_hangup" &&
+				(state.Kind == "cleanup" || state.Kind == callLegClientStateStaffHangup))) {
 			return m.applyOutboundRingtoneFact(ctx, fact, state)
 		}
 		return m.applyRingWindowEnded(ctx, fact)
