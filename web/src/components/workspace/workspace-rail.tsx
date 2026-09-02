@@ -84,6 +84,7 @@ import {
   type AppointmentOutcomeFolder,
 } from "@/lib/ai-outcome-attention"
 import { authClient } from "@/lib/auth-client"
+import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import { newestFirst } from "@/lib/workspace-ordering"
@@ -471,7 +472,7 @@ export function WorkspaceRail({
             </div>
           )}
           <SidebarMenu>
-            {discovery.platformOperator && (
+            {canViewPracticeAnalytics(discovery, practice.id) && (
               <SidebarMenuItem>
                 <SidebarMenuButton
                   isActive={analyticsActive}
@@ -480,6 +481,18 @@ export function WorkspaceRail({
                 >
                   <ChartNoAxesCombinedIcon />
                   <span>Analytics</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
+            {discovery.platformOperator && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={projection.selection.view === "operator-analytics"}
+                  tooltip="AI diagnostics"
+                  onClick={() => onIntent({ type: "select-operator-analytics" })}
+                >
+                  <ChartNoAxesCombinedIcon />
+                  <span>AI diagnostics</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}

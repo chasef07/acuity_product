@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.7](https://github.com/chasef07/acuity_product/compare/v1.0.6...v1.0.7) (2026-09-02)
+
+
+### Bug Fixes
+
+* **calling:** bound status polling and recover availability warnings ([#255](https://github.com/chasef07/acuity_product/issues/255)) ([931e2b4](https://github.com/chasef07/acuity_product/commit/931e2b4f9ca04dd4098af87378813c83e27a78d5))
+
 ## [1.0.6](https://github.com/chasef07/acuity_product/compare/v1.0.5...v1.0.6) (2026-09-02)
 
 
