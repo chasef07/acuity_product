@@ -83,6 +83,7 @@ export type CallingCardFailure = {
     | "temporary-request"
   message: string
   recoverable: boolean
+  source?: "refresh" | "readiness" | "media-reconnect"
 }
 
 export type CallingCardCallView = {
@@ -150,6 +151,10 @@ export type CallingCardFailureView = {
     | "Calling session expired"
     | "Calling unavailable"
     | "Calling is open elsewhere"
+    | "Call updates delayed"
+    | "Calling service unavailable"
+    | "Calling request failed"
+    | "Calling reconnecting"
   message: string
   action?: {
     kind: "reload-page" | "recover"
@@ -385,7 +390,11 @@ export function projectCallingFailure(
   const copy = failureCopy(failure)
   return {
     ...copy,
-    ...(failure.recoverable && failure.kind !== "access"
+    ...(failure.recoverable &&
+      failure.kind !== "access" &&
+      failure.kind !== "temporary-request" &&
+      failure.kind !== "conflict" &&
+      failure.source !== "media-reconnect"
       ? {
           action: {
             kind:
@@ -423,11 +432,39 @@ function failureCopy(failure: CallingCardFailure) {
       }
     case "technical-readiness":
     case "media":
-    case "conflict":
-    case "temporary-request":
+      if (failure.source === "media-reconnect") {
+        return {
+          title: "Calling reconnecting" as const,
+          message: "Calling is reconnecting automatically. Keep this page open.",
+        }
+      }
       return {
         title: "Calling disconnected" as const,
         message: "Refresh the page to reconnect. Calls are paused until then.",
+      }
+    case "temporary-request":
+      if (failure.source === "refresh") {
+        return {
+          title: "Call updates delayed" as const,
+          message: "The latest call status could not be loaded. Retrying automatically.",
+        }
+      }
+      if (failure.source === "readiness") {
+        return {
+          title: "Calling service unavailable" as const,
+          message: "Calling availability could not be confirmed. Retrying automatically.",
+        }
+      }
+      return {
+        title: "Calling request failed" as const,
+        message: failure.recoverable
+          ? "Your request could not be confirmed. Try the action again."
+          : "Your request could not be confirmed.",
+      }
+    case "conflict":
+      return {
+        title: "Calling request failed" as const,
+        message: "The call or calling session changed. Try the action again.",
       }
   }
 }

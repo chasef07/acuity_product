@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { projectCallingCard } from "./calling-card.ts"
 import type {
   CallingCall,
   CallingDispositionResult,
@@ -218,6 +219,93 @@ test("authoritative terminal state clears attached media without an SDK ended ev
   assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
   assert.equal(fixture.media.disconnects, 0)
   await eventually(() => assert.equal(fixture.exact.rejections, 1))
+})
+
+test("a failed Call refresh does not label attached live media disconnected or ask Staff to reload", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-refresh-delay")
+  await fixture.runtime.signalRefresh()
+  const attached = fixture.runtime.getSnapshot().mediaAttachment
+  assert.equal(fixture.runtime.getSnapshot().activeCall?.state, "CONNECTED")
+
+  fixture.backend.readStateHandler = async () => {
+    throw new SoftphoneAdapterError(
+      "temporary-request",
+      "Calling refresh is unavailable.",
+      true,
+    )
+  }
+  await fixture.runtime.signalRefresh()
+
+  const snapshot = fixture.runtime.getSnapshot()
+  assert.deepEqual(snapshot.mediaAttachment, attached)
+  assert.equal(fixture.media.disconnects, 0)
+  assert.equal(fixture.exact.rejections, 0)
+  assert.equal(snapshot.controls.canEnd, true)
+  assert.equal(snapshot.controls.canMute, true)
+  assert.equal(snapshot.failure?.kind, "temporary-request")
+  assert.equal(snapshot.failure?.source, "refresh")
+  const view = projectCallingCard(snapshot, 0)
+  assert.notEqual(view?.failure?.title, "Calling disconnected")
+  assert.notEqual(view?.failure?.action?.kind, "reload-page")
+
+  fixture.backend.readStateHandler = undefined
+  await fixture.runtime.signalRefresh()
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+  assert.deepEqual(fixture.runtime.getSnapshot().mediaAttachment, attached)
+})
+
+test("Call detail refresh failures stay visible until the complete refresh succeeds", async (context) => {
+  for (const status of ["modified", "not-modified"] as const) {
+    await context.test(status, async () => {
+      const fixture = await attachedOutboundMediaFixture(`provider-${status}`)
+      await fixture.runtime.signalRefresh()
+      if (status === "not-modified") {
+        fixture.backend.readStateHandler = async () => ({ status, etag: "stable" })
+      }
+      fixture.backend.readCallHandler = async () => {
+        throw new SoftphoneAdapterError("temporary-request", "Call detail unavailable.", true)
+      }
+      await fixture.runtime.signalRefresh()
+      assert.equal(fixture.runtime.getSnapshot().failure?.kind, "temporary-request")
+      const visibleFailures: boolean[] = []
+      const unsubscribe = fixture.runtime.subscribe(() => {
+        visibleFailures.push(Boolean(fixture.runtime.getSnapshot().failure))
+      })
+
+      await fixture.runtime.signalRefresh()
+      await fixture.clock.advance(10_000)
+
+      assert.ok(visibleFailures.length > 0)
+      assert.ok(visibleFailures.every(Boolean), "partial refresh must not flash a cleared warning")
+      unsubscribe()
+      fixture.backend.readCallHandler = undefined
+      await fixture.runtime.signalRefresh()
+      assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+    })
+  }
+})
+
+test("a successful state refresh does not clear an unconfirmed readiness heartbeat", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-heartbeat-delay")
+  await fixture.runtime.signalRefresh()
+  fixture.backend.writeReadinessHandler = async () => {
+    throw new SoftphoneAdapterError("temporary-request", "Readiness unavailable.", true)
+  }
+  await fixture.clock.advance(10_000)
+  await eventually(() => assert.equal(fixture.runtime.getSnapshot().failure?.kind, "temporary-request"))
+
+  await fixture.runtime.signalRefresh()
+
+  const snapshot = fixture.runtime.getSnapshot()
+  assert.equal(snapshot.failure?.source, "readiness")
+  assert.notEqual(projectCallingCard(snapshot, 0)?.failure?.title, "Calling disconnected")
+  assert.notEqual(projectCallingCard(snapshot, 0)?.failure?.action?.kind, "reload-page")
+  assert.notEqual(snapshot.mediaAttachment, undefined)
+  assert.equal(fixture.media.disconnects, 0)
+
+  fixture.backend.writeReadinessHandler = undefined
+  await fixture.clock.advance(500)
+  await eventually(() => assert.equal(fixture.runtime.getSnapshot().failure, undefined))
 })
 
 test("terminal media purge failure or timeout fails calling closed", async (context) => {
@@ -797,6 +885,9 @@ test("SDK recovery preserves attached media while a fatal media failure tears it
   assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "reconnecting")
   assert.equal(fixture.runtime.getSnapshot().failure?.recoverable, true)
   assert.equal(fixture.media.disconnects, 0)
+  const recovering = projectCallingCard(fixture.runtime.getSnapshot(), 0)
+  assert.equal(recovering?.failure?.title, "Calling reconnecting")
+  assert.equal(recovering?.failure?.action, undefined)
 
   fixture.media.emitFailure("network")
   await eventually(() => assert.equal(fixture.media.disconnects, 1))
@@ -804,6 +895,9 @@ test("SDK recovery preserves attached media while a fatal media failure tears it
   assert.equal(fixture.runtime.getSnapshot().mediaAttachment, undefined)
   assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "unavailable")
   assert.equal(fixture.runtime.getSnapshot().failure?.kind, "media")
+  const disconnected = projectCallingCard(fixture.runtime.getSnapshot(), 0)
+  assert.equal(disconnected?.failure?.title, "Calling disconnected")
+  assert.equal(disconnected?.failure?.action?.kind, "reload-page")
 })
 
 test("failed explicit recovery closes backend availability before media teardown", async () => {

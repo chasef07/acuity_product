@@ -97,6 +97,42 @@ test("a failure without a Call or incoming offer does not render a Calling Card"
   assert.doesNotMatch(recovery, /technical lease detail/)
 })
 
+test("live call warnings distinguish delayed requests and automatic reconnects without offering reload", () => {
+  const failures = [
+    {
+      kind: "temporary-request" as const,
+      source: "refresh" as const,
+      title: "Call updates delayed",
+    },
+    {
+      kind: "temporary-request" as const,
+      source: "readiness" as const,
+      title: "Calling service unavailable",
+    },
+    {
+      kind: "media" as const,
+      source: "media-reconnect" as const,
+      title: "Calling reconnecting",
+    },
+  ]
+
+  for (const { kind, source, title } of failures) {
+    const html = render(
+      snapshot({
+        activeCall: call({ state: "CONNECTED" }),
+        failure: { kind, source, message: "technical request detail", recoverable: true },
+      }),
+    )
+
+    assert.match(html, new RegExp(`>${title}<`))
+    assert.match(html, /role="alert"/)
+    assert.match(html, /aria-label="Connected/)
+    assert.match(html, /aria-label="End"/)
+    assert.doesNotMatch(html, /Calling disconnected|Calls are paused|Refresh page/)
+    assert.doesNotMatch(html, /technical request detail/)
+  }
+})
+
 test("rendered simultaneous offers stay in one tray with exact CallLeg actions", () => {
   const html = render(
     snapshot({

@@ -437,16 +437,23 @@ func (m *Module) readCallingStateETag(
 		return "", fmt.Errorf("encode Calling access state: %w", err)
 	}
 
-	// The token query reads only compact, potentially visible active state. It
-	// deliberately avoids the projection's location, handoff, and scope joins:
-	// those values are immutable after Call admission or versioned by Discovery.
+	// Only the newest scoped voicemail is visible. Match that projection before
+	// loading CallLegs and commands so older voicemail history cannot amplify
+	// every poll. Location and handoff values are immutable after Call admission
+	// or versioned by Discovery.
 	// Provider-command rows remain part of the token because command acceptance
 	// can change ringing or voicemail state before another Call mutation occurs.
 	var callingSnapshot string
 	if err := m.database.QueryRow(ctx, `
 		WITH relevant_call_ids AS MATERIALIZED (
+			(
 			SELECT call.id
 			FROM human_calling_calls call
+			JOIN human_calling_call_legs caller
+				ON caller.call_id = call.id AND caller.role = 'CALLER'
+			JOIN access_calling_scopes calling_scope
+				ON calling_scope.practice_id = call.practice_id
+				AND calling_scope.user_subject = $1
 			WHERE call.practice_id = ANY($2::uuid[])
 				AND call.location_id = ANY($3::uuid[])
 				AND call.disposition_at IS NULL
@@ -467,6 +474,17 @@ func (m *Module) readCallingStateETag(
 						)
 					)
 				)
+				AND (
+					calling_scope.location_scope = 'ALL'
+					OR EXISTS (
+						SELECT 1 FROM access_membership_locations allowed
+						WHERE allowed.membership_id = calling_scope.membership_id
+							AND allowed.location_id = call.location_id
+					)
+				)
+			ORDER BY call.updated_at DESC, call.id
+			LIMIT 1
+			)
 			UNION
 			SELECT own_leg.call_id
 			FROM human_calling_call_legs own_leg
