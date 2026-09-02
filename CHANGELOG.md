@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/chasef07/acuity_product/compare/v1.0.5...v1.0.6) (2026-09-02)
+
+
+### Bug Fixes
+
+* **deploy:** use packaged Python for release verification ([#251](https://github.com/chasef07/acuity_product/issues/251)) ([f08eb51](https://github.com/chasef07/acuity_product/commit/f08eb51f75617ffb959ddf85b202e80b23f9e388))
+
 ## [1.0.5](https://github.com/chasef07/acuity_product/compare/v1.0.4...v1.0.5) (2026-09-02)
 
 
