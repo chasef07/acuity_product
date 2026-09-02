@@ -266,7 +266,10 @@ func (m *Module) authorizedLocationIDs(
 		ctx, tx, identity, practiceID, locationID,
 	)
 	if err != nil {
-		return nil, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return nil, ErrDenied
+		}
+		return nil, fmt.Errorf("authorize workspace read: %w", err)
 	}
 	if locationID != "" {
 		return []string{locationID}, nil

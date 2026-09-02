@@ -89,6 +89,7 @@ async function requestAccessToken(
   const response = await fetch("/api/auth/token", {
     credentials: "same-origin",
     cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
   }).catch(() => undefined)
   if (generation !== accessTokenGeneration) return { status: "unauthenticated" }
   if (!response) return recoverFromTransientFailure(generation, retry)
@@ -103,9 +104,15 @@ async function requestAccessToken(
     return { status: "unavailable" }
   }
 
-  const body = (await response.json().catch(() => undefined)) as
-    | { token?: unknown }
-    | undefined
+  let body: { token?: unknown } | undefined
+  try {
+    body = (await response.json()) as typeof body
+  } catch (error) {
+    if (generation !== accessTokenGeneration) return { status: "unauthenticated" }
+    if (error instanceof SyntaxError) return { status: "unavailable" }
+    return recoverFromTransientFailure(generation, retry)
+  }
+  if (generation !== accessTokenGeneration) return { status: "unauthenticated" }
   if (typeof body?.token !== "string" || !body.token) {
     return { status: "unavailable" }
   }

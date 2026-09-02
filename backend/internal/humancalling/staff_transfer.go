@@ -205,7 +205,7 @@ func (m *Module) RequestStaffTransfer(
 	`, command.CallID, command.Identity.Subject).Scan(
 		&sourceLegID, &customerLegID, &customerRole, &customerControlID,
 	); err != nil {
-		return StaffTransfer{}, ErrConflict
+		return StaffTransfer{}, callingLookupError(err, ErrConflict)
 	}
 	var recipientSession, sipUsername string
 	if err := tx.QueryRow(ctx, `
@@ -222,7 +222,7 @@ func (m *Module) RequestStaffTransfer(
 	`, command.RecipientSubject, m.now(), m.config.ReadinessGrace.String()).Scan(
 		&recipientSession, &sipUsername,
 	); err != nil {
-		return StaffTransfer{}, ErrIneligible
+		return StaffTransfer{}, callingLookupError(err, ErrIneligible)
 	}
 
 	transferID := uuid.NewString()
@@ -353,7 +353,7 @@ func (m *Module) idempotentStaffTransfer(
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, command.Identity, existing.PracticeID, existing.LocationID,
 	); err != nil {
-		return StaffTransfer{}, false, ErrDenied
+		return StaffTransfer{}, false, callingLookupError(err, ErrDenied)
 	}
 	return existing, true, nil
 }
@@ -420,7 +420,7 @@ func (m *Module) respondStaffTransfer(
 			SELECT recipient_session_id
 			FROM human_calling_staff_transfers WHERE id = $1
 		`, transfer.ID).Scan(&expectedSession); err != nil || expectedSession != command.SessionID {
-			return StaffTransfer{}, ErrConflict
+			return StaffTransfer{}, callingLookupError(err, ErrConflict)
 		}
 	}
 	var ownsSession bool
@@ -429,12 +429,12 @@ func (m *Module) respondStaffTransfer(
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
 	`, actorSubject, command.SessionID, m.now()).Scan(&ownsSession); err != nil || !ownsSession {
-		return StaffTransfer{}, ErrConflict
+		return StaffTransfer{}, callingLookupError(err, ErrConflict)
 	}
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, command.Identity, transfer.PracticeID, transfer.LocationID,
 	); err != nil {
-		return StaffTransfer{}, ErrDenied
+		return StaffTransfer{}, callingLookupError(err, ErrDenied)
 	}
 	availability := leaveTransferTargetAvailability
 	if responder == staffTransferOriginator {
@@ -523,7 +523,7 @@ func (m *Module) lockTransferSource(
 	`, callID, identity.Subject).Scan(
 		&practiceID, &locationID, &version, &ownerSession,
 	); err != nil {
-		return "", "", 0, ErrConflict
+		return "", "", 0, callingLookupError(err, ErrConflict)
 	}
 	if ownerSession != sessionID {
 		return "", "", 0, ErrConflict
@@ -531,7 +531,7 @@ func (m *Module) lockTransferSource(
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
-		return "", "", 0, ErrDenied
+		return "", "", 0, callingLookupError(err, ErrDenied)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
@@ -539,7 +539,7 @@ func (m *Module) lockTransferSource(
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
 	`, identity.Subject, sessionID, m.now()).Scan(&ownsLease); err != nil || !ownsLease {
-		return "", "", 0, ErrConflict
+		return "", "", 0, callingLookupError(err, ErrConflict)
 	}
 	return practiceID, locationID, version, nil
 }

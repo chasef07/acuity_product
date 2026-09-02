@@ -55,8 +55,8 @@ func TestRequestMetadataAllowsEachConfiguredBrowserOrigin(t *testing.T) {
 		wantAllow  string
 		wantExpose string
 	}{
-		{origin: "https://acuityhealth.io", want: "https://acuityhealth.io", wantAllow: "Authorization, Content-Type, If-None-Match, X-Correlation-ID", wantExpose: "ETag"},
-		{origin: "https://acuity-web.example.run.app", want: "https://acuity-web.example.run.app", wantAllow: "Authorization, Content-Type, If-None-Match, X-Correlation-ID", wantExpose: "ETag"},
+		{origin: "https://acuityhealth.io", want: "https://acuityhealth.io", wantAllow: "Authorization, Content-Type, If-None-Match, X-Correlation-ID", wantExpose: "ETag, Retry-After"},
+		{origin: "https://acuity-web.example.run.app", want: "https://acuity-web.example.run.app", wantAllow: "Authorization, Content-Type, If-None-Match, X-Correlation-ID", wantExpose: "ETag, Retry-After"},
 		{origin: "https://untrusted.example", want: "", wantAllow: "", wantExpose: ""},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/health/live", nil)

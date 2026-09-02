@@ -120,7 +120,10 @@ func (m *Module) uploadAttachment(
 		command.LocationID,
 	)
 	if err != nil {
-		return Attachment{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Attachment{}, ErrDenied
+		}
+		return Attachment{}, fmt.Errorf("authorize Message access: %w", err)
 	}
 	if idempotencyKey != "" {
 		var existing Attachment
@@ -340,13 +343,14 @@ func (m *Module) OpenAttachment(
 		tx,
 		attachmentID,
 	)
-	if errors.Is(err, pgx.ErrNoRows) ||
-		attachment.State != AttachmentStored ||
-		objectKey == "" {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return AttachmentContent{}, ErrDenied
 	}
 	if err != nil {
-		return AttachmentContent{}, err
+		return AttachmentContent{}, fmt.Errorf("read attachment metadata: %w", err)
+	}
+	if attachment.State != AttachmentStored || objectKey == "" {
+		return AttachmentContent{}, ErrDenied
 	}
 	if _, err := m.access.LockReadAuthorization(
 		ctx,
@@ -355,14 +359,17 @@ func (m *Module) OpenAttachment(
 		practiceID,
 		locationID,
 	); err != nil {
-		return AttachmentContent{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return AttachmentContent{}, ErrDenied
+		}
+		return AttachmentContent{}, fmt.Errorf("authorize Message access: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AttachmentContent{}, fmt.Errorf("commit attachment read: %w", err)
 	}
 	content, err := m.config.AttachmentStore.Get(ctx, objectKey)
 	if err != nil {
 		return AttachmentContent{}, ErrDenied
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return AttachmentContent{}, fmt.Errorf("commit attachment read: %w", err)
 	}
 	return AttachmentContent{Attachment: attachment, Content: content}, nil
 }
@@ -444,7 +451,10 @@ func (m *Module) OpenProviderAttachment(
 		&attachment.UpdatedAt,
 		&objectKey,
 	); err != nil {
-		return AttachmentContent{}, ErrDenied
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AttachmentContent{}, ErrDenied
+		}
+		return AttachmentContent{}, fmt.Errorf("read provider attachment metadata: %w", err)
 	}
 	content, err := m.config.AttachmentStore.Get(ctx, objectKey)
 	if err != nil {
@@ -527,11 +537,11 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 	if copyErr == nil {
 		copyErr = m.config.AttachmentStore.Put(ctx, objectKey, content)
 	}
+	// The durable attachment owns this deterministic object across retries.
+	// A failed finalization must not delete bytes a newer copy already stored,
+	// or bytes referenced by a commit whose acknowledgement was lost.
 	finishTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		if copyErr == nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-		}
 		return true, fmt.Errorf("begin inbound attachment result: %w", err)
 	}
 	defer func() { _ = finishTx.Rollback(ctx) }()
@@ -558,7 +568,6 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 				updated_at = $5
 			WHERE id = $1 AND state = 'PROCESSING'
 		`, attachment.ID, contentType, len(content), objectKey, m.now()); err != nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
 			return true, fmt.Errorf("record stored inbound attachment: %w", err)
 		}
 	}
@@ -567,15 +576,9 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 		finishTx,
 		practiceID,
 	); err != nil {
-		if copyErr == nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-		}
 		return true, err
 	}
 	if err := finishTx.Commit(ctx); err != nil {
-		if copyErr == nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-		}
 		return true, fmt.Errorf("commit inbound attachment result: %w", err)
 	}
 	return true, nil
@@ -619,7 +622,10 @@ func (m *Module) RetryAttachment(
 		locationID,
 	)
 	if err != nil {
-		return Attachment{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Attachment{}, ErrDenied
+		}
+		return Attachment{}, fmt.Errorf("authorize Message access: %w", err)
 	}
 	now := m.now()
 	if _, err := tx.Exec(ctx, `

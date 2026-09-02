@@ -177,7 +177,13 @@ func (m *Module) QueryAnalytics(
 		command.PracticeID,
 		command.LocationID,
 	)
-	if err != nil || !authorization.PlatformOperator {
+	if err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return AnalyticsPage{}, ErrDenied
+		}
+		return AnalyticsPage{}, fmt.Errorf("authorize operator AI analytics query: %w", err)
+	}
+	if !authorization.PlatformOperator {
 		return AnalyticsPage{}, ErrDenied
 	}
 
@@ -428,7 +434,13 @@ func (m *Module) ReadOperatorAnalytics(
 		stored.PracticeID,
 		stored.LocationID,
 	)
-	if err != nil || !authorization.PlatformOperator {
+	if err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return OperatorAnalyticsDetail{}, ErrDenied
+		}
+		return OperatorAnalyticsDetail{}, fmt.Errorf("authorize operator AI analytics detail: %w", err)
+	}
+	if !authorization.PlatformOperator {
 		return OperatorAnalyticsDetail{}, ErrDenied
 	}
 	if err := tx.Commit(ctx); err != nil {

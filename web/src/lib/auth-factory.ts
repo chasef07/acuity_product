@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth"
 import { bearer, jwt, oauthPopup, testUtils } from "better-auth/plugins"
-import { Pool } from "pg"
 
+import { createAuthDatabasePool } from "@/lib/auth-database"
 import { createUserEligibilityGate } from "@/lib/auth-eligibility"
 import { portalAuthenticationConfiguration } from "@/lib/auth-providers"
 import { authRateLimitOptions } from "@/lib/auth-rate-limit"
@@ -12,13 +12,10 @@ export function createAuth() {
   const portalAPIURL = required("PORTAL_API_INTERNAL_URL")
   const audience = required("PORTAL_API_AUDIENCE")
   const authentication = portalAuthenticationConfiguration()
-  const pool = new Pool({
+  const pool = createAuthDatabasePool({
     connectionString: required("AUTH_DATABASE_URL"),
     max: positiveInteger("AUTH_DB_POOL_MAX"),
     connectionTimeoutMillis: positiveInteger("AUTH_DB_ACQUIRE_TIMEOUT_MS"),
-    idleTimeoutMillis: 30_000,
-    maxLifetimeSeconds: 300,
-    options: "-c search_path=auth",
   })
 
   return betterAuth({

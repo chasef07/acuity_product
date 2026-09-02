@@ -176,6 +176,11 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: web
+      - name: Verify auth database deadlines
+        run: pnpm test:database
+        working-directory: web
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/acuity_test?sslmode=disable
       - name: Check generated contracts
         run: |
           PGPASSWORD=postgres createdb \

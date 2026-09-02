@@ -726,11 +726,11 @@ func (m *Module) openPlayback(
 	if err := row.Scan(
 		&practiceID, &locationID, &recordingID, &contentExpiresAt,
 	); err != nil {
-		return PlaybackContent{}, ErrDenied
+		return PlaybackContent{}, callingLookupError(err, ErrDenied)
 	}
 	if _, err := m.access.LockReadAuthorization(authorizationContext, tx,
 		identity, practiceID, locationID); err != nil {
-		return PlaybackContent{}, ErrDenied
+		return PlaybackContent{}, callingLookupError(err, ErrDenied)
 	}
 	if err := appendTimeline(authorizationContext, tx, claims.CallID, practiceID,
 		timelineKind, identity.Subject, "", "",

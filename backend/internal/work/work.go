@@ -1657,7 +1657,10 @@ func (m *Module) ReadTask(
 		task.PracticeID,
 		task.LocationID,
 	); err != nil {
-		return Task{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Task{}, ErrDenied
+		}
+		return Task{}, fmt.Errorf("authorize Task access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, fmt.Errorf("commit Task read: %w", err)
@@ -1712,7 +1715,10 @@ func (m *Module) authorizeMutation(
 		task.LocationID,
 	)
 	if err != nil {
-		return access.Authorization{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return access.Authorization{}, ErrDenied
+		}
+		return access.Authorization{}, fmt.Errorf("authorize Task access: %w", err)
 	}
 	return authorization, nil
 }

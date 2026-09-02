@@ -304,7 +304,7 @@ test("a successful state refresh does not clear an unconfirmed readiness heartbe
   assert.equal(fixture.media.disconnects, 0)
 
   fixture.backend.writeReadinessHandler = undefined
-  await fixture.clock.advance(500)
+  await fixture.clock.advance(4_000)
   await eventually(() => assert.equal(fixture.runtime.getSnapshot().failure, undefined))
 })
 
@@ -1344,6 +1344,87 @@ test("routine heartbeats use a stable per-session stagger without surfacing avai
   assert.ok(firstHeartbeatAt >= 3_500 && firstHeartbeatAt <= 4_000)
   assert.ok(secondHeartbeatAt >= 3_500 && secondHeartbeatAt <= 4_000)
   assert.notEqual(firstHeartbeatAt, secondHeartbeatAt)
+})
+
+test("failed Calling refreshes do not accelerate successful readiness heartbeats", async (context) => {
+  for (const source of ["state", "detail"] as const) {
+    await context.test(source, async () => {
+      const fixture = await attachedOutboundMediaFixture(`provider-${source}-outage`)
+      fixture.clock.microtaskTurns = 50
+      await fixture.runtime.signalRefresh()
+      const heartbeatAt: number[] = []
+      fixture.backend.writeReadinessHandler = async (input) => {
+        heartbeatAt.push(fixture.clock.now)
+        return { ...fixture.backend.lease, available: input.available }
+      }
+      const unavailable = async () => {
+        throw new SoftphoneAdapterError("temporary-request", "Calling refresh unavailable.", true)
+      }
+      if (source === "state") fixture.backend.readStateHandler = unavailable
+      else fixture.backend.readCallHandler = unavailable
+      await fixture.runtime.signalRefresh()
+
+      await fixture.clock.advance(20_000)
+
+      assert.equal(fixture.runtime.getSnapshot().failure?.source, "refresh")
+      assert.ok(heartbeatAt.length >= 5 && heartbeatAt.length <= 6,
+        `healthy readiness must keep normal cadence; observed ${heartbeatAt.length} writes in 20 seconds`)
+      for (let index = 1; index < heartbeatAt.length; index += 1) {
+        const gap = heartbeatAt[index]! - heartbeatAt[index - 1]!
+        assert.ok(gap >= 3_500 && gap <= 4_000)
+      }
+      assert.notEqual(fixture.runtime.getSnapshot().mediaAttachment, undefined)
+      assert.equal(fixture.media.disconnects, 0)
+    })
+  }
+})
+
+test("failed readiness heartbeats back off to normal cadence and reset after recovery", async () => {
+  const fixture = await attachedOutboundMediaFixture("provider-readiness-outage")
+  fixture.clock.microtaskTurns = 50
+  await fixture.runtime.signalRefresh()
+  const heartbeatAt: number[] = []
+  let unavailable = true
+  fixture.backend.writeReadinessHandler = async (input) => {
+    heartbeatAt.push(fixture.clock.now)
+    if (unavailable) {
+      throw new SoftphoneAdapterError("temporary-request", "Readiness unavailable.", true)
+    }
+    return { ...fixture.backend.lease, available: input.available }
+  }
+
+  await fixture.clock.advance(20_000)
+
+  assert.ok(heartbeatAt.length >= 6 && heartbeatAt.length <= 8,
+    `readiness outage must have a bounded retry rate; observed ${heartbeatAt.length} writes in 20 seconds`)
+  const gaps = heartbeatAt.slice(1).map((at, index) => at - heartbeatAt[index]!)
+  for (const [index, [minimum, maximum]] of [[500, 1_000], [1_000, 1_500], [2_000, 2_500]].entries()) {
+    assert.ok(gaps[index]! >= minimum! && gaps[index]! <= maximum!)
+  }
+  assert.ok(gaps.slice(3).every((gap) => gap >= 3_500 && gap <= 4_000))
+  assert.equal(fixture.runtime.getSnapshot().failure?.source, "readiness")
+  assert.equal(fixture.media.disconnects, 0)
+
+  unavailable = false
+  const beforeRecovery = heartbeatAt.length
+  await fixture.clock.advance(4_000)
+  assert.equal(heartbeatAt.length, beforeRecovery + 1)
+  assert.equal(fixture.runtime.getSnapshot().failure, undefined)
+  const recoveredAt = heartbeatAt.at(-1)!
+  await fixture.clock.advance(4_000)
+  assert.equal(heartbeatAt.length, beforeRecovery + 2)
+  assert.ok(heartbeatAt.at(-1)! - recoveredAt >= 3_500)
+  assert.ok(heartbeatAt.at(-1)! - recoveredAt <= 4_000)
+
+  unavailable = true
+  const normalDelay = heartbeatAt[0]!
+  await fixture.clock.advance(heartbeatAt.at(-1)! + normalDelay - fixture.clock.now)
+  const renewedFailureAt = heartbeatAt.at(-1)!
+  const beforeRetry = heartbeatAt.length
+  await fixture.clock.advance(1_000)
+  assert.equal(heartbeatAt.length, beforeRetry + 1)
+  assert.ok(heartbeatAt.at(-1)! - renewedFailureAt >= 500)
+  assert.ok(heartbeatAt.at(-1)! - renewedFailureAt <= 1_000)
 })
 
 test("stop discards local Call projections and abandoned command state", async () => {
@@ -2946,6 +3027,89 @@ test("another session's active lease never becomes local ownership on refresh", 
   await runtime.recover()
   assert.equal(backend.leaseRequests.length, leaseRequests)
 })
+
+test("unoccupied nonowner tabs use fewer background Calling polls", async (context) => {
+  for (const hidden of [false, true]) {
+    await context.test(hidden ? "hidden" : "visible", async () => {
+      const fixture = await nonownerRuntimeFixture(hidden)
+      const initialReads = fixture.backend.reads.length
+      await fixture.clock.advance(60_000)
+      const polls = fixture.backend.reads.length - initialReads
+      assert.ok(polls >= (hidden ? 3 : 5) && polls <= (hidden ? 4 : 6),
+        `an idle nonowner tab made ${polls} background polls in one minute`)
+      assert.equal(fixture.backend.readinessWrites.length, 0)
+      assert.equal(fixture.media.connects, 0)
+      assert.equal(fixture.runtime.getSnapshot().controls.canEnd, false)
+    })
+  }
+})
+
+test("nonowner tabs check access immediately on focus and can explicitly take over", async () => {
+  const fixture = await nonownerRuntimeFixture(false)
+  const initialReads = fixture.backend.reads.length
+  fixture.visibility.hidden = true
+  fixture.visibility.emit()
+  await drainMicrotasks(50)
+  assert.equal(fixture.backend.reads.length, initialReads,
+    "hiding an unoccupied nonowner tab should reschedule without an immediate duplicate request")
+  await fixture.clock.advance(1_000)
+  fixture.visibility.hidden = false
+  fixture.visibility.emit()
+  await drainMicrotasks(50)
+  assert.equal(fixture.backend.reads.length, initialReads + 1)
+
+  fixture.backend.acquireLeaseHandler = async ({ sessionID, takeover }) => {
+    assert.equal(takeover, true)
+    fixture.backend.lease = lease({ sessionId: sessionID, owner: true })
+    fixture.backend.state = callingState({ softphone: fixture.backend.lease })
+    return fixture.backend.lease
+  }
+  await fixture.runtime.recover()
+  assert.equal(fixture.runtime.getSnapshot().lease?.owner, true)
+  assert.equal(fixture.runtime.getSnapshot().readiness.mediaState, "ready")
+  assert.equal(fixture.media.connects, 1)
+  const readsAfterTakeover = fixture.backend.reads.length
+  await fixture.clock.advance(4_000)
+  assert.ok(fixture.backend.reads.length > readsAfterTakeover,
+    "ownership restores the normal four-second idle polling cadence")
+})
+
+test("hidden nonowner polling detects access revocation within its bounded interval", async () => {
+  const fixture = await nonownerRuntimeFixture(true)
+  fixture.backend.readStateHandler = async () => {
+    throw new SoftphoneAdapterError("access", "Calling access was revoked.", false)
+  }
+  await fixture.clock.advance(15_500)
+  assert.equal(fixture.runtime.getSnapshot().failure?.kind, "access")
+  assert.equal(fixture.runtime.getSnapshot().lease?.owner, false)
+  assert.equal(fixture.runtime.getSnapshot().controls.canEnd, false)
+  assert.equal(fixture.runtime.getSnapshot().controls.canMute, false)
+  const leaseRequests = fixture.backend.leaseRequests.length
+  await fixture.runtime.recover()
+  assert.equal(fixture.backend.leaseRequests.length, leaseRequests)
+  assert.equal(fixture.media.connects, 0)
+})
+
+async function nonownerRuntimeFixture(hidden: boolean) {
+  const clock = new ManualClock()
+  clock.microtaskTurns = 50
+  const backend = new DeterministicBackend()
+  backend.lease = lease({ sessionId: "other-session", owner: true })
+  backend.state = callingState({ softphone: backend.lease })
+  const media = new DeterministicMedia()
+  const visibility = new DeterministicVisibility()
+  visibility.hidden = hidden
+  const runtime = createSoftphoneRuntime({
+    sessionID: "session-1",
+    backend,
+    media,
+    microphone: readyMicrophone(),
+    clock,
+    visibility,
+  })
+  await runtime.start()
+  return { backend, clock, media, runtime, visibility }
+}
 
 test("active Practice access revocation tears down attached media and local Call controls", async () => {
   const fixture = await outboundMediaFixture()
@@ -5003,6 +5167,7 @@ class DeterministicMedia implements CallingMediaAdapter {
 
 class ManualClock implements SoftphoneClock {
   now = 0
+  microtaskTurns = 12
   private nextID = 1
   private timers = new Map<number, { at: number; callback: () => void }>()
 
@@ -5030,10 +5195,10 @@ class ManualClock implements SoftphoneClock {
       this.now = next[1].at
       this.timers.delete(next[0])
       next[1].callback()
-      await drainMicrotasks()
+      await drainMicrotasks(this.microtaskTurns)
     }
     this.now = target
-    await drainMicrotasks()
+    await drainMicrotasks(this.microtaskTurns)
   }
 }
 
@@ -5377,8 +5542,8 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-async function drainMicrotasks() {
-  for (let count = 0; count < 12; count += 1) await Promise.resolve()
+async function drainMicrotasks(turns = 12) {
+  for (let count = 0; count < turns; count += 1) await Promise.resolve()
 }
 
 async function eventually(assertion: () => void) {

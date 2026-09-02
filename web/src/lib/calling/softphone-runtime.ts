@@ -288,6 +288,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   const clock = options.clock ?? defaultClock
   const visibility = options.visibility ?? browserVisibility
   const heartbeatDelayMilliseconds = heartbeatDelay(options.sessionID)
+  const sessionStaggerMilliseconds =
+    heartbeatDelayMilliseconds - heartbeatMinimumMilliseconds
   const listeners = new Set<() => void>()
   const incomingMedia = new Map<string, IncomingMediaLeg>()
   const incomingMediaDeadlines = new WeakMap<IncomingMediaLeg, number>()
@@ -308,6 +310,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   let lifecycleGeneration = 0
   let etag: string | undefined
   let temporaryFailures = 0
+  let readinessFailures = 0
   let readinessGeneration = 0
   let readinessConfirmedGeneration = 0
   let readinessInFlight: Promise<void> | undefined
@@ -1196,6 +1199,14 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
     return inFlight
   }
 
+  function idleNonowner() {
+    return (
+      snapshot.lease?.owner === false &&
+      !snapshot.occupied &&
+      incomingMedia.size === 0
+    )
+  }
+
   function scheduleRefresh() {
     if (stopped) return
     if (refreshTimer !== undefined) clock.clearTimeout(refreshTimer)
@@ -1206,7 +1217,9 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         )
       : incomingMedia.size > 0
         ? mediaConfirmationRetryMilliseconds
-        : refreshDelay(snapshot, visibility.isHidden())
+        : idleNonowner()
+          ? (visibility.isHidden() ? 15_000 : 10_000) + sessionStaggerMilliseconds
+          : refreshDelay(snapshot, visibility.isHidden())
     refreshTimer = clock.setTimeout(() => {
       refreshTimer = undefined
       void requestRefresh(false).finally(scheduleRefresh)
@@ -1228,8 +1241,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         await commitReadiness(true, false, "silent")
       })().finally(() =>
         scheduleHeartbeat(
-          snapshot.failure?.kind === "temporary-request"
-            ? 500
+          readinessFailures > 0
+            ? Math.min(
+                heartbeatDelayMilliseconds,
+                500 * 2 ** Math.min(readinessFailures - 1, 3) +
+                  sessionStaggerMilliseconds,
+              )
             : heartbeatDelayMilliseconds,
         ),
       )
@@ -1313,6 +1330,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           )
           if (stopped) return
           if (generation !== readinessGeneration) continue
+          readinessFailures = 0
           const visibleLease = accessBlocked
             ? hideLeaseAfterAccessFailure(lease)!
             : lease
@@ -1347,6 +1365,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         } catch (error) {
           if (stopped) return
           if (generation !== readinessGeneration) continue
+          readinessFailures += 1
           publish({ pending: { ...snapshot.pending, availability: false } })
           await setRequestFailure(error, "temporary-request", "readiness")
         }
@@ -2092,7 +2111,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       unsubscribeVisibility = visibility.subscribe(() => {
         if (!stopped) {
           syncAttention(snapshot.offers)
-          void signalRefresh()
+          if (visibility.isHidden() && idleNonowner()) scheduleRefresh()
+          else void signalRefresh()
         }
       })
       try {
@@ -2150,6 +2170,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
         etag = undefined
         authoritativeRingingMedia.clear()
         temporaryFailures = 0
+        readinessFailures = 0
         for (const request of backendRequests) request.abort()
         unsubscribeVisibility?.()
         unsubscribeVisibility = undefined

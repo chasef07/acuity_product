@@ -67,7 +67,11 @@ func run() error {
 	}
 	defer pool.Close()
 	go reportMetrics(ctx, pool, observer)
-	database, err := productpostgres.NewExecutor(pool, productpostgres.ExecutorConfig{
+	newExecutor := productpostgres.NewExecutor
+	if config.Role == app.RolePortalAPI {
+		newExecutor = productpostgres.NewPortalExecutor
+	}
+	database, err := newExecutor(pool, productpostgres.ExecutorConfig{
 		AcquireTimeout:   config.AcquireTimeout,
 		OperationTimeout: config.OperationTimeout,
 		StatementTimeout: config.StatementTimeout,

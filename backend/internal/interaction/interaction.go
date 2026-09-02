@@ -223,7 +223,10 @@ func (m *Module) read(
 		stored.LocationID,
 	)
 	if err != nil {
-		return Interaction{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Interaction{}, ErrDenied
+		}
+		return Interaction{}, fmt.Errorf("authorize AI Interaction access: %w", err)
 	}
 	if requireAdmin &&
 		!authorization.PlatformOperator &&
@@ -275,7 +278,10 @@ func (m *Module) QueryOutcomes(
 		command.LocationID,
 	)
 	if err != nil {
-		return OutcomePage{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return OutcomePage{}, ErrDenied
+		}
+		return OutcomePage{}, fmt.Errorf("authorize AI Interaction access: %w", err)
 	}
 	locationIDs := make([]string, 0, len(authorization.Locations))
 	if command.LocationID != "" {
@@ -542,7 +548,10 @@ func (m *Module) ReviewOutcome(
 		stored.LocationID,
 	)
 	if err != nil {
-		return ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return ErrDenied
+		}
+		return fmt.Errorf("authorize AI Interaction access: %w", err)
 	}
 	reviewedAt := m.now()
 	tag, err := tx.Exec(ctx, `

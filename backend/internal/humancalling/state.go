@@ -103,7 +103,13 @@ func (m *Module) ReadCallingStateConditionally(
 		return CallingState{}, false, ErrDenied
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
-	if err != nil || !hasOperationalCallingAccess(discovery) {
+	if err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return CallingState{}, false, ErrDenied
+		}
+		return CallingState{}, false, fmt.Errorf("discover Calling state access: %w", err)
+	}
+	if !hasOperationalCallingAccess(discovery) {
 		return CallingState{}, false, ErrDenied
 	}
 	etag, err := m.readCallingStateETag(ctx, identity.Subject, discovery)

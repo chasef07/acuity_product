@@ -402,7 +402,10 @@ func (m *Module) Send(
 		command.LocationID,
 	)
 	if err != nil {
-		return Message{}, "", ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Message{}, "", ErrDenied
+		}
+		return Message{}, "", fmt.Errorf("authorize Message access: %w", err)
 	}
 	var originalAttachmentFileName, originalAttachmentType string
 	var originalAttachmentBytes int
@@ -1191,7 +1194,10 @@ func (m *Module) readMessageForRetry(
 		practiceID,
 		locationID,
 	); err != nil {
-		return Message{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Message{}, ErrDenied
+		}
+		return Message{}, fmt.Errorf("authorize Message access: %w", err)
 	}
 	message, err := loadMessage(ctx, tx, command.MessageID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1243,7 +1249,10 @@ func (m *Module) loadSendAgainReplay(
 		replayed.Thread.PracticeID,
 		replayed.Thread.LocationID,
 	); err != nil {
-		return Message{}, false, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Message{}, false, ErrDenied
+		}
+		return Message{}, false, fmt.Errorf("authorize Message access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Message{}, false, fmt.Errorf("commit Message new-attempt replay: %w", err)
@@ -1436,7 +1445,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// RecoverInterruptedCommands closes the process-crash window after a provider
+// RecoverInterruptedCommands closes one process-crash window after a provider
 // write began. The command is deliberately not replayed because its external
 // effect cannot be known safely.
 func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
@@ -1448,7 +1457,17 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 		return fmt.Errorf("begin Message command recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
+	var messageID, practiceID string
+	err = tx.QueryRow(ctx, `
+		WITH interrupted AS (
+			SELECT id
+			FROM messaging_provider_commands
+			WHERE state = 'WRITING'
+				AND write_started_at < $1::timestamptz - interval '30 seconds'
+			ORDER BY write_started_at, id
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
 		UPDATE messaging_provider_commands command
 		SET
 			state = 'UNKNOWN',
@@ -1456,51 +1475,30 @@ func (m *Module) RecoverInterruptedCommands(ctx context.Context) error {
 			completed_at = $1,
 			reconcile_until = $1 + interval '24 hours',
 			updated_at = $1
-		FROM messaging_messages message
-		WHERE command.message_id = message.id
-			AND command.state = 'WRITING'
-			AND command.write_started_at <
-				$1::timestamptz - interval '30 seconds'
+		FROM interrupted, messaging_messages message
+		WHERE command.id = interrupted.id
+			AND command.message_id = message.id
 		RETURNING message.id::text, message.practice_id::text
-	`, m.now())
+	`, m.now()).Scan(&messageID, &practiceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("recover interrupted Message commands: %w", err)
 	}
-	defer rows.Close()
-	type recovered struct {
-		messageID  string
-		practiceID string
+	if _, err := tx.Exec(ctx, `
+		UPDATE messaging_messages
+		SET
+			delivery_state = 'UNKNOWN',
+			safe_failure_code = 'PROVIDER_OUTCOME_UNKNOWN',
+			version = version + 1,
+			updated_at = $2
+		WHERE id = $1 AND delivery_state = 'SENDING'
+	`, messageID, m.now()); err != nil {
+		return fmt.Errorf("project interrupted Message command: %w", err)
 	}
-	recoveredCommands := []recovered{}
-	for rows.Next() {
-		var item recovered
-		if err := rows.Scan(&item.messageID, &item.practiceID); err != nil {
-			return fmt.Errorf("scan recovered Message command: %w", err)
-		}
-		recoveredCommands = append(recoveredCommands, item)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate recovered Message commands: %w", err)
-	}
-	for _, item := range recoveredCommands {
-		if _, err := tx.Exec(ctx, `
-			UPDATE messaging_messages
-			SET
-				delivery_state = 'UNKNOWN',
-				safe_failure_code = 'PROVIDER_OUTCOME_UNKNOWN',
-				version = version + 1,
-				updated_at = $2
-			WHERE id = $1 AND delivery_state = 'SENDING'
-		`, item.messageID, m.now()); err != nil {
-			return fmt.Errorf("project interrupted Message command: %w", err)
-		}
-		if _, err := m.access.RecordWorkspaceChange(
-			ctx,
-			tx,
-			item.practiceID,
-		); err != nil {
-			return err
-		}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, practiceID); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Message command recovery: %w", err)
@@ -1928,7 +1926,10 @@ func (m *Module) ReadMessage(
 		message.Thread.PracticeID,
 		message.Thread.LocationID,
 	); err != nil {
-		return Message{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return Message{}, ErrDenied
+		}
+		return Message{}, fmt.Errorf("authorize Message access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Message{}, fmt.Errorf("commit Message read: %w", err)
@@ -1980,7 +1981,10 @@ func (m *Module) QueryThreads(
 		command.LocationID,
 	)
 	if err != nil {
-		return ThreadPage{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return ThreadPage{}, ErrDenied
+		}
+		return ThreadPage{}, fmt.Errorf("authorize Message access: %w", err)
 	}
 	locationIDs := make([]string, 0, len(authorization.Locations))
 	if authorization.ActiveLocation != nil {
@@ -2216,7 +2220,10 @@ func (m *Module) MarkRead(
 		thread.LocationID,
 	)
 	if err != nil {
-		return ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return ErrDenied
+		}
+		return fmt.Errorf("authorize Message access: %w", err)
 	}
 	tag, err := tx.Exec(ctx, `
 		DELETE FROM messaging_thread_unreads
@@ -2302,7 +2309,10 @@ func (m *Module) CreateFollowUpTask(
 		locationID,
 	)
 	if err != nil {
-		return work.Task{}, "", ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return work.Task{}, "", ErrDenied
+		}
+		return work.Task{}, "", fmt.Errorf("authorize Message access: %w", err)
 	}
 	task, status, err := m.work.EnsureMessageFollowUp(
 		ctx,

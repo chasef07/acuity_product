@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/admission"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -33,14 +34,15 @@ type ExecutorConfig struct {
 type Cause string
 
 const (
-	CauseAcquireTimeout   Cause = "acquire_timeout"
-	CauseStatementTimeout Cause = "statement_timeout"
-	CauseLockTimeout      Cause = "lock_timeout"
-	CauseSerialization    Cause = "serialization"
-	CauseDeadlock         Cause = "deadlock"
-	CauseConnection       Cause = "connection"
-	CauseCanceled         Cause = "canceled"
-	CauseOther            Cause = "other"
+	CauseAcquireTimeout    Cause = "acquire_timeout"
+	CauseAdmissionRejected Cause = "admission_rejected"
+	CauseStatementTimeout  Cause = "statement_timeout"
+	CauseLockTimeout       Cause = "lock_timeout"
+	CauseSerialization     Cause = "serialization"
+	CauseDeadlock          Cause = "deadlock"
+	CauseConnection        Cause = "connection"
+	CauseCanceled          Cause = "canceled"
+	CauseOther             Cause = "other"
 )
 
 type executionError struct {
@@ -110,9 +112,10 @@ func (pool poolAcquirer) Acquire(ctx context.Context) (acquiredConnection, error
 // deadlines. Domain modules still compose their business transactions using
 // pgx.Tx; the wrapped transaction owns the real commit, rollback, and release.
 type Executor struct {
-	pool     acquirer
-	config   ExecutorConfig
-	observer observability.Observer
+	pool      acquirer
+	config    ExecutorConfig
+	observer  observability.Observer
+	admission *admission.Gate
 }
 
 func NewExecutor(
@@ -124,6 +127,25 @@ func NewExecutor(
 		return nil, errors.New("database pool is required")
 	}
 	return newExecutor(poolAcquirer{pool: pool}, config, observer)
+}
+
+// NewPortalExecutor reserves capacity across the entire connection lifetime,
+// including nested operations, streamed rows, and caller-owned transactions.
+// Other runtime roles keep the default executor's existing behavior.
+func NewPortalExecutor(
+	pool *pgxpool.Pool,
+	config ExecutorConfig,
+	observer observability.Observer,
+) (*Executor, error) {
+	if pool == nil || pool.Config().MaxConns < 3 {
+		return nil, errors.New("portal database pool must have at least three connections for Calling sync and control headroom")
+	}
+	executor, err := NewExecutor(pool, config, observer)
+	if err != nil {
+		return nil, err
+	}
+	executor.admission = admission.New(pool.Config().MaxConns)
+	return executor, nil
 }
 
 func newExecutor(
@@ -192,10 +214,11 @@ func (executor *Executor) QueryRow(
 		return errorRow{err: err}
 	}
 	statementContext, cancel := executor.statementContext(operationContext)
+	started := time.Now()
 	return &ownedRow{
 		row:     connection.QueryRow(statementContext, sql, arguments...),
 		ctx:     statementContext,
-		started: time.Now(),
+		started: started,
 		finish: func(err error, started time.Time) error {
 			cancel()
 			finish()
@@ -241,12 +264,26 @@ func (executor *Executor) BeginTx(
 func (executor *Executor) acquire(
 	ctx context.Context,
 ) (acquiredConnection, context.Context, func(), error) {
+	releaseAdmission := func() {}
+	if executor.admission != nil {
+		var err error
+		releaseAdmission, err = executor.admission.Acquire(ctx)
+		if err != nil {
+			cause := CauseCanceled
+			if errors.Is(err, admission.ErrFull) {
+				cause = CauseAdmissionRejected
+			}
+			executor.record(cause, 0)
+			return nil, nil, nil, &executionError{cause: cause, err: err}
+		}
+	}
 	acquireContext, cancelAcquire := context.WithTimeout(ctx, executor.config.AcquireTimeout)
 	started := time.Now()
 	connection, err := executor.pool.Acquire(acquireContext)
 	deadlineReached := errors.Is(acquireContext.Err(), context.DeadlineExceeded)
 	cancelAcquire()
 	if err != nil {
+		releaseAdmission()
 		cause := CauseOf(err)
 		if deadlineReached {
 			cause = CauseAcquireTimeout
@@ -260,6 +297,7 @@ func (executor *Executor) acquire(
 		once.Do(func() {
 			cancelOperation()
 			connection.Release()
+			releaseAdmission()
 		})
 	}
 	return connection, operationContext, finish, nil
@@ -458,10 +496,11 @@ func (transaction *ownedTx) QueryRow(
 	arguments ...any,
 ) pgx.Row {
 	operationContext, cancel := transaction.operationContext(ctx)
+	started := time.Now()
 	return &ownedRow{
 		row:     transaction.Tx.QueryRow(operationContext, sql, arguments...),
 		ctx:     operationContext,
-		started: time.Now(),
+		started: started,
 		finish: func(err error, started time.Time) error {
 			result := transaction.executor.finishOperation(err, operationContext, started)
 			cancel()

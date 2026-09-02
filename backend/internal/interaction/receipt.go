@@ -246,7 +246,10 @@ func (m *Module) authorizeReceipt(
 		access.ServiceCapabilityIngestAIInteraction,
 	)
 	if err != nil {
-		return access.ServiceAuthorization{}, ErrDenied
+		if errors.Is(err, access.ErrDenied) {
+			return access.ServiceAuthorization{}, ErrDenied
+		}
+		return access.ServiceAuthorization{}, fmt.Errorf("authorize AI Interaction access: %w", err)
 	}
 	if command.OfficeKey == "" {
 		return voiceAuthorization, nil
@@ -258,8 +261,13 @@ func (m *Module) authorizeReceipt(
 		command.OfficeKey,
 		access.ServiceCapabilityIngestAIInteraction,
 	)
-	if err != nil ||
-		officeAuthorization.PracticeID != voiceAuthorization.PracticeID ||
+	if err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return access.ServiceAuthorization{}, ErrDenied
+		}
+		return access.ServiceAuthorization{}, fmt.Errorf("authorize AI Interaction office: %w", err)
+	}
+	if officeAuthorization.PracticeID != voiceAuthorization.PracticeID ||
 		officeAuthorization.LocationID != voiceAuthorization.LocationID {
 		return access.ServiceAuthorization{}, ErrDenied
 	}

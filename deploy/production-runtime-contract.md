@@ -62,10 +62,20 @@ roles remain separate because their failure owners remain separate; saving a
 few dollars is not a reason to couple ingress acknowledgement or durable
 recovery to portal traffic.
 
-The portal accepts at most eight concurrent requests per instance so Cloud Run
-queues bursts before they can overwhelm its four-connection database pool.
-Production verification with twenty simultaneous authenticated workspaces
-completed without a 5xx response or database acquisition timeout.
+The portal accepts at most eight concurrent requests per instance. Within its
+existing four-connection pool, admission allows at most two background
+operations and three total non-control operations. This leaves capacity for
+Calling synchronization and live commands while history or analytics are slow.
+The same policy bounds complete HTTP handlers and actual connection lifetimes;
+nested acquisitions cannot bypass the database bound. Excess background work
+returns a retryable `503` immediately instead of occupying request slots while
+waiting. Registered routes, not client priority headers, select the class.
+
+This reservation does not isolate PostgreSQL CPU, shared row locks, or a burst
+of live commands from one another. Those still require bounded queries, short
+transactions, and production observation. See
+`../docs/diagnostics/2026-09-02-database-pressure-audit.md` for the source trace
+and mixed-workload regression evidence.
 
 ## Exact PostgreSQL reservation
 
@@ -110,6 +120,12 @@ acquisition/connect timeout, a five-minute idle limit, and bounded connection
 lifetime jitter. The migration job uses one task, pool max 1, a 5000 ms timeout,
 and no automatic retry. Realtime's dedicated `LISTEN` connection is outside its
 pool and is counted once for every allowed realtime instance.
+
+Better Auth has its own one-connection pool and a five-second PostgreSQL
+statement timeout. Browser token acquisition also ends after five seconds,
+retains an unexpired token on a transient failure, and keeps its existing
+single-flight refresh and retry backoff. Neither change raises the connection
+reservation.
 
 Listener generations are part of the runtime contract: loss or recovery of the
 PostgreSQL listener closes every stream from the old generation. Browsers then

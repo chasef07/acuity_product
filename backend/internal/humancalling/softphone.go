@@ -19,7 +19,13 @@ func (m *Module) AcquireSoftphone(
 		return SoftphoneState{}, ErrDenied
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
-	if err != nil || !hasOperationalCallingAccess(discovery) {
+	if err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return SoftphoneState{}, ErrDenied
+		}
+		return SoftphoneState{}, fmt.Errorf("discover softphone access: %w", err)
+	}
+	if !hasOperationalCallingAccess(discovery) {
 		return SoftphoneState{}, ErrDenied
 	}
 	now := m.now()
@@ -30,7 +36,7 @@ func (m *Module) AcquireSoftphone(
 	defer func() { _ = tx.Rollback(ctx) }()
 	practiceIDs, err := m.access.LockOperationalActor(ctx, tx, identity)
 	if err != nil {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, callingLookupError(err, ErrDenied)
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT leg.state
@@ -197,7 +203,7 @@ func (m *Module) SetReadiness(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
-		return SoftphoneState{}, ErrDenied
+		return SoftphoneState{}, callingLookupError(err, ErrDenied)
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT call.id

@@ -48,7 +48,7 @@ func (m *Module) ReadCall(
 	if _, err := m.access.LockReadAuthorization(
 		ctx, tx, identity, projection.call.PracticeID, projection.call.LocationID,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingLookupError(err, ErrDenied)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Call{}, fmt.Errorf("commit Call read: %w", err)
@@ -355,12 +355,12 @@ func (m *Module) RequestHangup(
 	`, callID).Scan(
 		&practiceID, &locationID, &direction, &initiatingSubject, &terminal,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingLookupError(err, ErrDenied)
 	}
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingLookupError(err, ErrDenied)
 	}
 	hangupCommitted := terminal
 	if !hangupCommitted {
@@ -402,7 +402,7 @@ func (m *Module) RequestHangup(
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
 	`, identity.Subject, sessionID, m.now()).Scan(&ownsLease); err != nil || !ownsLease {
-		return Call{}, ErrConflict
+		return Call{}, callingLookupError(err, ErrConflict)
 	}
 	var ownsConnectedCall bool
 	if err := tx.QueryRow(ctx, `
@@ -414,7 +414,7 @@ func (m *Module) RequestHangup(
 	`, callID, identity.Subject).Scan(&ownsConnectedCall); err != nil ||
 		(!ownsConnectedCall &&
 			(direction != CallOutbound || initiatingSubject != identity.Subject)) {
-		return Call{}, ErrConflict
+		return Call{}, callingLookupError(err, ErrConflict)
 	}
 	if direction == CallOutbound {
 		if _, err := tx.Exec(ctx, `
@@ -563,13 +563,13 @@ func (m *Module) RecordDisposition(
 		WHERE call.id = $1 FOR UPDATE OF call
 	`, callID).Scan(&practiceID, &locationID, &direction, &entryPoint, &taskID,
 		&phone, &reason, &terminal, &existing); err != nil {
-		return DispositionResult{}, ErrDenied
+		return DispositionResult{}, callingLookupError(err, ErrDenied)
 	}
 	authorization, err := m.access.LockMembershipAuthorization(
 		ctx, tx, identity, practiceID, locationID,
 	)
 	if err != nil {
-		return DispositionResult{}, ErrDenied
+		return DispositionResult{}, callingLookupError(err, ErrDenied)
 	}
 	var owner bool
 	if err := tx.QueryRow(ctx, `
@@ -578,7 +578,7 @@ func (m *Module) RecordDisposition(
 			WHERE owner.call_id = $1 AND owner.staff_subject = $2
 		)
 	`, callID, identity.Subject).Scan(&owner); err != nil || !owner {
-		return DispositionResult{}, ErrConflict
+		return DispositionResult{}, callingLookupError(err, ErrConflict)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
@@ -586,9 +586,15 @@ func (m *Module) RecordDisposition(
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1 FOR UPDATE
 	`, identity.Subject, sessionID, m.now()).Scan(&ownsLease); err != nil || !ownsLease {
-		return DispositionResult{}, ErrConflict
+		return DispositionResult{}, callingLookupError(err, ErrConflict)
 	}
-	connected := terminal == "ENDED" && m.callHasBridge(ctx, tx, callID)
+	var connected bool
+	if terminal == "ENDED" {
+		connected, err = m.callHasBridge(ctx, tx, callID)
+		if err != nil {
+			return DispositionResult{}, err
+		}
+	}
 	if !dispositionAllowed(direction, entryPoint, terminal, connected, disposition) {
 		return DispositionResult{}, ErrConflict
 	}
@@ -740,15 +746,17 @@ func (m *Module) ExpireDispositions(ctx context.Context) (int, error) {
 	return len(items), nil
 }
 
-func (m *Module) callHasBridge(ctx context.Context, tx pgx.Tx, callID string) bool {
+func (m *Module) callHasBridge(ctx context.Context, tx pgx.Tx, callID string) (bool, error) {
 	var bridged bool
-	_ = tx.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM human_calling_call_legs
 			WHERE call_id = $1 AND bridged_at IS NOT NULL
 		)
-	`, callID).Scan(&bridged)
-	return bridged
+	`, callID).Scan(&bridged); err != nil {
+		return false, fmt.Errorf("read Call bridge evidence: %w", err)
+	}
+	return bridged, nil
 }
 
 func validDisposition(disposition Disposition) bool {
@@ -796,11 +804,11 @@ func (m *Module) ReadOperatorTimeline(
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
 	if err != nil || !discovery.PlatformOperator {
-		return OperatorTimeline{}, ErrDenied
+		return OperatorTimeline{}, callingLookupError(err, ErrDenied)
 	}
 	projection, err := m.loadCallProjection(ctx, m.database, callID)
 	if err != nil {
-		return OperatorTimeline{}, ErrDenied
+		return OperatorTimeline{}, callingLookupError(err, ErrDenied)
 	}
 	result := OperatorTimeline{
 		CallID: callID, PracticeID: projection.call.PracticeID,

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/admission"
 	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/authn"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
@@ -87,6 +88,7 @@ type Server struct {
 	workspace     *workspace.Module
 	serviceAuth   ServiceAuthenticator
 	observer      observability.Observer
+	admission     *admission.Gate
 }
 
 type serverDependencies struct {
@@ -191,11 +193,16 @@ func newServer(
 		serviceAuth:   dependencies.serviceAuth,
 		observer:      config.Observer,
 	}
-	generated := api.HandlerWithOptions(server, api.StdHTTPServerOptions{
+	options := api.StdHTTPServerOptions{
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
 			server.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "The request is invalid.", false)
 		},
-	})
+	}
+	if role == "portal-api" {
+		server.admission = admission.New(pool.Config().MaxConns)
+		options.Middlewares = []api.MiddlewareFunc{server.withPortalAdmission}
+	}
+	generated := api.HandlerWithOptions(server, options)
 	return server.withRequestMetadata(generated), nil
 }
 
@@ -2610,7 +2617,7 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match, X-Correlation-ID")
-			w.Header().Set("Access-Control-Expose-Headers", "ETag")
+			w.Header().Set("Access-Control-Expose-Headers", "ETag, Retry-After")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {

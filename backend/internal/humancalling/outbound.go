@@ -271,7 +271,7 @@ func (m *Module) StartOutboundCall(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := m.access.LockOperationalActor(ctx, tx, command.Identity); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingLookupError(err, ErrDenied)
 	}
 	if _, err := tx.Exec(ctx, `
 		SELECT pg_advisory_xact_lock(hashtextextended($1, 0) # hashtextextended($2, 1))
@@ -316,7 +316,7 @@ func (m *Module) StartOutboundCall(
 	if _, err := m.access.LockMembershipAuthorization(
 		ctx, tx, command.Identity, practiceID, locationID,
 	); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingLookupError(err, ErrDenied)
 	}
 	var leaseReady bool
 	if err := tx.QueryRow(ctx, `
@@ -327,7 +327,7 @@ func (m *Module) StartOutboundCall(
 		WHERE user_subject = $1 FOR UPDATE
 	`, command.Identity.Subject, command.SessionID, m.now(),
 		m.config.ReadinessGrace.String()).Scan(&leaseReady); err != nil || !leaseReady {
-		return Call{}, ErrIneligible
+		return Call{}, callingLookupError(err, ErrIneligible)
 	}
 	var occupied bool
 	if err := tx.QueryRow(ctx, `
@@ -362,7 +362,7 @@ func (m *Module) StartOutboundCall(
 		SELECT provider_sip_username FROM human_calling_credentials
 		WHERE user_subject = $1 AND state = 'ACTIVE' FOR UPDATE
 	`, command.Identity.Subject).Scan(&sipUsername); err != nil {
-		return Call{}, ErrIneligible
+		return Call{}, callingLookupError(err, ErrIneligible)
 	}
 	if command.RetryOfCallID != "" {
 		var retryOwner string
@@ -372,7 +372,7 @@ func (m *Module) StartOutboundCall(
 			WHERE id = $1 AND direction = 'OUTBOUND' FOR UPDATE
 		`, command.RetryOfCallID).Scan(&retryOwner, &retryTerminal); err != nil ||
 			retryOwner != command.Identity.Subject || retryTerminal == nil {
-			return Call{}, ErrConflict
+			return Call{}, callingLookupError(err, ErrConflict)
 		}
 	}
 
@@ -517,11 +517,11 @@ func (m *Module) ConfirmOutboundMedia(
 		WHERE id = $1 AND direction = 'OUTBOUND' FOR UPDATE
 	`, command.CallID).Scan(&practiceID, &locationID, &destination,
 		&callerID, &terminal); err != nil || terminal != "" {
-		return Call{}, ErrConflict
+		return Call{}, callingLookupError(err, ErrConflict)
 	}
 	if _, err := m.access.LockMembershipAuthorization(ctx, tx, command.Identity,
 		practiceID, locationID); err != nil {
-		return Call{}, ErrDenied
+		return Call{}, callingLookupError(err, ErrDenied)
 	}
 	var staffLegID, staffControlID, staffSession, staffState string
 	var answered bool
@@ -532,14 +532,14 @@ func (m *Module) ConfirmOutboundMedia(
 		WHERE call_id = $1 AND role = 'STAFF' AND staff_subject = $2 FOR UPDATE
 	`, command.CallID, command.Identity.Subject).Scan(&staffLegID, &staffControlID,
 		&staffSession, &staffState, &answered); err != nil {
-		return Call{}, ErrConflict
+		return Call{}, callingLookupError(err, ErrConflict)
 	}
 	var ownsLease bool
 	if err := tx.QueryRow(ctx, `
 		SELECT session_id = $2 AND lease_expires_at > $3
 		FROM human_calling_softphone_leases WHERE user_subject = $1 FOR UPDATE
 	`, command.Identity.Subject, command.SessionID, m.now()).Scan(&ownsLease); err != nil {
-		return Call{}, ErrConflict
+		return Call{}, callingLookupError(err, ErrConflict)
 	}
 	if !ownsLease || staffSession != command.SessionID || !answered ||
 		!hmac.Equal([]byte(m.staffMediaToken(command.CallID, staffLegID)),
