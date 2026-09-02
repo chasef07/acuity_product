@@ -493,17 +493,18 @@
       {
         "displayName": "Any terminal Staff occupancy beyond reconciliation window",
         "conditionThreshold": {
-          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_terminal_staff_occupancy\" AND resource.type=\"cloud_run_worker_pool\"",
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_call_center_terminal_staff_occupancy_nonzero_count\" AND resource.type=\"cloud_run_worker_pool\"",
           "aggregations": [
             {
               "alignmentPeriod": "60s",
-              "perSeriesAligner": "ALIGN_PERCENTILE_99",
-              "crossSeriesReducer": "REDUCE_MAX"
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
             }
           ],
           "comparison": "COMPARISON_GT",
-          "thresholdValue": 1,
-          "duration": "60s"
+          "thresholdValue": 0,
+          "duration": "60s",
+          "evaluationMissingData": "EVALUATION_MISSING_DATA_INACTIVE"
         }
       }
     ]

@@ -20,38 +20,24 @@ func (m *Module) processCommand(
 	return m.executeCallLegCommand(ctx, commandID)
 }
 
-func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, error) {
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return "", false, fmt.Errorf("begin provider command claim: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	for {
-		var commandID string
-		err = tx.QueryRow(ctx, `
-		WITH call_candidate AS MATERIALIZED (
-			SELECT command.id, command.created_at
-			FROM human_calling_calls call
-			JOIN LATERAL (
-				SELECT pending.id, pending.created_at, pending.action,
-					pending.call_leg_id
-				FROM human_calling_provider_commands pending
-				WHERE pending.call_id = call.id
-					AND pending.state = 'PENDING'
-					AND pending.next_attempt_at <= $1
-					AND pending.action <> 'CREATE_JWT'
-					AND (
-						pending.depends_on_command_id IS NULL
-						OR EXISTS (
-							SELECT 1 FROM human_calling_provider_commands dependency
-							WHERE dependency.id = pending.depends_on_command_id
-								AND dependency.state IN ('SENT', 'RECONCILED')
-						)
-					)
-				ORDER BY pending.created_at, pending.id
-				LIMIT 1
-			) command ON true
-			WHERE NOT EXISTS (
+const nextCallLegCommandQuery = `
+	WITH call_candidate AS MATERIALIZED (
+		SELECT command.id, command.call_leg_id, command.created_at
+		FROM human_calling_provider_commands command
+		JOIN human_calling_calls call ON call.id = command.call_id
+		WHERE command.call_id IS NOT NULL
+			AND command.state = 'PENDING'
+			AND command.next_attempt_at <= $1
+			AND command.action <> 'CREATE_JWT'
+			AND (
+				command.depends_on_command_id IS NULL
+				OR EXISTS (
+					SELECT 1 FROM human_calling_provider_commands dependency
+					WHERE dependency.id = command.depends_on_command_id
+						AND dependency.state IN ('SENT', 'RECONCILED')
+				)
+			)
+			AND NOT EXISTS (
 				SELECT 1 FROM human_calling_provider_commands active
 				WHERE active.call_id = call.id
 					AND active.state IN ('SENDING', 'AMBIGUOUS')
@@ -63,38 +49,50 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 						OR active.call_leg_id = command.call_leg_id
 					)
 			)
-			ORDER BY command.created_at, command.id
-			FOR UPDATE OF call SKIP LOCKED
-			LIMIT 1
-		),
-		global_candidate AS MATERIALIZED (
-			SELECT command.id, command.created_at
-			FROM human_calling_provider_commands command
-			WHERE command.call_id IS NULL
-				AND command.state = 'PENDING'
-				AND command.next_attempt_at <= $1
-				AND command.action <> 'CREATE_JWT'
-				AND (
-					command.depends_on_command_id IS NULL
-					OR EXISTS (
-						SELECT 1 FROM human_calling_provider_commands dependency
-						WHERE dependency.id = command.depends_on_command_id
-							AND dependency.state IN ('SENT', 'RECONCILED')
-					)
-				)
-			ORDER BY command.created_at, command.id
-			FOR UPDATE SKIP LOCKED
-			LIMIT 1
-		)
-		SELECT candidate.id::text
-		FROM (
-			SELECT id, created_at FROM call_candidate
-			UNION ALL
-			SELECT id, created_at FROM global_candidate
-		) candidate
-		ORDER BY candidate.created_at, candidate.id
+		ORDER BY command.next_attempt_at, command.created_at, command.id
+		FOR UPDATE OF call SKIP LOCKED
 		LIMIT 1
-		`, m.now()).Scan(&commandID)
+	),
+	global_candidate AS MATERIALIZED (
+		SELECT command.id, command.call_leg_id, command.created_at
+		FROM human_calling_provider_commands command
+		WHERE command.call_id IS NULL
+			AND command.state = 'PENDING'
+			AND command.next_attempt_at <= $1
+			AND command.action <> 'CREATE_JWT'
+			AND (
+				command.depends_on_command_id IS NULL
+				OR EXISTS (
+					SELECT 1 FROM human_calling_provider_commands dependency
+					WHERE dependency.id = command.depends_on_command_id
+						AND dependency.state IN ('SENT', 'RECONCILED')
+				)
+			)
+		ORDER BY command.created_at, command.id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	)
+	SELECT candidate.id::text, COALESCE(candidate.call_leg_id::text, '')
+	FROM (
+		SELECT id, call_leg_id, created_at FROM call_candidate
+		UNION ALL
+		SELECT id, call_leg_id, created_at FROM global_candidate
+	) candidate
+	ORDER BY candidate.created_at, candidate.id
+	LIMIT 1
+`
+
+func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", false, fmt.Errorf("begin provider command claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for {
+		var commandID, callLegID string
+		err = tx.QueryRow(ctx, nextCallLegCommandQuery, m.now()).Scan(
+			&commandID, &callLegID,
+		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
 				return "", false, err
@@ -103,6 +101,16 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 		}
 		if err != nil {
 			return "", false, fmt.Errorf("select provider command: %w", err)
+		}
+		if callLegID != "" {
+			var lockedCallLegID string
+			if err := tx.QueryRow(ctx, `
+				SELECT id::text FROM human_calling_call_legs
+				WHERE id = $1
+				FOR UPDATE
+			`, callLegID).Scan(&lockedCallLegID); err != nil {
+				return "", false, fmt.Errorf("lock provider command CallLeg: %w", err)
+			}
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE human_calling_provider_commands
@@ -128,12 +136,12 @@ func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) erro
 		return fmt.Errorf("begin committed provider command claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var callID string
+	var callID, callLegID string
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(call_id::text, '')
+		SELECT COALESCE(call_id::text, ''), COALESCE(call_leg_id::text, '')
 		FROM human_calling_provider_commands
 		WHERE id = $1 AND state = 'PENDING'
-	`, commandID).Scan(&callID); err != nil {
+	`, commandID).Scan(&callID, &callLegID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
@@ -144,6 +152,16 @@ func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) erro
 			SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
 		`, callID).Scan(&callID); err != nil {
 			return fmt.Errorf("lock provider command Call: %w", err)
+		}
+	}
+	if callLegID != "" {
+		var lockedCallLegID string
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text FROM human_calling_call_legs
+			WHERE id = $1 AND call_id = $2
+			FOR UPDATE
+		`, callLegID, callID).Scan(&lockedCallLegID); err != nil {
+			return fmt.Errorf("lock provider command CallLeg: %w", err)
 		}
 	}
 	tag, err := tx.Exec(ctx, `

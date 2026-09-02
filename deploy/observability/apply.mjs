@@ -64,6 +64,36 @@ const run = (args, capture = false) => {
   return capture ? result.stdout.trim() : ""
 }
 
+if (apply && !metricsOnly) {
+  for (const channelName of new Set(notificationChannels)) {
+    const channelJSON = run(
+      [
+        "beta",
+        "monitoring",
+        "channels",
+        "describe",
+        channelName,
+        "--format=json",
+        "--project",
+        project,
+      ],
+      true,
+    )
+    const channel = JSON.parse(channelJSON)
+    if (channel.name !== channelName) {
+      throw new Error(
+        `notification channel ${channelName} did not resolve exactly`,
+      )
+    }
+    if (channel.enabled !== true) {
+      throw new Error(`notification channel ${channelName} is disabled`)
+    }
+    if (channel.verificationStatus === "UNVERIFIED") {
+      throw new Error(`notification channel ${channelName} is unverified`)
+    }
+  }
+}
+
 const existingMetricsJSON = run(
   [
     "logging",

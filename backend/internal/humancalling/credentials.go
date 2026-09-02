@@ -132,7 +132,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	recovered, err := m.recoverInterruptedCommandOwnership(
-		ctx, tx, credentialCommandOwner, m.now(),
+		ctx, tx, credentialCommandOwner, "", m.now(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("recover interrupted credential commands: %w", err)

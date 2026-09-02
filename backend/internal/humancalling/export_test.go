@@ -1,3 +1,7 @@
 package humancalling
 
 const StaleCallLegCandidateQueryForTest = staleCallLegCandidateQuery
+
+const NextCallLegCommandQueryForTest = nextCallLegCommandQuery
+
+const InterruptedCallLegCommandQueryForTest = interruptedCallLegCommandQuery

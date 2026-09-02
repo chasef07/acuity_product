@@ -34,8 +34,8 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 41 {
-		t.Fatalf("migration count = %d, want 41", migrationCount)
+	if migrationCount != 43 {
+		t.Fatalf("migration count = %d, want 43", migrationCount)
 	}
 	var pendingInteractionReceiptIndex string
 	if err := pool.QueryRow(ctx, `
@@ -101,6 +101,26 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	} {
 		if !strings.Contains(staleCommandIndex, fragment) {
 			t.Errorf("stale CallLeg command index omits %q: %s", fragment, staleCommandIndex)
+		}
+	}
+	var callingStateValidatorIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'human_calling_state_active_practice_idx'
+	`).Scan(&callingStateValidatorIndex); err != nil {
+		t.Fatalf("read Calling state validator index: %v", err)
+	}
+	for _, fragment := range []string{
+		"(practice_id, id)",
+		"terminal_outcome IS NULL",
+		"disposition_at IS NULL",
+		"'ENDED'::text",
+		"'VOICEMAIL'::text",
+	} {
+		if !strings.Contains(callingStateValidatorIndex, fragment) {
+			t.Errorf("Calling state validator index omits %q: %s",
+				fragment, callingStateValidatorIndex)
 		}
 	}
 	var messageThreadActivityIndex string

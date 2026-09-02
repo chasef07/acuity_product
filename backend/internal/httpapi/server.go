@@ -888,12 +888,16 @@ func (server *Server) GetCallingState(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
-	state, err := server.calling.ReadCallingState(ctx, identity)
+	state, notModified, err := server.calling.ReadCallingStateConditionally(
+		ctx,
+		identity,
+		r.Header.Get("If-None-Match"),
+	)
 	if err != nil {
 		server.writeCallingError(w, r, err)
 		return
 	}
-	if r.Header.Get("If-None-Match") == state.ETag {
+	if notModified {
 		w.Header().Set("ETag", state.ETag)
 		w.WriteHeader(http.StatusNotModified)
 		return
