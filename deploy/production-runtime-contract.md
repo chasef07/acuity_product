@@ -158,6 +158,13 @@ MESSAGING_ATTACHMENT_BUCKET_LOCATION=us-east1 \
 The command also rejects a Cloud SQL connection name or Messaging attachment
 bucket location outside `us-east1`.
 
+The automated release performs a second, live readback after every revision is
+promoted and its smoke checks pass. It compares each request service's
+minimum, maximum, concurrency, and application pool plus the worker pool's
+fixed instance count, concurrency, and application pool against
+`production-runtime-contract.json`. Any missing or different value keeps the
+release incomplete; the same check runs after a destructive cutover.
+
 Messaging adds one shared private Cloud Storage volume mounted at
 `MESSAGING_ATTACHMENT_DIRECTORY` by `portal-api`, `provider-ingress`, and
 `worker`. Those three service accounts need only the object permissions their

@@ -4296,6 +4296,71 @@ func TestCredentialReconciliationOwnsInterruptedCredentialRecovery(t *testing.T)
 	}
 }
 
+func TestCredentialMaintenanceRecoversOneInterruptedCommandPerTick(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.August, 15, 12, 40, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	_, staff := provisionConcurrentStaff(
+		t, accessModule, now, "bounded-interrupted-credential-recovery", 2,
+	)
+	calling := humancalling.New(pool, accessModule, commandOnlyProvider{}, humancalling.Config{
+		CredentialConnectionID: "staff-credential-connection",
+	}, func() time.Time { return now })
+	if err := calling.ReconcileCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if tag, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_provider_commands
+		SET state = 'SENDING', created_at = $2, updated_at = $2
+		WHERE user_subject = ANY($1::text[]) AND action = 'CREATE_CREDENTIAL'
+	`, []string{staff[0].Subject, staff[1].Subject}, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	} else if tag.RowsAffected() != 2 {
+		t.Fatalf("interrupted credential commands = %d, want 2", tag.RowsAffected())
+	}
+
+	processed, err := calling.ProcessNextCredentialReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("first credential maintenance tick = processed:%t err:%v", processed, err)
+	}
+	assertCredentialRecoveryCounts(t, pool, 1, 1)
+
+	processed, err = calling.ProcessNextCredentialReconciliation(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("second credential maintenance tick = processed:%t err:%v", processed, err)
+	}
+	assertCredentialRecoveryCounts(t, pool, 0, 2)
+}
+
+func assertCredentialRecoveryCounts(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	sending int,
+	ambiguous int,
+) {
+	t.Helper()
+	var actualSending, actualAmbiguous int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*) FILTER (WHERE state = 'SENDING'),
+			count(*) FILTER (WHERE state = 'AMBIGUOUS')
+		FROM human_calling_provider_commands
+		WHERE call_id IS NULL
+			AND action IN ('CREATE_CREDENTIAL', 'DISABLE_CREDENTIAL')
+	`).Scan(&actualSending, &actualAmbiguous); err != nil {
+		t.Fatal(err)
+	}
+	if actualSending != sending || actualAmbiguous != ambiguous {
+		t.Fatalf(
+			"credential recovery states = sending:%d ambiguous:%d, want %d/%d",
+			actualSending,
+			actualAmbiguous,
+			sending,
+			ambiguous,
+		)
+	}
+}
+
 func TestCredentialReconciliationRecoversWithoutObservationAdapter(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Date(2026, time.August, 15, 12, 45, 0, 0, time.UTC)

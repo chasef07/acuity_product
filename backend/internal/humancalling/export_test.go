@@ -1,3 +1,0 @@
-package humancalling
-
-const StaleCallLegCandidateQueryForTest = staleCallLegCandidateQuery

@@ -308,6 +308,53 @@ func TestCallCenterAlertPoliciesMatchInitialOperatingThresholds(t *testing.T) {
 	}
 }
 
+func TestTerminalStaffOccupancyUsesAnExactNonzeroCounter(t *testing.T) {
+	directory := deployDirectory(t)
+	metrics := decodeStrict[[]logMetric](
+		t,
+		filepath.Join(directory, "observability", "log-metrics.json"),
+	)
+	var occupancyMetric logMetric
+	for _, metric := range metrics {
+		if metric.Name == "acuity_call_center_terminal_staff_occupancy_nonzero_count" {
+			occupancyMetric = metric
+			break
+		}
+	}
+	if occupancyMetric.Name == "" {
+		t.Fatal("terminal Staff occupancy omits its nonzero counter")
+	}
+	if occupancyMetric.MetricDescriptor.ValueType != "INT64" ||
+		occupancyMetric.ValueExtractor != "" || len(occupancyMetric.BucketOptions) != 0 ||
+		!strings.Contains(occupancyMetric.Filter, "jsonPayload.staff_occupancy>0") {
+		t.Fatalf("terminal Staff occupancy metric is not an exact nonzero counter: %#v", occupancyMetric)
+	}
+
+	policies := decodeStrict[[]alertPolicy](
+		t,
+		filepath.Join(directory, "observability", "alert-policies.json"),
+	)
+	for _, policy := range policies {
+		for _, condition := range policy.Conditions {
+			if condition.DisplayName != "Any terminal Staff occupancy beyond reconciliation window" {
+				continue
+			}
+			threshold := condition.ConditionThreshold
+			if !strings.Contains(
+				threshold.Filter,
+				"acuity_call_center_terminal_staff_occupancy_nonzero_count",
+			) || len(threshold.Aggregations) != 1 ||
+				threshold.Aggregations[0].PerSeriesAligner != "ALIGN_SUM" ||
+				threshold.ThresholdValue != 0 ||
+				threshold.EvaluationMissingData != "EVALUATION_MISSING_DATA_INACTIVE" {
+				t.Fatalf("terminal Staff occupancy condition is not exact: %#v", threshold)
+			}
+			return
+		}
+	}
+	t.Fatal("terminal Staff occupancy alert condition is missing")
+}
+
 func TestProductionDeployProfileConsumesCheckedContract(t *testing.T) {
 	directory := deployDirectory(t)
 	script, err := os.ReadFile(filepath.Join(
@@ -443,7 +490,7 @@ func expectedLogMetrics() map[string]expectedMetric {
 			valueType:      "DISTRIBUTION",
 		}
 	}
-	return map[string]expectedMetric{
+	expected := map[string]expectedMetric{
 		"acuity_backend_availability_count":                       counter("acuity_backend_availability"),
 		"acuity_backend_availability_seconds":                     distribution("acuity_backend_availability", "seconds"),
 		"acuity_call_center_webhook_acknowledgement_count":        counter("acuity_call_center_webhook_acknowledgement"),
@@ -472,8 +519,10 @@ func expectedLogMetrics() map[string]expectedMetric {
 		"acuity_call_center_sse_listener_reconnect_failure_count": counter("acuity_call_center_sse_listener"),
 		"acuity_call_center_staff_answer_count":                   counter("acuity_call_center_staff_answer"),
 		"acuity_call_center_answer_to_bridge_seconds":             distribution("acuity_call_center_answer_to_bridge", "seconds"),
-		"acuity_call_center_terminal_staff_occupancy":             distribution("acuity_call_center_terminal_cleanup", "staff_occupancy"),
 	}
+	expected["acuity_call_center_terminal_staff_occupancy_nonzero_count"] =
+		counter("acuity_call_center_terminal_cleanup")
+	return expected
 }
 
 func expectedAlerts() map[string]expectedAlert {
@@ -498,7 +547,7 @@ func expectedAlerts() map[string]expectedAlert {
 		"Lost Staff answer race ratio above 0.5":                    {"acuity_call_center_staff_answer_count", 0.5, "0s"},
 		"At least ten Staff answers in five minutes":                {"acuity_call_center_staff_answer_count", 9, "0s"},
 		"Answer-to-Bridge p95 above eight seconds":                  {"acuity_call_center_answer_to_bridge_seconds", 8, "60s"},
-		"Any terminal Staff occupancy beyond reconciliation window": {"acuity_call_center_terminal_staff_occupancy", 1, "60s"},
+		"Any terminal Staff occupancy beyond reconciliation window": {"acuity_call_center_terminal_staff_occupancy_nonzero_count", 0, "60s"},
 	}
 }
 

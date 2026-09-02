@@ -112,6 +112,18 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 	assertCapturedCommand(t, commands, "run\tservices\tupdate-traffic\tacuity-web",
 		"--to-revisions\tacuity-web-release-1234=100",
 	)
+	webPromotion := commandIndex(commands, "run\tservices\tupdate-traffic\tacuity-web")
+	runtimeVerification := -1
+	for index, captured := range commands {
+		if strings.HasPrefix(captured, "run\tservices\tdescribe\tacuity-web") &&
+			strings.Contains(captured, "--format\tjson") {
+			runtimeVerification = index
+			break
+		}
+	}
+	if runtimeVerification <= webPromotion {
+		t.Fatalf("runtime contract was not verified after rollout:\n%s", strings.Join(commands, "\n"))
+	}
 
 	curlCalls, err := os.ReadFile(curlCapture)
 	if err != nil {
@@ -127,6 +139,48 @@ func TestProductionReleaseMigratesStagesAndPromotesOneImmutableBuild(t *testing.
 		if !strings.Contains(string(curlCalls), expected) {
 			t.Errorf("release smoke omits %s:\n%s", expected, curlCalls)
 		}
+	}
+}
+
+func TestProductionReleaseFailsClosedOnLiveRuntimeContractDrift(t *testing.T) {
+	for _, destructiveCutover := range []bool{false, true} {
+		name := "ordinary rollout"
+		if destructiveCutover {
+			name = "destructive cutover"
+		}
+		t.Run(name, func(t *testing.T) {
+			directory := releaseDeployDirectory(t)
+			path, gcloudCapture, curlCapture := installReleaseFakes(t)
+			environment := append(
+				releaseEnvironment(),
+				"GCLOUD_RUNTIME_DRIFT_SERVICE=acuity-portal-api",
+			)
+			if destructiveCutover {
+				environment = append(
+					environment,
+					"CALLLEG_DESTRUCTIVE_CUTOVER=true",
+					"CALLLEG_CUTOVER_EVIDENCE_VERIFIED=true",
+					"CALLLEG_CUTOVER_WINDOW_CONFIRMED=true",
+					"CALLLEG_CUTOVER_EVIDENCE_PATH="+filepath.Join(strings.Split(path, ":")[0], "cutover-evidence.json"),
+				)
+			}
+			command := exec.Command("bash", filepath.Join(directory, "deploy-production-release.sh"))
+			command.Env = append([]string{
+				"PATH=" + path,
+				"GCLOUD_CAPTURE=" + gcloudCapture,
+				"CURL_CAPTURE=" + curlCapture,
+			}, environment...)
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatalf("release accepted live runtime drift:\n%s", output)
+			}
+			if !strings.Contains(
+				string(output),
+				"acuity-portal-api runtime contract drift: maximumInstances expected 3, got 20",
+			) {
+				t.Fatalf("runtime drift error = %q", output)
+			}
+		})
 	}
 }
 
@@ -164,6 +218,7 @@ func TestProductionReleaseLoadsWorkerCapacityFromRuntimeContract(t *testing.T) {
 	for _, name := range []string{
 		"deploy-production-release.sh",
 		"production-runtime-contract.json",
+		"verify-production-runtime.mjs",
 	} {
 		raw, err := os.ReadFile(filepath.Join(directory, name))
 		if err != nil {
@@ -211,6 +266,7 @@ func TestProductionReleaseLoadsWorkerCapacityFromRuntimeContract(t *testing.T) {
 		"PATH=" + path,
 		"GCLOUD_CAPTURE=" + gcloudCapture,
 		"CURL_CAPTURE=" + curlCapture,
+		"GCLOUD_WORKER_POOL=3",
 	}, environmentWithValue(releaseEnvironment(), "USABLE_DATABASE_CONNECTIONS", "30")...)
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -763,13 +819,38 @@ case "$*" in
   "run worker-pools describe "*"spec.template.scaling.manualInstanceCount"*)
     printf '%s\n' "0"
     ;;
+  "run services describe "*"--format json"*)
+    service="$4"
+    case "$service" in
+      acuity-web)
+        concurrency=40; minimum=1; maximum=2; pool_name=AUTH_DB_POOL_MAX; pool=1 ;;
+      acuity-portal-api)
+        concurrency=8; minimum=1; maximum=3; pool_name=DATABASE_POOL_MAX; pool=4 ;;
+      acuity-provider-ingress)
+        concurrency=20; minimum=1; maximum=2; pool_name=DATABASE_POOL_MAX; pool=1 ;;
+      acuity-realtime)
+        concurrency=50; minimum=1; maximum=2; pool_name=DATABASE_POOL_MAX; pool=1 ;;
+    esac
+    if [ "${GCLOUD_RUNTIME_DRIFT_SERVICE:-}" = "$service" ]; then
+      maximum=20
+    fi
+    printf '{"metadata":{"name":"%s","annotations":{"run.googleapis.com/minScale":"%s","run.googleapis.com/maxScale":"%s"}},"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/maxScale":"20"}},"spec":{"containerConcurrency":%s,"containers":[{"env":[{"name":"%s","value":"%s"}]}]}}}}\n' \
+      "$service" "$minimum" "$maximum" "$concurrency" "$pool_name" "$pool"
+    ;;
+  "run worker-pools describe acuity-worker "*"--format json"*)
+    printf '{"metadata":{"name":"acuity-worker"},"spec":{"template":{"scaling":{"manualInstanceCount":"1"},"spec":{"containerConcurrency":0,"containers":[{"env":[{"name":"DATABASE_POOL_MAX","value":"%s"}]}]}}}}\n' "${GCLOUD_WORKER_POOL:-2}"
+    ;;
 esac
 `
 	curl := `#!/bin/sh
 set -eu
 printf '%s\n' "$*" >>"$CURL_CAPTURE"
 `
-	node := "#!/bin/sh\nset -eu\n"
+	realNode, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal("locate node:", err)
+	}
+	node := "#!/bin/sh\nset -eu\ncase \"$1\" in\n  *verify-production-runtime.mjs) exec \"" + realNode + "\" \"$@\" ;;\nesac\n"
 	if err := os.WriteFile(gcloudPath, []byte(gcloud), 0o755); err != nil {
 		t.Fatalf("write fake gcloud: %v", err)
 	}

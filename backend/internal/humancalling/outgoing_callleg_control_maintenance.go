@@ -25,8 +25,12 @@ func (m *Module) recoverInterruptedCommandOwnership(
 	ctx context.Context,
 	tx pgx.Tx,
 	owner interruptedCommandOwner,
+	commandID string,
 	now time.Time,
 ) (bool, error) {
+	if commandID == "" {
+		return false, errors.New("interrupted provider command ID is required")
+	}
 	var ownerPredicate string
 	switch owner {
 	case outgoingCallLegCommandOwner:
@@ -37,6 +41,7 @@ func (m *Module) recoverInterruptedCommandOwnership(
 	default:
 		return false, fmt.Errorf("unknown interrupted command owner %d", owner)
 	}
+	ownerPredicate += " AND command.id = $2"
 	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands command
 		SET state = CASE
@@ -71,7 +76,7 @@ func (m *Module) recoverInterruptedCommandOwnership(
 		WHERE `+ownerPredicate+`
 			AND command.state = 'SENDING'
 			AND command.updated_at <= $1::timestamptz - interval '30 seconds'
-	`, now)
+	`, now, commandID)
 	if err != nil {
 		return false, err
 	}
@@ -202,6 +207,19 @@ func (m *Module) ClaimNextCommand(
 	}, true, nil
 }
 
+const interruptedCallLegCommandQuery = `
+	SELECT command.id::text, call.id::text,
+		COALESCE(command.call_leg_id::text, '')
+	FROM human_calling_provider_commands command
+	JOIN human_calling_calls call ON call.id = command.call_id
+	WHERE command.call_id IS NOT NULL
+		AND command.state = 'SENDING'
+		AND command.updated_at <= $1::timestamptz - interval '30 seconds'
+	ORDER BY command.updated_at, command.id
+	FOR UPDATE OF call SKIP LOCKED
+	LIMIT 1
+`
+
 func (m *Module) recoverInterruptedCommands(ctx context.Context) (bool, error) {
 	now := m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -209,33 +227,28 @@ func (m *Module) recoverInterruptedCommands(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("begin interrupted provider command recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
-		SELECT call.id::text
-		FROM human_calling_calls call
-		WHERE EXISTS (
-			SELECT 1 FROM human_calling_provider_commands command
-			WHERE command.call_id = call.id AND command.state = 'SENDING'
-				AND command.updated_at <= $1::timestamptz - interval '30 seconds'
-		)
-		ORDER BY call.id
-		FOR UPDATE OF call
-	`, now)
-	if err != nil {
-		return false, fmt.Errorf("lock Calls for interrupted provider command recovery: %w", err)
+	var commandID, callID, callLegID string
+	err = tx.QueryRow(ctx, interruptedCallLegCommandQuery, now).Scan(
+		&commandID, &callID, &callLegID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
 	}
-	for rows.Next() {
-		var callID string
-		if err := rows.Scan(&callID); err != nil {
-			rows.Close()
-			return false, fmt.Errorf("scan interrupted provider command Call: %w", err)
+	if err != nil {
+		return false, fmt.Errorf("select interrupted provider command: %w", err)
+	}
+	if callLegID != "" {
+		var lockedCallLegID string
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text FROM human_calling_call_legs
+			WHERE id = $1 AND call_id = $2
+			FOR UPDATE
+		`, callLegID, callID).Scan(&lockedCallLegID); err != nil {
+			return false, fmt.Errorf("lock interrupted provider command CallLeg: %w", err)
 		}
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate interrupted provider command Calls: %w", err)
-	}
 	recovered, err := m.recoverInterruptedCommandOwnership(
-		ctx, tx, outgoingCallLegCommandOwner, now,
+		ctx, tx, outgoingCallLegCommandOwner, commandID, now,
 	)
 	if err != nil {
 		return false, fmt.Errorf("recover interrupted provider commands: %w", err)

@@ -702,6 +702,11 @@ fi
 web_url="$(service_url acuity-web)"
 smoke "$web_url/sign-in"
 smoke "$web_url/api/auth/get-session"
+node \
+  "$script_directory/verify-production-runtime.mjs" \
+  "$database_contract" \
+  "$PROJECT_ID" \
+  "$REGION"
 
 release_complete=true
 trap - ERR

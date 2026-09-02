@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -52,43 +53,99 @@ type CallingStateCall struct {
 	Version      int64
 }
 
+type callingAccessSnapshot struct {
+	ActorSubject     string                  `json:"actorSubject"`
+	PlatformOperator bool                    `json:"platformOperator"`
+	Practices        []callingPracticeAccess `json:"practices"`
+}
+
+type callingPracticeAccess struct {
+	PracticeID     string             `json:"practiceId"`
+	Membership     *access.Membership `json:"membership,omitempty"`
+	Locations      []access.Location  `json:"locations"`
+	CallingEnabled bool               `json:"callingEnabled"`
+}
+
+func callingAccessState(discovery access.Discovery) callingAccessSnapshot {
+	practices := make([]callingPracticeAccess, 0, len(discovery.Practices))
+	for _, practice := range discovery.Practices {
+		practices = append(practices, callingPracticeAccess{
+			PracticeID:     practice.ID,
+			Membership:     practice.Membership,
+			Locations:      practice.Locations,
+			CallingEnabled: practice.CallingEnabled,
+		})
+	}
+	return callingAccessSnapshot{
+		ActorSubject:     discovery.Actor.Subject,
+		PlatformOperator: discovery.PlatformOperator,
+		Practices:        practices,
+	}
+}
+
 func (m *Module) ReadCallingState(
 	ctx context.Context,
 	identity access.Identity,
 ) (CallingState, error) {
+	state, _, err := m.ReadCallingStateConditionally(ctx, identity, "")
+	return state, err
+}
+
+// ReadCallingStateConditionally checks the authoritative state token before
+// loading the full Calling projection. A matching validator returns only the
+// validator and does not execute the multi-query projection read.
+func (m *Module) ReadCallingStateConditionally(
+	ctx context.Context,
+	identity access.Identity,
+	ifNoneMatch string,
+) (CallingState, bool, error) {
 	if identity.Subject == "" || !identity.EmailVerified {
-		return CallingState{}, ErrDenied
+		return CallingState{}, false, ErrDenied
 	}
 	discovery, err := m.access.DiscoverActor(ctx, identity)
 	if err != nil || !hasOperationalCallingAccess(discovery) {
-		return CallingState{}, ErrDenied
+		return CallingState{}, false, ErrDenied
 	}
+	etag, err := m.readCallingStateETag(ctx, identity.Subject, discovery)
+	if err != nil {
+		return CallingState{}, false, err
+	}
+	if ifNoneMatch != "" && ifNoneMatch == etag {
+		return CallingState{ETag: etag}, true, nil
+	}
+	state, err := m.readCallingState(ctx, identity.Subject)
+	if err != nil {
+		return CallingState{}, false, err
+	}
+	state.ETag = etag
+	return state, false, nil
+}
 
+func (m *Module) readCallingState(
+	ctx context.Context,
+	staffSubject string,
+) (CallingState, error) {
 	state := CallingState{Ringing: []RingingCallLeg{}, Transfers: []StaffTransfer{}}
-	var leaseVersion int64
 	if err := m.database.QueryRow(ctx, `
 		SELECT session_id, lease_expires_at,
 			lease_expires_at > $2,
 			(desired_available AND registered AND microphone_ready
 				AND audio_ready AND session_healthy
-				AND lease_expires_at > $2),
-			version
+				AND lease_expires_at > $2)
 		FROM human_calling_softphone_leases
 		WHERE user_subject = $1
-	`, identity.Subject, m.now()).Scan(
+	`, staffSubject, m.now()).Scan(
 		&state.Softphone.SessionID,
 		&state.Softphone.LeaseExpiresAt,
 		&state.Softphone.Owner,
 		&state.Softphone.Available,
-		&leaseVersion,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			state.ETag = callingStateETag(state, leaseVersion)
 			return state, nil
 		}
 		return CallingState{}, fmt.Errorf("read Calling lease state: %w", err)
 	}
-	if err := m.loadCurrentCallCapacity(ctx, identity.Subject, &state.Softphone); err != nil {
+	if err := m.loadCurrentCallCapacity(ctx, staffSubject, &state.Softphone); err != nil {
 		return CallingState{}, err
 	}
 
@@ -156,7 +213,7 @@ func (m *Module) ReadCallingState(
 				)
 			)
 		ORDER BY leg.created_at, leg.id
-	`, identity.Subject, m.config.RingWindowDuration.String())
+	`, staffSubject, m.config.RingWindowDuration.String())
 	if err != nil {
 		return CallingState{}, fmt.Errorf("read ringing CallLegs: %w", err)
 	}
@@ -181,13 +238,13 @@ func (m *Module) ReadCallingState(
 	}
 	rows.Close()
 
-	state.Bridged, err = m.readStaffStateCall(ctx, identity.Subject, `
+	state.Bridged, err = m.readStaffStateCall(ctx, staffSubject, `
 		leg.state = 'BRIDGED' AND call.terminal_outcome IS NULL
 	`)
 	if err != nil {
 		return CallingState{}, err
 	}
-	state.Disposition, err = m.readStaffStateCall(ctx, identity.Subject, `
+	state.Disposition, err = m.readStaffStateCall(ctx, staffSubject, `
 		leg.bridged_at IS NOT NULL AND call.terminal_outcome = 'ENDED'
 		AND call.disposition_at IS NULL
 		AND leg.id = (
@@ -199,7 +256,7 @@ func (m *Module) ReadCallingState(
 	if err != nil {
 		return CallingState{}, err
 	}
-	state.Voicemail, err = m.readScopedVoicemailState(ctx, identity.Subject)
+	state.Voicemail, err = m.readScopedVoicemailState(ctx, staffSubject)
 	if err != nil {
 		return CallingState{}, err
 	}
@@ -218,7 +275,7 @@ func (m *Module) ReadCallingState(
 				)
 			)
 		ORDER BY transfer.created_at, transfer.id
-	`, identity.Subject)
+	`, staffSubject)
 	if err != nil {
 		return CallingState{}, fmt.Errorf("read active staff transfers: %w", err)
 	}
@@ -236,7 +293,6 @@ func (m *Module) ReadCallingState(
 	}
 	transferRows.Close()
 
-	state.ETag = callingStateETag(state, leaseVersion)
 	return state, nil
 }
 
@@ -361,33 +417,132 @@ func (m *Module) readScopedVoicemailState(
 	return &result, nil
 }
 
-func callingStateETag(state CallingState, leaseVersion int64) string {
-	value := fmt.Sprintf("lease:%d:%s:%t:%t:%s:%s", leaseVersion,
-		state.Softphone.SessionID, state.Softphone.Owner, state.Softphone.Available,
-		state.Softphone.ActiveCallID, state.Softphone.PendingOutcomeCallID)
-	for _, leg := range state.Ringing {
-		value += fmt.Sprintf("|ring:%s:%s:%s:%s:%s:%d", leg.CallID, leg.CallLegID,
-			leg.Phone, leg.Deadline.UTC().Format(time.RFC3339Nano), leg.State, leg.Version)
-	}
-	for _, transfer := range state.Transfers {
-		value += fmt.Sprintf("|transfer:%s:%s:%s:%s", transfer.ID, transfer.State,
-			transfer.TargetCallLegID, transfer.ExpiresAt.UTC().Format(time.RFC3339Nano))
-	}
-	orderedCalls := []struct {
-		name string
-		call *CallingStateCall
-	}{
-		{name: "bridged", call: state.Bridged},
-		{name: "voicemail", call: state.Voicemail},
-		{name: "disposition", call: state.Disposition},
-	}
-	for _, item := range orderedCalls {
-		name, call := item.name, item.call
-		if call != nil {
-			value += fmt.Sprintf("|%s:%s:%s:%s:%d", name, call.CallID,
-				call.CallLegID, call.State, call.Version)
+func (m *Module) readCallingStateETag(
+	ctx context.Context,
+	staffSubject string,
+	discovery access.Discovery,
+) (string, error) {
+	practiceIDs := make([]string, 0, len(discovery.Practices))
+	locationIDs := make([]string, 0)
+	for _, practice := range discovery.Practices {
+		if practice.CallingEnabled {
+			practiceIDs = append(practiceIDs, practice.ID)
+			for _, location := range practice.Locations {
+				locationIDs = append(locationIDs, location.ID)
+			}
 		}
 	}
-	digest := sha256.Sum256([]byte(value))
-	return `"` + base64.RawURLEncoding.EncodeToString(digest[:]) + `"`
+	accessSnapshot, err := json.Marshal(callingAccessState(discovery))
+	if err != nil {
+		return "", fmt.Errorf("encode Calling access state: %w", err)
+	}
+
+	// The token query reads only compact, potentially visible active state. It
+	// deliberately avoids the projection's location, handoff, and scope joins:
+	// those values are immutable after Call admission or versioned by Discovery.
+	// Provider-command rows remain part of the token because command acceptance
+	// can change ringing or voicemail state before another Call mutation occurs.
+	var callingSnapshot string
+	if err := m.database.QueryRow(ctx, `
+		WITH relevant_call_ids AS MATERIALIZED (
+			SELECT call.id
+			FROM human_calling_calls call
+			WHERE call.practice_id = ANY($2::uuid[])
+				AND call.location_id = ANY($3::uuid[])
+				AND call.disposition_at IS NULL
+				AND (
+					call.terminal_outcome = 'VOICEMAIL'
+					OR (
+						call.terminal_outcome IS NULL
+						AND EXISTS (
+							SELECT 1
+							FROM human_calling_provider_commands voicemail
+							WHERE voicemail.call_id = call.id
+								AND voicemail.action IN (
+									'SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING'
+								)
+								AND voicemail.state IN (
+									'PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED'
+								)
+						)
+					)
+				)
+			UNION
+			SELECT own_leg.call_id
+			FROM human_calling_call_legs own_leg
+			JOIN human_calling_calls call ON call.id = own_leg.call_id
+			WHERE own_leg.role = 'STAFF'
+				AND own_leg.staff_subject = $1
+				AND (
+					own_leg.state IN ('PENDING', 'DIALING', 'RINGING', 'ANSWERED',
+						'BRIDGE_PENDING', 'BRIDGED')
+					OR (own_leg.state = 'ENDING' AND own_leg.answered_at IS NOT NULL)
+					OR (
+						own_leg.bridged_at IS NOT NULL
+						AND call.terminal_outcome = 'ENDED'
+						AND call.disposition_at IS NULL
+					)
+				)
+			UNION
+			SELECT own_transfer.call_id
+			FROM human_calling_staff_transfers own_transfer
+			WHERE own_transfer.state IN ('REQUESTED', 'ACCEPTED')
+				AND own_transfer.location_id = ANY($3::uuid[])
+				AND (
+					own_transfer.requested_by_subject = $1
+					OR own_transfer.recipient_subject = $1
+				)
+		), relevant_calls AS MATERIALIZED (
+			SELECT call.*
+			FROM human_calling_calls call
+			JOIN relevant_call_ids relevant ON relevant.id = call.id
+		), state_rows AS (
+			SELECT 'lease'::text AS kind, lease.user_subject AS id,
+				to_jsonb(lease) || jsonb_build_object(
+					'leaseCurrent', lease.lease_expires_at > $4
+				) AS value
+			FROM human_calling_softphone_leases lease
+			WHERE lease.user_subject = $1
+			UNION ALL
+			SELECT 'call', call.id::text, to_jsonb(call)
+			FROM relevant_calls call
+			UNION ALL
+			SELECT 'leg', leg.id::text, to_jsonb(leg)
+			FROM human_calling_call_legs leg
+			JOIN relevant_calls call ON call.id = leg.call_id
+			UNION ALL
+			SELECT 'command', command.id::text, jsonb_build_object(
+				'callId', command.call_id,
+				'callLegId', command.call_leg_id,
+				'action', command.action,
+				'state', command.state,
+				'sentAt', command.sent_at,
+				'createdAt', command.created_at
+			)
+			FROM human_calling_provider_commands command
+			JOIN relevant_calls call ON call.id = command.call_id
+			UNION ALL
+			SELECT 'transfer', transfer.id::text, to_jsonb(transfer)
+			FROM human_calling_staff_transfers transfer
+			JOIN relevant_calls call ON call.id = transfer.call_id
+		)
+		SELECT COALESCE(
+			jsonb_agg(
+				jsonb_build_array(kind, id, value)
+				ORDER BY kind, id
+			)::text,
+			'[]'
+		)
+		FROM state_rows
+	`, staffSubject, practiceIDs, locationIDs, m.now()).Scan(&callingSnapshot); err != nil {
+		return "", fmt.Errorf("read Calling state validator: %w", err)
+	}
+
+	digest := sha256.New()
+	_, _ = digest.Write(accessSnapshot)
+	_, _ = digest.Write([]byte{0})
+	_, _ = digest.Write([]byte(callingSnapshot))
+	_, _ = digest.Write([]byte{0})
+	_, _ = digest.Write([]byte(m.config.RingWindowDuration.String()))
+	return `"` + base64.RawURLEncoding.EncodeToString(digest.Sum(nil)) + `"`, nil
 }

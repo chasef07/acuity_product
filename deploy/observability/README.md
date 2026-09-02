@@ -97,7 +97,11 @@ Metric updates are idempotent by metric name. Policy updates resolve exactly one
 existing policy by its immutable `acuity_policy` label and fail closed if
 duplicates exist. Existing policy and condition resource names are preserved,
 so an unchanged apply does not replace the conditions. Notification channels
-are required for apply and are never stored in the repo.
+are required for apply and are never stored in the repo. Before any mutation,
+apply reads each configured channel and fails closed when it does not resolve
+exactly, is disabled, or is explicitly unverified. Cloud Monitoring's
+unspecified verification status remains valid for channel types that do not
+require verification.
 
 Run the offline contract and identity checks with:
 
@@ -135,11 +139,12 @@ availability SLO:
 | Answer-to-Bridge p95 above eight seconds | p95 over 10 minutes for 60 seconds |
 | Any terminal Staff occupancy beyond reconciliation window | any sampled occupancy for 60 seconds after the 60-second reconciliation window |
 
-The quarantine-depth and terminal-occupancy metrics use width-one linear
-distribution buckets. Cloud Monitoring interpolates a raw zero sample to a p99
-just below `1` and a raw one sample to a p99 just below `2`, so their alert
-threshold is `> 1`. This preserves the intended "any nonzero count" behavior
-without holding incidents open on healthy zero samples.
+The terminal-occupancy metric is a counter whose log filter accepts only
+observations where `staff_occupancy > 0`. Its alert sums those nonzero
+observations and triggers above zero; missing counter data is treated as
+inactive. Healthy zero samples therefore cannot be interpolated into false
+incidents. Quarantine depth remains a width-one linear distribution with a
+threshold above one to distinguish raw zero and one values.
 
 Load evidence must replace the receipt-depth and Staff-answer-contention hypotheses
 with measured baselines before the production gate is complete.
