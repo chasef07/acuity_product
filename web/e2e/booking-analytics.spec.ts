@@ -35,7 +35,16 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
           new Date(start.getTime() + (300 + i * 60) * 1000),
           booked ? "BOOKING" : "INDETERMINATE",
           booked ? `test-appointment-${id}` : null,
-          booked ? { status: "booked" } : null,
+          booked
+            ? {
+                status: "booked",
+                appointmentId: `test-appointment-${id}`,
+                ...(i === 2
+                  ? { appointmentTypeName: "New Adult Medical" }
+                  : {}),
+                ...(i === 1 ? { appointmentTypeName: "Post Op" } : {}),
+              }
+            : null,
           booked ? new Date(start.getTime() + (200 + i * 30) * 1000) : null,
           i === 5
             ? null
@@ -55,7 +64,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
               },
           {
             domainOutcomes:
-              i === 2 || i === 5
+              i === 1 || i === 2 || i === 5
                 ? []
                 : [
                     {
@@ -94,6 +103,24 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByText("Availability calls", { exact: true }),
     ).toHaveCount(0)
     await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0)
+    const breakdown = page.getByRole("region", {
+      name: "Breakdown",
+      exact: true,
+    })
+    await expect(
+      breakdown
+        .getByRole("row")
+        .filter({ hasText: "New patients" })
+        .getByRole("cell")
+        .nth(1),
+    ).toHaveText("2")
+    await expect(
+      breakdown
+        .getByRole("row")
+        .filter({ hasText: "Existing patients" })
+        .getByRole("cell")
+        .nth(1),
+    ).toHaveText("2")
     await page.getByRole("button", { name: "Conversion", exact: true }).click()
     await expect(
       performance.getByText(
@@ -111,7 +138,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toBeVisible()
     await expect(
       page.getByText(
-        "New/existing breakdown covers 4 of 6 calls. Totals include all calls.",
+        "New/existing breakdown covers 5 of 6 calls. Totals include all calls.",
         { exact: true },
       ),
     ).toBeVisible()
@@ -119,8 +146,12 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByRole("cell", { name: "Unknown", exact: true }),
     ).toHaveCount(0)
     // Each series has just one observation: it must still render a visible mark.
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(3)
-    for (const dot of await performance.locator(".recharts-line-dots circle").all()) {
+    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
+      3,
+    )
+    for (const dot of await performance
+      .locator(".recharts-line-dots circle")
+      .all()) {
       await expect(dot).toBeVisible()
       await expect(dot).not.toHaveCSS("fill", "rgb(255, 255, 255)")
     }
@@ -133,8 +164,12 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       page.getByRole("button", { name: "Duration", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(3)
-    for (const dot of await performance.locator(".recharts-line-dots circle").all()) {
+    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
+      3,
+    )
+    for (const dot of await performance
+      .locator(".recharts-line-dots circle")
+      .all()) {
       await expect(dot).toBeVisible()
       await expect(dot).not.toHaveCSS("fill", "rgb(255, 255, 255)")
     }

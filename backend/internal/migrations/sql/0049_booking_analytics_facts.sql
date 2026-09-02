@@ -13,6 +13,7 @@ DECLARE
     native_items jsonb;
     historical_tools jsonb;
     outcomes jsonb;
+    appointment_type text;
 BEGIN
     IF NEW.status = 'IN_PROGRESS' OR NEW.lifecycle_stage <> 3 THEN
         NEW.booking_confirmed := NULL;
@@ -29,6 +30,7 @@ BEGIN
     historical_tools := CASE WHEN jsonb_typeof(NEW.closeout_payload -> 'toolExecutions') = 'array'
         THEN NEW.closeout_payload -> 'toolExecutions' END;
     outcomes := COALESCE(NEW.closeout_payload -> 'domainOutcomes', '[]'::jsonb);
+    appointment_type := lower(btrim(NEW.booking_result ->> 'appointmentTypeName'));
     NEW.booking_confirmed := COALESCE(NEW.appointment_outcome = 'BOOKING'
         AND lower(btrim(NEW.booking_result ->> 'status')) = 'booked'
         AND nullif(NEW.new_appointment_id, '') IS NOT NULL, false);
@@ -38,11 +40,30 @@ BEGIN
         '$[*] ? (@.toolName == "get_availability" || @.tool_name == "get_availability" || @.name == "get_availability")'), false);
     NEW.booking_search_known := (native_items IS NOT NULL OR historical_tools IS NOT NULL)
         AND COALESCE(NEW.closeout_payload ->> 'sessionReportUnavailable', 'false') <> 'true';
+    -- Prefer the type of the actual confirmed appointment over call-wide identity
+    -- events. These explicit receipt labels cover both current and legacy Agent
+    -- payloads, including bookings for a different family member. Numeric EHR
+    -- type IDs are not global across Practices and must not classify on their own.
     NEW.booking_patient_group := CASE
-        WHEN jsonb_path_exists(outcomes, '$[*] ? (@.outcome == "patient_switched" && @.status == "success")') THEN 'unknown'
-        WHEN jsonb_path_exists(outcomes, '$[*] ? (@.outcome == "patient_new" && @.status == "success")') THEN 'new'
-        WHEN jsonb_path_exists(outcomes, '$[*] ? (@.outcome == "patient_created" && @.status == "success")') THEN 'unknown'
-        WHEN jsonb_path_exists(outcomes, '$[*] ? (@.outcome == "patient_verified" && @.status == "success")') THEN 'existing'
+        WHEN NEW.booking_confirmed
+            AND NEW.booking_result ->> 'appointmentId' = NEW.new_appointment_id
+            AND appointment_type IN (
+                'new adult medical', 'new pediatric medical', 'new adult vision',
+                'new pediatric vision', 'crystal river new patient'
+            ) THEN 'new'
+        WHEN NEW.booking_confirmed
+            AND NEW.booking_result ->> 'appointmentId' = NEW.new_appointment_id
+            AND appointment_type IN (
+                'established adult medical (follow up)', 'established pediatric medical (follow up)',
+                'established adult vision', 'established pediatric vision', 'crystal river established patient',
+                'post op', 'crystal river post op'
+            ) THEN 'existing'
+        -- Without a typed booking receipt, only explicit, non-superseded
+        -- patient evidence can classify a call. Switching makes an earlier
+        -- unbound identity event ambiguous; absence of creation is not existing.
+        WHEN jsonb_path_exists(outcomes, '$[*] ? (@.outcome == "patient_switched" && @.status == "success" && !(@.evidence.superseded == true))') THEN 'unknown'
+        WHEN jsonb_path_exists(outcomes, '$[*] ? ((@.outcome == "patient_new" || @.outcome == "patient_created") && @.status == "success" && !(@.evidence.superseded == true))') THEN 'new'
+        WHEN jsonb_path_exists(outcomes, '$[*] ? (@.outcome == "patient_verified" && @.status == "success" && !(@.evidence.superseded == true))') THEN 'existing'
         ELSE 'unknown'
     END;
     RETURN NEW;

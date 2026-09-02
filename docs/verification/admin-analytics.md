@@ -56,7 +56,7 @@ Executed against `acuity_booking_test` and `acuity_booking_e2e`, both disposable
 ```sh
 TEST_DATABASE_URL=... go test -p 1 ./backend/... ./deploy -count=1
 go vet ./backend/... ./deploy
-go generate ./backend/internal/api
+GOTOOLCHAIN=go1.26.7 go generate ./backend/internal/api
 pnpm --dir web api:generate
 pnpm --dir web lint
 pnpm --dir web typecheck
@@ -97,11 +97,41 @@ shared missing-duration flag that incorrectly hid both phone directions.
 The standalone preview and duplicate browser aggregation were removed. The
 workspace rail and projection now share one Practice Admin access predicate.
 
-An aggregate-only, read-only production sample of the latest 200 BOOKING
-outcomes in the preceding 30 days found 16 classifiable as existing and 184
-without reliable patient classification under the current structured-evidence
-rules. This is a bounded sample, not a population estimate or latency test.
-The UI keeps these outcomes in totals and an All patients trend, explains the
-partial new/existing breakdown, and does not invent a patient type or show an
-Unknown row. Historical availability coverage is also visible beside conversion.
+The first aggregate-only, read-only production check found 184 of 200 booked
+calls unclassified by the initial outcome-only rules. That finding exposed an
+incomplete classifier, not absent patient evidence: confirmed booking receipts
+already include the actual appointment type.
+
+A follow-up read-only comparison on the latest 200 Abita Eye Group completed
+BOOKING calls in the preceding 30 days used the exact old and new SQL classifier
+expressions against the same records (September 2, 2026, 21:47 UTC):
+
+| Initial classification | Corrected classification | Calls |
+| --- | --- | ---: |
+| Existing | Existing | 16 |
+| Unclassified | Existing | 84 |
+| Unclassified | New | 100 |
+
+All 200 had matching receipt/appointment IDs and explicit new/established type
+labels. Type IDs independently agreed with those labels. Corrected coverage
+was 200/200: 100 new and 100 existing. This is a bounded sample, not proof of
+complete coverage for every historical call or unbooked conversion denominator.
+
+After explicitly defining post-op as existing, a second bounded read-only audit
+covered every completed confirmed booked call in the last 90 complete calendar
+days (America/Los_Angeles): **467/467 classified, 216 new and 251 existing**.
+The 30-day cohort contained the same 467 calls; the 7-day cohort contained 124
+(66 new, 58 existing). No booked calls remained unclassified in those windows.
+The classifier was evaluated as a SELECT; no production backfill was run.
+
+The regression test initially reproduced successful patient creation being
+classified as unknown. It now covers all twelve receipt labels (including post-op as existing), missing legacy
+outcomes, family-member switches, receipt precedence, failed/mismatched
+receipts, superseded creation, and unsupported types. The browser fixture also
+uses new-patient and post-op booking receipts with no patient domain outcomes.
+
+CI initially found compressed OpenAPI bytes differed between local Go 1.27.1
+and CI Go 1.26.7. Regenerating with the CI toolchain produced byte-identical
+output on repeat; decoded contract contents were unchanged.
+
 No production records, application configuration, or cloud resources were changed.

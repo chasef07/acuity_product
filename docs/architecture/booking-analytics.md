@@ -38,14 +38,30 @@ details; there is no “Availability calls” headline or table column.
 
 ## Evidence and reporting boundaries
 
-New versus existing uses successful structured `patient_new` and
-`patient_verified` domain outcomes. A new-patient outcome takes precedence over
-later verification. Patient switching is Unknown, and chart creation alone
-does not establish either cohort. Missing historical classification remains
-unclassified in stored evidence and remains included in totals. The UI has no
-Unknown row. When classification is incomplete, a dashed All patients trend
-includes every call, and a compact coverage note explains the new/existing
-breakdown. Daily total percentiles are pooled from source durations.
+New versus existing first uses the explicit new/established appointment type
+on the **confirmed booking receipt**, matched to `new_appointment_id`. This is
+the appointment actually booked, so it takes precedence over call-wide patient
+switches, unrelated registration attempts, or missing domain outcomes.
+
+Recognized receipt labels are New Adult/Pediatric Medical, New Adult/Pediatric
+Vision, Crystal River New Patient, their Established equivalents (Medical
+includes “Follow Up”), and Crystal River Established Patient. These labels
+come from the middleware appointment catalog; numeric EHR type IDs alone are
+not interpreted globally across Practices. **Post Op and Crystal River Post Op
+count as existing patients**, per the September 2 product decision, even when
+that call also created a chart. Unrecognized labels do not imply a patient category.
+
+When no typed receipt is available, explicit successful `patient_new` or
+`patient_created` establishes new; `patient_verified` establishes existing.
+Superseded outcomes are ignored. Creation takes precedence over later
+verification of that newly created patient. A patient switch leaves unbound
+call-wide evidence ambiguous. Calls without bookings therefore still require
+explicit patient evidence for the conversion breakdown.
+
+Missing classification remains included in totals. The UI has no Unknown row.
+When classification is incomplete, an All patients trend includes every call,
+and a coverage note explains the new/existing breakdown. Daily total
+percentiles are pooled from source durations.
 
 Availability use is read from native function-call records or historical
 structured tool-execution records. Missing tool history is not a negative
