@@ -131,9 +131,27 @@ func (m *Module) ProcessNextCredentialReconciliation(
 		return false, fmt.Errorf("begin credential state reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	recovered, err := m.recoverInterruptedCommandOwnership(
-		ctx, tx, credentialCommandOwner, "", m.now(),
-	)
+	recoveryNow := m.now()
+	var interruptedCommandID string
+	err = tx.QueryRow(ctx, `
+		SELECT command.id::text
+		FROM human_calling_provider_commands command
+		WHERE command.call_id IS NULL
+			AND command.action IN ('CREATE_CREDENTIAL', 'DISABLE_CREDENTIAL')
+			AND command.state = 'SENDING'
+			AND command.updated_at <= $1::timestamptz - interval '30 seconds'
+		ORDER BY command.updated_at, command.id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`, recoveryNow).Scan(&interruptedCommandID)
+	recovered := false
+	if err == nil {
+		recovered, err = m.recoverInterruptedCommandOwnership(
+			ctx, tx, credentialCommandOwner, interruptedCommandID, recoveryNow,
+		)
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		err = nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("recover interrupted credential commands: %w", err)
 	}
@@ -155,7 +173,7 @@ func (m *Module) ProcessNextCredentialReconciliation(
 			AND next_attempt_at <= $1
 		ORDER BY updated_at, id
 		FOR UPDATE SKIP LOCKED LIMIT 1
-	`, m.now()).Scan(
+	`, recoveryNow).Scan(
 		&command.ID, &subject, &command.Action, &command.TargetID, &createdAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

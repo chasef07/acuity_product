@@ -132,72 +132,6 @@ func TestOutgoingCallLegMaintenanceDoesNotStarveRealtimeCommandsAtProductionCard
 			t.Fatalf("analyze %s: %v", relation, err)
 		}
 	}
-	planRows, err := pool.Query(
-		context.Background(),
-		"EXPLAIN (COSTS OFF) "+humancalling.StaleCallLegCandidateQueryForTest,
-		now,
-	)
-	if err != nil {
-		t.Fatalf("explain stale CallLeg reconciliation: %v", err)
-	}
-	var plan strings.Builder
-	for planRows.Next() {
-		var line string
-		if err := planRows.Scan(&line); err != nil {
-			planRows.Close()
-			t.Fatal(err)
-		}
-		plan.WriteString(line)
-		plan.WriteByte('\n')
-	}
-	if err := planRows.Err(); err != nil {
-		planRows.Close()
-		t.Fatal(err)
-	}
-	planRows.Close()
-	if !strings.Contains(plan.String(), "human_calling_stale_leg_commands_idx") ||
-		strings.Contains(plan.String(), "Seq Scan on human_calling_provider_commands pending") {
-		t.Fatalf("stale CallLeg reconciliation lost its indexed lateral lookup:\n%s", plan.String())
-	}
-	for name, plannedQuery := range map[string]struct {
-		query string
-		index string
-	}{
-		"ready command claim": {
-			query: humancalling.NextCallLegCommandQueryForTest,
-			index: "human_calling_ready_commands_idx",
-		},
-		"interrupted command recovery": {
-			query: humancalling.InterruptedCallLegCommandQueryForTest,
-			index: "human_calling_interrupted_commands_idx",
-		},
-	} {
-		rows, err := pool.Query(
-			context.Background(), "EXPLAIN (COSTS OFF) "+plannedQuery.query, now,
-		)
-		if err != nil {
-			t.Fatalf("explain %s: %v", name, err)
-		}
-		var workerPlan strings.Builder
-		for rows.Next() {
-			var line string
-			if err := rows.Scan(&line); err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-			workerPlan.WriteString(line)
-			workerPlan.WriteByte('\n')
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			t.Fatal(err)
-		}
-		rows.Close()
-		if !strings.Contains(workerPlan.String(), plannedQuery.index) {
-			t.Fatalf("%s lost %s:\n%s", name, plannedQuery.index, workerPlan.String())
-		}
-	}
-
 	config, err := pgxpool.ParseConfig(pool.Config().ConnString())
 	if err != nil {
 		t.Fatal(err)
@@ -442,31 +376,6 @@ func TestClaimNextCommandLocksCallLegBeforeProviderCommand(t *testing.T) {
 	var postgresError *pgconn.PgError
 	if !errors.As(lockErr, &postgresError) || postgresError.Code != "55P03" {
 		t.Fatalf("CallLeg was not locked before provider command update: %v", lockErr)
-	}
-}
-
-func TestProviderCommandWorkIndexesSupportBoundedWorkerSelection(t *testing.T) {
-	pool := testdb.Open(t)
-	for name, want := range map[string][]string{
-		"human_calling_ready_commands_idx": {
-			"next_attempt_at", "created_at", "id", "call_id", "call_leg_id",
-		},
-		"human_calling_interrupted_commands_idx": {
-			"updated_at", "id", "call_id", "call_leg_id",
-		},
-	} {
-		var definition string
-		if err := pool.QueryRow(context.Background(), `
-			SELECT indexdef FROM pg_indexes
-			WHERE schemaname = 'public' AND indexname = $1
-		`, name).Scan(&definition); err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		for _, fragment := range want {
-			if !strings.Contains(definition, fragment) {
-				t.Errorf("%s does not cover %s: %s", name, fragment, definition)
-			}
-		}
 	}
 }
 

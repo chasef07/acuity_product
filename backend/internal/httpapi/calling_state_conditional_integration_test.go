@@ -12,6 +12,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 )
 
 func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *testing.T) {
@@ -43,6 +44,20 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 		t.Fatalf("provision conditional Calling state fixture: %v", err)
 	}
 	authorization := testaccess.Activate(t, accessModule, identity)
+	var completedCallID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point, caller_phone,
+			terminal_outcome, ended_at, created_at, updated_at
+		)
+		VALUES ($1, $2, 'INBOUND', 'STANDALONE', '+19855550100',
+			'RESOLVED', $3, $3, $3)
+		RETURNING id::text
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now).Scan(
+		&completedCallID,
+	); err != nil {
+		t.Fatalf("seed completed Calling state Call: %v", err)
+	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO human_calling_softphone_leases (
 			user_subject, session_id, lease_expires_at, readiness_updated_at
@@ -114,38 +129,70 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 		t.Fatalf("lock full-state table: %v", err)
 	}
 
-	conditionalRequest, err := http.NewRequest(
-		http.MethodGet,
+	assertCallingStateNotModified(
+		t,
+		server.Client(),
 		server.URL+"/v1/calling/state",
-		nil,
+		"conditional-token",
+		etag,
+		"unchanged state",
 	)
-	if err != nil {
-		t.Fatalf("create conditional Calling state request: %v", err)
-	}
-	conditionalRequest.Header.Set("Authorization", "Bearer conditional-token")
-	conditionalRequest.Header.Set("If-None-Match", etag)
-	conditional, err := server.Client().Do(conditionalRequest)
-	if err != nil {
-		t.Fatalf("read conditional Calling state: %v", err)
-	}
-	defer conditional.Body.Close()
-	if conditional.StatusCode != http.StatusNotModified {
-		t.Fatalf(
-			"conditional Calling state status = %d, want %d; body = %s",
-			conditional.StatusCode,
-			http.StatusNotModified,
-			readBody(t, conditional),
-		)
-	}
-	if got := conditional.Header.Get("ETag"); got != etag {
-		t.Fatalf("conditional Calling state ETag = %q, want %q", got, etag)
-	}
 	if err := transaction.Rollback(context.Background()); err != nil {
 		t.Fatalf("release full-state table lock: %v", err)
 	}
 	transaction = nil
 	lock.Release()
 	lock = nil
+
+	taskTransaction, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin unrelated Task creation: %v", err)
+	}
+	if _, err := work.New(pool, accessModule, func() time.Time { return now }).EnsureCallFollowUp(
+		context.Background(),
+		taskTransaction,
+		work.EnsureCallFollowUpCommand{
+			CallID:     completedCallID,
+			PracticeID: authorization.Practice.ID,
+			LocationID: authorization.Locations[0].ID,
+			Phone:      "+19855550100",
+			Reason:     "Unrelated patient work",
+			Creator:    authorization.Actor,
+		},
+	); err != nil {
+		_ = taskTransaction.Rollback(context.Background())
+		t.Fatalf("create unrelated Task: %v", err)
+	}
+	if err := taskTransaction.Commit(context.Background()); err != nil {
+		t.Fatalf("commit unrelated Task: %v", err)
+	}
+
+	assertCallingStateNotModified(
+		t,
+		server.Client(),
+		server.URL+"/v1/calling/state",
+		"conditional-token",
+		etag,
+		"unrelated Task",
+	)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO human_calling_calls (
+			practice_id, location_id, direction, entry_point, caller_phone,
+			created_at, updated_at
+		)
+		VALUES ($1, $2, 'INBOUND', 'STANDALONE', '+19855550101', $3, $3)
+	`, authorization.Practice.ID, authorization.Locations[0].ID, now); err != nil {
+		t.Fatalf("seed unrelated active Call: %v", err)
+	}
+
+	assertCallingStateNotModified(
+		t,
+		server.Client(),
+		server.URL+"/v1/calling/state",
+		"conditional-token",
+		etag,
+		"unrelated Call",
+	)
 
 	now = now.Add(6 * time.Minute)
 	expiredRequest, err := http.NewRequest(
@@ -214,5 +261,39 @@ func TestConditionalCallingStateReturnsNotModifiedWithoutLoadingFullState(t *tes
 			http.StatusForbidden,
 			readBody(t, revoked),
 		)
+	}
+}
+
+func assertCallingStateNotModified(
+	t *testing.T,
+	client *http.Client,
+	target string,
+	token string,
+	etag string,
+	scenario string,
+) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("create Calling state request after %s: %v", scenario, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("If-None-Match", etag)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("read Calling state after %s: %v", scenario, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNotModified {
+		t.Fatalf(
+			"Calling state after %s status = %d, want %d; body = %s",
+			scenario,
+			response.StatusCode,
+			http.StatusNotModified,
+			readBody(t, response),
+		)
+	}
+	if got := response.Header.Get("ETag"); got != etag {
+		t.Fatalf("Calling state ETag after %s = %q, want %q", scenario, got, etag)
 	}
 }

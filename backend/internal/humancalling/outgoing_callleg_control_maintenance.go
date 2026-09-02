@@ -28,6 +28,9 @@ func (m *Module) recoverInterruptedCommandOwnership(
 	commandID string,
 	now time.Time,
 ) (bool, error) {
+	if commandID == "" {
+		return false, errors.New("interrupted provider command ID is required")
+	}
 	var ownerPredicate string
 	switch owner {
 	case outgoingCallLegCommandOwner:
@@ -38,11 +41,7 @@ func (m *Module) recoverInterruptedCommandOwnership(
 	default:
 		return false, fmt.Errorf("unknown interrupted command owner %d", owner)
 	}
-	args := []any{now}
-	if commandID != "" {
-		ownerPredicate += " AND command.id = $2"
-		args = append(args, commandID)
-	}
+	ownerPredicate += " AND command.id = $2"
 	tag, err := tx.Exec(ctx, `
 		UPDATE human_calling_provider_commands command
 		SET state = CASE
@@ -77,7 +76,7 @@ func (m *Module) recoverInterruptedCommandOwnership(
 		WHERE `+ownerPredicate+`
 			AND command.state = 'SENDING'
 			AND command.updated_at <= $1::timestamptz - interval '30 seconds'
-	`, args...)
+	`, now, commandID)
 	if err != nil {
 		return false, err
 	}

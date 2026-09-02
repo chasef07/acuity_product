@@ -53,6 +53,36 @@ type CallingStateCall struct {
 	Version      int64
 }
 
+type callingAccessSnapshot struct {
+	ActorSubject     string                  `json:"actorSubject"`
+	PlatformOperator bool                    `json:"platformOperator"`
+	Practices        []callingPracticeAccess `json:"practices"`
+}
+
+type callingPracticeAccess struct {
+	PracticeID     string             `json:"practiceId"`
+	Membership     *access.Membership `json:"membership,omitempty"`
+	Locations      []access.Location  `json:"locations"`
+	CallingEnabled bool               `json:"callingEnabled"`
+}
+
+func callingAccessState(discovery access.Discovery) callingAccessSnapshot {
+	practices := make([]callingPracticeAccess, 0, len(discovery.Practices))
+	for _, practice := range discovery.Practices {
+		practices = append(practices, callingPracticeAccess{
+			PracticeID:     practice.ID,
+			Membership:     practice.Membership,
+			Locations:      practice.Locations,
+			CallingEnabled: practice.CallingEnabled,
+		})
+	}
+	return callingAccessSnapshot{
+		ActorSubject:     discovery.Actor.Subject,
+		PlatformOperator: discovery.PlatformOperator,
+		Practices:        practices,
+	}
+}
+
 func (m *Module) ReadCallingState(
 	ctx context.Context,
 	identity access.Identity,
@@ -402,7 +432,7 @@ func (m *Module) readCallingStateETag(
 			}
 		}
 	}
-	accessSnapshot, err := json.Marshal(discovery)
+	accessSnapshot, err := json.Marshal(callingAccessState(discovery))
 	if err != nil {
 		return "", fmt.Errorf("encode Calling access state: %w", err)
 	}
@@ -419,11 +449,22 @@ func (m *Module) readCallingStateETag(
 			FROM human_calling_calls call
 			WHERE call.practice_id = ANY($2::uuid[])
 				AND call.location_id = ANY($3::uuid[])
+				AND call.disposition_at IS NULL
 				AND (
-					call.terminal_outcome IS NULL
+					call.terminal_outcome = 'VOICEMAIL'
 					OR (
-						call.disposition_at IS NULL
-						AND call.terminal_outcome IN ('ENDED', 'VOICEMAIL')
+						call.terminal_outcome IS NULL
+						AND EXISTS (
+							SELECT 1
+							FROM human_calling_provider_commands voicemail
+							WHERE voicemail.call_id = call.id
+								AND voicemail.action IN (
+									'SPEAK_VOICEMAIL', 'START_VOICEMAIL_RECORDING'
+								)
+								AND voicemail.state IN (
+									'PENDING', 'SENDING', 'SENT', 'AMBIGUOUS', 'RECONCILED'
+								)
+						)
 					)
 				)
 			UNION
