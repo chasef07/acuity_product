@@ -80,8 +80,9 @@ for arithmetic and availability tradeoffs.
    pool. Calling sync can use the third slot; commands can use the fourth.
    Handler-lifetime and connection-lifetime gates use one small policy. The
    database permit lasts through rows/transaction release, including nested
-   acquisition. Background overload fails promptly with retryable `503` and
-   `Retry-After: 1` instead of filling Cloud Run's request slots with waiters.
+   acquisition. HTTP admission waits at most 100 ms to absorb normal short page-load bursts;
+   sustained overload returns retryable `503` with `Retry-After: 1`. Database
+   admission remains immediate. Live commands bypass the admission wait.
 2. **Dependency failure is not access revocation.** Only an actual authorization
    denial maps to `403`. Pool, statement, and lock failures retain their cause
    and return a recoverable dependency error. This applies at domain boundaries,
@@ -95,8 +96,10 @@ for arithmetic and availability tradeoffs.
    media keep their existing cadence. Hiding an idle nonowner starts no extra
    request, and hidden access revalidation remains bounded by 15.5 seconds.
 4. **Auth cannot leave token consumers waiting indefinitely.** PostgreSQL
-   cancels slow auth statements after five seconds; the browser bounds token
-   acquisition and preserves a still-valid token on transient refresh failure.
+   cancels slow auth statements after five seconds; each browser token request
+   has a five-second deadline and preserves a still-valid token on transient
+   refresh failure. Without a valid cached token, the existing one retry plus
+   backoff can take approximately 11–11.25 seconds across two stalled attempts.
 5. **Attachment reads release database resources before storage I/O.**
    Authorization and metadata commit before retrieving bytes. Recovery and
    cleanup must preserve durable ownership and must not delete bytes merely
@@ -161,6 +164,7 @@ Local regressions use disposable PostgreSQL 16 databases and synthetic data.
 
 | Scenario | Before | After |
 | --- | --- | --- |
+| Normal workspace page-load request burst | Immediate HTTP admission rejected later reads; 3 browser journeys failed with unavailable lists | A maximum 100 ms HTTP-only wait absorbs short bursts while database permits and live-control bypass remain unchanged |
 | Two real blocked history/analytics queries plus an eight-request burst | Readiness returned 503 when reads occupied the pool | Current bridged Call read, readiness commit, and two durable hangup commands progressed within milliseconds |
 | Access lookup encounters database capacity/deadline failure | Some paths reported 403 / access denied | Retryable dependency failure; actual revoked access remains denied |
 | Status/detail read unavailable while readiness succeeds | Warning could select the 500 ms heartbeat retry cadence | Healthy readiness retains its staggered 3.5–4 second cadence |
@@ -174,6 +178,36 @@ Local regressions use disposable PostgreSQL 16 databases and synthetic data.
 The call-control regression proves durable database commands, not actual Telnyx
 hangup completion or audible media. Live production observation and provider
 receipt convergence remain distinct evidence layers.
+
+## Earlier fix: production verification
+
+Release 1.0.7 (`63b8564d1a9847a546c92d1952b037329a1ace05`, PR #255 plus
+release metadata) was deployed by Cloud Build
+`e592d98b-ee43-4412-9247-02c9e5d46b5d`. The release workflow and rollout checks
+passed, and Portal and web each served 100% traffic on that revision. The first
+build failed downloading a Go module from the public proxy before promotion;
+only the failed deployment job was retried with the same verified source.
+This production evidence applies to the earlier fix, not the new hardening PR.
+
+| Observed signal | Before: 16:10:30–16:20:30 UTC | After: 16:24:29–16:34:29 UTC |
+| --- | ---: | ---: |
+| Calling-state requests | 972 | 1,029 |
+| Calling-state successful p95 | 1.930 s | 0.170 s |
+| Calling-state 5xx | 1 | 0 |
+| Readiness requests / successful p95 | 1,015 / 0.211 s | 1,019 / 0.035 s |
+| Conversation timeline requests / successful p95 | 171 / 0.251 s | 83 / 0.131 s |
+| Relevant route requests / 5xx | 2,158 / 1 | 2,131 / 0 |
+| Portal pool acquisition timeouts | 1 | 0 |
+| SQL CPU median one-minute maximum | 61.5% | 31.7% |
+| SQL CPU peak one-minute maximum | 63.9% | 43.9% |
+
+Logs stayed below explicit retrieval caps; Monitoring pages were exhausted.
+The CPU comparison contains nine one-minute samples per window and covers the
+shared SQL instance. Recent ingestion can lag. These observations support the
+specific fix's benefit, not zero dropped calls, unchanged demand in every
+route, or future error-free availability. No live call or provider command was
+initiated for this check. Staff need to refresh between calls to load the new
+browser code; the backend change applies to existing sessions immediately.
 
 ## Remaining structural work and release observation
 
@@ -364,19 +398,19 @@ Rows marked fixed distinguish completed prevention work from remaining risks.
 
 | Source family | Statement / transaction sites | Ownership, bounds, and review conclusion |
 |---|---:|---|
-| `humancalling/state.go` | 6 / 0 | Live Calling projection/validator. Staff-owned active Call and latest disposition candidate, active transfers, lease, and exactly the latest visible scoped Caller-backed voicemail. The historical voicemail serialization cause was already fixed in main by PR255. Current class is CallingSync; it can use the third slot of the four-connection pool while two heavy background requests run. |
+| `humancalling/state.go` | 6 / 0 | Live Calling projection/validator. Staff-owned active Call and latest disposition candidate, active transfers, lease, and exactly the latest visible scoped Caller-backed voicemail. The historical voicemail serialization cause was already fixed in main by PR #255. Current class is CallingSync; it can use the third slot of the four-connection pool while two heavy background requests run. |
 | `humancalling/softphone.go` | 9 / 8 | Lease/readiness mutation serializes actor, sorted active Calls, recipient transfers, and own lease; commits before loading resulting current capacity. No provider network calls in the transaction. Access failure was collapsed into denial; now propagated. |
-| `humancalling/calls.go` | 20 / 14 | Exact Call projection, page-bounded history (default25/max100, `QueryCallHistory:226`), exact-leg hangup and disposition. Hangup locks Call then matching legs and enqueues durable commands; provider work occurs later. `ExpireDispositions:659` claims at most100 Calls using SKIP LOCKED; bounded but can still perform100 Task/projection mutations in one transaction. `ReadOperatorTimeline:797` has an exact Call filter but no row limit across all timeline/command/receipt history: residual growth risk, not an established incident cause. Access/state query errors no longer become denial/conflict; bridge-evidence lookup at748 no longer discards errors. |
+| `humancalling/calls.go` | 20 / 14 | Exact Call projection, page-bounded history (default 25 / maximum 100, `QueryCallHistory:226`), exact-leg hangup and disposition. Hangup locks Call then matching legs and enqueues durable commands; provider work occurs later. `ExpireDispositions:659` claims at most 100 Calls using SKIP LOCKED; bounded but can still perform 100 Task/projection mutations in one transaction. `ReadOperatorTimeline:797` has an exact Call filter but no row limit across all timeline/command/receipt history: residual growth risk, not an established incident cause. Access/state query errors no longer become denial/conflict; bridge-evidence lookup at748 no longer discards errors. |
 | `humancalling/outbound.go` | 39 / 30 | Idempotent outbound creation uses per-actor/idempotency advisory lock, exact Task/scope/lease/occupancy checks, Call+Leg creation and durable command enqueue. Media-ready confirms exact Call, Staff session, signed token and observed answer. Provider projection validates identifiers before state transition. Query errors in readiness/credential/Call/leg lookup no longer become ineligible/conflict. |
 | `humancalling/staff_transfer.go` | 18 / 16 | Exact Call/source owner/session authorization; eligible recipient selection; idempotent transfer insert; response/expiry transition. `ExpireStaffTransfers:458` claims one Call with SKIP LOCKED then rechecks/locks exact transfer. Query errors now retained separately from actual wrong state/version/session/denial. |
 | `humancalling/staff_transfer_projection.go` | 32 / 9 | Provider-fact-to-transfer projection under exact Call/transfer/CallLeg ownership. Existing conflicts represent evidence mismatch or invalid transition after successful DB reads. No provider I/O held inside DB transaction. |
 | `humancalling/handoff.go` | 6 / 4 | Idempotent service-authenticated Handoff admission and Call/receipt enqueue, scope checked at Access boundary. Existing Access mapping already preserved dependency errors. Handoff is classified CallingControl because it starts live staff handoff. |
 | `humancalling/callleg_projection.go` | 48 / 29 | Exact ProviderReceipt/Call/CallLeg fact matching and authoritative transition; prepares durable bridge/recording/termination work with Call→Leg ownership. Dynamic SQL variants are finite fixed forms (resolved below). Projection uses observed provider identifiers and duplicate guards. No provider network operation held by the SQL mutation transaction. |
 | `humancalling/outgoing_callleg_control.go` | 36 / 10 | Single command claim with due state, dependencies, per-Call lane, SKIP LOCKED; claim committed before callback execution. Callback reads one command, Scan releases connection, invokes provider at220, then opens result transaction. Active ownership prevents duplicate effects; effect ambiguity remains explicit. |
-| `humancalling/outgoing_callleg_control_maintenance.go` | 26 / 31 | Reclaim interrupted ownership or one stale/never-started leg per tick; old-state claims use LIMIT1, SKIP LOCKED and exact locked owner recheck. Reconciliation claim commits before provider ObserveCall at424. Structural query candidates/indexed pending paths already have production-shaped regression. No extra worker or connection change warranted. |
+| `humancalling/outgoing_callleg_control_maintenance.go` | 26 / 31 | Reclaim interrupted ownership or one stale/never-started leg per tick; old-state claims use LIMIT 1, SKIP LOCKED and exact locked owner recheck. Reconciliation claim commits before provider ObserveCall at424. Structural query candidates/indexed pending paths already have production-shaped regression. No extra worker or connection change warranted. |
 | `humancalling/outgoing_callleg_control_transitions.go` | 17 / 0 | Exact CallLeg/command state transition helpers inside caller-owned transactions; no independent pooled acquisition and no provider I/O. These AST statement sites are transaction forwarding, not additional connection lifetimes. |
 | `humancalling/credentials.go` | 24 / 16 | Credential intent reconciliation, one ambiguous credential observation per claim, and media JWT authorization. Observation lookup runs after claim commit (`FindCredentialByName:217`). Media authorization commits before provider JWT creation. `ReconcileCredentials:15` processes set-based eligible users and all pending/disabling intents in a transaction: cardinality-growth exposure at scheduled frequency, no measured incident attribution. Lease/access errors now retained as retryable dependency errors. |
-| `humancalling/connected_recording.go` | 17 / 25 | Recording receipts, one ambiguous recording claim (`LIMIT1:258`), one retention claim (`LIMIT1:473`), playback metadata authorization. ResolveRecording at281 and DeleteRecording at494 happen after claim commit; later transaction records result. Direct fact recording resolution at57 happens before mutation transaction. |
+| `humancalling/connected_recording.go` | 17 / 25 | Recording receipts, one ambiguous recording claim (`LIMIT 1:258`), one retention claim (`LIMIT 1:473`), playback metadata authorization. ResolveRecording at281 and DeleteRecording at494 happen after claim commit; later transaction records result. Direct fact recording resolution at57 happens before mutation transaction. |
 | `humancalling/voicemail.go` | 18 / 17 | Exact Caller voicemail lifecycle and recording outcome. Optional provider ResolveRecording at329 precedes mutation transaction. Playback authorization validates exact row and scope, appends audit and commits before OpenRecording at747/755; streaming does not hold a DB connection. Metadata/access lookup timeouts now retained as dependency errors. |
 | `humancalling/webhook.go` | 17 / 10 | Verified incoming receipt/idempotency commit, bounded claiming and explicit quarantine/requeue authority. Requeue authorization dependency errors now preserved. Provider receipt ingress role still uses its own existing executor policy. |
 | `humancalling/receipt_audit.go` | 2 / 3 | Repeatable-read, read-only administrative receipt audit (`AuditProviderReceipts:56`). Aggregates all receipt states and FAILED/QUARANTINED subsets with an allowlisted error vocabulary; no time or row cap. Result groups are small but underlying scan work grows with receipt history. No provider effects or recovery mutation; not a high-frequency portal route. |
@@ -390,20 +424,20 @@ The lines are current source lines at review; the CSV is the earlier baseline. N
 |---|---|
 | `callleg_projection.go:100`, `recordingPolicyQuery` | Fixed Call→Practice SELECT for exact Call ID; conditional suffix is only the literal `FOR SHARE OF call, practice` when reserving recording. |
 | `callleg_projection.go:1382`, `query` | Two fixed fact-match queries: exact provider control+leg IDs or exact signed client-state Call+CallLeg IDs; locks Call and CallLeg. |
-| `outgoing_callleg_control.go:93`, `nextCallLegCommandQuery` | Constant at23: two candidates (Call-owned and global credential command), each LIMIT1 SKIP LOCKED and dependencies checked, final one-row oldest eligible pick. |
+| `outgoing_callleg_control.go:93`, `nextCallLegCommandQuery` | Constant at23: two candidates (Call-owned and global credential command), each LIMIT 1 SKIP LOCKED and dependencies checked, final one-row oldest eligible pick. |
 | `outgoing_callleg_control_maintenance.go:45`, `ownerPredicate` | Fixed ownership predicate selected by command kind (Call-owned vs global credential actions), then exact command ID; no external SQL. |
-| `outgoing_callleg_control_maintenance.go:231`, `interruptedCallLegCommandQuery` | Constant210: oldest interrupted SENDING command older30s, Call-owned, LIMIT1 SKIP LOCKED. |
-| `outgoing_callleg_control_maintenance.go:284`, `terminalNeverStartedCallLegQuery` | Constant86: terminal Call with never-started pending leg and no active command; older60s; LIMIT1 Call+Leg lock. |
-| `outgoing_callleg_control_maintenance.go:369`, `staleCallLegCandidateQuery` | Constant108: one stale leg plus one latest relevant command via LATERAL LIMIT1; Call+Leg SKIP LOCKED. Commit occurs before external observation. |
+| `outgoing_callleg_control_maintenance.go:231`, `interruptedCallLegCommandQuery` | Constant210: oldest interrupted SENDING command older than 30 seconds, Call-owned, LIMIT 1 SKIP LOCKED. |
+| `outgoing_callleg_control_maintenance.go:284`, `terminalNeverStartedCallLegQuery` | Constant86: terminal Call with never-started pending leg and no active command; older than 60 seconds; LIMIT 1 Call+Leg lock. |
+| `outgoing_callleg_control_maintenance.go:369`, `staleCallLegCandidateQuery` | Constant108: one stale leg plus one latest relevant command via LATERAL LIMIT 1; Call+Leg SKIP LOCKED. Commit occurs before external observation. |
 | `staff_transfer.go:313`, `staffTransferSelect` | Constant605: fixed transfer projection with Location and one membership-email value per participant; appends exact transfer ID after commit. |
 | `staff_transfer.go:650`, `staffTransferSelect` | Same fixed projection plus exact ID. |
 | `staff_transfer.go:658`, `staffTransferSelect` | Same fixed projection plus exact ID and `FOR UPDATE OF transfer`. |
 | `state.go:263`, `staffTransferSelect` | Same projection restricted to current Staff participant, active REQUESTED/ACCEPTED transfers and authorized scope. Bounded by active offers, not historical transfers. |
-| `state.go:343`, `query` | Fixed Staff Call template; callers247/253 supply one of exactly two literals: owned BRIDGED nonterminal Call or latest owned ENDED undisposed Call. Scope/Staff filters and updated_at/id ordering, LIMIT1. |
+| `state.go:343`, `query` | Fixed Staff Call template; callers247/253 supply one of exactly two literals: owned BRIDGED nonterminal Call or latest owned ENDED undisposed Call. Scope/Staff filters and updated_at/id ordering, LIMIT 1. |
 
 ### Worker runtime and existing controls
 
-`worker/runner.go:136` starts seven independent lanes: Calling receipts, provider commands, AI receipts, Work recovery, outbound message commands, Messaging receipts, and maintenance. Dependency, credential and metric ticks run within the maintenance lane. Provider commands have one claim coordinator (`:222`) feeding a configured bounded executor channel (`:201`); production has ten provider-effect executors, which do not each poll independently. Receipt/provider claim batches are8; recovery/Messaging batches1. Idle work backs off to2s; consecutive failure backoff is250ms–10s; Calling receipts retain the250ms pickup interval. The worker keeps its existing two DB connections; portal admission does not alter worker/ingress/realtime executors.
+`worker/runner.go:136` starts seven independent lanes: Calling receipts, provider commands, AI receipts, Work recovery, outbound message commands, Messaging receipts, and maintenance. Dependency, credential and metric ticks run within the maintenance lane. Provider commands have one claim coordinator (`:222`) feeding a configured bounded executor channel (`:201`); production has ten provider-effect executors, which do not each poll independently. Receipt/provider claim batches are 8; recovery/Messaging batches 1. Idle work backs off to 2 seconds; consecutive failure backoff is 250 ms–10 s; Calling receipts retain the 250 ms pickup interval. The worker keeps its existing two DB connections; portal admission does not alter worker/ingress/realtime executors.
 
 `worker/runner.go:550–551` is a **callback-shaped database operation not directly represented as a CallExpr in the AST inventory**: `runner.dependency.Ping` is passed into `runWork`, invoked with HealthTimeout. Runtime injects the worker's pgx pool. Count it as a reviewed forwarding path, not an unexamined query or a missing SQL statement. Provider/receipt/Messaging lane interfaces likewise dispatch to owning module methods enumerated above or by the other audit owner.
 
@@ -411,11 +445,11 @@ No urgent-command priority exists across all eligible Calls; command picks are d
 
 ### Before/after proof and remaining limits
 
-- `httpapi/call_control_capacity_integration_test.go`: real Pg4, two actual blocked history/analytics queries, eight simulated HTTP slots; six overflow reads fail fast503. Real Calling-state and readiness proceed, and hangup commits two PENDING HANGUP_LEG commands and two ENDING CallLegs. Measured local state14ms/readiness4ms/hangup6ms. This proves durable enqueue, not a provider hangup outcome.
-- `postgres/portal_capacity_integration_test.go`: permits follow real row/transaction connection lifetime, nested acquisitions cannot bypass lower-priority caps, cancellation releases, and pool1/2 rejection is explicit for Portal only. Default executors retain behavior.
-- Same file real `pg_sleep` statement-timeout test verifies QueryRow measurement includes underlying DB wait before Scan for both pooled and transaction QueryRow (approximately41ms, formerly near-zero).
-- `httpapi/calling_access_dependency_integration_test.go`: Access table locks formerly produced four403s; lease table lock produced media-token403/hangup409. After preservation all six are retryable503; unlock recovers200; genuine missing/denied remains403 and missing credential/wrong session409.
-- Existing `humancalling/reconciliation_capacity_integration_test.go:20` seeds2450legs/5565commands and exercises answer/bridge/hangup progression within500ms under the worker's two-connection budget. Tests214/284 prove one interrupted claim per tick and CallLeg-before-command lock order.
+- `httpapi/call_control_capacity_integration_test.go`: a real four-connection PostgreSQL pool, two actual blocked history/analytics queries, eight simulated HTTP slots; six overflow reads return 503 within the 100 ms HTTP admission budget. Real Calling-state and readiness proceed, and hangup commits two PENDING HANGUP_LEG commands and two ENDING CallLegs. With all eight HTTP slots initially occupied, measured local Calling state completed in 122 ms, readiness in 4.65 ms and hangup in 14.51 ms after the short-wait correction. Eight simultaneous 10 ms background reads all succeeded within the unchanged two-handler limit. This proves durable enqueue, not a provider hangup outcome.
+- `postgres/portal_capacity_integration_test.go`: permits follow real row/transaction connection lifetime, nested acquisitions cannot bypass lower-priority caps, cancellation releases, and pool sizes 1 / 2 rejection is explicit for Portal only. Default executors retain behavior.
+- Same file real `pg_sleep` statement-timeout test verifies QueryRow measurement includes underlying DB wait before Scan for both pooled and transaction QueryRow (approximately 41 ms, formerly near-zero).
+- `httpapi/calling_access_dependency_integration_test.go`: Access table locks formerly produced four 403s; lease table lock produced media-token 403 / hangup 409. After preservation all six are retryable 503; unlock recovers 200; genuine missing/denied remains 403 and missing credential/wrong session 409.
+- Existing `humancalling/reconciliation_capacity_integration_test.go:20` seeds 2,450 legs / 5,565 commands and exercises answer/bridge/hangup progression within 500 ms under the worker's two-connection budget. Tests at lines 214 / 284 prove one interrupted claim per tick and CallLeg-before-command lock order.
 - Existing `humancalling/calllegs_integration_test.go:3447` verifies independent Call progress;3554 concurrent Staff dialing. `worker/runner_test.go:11,41,82,113,606` cover one idle poll, pickup interval, exact batch yielding, slow provider independent lanes and Calling-receipt polling.
 
 Admission reserves access capacity within one Portal process. It does not guarantee latency under a slow query already using the reserved Calling slot, all-control saturation, conflicting Call locks, provider slowness, or CPU saturation across services. Protected Calling sync/control still receive visible retryable overload responses if their own budget is exhausted. Broader query tuning requires representative measurements; structural growth candidates above are not claims of a second production root cause.
@@ -450,3 +484,20 @@ Admission reserves access capacity within one Portal process. It does not guaran
 These are explicit remaining boundaries, not changes silently included in this
 PR. No schema rewrite, production replay, automatic merge or additional alert
 configuration is part of this follow-up.
+
+## Final local verification
+
+- `TEST_DATABASE_URL=.../conversation_failure_test go test -p 1 ./backend/... ./deploy -count=1`: passed, including real PostgreSQL and complete CI shard coverage.
+- `pnpm test:unit` from `web/`: 243 library tests and 12 render tests passed; none skipped.
+- `TEST_DATABASE_URL=.../acuity_auth_pressure_test pnpm test:database`: passed with real PostgreSQL.
+- `pnpm lint`, `pnpm typecheck`, and production `pnpm build` through the E2E runner: passed.
+- `E2E_DATABASE_URL=.../acuity_conversation_e2e ./scripts/run-e2e.sh human-calling.spec.ts messaging-workspace.spec.ts`: all eight affected browser journeys passed after the admission correction, including the three originally failing flows.
+- `go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...` and `pnpm audit --prod`: no known vulnerabilities found.
+- Source inventory regeneration matches the committed CSV; `git diff --check` passed.
+- Standards/spec reviews found one timing-documentation correction, which was fixed; follow-up review of the 100 ms admission change found no actionable issue.
+
+The first full local Go run caught missing new-package shard coverage and a
+20 ms executor test counting cold connection setup as operation time. The shard
+list now includes admission; deadline tests prepare the test connection before
+measuring operation behavior. The complete serial suite then passed. The local
+Docker daemon is unavailable, so the release-container gate runs in CI.

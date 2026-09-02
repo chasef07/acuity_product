@@ -1,10 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/admission"
 )
+
+// Absorb a page's short read burst without filling Cloud Run request slots for
+// the much longer database acquisition timeout during sustained overload.
+const portalAdmissionWait = 100 * time.Millisecond
 
 func (server *Server) withPortalAdmission(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -13,7 +19,9 @@ func (server *Server) withPortalAdmission(next http.Handler) http.Handler {
 		// a class with a header, path prefix, or malformed resource identifier.
 		class := portalRequestClass(r.Pattern)
 		ctx := admission.WithClass(r.Context(), class)
-		release, err := server.admission.Acquire(ctx)
+		waitContext, cancelWait := context.WithTimeout(ctx, portalAdmissionWait)
+		release, err := server.admission.Wait(waitContext)
+		cancelWait()
 		if err != nil {
 			if ctx.Err() == nil {
 				w.Header().Set("Retry-After", "1")

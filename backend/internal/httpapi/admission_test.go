@@ -4,13 +4,52 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/admission"
 )
 
-func TestPortalAdmissionFailsFastAndReleasesCanceledHandlers(t *testing.T) {
+func TestPortalAdmissionAbsorbsShortReadBurst(t *testing.T) {
+	server := &Server{admission: admission.New(4)}
+	var active, maximum atomic.Int32
+	handler := server.withPortalAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for previous := maximum.Load(); current > previous; previous = maximum.Load() {
+			if maximum.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		// Represent the short independent reads issued together by a page load.
+		time.Sleep(10 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	start := make(chan struct{})
+	results := make(chan int, 8)
+	for range 8 {
+		go func() {
+			<-start
+			request := httptest.NewRequest(http.MethodGet, "/v1/workspace", nil)
+			request.Pattern = "GET /v1/workspace"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			results <- response.Code
+		}()
+	}
+	close(start)
+	for range 8 {
+		if status := <-results; status != http.StatusNoContent {
+			t.Errorf("short read burst status=%d, want %d", status, http.StatusNoContent)
+		}
+	}
+	if maximum.Load() != 2 {
+		t.Fatalf("concurrent background handlers=%d, want 2", maximum.Load())
+	}
+}
+
+func TestPortalAdmissionBoundsWaitAndReleasesCanceledHandlers(t *testing.T) {
 	server := &Server{admission: admission.New(4)}
 	entered := make(chan admission.Class, 4)
 	handler := server.withPortalAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,9 +99,23 @@ func TestPortalAdmissionFailsFastAndReleasesCanceledHandlers(t *testing.T) {
 		if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") != "1" {
 			t.Fatalf("overloaded %s status=%d retryAfter=%q", pattern, response.Code, response.Header().Get("Retry-After"))
 		}
-		if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
-			t.Fatalf("background admission waited for capacity: %s", elapsed)
+		if elapsed := time.Since(started); elapsed < 75*time.Millisecond || elapsed > 250*time.Millisecond {
+			t.Fatalf("background admission exceeded its short wait budget: %s", elapsed)
 		}
+	}
+	waiting, cancelWaiting := context.WithCancel(context.Background())
+	waiterDone := make(chan struct{})
+	go func() {
+		request := httptest.NewRequest(http.MethodGet, "/v1/workspace", nil).WithContext(waiting)
+		request.Pattern = "GET /v1/workspace"
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+		close(waiterDone)
+	}()
+	cancelWaiting()
+	select {
+	case <-waiterDone:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("canceled admission waiter did not return promptly")
 	}
 	control := httptest.NewRequest(http.MethodPost, "/v1/calling/calls/synthetic/hangup", nil)
 	control.Pattern = "POST /v1/calling/calls/{callId}/hangup"

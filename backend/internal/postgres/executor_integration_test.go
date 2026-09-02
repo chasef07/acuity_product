@@ -86,6 +86,13 @@ func openExecutorPool(t *testing.T, maximum int32) *pgxpool.Pool {
 		t.Fatalf("open test pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// These tests measure operation/permit deadlines in milliseconds, not a
+	// cold PostgreSQL connection's setup time under other integration work.
+	readyContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pool.Ping(readyContext); err != nil {
+		t.Fatalf("prepare test pool: %v", err)
+	}
 	return pool
 }
 

@@ -203,20 +203,19 @@ func TestPortalCallControlCommitsWhileBackgroundQueriesAreBlocked(t *testing.T) 
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	// An eight-read burst must leave room for Calling sync and commands instead
-	// of filling either all HTTP slots or all database connections.
+	// Fill all eight HTTP slots with two blocked reads and six short admission
+	// waiters. Calling sync must enter as the bounded wait expires, while the
+	// blocked reads continue to hold only two database connections.
 	overflow := []<-chan result{startBackground(true)}
 	for range 5 {
 		overflow = append(overflow, startBackground(false))
 	}
-	var overflowResult *result
 	deadline = time.Now().Add(time.Second)
-	for overflowResult == nil && pool.Stat().AcquiredConns() < 4 && time.Now().Before(deadline) {
-		select {
-		case completed := <-overflow[0]:
-			overflowResult = &completed
-		case <-time.After(5 * time.Millisecond):
-		}
+	for len(httpSlots) < 8 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(httpSlots) != 8 {
+		t.Fatalf("HTTP burst occupied %d slots, want 8", len(httpSlots))
 	}
 	started := time.Now()
 	callingState := request(t, server.Client(), http.MethodGet, server.URL+"/v1/calling/state", "staff", nil)
@@ -228,7 +227,11 @@ func TestPortalCallControlCommitsWhileBackgroundQueriesAreBlocked(t *testing.T) 
 	if current.Bridged == nil || current.Bridged.CallId.String() != callID {
 		t.Fatalf("Calling sync lost the active Call: %#v", current.Bridged)
 	}
-	t.Logf("Calling sync preserved the active Call during eight-read burst in %s", time.Since(started))
+	if elapsed := time.Since(started); elapsed > 400*time.Millisecond {
+		t.Fatalf("Calling sync was starved by admission waiters: %s", elapsed)
+	} else {
+		t.Logf("Calling sync preserved the active Call during eight-read burst in %s", elapsed)
+	}
 	// A handler can also encounter the connection-level limit after admission:
 	// dependency pressure must remain retryable, never become a false access loss.
 	syncTransaction, err := database.BeginTx(admission.WithClass(ctx, admission.CallingSync), pgx.TxOptions{})
@@ -286,16 +289,12 @@ func TestPortalCallControlCommitsWhileBackgroundQueriesAreBlocked(t *testing.T) 
 	`, callID).Scan(&commands, &endingLegs); err != nil || commands != 2 || endingLegs != 2 {
 		t.Fatalf("hangup durable state: commands=%d endingLegs=%d err=%v", commands, endingLegs, err)
 	}
-	for index, pending := range overflow {
+	for _, pending := range overflow {
 		var completed result
-		if index == 0 && overflowResult != nil {
-			completed = *overflowResult
-		} else {
-			select {
-			case completed = <-pending:
-			case <-time.After(time.Second):
-				t.Fatal("background overflow waited instead of rejecting promptly")
-			}
+		select {
+		case completed = <-pending:
+		case <-time.After(time.Second):
+			t.Fatal("background overflow exceeded its bounded admission wait")
 		}
 		if completed.err != nil || completed.status != http.StatusServiceUnavailable || !completed.retryable || completed.retryAfter != "1" {
 			t.Fatalf("background overflow response = %#v, want retryable 503", completed)

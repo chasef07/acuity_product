@@ -53,6 +53,17 @@ func New(poolMaximum int32) *Gate {
 // Acquire fails immediately when non-control capacity is full. The caller owns
 // the permit until its complete handler, connection, rows, or transaction ends.
 func (gate *Gate) Acquire(ctx context.Context) (func(), error) {
+	return gate.acquire(ctx, false)
+}
+
+// Wait shares Acquire's capacity policy but waits for a permit until the
+// caller's context ends. HTTP callers supply a short admission-only deadline;
+// database acquisition continues to use the immediate Acquire path.
+func (gate *Gate) Wait(ctx context.Context) (func(), error) {
+	return gate.acquire(ctx, true)
+}
+
+func (gate *Gate) acquire(ctx context.Context, wait bool) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -61,19 +72,15 @@ func (gate *Gate) Acquire(ctx context.Context) (func(), error) {
 		return func() {}, nil
 	}
 	if class == Background {
-		select {
-		case gate.background <- struct{}{}:
-		default:
-			return nil, ErrFull
+		if err := acquireSlot(ctx, gate.background, wait); err != nil {
+			return nil, err
 		}
 	}
-	select {
-	case gate.nonControl <- struct{}{}:
-	default:
+	if err := acquireSlot(ctx, gate.nonControl, wait); err != nil {
 		if class == Background {
 			<-gate.background
 		}
-		return nil, ErrFull
+		return nil, err
 	}
 	var once sync.Once
 	release := func() {
@@ -89,4 +96,21 @@ func (gate *Gate) Acquire(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 	return release, nil
+}
+
+func acquireSlot(ctx context.Context, slot chan struct{}, wait bool) error {
+	if !wait {
+		select {
+		case slot <- struct{}{}:
+			return nil
+		default:
+			return ErrFull
+		}
+	}
+	select {
+	case slot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

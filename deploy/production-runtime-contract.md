@@ -68,8 +68,10 @@ operations and three total non-control operations. This leaves capacity for
 Calling synchronization and live commands while history or analytics are slow.
 The same policy bounds complete HTTP handlers and actual connection lifetimes;
 nested acquisitions cannot bypass the database bound. Excess background work
-returns a retryable `503` immediately instead of occupying request slots while
-waiting. Registered routes, not client priority headers, select the class.
+waits at most 100 ms at the HTTP boundary, then returns a retryable `503`.
+This absorbs normal short page-load bursts without occupying request slots for
+the much longer database acquisition deadline. Connection-level admission
+remains immediate. Registered routes, not client priority headers, select the class.
 
 This reservation does not isolate PostgreSQL CPU, shared row locks, or a burst
 of live commands from one another. Those still require bounded queries, short
@@ -122,7 +124,7 @@ and no automatic retry. Realtime's dedicated `LISTEN` connection is outside its
 pool and is counted once for every allowed realtime instance.
 
 Better Auth has its own one-connection pool and a five-second PostgreSQL
-statement timeout. Browser token acquisition also ends after five seconds,
+statement timeout. Each browser token request has a five-second deadline; it
 retains an unexpired token on a transient failure, and keeps its existing
 single-flight refresh and retry backoff. Neither change raises the connection
 reservation.

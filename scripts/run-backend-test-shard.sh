@@ -22,6 +22,7 @@ case "${1:-}" in
     packages=(
       ./backend/cmd/acuity
       ./backend/cmd/receipt-audit
+      ./backend/internal/admission
       ./backend/internal/api
       ./backend/internal/app
       ./backend/internal/authn
