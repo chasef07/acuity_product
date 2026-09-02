@@ -123,6 +123,118 @@ func TestCallingStateValidatorUsesActivePracticeIndexAtProductionCardinality(t *
 	}
 }
 
+func TestCallingStateValidatorIgnoresCallsOutsideSelectedLocationScope(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.September, 1, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	identity := access.Identity{
+		Subject:       "calling-state-selected-staff",
+		Email:         "staff@calling-state-selected.test",
+		EmailVerified: true,
+	}
+	_, err := accessModule.Provision(context.Background(), access.Provisioning{
+		Environment: "test",
+		RequestedBy: "calling-state-selected-test",
+		Practices: []access.PracticeProvision{{
+			Key:  "calling-state-selected",
+			Name: "Calling State Selected",
+			Locations: []access.LocationProvision{
+				{Key: "allowed", Name: "Allowed"},
+				{Key: "hidden", Name: "Hidden"},
+			},
+			AccessGrants: []access.AccessGrantProvision{{
+				Key:                  "selected-staff",
+				Email:                identity.Email,
+				Role:                 access.RoleStaff,
+				LocationScope:        access.LocationScopeSelected,
+				SelectedLocationKeys: []string{"allowed"},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("provision selected Calling state fixture: %v", err)
+	}
+	discovery, err := accessModule.DiscoverActor(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("discover selected Calling state actor: %v", err)
+	}
+	if len(discovery.Practices) != 1 || len(discovery.Practices[0].Locations) != 1 {
+		t.Fatalf("selected Calling discovery = %#v", discovery.Practices)
+	}
+	practiceID := discovery.Practices[0].ID
+	allowedLocationID := discovery.Practices[0].Locations[0].ID
+	var hiddenLocationID string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM access_locations
+		WHERE practice_id = $1 AND name = 'Hidden'
+	`, practiceID).Scan(&hiddenLocationID); err != nil {
+		t.Fatalf("read hidden Location: %v", err)
+	}
+	var allowedCallID, hiddenCallID string
+	if err := pool.QueryRow(context.Background(), `
+		WITH allowed_call AS (
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point,
+				created_at, updated_at
+			) VALUES ($1, $2, 'INBOUND', 'STANDALONE', $4, $4)
+			RETURNING id
+		), hidden_call AS (
+			INSERT INTO human_calling_calls (
+				practice_id, location_id, direction, entry_point,
+				created_at, updated_at
+			) VALUES ($1, $3, 'INBOUND', 'STANDALONE', $4, $4)
+			RETURNING id
+		)
+		SELECT allowed_call.id::text, hidden_call.id::text
+		FROM allowed_call, hidden_call
+	`, practiceID, allowedLocationID, hiddenLocationID, now).Scan(
+		&allowedCallID, &hiddenCallID,
+	); err != nil {
+		t.Fatalf("seed selected Calling state Calls: %v", err)
+	}
+	calling := New(pool, accessModule, nil, Config{}, func() time.Time { return now })
+	before, err := calling.readCallingStateETag(
+		context.Background(), identity.Subject, discovery,
+	)
+	if err != nil {
+		t.Fatalf("read selected Calling state validator: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET version = version + 1, updated_at = $2
+		WHERE id = $1
+	`, hiddenCallID, now.Add(time.Second)); err != nil {
+		t.Fatalf("update hidden Call: %v", err)
+	}
+	afterHidden, err := calling.readCallingStateETag(
+		context.Background(), identity.Subject, discovery,
+	)
+	if err != nil {
+		t.Fatalf("read validator after hidden Call update: %v", err)
+	}
+	if afterHidden != before {
+		t.Fatalf("hidden Location changed Calling state validator: before=%s after=%s",
+			before, afterHidden)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_calls
+		SET version = version + 1, updated_at = $2
+		WHERE id = $1
+	`, allowedCallID, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("update allowed Call: %v", err)
+	}
+	afterAllowed, err := calling.readCallingStateETag(
+		context.Background(), identity.Subject, discovery,
+	)
+	if err != nil {
+		t.Fatalf("read validator after allowed Call update: %v", err)
+	}
+	if afterAllowed == before {
+		t.Fatal("allowed Location did not change Calling state validator")
+	}
+}
+
 type callingStateValidatorTracer struct {
 	query     string
 	arguments []any

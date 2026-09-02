@@ -393,9 +393,13 @@ func (m *Module) readCallingStateETag(
 	discovery access.Discovery,
 ) (string, error) {
 	practiceIDs := make([]string, 0, len(discovery.Practices))
+	locationIDs := make([]string, 0)
 	for _, practice := range discovery.Practices {
 		if practice.CallingEnabled {
 			practiceIDs = append(practiceIDs, practice.ID)
+			for _, location := range practice.Locations {
+				locationIDs = append(locationIDs, location.ID)
+			}
 		}
 	}
 	accessSnapshot, err := json.Marshal(discovery)
@@ -414,6 +418,7 @@ func (m *Module) readCallingStateETag(
 			SELECT call.id
 			FROM human_calling_calls call
 			WHERE call.practice_id = ANY($2::uuid[])
+				AND call.location_id = ANY($3::uuid[])
 				AND (
 					call.terminal_outcome IS NULL
 					OR (
@@ -441,6 +446,7 @@ func (m *Module) readCallingStateETag(
 			SELECT own_transfer.call_id
 			FROM human_calling_staff_transfers own_transfer
 			WHERE own_transfer.state IN ('REQUESTED', 'ACCEPTED')
+				AND own_transfer.location_id = ANY($3::uuid[])
 				AND (
 					own_transfer.requested_by_subject = $1
 					OR own_transfer.recipient_subject = $1
@@ -452,7 +458,7 @@ func (m *Module) readCallingStateETag(
 		), state_rows AS (
 			SELECT 'lease'::text AS kind, lease.user_subject AS id,
 				to_jsonb(lease) || jsonb_build_object(
-					'leaseCurrent', lease.lease_expires_at > $3
+					'leaseCurrent', lease.lease_expires_at > $4
 				) AS value
 			FROM human_calling_softphone_leases lease
 			WHERE lease.user_subject = $1
@@ -487,7 +493,7 @@ func (m *Module) readCallingStateETag(
 			'[]'
 		)
 		FROM state_rows
-	`, staffSubject, practiceIDs, m.now()).Scan(&callingSnapshot); err != nil {
+	`, staffSubject, practiceIDs, locationIDs, m.now()).Scan(&callingSnapshot); err != nil {
 		return "", fmt.Errorf("read Calling state validator: %w", err)
 	}
 

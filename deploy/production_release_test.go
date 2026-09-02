@@ -838,7 +838,7 @@ case "$*" in
       "$service" "$minimum" "$maximum" "$concurrency" "$pool_name" "$pool"
     ;;
   "run worker-pools describe acuity-worker "*"--format json"*)
-    printf '{"metadata":{"name":"acuity-worker","annotations":{"run.googleapis.com/manualInstanceCount":"1"}},"spec":{"template":{"spec":{"containerConcurrency":0,"containers":[{"env":[{"name":"DATABASE_POOL_MAX","value":"%s"}]}]}}}}\n' "${GCLOUD_WORKER_POOL:-2}"
+    printf '{"metadata":{"name":"acuity-worker"},"spec":{"template":{"scaling":{"manualInstanceCount":"1"},"spec":{"containerConcurrency":0,"containers":[{"env":[{"name":"DATABASE_POOL_MAX","value":"%s"}]}]}}}}\n' "${GCLOUD_WORKER_POOL:-2}"
     ;;
 esac
 `

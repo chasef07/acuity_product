@@ -122,6 +122,7 @@ for (const runtime of contract.runtimes) {
   const instances =
     live.scaling?.manualInstanceCount ??
     live.spec?.scaling?.manualInstanceCount ??
+    live.spec?.template?.scaling?.manualInstanceCount ??
     live.metadata?.annotations?.["run.googleapis.com/manualInstanceCount"]
   assertValue(
     runtimeName,
