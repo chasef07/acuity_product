@@ -52,6 +52,8 @@ jobs:
           cache: true
       - run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}
       - if: matrix.shard == 'support'
+        run: bash ./scripts/test-release-container.sh
+      - if: matrix.shard == 'support'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
 
   backend-exact:
@@ -82,6 +84,7 @@ jobs:
           go-version: "1.26.7"
           cache: true
       - run: go test -p 1 ./backend/... ./deploy -count=1
+      - run: bash ./scripts/test-release-container.sh
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
 
   backend:

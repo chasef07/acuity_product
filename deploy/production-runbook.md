@@ -70,6 +70,33 @@ Merge the reviewed Release Please pull request, then follow the GitHub Actions
 run and its linked Cloud Build. The web URL is
 `https://acuity-web-cbuqwpsdsq-ue.a.run.app`.
 
+### Deployment environment verification
+
+The release image is pinned by digest in `cloudbuild.release.yaml`. Before any
+cloud access, the release script requires `dirname`, `awk`, `curl`, `gcloud`, and
+`python3`, then loads the runtime verifier and validates its JSON contract.
+The destructive CallLeg path additionally requires Node and validates its
+cutover evidence before proceeding. Ordinary release verification uses only
+Python's standard library, already included in the Cloud SDK image.
+
+Run `bash scripts/test-release-container.sh` to test the release path in that
+exact `linux/amd64` image. The harness compiles the Go tests outside the image,
+checks the real Cloud SDK and curl, and runs with a read-only filesystem, no
+network, and no mounted cloud credentials. Release tests substitute gcloud and
+curl responses; ordinary releases use the image's real interpreters. Cutover
+ordering tests substitute only the separately tested cutover evidence checker.
+The same command gates both pull-request and exact-release backend CI.
+
+This check reproduces the v1.0.5 failure: the previous verifier invoked Node
+after promotion, but the Cloud SDK image had no Node executable. Host tests
+missed it because their Node wrapper forwarded verification to the host's
+installed runtime. Container coverage now verifies successful release, early
+rejection of missing commands or invalid local artifacts, and failure on live
+capacity drift. Ordinary drift failures restore prior service traffic and
+worker allocations; destructive cutover failures after migration keep the
+existing forward-recovery requirement. Traffic rollback does not undo schema
+migrations.
+
 ## Custom domain cutover
 
 The production front door reserves global IP `136.68.242.183` and routes to
