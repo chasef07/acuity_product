@@ -100,3 +100,57 @@ lookups returned no recordings or errors for their relevant legs. No missing
 audio was falsely marked recovered.
 
 Operational procedure: [audited backlog recovery](../runbooks/backend-backlog-recovery.md).
+
+## September 2 recovery guard review
+
+PR #254 was refreshed against `main` at `765b160`, preserving migration 0045
+alongside the new analytics migrations (51 migrations in total). This review
+changed local code and tests; it performed no new production recovery.
+
+Real PostgreSQL regressions reproduced three unsafe successes in historical
+ringtone recovery: an unconfirmed `SENT` command, bridge-only `outbound_media`
+evidence with no hangup command, and another receipt quarantined after timeline
+inspection. Each incorrectly changed the selected receipt to `APPLIED`. A
+separate CLI regression reproduced success with a `SENT` command or a terminal
+outcome lacking an end time.
+
+Recovery now rejects all three cases without changing the receipt, its raw
+evidence or attempt count, or writing a projected fact or success audit. Its
+allowed client states are only `cleanup` and `staff_hangup`. CLI verification
+requires the end time and includes `SENT` among unresolved commands. Its SQL is
+expanded into explicit checks for easier review. The two valid hangup journeys
+still recover successfully after provider bridge/hangup facts reconcile their
+commands; ordinary runtime `outbound_media` handling remains intact.
+
+Focused verification (5 module scenarios and 6 CLI scenarios) passed using
+`acuity_pr254_review_test`, a disposable local PostgreSQL database:
+
+```sh
+GOTOOLCHAIN=go1.26.7 TEST_DATABASE_URL='postgres://postgres@127.0.0.1:55434/acuity_pr254_review_test?sslmode=disable' \
+  go test -p 1 ./backend/internal/humancalling ./backend/cmd/backlog-recovery \
+  -run 'TestOutboundRingtoneEndedUsesExactHangupCommand|TestCallingVerificationRequiresCommittedTerminalEvidence' \
+  -count=1 -v
+```
+
+The full serial `go test -p 1 ./backend/... ./deploy -count=1` suite passed
+against the same disposable database with Go 1.26.7. Affected-package `go vet`
+and `govulncheck@v1.7.0 ./backend/...` passed. With pnpm 10.34.5, frontend lint,
+typecheck, all 243 unit/render tests, the production build, and the production
+dependency audit passed. `git diff --check` passed. The updated PR reruns CI,
+including browser journeys, generated contracts, and release-container checks.
+
+### Standards review
+
+Both safety findings (ignored `SENT` work and bridge-only historical recovery)
+are resolved. No blocking standards or simplicity finding remains. Keeping the
+existing shared ringtone validator avoids a second validation implementation.
+Moving the separate acknowledgement retirement policy from the CLI into Work
+remains a nonblocking ownership cleanup, outside this quarantine correction.
+
+### Spec review
+
+The command, hangup-evidence, and sibling-quarantine guards now match the
+runbook's existing contract. No additional blocking correctness or scope gap
+was found. The independent reviewers inspected code without sharing the test
+database. Local tests and review do not prove deployment or clear production
+quarantines; historical items still require individual evidence checks.

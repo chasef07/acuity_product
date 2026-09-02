@@ -175,7 +175,29 @@ func verify(ctx context.Context, pool *pgxpool.Pool, group, id string) error {
 		query = `SELECT state='RETIRED' AND projected_at IS NULL AND EXISTS(SELECT 1 FROM access_audit_events WHERE action='ai_interaction.legacy_receipt_retired' AND details->>'resourceId'=$1) FROM ai_interaction_receipts WHERE id=$1::uuid`
 	}
 	if group == "calling" {
-		query = `SELECT terminal_outcome IS NOT NULL AND NOT EXISTS(SELECT 1 FROM human_calling_provider_receipts WHERE call_id=$1 AND state IN ('PENDING','PROCESSING','QUARANTINED')) AND NOT EXISTS(SELECT 1 FROM human_calling_call_legs WHERE call_id=$1 AND state NOT IN ('ENDED','FAILED')) AND NOT EXISTS(SELECT 1 FROM human_calling_provider_commands WHERE call_id=$1 AND state IN ('PENDING','SENDING','AMBIGUOUS')) AND EXISTS(SELECT 1 FROM access_audit_events a JOIN human_calling_provider_receipts r ON r.event_id=a.details->>'resourceId' WHERE a.action='provider_receipt.recovered' AND r.call_id=$1 AND r.state='APPLIED') FROM human_calling_calls WHERE id=$1`
+		query = `
+			SELECT terminal_outcome IS NOT NULL AND ended_at IS NOT NULL
+				AND NOT EXISTS (
+					SELECT 1 FROM human_calling_provider_receipts
+					WHERE call_id=$1 AND state IN ('PENDING','PROCESSING','QUARANTINED')
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM human_calling_call_legs
+					WHERE call_id=$1 AND state NOT IN ('ENDED','FAILED')
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM human_calling_provider_commands
+					WHERE call_id=$1 AND state IN ('PENDING','SENDING','SENT','AMBIGUOUS')
+				)
+				AND EXISTS (
+					SELECT 1 FROM access_audit_events audit
+					JOIN human_calling_provider_receipts receipt
+						ON receipt.event_id=audit.details->>'resourceId'
+					WHERE audit.action='provider_receipt.recovered'
+						AND receipt.call_id=$1 AND receipt.state='APPLIED'
+				)
+			FROM human_calling_calls WHERE id=$1
+		`
 	}
 	var verified bool
 	if err := pool.QueryRow(ctx, query, id).Scan(&verified); err != nil {

@@ -55,7 +55,7 @@ func (m *Module) RecoverQuarantinedRingtone(
 	state, hasState := parseCallLegClientState(fact.ClientState)
 	if err != nil || !supported || !hasState || fact.EventID != eventID || state.CallID != callID ||
 		fact.Type != FactPlaybackEnded || fact.PlaybackStatus != "call_hangup" || state.Role != "STAFF" ||
-		(state.Kind != "cleanup" && state.Kind != callLegClientStateStaffHangup && state.Kind != "outbound_media") {
+		(state.Kind != "cleanup" && state.Kind != callLegClientStateStaffHangup) {
 		return ErrConflict
 	}
 	var terminal bool
@@ -72,12 +72,15 @@ func (m *Module) RecoverQuarantinedRingtone(
 			WHERE call_id = $1 AND state NOT IN ('ENDED', 'FAILED')
 		) OR EXISTS (
 			SELECT 1 FROM human_calling_provider_commands
-			WHERE call_id = $1 AND state IN ('PENDING', 'SENDING', 'AMBIGUOUS')
+			WHERE call_id = $1 AND state IN ('PENDING', 'SENDING', 'SENT', 'AMBIGUOUS')
 		) OR EXISTS (
 			SELECT 1 FROM human_calling_provider_receipts
-			WHERE call_id = $1 AND state IN ('PENDING', 'PROCESSING')
+			WHERE call_id = $1 AND (
+				state IN ('PENDING', 'PROCESSING')
+				OR (state = 'QUARANTINED' AND event_id <> $2)
+			)
 		)
-	`, callID).Scan(&active); err != nil || active {
+	`, callID, eventID).Scan(&active); err != nil || active {
 		return ErrConflict
 	}
 	if err := requireOutboundRingtoneFact(ctx, tx, fact, state); err != nil {

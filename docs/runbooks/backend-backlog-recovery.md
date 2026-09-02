@@ -39,6 +39,16 @@ Calling recovery requires `RECOVERY_HANDOFF_KEY` to be the existing configured
 recovery-reference key. The tool obtains the reference through the authorized
 operator timeline; it does not use a raw event ID as the recovery command.
 
+Historical ringtone recovery accepts only `call_hangup` playback endings with
+`cleanup` or `staff_hangup` state. A normal `outbound_media` callback remains
+valid during ingestion, but its bridge evidence alone cannot authorize this
+historical repair. The Call must have both a terminal outcome and an end time.
+`SENT` commands are still awaiting provider confirmation and block recovery,
+along with `PENDING`, `SENDING`, and `AMBIGUOUS` commands. Any pending, processing,
+or other quarantined receipt on that Call also blocks the transaction. Let
+unresolved provider work reconcile before retrying; do not mark it successful
+just to pass this gate. The CLI rechecks committed state and the matching audit.
+
 Legacy retirement requires forward migration
 `0045_retired_legacy_interaction_receipts.sql`. The `schema` group can dry-run or
 apply exactly through that migration, requiring the existing `0044` schema.
