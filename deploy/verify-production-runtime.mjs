@@ -78,9 +78,8 @@ for (const runtime of contract.runtimes) {
     if (live.metadata?.name !== runtimeName) {
       throw new Error(`${runtimeName} did not resolve exactly`)
     }
-    const annotations = live.spec?.template?.metadata?.annotations ?? {}
+    const annotations = live.metadata?.annotations ?? {}
     const serviceScaling = live.spec?.scaling ?? live.scaling ?? {}
-    const revisionScaling = live.spec?.template?.scaling ?? {}
     assertValue(
       runtimeName,
       "concurrency",
@@ -93,16 +92,14 @@ for (const runtime of contract.runtimes) {
       "minimumInstances",
       runtime.minimumInstances,
       serviceScaling.minInstanceCount ??
-        revisionScaling.minInstanceCount ??
-        annotations["autoscaling.knative.dev/minScale"],
+        annotations["run.googleapis.com/minScale"],
     )
     assertValue(
       runtimeName,
       "maximumInstances",
       runtime.maximumInstances,
       serviceScaling.maxInstanceCount ??
-        revisionScaling.maxInstanceCount ??
-        annotations["autoscaling.knative.dev/maxScale"],
+        annotations["run.googleapis.com/maxScale"],
     )
     assertValue(
       runtimeName,

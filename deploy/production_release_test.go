@@ -834,7 +834,7 @@ case "$*" in
     if [ "${GCLOUD_RUNTIME_DRIFT_SERVICE:-}" = "$service" ]; then
       maximum=20
     fi
-    printf '{"metadata":{"name":"%s"},"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/minScale":"%s","autoscaling.knative.dev/maxScale":"%s"}},"spec":{"containerConcurrency":%s,"containers":[{"env":[{"name":"%s","value":"%s"}]}]}}}}\n' \
+    printf '{"metadata":{"name":"%s","annotations":{"run.googleapis.com/minScale":"%s","run.googleapis.com/maxScale":"%s"}},"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/maxScale":"20"}},"spec":{"containerConcurrency":%s,"containers":[{"env":[{"name":"%s","value":"%s"}]}]}}}}\n' \
       "$service" "$minimum" "$maximum" "$concurrency" "$pool_name" "$pool"
     ;;
   "run worker-pools describe acuity-worker "*"--format json"*)
