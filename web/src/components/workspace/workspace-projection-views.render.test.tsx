@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import test, { type TestContext } from "node:test"
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -9,8 +9,10 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { AIInteractionContext } from "./ai-interaction-context.tsx"
 import { EngagementWorkspaceView } from "./engagement-workspace.tsx"
 import { WorkspaceRail } from "./workspace-rail.tsx"
+import { clearAccessToken } from "../../lib/auth-client.ts"
 import type {
   AiInteractionDetail,
+  ConversationTimelineItem,
   Task,
 } from "../../lib/api/generated/types.gen.ts"
 import type {
@@ -139,6 +141,157 @@ test("failed AI outcome review exposes a retry that can recover", async () => {
   await act(async () => root.unmount())
   dom.window.close()
 })
+
+test("conversation clears its unavailable alert after a successful refresh", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = projectedTask()
+  conversation.items = [{
+    type: "TASK",
+    id: task.id,
+    occurredAt: task.createdAt,
+    taskActivity: "TASK_CREATED",
+    task,
+  }]
+  await conversation.render(0)
+  assert.equal(conversation.timelineRequests, 1)
+  assert.match(conversation.host.textContent ?? "", /Projected follow-up/)
+
+  conversation.timelineStatus = 503
+  await conversation.render(1)
+  assert.equal(conversation.timelineRequests, 2)
+  assert.match(conversation.host.textContent ?? "", /Projected follow-up/)
+  assert.match(
+    conversation.host.querySelector("[role='alert']")?.textContent ?? "",
+    /Conversation unavailable.*The conversation could not be loaded\./,
+  )
+
+  conversation.timelineStatus = 200
+  await conversation.render(2)
+  assert.equal(conversation.timelineRequests, 3)
+  assert.equal(
+    Boolean(conversation.host.querySelector("[role='alert']")),
+    false,
+    "A successful timeline response must clear the conversation unavailable alert",
+  )
+})
+
+test("an unavailable conversation can be retried without showing an empty history", async (t) => {
+  const conversation = conversationHarness(t)
+  conversation.timelineStatus = 503
+  await conversation.render(0)
+  assert.doesNotMatch(conversation.host.textContent ?? "", /No activity yet/)
+  const retry = Array.from(conversation.host.querySelectorAll("button")).find(
+    (button) => button.textContent === "Try again",
+  )
+  assert.ok(retry, "A failed initial timeline load must offer a retry")
+
+  await act(async () => retry.click())
+  assert.equal(conversation.timelineRequests, 2)
+  assert.match(
+    conversation.host.querySelector("[role='alert']")?.textContent ?? "",
+    /The conversation could not be loaded\./,
+  )
+
+  conversation.timelineStatus = 200
+  await act(async () => retry.click())
+  assert.equal(conversation.timelineRequests, 3)
+  assert.equal(Boolean(conversation.host.querySelector("[role='alert']")), false)
+  assert.match(conversation.host.textContent ?? "", /No activity yet/)
+})
+
+test("a missing access token leaves a retryable conversation error instead of a loading spinner", async (t) => {
+  const conversation = conversationHarness(t)
+  conversation.tokenStatus = 401
+  await conversation.render(0)
+  assert.equal(conversation.timelineRequests, 0)
+  assert.equal(
+    Boolean(conversation.host.querySelector('[aria-label="Loading conversation"]')),
+    false,
+  )
+  const retry = Array.from(conversation.host.querySelectorAll("button")).find(
+    (button) => button.textContent === "Try again",
+  )
+  assert.ok(retry)
+  conversation.tokenStatus = 200
+  await act(async () => retry.click())
+  assert.equal(conversation.timelineRequests, 1)
+  assert.equal(Boolean(conversation.host.querySelector("[role='alert']")), false)
+})
+
+function conversationHarness(t: TestContext) {
+  const dom = installDOM()
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  const previousAPIURL = process.env.NEXT_PUBLIC_PORTAL_API_URL
+  process.env.NEXT_PUBLIC_PORTAL_API_URL = "http://portal.test"
+  clearAccessToken()
+  const conversation = {
+    host,
+    render,
+    timelineStatus: 200,
+    timelineRequests: 0,
+    tokenStatus: 200,
+    items: [] as ConversationTimelineItem[],
+  }
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url
+    if (url === "/api/auth/token") {
+      return Response.json(
+        { token: "synthetic-token" },
+        { status: conversation.tokenStatus },
+      )
+    }
+    assert.match(url, /\/v1\/engagements\/%2B15551234567\/timeline\?/)
+    conversation.timelineRequests += 1
+    return conversation.timelineStatus === 200
+      ? Response.json({ items: conversation.items, nextCursor: "" })
+      : Response.json(
+          { code: "UNAVAILABLE" },
+          { status: conversation.timelineStatus },
+        )
+  })
+  const projection = projectedWorkspace(projectedTask())
+  async function render(revision: number) {
+    await act(async () => {
+      root.render(
+        <EngagementWorkspaceView
+          engagement={projection.selection.engagement!}
+          practiceID={projection.scope.practiceID}
+          canMutate={false}
+          revision={revision}
+          onTaskCreated={() => {}}
+          onTaskOpen={() => {}}
+          onCallOpen={() => {}}
+          onAIInteractionOpen={() => {}}
+          calling={{
+            callingOccupied: false,
+            callingEnabled: false,
+            outboundPending: false,
+            ownsSoftphone: false,
+            startOutbound: async () => undefined,
+          }}
+        />,
+      )
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+  t.after(async () => {
+    await act(async () => root.unmount())
+    clearAccessToken()
+    if (previousAPIURL === undefined) delete process.env.NEXT_PUBLIC_PORTAL_API_URL
+    else process.env.NEXT_PUBLIC_PORTAL_API_URL = previousAPIURL
+    dom.window.close()
+  })
+  return conversation
+}
 
 function installDOM() {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {

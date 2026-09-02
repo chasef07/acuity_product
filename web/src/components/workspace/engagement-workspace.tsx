@@ -372,16 +372,16 @@ function MessageConversation({
     async (scroll = false) => {
       if (!timelineKey) return
       const requestGeneration = ++generation.current
-      if (!initialized.current) setLoading(true)
+      setLoading(true)
       const token = await getAccessToken()
-      if (!token) return
-      const result = await loadPage(token)
+      const result = token ? await loadPage(token) : undefined
       if (requestGeneration !== generation.current) return
       setLoading(false)
       if (!result?.data) {
         setError("The conversation could not be loaded.")
         return
       }
+      setError("")
       initialized.current = true
       setItems((current) => {
         const committed = committedMessage.current
@@ -498,7 +498,7 @@ function MessageConversation({
                   </Button>
                 </MessageScrollerItem>
               )}
-              {loading && (
+              {loading && items.length === 0 && (
                 <MessageScrollerItem messageId="loading-conversation">
                   <div
                     aria-label="Loading conversation"
@@ -512,45 +512,44 @@ function MessageConversation({
                   </div>
                 </MessageScrollerItem>
               )}
-              {!loading &&
-                presentedItems.map((item, index) => (
-                  <MessageScrollerItem
-                    key={`${item.type}:${item.id}`}
-                    messageId={`${item.type}:${item.id}`}
-                  >
-                    <Fragment>
-                      {(index === 0 ||
-                        !sameConversationDate(
-                          presentedItems[index - 1]!.occurredAt,
-                          item.occurredAt,
-                        )) && (
-                        <Marker variant="separator" className="my-2">
-                          <MarkerContent>
-                            {conversationDateLabel(item.occurredAt)}
-                          </MarkerContent>
-                        </Marker>
-                      )}
-                      <TimelineEntry
-                        item={item}
-                        contextLocationID={locationID}
-                        canMutate={canMutate}
-                        onChanged={() => void loadLatest(true)}
-                        onTaskCreated={onTaskCreated}
-                        onTaskOpen={onTaskOpen}
-                        onCallOpen={onCallOpen}
-                        onAIInteractionOpen={onAIInteractionOpen}
-                        selectedTaskID={selectedTaskID}
-                        selectedCallID={selectedCallID}
-                        selectedAIInteractionID={selectedAIInteractionID}
-                        recoveryFollowUp={
-                          item.type === "CALL" &&
-                          followUpCallIDs.has(item.call?.id ?? "")
-                        }
-                      />
-                    </Fragment>
-                  </MessageScrollerItem>
-                ))}
-              {!loading && presentedItems.length === 0 && (
+              {presentedItems.map((item, index) => (
+                <MessageScrollerItem
+                  key={`${item.type}:${item.id}`}
+                  messageId={`${item.type}:${item.id}`}
+                >
+                  <Fragment>
+                    {(index === 0 ||
+                      !sameConversationDate(
+                        presentedItems[index - 1]!.occurredAt,
+                        item.occurredAt,
+                      )) && (
+                      <Marker variant="separator" className="my-2">
+                        <MarkerContent>
+                          {conversationDateLabel(item.occurredAt)}
+                        </MarkerContent>
+                      </Marker>
+                    )}
+                    <TimelineEntry
+                      item={item}
+                      contextLocationID={locationID}
+                      canMutate={canMutate}
+                      onChanged={() => void loadLatest(true)}
+                      onTaskCreated={onTaskCreated}
+                      onTaskOpen={onTaskOpen}
+                      onCallOpen={onCallOpen}
+                      onAIInteractionOpen={onAIInteractionOpen}
+                      selectedTaskID={selectedTaskID}
+                      selectedCallID={selectedCallID}
+                      selectedAIInteractionID={selectedAIInteractionID}
+                      recoveryFollowUp={
+                        item.type === "CALL" &&
+                        followUpCallIDs.has(item.call?.id ?? "")
+                      }
+                    />
+                  </Fragment>
+                </MessageScrollerItem>
+              ))}
+              {!loading && !error && presentedItems.length === 0 && (
                 <MessageScrollerItem messageId="empty-conversation">
                   <Empty className="my-10 border-0">
                     <EmptyHeader>
@@ -585,7 +584,18 @@ function MessageConversation({
       {error && (
         <Alert variant="destructive" className="rounded-none border-x-0">
           <AlertTitle>Conversation unavailable</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>
+            {error}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={loading}
+              onClick={() => void loadLatest(true)}
+            >
+              {loading && <Spinner />}
+              Try again
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
       <MessageComposer

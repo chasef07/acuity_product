@@ -526,14 +526,12 @@ test("typed failures replace provider details with concise Staff recovery copy",
       action: { kind: "reload-page", label: "Refresh page" },
     },
     {
-      title: "Calling disconnected",
-      message: "Refresh the page to reconnect. Calls are paused until then.",
-      action: { kind: "reload-page", label: "Refresh page" },
+      title: "Calling request failed",
+      message: "The call or calling session changed. Try the action again.",
     },
     {
-      title: "Calling disconnected",
-      message: "Refresh the page to reconnect. Calls are paused until then.",
-      action: { kind: "reload-page", label: "Refresh page" },
+      title: "Calling request failed",
+      message: "Your request could not be confirmed. Try the action again.",
     },
   ])
 })
@@ -557,7 +555,7 @@ test("active Call ownership stays visible without offering an unsafe takeover", 
   })
 })
 
-test("failed stop cleanup uses the same Staff recovery copy without a false action", () => {
+test("failed stop cleanup reports an unconfirmed request without a false action", () => {
   const message =
     "Calling stopped locally, but backend readiness could not be cleared. Calling could not reach the service."
   assert.deepEqual(
@@ -567,8 +565,8 @@ test("failed stop cleanup uses the same Staff recovery copy without a false acti
       recoverable: false,
     }),
     {
-      title: "Calling disconnected",
-      message: "Refresh the page to reconnect. Calls are paused until then.",
+      title: "Calling request failed",
+      message: "Your request could not be confirmed.",
     },
   )
 })

@@ -30,6 +30,7 @@ export type SoftphoneFailure = {
   kind: SoftphoneFailureKind
   message: string
   recoverable: boolean
+  source?: "refresh" | "readiness" | "media-reconnect"
 }
 
 export type RuntimeOffer = RingingCallLeg & { answerReady: boolean }
@@ -615,14 +616,31 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
   async function setRequestFailure(
     error: unknown,
     fallback: SoftphoneFailureKind = "temporary-request",
+    source?: SoftphoneFailure["source"],
   ) {
     const failure = failureFrom(error, fallback)
     if (failure.kind === "access") {
       await failClosedAccess(failure)
       return failure
     }
-    publish({ failure })
+    publish({
+      failure:
+        failure.kind === "temporary-request" && source
+          ? { ...failure, source }
+          : failure,
+    })
     return failure
+  }
+
+  function clearRefreshFailure(generation: number) {
+    if (
+      !stopped &&
+      generation === lifecycleGeneration &&
+      snapshot.failure?.kind === "temporary-request" &&
+      snapshot.failure.source !== "readiness"
+    ) {
+      publish({ failure: undefined })
+    }
   }
 
   function ownershipFailure(lease: SoftphoneState, moved = false): SoftphoneFailure {
@@ -880,9 +898,6 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       if (result.etag) etag = result.etag
       if (stopped || generation !== lifecycleGeneration) return
       if (result.status === "not-modified") {
-        if (snapshot.failure?.kind === "temporary-request") {
-          publish({ failure: undefined })
-        }
         if (snapshot.expectedCallID) {
           const call = await backendRequest((signal) =>
             options.backend.readCall(snapshot.expectedCallID, signal),
@@ -890,6 +905,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           if (!stopped && generation === lifecycleGeneration) applyCall(call)
         }
         rejectExpiredUnmatchedMedia(correlatedMediaTokens())
+        clearRefreshFailure(generation)
         temporaryFailures = 0
         return
       }
@@ -1094,8 +1110,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           ? snapshot.failure
           : !lease.owner
           ? ownershipFailure(lease, ownershipLost)
-          : snapshot.failure?.kind === "temporary-request" ||
-              snapshot.failure?.kind === "ownership"
+          : snapshot.failure?.kind === "ownership"
             ? undefined
             : snapshot.failure,
       })
@@ -1151,11 +1166,12 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
       if (ownershipAcquired) {
         void connectMedia().then(() => scheduleHeartbeat())
       }
+      clearRefreshFailure(generation)
       temporaryFailures = 0
     } catch (error) {
       if (stopped || generation !== lifecycleGeneration) return
       temporaryFailures += 1
-      await setRequestFailure(error)
+      await setRequestFailure(error, "temporary-request", "refresh")
     }
   }
 
@@ -1321,7 +1337,8 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
                 request.microphoneReady &&
                 request.audioReady &&
                 request.sessionHealthy &&
-                !readinessFailClosed
+                !readinessFailClosed &&
+                snapshot.failure?.source !== "refresh"
                 ? undefined
                 : snapshot.failure
               : ownershipFailure(visibleLease),
@@ -1331,7 +1348,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
           if (stopped) return
           if (generation !== readinessGeneration) continue
           publish({ pending: { ...snapshot.pending, availability: false } })
-          await setCommandFailure(error)
+          await setRequestFailure(error, "temporary-request", "readiness")
         }
       }
     })()
@@ -1456,6 +1473,7 @@ export function createSoftphoneRuntime(options: RuntimeOptions): SoftphoneRuntim
                   mediaState === "reconnecting"
                     ? {
                         kind: "media",
+                        source: "media-reconnect",
                         message: "Call audio is reconnecting. Reconnect calling if it does not recover.",
                         recoverable: true,
                       }
