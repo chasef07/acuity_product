@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/chasef07/acuity_product/compare/v1.0.7...v1.1.0) (2026-09-02)
+
+
+### Features
+
+* **analytics:** add practice booking and staff performance dashboards ([#258](https://github.com/chasef07/acuity_product/issues/258)) ([765b160](https://github.com/chasef07/acuity_product/commit/765b16023aaadaab82c6b6450a0a4b521a081fb5))
+
+
+### Bug Fixes
+
+* prevent backend acknowledgement and receipt buildup ([#254](https://github.com/chasef07/acuity_product/issues/254)) ([6aef432](https://github.com/chasef07/acuity_product/commit/6aef432e1aa10c00e5778ba5856ba0a02d3735bc))
+
 ## [1.0.7](https://github.com/chasef07/acuity_product/compare/v1.0.6...v1.0.7) (2026-09-02)
 
 
