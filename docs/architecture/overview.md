@@ -71,7 +71,13 @@ history, not a compatibility contract, replay path, alias, or fallback. Workers
 leave those historical receipts unchanged and select only supported lifecycle
 messages for projection. Runtime pending-work indexes and operational backlog
 gates use the same supported-kind predicate, so immutable history cannot appear
-as executable work. The historical column's update grant remains for one
+as executable work. An explicitly authorized operator can retire a quarantined
+`SUMMARY` after a supported projected `CLOSEOUT` establishes its source
+Interaction's terminal outcome. `RETIRED` preserves the raw receipt and error,
+links the established Interaction, and records an operator audit; it does not
+claim successful projection. See the
+[backlog recovery runbook](../runbooks/backend-backlog-recovery.md).
+The historical column's update grant remains for one
 expand/contract window so overlapping pre-change Product revisions can roll
 back safely; the current application neither reads nor writes that column.
 
@@ -207,6 +213,15 @@ Dependency rules:
 3. `HumanCalling` grants a short-lived signed playback capability after authorization. The native media element uses that capability for range requests; each request rechecks the signed subject's current Practice and Location access, and the backend streams provider audio without buffering it or exposing a raw provider URL. PostgreSQL stores the durable Telnyx recording identity, reconciles stale processing rows when a saved/error webhook is lost, and deletes provider content when the configured retention period expires.
 4. PostgreSQL is the sole durable product authority. SSE, browser state, and provider commands are projections or requests.
 5. Provider events are facts. A browser click cannot prove that a call bridged, an SMS delivered, or a recording became available.
+
+Automatic Task acknowledgements have a five-minute send window measured from
+the original acknowledgement intent. Missing or inactive Messaging configuration
+retries at one-minute intervals only inside that window. Expired unsent intents
+become `NOT_NEEDED`, retain their last configuration failure (or
+`ACKNOWLEDGEMENT_EXPIRED`), and remain visible as not sent; the patient Task is
+unchanged. Messaging rechecks the original deadline before starting a queued
+provider command. An expired command becomes `FAILED` without provider contact.
+Staff-authored Messages and explicit send-again attempts use their normal rules.
 
 ## Seams and adapters
 

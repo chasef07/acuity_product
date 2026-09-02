@@ -55,7 +55,8 @@ const automaticTaskAcknowledgementCopy = "We received your request and shared it
 
 const automaticTaskAcknowledgementActor = "task-acknowledgement"
 
-const automaticTaskAcknowledgementConfigurationRetryDelay = 5 * time.Minute
+const automaticTaskAcknowledgementConfigurationRetryDelay = time.Minute
+const automaticTaskAcknowledgementMaxAge = 5 * time.Minute
 
 var (
 	ErrDenied                 = errors.New("messaging access denied")
@@ -895,12 +896,20 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 		}
 		return false, nil
 	}
-	if claim.TaskState != work.TaskOpen {
+	deadline := claim.CreatedAt.Add(automaticTaskAcknowledgementMaxAge)
+	if claim.TaskState != work.TaskOpen || !now.Before(deadline) {
+		failureCode := "TASK_ALREADY_RESOLVED"
+		if claim.TaskState == work.TaskOpen {
+			failureCode = claim.SafeFailureCode
+			if failureCode == "" {
+				failureCode = "ACKNOWLEDGEMENT_EXPIRED"
+			}
+		}
 		if err := m.work.MarkTaskAcknowledgementNotNeeded(
 			ctx,
 			tx,
 			claim.ID,
-			"TASK_ALREADY_RESOLVED",
+			failureCode,
 			now,
 		); err != nil {
 			return false, err
@@ -909,11 +918,15 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 			return false, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("commit resolved Task acknowledgement: %w", err)
+			return false, fmt.Errorf("commit unsent Task acknowledgement: %w", err)
 		}
 		return true, nil
 	}
 
+	nextAttemptAt := now.Add(automaticTaskAcknowledgementConfigurationRetryDelay)
+	if nextAttemptAt.After(deadline) {
+		nextAttemptAt = deadline
+	}
 	var sender, profileID string
 	var active bool
 	if err := tx.QueryRow(ctx, `
@@ -931,7 +944,7 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 			claim.ID,
 			"SENDER_CONFIGURATION_UNAVAILABLE",
 			now,
-			now.Add(automaticTaskAcknowledgementConfigurationRetryDelay),
+			nextAttemptAt,
 		); err != nil {
 			return false, err
 		}
@@ -951,7 +964,7 @@ func (m *Module) QueueNextTaskAcknowledgement(ctx context.Context) (bool, error)
 			claim.ID,
 			"SENDER_CONFIGURATION_INACTIVE",
 			now,
-			now.Add(automaticTaskAcknowledgementConfigurationRetryDelay),
+			nextAttemptAt,
 		); err != nil {
 			return false, err
 		}
@@ -1267,6 +1280,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 	var command ProviderCommand
 	var practiceID, locationID string
 	var attachmentID string
+	var acknowledgementCreatedAt *time.Time
 	var blocked, active bool
 	if err := tx.QueryRow(ctx, `
 		SELECT
@@ -1281,7 +1295,8 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 			provider_command.messaging_profile_id,
 			COALESCE(attachment.id::text, ''),
 			thread.outbound_blocked,
-			COALESCE(configuration.active, false)
+			COALESCE(configuration.active, false),
+			acknowledgement.created_at
 		FROM messaging_provider_commands provider_command
 		JOIN messaging_messages message
 			ON message.id = provider_command.message_id
@@ -1296,6 +1311,8 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		LEFT JOIN messaging_attachments attachment
 			ON attachment.message_id = message.id
 			AND attachment.state = 'STORED'
+		LEFT JOIN work_task_acknowledgements acknowledgement
+			ON acknowledgement.message_id = message.id
 		WHERE provider_command.state = 'PENDING'
 			AND provider_command.next_attempt_at <= $1
 		ORDER BY provider_command.created_at, provider_command.id
@@ -1314,6 +1331,7 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		&attachmentID,
 		&blocked,
 		&active,
+		&acknowledgementCreatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
@@ -1328,13 +1346,18 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 		command.MediaURL, err = m.ProviderMediaURL(attachmentID)
 		mediaUnavailable = err != nil
 	}
-	if blocked || !active || mediaUnavailable {
+	acknowledgementExpired := acknowledgementCreatedAt != nil &&
+		!m.now().Before(acknowledgementCreatedAt.Add(automaticTaskAcknowledgementMaxAge))
+	if blocked || !active || mediaUnavailable || acknowledgementExpired {
 		code := "OUTBOUND_BLOCKED"
 		if !active {
 			code = "SENDER_CONFIGURATION_CHANGED"
 		}
 		if mediaUnavailable {
 			code = "ATTACHMENT_UNAVAILABLE"
+		}
+		if acknowledgementExpired {
+			code = "ACKNOWLEDGEMENT_EXPIRED"
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE messaging_provider_commands
