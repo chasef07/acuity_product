@@ -33,6 +33,7 @@ import {
   type BookingSummary,
   type PatientGroup,
 } from "@/lib/booking-analytics"
+import { useReducedMotion } from "@/lib/reduced-motion"
 import styles from "./booking-overview.module.css"
 
 type Metric = BookingMetric
@@ -122,6 +123,7 @@ function BookingTrend({
   metric: Metric
   series: readonly Series[]
 }) {
+  const reducedMotion = useReducedMotion()
   return (
     <ChartContainer
       config={chartConfig}
@@ -182,7 +184,7 @@ function BookingTrend({
               fillOpacity={0.055}
               stroke="none"
               tooltipType="none"
-              isAnimationActive={false}
+              isAnimationActive={!reducedMotion}
             />
           ))}
         {series.map((cohort) => (
@@ -201,7 +203,7 @@ function BookingTrend({
             }
             activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
             connectNulls={false}
-            isAnimationActive={false}
+            isAnimationActive={!reducedMotion}
           />
         ))}
       </ComposedChart>

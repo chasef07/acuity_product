@@ -27,6 +27,7 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import styles from "./booking-overview.module.css"
+import { useReducedMotion } from "@/lib/reduced-motion"
 
 function hours(seconds: number | null) {
   if (seconds === null) return "—"
@@ -104,6 +105,7 @@ const columns: Array<{ key: SortKey; label: string }> = [
 ]
 
 export function StaffOverview({ report }: { report: StaffAnalytics }) {
+  const reducedMotion = useReducedMotion()
   const [sorting, setSorting] = useState<{ key: SortKey; descending: boolean }>(
     { key: "email", descending: false },
   )
@@ -232,7 +234,7 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
                 dot={{ r: 2, strokeWidth: 0, fill: "var(--foreground)" }}
                 activeDot={{ r: 4 }}
                 connectNulls={false}
-                isAnimationActive={false}
+                isAnimationActive={!reducedMotion}
               />
             </LineChart>
           </ChartContainer>

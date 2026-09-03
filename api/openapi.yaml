@@ -1135,6 +1135,33 @@ paths:
           $ref: "#/components/responses/AnalyticsBusy"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/operator/ai-costs/query:
+    post:
+      operationId: queryOperatorAICosts
+      summary: Estimate AI call costs from recorded usage at confirmed vendor rates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorAICostQueryRequest"
+      responses:
+        "200":
+          description: Platform Operator cost estimates before credits, with usage coverage and item shares.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorAICostAnalytics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operator/ai-analytics/query:
     post:
       operationId: queryOperatorAIAnalytics
@@ -3620,6 +3647,97 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BookingDay"
+    OperatorAICostQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [practiceId, range, timeZone]
+      properties:
+        practiceId: {type: string, format: uuid}
+        locationId: {type: string, format: uuid}
+        range: {$ref: "#/components/schemas/OperatorAIAnalyticsRange"}
+        timeZone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: IANA timezone for daily chart buckets. The range is a rolling time window.
+    OperatorAICostItem:
+      type: object
+      additionalProperties: false
+      required: [id, label, quantity, unit, rateUsd, rateQuantity, rateUnit, costUsd, sharePercent, calls]
+      properties:
+        id: {type: string}
+        label: {type: string}
+        quantity: {type: number, minimum: 0}
+        unit: {type: string, enum: [tokens, characters, minutes]}
+        rateUsd: {type: number, minimum: 0}
+        rateQuantity: {type: number, exclusiveMinimum: 0}
+        rateUnit: {type: string, enum: [tokens, characters, minute, hour]}
+        costUsd: {type: number, nullable: true, minimum: 0}
+        sharePercent:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 100
+          description: Item cost divided by the recorded estimated subtotal, times 100. Null without a positive denominator or recorded usage.
+        calls:
+          type: integer
+          minimum: 0
+          description: Completed calls with recorded usage for this item.
+    OperatorAICostDay:
+      type: object
+      additionalProperties: false
+      required: [day, costUsd, calls, pricedCalls, unpricedUsage]
+      properties:
+        day: {type: string}
+        costUsd: {type: number, minimum: 0}
+        calls: {type: integer, minimum: 0}
+        pricedCalls:
+          type: integer
+          minimum: 0
+          description: Calls on this day with complete cost usage.
+        unpricedUsage:
+          type: integer
+          minimum: 0
+          description: Usage entries on this day excluded because their model or quantity could not be priced.
+    OperatorAICostAnalytics:
+      type: object
+      additionalProperties: false
+      required: [from, through, timeZone, rateEffectiveDate, totalCalls, pricedCalls, unpricedUsage, totalCostUsd, costPerCallUsd, costPerMinuteUsd, cacheHitRate, cacheSavingsUsd, items, daily]
+      properties:
+        from: {type: string}
+        through: {type: string}
+        timeZone: {type: string}
+        rateEffectiveDate:
+          type: string
+          format: date
+          description: Effective date of the tariff used for all estimates in this report.
+        totalCalls: {type: integer, minimum: 0}
+        pricedCalls:
+          type: integer
+          minimum: 0
+          description: Completed calls with all seven cost items known and no unpriced LLM, STT, or TTS usage.
+        unpricedUsage:
+          type: integer
+          minimum: 0
+          description: Usage entries with unrecognized provider/model rates or invalid quantities, excluded from cost estimates.
+        totalCostUsd:
+          type: number
+          minimum: 0
+          description: Sum of recorded estimated item costs at the report tariff, before credits. May be partial; inspect pricedCalls and item calls.
+        costPerCallUsd:
+          type: number
+          nullable: true
+          minimum: 0
+          description: Average estimated cost across completed calls with complete cost usage.
+        costPerMinuteUsd:
+          type: number
+          nullable: true
+          minimum: 0
+          description: Average estimated cost per call minute across completed calls with complete cost usage.
+        cacheHitRate: {type: number, nullable: true, minimum: 0, maximum: 100}
+        cacheSavingsUsd: {type: number, minimum: 0}
+        items: {type: array, items: {$ref: "#/components/schemas/OperatorAICostItem"}}
+        daily: {type: array, items: {$ref: "#/components/schemas/OperatorAICostDay"}}
     OperatorAIAnalyticsRange:
       type: string
       enum: [24h, 7d, 30d]

@@ -193,6 +193,57 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
+	usage := `[{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":1000000,"input_cached_tokens":250000,"output_tokens":100000},{"type":"stt_usage","provider":"livekit","model":"assemblyai/universal-3-5-pro","audio_duration":120},{"type":"tts_usage","provider":"rime","model":"coda","characters_count":10000}]`
+	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript = jsonb_set(transcript, '{usage}', $2::jsonb) WHERE id=$1::uuid`, richID, usage); err != nil {
+		t.Fatal(err)
+	}
+	costBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "locationId": northID, "range": "7d", "timeZone": "America/Los_Angeles"})
+	for _, token := range []string{"", "admin-token", "operator-token"} {
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", token, costBody)
+		if token != "operator-token" {
+			want := http.StatusForbidden
+			if token == "" {
+				want = http.StatusUnauthorized
+			}
+			if response.StatusCode != want {
+				t.Fatalf("cost authorization = %d, want %d", response.StatusCode, want)
+			}
+			_ = response.Body.Close()
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("cost query = %d: %s", response.StatusCode, readBody(t, response))
+		}
+		var costs interaction.CostAnalytics
+		decode(t, response, &costs)
+		if costs.TotalCalls != 2 || costs.PricedCalls != 1 || costs.CostPerCallUSD == nil ||
+			math.Abs(*costs.CostPerCallUSD-1.39) > 1e-9 || costs.CostPerMinuteUSD == nil ||
+			math.Abs(*costs.CostPerMinuteUSD-(1.39/30)) > 1e-9 || math.Abs(costs.TotalCostUSD-1.4575) > 1e-9 {
+			t.Fatalf("scoped partial cost estimate: %+v", costs)
+		}
+		if costs.Items[0].Quantity != 750000 || costs.Items[1].Quantity != 250000 || costs.Items[3].Quantity != 2 {
+			t.Fatalf("native usage quantities: %+v", costs.Items)
+		}
+		var shares, daily float64
+		for _, item := range costs.Items {
+			if item.SharePercent != nil {
+				shares += *item.SharePercent
+			}
+		}
+		for _, day := range costs.Daily {
+			daily += day.CostUSD
+		}
+		if math.Abs(shares-100) > 1e-9 || math.Abs(daily-costs.TotalCostUSD) > 1e-9 {
+			t.Fatal("cost breakdown does not reconcile")
+		}
+	}
+	invalidCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "range": "7d", "timeZone": "Not/AZone"})
+	invalidCost := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", invalidCostBody)
+	if invalidCost.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid cost timezone = %d", invalidCost.StatusCode)
+	}
+	_ = invalidCost.Body.Close()
+
 	queryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
 		"locationId": northID,
