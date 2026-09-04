@@ -186,6 +186,13 @@ func (report *CostAnalytics) addCall(started, ended time.Time, raw json.RawMessa
 		provider, model = costModelKey(provider), costModelKey(model)
 		switch entry["type"] {
 		case "llm_usage":
+			// LiveKit emits wrapper metrics as well as the underlying provider
+			// metrics. This is duplicated stream usage, not another billed model.
+			// Only provider rows establish known LLM costs below, so a report
+			// containing just the wrapper still has incomplete coverage.
+			if provider == "unknown" && model == "fallbackadapter" {
+				continue
+			}
 			input, a := usageQuantity(entry, "input_tokens", "inputTokens")
 			cached, b := usageQuantity(entry, "input_cached_tokens", "inputCachedTokens")
 			output, c := usageQuantity(entry, "output_tokens", "outputTokens")

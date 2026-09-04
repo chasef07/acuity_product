@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +195,9 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	defer server.Close()
 
 	usage := `[{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":1000000,"input_cached_tokens":250000,"output_tokens":100000},{"type":"stt_usage","provider":"livekit","model":"assemblyai/universal-3-5-pro","audio_duration":120},{"type":"tts_usage","provider":"rime","model":"coda","characters_count":10000}]`
+	// Native LiveKit reports also contain duplicate stream usage from the
+	// fallback wrapper. It must neither add cost nor suppress the averages.
+	usage = strings.TrimSuffix(usage, "]") + `,{"type":"llm_usage","provider":"unknown","model":"FallbackAdapter","input_tokens":1000000,"input_cached_tokens":250000,"output_tokens":100000}]`
 	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript = jsonb_set(transcript, '{usage}', $2::jsonb) WHERE id=$1::uuid`, richID, usage); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +220,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		}
 		var costs interaction.CostAnalytics
 		decode(t, response, &costs)
-		if costs.TotalCalls != 2 || costs.PricedCalls != 1 || costs.CostPerCallUSD == nil ||
+		if costs.TotalCalls != 2 || costs.PricedCalls != 1 || costs.UnpricedUsage != 0 || costs.CostPerCallUSD == nil ||
 			math.Abs(*costs.CostPerCallUSD-1.39) > 1e-9 || costs.CostPerMinuteUSD == nil ||
 			math.Abs(*costs.CostPerMinuteUSD-(1.39/30)) > 1e-9 || math.Abs(costs.TotalCostUSD-1.4575) > 1e-9 {
 			t.Fatalf("scoped partial cost estimate: %+v", costs)
