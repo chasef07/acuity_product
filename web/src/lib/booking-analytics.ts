@@ -21,10 +21,12 @@ export function canViewPracticeAnalytics(
   )
 }
 
-export function bookingConversionExplanation(value: number | null): string {
-  return value === null
-    ? "No availability checks recorded for this period."
-    : `${Math.round(value)}% of calls with a recorded availability check booked.`
+export function bookingConversionExplanation(
+  summary: Pick<BookingSummary, "converted" | "searched">,
+): string {
+  return summary.searched === 0
+    ? "No calls with an availability check in this period."
+    : `${summary.converted.toLocaleString("en-US")} of ${summary.searched.toLocaleString("en-US")} calls booked after checking availability.`
 }
 
 export function formatDuration(seconds: number | null): string {

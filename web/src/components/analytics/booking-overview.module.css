@@ -77,6 +77,42 @@
   gap: 25px;
   padding-top: 3px;
 }
+.conversion {
+  --booking-total: var(--foreground);
+}
+.conversion .summaryCaption {
+  color: var(--foreground);
+  font-size: 12px;
+}
+.conversionOutcomes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+.conversionOutcomes dt {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.conversionOutcomes dd {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.coverageNote {
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.chartCaption {
+  margin-top: -8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+}
 .summaryLabel {
   color: var(--muted-foreground);
   font-size: 12px;

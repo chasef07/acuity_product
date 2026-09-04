@@ -34,8 +34,31 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 51 {
-		t.Fatalf("migration count = %d, want 51", migrationCount)
+	if migrationCount != 53 {
+		t.Fatalf("migration count = %d, want 53", migrationCount)
+	}
+	var bookingSearchPreciseExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='ai_interactions'
+				AND column_name='booking_search_precise'
+		)
+	`).Scan(&bookingSearchPreciseExists); err != nil {
+		t.Fatal(err)
+	}
+	if !bookingSearchPreciseExists {
+		t.Fatal("booking_search_precise column is missing")
+	}
+	var bookingFactsIndex string
+	if err := pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE schemaname='public' AND indexname='ai_interactions_booking_facts_idx'
+	`).Scan(&bookingFactsIndex); err != nil {
+		t.Fatalf("read booking facts index: %v", err)
+	}
+	if !strings.Contains(bookingFactsIndex, "booking_search_precise") {
+		t.Fatalf("booking facts index omits precise-search coverage: %s", bookingFactsIndex)
 	}
 	var pendingInteractionReceiptIndex string
 	if err := pool.QueryRow(ctx, `
