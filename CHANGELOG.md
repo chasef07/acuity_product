@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/chasef07/acuity_product/compare/v1.2.0...v1.2.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **analytics:** align conversion cohorts and charts ([#264](https://github.com/chasef07/acuity_product/issues/264)) ([f344844](https://github.com/chasef07/acuity_product/commit/f34484434b253f03cd2b50425664c8f59e1dffbf))
+* **analytics:** exclude duplicate fallback wrapper from cost coverage ([#265](https://github.com/chasef07/acuity_product/issues/265)) ([e3534ea](https://github.com/chasef07/acuity_product/commit/e3534ead416df99963d803620775a10574644227))
+
 ## [1.2.0](https://github.com/chasef07/acuity_product/compare/v1.1.0...v1.2.0) (2026-09-04)
 
 
