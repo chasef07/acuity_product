@@ -266,8 +266,8 @@ function CostReport({ report }: { report: OperatorAiCostAnalytics }) {
           </div>
           <p className={styles.summaryNote}>
             {report.cacheHitRate === null
-              ? "Cache usage unavailable."
-              : `${formatPercent(report.cacheHitRate)} of recorded input tokens served from cache.`}
+              ? "Cache hit rate unavailable."
+              : `Cache hit rate · ${formatPercent(report.cacheHitRate)}`}
             {partial && (
               <>
                 {" "}

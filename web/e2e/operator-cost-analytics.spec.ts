@@ -79,7 +79,7 @@ test("Platform Operator sees a scoped cost trend and reconciling item shares", a
     await expect(overview.getByText("$1.18", { exact: true })).toBeVisible()
     await expect(overview.getByText("$0.1180", { exact: true })).toBeVisible()
     await expect(
-      overview.getByText("25.0% of recorded input tokens served from cache.", {
+      overview.getByText("Cache hit rate · 25.0%", {
         exact: true,
       }),
     ).toBeVisible()
