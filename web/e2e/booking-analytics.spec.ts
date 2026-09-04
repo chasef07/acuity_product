@@ -7,6 +7,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
   page,
   browser,
 }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
   const databaseURL = process.env.E2E_DATABASE_URL
   test.skip(!databaseURL, "E2E_DATABASE_URL is required")
   if (!new URL(databaseURL!).pathname.endsWith("_e2e"))
@@ -18,11 +19,33 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     const scope = await client.query(
       "SELECT l.id, l.practice_id FROM access_locations l JOIN access_practices p ON p.id=l.practice_id WHERE p.provisioning_key='abita-eye-group' AND l.provisioning_key='fixture-location-6'",
     )
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 9; i++) {
       const id = randomUUID()
       ids.push(id)
       const start = new Date(Date.now() - 3 * 86400000 + i * 1000)
       const booked = i < 4
+      const domainOutcomes: Array<Record<string, unknown>> =
+        i === 0 || i === 3 || i === 4
+          ? [
+              {
+                outcome: i % 2 ? "patient_verified" : "patient_new",
+                status: "success",
+              },
+            ]
+          : []
+      if (i !== 5 && i !== 7 && i !== 8) {
+        const patientGroups = i === 6 ? ["new", "existing"] : []
+        if (patientGroups.length === 0) {
+          patientGroups.push(i === 0 || i === 2 || i === 4 ? "new" : "existing")
+        }
+        for (const patientGroup of patientGroups) {
+          domainOutcomes.push({
+            outcome: "availability_searched",
+            status: "success",
+            evidence: { intent: "booking", patientGroup },
+          })
+        }
+      }
       await client.query(
         `INSERT INTO ai_interactions
         (id, service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage, appointment_outcome, new_appointment_id, booking_result, appointment_occurred_at, transcript, closeout_payload)
@@ -62,17 +85,11 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
                   },
                 ],
               },
-          {
-            domainOutcomes:
-              i === 1 || i === 2 || i === 5
-                ? []
-                : [
-                    {
-                      outcome: i % 2 ? "patient_verified" : "patient_new",
-                      status: "success",
-                    },
-                  ],
-          },
+          i === 5
+            ? { domainOutcomes: [], sessionReportUnavailable: true }
+            : i === 8
+              ? { domainOutcomes: [] }
+              : { bookingAnalyticsVersion: 1, domainOutcomes },
         ],
       )
     }
@@ -123,38 +140,70 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toHaveText("2")
     await page.getByRole("button", { name: "Conversion", exact: true }).click()
     await expect(
+      performance.getByRole("status", {
+        name: "Overall booking conversion",
+        exact: true,
+      }),
+    ).toHaveText("57.1%")
+    await expect(
       performance.getByText(
-        "80% of calls with a recorded availability check booked.",
+        "4 of 7 calls booked after checking availability.",
         { exact: true },
       ),
     ).toBeVisible()
     await expect(
-      performance.getByText("4 of 5 calls booked.", { exact: true }),
+      performance.getByText("Did not book", { exact: true }),
     ).toBeVisible()
     await expect(
-      performance.getByText("Availability history recorded for 5 of 6 calls.", {
-        exact: true,
-      }),
+      performance.getByText(
+        "1 call has no recorded availability history and is excluded from this rate.",
+        { exact: true },
+      ),
     ).toBeVisible()
     await expect(
       page.getByText(
-        "New/existing breakdown covers 5 of 6 calls. Totals include all calls.",
+        "New/existing rates cover 5 of 7 calls that checked availability.",
         { exact: true },
       ),
     ).toBeVisible()
     await expect(
-      page.getByRole("cell", { name: "Unknown", exact: true }),
+      page.getByText(
+        "Exact completed-search evidence covers 6 of 7 calls in this rate.",
+        { exact: true },
+      ),
+    ).toBeVisible()
+    await expect(
+      page.getByText(
+        "The remaining 1 call uses earlier tool history, which may include blocked attempts.",
+        { exact: true },
+      ),
+    ).toBeVisible()
+    const unclassified = breakdown
+      .getByRole("row")
+      .filter({ hasText: "Unclassified" })
+    await expect(unclassified.getByRole("cell")).toHaveText([
+      "Unclassified",
+      "0",
+      "2",
+      "0.0%",
+    ])
+    await expect(
+      breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
+    ).toHaveText(["Total", "4", "7", "57.1%"])
+    await expect(
+      breakdown.getByRole("columnheader", {
+        name: "p50 duration",
+        exact: true,
+      }),
     ).toHaveCount(0)
-    // Each series has just one observation: it must still render a visible mark.
+    // Conversion shows one complete population, with a visible sparse observation.
+    await expect(performance.locator(".recharts-line")).toHaveCount(1)
     await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
-      3,
+      1,
     )
-    for (const dot of await performance
-      .locator(".recharts-line-dots circle")
-      .all()) {
-      await expect(dot).toBeVisible()
-      await expect(dot).not.toHaveCSS("fill", "rgb(255, 255, 255)")
-    }
+    await expect(
+      performance.locator(".recharts-line-dots circle"),
+    ).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-conversion.png"),
       fullPage: true,

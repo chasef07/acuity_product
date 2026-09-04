@@ -119,7 +119,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Total.Calls != 3 || report.Total.Bookings != 2 || report.Total.Searched != 2 || report.Total.Converted != 1 || report.Total.SearchEvidenceCalls != 2 || report.Total.Conversion == nil || *report.Total.Conversion != 50 {
+	if report.Total.Calls != 3 || report.Total.Bookings != 2 || report.Total.Searched != 2 || report.Total.Converted != 1 || report.Total.SearchEvidenceCalls != 2 || report.Total.PreciseSearchCalls != 0 || report.Total.Conversion == nil || *report.Total.Conversion != 50 {
 		t.Fatalf("unexpected totals: %+v", report.Total)
 	}
 	if len(report.Daily) != 7 || report.Groups.New.Bookings != 1 || report.Groups.Unknown.Bookings != 1 || report.Total.P50 == nil || *report.Total.P50 != 300 {

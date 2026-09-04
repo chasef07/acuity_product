@@ -38,9 +38,13 @@ import styles from "./booking-overview.module.css"
 
 type Metric = BookingMetric
 const chartConfig = {
-  total: { label: "All patients", color: "var(--muted-foreground)" },
+  total: {
+    label: "All patients",
+    color: "var(--booking-total, var(--muted-foreground))",
+  },
   new: { label: "New patients", color: "var(--booking-new)" },
   existing: { label: "Existing patients", color: "var(--booking-existing)" },
+  unknown: { label: "Unclassified", color: "var(--muted-foreground)" },
 } satisfies ChartConfig
 const visibleGroups = ["new", "existing"] as const
 const count = (value: number) => value.toLocaleString("en-US")
@@ -91,7 +95,9 @@ function DayTooltip({
             </div>
             {metric === "conversion" && (
               <span className={styles.tooltipSub}>
-                {summary.converted} of {summary.searched} calls booked
+                {summary.searched === 0
+                  ? "No availability checks recorded"
+                  : `${count(summary.converted)} of ${count(summary.searched)} calls booked`}
               </span>
             )}
             {metric === "duration" && (
@@ -132,7 +138,7 @@ function BookingTrend({
         metric === "bookings"
           ? "Daily confirmed bookings by patient status"
           : metric === "conversion"
-            ? "Daily booking conversion by patient status"
+            ? "Daily overall booking conversion"
             : "Daily p50 duration by patient status"
       }
     >
@@ -191,11 +197,13 @@ function BookingTrend({
           <Line
             key={cohort}
             name={chartConfig[cohort].label}
-            type="monotone"
+            type={metric === "conversion" ? "linear" : "monotone"}
             dataKey={`${cohort}.${metric === "duration" ? "p50" : metric}`}
             stroke={`var(--color-${cohort})`}
             strokeWidth={2}
-            strokeDasharray={cohort === "total" ? "4 3" : undefined}
+            strokeDasharray={
+              cohort === "total" && metric !== "conversion" ? "4 3" : undefined
+            }
             dot={
               metric === "bookings"
                 ? false
@@ -211,6 +219,47 @@ function BookingTrend({
   )
 }
 
+function ConversionSummary({ total }: { total: BookingSummary }) {
+  const missingHistory = total.calls - total.searchEvidenceCalls
+  return (
+    <div className={styles.summary}>
+      <div>
+        <p className={styles.summaryLabel}>Overall booking conversion</p>
+        <output
+          className={styles.headline}
+          aria-label="Overall booking conversion"
+        >
+          {formatPercent(total.conversion)}
+        </output>
+        <p className={styles.summaryCaption}>
+          {bookingConversionExplanation(total)}
+        </p>
+      </div>
+      <dl className={styles.conversionOutcomes}>
+        <div>
+          <dt>Booked</dt>
+          <dd>{count(total.converted)}</dd>
+        </div>
+        <div>
+          <dt>Did not book</dt>
+          <dd>{count(total.searched - total.converted)}</dd>
+        </div>
+      </dl>
+      <p className={styles.summaryNote}>
+        Repeated availability checks count as one call.
+      </p>
+      {missingHistory > 0 && (
+        <p className={styles.summaryNote}>
+          {count(missingHistory)}{" "}
+          {missingHistory === 1 ? "call has" : "calls have"} no recorded
+          availability history and {missingHistory === 1 ? "is" : "are"}{" "}
+          excluded from this rate.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Summary({
   total,
   groups,
@@ -220,12 +269,9 @@ function Summary({
   groups: Record<PatientGroup, BookingSummary>
   metric: Metric
 }) {
+  if (metric === "conversion") return <ConversionSummary total={total} />
   const label =
-    metric === "bookings"
-      ? "Confirmed bookings"
-      : metric === "conversion"
-        ? "Booking conversion"
-        : "Median booked-call duration"
+    metric === "bookings" ? "Confirmed bookings" : "Median booked-call duration"
   return (
     <div className={styles.summary}>
       <div>
@@ -233,15 +279,11 @@ function Summary({
         <output className={styles.headline} aria-label={label}>
           {metric === "bookings"
             ? count(total.bookings)
-            : metric === "conversion"
-              ? formatPercent(total.conversion)
-              : formatDuration(total.p50)}
+            : formatDuration(total.p50)}
         </output>
-        {metric !== "bookings" && (
+        {metric === "duration" && (
           <p className={styles.summaryCaption}>
-            {metric === "conversion"
-              ? bookingConversionExplanation(total.conversion)
-              : `p50 · ${count(total.durationSamples)} booked calls`}
+            p50 · {count(total.durationSamples)} booked calls
           </p>
         )}
       </div>
@@ -255,36 +297,103 @@ function Summary({
                 <strong>
                   {metric === "bookings"
                     ? count(summary.bookings)
-                    : metric === "conversion"
-                      ? formatPercent(summary.conversion)
-                      : formatDuration(summary.p50)}
+                    : formatDuration(summary.p50)}
                 </strong>
               </div>
               <p>
                 {metric === "bookings"
                   ? `${total.bookings ? ((summary.bookings / total.bookings) * 100).toFixed(1) : "0"}% of bookings`
-                  : metric === "conversion"
-                    ? `${count(summary.converted)} of ${count(summary.searched)} calls booked`
-                    : `p50 · ${count(summary.durationSamples)} calls`}
+                  : `p50 · ${count(summary.durationSamples)} calls`}
               </p>
             </div>
           )
         })}
       </div>
-      {metric === "conversion" && total.searchEvidenceCalls < total.calls && (
+      {metric === "duration" && (
         <p className={styles.summaryNote}>
-          Availability history recorded for {count(total.searchEvidenceCalls)}{" "}
-          of {count(total.calls)} calls.
-        </p>
-      )}
-      {metric !== "bookings" && (
-        <p className={styles.summaryNote}>
-          {metric === "conversion"
-            ? `${count(total.converted)} of ${count(total.searched)} calls booked.`
-            : "From call start to hang-up, for calls that booked."}
+          From call start to hang-up, for calls that booked.
         </p>
       )}
     </div>
+  )
+}
+
+function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
+  const missingStatus = report.groups.unknown.searched
+  const legacySearches = report.total.searched - report.total.preciseSearchCalls
+  const groups: readonly PatientGroup[] =
+    missingStatus > 0 ? [...visibleGroups, "unknown"] : visibleGroups
+  const rows = [
+    ...groups.map((group) => ({
+      key: group,
+      label: chartConfig[group].label,
+      summary: report.groups[group],
+    })),
+    { key: "total", label: <strong>Total</strong>, summary: report.total },
+  ]
+  return (
+    <section className={styles.breakdown} aria-label="Breakdown">
+      <div className={styles.sectionHeading}>
+        <div>
+          <h2>Conversion by patient status</h2>
+          {missingStatus > 0 && (
+            <div className={styles.coverageNote}>
+              <p>
+                New/existing rates cover{" "}
+                {count(report.total.searched - missingStatus)} of{" "}
+                {count(report.total.searched)} calls that checked availability.
+              </p>
+              <p>
+                Patient status is often captured at booking, so these partial
+                rates can be higher. Unclassified calls remain in the total.
+              </p>
+            </div>
+          )}
+          {legacySearches > 0 && (
+            <div className={styles.coverageNote}>
+              <p>
+                Exact completed-search evidence covers{" "}
+                {count(report.total.preciseSearchCalls)} of{" "}
+                {count(report.total.searched)} calls in this rate.
+              </p>
+              <p>
+                The remaining {count(legacySearches)}{" "}
+                {legacySearches === 1 ? "call uses" : "calls use"} earlier tool
+                history, which may include blocked attempts.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Patient status</TableHead>
+            <TableHead className="text-right">Booked calls</TableHead>
+            <TableHead className="text-right">
+              Calls checking availability
+            </TableHead>
+            <TableHead className="text-right">Conversion</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(({ key, label, summary }) => (
+            <TableRow key={key}>
+              <TableCell>{label}</TableCell>
+              <TableCell className="text-right tabular-nums">
+                {count(summary.converted)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {count(summary.searched)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {formatPercent(summary.conversion)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </section>
   )
 }
 
@@ -296,12 +405,18 @@ export function BookingOverview({
   metric: Metric
 }) {
   const partialBreakdown = report.groups.unknown.calls > 0
-  const series: readonly Series[] = partialBreakdown
-    ? ["total", ...visibleGroups]
-    : visibleGroups
+  const series: readonly Series[] =
+    metric === "conversion"
+      ? ["total"]
+      : partialBreakdown
+        ? ["total", ...visibleGroups]
+        : visibleGroups
   return (
     <>
-      <section className={styles.hero} aria-label="Booking performance">
+      <section
+        className={`${styles.hero} ${metric === "conversion" ? styles.conversion : ""}`}
+        aria-label="Booking performance"
+      >
         <Summary total={report.total} groups={report.groups} metric={metric} />
         <div className={styles.chartSection}>
           <div className={styles.chartHeading}>
@@ -309,78 +424,91 @@ export function BookingOverview({
               {metric === "bookings"
                 ? "Bookings"
                 : metric === "conversion"
-                  ? "Conversion"
+                  ? "Daily booking conversion"
                   : "Median booked-call duration"}
             </h2>
-            {partialBreakdown && <GroupLabel group="total" />}
+            {metric === "conversion" ? (
+              <span className={styles.summaryLabel}>All patient statuses</span>
+            ) : (
+              partialBreakdown && <GroupLabel group="total" />
+            )}
           </div>
+          {metric === "conversion" && (
+            <p className={styles.chartCaption}>
+              Booked calls ÷ calls checking availability, each day.
+            </p>
+          )}
           <BookingTrend daily={report.daily} metric={metric} series={series} />
         </div>
       </section>
 
-      <section className={styles.breakdown} aria-label="Breakdown">
-        <div className={styles.sectionHeading}>
-          <div>
-            <h2>Breakdown</h2>
-            {partialBreakdown && (
-              <p className={styles.summaryCaption}>
-                New/existing breakdown covers{" "}
-                {count(report.total.calls - report.groups.unknown.calls)} of{" "}
-                {count(report.total.calls)} calls. Totals include all calls.
-              </p>
-            )}
+      {metric === "conversion" ? (
+        <ConversionBreakdown report={report} />
+      ) : (
+        <section className={styles.breakdown} aria-label="Breakdown">
+          <div className={styles.sectionHeading}>
+            <div>
+              <h2>Breakdown</h2>
+              {partialBreakdown && (
+                <p className={styles.summaryCaption}>
+                  New/existing breakdown covers{" "}
+                  {count(report.total.calls - report.groups.unknown.calls)} of{" "}
+                  {count(report.total.calls)} calls. Totals include all calls.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Patient status</TableHead>
-              <TableHead className="text-right">Bookings</TableHead>
-              <TableHead className="text-right">Conversion</TableHead>
-              <TableHead className="text-right">p50 duration</TableHead>
-              <TableHead className="text-right">p90 duration</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {visibleGroups.map((group) => (
-              <TableRow key={group}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Patient status</TableHead>
+                <TableHead className="text-right">Bookings</TableHead>
+                <TableHead className="text-right">Conversion</TableHead>
+                <TableHead className="text-right">p50 duration</TableHead>
+                <TableHead className="text-right">p90 duration</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visibleGroups.map((group) => (
+                <TableRow key={group}>
+                  <TableCell>
+                    <GroupLabel group={group} />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {count(report.groups[group].bookings)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatPercent(report.groups[group].conversion)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatDuration(report.groups[group].p50)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatDuration(report.groups[group].p90)}
+                  </TableCell>
+                </TableRow>
+              ))}
+              <TableRow>
                 <TableCell>
-                  <GroupLabel group={group} />
+                  <strong>Total</strong>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {count(report.groups[group].bookings)}
+                  {count(report.total.bookings)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatPercent(report.groups[group].conversion)}
+                  {formatPercent(report.total.conversion)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatDuration(report.groups[group].p50)}
+                  {formatDuration(report.total.p50)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatDuration(report.groups[group].p90)}
+                  {formatDuration(report.total.p90)}
                 </TableCell>
               </TableRow>
-            ))}
-            <TableRow>
-              <TableCell>
-                <strong>Total</strong>
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {count(report.total.bookings)}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {formatPercent(report.total.conversion)}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {formatDuration(report.total.p50)}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {formatDuration(report.total.p90)}
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </section>
+            </TableBody>
+          </Table>
+        </section>
+      )}
     </>
   )
 }
