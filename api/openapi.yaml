@@ -3581,7 +3581,7 @@ components:
           description: Distinct appointment identifiers backed by a confirmed Product BOOKING outcome and booked result in the selected completed-call cohort.
         searched:
           type: integer
-          description: Unique completed calls with booking-intent availability evidence. Versioned evidence requires a successful middleware result; legacy evidence excludes known appointment changes.
+          description: Unique calls with a recorded get_availability invocation, including failed and empty searches.
         converted:
           type: integer
           description: Searched calls with a confirmed booking.
@@ -3604,7 +3604,8 @@ components:
           description: Calls with recorded availability use or complete tool history.
         preciseSearchCalls:
           type: integer
-          description: Searched calls backed by versioned successful middleware availability evidence rather than legacy tool-invocation history.
+          deprecated: true
+          description: Deprecated rolling-deploy compatibility field. Always zero; use searched for the invocation-based denominator.
     BookingGroups:
       type: object
       additionalProperties: false

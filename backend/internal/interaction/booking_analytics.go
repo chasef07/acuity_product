@@ -32,7 +32,9 @@ type BookingMetrics struct {
 	P90                 *float64 `json:"p90"`
 	DurationSamples     int      `json:"durationSamples"`
 	SearchEvidenceCalls int      `json:"searchEvidenceCalls"`
-	PreciseSearchCalls  int      `json:"preciseSearchCalls"`
+	// PreciseSearchCalls is retained for rolling-deploy compatibility with the
+	// prior frontend. It remains zero; new clients use Searched directly.
+	PreciseSearchCalls int `json:"preciseSearchCalls"`
 }
 
 type BookingGroups struct {
@@ -64,7 +66,6 @@ type bookingFact struct {
 	countBooking  bool
 	searched      bool
 	searchKnown   bool
-	searchPrecise bool
 	patientGroup  string
 }
 
@@ -106,8 +107,7 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	// is never parsed on this path. Fail visibly rather than truncating a report.
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
-            booking_searched, booking_search_known,
-            COALESCE(booking_search_precise, false), booking_patient_group
+            booking_searched, booking_search_known, booking_patient_group
         FROM ai_interactions
         WHERE practice_id = $1::uuid AND location_id = ANY($2::uuid[])
             AND started_at >= $3 AND started_at < $4
@@ -121,7 +121,7 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	facts := make([]bookingFact, 0)
 	for rows.Next() {
 		var fact bookingFact
-		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &fact.searchPrecise, &fact.patientGroup); err != nil {
+		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &fact.patientGroup); err != nil {
 			rows.Close()
 			return BookingAnalytics{}, fmt.Errorf("read booking analytics: %w", err)
 		}
@@ -152,9 +152,6 @@ func (a *bookingAccumulator) add(f bookingFact) {
 	}
 	if f.searched {
 		a.metrics.Searched++
-		if f.searchPrecise {
-			a.metrics.PreciseSearchCalls++
-		}
 		if f.booked {
 			a.metrics.Converted++
 		}

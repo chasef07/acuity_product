@@ -47,12 +47,12 @@ func TestBookingDailyTotalIncludesUnclassifiedCallsAndPoolsDurations(t *testing.
 	var facts []bookingFact
 	for i, group := range []string{"new", "existing", "unknown", "unknown"} {
 		end := from.Add(time.Duration(100+i*100) * time.Second)
-		facts = append(facts, bookingFact{appointmentID: group, started: from, ended: &end, booked: true, searched: true, searchPrecise: i < 2, patientGroup: group})
+		facts = append(facts, bookingFact{appointmentID: group, started: from, ended: &end, booked: true, searched: true, patientGroup: group})
 	}
 	facts = append(facts, bookingFact{started: from, patientGroup: "unknown"})
 	report := summarizeBookingFacts(facts, from, from.AddDate(0, 0, 1))
 	daily := report.Daily[0].Total
-	if daily.Bookings != 3 || daily.Calls != 5 || daily.SearchEvidenceCalls != 4 || daily.PreciseSearchCalls != 2 || daily.Searched != 4 || daily.Converted != 4 || daily.DurationSamples != 4 || daily.P50 == nil || *daily.P50 != 250 || daily.P90 == nil || *daily.P90 != 370 {
+	if daily.Bookings != 3 || daily.Calls != 5 || daily.SearchEvidenceCalls != 4 || daily.PreciseSearchCalls != 0 || daily.Searched != 4 || daily.Converted != 4 || daily.DurationSamples != 4 || daily.P50 == nil || *daily.P50 != 250 || daily.P90 == nil || *daily.P90 != 370 {
 		t.Fatalf("daily total must aggregate all source observations: %+v", daily)
 	}
 }

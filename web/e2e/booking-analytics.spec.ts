@@ -19,7 +19,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     const scope = await client.query(
       "SELECT l.id, l.practice_id FROM access_locations l JOIN access_practices p ON p.id=l.practice_id WHERE p.provisioning_key='abita-eye-group' AND l.provisioning_key='fixture-location-6'",
     )
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 7; i++) {
       const id = randomUUID()
       ids.push(id)
       const start = new Date(Date.now() - 3 * 86400000 + i * 1000)
@@ -33,19 +33,6 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
               },
             ]
           : []
-      if (i !== 5 && i !== 7 && i !== 8) {
-        const patientGroups = i === 6 ? ["new", "existing"] : []
-        if (patientGroups.length === 0) {
-          patientGroups.push(i === 0 || i === 2 || i === 4 ? "new" : "existing")
-        }
-        for (const patientGroup of patientGroups) {
-          domainOutcomes.push({
-            outcome: "availability_searched",
-            status: "success",
-            evidence: { intent: "booking", patientGroup },
-          })
-        }
-      }
       await client.query(
         `INSERT INTO ai_interactions
         (id, service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage, appointment_outcome, new_appointment_id, booking_result, appointment_occurred_at, transcript, closeout_payload)
@@ -87,9 +74,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
               },
           i === 5
             ? { domainOutcomes: [], sessionReportUnavailable: true }
-            : i === 8
-              ? { domainOutcomes: [] }
-              : { bookingAnalyticsVersion: 1, domainOutcomes },
+            : { domainOutcomes },
         ],
       )
     }
@@ -144,10 +129,10 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
         name: "Overall booking conversion",
         exact: true,
       }),
-    ).toHaveText("57.1%")
+    ).toHaveText("66.7%")
     await expect(
       performance.getByText(
-        "4 of 7 calls booked after checking availability.",
+        "4 of 6 calls booked after an availability-check attempt.",
         { exact: true },
       ),
     ).toBeVisible()
@@ -162,19 +147,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toBeVisible()
     await expect(
       page.getByText(
-        "New/existing rates cover 5 of 7 calls that checked availability.",
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await expect(
-      page.getByText(
-        "Exact completed-search evidence covers 6 of 7 calls in this rate.",
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await expect(
-      page.getByText(
-        "The remaining 1 call uses earlier tool history, which may include blocked attempts.",
+        "New/existing rates cover 5 of 6 calls with availability attempts.",
         { exact: true },
       ),
     ).toBeVisible()
@@ -184,12 +157,12 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(unclassified.getByRole("cell")).toHaveText([
       "Unclassified",
       "0",
-      "2",
+      "1",
       "0.0%",
     ])
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
-    ).toHaveText(["Total", "4", "7", "57.1%"])
+    ).toHaveText(["Total", "4", "6", "66.7%"])
     await expect(
       breakdown.getByRole("columnheader", {
         name: "p50 duration",

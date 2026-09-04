@@ -8,18 +8,18 @@ import {
 test("conversion explanation names the full booked-call numerator and denominator", () => {
   assert.equal(
     bookingConversionExplanation({ converted: 496, searched: 1024 }),
-    "496 of 1,024 calls booked after checking availability.",
+    "496 of 1,024 calls booked after an availability-check attempt.",
   )
 })
 
 test("zero bookings and no availability checks remain distinct", () => {
   assert.equal(
     bookingConversionExplanation({ converted: 0, searched: 12 }),
-    "0 of 12 calls booked after checking availability.",
+    "0 of 12 calls booked after an availability-check attempt.",
   )
   assert.equal(
     bookingConversionExplanation({ converted: 0, searched: 0 }),
-    "No calls with an availability check in this period.",
+    "No calls with an availability-check attempt in this period.",
   )
   assert.equal(formatPercent(0), "0.0%")
   assert.equal(formatPercent(null), "—")

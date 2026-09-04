@@ -75,78 +75,100 @@ func TestBookingFactsBackfillResumesAndTracksEvidenceChanges(t *testing.T) {
 	}
 }
 
-func TestPreciseBookingEvidenceMigrationReprojectsEarlierCloseouts(t *testing.T) {
-	pool := testdb.OpenThrough(t, "0051_cover_booking_analytics_facts.sql")
+func TestInvocationBookingConversionMigrationRestoresEveryInvocation(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0053_cover_precise_booking_analytics.sql")
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
  INSERT INTO access_practices(id,provisioning_key,name)
- VALUES('00000000-0000-0000-0000-000000000201','precise-booking','Synthetic');
+ VALUES('00000000-0000-0000-0000-000000000201','invocation-conversion','Synthetic');
  INSERT INTO access_locations(id,practice_id,provisioning_key,name)
  VALUES('00000000-0000-0000-0000-000000000202','00000000-0000-0000-0000-000000000201','location','Synthetic');
  INSERT INTO ai_interactions(
    id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,
-   started_at,ended_at,status,lifecycle_stage,appointment_outcome,
-   new_appointment_id,booking_result,transcript,closeout_payload)
+   started_at,ended_at,status,lifecycle_stage,appointment_outcome,transcript,closeout_payload)
+ SELECT id,'migration-fixture','00000000-0000-0000-0000-000000000201',
+   '00000000-0000-0000-0000-000000000202',source_call_id,'+15555550199',
+   '+15555550100',now()-interval '1 day',now()-interval '23 hours','COMPLETED',3,
+   appointment_outcome,'{"items":[{"type":"function_call","name":"get_availability"}]}',closeout_payload::jsonb
+ FROM (VALUES
+   ('00000000-0000-0000-0000-000000000203'::uuid,'booking','INDETERMINATE','{}'),
+   ('00000000-0000-0000-0000-000000000204'::uuid,'reschedule','RESCHEDULE','{}'),
+   ('00000000-0000-0000-0000-000000000205'::uuid,'cancellation','CANCELLATION','{}'),
+   ('00000000-0000-0000-0000-000000000206'::uuid,'versioned-blocked','INDETERMINATE','{"bookingAnalyticsVersion":1,"domainOutcomes":[]}')
+ ) AS calls(id,source_call_id,appointment_outcome,closeout_payload);
+ INSERT INTO ai_interactions(
+   id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,
+   started_at,ended_at,status,lifecycle_stage,appointment_outcome,new_appointment_id,
+   booking_result,transcript,closeout_payload)
  VALUES(
-   '00000000-0000-0000-0000-000000000203','migration-fixture',
+   '00000000-0000-0000-0000-000000000207','migration-fixture',
    '00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000202',
-   'legacy-reschedule','+15555550199','+15555550100',now()-interval '1 day',
-   now()-interval '23 hours','COMPLETED',3,'RESCHEDULE','synthetic-appointment',
-   '{"status":"booked","appointmentId":"synthetic-appointment","appointmentTypeName":"Established Adult Vision"}',
-   '{"items":[{"type":"function_call","name":"get_availability"}]}','{}'),
-  (
-   '00000000-0000-0000-0000-000000000204','migration-fixture',
+   'partial','+15555550199','+15555550100',now()-interval '1 day',
+   now()-interval '23 hours','COMPLETED',3,'PARTIAL','synthetic-appointment',
+   '{"status":"booked","appointmentId":"synthetic-appointment","appointmentTypeName":"New Adult Medical"}',
+   '{"items":[{"type":"function_call","name":"get_availability"}]}','{}');
+ INSERT INTO ai_interactions(
+   id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,
+   started_at,ended_at,status,lifecycle_stage,appointment_outcome,
+   transcript,closeout_payload)
+ VALUES(
+   '00000000-0000-0000-0000-000000000208','migration-fixture',
    '00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000202',
-   'versioned-blocked','+15555550199','+15555550100',now()-interval '1 day',
-   now()-interval '23 hours','COMPLETED',3,'INDETERMINATE',NULL,NULL,
-   '{"items":[{"type":"function_call","name":"get_availability"}]}',
-   '{"bookingAnalyticsVersion":1,"domainOutcomes":[]}'
-  ),
-  (
-   '00000000-0000-0000-0000-000000000205','migration-fixture',
-   '00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000202',
-   'versioned-success','+15555550199','+15555550100',now()-interval '1 day',
-   now()-interval '23 hours','COMPLETED',3,'INDETERMINATE',NULL,NULL,
+   'versioned-success-without-invocation','+15555550199','+15555550100',
+   now()-interval '1 day',now()-interval '23 hours','COMPLETED',3,'INDETERMINATE',
    '{"items":[]}',
-   '{"bookingAnalyticsVersion":1,"domainOutcomes":[{"outcome":"availability_searched","status":"success","evidence":{"intent":"booking","patientGroup":"existing"}}]}'
-  );
+   '{"bookingAnalyticsVersion":1,"domainOutcomes":[{"outcome":"availability_searched","status":"success","evidence":{"intent":"booking","patientGroup":"existing"}}]}');
  `); err != nil {
 		t.Fatal(err)
 	}
-	var searched bool
+	var searched int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_interactions WHERE booking_searched`).Scan(&searched); err != nil {
+		t.Fatal(err)
+	}
+	if searched != 3 {
+		t.Fatalf("precise-era searched calls = %d, want 3", searched)
+	}
 	var group string
-	if err := pool.QueryRow(ctx, `SELECT booking_searched,booking_patient_group FROM ai_interactions WHERE source_call_id='legacy-reschedule'`).Scan(&searched, &group); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT booking_patient_group FROM ai_interactions WHERE source_call_id='partial'`).Scan(&group); err != nil {
 		t.Fatal(err)
 	}
-	if !searched || group != "unknown" {
-		t.Fatalf("legacy precondition searched=%t group=%q", searched, group)
+	if group != "new" {
+		t.Fatalf("precise-era partial group = %q, want new", group)
 	}
-	if err := pool.QueryRow(ctx, `SELECT booking_searched,booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-blocked'`).Scan(&searched, &group); err != nil {
+	var precise bool
+	if err := pool.QueryRow(ctx, `SELECT booking_search_precise, booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-success-without-invocation'`).Scan(&precise, &group); err != nil {
 		t.Fatal(err)
 	}
-	if !searched || group != "unknown" {
-		t.Fatalf("versioned blocked precondition searched=%t group=%q", searched, group)
+	if !precise || group != "existing" {
+		t.Fatalf("precise-era versioned success = precise %v, group %q; want true, existing", precise, group)
 	}
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT booking_searched,booking_patient_group FROM ai_interactions WHERE source_call_id='legacy-reschedule'`).Scan(&searched, &group); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_interactions WHERE booking_searched`).Scan(&searched); err != nil {
 		t.Fatal(err)
 	}
-	if searched || group != "existing" {
-		t.Fatalf("reprojected facts searched=%t group=%q", searched, group)
+	if searched != 5 {
+		t.Fatalf("invocation-based searched calls = %d, want 5", searched)
 	}
-	var precise bool
-	if err := pool.QueryRow(ctx, `SELECT booking_searched,booking_search_precise,booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-blocked'`).Scan(&searched, &precise, &group); err != nil {
+	var preciseCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_interactions WHERE booking_search_precise`).Scan(&preciseCount); err != nil {
 		t.Fatal(err)
 	}
-	if searched || precise || group != "unknown" {
-		t.Fatalf("reprojected blocked facts searched=%t precise=%t group=%q", searched, precise, group)
+	if preciseCount != 0 {
+		t.Fatalf("retired precise-search facts = %d, want 0", preciseCount)
 	}
-	if err := pool.QueryRow(ctx, `SELECT booking_searched,booking_search_precise,booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-success'`).Scan(&searched, &precise, &group); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT booking_patient_group FROM ai_interactions WHERE source_call_id='partial'`).Scan(&group); err != nil {
 		t.Fatal(err)
 	}
-	if !searched || !precise || group != "existing" {
-		t.Fatalf("reprojected success facts searched=%t precise=%t group=%q", searched, precise, group)
+	if group != "unknown" {
+		t.Fatalf("restored partial group = %q, want unknown", group)
+	}
+	var invocation bool
+	if err := pool.QueryRow(ctx, `SELECT booking_searched, booking_search_precise, booking_patient_group FROM ai_interactions WHERE source_call_id='versioned-success-without-invocation'`).Scan(&invocation, &precise, &group); err != nil {
+		t.Fatal(err)
+	}
+	if invocation || precise || group != "unknown" {
+		t.Fatalf("restored versioned success = searched %v, precise %v, group %q; want false, false, unknown", invocation, precise, group)
 	}
 }

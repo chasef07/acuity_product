@@ -96,7 +96,7 @@ function DayTooltip({
             {metric === "conversion" && (
               <span className={styles.tooltipSub}>
                 {summary.searched === 0
-                  ? "No availability checks recorded"
+                  ? "No availability-check attempts recorded"
                   : `${count(summary.converted)} of ${count(summary.searched)} calls booked`}
               </span>
             )}
@@ -246,7 +246,7 @@ function ConversionSummary({ total }: { total: BookingSummary }) {
         </div>
       </dl>
       <p className={styles.summaryNote}>
-        Repeated availability checks count as one call.
+        Repeated availability-check attempts count as one call.
       </p>
       {missingHistory > 0 && (
         <p className={styles.summaryNote}>
@@ -320,7 +320,6 @@ function Summary({
 
 function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
   const missingStatus = report.groups.unknown.searched
-  const legacySearches = report.total.searched - report.total.preciseSearchCalls
   const groups: readonly PatientGroup[] =
     missingStatus > 0 ? [...visibleGroups, "unknown"] : visibleGroups
   const rows = [
@@ -341,25 +340,11 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
               <p>
                 New/existing rates cover{" "}
                 {count(report.total.searched - missingStatus)} of{" "}
-                {count(report.total.searched)} calls that checked availability.
+                {count(report.total.searched)} calls with availability attempts.
               </p>
               <p>
                 Patient status is often captured at booking, so these partial
                 rates can be higher. Unclassified calls remain in the total.
-              </p>
-            </div>
-          )}
-          {legacySearches > 0 && (
-            <div className={styles.coverageNote}>
-              <p>
-                Exact completed-search evidence covers{" "}
-                {count(report.total.preciseSearchCalls)} of{" "}
-                {count(report.total.searched)} calls in this rate.
-              </p>
-              <p>
-                The remaining {count(legacySearches)}{" "}
-                {legacySearches === 1 ? "call uses" : "calls use"} earlier tool
-                history, which may include blocked attempts.
               </p>
             </div>
           )}
@@ -371,7 +356,7 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
             <TableHead>Patient status</TableHead>
             <TableHead className="text-right">Booked calls</TableHead>
             <TableHead className="text-right">
-              Calls checking availability
+              Calls with availability attempts
             </TableHead>
             <TableHead className="text-right">Conversion</TableHead>
           </TableRow>
@@ -435,7 +420,7 @@ export function BookingOverview({
           </div>
           {metric === "conversion" && (
             <p className={styles.chartCaption}>
-              Booked calls ÷ calls checking availability, each day.
+              Booked calls ÷ calls with availability attempts, each day.
             </p>
           )}
           <BookingTrend daily={report.daily} metric={metric} series={series} />

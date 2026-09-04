@@ -702,7 +702,7 @@ export type BookingMetrics = {
      */
     bookings: number;
     /**
-     * Unique completed calls with booking-intent availability evidence. Versioned evidence requires a successful middleware result; legacy evidence excludes known appointment changes.
+     * Unique calls with a recorded get_availability invocation, including failed and empty searches.
      */
     searched: number;
     /**
@@ -727,7 +727,9 @@ export type BookingMetrics = {
      */
     searchEvidenceCalls: number;
     /**
-     * Searched calls backed by versioned successful middleware availability evidence rather than legacy tool-invocation history.
+     * Deprecated rolling-deploy compatibility field. Always zero; use searched for the invocation-based denominator.
+     *
+     * @deprecated
      */
     preciseSearchCalls: number;
 };
