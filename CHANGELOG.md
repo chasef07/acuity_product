@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/chasef07/acuity_product/compare/v1.1.0...v1.2.0) (2026-09-04)
+
+
+### Features
+
+* **analytics:** add AI cost diagnostics and chart motion ([#261](https://github.com/chasef07/acuity_product/issues/261)) ([6b51d40](https://github.com/chasef07/acuity_product/commit/6b51d40fff1fc7615a80ff0b7bc3b5de0c0e7c65))
+
+
+### Bug Fixes
+
+* **analytics:** clarify booking conversion evidence ([#263](https://github.com/chasef07/acuity_product/issues/263)) ([28e522f](https://github.com/chasef07/acuity_product/commit/28e522f2b092bfbdec25bca34d2f41f77dc955d5))
+
 ## [1.1.0](https://github.com/chasef07/acuity_product/compare/v1.0.7...v1.1.0) (2026-09-02)
 
 
