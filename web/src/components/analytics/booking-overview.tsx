@@ -34,6 +34,7 @@ import {
   type PatientGroup,
 } from "@/lib/booking-analytics"
 import { useReducedMotion } from "@/lib/reduced-motion"
+import { trendDot } from "./trend-dot"
 import styles from "./booking-overview.module.css"
 
 type Metric = BookingMetric
@@ -96,7 +97,7 @@ function DayTooltip({
             {metric === "conversion" && (
               <span className={styles.tooltipSub}>
                 {summary.searched === 0
-                  ? "No availability checks recorded"
+                  ? "No completed availability searches"
                   : `${count(summary.converted)} of ${count(summary.searched)} calls booked`}
               </span>
             )}
@@ -138,7 +139,7 @@ function BookingTrend({
         metric === "bookings"
           ? "Daily confirmed bookings by patient status"
           : metric === "conversion"
-            ? "Daily overall booking conversion"
+            ? "Daily booking conversion by patient status"
             : "Daily p50 duration by patient status"
       }
     >
@@ -180,35 +181,34 @@ function BookingTrend({
           content={<DayTooltip metric={metric} series={series} />}
           cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
         />
-        {metric === "bookings" &&
-          series.map((cohort) => (
-            <Area
-              key={cohort}
-              type="monotone"
-              dataKey={`${cohort}.bookings`}
-              fill={`var(--color-${cohort})`}
-              fillOpacity={0.055}
-              stroke="none"
-              tooltipType="none"
-              isAnimationActive={!reducedMotion}
-            />
-          ))}
+        {series.map((cohort) => (
+          <Area
+            key={cohort}
+            type="monotone"
+            dataKey={`${cohort}.${metric === "duration" ? "p50" : metric}`}
+            fill={`var(--color-${cohort})`}
+            fillOpacity={0.055}
+            stroke="none"
+            tooltipType="none"
+            connectNulls={false}
+            isAnimationActive={!reducedMotion}
+          />
+        ))}
         {series.map((cohort) => (
           <Line
             key={cohort}
             name={chartConfig[cohort].label}
-            type={metric === "conversion" ? "linear" : "monotone"}
+            type="monotone"
             dataKey={`${cohort}.${metric === "duration" ? "p50" : metric}`}
             stroke={`var(--color-${cohort})`}
             strokeWidth={2}
-            strokeDasharray={
-              cohort === "total" && metric !== "conversion" ? "4 3" : undefined
-            }
-            dot={
-              metric === "bookings"
-                ? false
-                : { r: 2, strokeWidth: 0, fill: `var(--color-${cohort})` }
-            }
+            strokeDasharray={cohort === "total" ? "4 3" : undefined}
+            dot={trendDot(
+              daily.map((day) =>
+                metric === "duration" ? day[cohort].p50 : day[cohort][metric],
+              ),
+              `var(--color-${cohort})`,
+            )}
             activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
             connectNulls={false}
             isAnimationActive={!reducedMotion}
@@ -219,7 +219,13 @@ function BookingTrend({
   )
 }
 
-function ConversionSummary({ total }: { total: BookingSummary }) {
+function ConversionSummary({
+  total,
+  groups,
+}: {
+  total: BookingSummary
+  groups: Record<PatientGroup, BookingSummary>
+}) {
   const missingHistory = total.calls - total.searchEvidenceCalls
   return (
     <div className={styles.summary}>
@@ -235,18 +241,26 @@ function ConversionSummary({ total }: { total: BookingSummary }) {
           {bookingConversionExplanation(total)}
         </p>
       </div>
-      <dl className={styles.conversionOutcomes}>
-        <div>
-          <dt>Booked</dt>
-          <dd>{count(total.converted)}</dd>
-        </div>
-        <div>
-          <dt>Did not book</dt>
-          <dd>{count(total.searched - total.converted)}</dd>
-        </div>
-      </dl>
+      <div className={styles.cohorts}>
+        {visibleGroups.map((group) => {
+          const summary = groups[group]
+          return (
+            <div key={group} className={styles.cohort}>
+              <div className={styles.cohortHeading}>
+                <GroupLabel group={group} />
+                <strong>{formatPercent(summary.conversion)}</strong>
+              </div>
+              <p>
+                {count(summary.converted)} of {count(summary.searched)} calls
+                booked
+              </p>
+            </div>
+          )
+        })}
+      </div>
       <p className={styles.summaryNote}>
-        Repeated availability checks count as one call.
+        Repeated completed searches count once. Searches with no openings remain
+        included. Failed searches, reschedules, and cancellations are excluded.
       </p>
       {missingHistory > 0 && (
         <p className={styles.summaryNote}>
@@ -269,7 +283,8 @@ function Summary({
   groups: Record<PatientGroup, BookingSummary>
   metric: Metric
 }) {
-  if (metric === "conversion") return <ConversionSummary total={total} />
+  if (metric === "conversion")
+    return <ConversionSummary total={total} groups={groups} />
   const label =
     metric === "bookings" ? "Confirmed bookings" : "Median booked-call duration"
   return (
@@ -319,14 +334,10 @@ function Summary({
 }
 
 function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
-  const missingStatus = report.groups.unknown.searched
-  const legacySearches = report.total.searched - report.total.preciseSearchCalls
-  const groups: readonly PatientGroup[] =
-    missingStatus > 0 ? [...visibleGroups, "unknown"] : visibleGroups
   const rows = [
-    ...groups.map((group) => ({
+    ...visibleGroups.map((group) => ({
       key: group,
-      label: chartConfig[group].label,
+      label: <GroupLabel group={group} />,
       summary: report.groups[group],
     })),
     { key: "total", label: <strong>Total</strong>, summary: report.total },
@@ -336,33 +347,10 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
       <div className={styles.sectionHeading}>
         <div>
           <h2>Conversion by patient status</h2>
-          {missingStatus > 0 && (
-            <div className={styles.coverageNote}>
-              <p>
-                New/existing rates cover{" "}
-                {count(report.total.searched - missingStatus)} of{" "}
-                {count(report.total.searched)} calls that checked availability.
-              </p>
-              <p>
-                Patient status is often captured at booking, so these partial
-                rates can be higher. Unclassified calls remain in the total.
-              </p>
-            </div>
-          )}
-          {legacySearches > 0 && (
-            <div className={styles.coverageNote}>
-              <p>
-                Exact completed-search evidence covers{" "}
-                {count(report.total.preciseSearchCalls)} of{" "}
-                {count(report.total.searched)} calls in this rate.
-              </p>
-              <p>
-                The remaining {count(legacySearches)}{" "}
-                {legacySearches === 1 ? "call uses" : "calls use"} earlier tool
-                history, which may include blocked attempts.
-              </p>
-            </div>
-          )}
+          <p className={styles.summaryCaption}>
+            New and existing rows cover all {count(report.total.searched)}{" "}
+            completed availability searches.
+          </p>
         </div>
       </div>
       <Table>
@@ -371,7 +359,7 @@ function ConversionBreakdown({ report }: { report: BookingAnalytics }) {
             <TableHead>Patient status</TableHead>
             <TableHead className="text-right">Booked calls</TableHead>
             <TableHead className="text-right">
-              Calls checking availability
+              Completed availability searches
             </TableHead>
             <TableHead className="text-right">Conversion</TableHead>
           </TableRow>
@@ -407,7 +395,7 @@ export function BookingOverview({
   const partialBreakdown = report.groups.unknown.calls > 0
   const series: readonly Series[] =
     metric === "conversion"
-      ? ["total"]
+      ? ["total", ...visibleGroups]
       : partialBreakdown
         ? ["total", ...visibleGroups]
         : visibleGroups
@@ -427,15 +415,13 @@ export function BookingOverview({
                   ? "Daily booking conversion"
                   : "Median booked-call duration"}
             </h2>
-            {metric === "conversion" ? (
-              <span className={styles.summaryLabel}>All patient statuses</span>
-            ) : (
-              partialBreakdown && <GroupLabel group="total" />
+            {(metric === "conversion" || partialBreakdown) && (
+              <GroupLabel group="total" />
             )}
           </div>
           {metric === "conversion" && (
             <p className={styles.chartCaption}>
-              Booked calls ÷ calls checking availability, each day.
+              Booked calls ÷ completed availability searches, each day.
             </p>
           )}
           <BookingTrend daily={report.daily} metric={metric} series={series} />

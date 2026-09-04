@@ -69,8 +69,12 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 		if fixture.evidence {
 			items := []map[string]any{}
 			if fixture.searched {
+				if fixture.group == "patient_new" {
+					items = append(items, map[string]any{"type": "function_call", "name": "add_patient", "call_id": "patient-1"})
+				}
 				items = append(items,
 					map[string]any{"type": "function_call", "name": "get_availability", "call_id": "search-1"},
+					map[string]any{"type": "function_call_output", "call_id": "search-1", "is_error": false},
 					map[string]any{"type": "function_call", "name": "get_availability", "call_id": "search-2"},
 					map[string]any{"type": "function_call_output", "call_id": "search-2", "is_error": true})
 			}

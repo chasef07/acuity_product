@@ -25,8 +25,8 @@ export function bookingConversionExplanation(
   summary: Pick<BookingSummary, "converted" | "searched">,
 ): string {
   return summary.searched === 0
-    ? "No calls with an availability check in this period."
-    : `${summary.converted.toLocaleString("en-US")} of ${summary.searched.toLocaleString("en-US")} calls booked after checking availability.`
+    ? "No completed availability searches in this period."
+    : `${summary.converted.toLocaleString("en-US")} of ${summary.searched.toLocaleString("en-US")} calls booked after a completed availability search.`
 }
 
 export function formatDuration(seconds: number | null): string {

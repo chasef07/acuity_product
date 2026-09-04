@@ -4,9 +4,10 @@ import { useMemo, useState } from "react"
 import { ArrowDownIcon, ArrowUpIcon, ArrowUpDownIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
+  Area,
   CartesianGrid,
+  ComposedChart,
   Line,
-  LineChart,
   ReferenceLine,
   XAxis,
   YAxis,
@@ -28,6 +29,7 @@ import type {
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import styles from "./booking-overview.module.css"
 import { useReducedMotion } from "@/lib/reduced-motion"
+import { trendDot } from "./trend-dot"
 
 function hours(seconds: number | null) {
   if (seconds === null) return "—"
@@ -107,7 +109,7 @@ const columns: Array<{ key: SortKey; label: string }> = [
 export function StaffOverview({ report }: { report: StaffAnalytics }) {
   const reducedMotion = useReducedMotion()
   const [sorting, setSorting] = useState<{ key: SortKey; descending: boolean }>(
-    { key: "email", descending: false },
+    { key: "inboundSeconds", descending: true },
   )
   const accounts = useMemo(
     () =>
@@ -182,7 +184,7 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
             className="h-[300px] w-full aspect-auto"
             aria-label="Median task completion time by day"
           >
-            <LineChart
+            <ComposedChart
               data={report.daily}
               accessibilityLayer
               margin={{ top: 20, right: 16, bottom: 8, left: 8 }}
@@ -226,17 +228,30 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
                 content={<TaskTooltip />}
                 cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
               />
+              <Area
+                type="monotone"
+                dataKey="p50Seconds"
+                fill="var(--color-p50Seconds)"
+                fillOpacity={0.055}
+                stroke="none"
+                tooltipType="none"
+                connectNulls={false}
+                isAnimationActive={!reducedMotion}
+              />
               <Line
                 type="monotone"
                 dataKey="p50Seconds"
                 stroke="var(--foreground)"
                 strokeWidth={2}
-                dot={{ r: 2, strokeWidth: 0, fill: "var(--foreground)" }}
+                dot={trendDot(
+                  report.daily.map((day) => day.p50Seconds),
+                  "var(--foreground)",
+                )}
                 activeDot={{ r: 4 }}
                 connectNulls={false}
                 isAnimationActive={!reducedMotion}
               />
-            </LineChart>
+            </ComposedChart>
           </ChartContainer>
         </div>
       </section>

@@ -68,58 +68,6 @@ func TestBookingPatientClassificationUsesSuccessfulRegistration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) { assertBookingPatientGroup(t, pool, tc.result, tc.closeout, tc.want) })
 	}
 
-	for _, tc := range []struct {
-		name, outcome, result, transcript, closeout, wantGroup string
-		wantSearched, wantKnown, wantPrecise                   bool
-	}{
-		{
-			name: "structured booking search captures a preloaded existing patient", outcome: "INDETERMINATE",
-			result: `{}`, transcript: `{"items":[{"type":"function_call","name":"get_availability"}]}`,
-			closeout:  `{"bookingAnalyticsVersion":1,"domainOutcomes":[{"outcome":"availability_searched","status":"success","evidence":{"intent":"booking","patientGroup":"existing"}}]}`,
-			wantGroup: "existing", wantSearched: true, wantKnown: true, wantPrecise: true,
-		},
-		{
-			name: "structured blocked invocation is not a search", outcome: "INDETERMINATE",
-			result: `{}`, transcript: `{"items":[{"type":"function_call","name":"get_availability"}]}`,
-			closeout:  `{"bookingAnalyticsVersion":1,"domainOutcomes":[]}`,
-			wantGroup: "unknown", wantSearched: false, wantKnown: true,
-		},
-		{
-			name: "structured reschedule is excluded from booking conversion", outcome: "RESCHEDULE",
-			result:     `{"status":"booked","appointmentId":"synthetic-appointment","appointmentTypeName":"New Adult Medical"}`,
-			transcript: `{"items":[{"type":"function_call","name":"get_availability"}]}`,
-			closeout:   `{"bookingAnalyticsVersion":1,"domainOutcomes":[{"outcome":"availability_searched","status":"success","evidence":{"intent":"reschedule","patientGroup":"new"}}]}`,
-			wantGroup:  "new", wantSearched: false, wantKnown: true,
-		},
-		{
-			name: "structured cancellation is excluded from booking conversion", outcome: "CANCELLATION",
-			result:     `{"status":"booked","appointmentId":"synthetic-appointment","appointmentTypeName":"Established Adult Vision"}`,
-			transcript: `{"items":[{"type":"function_call","name":"get_availability"}]}`,
-			closeout:   `{"bookingAnalyticsVersion":1,"domainOutcomes":[{"outcome":"availability_searched","status":"success","evidence":{"intent":"booking","patientGroup":"existing"}}]}`,
-			wantGroup:  "existing", wantSearched: false, wantKnown: true,
-		},
-		{
-			name: "legacy reschedule is excluded from booking conversion", outcome: "RESCHEDULE",
-			result:     `{"status":"booked","appointmentId":"synthetic-appointment","appointmentTypeName":"Established Adult Vision"}`,
-			transcript: `{"items":[{"type":"function_call","name":"get_availability"}]}`,
-			closeout:   `{}`, wantGroup: "existing", wantSearched: false, wantKnown: true,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET appointment_outcome=$1, booking_result=$2::jsonb, transcript=$3::jsonb, closeout_payload=$4::jsonb WHERE source_call_id='classification'`, tc.outcome, tc.result, tc.transcript, tc.closeout); err != nil {
-				t.Fatal(err)
-			}
-			var group string
-			var searched, known, precise bool
-			if err := pool.QueryRow(ctx, `SELECT booking_patient_group,booking_searched,booking_search_known,booking_search_precise FROM ai_interactions WHERE source_call_id='classification'`).Scan(&group, &searched, &known, &precise); err != nil {
-				t.Fatal(err)
-			}
-			if group != tc.wantGroup || searched != tc.wantSearched || known != tc.wantKnown || precise != tc.wantPrecise {
-				t.Fatalf("facts group=%q searched=%t known=%t precise=%t; want %q %t %t %t", group, searched, known, precise, tc.wantGroup, tc.wantSearched, tc.wantKnown, tc.wantPrecise)
-			}
-		})
-	}
-
 }
 
 func assertBookingPatientGroup(t *testing.T, pool *pgxpool.Pool, result, closeout, want string) {
