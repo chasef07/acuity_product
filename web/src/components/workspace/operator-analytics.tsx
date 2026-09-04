@@ -16,6 +16,8 @@ import {
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AnalyticsFrame } from "@/components/analytics/analytics-layout"
+import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -33,6 +35,15 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SidebarTrigger } from "@/components/ui/sidebar"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
   TableBody,
@@ -41,7 +52,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { OperatorAnalyticsDetailSheet } from "@/components/workspace/operator-analytics-detail"
 import { portalClient } from "@/lib/api/client"
 import { queryOperatorAiAnalytics } from "@/lib/api/generated/sdk.gen"
@@ -50,15 +60,17 @@ import type {
   OperatorAiAnalyticsRange,
   OperatorAiAnalyticsSummary,
   OperatorAiCallAnalytics,
+  Location,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 
 type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
-type AnalyticsTab = "overview" | "performance" | "tools" | "calls"
+type AnalyticsTab = "overview" | "cost" | "performance" | "tools" | "calls"
 
 const analyticsTabs: Array<{ value: AnalyticsTab; label: string }> = [
   { value: "overview", label: "Overview" },
+  { value: "cost", label: "Cost" },
   { value: "performance", label: "Performance" },
   { value: "tools", label: "Tools" },
   { value: "calls", label: "Calls" },
@@ -69,20 +81,35 @@ const ranges: Array<{
   label: string
   short: string
 }> = [
-  { value: "24h", label: "Last 24 hours", short: "24h" },
-  { value: "7d", label: "Last 7 days", short: "7d" },
-  { value: "30d", label: "Last 30 days", short: "30d" },
+  { value: "24h", label: "Last 24 hours", short: "24 hours" },
+  { value: "7d", label: "Last 7 days", short: "7 days" },
+  { value: "30d", label: "Last 30 days", short: "30 days" },
 ]
 
 export function OperatorAnalytics({
   practiceID,
   locationScopeID,
+  locations,
 }: {
   practiceID: string
   locationScopeID: string
+  locations: Location[]
 }) {
+  const scopeKey = `${practiceID}:${locationScopeID}`
+  const [officeSelection, setOfficeSelection] = useState({
+    key: scopeKey,
+    value: locationScopeID || "all",
+  })
+  const office =
+    officeSelection.key === scopeKey
+      ? officeSelection.value
+      : locationScopeID || "all"
+  const setOffice = (value: string) =>
+    setOfficeSelection({ key: scopeKey, value })
+  const locationID = office === "all" ? "" : office
   const [range, setRange] = useState<OperatorAiAnalyticsRange>("7d")
   const [tab, setTab] = useState<AnalyticsTab>("overview")
+  const costView = tab === "cost"
   const [requestVersion, setRequestVersion] = useState(0)
   const [request, setRequest] = useState<{
     key: string
@@ -94,7 +121,7 @@ export function OperatorAnalytics({
     key: string
     state: AnalyticsNextPageState
   }>({ key: "", state: "idle" })
-  const requestKey = `${practiceID}:${locationScopeID}:${range}:${requestVersion}`
+  const requestKey = `${practiceID}:${locationID}:${range}:${requestVersion}`
   const currentRequest =
     request.key === requestKey
       ? request
@@ -103,7 +130,7 @@ export function OperatorAnalytics({
     nextPageRequest.key === requestKey ? nextPageRequest.state : "idle"
 
   useEffect(() => {
-    if (!practiceID) return
+    if (!practiceID || costView) return
     const controller = new AbortController()
     void getAccessToken().then(async (token) => {
       if (controller.signal.aborted) return
@@ -116,7 +143,7 @@ export function OperatorAnalytics({
           client: portalClient(token),
           body: {
             practiceId: practiceID,
-            locationId: locationScopeID || undefined,
+            locationId: locationID || undefined,
             range,
             limit: 50,
           },
@@ -140,7 +167,7 @@ export function OperatorAnalytics({
       }
     })
     return () => controller.abort()
-  }, [locationScopeID, practiceID, range, requestKey])
+  }, [locationID, practiceID, range, requestKey, costView])
 
   async function loadNextPage() {
     if (
@@ -167,7 +194,7 @@ export function OperatorAnalytics({
         client: portalClient(token),
         body: {
           practiceId: practiceID,
-          locationId: locationScopeID || undefined,
+          locationId: locationID || undefined,
           range,
           cursor,
           limit: 50,
@@ -201,84 +228,103 @@ export function OperatorAnalytics({
     }
   }
 
+  const offices = [
+    { value: "all", label: "All offices" },
+    ...locations.map((location) => ({
+      value: location.id,
+      label: location.name,
+    })),
+  ]
   return (
     <section
-      aria-labelledby="operator-analytics-title"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      aria-label="AI call analytics"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[100rem] p-4 sm:p-6 lg:p-8">
-          <header className="mb-5 flex flex-col gap-4 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <ChartNoAxesCombinedIcon
-                  className="size-3.5"
-                  aria-hidden="true"
-                />
-                Operator evidence
-                <span aria-hidden="true">·</span>
-                {locationScopeID ? "Selected office" : "All offices"}
-              </div>
-              <h1
-                id="operator-analytics-title"
-                className="text-xl font-semibold tracking-[-0.02em] sm:text-2xl"
-              >
-                AI call analytics
-              </h1>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Review call quality, response timing, tool reliability, and
-                appointment outcomes in the active workspace scope.
-              </p>
-            </div>
-            <div
-              role="group"
+      <AnalyticsFrame
+        section="AI diagnostics"
+        title={analyticsTabs.find((item) => item.value === tab)!.label}
+        headerLeading={<SidebarTrigger collapsedOnly />}
+        periodLabel={ranges.find((item) => item.value === range)!.label}
+        controls={
+          <>
+            <Select
+              value={office}
+              items={offices}
+              onValueChange={(value) => {
+                if (value !== null) setOffice(value)
+              }}
+            >
+              <SelectTrigger aria-label="Office">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {offices.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <ToggleGroup
+              variant="segmented"
+              spacing={1}
+              value={[range]}
               aria-label="Analytics range"
-              className="grid grid-cols-3 rounded-lg border bg-card p-1"
+              onValueChange={(values) => {
+                const value = values[0]
+                if (ranges.some((item) => item.value === value))
+                  setRange(value as OperatorAiAnalyticsRange)
+              }}
             >
               {ranges.map((item) => (
-                <Button
+                <ToggleGroupItem
                   key={item.value}
+                  value={item.value}
                   aria-label={item.label}
-                  aria-pressed={range === item.value}
-                  variant={range === item.value ? "secondary" : "ghost"}
-                  size="sm"
-                  className="min-w-14"
-                  onClick={() => setRange(item.value)}
                 >
                   {item.short}
-                </Button>
+                </ToggleGroupItem>
               ))}
-            </div>
-          </header>
-
-          <AnalyticsTabs tab={tab} onChange={setTab} />
-
-          {currentRequest.state === "loading" && <AnalyticsLoading />}
-          {currentRequest.state === "unauthorized" && (
-            <AnalyticsFailure
-              title="Analytics access unavailable"
-              description="This session is not authorized to load Platform Operator call evidence."
-            />
-          )}
-          {currentRequest.state === "unavailable" && (
-            <AnalyticsFailure
-              title="Analytics temporarily unavailable"
-              description="No call evidence was reconstructed. Retry when the analytics service is available."
-              onRetry={() => setRequestVersion((current) => current + 1)}
-            />
-          )}
-          {currentRequest.state === "ready" && currentRequest.data && (
-            <AnalyticsReady
-              data={currentRequest.data}
-              tab={tab}
-              range={range}
-              nextPageState={nextPageState}
-              onLoadNextPage={loadNextPage}
-              onSelect={setSelectedInteractionID}
-            />
-          )}
-        </div>
-      </div>
+            </ToggleGroup>
+          </>
+        }
+        tabs={<AnalyticsTabs tab={tab} onChange={setTab} />}
+      >
+        {costView ? (
+          <CostOverview
+            practiceID={practiceID}
+            locationID={locationID}
+            range={range}
+          />
+        ) : (
+          <>
+            {currentRequest.state === "loading" && <AnalyticsLoading />}
+            {currentRequest.state === "unauthorized" && (
+              <AnalyticsFailure
+                title="Analytics access unavailable"
+                description="This session is not authorized to load Platform Operator call evidence."
+              />
+            )}
+            {currentRequest.state === "unavailable" && (
+              <AnalyticsFailure
+                title="Analytics temporarily unavailable"
+                description="No call evidence was reconstructed. Retry when the analytics service is available."
+                onRetry={() => setRequestVersion((current) => current + 1)}
+              />
+            )}
+            {currentRequest.state === "ready" && currentRequest.data && (
+              <AnalyticsReady
+                data={currentRequest.data}
+                tab={tab}
+                range={range}
+                nextPageState={nextPageState}
+                onLoadNextPage={loadNextPage}
+                onSelect={setSelectedInteractionID}
+              />
+            )}
+          </>
+        )}
+      </AnalyticsFrame>
       <OperatorAnalyticsDetailSheet
         interactionID={selectedInteractionID}
         onClose={() => setSelectedInteractionID("")}
@@ -305,9 +351,7 @@ function AnalyticsReady({
   return (
     <>
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "performance" && (
-        <AnalyticsPerformance summary={data.summary} />
-      )}
+      {tab === "performance" && <AnalyticsPerformance summary={data.summary} />}
       {tab === "tools" && <AnalyticsTools summary={data.summary} />}
       {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
@@ -345,19 +389,24 @@ function AnalyticsTabs({
   onChange: (tab: AnalyticsTab) => void
 }) {
   return (
-    <div className="mb-5 max-w-full overflow-x-auto pb-1 sm:mb-6">
-      <Tabs
-        value={tab}
-        onValueChange={(value) => onChange(value as AnalyticsTab)}
+    <div className="max-w-full overflow-x-auto">
+      <ToggleGroup
+        variant="segmented"
+        spacing={1}
+        value={[tab]}
+        aria-label="AI diagnostics view"
+        onValueChange={(values) => {
+          const value = values[0]
+          if (analyticsTabs.some((item) => item.value === value))
+            onChange(value as AnalyticsTab)
+        }}
       >
-        <TabsList aria-label="Analytics section" className="min-w-max border bg-card">
-          {analyticsTabs.map((item) => (
-            <TabsTrigger key={item.value} value={item.value} className="min-w-24">
-              {item.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+        {analyticsTabs.map((item) => (
+          <ToggleGroupItem key={item.value} value={item.value}>
+            {item.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
     </div>
   )
 }

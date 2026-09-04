@@ -436,7 +436,9 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       path: testInfo.outputPath("operator-analytics-overview.png"),
       fullPage: true,
     })
-    await analyticsRegion.getByRole("tab", { name: "Performance" }).click()
+    await analyticsRegion
+      .getByRole("button", { name: "Performance", exact: true })
+      .click()
     const latencyPipeline = analyticsRegion.getByRole("region", {
       name: "Median response pipeline",
     })
@@ -474,11 +476,15 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       fullPage: true,
     })
 
-    await analyticsRegion.getByRole("tab", { name: "Tools" }).click()
+    await analyticsRegion
+      .getByRole("button", { name: "Tools", exact: true })
+      .click()
     await expect(analyticsRegion.getByText("Total tool calls")).toBeVisible()
     await expect(analyticsRegion.getByText("31", { exact: true })).toBeVisible()
 
-    await analyticsRegion.getByRole("tab", { name: "Calls" }).click()
+    await analyticsRegion
+      .getByRole("button", { name: "Calls", exact: true })
+      .click()
     const callerPhone = analyticsRegion.getByText("(985) 555-0142").first()
     await expect(callerPhone).toBeVisible()
     await expect
@@ -522,7 +528,9 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await expect
       .poll(() => analyticsRequests.at(-1)?.locationId)
       .toBe(selectedLocation.id)
-    await analyticsRegion.getByRole("tab", { name: "Calls" }).click()
+    await analyticsRegion
+      .getByRole("button", { name: "Calls", exact: true })
+      .click()
 
     await operatorPage
       .getByRole("button", { name: /Open analytics for call from/ })

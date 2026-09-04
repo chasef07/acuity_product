@@ -317,7 +317,7 @@ export function PortalWorkspace() {
           data-workspace-version={workspace.version}
           className="h-svh min-h-0 min-w-0 overflow-hidden"
         >
-          {view !== "engagement" && view !== "analytics" && (
+          {view !== "engagement" && view !== "analytics" && view !== "operator-analytics" && (
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
               <SidebarTrigger collapsedOnly />
               <div className="flex-1" />
@@ -334,6 +334,7 @@ export function PortalWorkspace() {
             <OperatorAnalytics
               practiceID={state.scope.practiceID}
               locationScopeID={state.scope.locationScopeID}
+              locations={discovery.practices.find(practice => practice.id === state.scope.practiceID)?.locations ?? []}
             />
           ) : view === "engagement" && selectedEngagement ? (
             <div className="relative flex min-h-0 flex-1 bg-background">

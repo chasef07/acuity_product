@@ -751,6 +751,84 @@ export type BookingAnalytics = {
     daily: Array<BookingDay>;
 };
 
+export type OperatorAiCostQueryRequest = {
+    practiceId: string;
+    locationId?: string;
+    range: OperatorAiAnalyticsRange;
+    /**
+     * IANA timezone for daily chart buckets. The range is a rolling time window.
+     */
+    timeZone: string;
+};
+
+export type OperatorAiCostItem = {
+    id: string;
+    label: string;
+    quantity: number;
+    unit: 'tokens' | 'characters' | 'minutes';
+    rateUsd: number;
+    rateQuantity: number;
+    rateUnit: 'tokens' | 'characters' | 'minute' | 'hour';
+    costUsd: number | null;
+    /**
+     * Item cost divided by the recorded estimated subtotal, times 100. Null without a positive denominator or recorded usage.
+     */
+    sharePercent: number | null;
+    /**
+     * Completed calls with recorded usage for this item.
+     */
+    calls: number;
+};
+
+export type OperatorAiCostDay = {
+    day: string;
+    costUsd: number;
+    calls: number;
+    /**
+     * Calls on this day with complete cost usage.
+     */
+    pricedCalls: number;
+    /**
+     * Usage entries on this day excluded because their model or quantity could not be priced.
+     */
+    unpricedUsage: number;
+};
+
+export type OperatorAiCostAnalytics = {
+    from: string;
+    through: string;
+    timeZone: string;
+    /**
+     * Effective date of the tariff used for all estimates in this report.
+     */
+    rateEffectiveDate: string;
+    totalCalls: number;
+    /**
+     * Completed calls with all seven cost items known and no unpriced LLM, STT, or TTS usage.
+     */
+    pricedCalls: number;
+    /**
+     * Usage entries with unrecognized provider/model rates or invalid quantities, excluded from cost estimates.
+     */
+    unpricedUsage: number;
+    /**
+     * Sum of recorded estimated item costs at the report tariff, before credits. May be partial; inspect pricedCalls and item calls.
+     */
+    totalCostUsd: number;
+    /**
+     * Average estimated cost across completed calls with complete cost usage.
+     */
+    costPerCallUsd: number | null;
+    /**
+     * Average estimated cost per call minute across completed calls with complete cost usage.
+     */
+    costPerMinuteUsd: number | null;
+    cacheHitRate: number | null;
+    cacheSavingsUsd: number;
+    items: Array<OperatorAiCostItem>;
+    daily: Array<OperatorAiCostDay>;
+};
+
 export type OperatorAiAnalyticsRange = '24h' | '7d' | '30d';
 
 export type OperatorAiAnalyticsQueryRequest = {
@@ -2577,6 +2655,47 @@ export type QueryStaffAnalyticsResponses = {
 };
 
 export type QueryStaffAnalyticsResponse = QueryStaffAnalyticsResponses[keyof QueryStaffAnalyticsResponses];
+
+export type QueryOperatorAiCostsData = {
+    body: OperatorAiCostQueryRequest;
+    path?: never;
+    query?: never;
+    url: '/v1/operator/ai-costs/query';
+};
+
+export type QueryOperatorAiCostsErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Another analytics request is running on this portal instance. Retry later.
+     */
+    429: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type QueryOperatorAiCostsError = QueryOperatorAiCostsErrors[keyof QueryOperatorAiCostsErrors];
+
+export type QueryOperatorAiCostsResponses = {
+    /**
+     * Platform Operator cost estimates before credits, with usage coverage and item shares.
+     */
+    200: OperatorAiCostAnalytics;
+};
+
+export type QueryOperatorAiCostsResponse = QueryOperatorAiCostsResponses[keyof QueryOperatorAiCostsResponses];
 
 export type QueryOperatorAiAnalyticsData = {
     body: OperatorAiAnalyticsQueryRequest;
