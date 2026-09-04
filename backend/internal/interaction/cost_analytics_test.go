@@ -121,6 +121,52 @@ func TestCostItemHourlyRateUsesItsStructuredQuantity(t *testing.T) {
 	assertCostClose(t, item.cost(60), 0.45)
 }
 
+func TestCostAnalyticsFallbackAdapterUsage(t *testing.T) {
+	// LiveKit's FallbackAdapter forwards the underlying provider metrics and
+	// emits its own metrics for the same stream. ModelUsageCollector therefore
+	// records both rows even when only the primary model answered.
+	provider := `{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":1000,"input_cached_tokens":200,"output_tokens":20}`
+	wrapper := `{"type":"llm_usage","provider":"unknown","model":"FallbackAdapter","input_tokens":1000,"input_cached_tokens":200,"output_tokens":20}`
+	speech := `{"type":"stt_usage","provider":"livekit","model":"assemblyai/universal-3-5-pro","audio_duration":60},{"type":"tts_usage","provider":"rime","model":"coda","characters_count":100}`
+	for _, tc := range []struct {
+		name, llm        string
+		priced, unpriced int
+	}{
+		{"provider alone", provider, 1, 0},
+		{"provider and wrapper", provider + "," + wrapper, 1, 0},
+		{"wrapper before provider", wrapper + "," + provider, 1, 0},
+		{"raw collector wrapper", provider + `,{"type":"llm_usage","provider":"unknown","model":"FallbackAdapter","inputTokens":1000,"inputCachedTokens":200,"outputTokens":20}`, 1, 0},
+		{"wrapper without provider evidence", wrapper, 0, 0},
+		{"real fallback remains unpriced", provider + "," + wrapper + `,{"type":"llm_usage","provider":"livekit","model":"xai/grok-4.5","input_tokens":50,"output_tokens":10}`, 0, 1},
+		{"unknown model remains unpriced", provider + `,{"type":"llm_usage","provider":"unknown","model":"other","input_tokens":1000}`, 0, 1},
+		{"invalid provider usage remains unpriced", wrapper + `,{"type":"llm_usage","provider":"livekit","model":"google/gemma-4-31b-it","input_tokens":10,"input_cached_tokens":20}`, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			started := time.Date(2026, 9, 3, 1, 0, 0, 0, time.UTC)
+			report := newCostAnalytics(started, started.Add(time.Hour), time.UTC)
+			report.addCall(started, started.Add(time.Minute), json.RawMessage("["+tc.llm+","+speech+"]"), time.UTC)
+			report.finalize()
+			if report.PricedCalls != tc.priced || report.UnpricedUsage != tc.unpriced || report.Daily[0].PricedCalls != tc.priced || report.Daily[0].UnpricedUsage != tc.unpriced {
+				t.Fatalf("coverage: priced=%d unpriced=%d daily=%+v; want %d, %d", report.PricedCalls, report.UnpricedUsage, report.Daily[0], tc.priced, tc.unpriced)
+			}
+			if tc.priced == 0 {
+				if report.CostPerCallUSD != nil || report.CostPerMinuteUSD != nil {
+					t.Fatal("incomplete provider evidence produced an average")
+				}
+				return
+			}
+			if report.CostPerCallUSD == nil || report.CostPerMinuteUSD == nil {
+				t.Fatal("complete provider usage has no average")
+			}
+			assertCostClose(t, report.TotalCostUSD, 0.026384)
+			assertCostClose(t, *report.CostPerCallUSD, 0.026384)
+			assertCostClose(t, *report.CostPerMinuteUSD, 0.026384)
+			assertCostClose(t, *report.CacheHitRate, 20)
+			assertCostClose(t, report.Items[0].Quantity, 800)
+		})
+	}
+}
+
 func assertCostClose(t *testing.T, got, want float64) {
 	t.Helper()
 	if math.Abs(got-want) > 1e-9 {
