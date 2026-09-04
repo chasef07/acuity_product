@@ -702,7 +702,7 @@ export type BookingMetrics = {
      */
     bookings: number;
     /**
-     * Unique calls with a recorded get_availability invocation, including failed and empty searches.
+     * Unique completed calls with a get_availability execution that has a successful tool output, excluding calls whose Product outcome is RESCHEDULE or CANCELLATION. A completed search with no openings remains included.
      */
     searched: number;
     /**
@@ -727,7 +727,7 @@ export type BookingMetrics = {
      */
     searchEvidenceCalls: number;
     /**
-     * Deprecated rolling-deploy compatibility field. Always zero; use searched for the invocation-based denominator.
+     * Deprecated rolling-deploy compatibility field. Always zero; use searched for the completed-search denominator.
      *
      * @deprecated
      */

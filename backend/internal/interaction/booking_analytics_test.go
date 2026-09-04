@@ -42,12 +42,16 @@ func TestBookingAnalyticsCountsAnAppointmentOnceButConversionPerCall(t *testing.
 	}
 }
 
-func TestBookingDailyTotalIncludesUnclassifiedCallsAndPoolsDurations(t *testing.T) {
+func TestBookingDailyTotalPoolsDurationsAcrossPatientGroups(t *testing.T) {
 	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	var facts []bookingFact
-	for i, group := range []string{"new", "existing", "unknown", "unknown"} {
+	for i, group := range []string{"new", "existing", "new", "existing"} {
 		end := from.Add(time.Duration(100+i*100) * time.Second)
-		facts = append(facts, bookingFact{appointmentID: group, started: from, ended: &end, booked: true, searched: true, patientGroup: group})
+		appointmentID := group
+		if i == 2 {
+			appointmentID = "second-new"
+		}
+		facts = append(facts, bookingFact{appointmentID: appointmentID, started: from, ended: &end, booked: true, searched: true, patientGroup: group})
 	}
 	facts = append(facts, bookingFact{started: from, patientGroup: "unknown"})
 	report := summarizeBookingFacts(facts, from, from.AddDate(0, 0, 1))

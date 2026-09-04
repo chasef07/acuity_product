@@ -6,6 +6,7 @@ import { signInAs } from "./support"
 test("Staff analytics measures connected phone time and the 48-hour task goal", async ({
   page,
 }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
   const url = process.env.E2E_DATABASE_URL
   test.skip(!url, "E2E_DATABASE_URL required")
   if (!new URL(url!).pathname.endsWith("_e2e"))
@@ -47,9 +48,10 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         [id, staff.user_subject, day, end],
       )
     }
-    for (const completed of [true, false]) {
+    for (const [index, completed] of [true, true, false].entries()) {
       const id = randomUUID()
       tasks.push(id)
+      const createdAt = new Date(+day + (index % 2) * 86400000)
       await db.query(
         `INSERT INTO work_tasks(id,practice_id,location_id,phone,title,state,created_by_kind,created_by_subject,created_at,updated_at,origin,source_call_id,source_message,category,ai_idempotency_key,ai_input_fingerprint,completed_by_kind,completed_by_subject,completed_by_email,completed_at) VALUES($1::uuid,$2,$3,'+15555550199','Synthetic staff task',$4,'SERVICE','staff-e2e',$5,$5,'ABITA_AI',$1::uuid::text,'Synthetic staff evidence','other',$1::uuid::text,decode(repeat('00',32),'hex'),$6,$7,$8,$9)`,
         [
@@ -57,11 +59,11 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
           location.practice_id,
           location.id,
           completed ? "COMPLETED" : "OPEN",
-          day,
+          createdAt,
           completed ? "HUMAN" : null,
           completed ? staff.user_subject : null,
           completed ? staff.email : null,
-          completed ? new Date(+day + 86400000) : null,
+          completed ? new Date(+createdAt + 86400000) : null,
         ],
       )
     }
@@ -82,7 +84,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       name: "Staff performance",
       exact: true,
     })
-    await expect(performance.getByText("50.0%", { exact: true })).toBeVisible()
+    await expect(performance.getByText("66.7%", { exact: true })).toBeVisible()
     const accounts = page.getByRole("region", {
       name: "Staff accounts",
       exact: true,
@@ -92,13 +94,24 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         .getByRole("row")
         .filter({ hasText: "selected@abita.test" })
         .getByRole("cell"),
-    ).toHaveText(["selected@abita.testStaff", "1", "1", "2m", "5m", "1"])
+    ).toHaveText(["selected@abita.testStaff", "1", "1", "2m", "5m", "2"])
     await expect(
       accounts
         .getByRole("row")
         .filter({ hasText: "admin@abita.test" })
         .getByRole("cell"),
     ).toHaveText(["admin@abita.testAdmin", "0", "0", "0m", "0m", "0"])
+    await expect(accounts.getByRole("row").nth(1)).toContainText(
+      "selected@abita.test",
+    )
+    await expect(
+      accounts
+        .getByRole("columnheader")
+        .filter({ hasText: "Inbound time" }),
+    ).toHaveAttribute("aria-sort", "descending")
+    await expect(performance.locator(".recharts-line")).toHaveCount(1)
+    await expect(performance.locator(".recharts-area")).toHaveCount(1)
+    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
     await expect(
       page.getByRole("button", { name: "Staff", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")
