@@ -3062,7 +3062,7 @@ components:
     TaskPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor, counts]
+      required: [items, nextCursor]
       properties:
         items:
           type: array
@@ -3071,6 +3071,7 @@ components:
         nextCursor:
           type: string
         counts:
+          description: Present unless the query explicitly disables counts.
           $ref: "#/components/schemas/TaskFolderCounts"
     TaskFolderCounts:
       type: object
@@ -4112,6 +4113,10 @@ components:
         folder:
           type: string
           enum: [work, missed_calls]
+        includeCounts:
+          description: Include fresh counts across all Task folders in the requested scope and search.
+          type: boolean
+          default: true
         cursor:
           type: string
         limit:

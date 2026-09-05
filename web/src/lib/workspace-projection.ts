@@ -329,10 +329,12 @@ export function createWorkspaceProjection({
     : undefined
   const queryGenerations = {
     tasks: 0,
+    taskCounts: 0,
     recoveryTasks: 0,
     messages: 0,
     aiOutcomes: 0,
   }
+  let aiRefreshController: AbortController | undefined
   let accessController: AbortController | undefined
   const listeners = new Set<() => void>()
 
@@ -416,7 +418,10 @@ export function createWorkspaceProjection({
     signal,
     minimumVersion,
   }: Parameters<WorkspaceRealtimeCallbacks["reconcile"]>[0]) {
+    aiRefreshController?.abort()
+    const resumeAIRefresh = requestBudget?.pauseAIRefresh()
     const generation = scopeGeneration
+    const countGeneration = ++queryGenerations.taskCounts
     const taskGeneration = ++queryGenerations.tasks
     const recoveryGeneration = ++queryGenerations.recoveryTasks
     const messageGeneration = ++queryGenerations.messages
@@ -432,7 +437,7 @@ export function createWorkspaceProjection({
     const selectedAIInteractionID = current.selection.aiInteractionID
     const [
       snapshotResult,
-      taskResult,
+      taskPageResult,
       recoveryResult,
       messageResult,
       outcomeResult,
@@ -466,8 +471,9 @@ export function createWorkspaceProjection({
         selectedAIInteractionID
           ? authority.aiInteraction(token, selectedAIInteractionID, signal)
           : Promise.resolve(undefined),
-      ])
+      ]).finally(() => resumeAIRefresh?.())
 
+    const taskResult = requireTaskCounts(taskPageResult)
     const authorityResults = [
       snapshotResult,
       taskResult,
@@ -624,25 +630,30 @@ export function createWorkspaceProjection({
               aiInteractionError: aiInteractionDetailError,
             }
           }
+          let taskWindow = currentState.tasks
+          if (taskWindowCurrent) {
+            taskWindow = taskResult.kind === "success"
+              ? {
+                  items: tasksWithSelection,
+                  nextCursor: taskResult.data.nextCursor,
+                  counts: currentState.tasks.counts,
+                  loading: false,
+                  error: "",
+                }
+              : { ...taskWindow, loading: false, error: taskWindowError }
+          }
+          // Cursor requests only replace rows; they must not discard a newer
+          // authoritative count for the same scope and search.
+          if (countGeneration === queryGenerations.taskCounts) {
+            taskWindow = taskResult.kind === "success"
+              ? { ...taskWindow, counts: taskResult.data.counts }
+              : { ...taskWindow, error: taskWindowError }
+          }
           return {
             ...currentState,
             loadState: "ready",
             workspace: snapshot,
-            tasks: taskWindowCurrent && taskResult.kind === "success"
-              ? {
-                  items: tasksWithSelection,
-                  nextCursor: taskResult.data.nextCursor,
-                  counts: taskResult.data.counts,
-                  loading: false,
-                  error: "",
-                }
-              : taskWindowCurrent
-                ? {
-                  ...currentState.tasks,
-                  loading: false,
-                  error: taskWindowError,
-                  }
-                : currentState.tasks,
+            tasks: taskWindow,
             recoveryTasks:
               recoveryWindowCurrent && recoveryResult.kind === "success"
               ? {
@@ -1065,9 +1076,9 @@ export function createWorkspaceProjection({
   ) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
-    const queryGeneration = ++queryGenerations[window]
     const currentWindow = state[window]
     if (currentWindow.loading || !currentWindow.nextCursor) return
+    const queryGeneration = ++queryGenerations[window]
     patch((current) => ({
       ...current,
       [window]: { ...current[window], loading: true, error: "" },
@@ -1112,6 +1123,7 @@ export function createWorkspaceProjection({
             ? taskQueryRequest(state.scope, state.search.applied)
             : recoveryTaskQueryRequest(state.scope, state.search.applied)),
           cursor: currentWindow.nextCursor,
+          includeCounts: false,
         },
         signal,
       ),
@@ -1132,7 +1144,7 @@ export function createWorkspaceProjection({
         tasks: {
           items: appendUniqueByID(current.tasks.items, result.data.items),
           nextCursor: result.data.nextCursor,
-          counts: result.data.counts,
+          counts: current.tasks.counts,
           loading: false,
           error: "",
         },
@@ -1169,6 +1181,7 @@ export function createWorkspaceProjection({
             ? { locationId: state.scope.locationScopeID }
             : {}),
           appointmentAction: appointmentActionForFolder(folder),
+          includeCounts: false,
           cursor,
           limit: 10,
         },
@@ -1215,16 +1228,20 @@ export function createWorkspaceProjection({
 
   async function refreshAIOutcomes() {
     if (state.loadState !== "ready") return
+    const controller = new AbortController()
+    aiRefreshController = controller
     const generation = scopeGeneration
     const queryGeneration = ++queryGenerations.aiOutcomes
     const current = state.aiOutcomes
     const scope = state.scope
     const result = await authenticatedRequest((token, signal) =>
       loadOutcomeWindows(token, current, scope, signal),
+      controller.signal,
     )
     if (
       generation !== scopeGeneration ||
       queryGeneration !== queryGenerations.aiOutcomes ||
+      controller.signal.aborted ||
       stopped
     ) return
     if (failIfAccessLost(result)) return
@@ -1318,6 +1335,7 @@ export function createWorkspaceProjection({
       )
       return
     }
+    queryGenerations.taskCounts += 1
     const committed = result.data
     const recovery = isRecoveryTask(committed)
     patch((current) => {
@@ -1448,6 +1466,7 @@ export function createWorkspaceProjection({
 
   function projectTaskIntent(task: Task, select: boolean) {
     detailGeneration += 1
+    queryGenerations.taskCounts += 1
     const recovery = isRecoveryTask(task)
     patch((current) => {
       const window = recovery ? current.recoveryTasks : current.tasks
@@ -1668,6 +1687,7 @@ export function createWorkspaceProjection({
   async function refreshTaskWindows(search: string) {
     if (state.loadState !== "ready") return
     const generation = scopeGeneration
+    const countGeneration = ++queryGenerations.taskCounts
     const taskGeneration = ++queryGenerations.tasks
     const recoveryGeneration = ++queryGenerations.recoveryTasks
     const scope = state.scope
@@ -1712,9 +1732,9 @@ export function createWorkspaceProjection({
     })
     if (generation !== scopeGeneration || stopped) return
     if (failIfAccessLost(result)) return
-    const tasks = result.kind === "success"
+    const tasks = requireTaskCounts(result.kind === "success"
       ? result.data.tasks
-      : ({ kind: "unavailable" } as const)
+      : ({ kind: "unavailable" } as const))
     const recoveryTasks = result.kind === "success"
       ? result.data.recoveryTasks
       : ({ kind: "unavailable" } as const)
@@ -1727,7 +1747,9 @@ export function createWorkspaceProjection({
             ? {
                 items: tasks.data.items,
                 nextCursor: tasks.data.nextCursor,
-                counts: tasks.data.counts,
+                counts: countGeneration === queryGenerations.taskCounts
+                  ? tasks.data.counts
+                  : current.tasks.counts,
                 loading: false,
                 error: "",
               }
@@ -1752,6 +1774,7 @@ export function createWorkspaceProjection({
 
   function obsoleteAllQueries() {
     queryGenerations.tasks += 1
+    queryGenerations.taskCounts += 1
     queryGenerations.recoveryTasks += 1
     queryGenerations.messages += 1
     queryGenerations.aiOutcomes += 1
@@ -1781,15 +1804,15 @@ export function createWorkspaceProjection({
     const target = refreshLoadedWindowTarget(loadedCount)
     const items: Task[] = []
     let cursor = ""
-    let counts = emptyTaskFolderCounts()
+    let counts: TaskFolderCounts | undefined
     do {
       const result = await authority.tasks(
         token,
-        { ...request, ...(cursor ? { cursor } : {}) },
+        { ...request, includeCounts: request.includeCounts !== false && !cursor, ...(cursor ? { cursor } : {}) },
         signal,
       )
       if (result.kind !== "success") return result
-      if (items.length === 0) counts = result.data.counts
+      if (!cursor) counts = result.data.counts
       items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
       cursor = result.data.nextCursor
     } while (cursor && items.length < target)
@@ -1887,13 +1910,16 @@ export function createWorkspaceProjection({
             ? { locationId: scope.locationScopeID }
             : {}),
           appointmentAction: appointmentActionForFolder(folder),
-          includeCounts,
+          includeCounts: includeCounts && !cursor,
           ...(cursor ? { cursor } : {}),
-          limit: 10,
+          limit: Math.min(50, Math.max(10, target - items.length)),
         },
         signal,
       )
       if (result.kind !== "success") return { folder, result }
+      if (includeCounts && !cursor && !result.data.counts) {
+        return { folder, result: { kind: "unavailable" as const } }
+      }
       counts ??= result.data.counts
       items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
       cursor = result.data.nextCursor
@@ -1910,6 +1936,7 @@ export function createWorkspaceProjection({
   function stop() {
     stopped = true
     accessController?.abort()
+    aiRefreshController?.abort()
     accessController = undefined
     realtimeController.stop()
     requestBudget?.stop()
@@ -2042,6 +2069,7 @@ function taskQueryRequest(
     state: "OPEN",
     ordering: "recent",
     folder: "work",
+    includeCounts: true,
     ...(search ? { search } : {}),
     limit: 50,
   }
@@ -2054,6 +2082,7 @@ function recoveryTaskQueryRequest(
   return {
     ...taskQueryRequest(scope, search),
     folder: "missed_calls",
+    includeCounts: false,
   }
 }
 
@@ -2241,3 +2270,11 @@ const recoveryWindowError = "Missed Calls are temporarily unavailable."
 const messageWindowError = "Texts are temporarily unavailable."
 const outcomeWindowError = "AI appointment updates are unavailable."
 const aiInteractionDetailError = "This AI call could not be loaded."
+
+function requireTaskCounts(
+  result: WorkspaceAuthorityResult<TaskPage>,
+): WorkspaceAuthorityResult<TaskPage & { counts: TaskFolderCounts }> {
+  if (result.kind !== "success") return result
+  if (!result.data.counts) return { kind: "unavailable" }
+  return { kind: "success", data: { ...result.data, counts: result.data.counts } }
+}
