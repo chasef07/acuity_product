@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -20,7 +21,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const maximumAttachmentBytes = 600 * 1024
+const (
+	maximumAttachmentBytes     = 600 * 1024
+	attachmentOperationTimeout = 20 * time.Second
+	attachmentClaimTTL         = 30 * time.Second
+)
 
 type AttachmentState string
 
@@ -94,228 +99,176 @@ func (m *Module) uploadAttachment(
 		!fileNameMatchesType(command.FileName, contentType) {
 		return Attachment{}, ErrInvalidInput
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Attachment{}, fmt.Errorf("begin attachment upload: %w", err)
+	if requestedID == "" {
+		requestedID = uuid.NewString()
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if idempotencyKey != "" {
-		if _, err := tx.Exec(ctx, `
-			SELECT pg_advisory_xact_lock(
-				hashtextextended($1, 0)
-					# hashtextextended($2, 1)
-					# hashtextextended($3, 2)
-			)
-		`, command.PracticeID, command.Identity.Subject,
-			idempotencyKey,
-		); err != nil {
-			return Attachment{}, fmt.Errorf("lock attachment retry key: %w", err)
+	if uuid.Validate(requestedID) != nil {
+		return Attachment{}, ErrInvalidInput
+	}
+	// Retried Send-again requests share a durable reservation. Waiting for its
+	// writer does not retain a connection or an authorization lock.
+	ctx, cancel := context.WithTimeout(ctx, attachmentOperationTimeout)
+	defer cancel()
+	var result Attachment
+	var token string
+	for {
+		var err error
+		result, token, err = m.claimAttachmentUpload(ctx, command, requestedID, idempotencyKey, retryOfMessageID)
+		if err != nil {
+			return Attachment{}, err
+		}
+		if result.State != AttachmentProcessing {
+			return result, nil
+		}
+		if token != "" {
+			break
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Attachment{}, ctx.Err()
+		case <-timer.C:
 		}
 	}
-	authorization, err := m.access.LockMutationAuthorization(
-		ctx,
-		tx,
-		command.Identity,
-		command.PracticeID,
-		command.LocationID,
-	)
+	objectKey := attachmentObjectKey(result.ID, token)
+	writeErr := m.config.AttachmentStore.Put(ctx, objectKey, command.Content)
+	if err := m.finishAttachmentWrite(ctx, objectKey); err != nil {
+		return Attachment{}, errors.Join(writeErr, err)
+	}
+	if writeErr != nil {
+		return Attachment{}, fmt.Errorf("store pending attachment: %w", writeErr)
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Attachment{}, fmt.Errorf("begin attachment upload result: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockAttachmentWrite(ctx, tx, objectKey, m.now()); err != nil {
+		return Attachment{}, err
+	}
+	authorization, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
 	if err != nil {
 		return Attachment{}, ErrDenied
 	}
-	if idempotencyKey != "" {
-		var existing Attachment
-		var existingPracticeID, existingLocationID, actorSubject string
-		if err := tx.QueryRow(ctx, `
-			SELECT
-				id::text,
-				practice_id::text,
-				location_id::text,
-				direction,
-				state,
-				actor_subject,
-				file_name,
-				content_type,
-				byte_size,
-				created_at,
-				updated_at
-			FROM messaging_attachments
-			WHERE practice_id = $1
-				AND actor_subject = $2
-				AND retry_idempotency_key = $3
-			FOR SHARE
-		`, command.PracticeID, command.Identity.Subject,
-			idempotencyKey,
-		).Scan(
-			&existing.ID,
-			&existingPracticeID,
-			&existingLocationID,
-			&existing.Direction,
-			&existing.State,
-			&actorSubject,
-			&existing.FileName,
-			&existing.ContentType,
-			&existing.ByteSize,
-			&existing.CreatedAt,
-			&existing.UpdatedAt,
-		); err == nil {
-			if existing.ID != requestedID ||
-				existingPracticeID != command.PracticeID ||
-				existingLocationID != command.LocationID ||
-				existing.Direction != DirectionOutbound ||
-				actorSubject != command.Identity.Subject ||
-				existing.FileName != command.FileName ||
-				existing.ContentType != contentType ||
-				existing.ByteSize != len(command.Content) {
-				return Attachment{}, ErrConflict
-			}
-			if err := tx.Commit(ctx); err != nil {
-				return Attachment{}, fmt.Errorf(
-					"commit replayed retry attachment: %w",
-					err,
-				)
-			}
-			return existing, nil
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return Attachment{}, fmt.Errorf(
-				"load attachment retry reservation: %w",
-				err,
-			)
-		}
-	}
 	now := m.now()
-	attachmentID := requestedID
-	if attachmentID == "" {
-		attachmentID = uuid.NewString()
-	}
-	if uuid.Validate(attachmentID) != nil {
-		return Attachment{}, ErrInvalidInput
-	}
-	result := Attachment{
-		ID:          attachmentID,
-		Direction:   DirectionOutbound,
-		State:       AttachmentPending,
-		FileName:    command.FileName,
-		ContentType: contentType,
-		ByteSize:    len(command.Content),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	objectKey := "attachments/" + result.ID
-	if err := m.config.AttachmentStore.Put(
-		ctx,
-		objectKey,
-		command.Content,
-	); err != nil {
-		return Attachment{}, fmt.Errorf("store pending attachment: %w", err)
-	}
-	keepObject := false
-	defer func() {
-		if !keepObject {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-		}
-	}()
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO messaging_attachments (
-			id,
-			practice_id,
-			location_id,
-			direction,
-			state,
-			actor_subject,
-			file_name,
-			content_type,
-			byte_size,
-			object_key,
-			retry_idempotency_key,
-			retry_of_message_id,
-			expires_at,
-			created_at,
-			updated_at
-		)
-		VALUES (
-			$1, $2, $3, 'OUTBOUND', 'PENDING', $4, $5, $6, $7, $8,
-			NULLIF($9, ''), NULLIF($10, '')::uuid, $11, $12, $12
-		)
-		ON CONFLICT (id) DO NOTHING
-	`, result.ID, command.PracticeID, command.LocationID,
-		command.Identity.Subject, result.FileName, result.ContentType,
-		result.ByteSize, objectKey, idempotencyKey, retryOfMessageID,
-		now.Add(15*time.Minute), now,
-	)
+		UPDATE messaging_attachments
+		SET state = 'PENDING', storage_token = NULL, copy_started_at = NULL, updated_at = $3
+		WHERE id = $1 AND state = 'PROCESSING' AND storage_token = $2 AND expires_at > $3
+	`, result.ID, token, now)
 	if err != nil {
-		return Attachment{}, fmt.Errorf("record pending attachment: %w", err)
+		return Attachment{}, fmt.Errorf("finalize pending attachment: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		keepObject = true
-		var existing Attachment
-		var practiceID, locationID, actorSubject, existingObjectKey string
-		if err := tx.QueryRow(ctx, `
-			SELECT
-				id::text,
-				practice_id::text,
-				location_id::text,
-				direction,
-				state,
-				actor_subject,
-				file_name,
-				content_type,
-				byte_size,
-				object_key,
-				created_at,
-				updated_at
-			FROM messaging_attachments
-			WHERE id = $1
-			FOR SHARE
-		`, result.ID).Scan(
-			&existing.ID,
-			&practiceID,
-			&locationID,
-			&existing.Direction,
-			&existing.State,
-			&actorSubject,
-			&existing.FileName,
-			&existing.ContentType,
-			&existing.ByteSize,
-			&existingObjectKey,
-			&existing.CreatedAt,
-			&existing.UpdatedAt,
-		); err != nil {
-			return Attachment{}, fmt.Errorf("load replayed attachment: %w", err)
-		}
-		if practiceID != command.PracticeID ||
-			locationID != command.LocationID ||
-			existing.Direction != DirectionOutbound ||
-			actorSubject != command.Identity.Subject ||
-			existing.FileName != result.FileName ||
-			existing.ContentType != result.ContentType ||
-			existing.ByteSize != result.ByteSize ||
-			existingObjectKey != objectKey {
-			return Attachment{}, ErrConflict
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Attachment{}, fmt.Errorf("commit replayed attachment: %w", err)
-		}
-		return existing, nil
+	if tag.RowsAffected() != 1 {
+		return Attachment{}, ErrConflict
 	}
-	if err := m.access.AuditOperatorMutation(
-		ctx,
-		tx,
-		authorization,
-		access.OperatorMutationAudit{
-			Action:          "attachment.uploaded",
-			ResourceType:    "attachment",
-			ResourceID:      result.ID,
-			ResourceVersion: 1,
-			OccurredAt:      now,
-		},
-	); err != nil {
+	if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{
+		Action: "attachment.uploaded", ResourceType: "attachment", ResourceID: result.ID,
+		ResourceVersion: 1, OccurredAt: now,
+	}); err != nil {
 		return Attachment{}, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM messaging_attachment_cleanup WHERE object_key = $1`, objectKey); err != nil {
+		return Attachment{}, fmt.Errorf("complete attachment write: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Attachment{}, fmt.Errorf("commit pending attachment: %w", err)
 	}
-	keepObject = true
+	result.State = AttachmentPending
+	result.UpdatedAt = now
 	return result, nil
+}
+
+// claimAttachmentUpload returns an empty token when another request owns the
+// same in-progress reservation. Each resumed writer gets its own immutable key.
+func (m *Module) claimAttachmentUpload(
+	ctx context.Context, command UploadAttachmentCommand, attachmentID, idempotencyKey, retryOfMessageID string,
+) (Attachment, string, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Attachment{}, "", fmt.Errorf("begin attachment upload: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if idempotencyKey != "" {
+		if _, err := tx.Exec(ctx, `
+			SELECT pg_advisory_xact_lock(hashtextextended($1, 0) # hashtextextended($2, 1) # hashtextextended($3, 2))
+		`, command.PracticeID, command.Identity.Subject, idempotencyKey); err != nil {
+			return Attachment{}, "", fmt.Errorf("lock attachment retry key: %w", err)
+		}
+	}
+	authorization, err := m.access.LockMutationAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
+	if err != nil {
+		return Attachment{}, "", ErrDenied
+	}
+	now, token := m.now(), uuid.NewString()
+	digest := sha256.Sum256(command.Content)
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO messaging_attachments (
+			id, practice_id, location_id, direction, state, actor_subject,
+			file_name, content_type, byte_size, object_key, retry_idempotency_key,
+			retry_of_message_id, expires_at, created_at, updated_at, copy_started_at, storage_token, content_sha256
+		) VALUES (
+			$1, $2, $3, 'OUTBOUND', 'PROCESSING', $4, $5, $6, $7, $8,
+			NULLIF($9, ''), NULLIF($10, '')::uuid, $11, $12, $12, $12, $13, $14
+		) ON CONFLICT DO NOTHING
+	`, attachmentID, command.PracticeID, command.LocationID, command.Identity.Subject,
+		command.FileName, command.DeclaredType, len(command.Content), attachmentObjectKey(attachmentID, token),
+		idempotencyKey, retryOfMessageID, now.Add(15*time.Minute), now, token, digest[:])
+	if err != nil {
+		return Attachment{}, "", fmt.Errorf("reserve pending attachment: %w", err)
+	}
+	var result Attachment
+	var practiceID, locationID, actorSubject, storedRetryKey, storedRetryOf string
+	var startedAt, expiresAt *time.Time
+	var storedDigest []byte
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text, practice_id::text, location_id::text, direction, state, actor_subject,
+			file_name, content_type, byte_size, created_at, updated_at, copy_started_at, expires_at,
+			COALESCE(retry_idempotency_key, ''), COALESCE(retry_of_message_id::text, ''), content_sha256
+		FROM messaging_attachments WHERE id = $1 FOR UPDATE
+	`, attachmentID).Scan(&result.ID, &practiceID, &locationID, &result.Direction, &result.State,
+		&actorSubject, &result.FileName, &result.ContentType, &result.ByteSize, &result.CreatedAt,
+		&result.UpdatedAt, &startedAt, &expiresAt, &storedRetryKey, &storedRetryOf, &storedDigest); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Attachment{}, "", ErrConflict
+		}
+		return Attachment{}, "", fmt.Errorf("load attachment reservation: %w", err)
+	}
+	if practiceID != command.PracticeID || locationID != command.LocationID ||
+		actorSubject != command.Identity.Subject || result.Direction != DirectionOutbound ||
+		result.FileName != command.FileName || result.ContentType != command.DeclaredType ||
+		result.ByteSize != len(command.Content) || storedRetryKey != idempotencyKey || storedRetryOf != retryOfMessageID ||
+		(storedDigest != nil && !bytes.Equal(storedDigest, digest[:])) ||
+		result.State == AttachmentUnavailable ||
+		(result.State != AttachmentStored && (expiresAt == nil || !expiresAt.After(now))) {
+		return Attachment{}, "", ErrConflict
+	}
+	if tag.RowsAffected() == 0 {
+		token = ""
+		if result.State == AttachmentProcessing && (startedAt == nil || !startedAt.Add(attachmentClaimTTL).After(now)) {
+			token = uuid.NewString()
+			if _, err := tx.Exec(ctx, `
+				UPDATE messaging_attachments SET copy_started_at = $2, storage_token = $3, object_key = $4, updated_at = $2 WHERE id = $1
+			`, result.ID, now, token, attachmentObjectKey(result.ID, token)); err != nil {
+				return Attachment{}, "", fmt.Errorf("resume attachment upload: %w", err)
+			}
+		}
+	} else if err := m.access.AuditOperatorMutation(ctx, tx, authorization, access.OperatorMutationAudit{
+		Action: "attachment.upload_requested", ResourceType: "attachment", ResourceID: result.ID,
+		ResourceVersion: 1, OccurredAt: now,
+	}); err != nil {
+		return Attachment{}, "", err
+	}
+	if token != "" {
+		if err := reserveAttachmentWrite(ctx, tx, result.ID, token, now); err != nil {
+			return Attachment{}, "", err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Attachment{}, "", fmt.Errorf("commit attachment reservation: %w", err)
+	}
+	return result, token, nil
 }
 
 func (m *Module) OpenAttachment(
@@ -330,41 +283,45 @@ func (m *Module) OpenAttachment(
 		attachmentID == "" {
 		return AttachmentContent{}, ErrDenied
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return AttachmentContent{}, fmt.Errorf("begin attachment read: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	attachment, practiceID, locationID, objectKey, err := loadAttachment(
-		ctx,
-		tx,
-		attachmentID,
-	)
-	if errors.Is(err, pgx.ErrNoRows) ||
-		attachment.State != AttachmentStored ||
-		objectKey == "" {
-		return AttachmentContent{}, ErrDenied
-	}
+	attachment, objectKey, err := m.authorizeAttachmentRead(ctx, identity, attachmentID)
 	if err != nil {
 		return AttachmentContent{}, err
-	}
-	if _, err := m.access.LockReadAuthorization(
-		ctx,
-		tx,
-		identity,
-		practiceID,
-		locationID,
-	); err != nil {
-		return AttachmentContent{}, ErrDenied
 	}
 	content, err := m.config.AttachmentStore.Get(ctx, objectKey)
 	if err != nil {
 		return AttachmentContent{}, ErrDenied
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return AttachmentContent{}, fmt.Errorf("commit attachment read: %w", err)
+	// Access or attachment state may have changed during a slow storage read.
+	current, currentKey, err := m.authorizeAttachmentRead(ctx, identity, attachmentID)
+	if err != nil || currentKey != objectKey || current.State != attachment.State {
+		return AttachmentContent{}, ErrDenied
 	}
-	return AttachmentContent{Attachment: attachment, Content: content}, nil
+	return AttachmentContent{Attachment: current, Content: content}, nil
+}
+
+func (m *Module) authorizeAttachmentRead(ctx context.Context, identity access.Identity, attachmentID string) (Attachment, string, error) {
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Attachment{}, "", fmt.Errorf("begin attachment read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	attachment, practiceID, locationID, objectKey, err := loadAttachment(ctx, tx, attachmentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Attachment{}, "", ErrDenied
+	}
+	if err != nil {
+		return Attachment{}, "", err
+	}
+	if attachment.State != AttachmentStored || objectKey == "" {
+		return Attachment{}, "", ErrDenied
+	}
+	if _, err := m.access.LockReadAuthorization(ctx, tx, identity, practiceID, locationID); err != nil {
+		return Attachment{}, "", ErrDenied
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Attachment{}, "", fmt.Errorf("commit attachment read: %w", err)
+	}
+	return attachment, objectKey, nil
 }
 
 func (m *Module) ProviderMediaURL(
@@ -450,6 +407,17 @@ func (m *Module) OpenProviderAttachment(
 	if err != nil {
 		return AttachmentContent{}, ErrDenied
 	}
+	var authorized bool
+	if !m.now().Before(time.Unix(expires, 0)) {
+		return AttachmentContent{}, ErrDenied
+	}
+	if err := m.database.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM messaging_attachments
+		WHERE id = $1 AND direction = 'OUTBOUND' AND state = 'STORED'
+			AND message_id = $2 AND object_key = $3)
+	`, attachment.ID, attachment.MessageID, objectKey).Scan(&authorized); err != nil || !authorized {
+		return AttachmentContent{}, ErrDenied
+	}
 	return AttachmentContent{Attachment: attachment, Content: content}, nil
 }
 
@@ -460,6 +428,9 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 		m.config.HTTPClient == nil {
 		return false, ErrInvalidInput
 	}
+	ctx, cancel := context.WithTimeout(ctx, attachmentOperationTimeout)
+	defer cancel()
+	token, now := uuid.NewString(), m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin inbound attachment copy: %w", err)
@@ -513,69 +484,62 @@ func (m *Module) ProcessNextAttachment(ctx context.Context) (bool, error) {
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE messaging_attachments
-		SET copy_started_at = $2, updated_at = $2
+		SET copy_started_at = $2, storage_token = $3, object_key = $4, updated_at = $2
 		WHERE id = $1
-	`, attachment.ID, m.now()); err != nil {
+	`, attachment.ID, now, token, attachmentObjectKey(attachment.ID, token)); err != nil {
 		return false, fmt.Errorf("mark inbound attachment copy: %w", err)
+	}
+	if err := reserveAttachmentWrite(ctx, tx, attachment.ID, token, now); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit inbound attachment claim: %w", err)
 	}
 
 	content, contentType, copyErr := m.downloadAttachment(ctx, providerURL)
-	objectKey := "attachments/" + attachment.ID
+	objectKey := attachmentObjectKey(attachment.ID, token)
 	if copyErr == nil {
 		copyErr = m.config.AttachmentStore.Put(ctx, objectKey, content)
 	}
+	if err := m.finishAttachmentWrite(ctx, objectKey); err != nil {
+		return true, errors.Join(copyErr, err)
+	}
 	finishTx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		if copyErr == nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-		}
 		return true, fmt.Errorf("begin inbound attachment result: %w", err)
 	}
 	defer func() { _ = finishTx.Rollback(ctx) }()
-	if copyErr != nil {
-		if _, err := finishTx.Exec(ctx, `
-			UPDATE messaging_attachments
-			SET
-				state = 'UNAVAILABLE',
-				copy_started_at = NULL,
-				updated_at = $2
-			WHERE id = $1 AND state = 'PROCESSING'
-		`, attachment.ID, m.now()); err != nil {
-			return true, fmt.Errorf("record unavailable inbound attachment: %w", err)
-		}
-	} else {
-		if _, err := finishTx.Exec(ctx, `
-			UPDATE messaging_attachments
-			SET
-				state = 'STORED',
-				content_type = $2,
-				byte_size = $3,
-				object_key = $4,
-				copy_started_at = NULL,
-				updated_at = $5
-			WHERE id = $1 AND state = 'PROCESSING'
-		`, attachment.ID, contentType, len(content), objectKey, m.now()); err != nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-			return true, fmt.Errorf("record stored inbound attachment: %w", err)
+	if copyErr == nil {
+		if err := lockAttachmentWrite(ctx, finishTx, objectKey, m.now()); err != nil {
+			return true, err
 		}
 	}
-	if _, err := m.access.RecordWorkspaceChange(
-		ctx,
-		finishTx,
-		practiceID,
-	); err != nil {
-		if copyErr == nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
+	state := AttachmentStored
+	if copyErr != nil {
+		state = AttachmentUnavailable
+	}
+	tag, err := finishTx.Exec(ctx, `
+		UPDATE messaging_attachments
+		SET state = $3, content_type = CASE WHEN $3 = 'STORED' THEN $4 ELSE content_type END,
+			byte_size = CASE WHEN $3 = 'STORED' THEN $5 ELSE byte_size END,
+			copy_started_at = NULL, storage_token = NULL, updated_at = $6
+		WHERE id = $1 AND state = 'PROCESSING' AND storage_token = $2
+	`, attachment.ID, token, state, contentType, len(content), m.now())
+	if err != nil {
+		return true, fmt.Errorf("record inbound attachment result: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return true, ErrConflict
+	}
+	if copyErr == nil {
+		if _, err := finishTx.Exec(ctx, `DELETE FROM messaging_attachment_cleanup WHERE object_key = $1`, objectKey); err != nil {
+			return true, fmt.Errorf("complete inbound attachment write: %w", err)
 		}
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, finishTx, practiceID); err != nil {
 		return true, err
 	}
 	if err := finishTx.Commit(ctx); err != nil {
-		if copyErr == nil {
-			_ = m.config.AttachmentStore.Delete(context.Background(), objectKey)
-		}
 		return true, fmt.Errorf("commit inbound attachment result: %w", err)
 	}
 	return true, nil
@@ -624,7 +588,7 @@ func (m *Module) RetryAttachment(
 	now := m.now()
 	if _, err := tx.Exec(ctx, `
 		UPDATE messaging_attachments
-		SET state = 'PROCESSING', copy_started_at = NULL, updated_at = $2
+		SET state = 'PROCESSING', copy_started_at = NULL, storage_token = NULL, updated_at = $2
 		WHERE id = $1 AND state = 'UNAVAILABLE'
 	`, attachment.ID, now); err != nil {
 		return Attachment{}, fmt.Errorf("retry inbound attachment copy: %w", err)
@@ -652,60 +616,6 @@ func (m *Module) RetryAttachment(
 	attachment.State = AttachmentProcessing
 	attachment.UpdatedAt = now
 	return attachment, nil
-}
-
-func (m *Module) ExpirePendingAttachments(ctx context.Context) error {
-	if m.database == nil || m.config.AttachmentStore == nil {
-		return ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin pending attachment expiration: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
-		WITH expired AS (
-			SELECT id
-			FROM messaging_attachments
-			WHERE direction = 'OUTBOUND'
-				AND state = 'PENDING'
-				AND message_id IS NULL
-				AND expires_at <= $1
-			ORDER BY expires_at, id
-			FOR UPDATE SKIP LOCKED
-			LIMIT 50
-		)
-		DELETE FROM messaging_attachments attachment
-		USING expired
-		WHERE attachment.id = expired.id
-		RETURNING attachment.object_key
-	`, m.now())
-	if err != nil {
-		return fmt.Errorf("expire pending attachments: %w", err)
-	}
-	objectKeys := make([]string, 0, 50)
-	for rows.Next() {
-		var objectKey string
-		if err := rows.Scan(&objectKey); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan expired pending attachment: %w", err)
-		}
-		objectKeys = append(objectKeys, objectKey)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("iterate expired pending attachments: %w", err)
-	}
-	rows.Close()
-	for _, objectKey := range objectKeys {
-		if err := m.config.AttachmentStore.Delete(ctx, objectKey); err != nil {
-			return fmt.Errorf("delete expired pending attachment object: %w", err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit pending attachment expiration: %w", err)
-	}
-	return nil
 }
 
 func (m *Module) downloadAttachment(

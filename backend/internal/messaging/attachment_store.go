@@ -35,16 +35,22 @@ func NewFileAttachmentStore(root string) (*FileAttachmentStore, error) {
 }
 
 func (store *FileAttachmentStore) Put(
-	_ context.Context,
+	ctx context.Context,
 	key string,
 	value []byte,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	path, err := store.path(key)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create attachment object prefix: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
@@ -53,7 +59,7 @@ func (store *FileAttachmentStore) Put(
 			return fmt.Errorf("read existing attachment object: %w", readErr)
 		}
 		if bytes.Equal(existing, value) {
-			return nil
+			return ctx.Err()
 		}
 		return ErrConflict
 	}
@@ -67,8 +73,14 @@ func (store *FileAttachmentStore) Put(
 			_ = os.Remove(path)
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, err := file.Write(value); err != nil {
 		return fmt.Errorf("write attachment object: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync attachment object: %w", err)
@@ -77,13 +89,16 @@ func (store *FileAttachmentStore) Put(
 		return fmt.Errorf("close attachment object: %w", err)
 	}
 	keep = true
-	return nil
+	return ctx.Err()
 }
 
 func (store *FileAttachmentStore) Get(
-	_ context.Context,
+	ctx context.Context,
 	key string,
 ) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	path, err := store.path(key)
 	if err != nil {
 		return nil, err
@@ -95,13 +110,19 @@ func (store *FileAttachmentStore) Get(
 	if err != nil {
 		return nil, fmt.Errorf("read attachment object: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return value, nil
 }
 
 func (store *FileAttachmentStore) Delete(
-	_ context.Context,
+	ctx context.Context,
 	key string,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	path, err := store.path(key)
 	if err != nil {
 		return err
@@ -109,7 +130,7 @@ func (store *FileAttachmentStore) Delete(
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("delete attachment object: %w", err)
 	}
-	return nil
+	return ctx.Err()
 }
 
 func (store *FileAttachmentStore) path(key string) (string, error) {
@@ -143,10 +164,13 @@ func NewMemoryAttachmentStore() *MemoryAttachmentStore {
 }
 
 func (store *MemoryAttachmentStore) Put(
-	_ context.Context,
+	ctx context.Context,
 	key string,
 	value []byte,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(key) == "" {
 		return ErrInvalidInput
 	}
@@ -154,7 +178,7 @@ func (store *MemoryAttachmentStore) Put(
 	defer store.mutex.Unlock()
 	if existing, exists := store.objects[key]; exists {
 		if bytes.Equal(existing, value) {
-			return nil
+			return ctx.Err()
 		}
 		return ErrConflict
 	}
@@ -163,9 +187,12 @@ func (store *MemoryAttachmentStore) Put(
 }
 
 func (store *MemoryAttachmentStore) Get(
-	_ context.Context,
+	ctx context.Context,
 	key string,
 ) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	store.mutex.RLock()
 	defer store.mutex.RUnlock()
 	value, exists := store.objects[key]
@@ -176,9 +203,12 @@ func (store *MemoryAttachmentStore) Get(
 }
 
 func (store *MemoryAttachmentStore) Delete(
-	_ context.Context,
+	ctx context.Context,
 	key string,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	store.mutex.Lock()
 	defer store.mutex.Unlock()
 	delete(store.objects, key)
