@@ -53,6 +53,7 @@
         {
           "Key": "north-miami-beach-optical",
           "Name": "North Miami Beach Optical",
+          "InboundRingEmails": ["brightvumiami@gmail.com"],
           "AbitaOfficeKeys": ["north-miami-beach-optical"],
           "VoiceNumber": "+13055095333",
           "VoicemailGreeting": "Thank you for calling Abeeta Eye Group. You have reached us after hours, or we are with a patient, and we are not able to answer your call. Please leave your information after the tone and we will return the call promptly. If this is an emergency after hours, please call our on-call physician at 727-379-4923."

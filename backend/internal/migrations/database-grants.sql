@@ -333,6 +333,7 @@ GRANT SELECT ON TABLE
     public.human_calling_credentials,
     public.human_calling_handoffs,
     public.human_calling_location_voice_numbers,
+    public.human_calling_location_ring_groups,
     public.human_calling_provider_commands,
     public.human_calling_provider_receipts,
     public.human_calling_softphone_leases,
