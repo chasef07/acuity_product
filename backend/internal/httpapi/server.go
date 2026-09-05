@@ -2617,6 +2617,9 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match, X-Correlation-ID")
 			w.Header().Set("Access-Control-Expose-Headers", "ETag")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Max-Age", "600")
+			}
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -19,6 +19,11 @@ import (
 
 var ErrInvalidCredential = errors.New("invalid credential")
 
+const (
+	jwksRefreshTimeout  = 3 * time.Second
+	jwksRefreshCooldown = 5 * time.Second
+)
+
 type JWKSConfig struct {
 	URL        string
 	Issuer     string
@@ -40,9 +45,18 @@ type JWKSAuthenticator struct {
 	clockSkew  time.Duration
 	now        func() time.Time
 
-	mu        sync.Mutex
-	keys      map[string]ed25519.PublicKey
-	fetchedAt time.Time
+	mu            sync.Mutex
+	keys          map[string]ed25519.PublicKey
+	fetchedAt     time.Time
+	refreshing    *keyRefresh
+	nextRefreshAt time.Time
+	refreshError  error
+}
+
+type keyRefresh struct {
+	done chan struct{}
+	keys map[string]ed25519.PublicKey
+	err  error
 }
 
 func NewJWKSAuthenticator(config JWKSConfig) (*JWKSAuthenticator, error) {
@@ -154,43 +168,87 @@ func (adapter *JWKSAuthenticator) key(
 	ctx context.Context,
 	keyID string,
 ) (ed25519.PublicKey, error) {
-	adapter.mu.Lock()
-	defer adapter.mu.Unlock()
-
-	now := adapter.now()
-	if len(adapter.keys) == 0 || now.Sub(adapter.fetchedAt) >= adapter.cacheTTL {
-		if err := adapter.refresh(ctx); err != nil {
-			return nil, err
-		}
-	}
-	if key, ok := adapter.keys[keyID]; ok {
-		return key, nil
-	}
-	if err := adapter.refresh(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if key, ok := adapter.keys[keyID]; ok {
+	adapter.mu.Lock()
+	now := adapter.now()
+	fresh := len(adapter.keys) > 0 && now.Sub(adapter.fetchedAt) < adapter.cacheTTL
+	if key, ok := adapter.keys[keyID]; fresh && ok {
+		adapter.mu.Unlock()
+		return key, nil
+	}
+	refresh := adapter.refreshing
+	if refresh == nil {
+		if now.Before(adapter.nextRefreshAt) {
+			err := adapter.refreshError
+			adapter.mu.Unlock()
+			if err != nil {
+				return nil, err
+			}
+			return nil, ErrInvalidCredential
+		}
+		refresh = &keyRefresh{done: make(chan struct{})}
+		adapter.refreshing = refresh
+		// Refresh belongs to the adapter, not whichever request first missed.
+		// Each caller can stop waiting independently; network work is bounded.
+		go adapter.refreshKeys(context.WithoutCancel(ctx), refresh, keyID, fresh)
+	}
+	adapter.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-refresh.done:
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if refresh.err != nil {
+		return nil, refresh.err
+	}
+	if key, ok := refresh.keys[keyID]; ok {
 		return key, nil
 	}
 	return nil, ErrInvalidCredential
 }
 
-func (adapter *JWKSAuthenticator) refresh(ctx context.Context) error {
+func (adapter *JWKSAuthenticator) refreshKeys(ctx context.Context, refresh *keyRefresh, keyID string, unknownKey bool) {
+	ctx, cancel := context.WithTimeout(ctx, jwksRefreshTimeout)
+	defer cancel()
+	keys, err := adapter.fetchKeys(ctx)
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+	if err == nil {
+		adapter.keys = keys
+		adapter.fetchedAt = adapter.now()
+	}
+	// Cache misses and failures cannot turn a request burst into a fetch burst.
+	// Keep fresh cached keys usable while allowing rotation to retry shortly.
+	if unknownKey || err != nil || keys[keyID] == nil {
+		adapter.nextRefreshAt = adapter.now().Add(jwksRefreshCooldown)
+	}
+	adapter.refreshError = err
+	refresh.keys, refresh.err = keys, err
+	adapter.refreshing = nil
+	close(refresh.done)
+}
+
+func (adapter *JWKSAuthenticator) fetchKeys(ctx context.Context) (map[string]ed25519.PublicKey, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, adapter.url, nil)
 	if err != nil {
-		return ErrInvalidCredential
+		return nil, ErrInvalidCredential
 	}
 	response, err := adapter.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("%w: JWKS unavailable", ErrInvalidCredential)
+		return nil, fmt.Errorf("%w: JWKS unavailable", ErrInvalidCredential)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: JWKS status", ErrInvalidCredential)
+		return nil, fmt.Errorf("%w: JWKS status", ErrInvalidCredential)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return fmt.Errorf("%w: JWKS response", ErrInvalidCredential)
+		return nil, fmt.Errorf("%w: JWKS response", ErrInvalidCredential)
 	}
 	var document struct {
 		Keys []struct {
@@ -203,7 +261,7 @@ func (adapter *JWKSAuthenticator) refresh(ctx context.Context) error {
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(body, &document); err != nil {
-		return fmt.Errorf("%w: JWKS document", ErrInvalidCredential)
+		return nil, fmt.Errorf("%w: JWKS document", ErrInvalidCredential)
 	}
 	keys := make(map[string]ed25519.PublicKey, len(document.Keys))
 	for _, key := range document.Keys {
@@ -221,11 +279,9 @@ func (adapter *JWKSAuthenticator) refresh(ctx context.Context) error {
 		keys[key.KeyID] = ed25519.PublicKey(publicKey)
 	}
 	if len(keys) == 0 {
-		return fmt.Errorf("%w: JWKS has no supported signing keys", ErrInvalidCredential)
+		return nil, fmt.Errorf("%w: JWKS has no supported signing keys", ErrInvalidCredential)
 	}
-	adapter.keys = keys
-	adapter.fetchedAt = adapter.now()
-	return nil
+	return keys, nil
 }
 
 type tokenClaims struct {
