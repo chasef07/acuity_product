@@ -788,6 +788,11 @@ func expectedTablePrivileges() map[string]bool {
 			result[privilegeKey("acuity_auth", "auth."+relation, privilege)] = true
 		}
 	}
+	for _, role := range []string{"acuity_portal", "acuity_worker"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "DELETE"} {
+			grant(role, privilege, "messaging_attachment_cleanup")
+		}
+	}
 	return result
 }
 
@@ -1214,6 +1219,11 @@ func expectedColumnPrivileges() map[string]bool {
 		"UPDATE",
 		"user_subject",
 	)
+	for _, role := range []string{"acuity_portal", "acuity_worker"} {
+		grant(role, "public.messaging_attachment_cleanup", "UPDATE", "write_finished", "cleanup_after", "cleanup_token")
+		grant(role, "public.messaging_attachments", "UPDATE", "storage_token")
+	}
+	grant("acuity_portal", "public.messaging_attachments", "UPDATE", "object_key")
 	return result
 }
 

@@ -219,6 +219,7 @@ GRANT UPDATE (
     state,
     expires_at,
     copy_started_at,
+    storage_token,
     updated_at
 )
 ON TABLE public.messaging_attachments
@@ -559,6 +560,7 @@ GRANT UPDATE (
     byte_size,
     object_key,
     copy_started_at,
+    storage_token,
     updated_at
 )
 ON TABLE public.messaging_attachments
@@ -616,3 +618,11 @@ FROM acuity_auth;
 ALTER DEFAULT PRIVILEGES FOR ROLE acuity_migrate IN SCHEMA auth
 REVOKE ALL ON SEQUENCES
 FROM acuity_auth;
+
+-- Messaging owns durable attachment write/cleanup intent.
+GRANT SELECT, INSERT, DELETE ON TABLE public.messaging_attachment_cleanup
+TO acuity_portal, acuity_worker;
+GRANT UPDATE (write_finished, cleanup_after, cleanup_token)
+ON TABLE public.messaging_attachment_cleanup
+TO acuity_portal, acuity_worker;
+GRANT UPDATE (object_key) ON TABLE public.messaging_attachments TO acuity_portal;

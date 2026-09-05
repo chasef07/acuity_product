@@ -663,7 +663,7 @@ func TestCallingReceiptLaneDoesNotIdleBackOff(t *testing.T) {
 }
 
 func TestMaintenanceLaneBacksOffErrorsAndResetsAfterSuccess(t *testing.T) {
-	work := &credentialReconciliationFailureWork{
+	work := &maintenanceFailureWork{
 		controlledWork: newControlledWork(),
 	}
 	runner := &Runner{
@@ -811,19 +811,19 @@ func (work *readyProviderCommandWork) ClaimNextCommand(
 	}, true, nil
 }
 
-type credentialReconciliationFailureWork struct {
+type maintenanceFailureWork struct {
 	*controlledWork
 	reconciliationCalls int
 }
 
-func (work *credentialReconciliationFailureWork) ProcessNextCredentialReconciliation(
+func (work *maintenanceFailureWork) MaintainOutgoingCallLegs(
 	context.Context,
 ) (bool, error) {
 	work.reconciliationCalls++
 	if work.reconciliationCalls == 1 ||
 		work.reconciliationCalls == 2 ||
 		work.reconciliationCalls == 4 {
-		return true, errors.New("provider credential lookup unavailable")
+		return true, errors.New("call maintenance unavailable")
 	}
 	return false, nil
 }
