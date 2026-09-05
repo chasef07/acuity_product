@@ -302,3 +302,13 @@
     margin-top: 35px;
   }
 }
+
+.chartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.callVolumeSwatch {
+  width: 16px;
+  border-top: 2px dotted var(--chart-3);
+}

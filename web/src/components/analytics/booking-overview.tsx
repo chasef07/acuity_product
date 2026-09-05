@@ -34,7 +34,6 @@ import {
   type PatientGroup,
 } from "@/lib/booking-analytics"
 import { useReducedMotion } from "@/lib/reduced-motion"
-import { trendDot } from "./trend-dot"
 import styles from "./booking-overview.module.css"
 
 type Metric = BookingMetric
@@ -45,19 +44,25 @@ const chartConfig = {
   },
   new: { label: "New patients", color: "var(--booking-new)" },
   existing: { label: "Existing patients", color: "var(--booking-existing)" },
+  calls: { label: "Call volume", color: "var(--chart-3)" },
   unknown: { label: "Unclassified", color: "var(--muted-foreground)" },
 } satisfies ChartConfig
 const visibleGroups = ["new", "existing"] as const
 const count = (value: number) => value.toLocaleString("en-US")
 
-type Series = keyof typeof chartConfig
+type Series = Exclude<keyof typeof chartConfig, "calls">
 
-function GroupLabel({ group }: { group: Series }) {
+// Only the plotted value uses zero; report metrics retain their missing state.
+function chartValue(summary: BookingSummary, metric: Metric) {
+  return (metric === "duration" ? summary.p50 : summary[metric]) ?? 0
+}
+
+function GroupLabel({ group }: { group: keyof typeof chartConfig }) {
   return (
     <span className={styles.groupLabel}>
       <span
-        className={styles.dot}
-        style={{ background: chartConfig[group].color }}
+        className={group === "calls" ? styles.callVolumeSwatch : styles.dot}
+        style={group === "calls" ? undefined : { background: chartConfig[group].color }}
       />
       {chartConfig[group].label}
     </span>
@@ -80,6 +85,14 @@ function DayTooltip({
   return (
     <div className={styles.tooltip}>
       <p className={styles.tooltipDate}>{formatDay(day.day)}</p>
+      {metric === "bookings" && (
+        <div className={styles.tooltipGroup}>
+          <div className={styles.tooltipRow}>
+            <GroupLabel group="calls" />
+            <strong>{count(day.total.calls)}</strong>
+          </div>
+        </div>
+      )}
       {series.map((cohort) => {
         const summary = day[cohort]
         return (
@@ -90,8 +103,14 @@ function DayTooltip({
                 {metric === "bookings"
                   ? count(summary.bookings)
                   : metric === "conversion"
-                    ? formatPercent(summary.conversion)
-                    : formatDuration(summary.p50)}
+                    ? summary.searched === 0
+                      ? "No activity"
+                      : formatPercent(summary.conversion)
+                    : summary.p50 === null
+                      ? summary.bookings === 0
+                        ? "No activity"
+                        : "Duration unavailable"
+                      : formatDuration(summary.p50)}
               </strong>
             </div>
             {metric === "conversion" && (
@@ -103,7 +122,11 @@ function DayTooltip({
             )}
             {metric === "duration" && (
               <span className={styles.tooltipSub}>
-                p50 · {summary.durationSamples} calls
+                {summary.durationSamples === 0
+                  ? summary.bookings === 0
+                    ? "No booked calls"
+                    : "No recorded call durations"
+                  : `p50 · ${count(summary.durationSamples)} calls`}
               </span>
             )}
           </div>
@@ -137,7 +160,7 @@ function BookingTrend({
       className="h-[300px] w-full aspect-auto"
       aria-label={
         metric === "bookings"
-          ? "Daily confirmed bookings by patient status"
+          ? "Daily confirmed bookings and call volume"
           : metric === "conversion"
             ? "Daily booking conversion by patient status"
             : "Daily p50 duration by patient status"
@@ -185,12 +208,11 @@ function BookingTrend({
           <Area
             key={cohort}
             type="monotone"
-            dataKey={`${cohort}.${metric === "duration" ? "p50" : metric}`}
+            dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
             fill={`var(--color-${cohort})`}
             fillOpacity={0.055}
             stroke="none"
             tooltipType="none"
-            connectNulls={false}
             isAnimationActive={!reducedMotion}
           />
         ))}
@@ -199,21 +221,28 @@ function BookingTrend({
             key={cohort}
             name={chartConfig[cohort].label}
             type="monotone"
-            dataKey={`${cohort}.${metric === "duration" ? "p50" : metric}`}
+            dataKey={(day: BookingDay) => chartValue(day[cohort], metric)}
             stroke={`var(--color-${cohort})`}
             strokeWidth={2}
             strokeDasharray={cohort === "total" ? "4 3" : undefined}
-            dot={trendDot(
-              daily.map((day) =>
-                metric === "duration" ? day[cohort].p50 : day[cohort][metric],
-              ),
-              `var(--color-${cohort})`,
-            )}
+            dot={false}
             activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
-            connectNulls={false}
             isAnimationActive={!reducedMotion}
           />
         ))}
+        {metric === "bookings" && (
+          <Line
+            name="Call volume"
+            type="monotone"
+            dataKey="total.calls"
+            stroke="var(--color-calls)"
+            strokeWidth={2}
+            strokeDasharray="2 4"
+            dot={false}
+            activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
+            isAnimationActive={!reducedMotion}
+          />
+        )}
       </ComposedChart>
     </ChartContainer>
   )
@@ -415,9 +444,12 @@ export function BookingOverview({
                   ? "Daily booking conversion"
                   : "Median booked-call duration"}
             </h2>
-            {(metric === "conversion" || partialBreakdown) && (
-              <GroupLabel group="total" />
-            )}
+            <div className={styles.chartLegend}>
+              {(metric === "conversion" || partialBreakdown) && (
+                <GroupLabel group="total" />
+              )}
+              {metric === "bookings" && <GroupLabel group="calls" />}
+            </div>
           </div>
           {metric === "conversion" && (
             <p className={styles.chartCaption}>
@@ -425,6 +457,11 @@ export function BookingOverview({
             </p>
           )}
           <BookingTrend daily={report.daily} metric={metric} series={series} />
+          {metric !== "bookings" && (
+            <p className={styles.chartCaption}>
+              Days without a measurement are shown at zero.
+            </p>
+          )}
         </div>
       </section>
 
