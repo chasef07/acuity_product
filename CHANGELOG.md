@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2](https://github.com/chasef07/acuity_product/compare/v1.2.1...v1.2.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **analytics:** connect daily charts and add call volume ([#268](https://github.com/chasef07/acuity_product/issues/268)) ([5049bba](https://github.com/chasef07/acuity_product/commit/5049bbac8568b1c3f7ab4fc53265694fd90bc07e))
+* **backend:** reduce calling delays and bound analytics and recovery work ([#267](https://github.com/chasef07/acuity_product/issues/267)) ([a70bc6f](https://github.com/chasef07/acuity_product/commit/a70bc6fe90d68f631044260081a3e4e9504ea7c2))
+
 ## [1.2.1](https://github.com/chasef07/acuity_product/compare/v1.2.0...v1.2.1) (2026-09-04)
 
 
