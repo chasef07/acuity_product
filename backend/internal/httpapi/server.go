@@ -3792,7 +3792,11 @@ func operatorAIAnalyticsPageResponse(
 	page interaction.AnalyticsPage,
 ) (api.OperatorAIAnalyticsPage, error) {
 	response := api.OperatorAIAnalyticsPage{
-		Summary: api.OperatorAIAnalyticsSummary{
+		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
+		NextCursor: page.NextCursor,
+	}
+	if page.Summary != nil {
+		response.Summary = &api.OperatorAIAnalyticsSummary{
 			TotalCalls:        page.Summary.TotalCalls,
 			BookingCount:      page.Summary.BookingCount,
 			CancellationCount: page.Summary.CancellationCount,
@@ -3814,9 +3818,7 @@ func operatorAIAnalyticsPageResponse(
 			ToolCallCount:     page.Summary.ToolCallCount,
 			ToolErrorCount:    page.Summary.ToolErrorCount,
 			ToolFailureRate:   page.Summary.ToolFailureRate,
-		},
-		Calls:      make([]api.OperatorAICallAnalytics, 0, len(page.Calls)),
-		NextCursor: page.NextCursor,
+		}
 	}
 	for _, call := range page.Calls {
 		id, err := uuid.Parse(call.ID)

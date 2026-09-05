@@ -116,10 +116,10 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 	if len(locations) == 0 {
 		return CostAnalytics{}, ErrDenied
 	}
-	// The native session report is stored as transcript. Read its bounded usage
-	// records only; never transfer conversation content to the cost query.
+	// Source-driven compact usage avoids detoasting full session reports for
+	// every call in the reporting window. Pricing remains owned here.
 	rows, err := tx.Query(ctx, `
-		SELECT started_at, ended_at, transcript->'usage'
+		SELECT started_at, ended_at, cost_usage_evidence
 		FROM ai_interactions
 		WHERE practice_id = $1::uuid AND location_id = ANY($2::uuid[])
 			AND started_at >= $3 AND started_at < $4
@@ -139,6 +139,9 @@ func (m *Module) QueryCostAnalytics(ctx context.Context, command QueryCostAnalyt
 		var usage json.RawMessage
 		if err := rows.Scan(&started, &ended, &usage); err != nil {
 			return CostAnalytics{}, fmt.Errorf("scan AI costs: %w", err)
+		}
+		if len(usage) == 0 {
+			return CostAnalytics{}, errors.New("AI cost usage evidence backfill is incomplete")
 		}
 		report.addCall(started, ended, usage, zone)
 	}

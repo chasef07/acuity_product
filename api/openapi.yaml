@@ -3915,9 +3915,10 @@ components:
         transcriptAvailable:
           type: boolean
     OperatorAIAnalyticsPage:
+      description: The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
       type: object
       additionalProperties: false
-      required: [summary, calls, nextCursor]
+      required: [calls, nextCursor]
       properties:
         summary:
           $ref: "#/components/schemas/OperatorAIAnalyticsSummary"
