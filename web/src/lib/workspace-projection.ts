@@ -897,11 +897,13 @@ export function createWorkspaceProjection({
       return
     }
     if (intent.type === "task-committed") {
+      queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
       realtimeController.refresh()
       return
     }
     if (intent.type === "task-created") {
+      queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
       realtimeController.refresh()
       return
@@ -1466,7 +1468,6 @@ export function createWorkspaceProjection({
 
   function projectTaskIntent(task: Task, select: boolean) {
     detailGeneration += 1
-    queryGenerations.taskCounts += 1
     const recovery = isRecoveryTask(task)
     patch((current) => {
       const window = recovery ? current.recoveryTasks : current.tasks

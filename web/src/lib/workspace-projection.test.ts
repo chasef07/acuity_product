@@ -1270,3 +1270,55 @@ test("requested Task counts cannot silently become zero when omitted", async () 
   assert.ok(projection.getSnapshot().tasks.error, "missing authoritative counts must be visible")
   projection.stop()
 })
+
+
+test("opening Task context preserves pending authoritative count reconciliation", async () => {
+  const realtime = deterministicRealtime()
+  const openTask = task("task-1")
+  let currentPage = taskPage([openTask])
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: currentPage }),
+      tasks: async () => success(currentPage),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  currentPage = taskPage([openTask, task("task-2")])
+  const pending = await realtime.prepareReconciliation(0)
+  await projection.dispatch({ type: "open-task-context", task: openTask })
+  pending.apply()
+  assert.deepEqual(projection.getSnapshot().tasks.counts, currentPage.counts)
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, true)
+  projection.stop()
+})
+
+
+for (const type of ["task-committed", "task-created"] as const) {
+  test(`${type} fences counts fetched before the committed change`, async () => {
+    const realtime = deterministicRealtime()
+    const openTask = task("task-1")
+    let currentPage = taskPage([openTask])
+    const projection = createWorkspaceProjection({
+      authority: {
+        ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: currentPage }),
+        tasks: async () => success(currentPage),
+      },
+      realtime: realtime.adapter,
+      preferences: memoryPreferences(),
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    currentPage = taskPage(Array.from({ length: 5 }, (_, i) => task(`task-${i + 1}`)))
+    const pending = await realtime.prepareReconciliation(0)
+    await projection.dispatch({ type, task: type === "task-created" ? task("new-task") : task("task-1", { version: 2 }) })
+    const committedCounts = projection.getSnapshot().tasks.counts
+    assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
+    pending.apply()
+    assert.deepEqual(projection.getSnapshot().tasks.counts, committedCounts)
+    assert.equal(realtime.refreshes, 1)
+    projection.stop()
+  })
+}
