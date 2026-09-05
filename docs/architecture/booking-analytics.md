@@ -72,9 +72,15 @@ absence of a preceding `add_patient` call is the Product rule for existing
 within this completed-search cohort. The overall conversion rate is therefore
 the weighted result of the New and Existing rows.
 
+The Bookings chart also plots daily total call volume on the same count axis,
+using a dotted line and the existing daily call aggregates.
+
 Bookings, Conversion, and Duration share the same chart treatment: monotone
 total, new-patient, and existing-patient lines with subtle area fills. The total
-line is dashed. Isolated observations retain a dot so missing adjacent days do not hide data. Tooltips show each series' numerator and denominator where
+line is dashed. Days without a measurement plot at zero with connected lines and
+fills. Tooltips distinguish no activity from unavailable durations; summary
+metrics retain their original null values. Tooltips show each series' numerator
+and denominator where
 relevant. Days without completed searches have no conversion rate; a day with
 completed searches and no bookings has a real zero.
 

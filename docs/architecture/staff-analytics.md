@@ -52,6 +52,10 @@ unchanged. Excess analytics requests return 429 with Retry-After; normal
 portal requests do not use this permit. The browser
 aborts and fences obsolete requests on office, period, or analytics-tab changes.
 
+The daily completion-time chart plots days without completions at zero and keeps
+the line and fill connected. Tooltips label these days No activity; summary
+medians still exclude days without a measurement.
+
 Staff headers sort locally by name, calls, phone time, or completed Tasks.
 Numeric columns start descending and toggle direction; unavailable time stays
 last, and the Total row stays below all accounts. Sorting issues no API request.

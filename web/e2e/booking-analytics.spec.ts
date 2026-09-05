@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { expectConnectedZeroBaseline, signInAs } from "./support"
 
 test("Practice Admin booking analytics uses real scoped aggregates and clear copy", async ({
   page,
@@ -139,6 +139,13 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByText("Availability calls", { exact: true }),
     ).toHaveCount(0)
     await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0)
+    await expect(performance.getByText("Call volume", { exact: true })).toBeVisible()
+    await expect(performance.locator(".recharts-line")).toHaveCount(4)
+    await expectConnectedZeroBaseline(performance, 4)
+    await page.screenshot({
+      path: testInfo.outputPath("admin-bookings-call-volume.png"),
+      fullPage: true,
+    })
     const breakdown = page.getByRole("region", {
       name: "Breakdown",
       exact: true,
@@ -216,6 +223,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(performance.locator(".recharts-line")).toHaveCount(3)
     await expect(performance.locator(".recharts-area")).toHaveCount(3)
     await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
+    await expectConnectedZeroBaseline(performance, 3)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-conversion.png"),
       fullPage: true,
@@ -227,8 +235,9 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toHaveAttribute("aria-pressed", "true")
     await expect(performance.locator(".recharts-line")).toHaveCount(3)
     await expect(performance.locator(".recharts-area")).toHaveCount(3)
-    // The two new-patient observations have a missing day between them.
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(2)
+    // The two new-patient observations connect through zero on the inactive day.
+    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
+    await expectConnectedZeroBaseline(performance, 3)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-duration.png"),
       fullPage: true,

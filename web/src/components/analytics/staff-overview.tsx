@@ -29,7 +29,6 @@ import type {
 import { formatDay, formatPercent } from "@/lib/booking-analytics"
 import styles from "./booking-overview.module.css"
 import { useReducedMotion } from "@/lib/reduced-motion"
-import { trendDot } from "./trend-dot"
 
 function hours(seconds: number | null) {
   if (seconds === null) return "—"
@@ -54,7 +53,9 @@ function TaskTooltip({
       <p className={styles.tooltipDate}>{formatDay(day.day)}</p>
       <div className={styles.tooltipRow}>
         <span>Median completion time</span>
-        <strong>{hours(day.p50Seconds)}</strong>
+        <strong>
+          {day.completed === 0 ? "No activity" : hours(day.p50Seconds)}
+        </strong>
       </div>
       <div className={styles.tooltipRow}>
         <span>Tasks completed</span>
@@ -230,29 +231,27 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
               />
               <Area
                 type="monotone"
-                dataKey="p50Seconds"
+                dataKey={(day: StaffTaskDay) => day.p50Seconds ?? 0}
                 fill="var(--color-p50Seconds)"
                 fillOpacity={0.055}
                 stroke="none"
                 tooltipType="none"
-                connectNulls={false}
                 isAnimationActive={!reducedMotion}
               />
               <Line
                 type="monotone"
-                dataKey="p50Seconds"
+                dataKey={(day: StaffTaskDay) => day.p50Seconds ?? 0}
                 stroke="var(--foreground)"
                 strokeWidth={2}
-                dot={trendDot(
-                  report.daily.map((day) => day.p50Seconds),
-                  "var(--foreground)",
-                )}
+                dot={false}
                 activeDot={{ r: 4 }}
-                connectNulls={false}
                 isAnimationActive={!reducedMotion}
               />
             </ComposedChart>
           </ChartContainer>
+          <p className={styles.chartCaption}>
+            Days without task completions are shown at zero.
+          </p>
         </div>
       </section>
       <section className={styles.breakdown} aria-label="Staff accounts">

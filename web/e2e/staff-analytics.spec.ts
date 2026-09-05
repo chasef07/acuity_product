@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { Client } from "pg"
 import { expect, test } from "@playwright/test"
-import { signInAs } from "./support"
+import { expectConnectedZeroBaseline, signInAs } from "./support"
 
 test("Staff analytics measures connected phone time and the 48-hour task goal", async ({
   page,
@@ -112,6 +112,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
     await expect(performance.locator(".recharts-line")).toHaveCount(1)
     await expect(performance.locator(".recharts-area")).toHaveCount(1)
     await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
+    await expectConnectedZeroBaseline(performance, 1)
     await expect(
       page.getByRole("button", { name: "Staff", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")
