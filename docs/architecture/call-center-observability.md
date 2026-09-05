@@ -26,6 +26,7 @@ numeric fields.
 | `acuity_call_center_receipt_queue` | `depth`, `oldest_age_seconds`, `projection_retry_depth`, `related_fact_depth`, `quarantined_depth` | None | Receipt worker |
 | `acuity_call_center_receipt_processing` | `queue_seconds`, `processing_seconds` | `outcome` | Receipt worker |
 | `acuity_call_center_provider_command` | `queue_seconds`, `duration_seconds` | `action`, `outcome` | Command worker |
+| `acuity_call_center_provider_command_stage` | `seconds` | `action`, `stage`, `outcome` | Command claim and execution |
 | `acuity_call_center_database_pool_acquire` | `seconds` | `outcome` | PostgreSQL adapter, non-success only |
 | `acuity_backend_database_execution` | `seconds` | `cause` | PostgreSQL adapter, failures only |
 | `acuity_call_center_database_pool` | `acquired`, `idle`, `max`, `saturation_ratio` | None | Runtime |
@@ -44,15 +45,37 @@ ordinary traffic and resource utilization, while the 30-second database-pool
 snapshot preserves saturation evidence. Every bounded non-success acquisition
 and execution cause remains an individual record for alerting and diagnosis.
 
-Provider-command `queue_seconds` measures creation to claim. It includes
-intentional `next_attempt_at` scheduling, dependency gating, serialization of
-non-Dial commands behind another active command for the same Call, and worker
-polling delay. Independent `DIAL_STAFF` commands for distinct Staff CallLegs may
-be claimed concurrently. The current durable model does not record one exact
-eligibility transition across the remaining blockers, so this metric must not
-be interpreted as eligible-to-claim latency. Separating that interval would
-require an explicit durable eligibility timestamp at the owning state
-transitions, not an inferred metric label.
+The legacy provider-command `queue_seconds` measures creation to provider
+dispatch on ordinary execution, and creation to observation on reconciliation.
+Its `duration_seconds` also includes durable result processing after the provider
+request. These historical fields retain their values for continuity; neither is
+an isolated database claim or provider-request latency.
+
+The separate stage observation records directly observed durations:
+
+| Stage | Interval |
+| --- | --- |
+| `claim` | Start of the claim operation through its committed result, including acquisition, SQL and lock waits |
+| `created_to_first_claim` | Database creation timestamp through observed first claim completion; first attempts only |
+| `claim_to_dispatch` | Claim completion through provider dispatch, including executor handoff and command reload |
+| `provider` | External provider execution, before result persistence |
+| `persist` | Durable provider-result processing |
+
+Fixed outcomes distinguish success and failure. Successful empty polls do not
+emit a timing observation. Each stage is recorded when it completes, so a later
+persistence failure cannot erase the earlier timing evidence. Reconciliation
+does not emit a new first-claim sample.
+The database creation timestamp is a transaction timestamp, not a commit
+timestamp; `created_to_first_claim` therefore includes time before insertion
+becomes visible, scheduled delay, dependencies and active-command serialization.
+It must not be described as eligible-to-claim latency.
+
+Independent `DIAL_STAFF` commands for distinct Staff CallLegs may be claimed
+concurrently. An active non-Dial command on the same Call can still block them.
+There is no exact durable eligibility timestamp across these blockers. Diagnose
+the directly observed stages and dependency state before changing scheduling or
+adding such a timestamp. Long-lived realtime SSE request duration is likewise
+not ordinary HTTP response latency.
 
 ## Privacy and cardinality
 

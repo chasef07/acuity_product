@@ -112,6 +112,7 @@ func TestCallCenterLogMetricDefinitionsAreBoundedAndComplete(t *testing.T) {
 		"revision",
 		"route",
 		"runtime_role",
+		"stage",
 	}
 	seen := make(map[string]bool, len(metrics))
 	for _, metric := range metrics {
@@ -506,6 +507,7 @@ func expectedLogMetrics() map[string]expectedMetric {
 		"acuity_call_center_provider_command_count":               counter("acuity_call_center_provider_command"),
 		"acuity_call_center_provider_command_queue_seconds":       distribution("acuity_call_center_provider_command", "queue_seconds"),
 		"acuity_call_center_provider_command_duration_seconds":    distribution("acuity_call_center_provider_command", "duration_seconds"),
+		"acuity_call_center_provider_command_stage_seconds":       distribution("acuity_call_center_provider_command_stage", "seconds"),
 		"acuity_call_center_database_pool_acquire_count":          counter("acuity_call_center_database_pool_acquire"),
 		"acuity_call_center_database_pool_acquire_seconds":        distribution("acuity_call_center_database_pool_acquire", "seconds"),
 		"acuity_backend_database_execution_count":                 counter("acuity_backend_database_execution"),

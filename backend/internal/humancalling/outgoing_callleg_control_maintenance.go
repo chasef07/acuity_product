@@ -117,9 +117,9 @@ const staleCallLegCandidateQuery = `
 		COALESCE(CASE command.action
 			WHEN 'TRANSFER_STAFF' THEN command.payload->>'target_leg_client_state'
 			ELSE command.payload->>'client_state'
-		END, ''), leg.updated_at,
+		END, ''), LEAST(leg.updated_at, command.created_at),
 		COALESCE(command.created_at, leg.updated_at),
-		COALESCE(call.ended_at, leg.ended_at, leg.updated_at)
+		COALESCE(call.ended_at, leg.ended_at, leg.updated_at), leg.updated_at
 	FROM human_calling_calls call
 	JOIN human_calling_call_legs leg ON leg.call_id = call.id
 	LEFT JOIN LATERAL (
@@ -178,7 +178,12 @@ const staleCallLegCandidateQuery = `
 			OR command.id IS NOT NULL
 		)
 		AND leg.updated_at <= $1::timestamptz - interval '60 seconds'
-	ORDER BY leg.updated_at, leg.id
+		AND (
+			leg.reconciliation_next_attempt_at IS NULL
+			OR leg.reconciliation_next_attempt_at <= $1
+			OR leg.updated_at > leg.reconciliation_checked_at
+		)
+	ORDER BY COALESCE(leg.reconciliation_next_attempt_at, leg.updated_at), leg.id
 	FOR UPDATE OF call, leg SKIP LOCKED
 	LIMIT 1
 `
@@ -197,12 +202,12 @@ func (m *Module) ProcessNextCommand(ctx context.Context) (bool, error) {
 func (m *Module) ClaimNextCommand(
 	ctx context.Context,
 ) (func(context.Context) error, bool, error) {
-	commandID, ok, err := m.claimNextCallLegCommand(ctx)
+	claim, ok, err := m.claimNextCallLegCommand(ctx)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
 	return func(executeContext context.Context) error {
-		_, executeErr := m.executeCallLegCommand(executeContext, commandID)
+		_, executeErr := m.executeCallLegCommand(executeContext, claim)
 		return executeErr
 	}, true, nil
 }
@@ -336,7 +341,7 @@ func (m *Module) reconcileNeverStartedTerminalCallLeg(
 	return true, nil
 }
 
-func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
+func (m *Module) reconcileStaleCallLeg(ctx context.Context) (maintained bool, resultErr error) {
 	expired, err := m.expireUnconfirmedOutboundMedia(ctx)
 	if err != nil {
 		return false, err
@@ -365,12 +370,12 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 	var controlID, providerLegID, sessionID string
 	var commandID, providerClientState string
 	var commandAction CommandAction
-	var observationSince, commandCreatedAt, terminalAt time.Time
+	var observationSince, commandCreatedAt, terminalAt, stateUpdatedAt time.Time
 	err = tx.QueryRow(ctx, staleCallLegCandidateQuery, m.now()).Scan(
 		&callID, &practiceID, &legID, &role, &direction, &legState,
 		&terminalOutcome, &connectionID,
 		&controlID, &providerLegID, &sessionID, &commandID, &commandAction,
-		&providerClientState, &observationSince, &commandCreatedAt, &terminalAt,
+		&providerClientState, &observationSince, &commandCreatedAt, &terminalAt, &stateUpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
@@ -379,14 +384,31 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("claim stale CallLeg: %w", err)
 	}
 	checkedAt := m.now()
-	if _, err := tx.Exec(ctx, `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
-	`, legID, checkedAt); err != nil {
+	var attempt int
+	if err := tx.QueryRow(ctx, `
+		UPDATE human_calling_call_legs
+		SET reconciliation_checked_at = $2,
+			reconciliation_next_attempt_at = $2::timestamptz + interval '60 seconds',
+			reconciliation_attempts = CASE
+				WHEN updated_at > reconciliation_checked_at THEN 1
+				ELSE LEAST(reconciliation_attempts + 1, 5)
+			END
+		WHERE id = $1
+		RETURNING reconciliation_attempts
+	`, legID, checkedAt).Scan(&attempt); err != nil {
 		return false, fmt.Errorf("mark stale CallLeg check: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit stale CallLeg claim: %w", err)
 	}
+	observationClaim := callLegObservationClaim{checkedAt: checkedAt, stateUpdatedAt: stateUpdatedAt}
+	defer func() {
+		// The result write is fenced against a newer observer. A cancelled
+		// request leaves the committed lease eligible again after one minute.
+		if err := m.finishCallLegObservation(ctx, legID, checkedAt, attempt, resultErr); err != nil {
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
 	if commandAction == CommandStopRingWindow && terminalOutcome != "" &&
 		(legState == "ENDED" || legState == "FAILED") {
 		state, valid := parseCallLegClientState(providerClientState)
@@ -532,7 +554,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 	}
 	if !observation.Active && commandID != "" && commandAction != CommandHangupLeg {
 		if err := m.rejectUnobservedCommand(
-			ctx, commandID, legID, commandAction, "PROVIDER_EFFECT_ABSENT",
+			ctx, commandID, legID, commandAction, "PROVIDER_EFFECT_ABSENT", observationClaim,
 		); err != nil {
 			return true, err
 		}
@@ -562,7 +584,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 			!commandCreatedAt.After(checkedAt.Add(-safeProviderRetryWindow)) {
 			if err := m.rejectUnobservedCommand(
 				ctx, commandID, legID, commandAction,
-				string(commandAction)+"_EVENT_ABSENT",
+				string(commandAction)+"_EVENT_ABSENT", observationClaim,
 			); err != nil {
 				return true, err
 			}
@@ -574,7 +596,7 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 		if err := m.rejectUnobservedCommand(
-			ctx, commandID, legID, commandAction, "PROVIDER_EFFECT_ABSENT",
+			ctx, commandID, legID, commandAction, "PROVIDER_EFFECT_ABSENT", observationClaim,
 		); err != nil {
 			return true, err
 		}
@@ -595,10 +617,67 @@ func (m *Module) reconcileStaleCallLeg(ctx context.Context) (bool, error) {
 		HangupCause:       "CALL_DOES_NOT_EXIST",
 		TerminationSource: "RECONCILER",
 	}
-	if err := m.ApplyProviderFact(ctx, fact); err != nil {
+	if err := m.applyHangupWithObservation(ctx, fact, &observationClaim); err != nil {
 		return true, err
 	}
 	return true, nil
+}
+
+type callLegObservationClaim struct {
+	checkedAt      time.Time
+	stateUpdatedAt time.Time
+}
+
+// current must be called while holding the Call and CallLeg locks. An absent
+// provider effect cannot override a receipt or observer that advanced state
+// while the provider read was in flight.
+func (claim callLegObservationClaim) current(ctx context.Context, tx pgx.Tx, legID string) (bool, error) {
+	var current bool
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(reconciliation_checked_at = $2, false) AND updated_at = $3
+		FROM human_calling_call_legs WHERE id = $1
+	`, legID, claim.checkedAt, claim.stateUpdatedAt).Scan(&current)
+	return current, err
+}
+
+// finishCallLegObservation schedules reads only. It never retries a provider
+// effect or claims convergence from an absent event or a successful HTTP read.
+func (m *Module) finishCallLegObservation(
+	ctx context.Context, legID string, checkedAt time.Time, attempt int, observationErr error,
+) error {
+	delay := time.Minute
+	errorCode := ""
+	nextAttempt := 0
+	if observationErr != nil {
+		delay *= time.Duration(1 << (attempt - 1))
+		if delay > 15*time.Minute {
+			delay = 15 * time.Minute
+		}
+		errorCode = safeProviderErrorCode(observationErr)
+		if errors.Is(observationErr, ErrInvalidInput) {
+			errorCode = "INVALID_INPUT"
+		}
+		nextAttempt = attempt
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin CallLeg observation schedule: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockCallThenCallLegForCommandMutation(ctx, tx, legID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE human_calling_call_legs
+		SET reconciliation_next_attempt_at = $3,
+			reconciliation_attempts = $4,
+			reconciliation_error_code = NULLIF($5, '')
+		WHERE id = $1 AND reconciliation_checked_at = $2
+			AND reconciliation_attempts = $6
+	`, legID, checkedAt, m.now().Add(delay), nextAttempt, errorCode, attempt); err != nil {
+		return fmt.Errorf("schedule CallLeg observation: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (m *Module) markUnobservedStopRingWindowAmbiguous(
@@ -918,6 +997,7 @@ func (m *Module) rejectUnobservedCommand(
 	callLegID string,
 	action CommandAction,
 	errorCode string,
+	observationClaim callLegObservationClaim,
 ) error {
 	observedAt := m.now()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
@@ -926,6 +1006,9 @@ func (m *Module) rejectUnobservedCommand(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockCallThenCallLegForCommandMutation(ctx, tx, callLegID); err != nil {
+		return err
+	}
+	if current, err := observationClaim.current(ctx, tx, callLegID); err != nil || !current {
 		return err
 	}
 	tag, err := tx.Exec(ctx, `

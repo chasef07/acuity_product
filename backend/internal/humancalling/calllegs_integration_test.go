@@ -3119,7 +3119,7 @@ func TestTerminalCallerReconcilesAcceptedStopRingWindowOnce(t *testing.T) {
 	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE human_calling_call_legs
-		SET updated_at = $1
+		SET updated_at = $1, reconciliation_next_attempt_at = $1
 		WHERE id = $2
 	`, now.Add(-2*time.Minute), callerLegID); err != nil {
 		t.Fatal(err)
@@ -5365,7 +5365,8 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 		t.Fatalf("uncertain loser after Bridge = leg:%s Dial:%s", loserState, dialState)
 	}
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		UPDATE human_calling_call_legs
+		SET updated_at = $2, reconciliation_next_attempt_at = $2 WHERE id = $1
 	`, dials[1].CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -5397,7 +5398,8 @@ func TestBridgeWinnerConvergesUncertainLosingDialAndHangup(t *testing.T) {
 	}
 	processAllCommands(t, calling)
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		UPDATE human_calling_call_legs
+		SET updated_at = $2, reconciliation_next_attempt_at = $2 WHERE id = $1
 	`, dials[1].CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -6166,7 +6168,8 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 	processAllCommands(t, calling)
 	ring := provider.last(humancalling.CommandStartRingWindow)
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		UPDATE human_calling_call_legs
+		SET updated_at = $2, reconciliation_next_attempt_at = $2 WHERE id = $1
 	`, ring.CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -6205,7 +6208,8 @@ func TestActiveCallMakesUnobservedSentStartRingWindowAmbiguousOnce(t *testing.T)
 		t.Fatalf("ambiguous provider command metrics = %d, want 1: %s", count, metrics.String())
 	}
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		UPDATE human_calling_call_legs
+		SET updated_at = $2, reconciliation_next_attempt_at = $2 WHERE id = $1
 	`, ring.CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -6407,7 +6411,8 @@ func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		UPDATE human_calling_call_legs
+		SET updated_at = $2, reconciliation_next_attempt_at = $2 WHERE id = $1
 	`, stop.CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -6447,7 +6452,8 @@ func TestActiveUnobservedStopRingWindowConvergesWhenCallEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `
-		UPDATE human_calling_call_legs SET updated_at = $2 WHERE id = $1
+		UPDATE human_calling_call_legs
+		SET updated_at = $2, reconciliation_next_attempt_at = $2 WHERE id = $1
 	`, stop.CallLegID, now.Add(-2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}

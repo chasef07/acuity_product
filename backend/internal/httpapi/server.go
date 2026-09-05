@@ -716,8 +716,11 @@ func (server *Server) QueryOperatorAIAnalytics(
 	if !server.decodeJSON(w, r, &body) {
 		return
 	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
+	ctx, finish, ok := server.beginAnalytics(w, r)
+	if !ok {
+		return
+	}
+	defer finish()
 	page, err := server.interactions.QueryAnalytics(
 		ctx,
 		interaction.QueryAnalyticsCommand{

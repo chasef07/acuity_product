@@ -305,3 +305,38 @@ func assertField(
 		t.Fatalf("%s %s = %#v, want %#v", metric, field, got, want)
 	}
 }
+
+func TestProviderCommandStagesBoundLabelsAndClampDurations(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(observability.RuntimeWorker, "worker-stage-test", slog.New(slog.NewJSONHandler(&output, nil)))
+	observer.Observe(observability.ProviderCommandStage(
+		observability.CommandAction("+15555550100"), observability.CommandStage("call-123"), observability.CommandStageOutcome("patient@example.test"), -time.Second,
+	))
+	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_provider_command_stage")
+	for _, label := range []string{"action", "stage", "outcome"} {
+		if entry[label] != "other" {
+			t.Fatalf("unbounded %s: %#v", label, entry)
+		}
+	}
+	if entry["seconds"] != float64(0) {
+		t.Fatalf("negative stage duration: %#v", entry)
+	}
+	for _, forbidden := range []string{"+15555550100", "call-123", "patient@example.test"} {
+		if strings.Contains(output.String(), forbidden) {
+			t.Fatalf("stage metric contains identifier: %s", output.String())
+		}
+	}
+}
+
+func TestProviderCommandStagesPreserveStaffTransferAction(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(observability.RuntimeWorker, "worker-stage-test", slog.New(slog.NewJSONHandler(&output, nil)))
+	observer.Observe(observability.ProviderCommandStage(
+		observability.CommandTransferStaff, observability.CommandStageProvider,
+		observability.CommandStageSucceeded, time.Second,
+	))
+	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_provider_command_stage")
+	if entry["action"] != "transfer_staff" {
+		t.Fatalf("Staff Transfer action = %#v, want transfer_staff", entry["action"])
+	}
+}

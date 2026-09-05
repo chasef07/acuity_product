@@ -104,9 +104,34 @@ func TestProviderCommandCoordinatorClaimsExactBatchBeforeYielding(t *testing.T) 
 	if got := work.executed.Load(); got != 8 {
 		t.Fatalf("provider-command effects before yield = %d, want 8", got)
 	}
-	want := []time.Duration{50 * time.Millisecond}
+	want := []time.Duration{0}
 	if len(delays) != len(want) || delays[0] != want[0] {
 		t.Fatalf("provider command yield delays = %v, want %v", delays, want)
+	}
+}
+
+func TestProviderCommandCoordinatorYieldsReadyBatchThenSleepsWhenBlocked(t *testing.T) {
+	work := &sequencedProviderCommandWork{results: []providerCommandClaimResult{
+		{claimed: true}, {claimed: true}, {},
+	}}
+	var delays []time.Duration
+	runner := &Runner{
+		config: Config{
+			WorkInterval: 250 * time.Millisecond, WorkTimeout: time.Second,
+			ProviderCommandBatchSize: 2, CommandWorkers: 2,
+		},
+		work: work,
+		wait: func(_ context.Context, delay time.Duration) bool {
+			delays = append(delays, delay)
+			return len(delays) < 2
+		},
+	}
+	runner.runProviderCommands(context.Background())
+	if len(delays) != 2 || delays[0] != 0 || delays[1] != 250*time.Millisecond {
+		t.Fatalf("ready batch/blocked queue delays=%v, want [0s 250ms]", delays)
+	}
+	if got := work.executed.Load(); got != 2 {
+		t.Fatalf("executed=%d, want2", got)
 	}
 }
 
@@ -452,7 +477,7 @@ func TestProviderCommandCoordinatorBoundsClaimFailuresAndResetsAfterSuccess(t *t
 	want := []time.Duration{
 		99 * time.Millisecond,
 		199 * time.Millisecond,
-		10 * time.Millisecond,
+		0,
 		10 * time.Millisecond,
 	}
 	if len(delays) != len(want) {

@@ -332,3 +332,9 @@ func (m *Module) recordProviderCommand(
 		),
 	)
 }
+
+func (m *Module) recordCommandStage(action CommandAction, stage observability.CommandStage, outcome observability.CommandStageOutcome, duration time.Duration) {
+	observability.Record(m.observer, observability.ProviderCommandStage(
+		observability.CommandAction(strings.ToLower(string(action))), stage, outcome, duration,
+	))
+}
