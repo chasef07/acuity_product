@@ -64,6 +64,8 @@ import type {
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 
+type AnalyticsSnapshot = OperatorAiAnalyticsPage & { summary: OperatorAiAnalyticsSummary }
+
 type AnalyticsLoadState = "loading" | "ready" | "unauthorized" | "unavailable"
 type AnalyticsNextPageState = "idle" | "loading" | "unavailable"
 type AnalyticsTab = "overview" | "cost" | "performance" | "tools" | "calls"
@@ -114,7 +116,7 @@ export function OperatorAnalytics({
   const [request, setRequest] = useState<{
     key: string
     state: AnalyticsLoadState
-    data?: OperatorAiAnalyticsPage
+    data?: AnalyticsSnapshot
   }>({ key: "", state: "loading" })
   const [selectedInteractionID, setSelectedInteractionID] = useState("")
   const [nextPageRequest, setNextPageRequest] = useState<{
@@ -150,8 +152,8 @@ export function OperatorAnalytics({
           signal: controller.signal,
         }).catch(() => undefined)
         if (controller.signal.aborted) return
-        if (result?.data) {
-          setRequest({ key: requestKey, state: "ready", data: result.data })
+        if (result?.data?.summary) {
+          setRequest({ key: requestKey, state: "ready", data: { ...result.data, summary: result.data.summary } })
           return
         }
         const status = result?.response?.status
@@ -341,7 +343,7 @@ function AnalyticsReady({
   onLoadNextPage,
   onSelect,
 }: {
-  data: OperatorAiAnalyticsPage
+  data: AnalyticsSnapshot
   tab: AnalyticsTab
   range: OperatorAiAnalyticsRange
   nextPageState: AnalyticsNextPageState

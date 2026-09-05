@@ -81,7 +81,7 @@ type AnalyticsCall struct {
 }
 
 type AnalyticsPage struct {
-	Summary    AnalyticsSummary
+	Summary    *AnalyticsSummary
 	Calls      []AnalyticsCall
 	NextCursor string
 }
@@ -131,6 +131,7 @@ type OperatorAnalyticsDetail struct {
 }
 
 type analyticsCursor struct {
+	Through    time.Time      `json:"through"`
 	Range      AnalyticsRange `json:"range"`
 	PracticeID string         `json:"practiceId"`
 	LocationID string         `json:"locationId,omitempty"`
@@ -164,6 +165,12 @@ func (m *Module) QueryAnalytics(
 	}
 
 	to := m.now().UTC().Truncate(time.Microsecond)
+	if cursor != nil {
+		if cursor.Through.After(to) {
+			return AnalyticsPage{}, ErrInvalidInput
+		}
+		to = cursor.Through
+	}
 	from := to.Add(-duration)
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -185,9 +192,15 @@ func (m *Module) QueryAnalytics(
 	if len(locationIDs) == 0 {
 		return AnalyticsPage{}, ErrDenied
 	}
-	summary, err := queryAnalyticsSummary(ctx, tx, command, locationIDs, from, to)
-	if err != nil {
-		return AnalyticsPage{}, err
+	// Continuations retain the original reporting window and the caller's
+	// first-page summary. Only an explicit refresh recalculates the full range.
+	var summary *AnalyticsSummary
+	if cursor == nil {
+		value, err := queryAnalyticsSummary(ctx, tx, command, locationIDs, from, to)
+		if err != nil {
+			return AnalyticsPage{}, err
+		}
+		summary = &value
 	}
 	calls, hasMore, err := queryAnalyticsCalls(
 		ctx,
@@ -207,7 +220,7 @@ func (m *Module) QueryAnalytics(
 
 	page := AnalyticsPage{Summary: summary, Calls: calls}
 	if hasMore && len(page.Calls) > 0 {
-		page.NextCursor, err = encodeAnalyticsCursor(command, page.Calls[len(page.Calls)-1])
+		page.NextCursor, err = encodeAnalyticsCursor(command, page.Calls[len(page.Calls)-1], to)
 		if err != nil {
 			return AnalyticsPage{}, fmt.Errorf("encode operator AI analytics cursor: %w", err)
 		}
@@ -305,18 +318,12 @@ func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
 	if summary.ToolCallCount > 0 {
 		summary.ToolFailureRate = float64(summary.ToolErrorCount) / float64(summary.ToolCallCount)
 	}
-	summary.P50SttMs = medianMilliseconds(summary.latencySamples.stt)
-	summary.P90SttMs = percentileMilliseconds(summary.latencySamples.stt, 90)
-	summary.P99SttMs = percentileMilliseconds(summary.latencySamples.stt, 99)
-	summary.P50TtftMs = medianMilliseconds(summary.latencySamples.ttft)
-	summary.P90TtftMs = percentileMilliseconds(summary.latencySamples.ttft, 90)
-	summary.P99TtftMs = percentileMilliseconds(summary.latencySamples.ttft, 99)
-	summary.P50TtsTtfbMs = medianMilliseconds(summary.latencySamples.ttsTtfb)
-	summary.P90TtsTtfbMs = percentileMilliseconds(summary.latencySamples.ttsTtfb, 90)
-	summary.P99TtsTtfbMs = percentileMilliseconds(summary.latencySamples.ttsTtfb, 99)
-	summary.P50TotalLatencyMs = medianMilliseconds(summary.latencySamples.total)
-	summary.P90TotalLatencyMs = percentileMilliseconds(summary.latencySamples.total, 90)
-	summary.P99TotalLatencyMs = percentileMilliseconds(summary.latencySamples.total, 99)
+	// These arrays are owned by the summary and discarded below. Sort each
+	// once, preserving the exact even-sample median and nearest-rank tails.
+	summary.P50SttMs, summary.P90SttMs, summary.P99SttMs = latencyPercentiles(summary.latencySamples.stt)
+	summary.P50TtftMs, summary.P90TtftMs, summary.P99TtftMs = latencyPercentiles(summary.latencySamples.ttft)
+	summary.P50TtsTtfbMs, summary.P90TtsTtfbMs, summary.P99TtsTtfbMs = latencyPercentiles(summary.latencySamples.ttsTtfb)
+	summary.P50TotalLatencyMs, summary.P90TotalLatencyMs, summary.P99TotalLatencyMs = latencyPercentiles(summary.latencySamples.total)
 	summary.latencySamples = latencyValueSet{}
 }
 
@@ -535,8 +542,9 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 	projection.call.Transferred = projection.call.Status == CallEscalated
 }
 
-func encodeAnalyticsCursor(command QueryAnalyticsCommand, call AnalyticsCall) (string, error) {
+func encodeAnalyticsCursor(command QueryAnalyticsCommand, call AnalyticsCall, through time.Time) (string, error) {
 	encoded, err := json.Marshal(analyticsCursor{
+		Through:    through,
 		Range:      command.Range,
 		PracticeID: command.PracticeID,
 		LocationID: command.LocationID,
@@ -562,7 +570,8 @@ func decodeAnalyticsCursor(command QueryAnalyticsCommand) (*analyticsCursor, err
 		return nil, err
 	}
 	if cursor.Range != command.Range || cursor.PracticeID != command.PracticeID ||
-		cursor.LocationID != command.LocationID || cursor.StartedAt.IsZero() ||
+		cursor.LocationID != command.LocationID || cursor.StartedAt.IsZero() || cursor.Through.IsZero() ||
+		cursor.StartedAt.After(cursor.Through) ||
 		!validUUID(cursor.ID) {
 		return nil, ErrInvalidInput
 	}
@@ -697,6 +706,13 @@ func medianMilliseconds(values []float64) *int {
 	}
 	ordered := append([]float64(nil), values...)
 	sort.Float64s(ordered)
+	return sortedMedianMilliseconds(ordered)
+}
+
+func sortedMedianMilliseconds(ordered []float64) *int {
+	if len(ordered) == 0 {
+		return nil
+	}
 	middle := len(ordered) / 2
 	value := ordered[middle]
 	if len(ordered)%2 == 0 {
@@ -706,12 +722,16 @@ func medianMilliseconds(values []float64) *int {
 	return &result
 }
 
-func percentileMilliseconds(values []float64, percentile float64) *int {
-	if len(values) == 0 || percentile < 0 || percentile > 100 {
+// latencyPercentiles consumes an owned sample array.
+func latencyPercentiles(values []float64) (p50, p90, p99 *int) {
+	sort.Float64s(values)
+	return sortedMedianMilliseconds(values), sortedPercentileMilliseconds(values, 90), sortedPercentileMilliseconds(values, 99)
+}
+
+func sortedPercentileMilliseconds(ordered []float64, percentile float64) *int {
+	if len(ordered) == 0 || percentile < 0 || percentile > 100 {
 		return nil
 	}
-	ordered := append([]float64(nil), values...)
-	sort.Float64s(ordered)
 	index := int(math.Ceil(percentile/100*float64(len(ordered)))) - 1
 	index = max(0, min(index, len(ordered)-1))
 	result := int(math.Round(ordered[index]))

@@ -268,7 +268,7 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	var firstPage operatorAIAnalyticsTestPage
 	decode(t, firstPageResponse, &firstPage)
-	if firstPage.Summary.TotalCalls != 2 || firstPage.Summary.TransferCount != 1 ||
+	if firstPage.Summary == nil || firstPage.Summary.TotalCalls != 2 || firstPage.Summary.TransferCount != 1 ||
 		math.Abs(firstPage.Summary.TransferRate-0.5) > 0.0001 ||
 		firstPage.Summary.BookingCount != 1 || firstPage.Summary.CancellationCount != 0 ||
 		firstPage.Summary.RescheduleCount != 0 ||
@@ -296,6 +296,9 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		"limit":      1,
 		"cursor":     firstPage.NextCursor,
 	})
+	// The continuation must not slide the reporting window as time advances.
+	initialNow := now
+	now = now.Add(8 * 24 * time.Hour)
 	secondPageResponse := request(t, server.Client(), http.MethodPost,
 		server.URL+"/v1/operator/ai-analytics/query", "operator-token", secondBody)
 	if secondPageResponse.StatusCode != http.StatusOK {
@@ -303,6 +306,10 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 	}
 	var secondPage operatorAIAnalyticsTestPage
 	decode(t, secondPageResponse, &secondPage)
+	now = initialNow
+	if secondPage.Summary != nil {
+		t.Fatal("continuation recalculated the full-range summary")
+	}
 	if len(secondPage.Calls) != 1 || secondPage.Calls[0].ID != richID ||
 		secondPage.Calls[0].Transferred || !secondPage.Calls[0].TranscriptAvailable ||
 		secondPage.Calls[0].P50SttMs != 200 || secondPage.Calls[0].P50TtftMs != 400 ||
@@ -312,6 +319,13 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		secondPage.Calls[0].P50TotalLatencyMs != 1000 || secondPage.NextCursor != "" {
 		t.Fatalf("operator analytics second page = %#v", secondPage)
 	}
+
+	deniedPage := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/operator/ai-analytics/query", "admin-token", secondBody)
+	if deniedPage.StatusCode != http.StatusForbidden {
+		t.Fatalf("continuation bypassed operator authorization: %d", deniedPage.StatusCode)
+	}
+	_ = deniedPage.Body.Close()
 
 	allLocationsBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
@@ -384,6 +398,43 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		t.Fatalf("non-operator analytics detail status = %d, body = %s", deniedDetail.StatusCode, readBody(t, deniedDetail))
 	}
 	_ = deniedDetail.Body.Close()
+
+	// Exercise the real cost endpoint under its SQL budget with large session
+	// reports. Conversation size must not determine the range-read payload.
+	largeReport, _ := json.Marshal(map[string]any{
+		"items": []any{map[string]any{"type": "message", "content": strings.Repeat("Synthetic conversation content. ", 5000)}},
+		"usage": json.RawMessage(usage),
+	})
+	const largeCalls = 2000
+	if _, err := pool.Exec(context.Background(), `INSERT INTO ai_interactions(service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,transcript)
+	 SELECT 'cost-scale',$1,$2,'cost-scale-'||n,'+15555550101','+15555550102',$3::timestamptz-interval '10 minutes',$3,'COMPLETED',3,$4 FROM generate_series(1,$5) n`, practiceID, southID, now.Add(-time.Hour), largeReport, largeCalls); err != nil {
+		t.Fatal(err)
+	}
+	largeCostBody, _ := json.Marshal(map[string]any{"practiceId": practiceID, "locationId": southID, "range": "30d", "timeZone": "UTC"})
+	started := time.Now()
+	largeCostResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", largeCostBody)
+	if largeCostResponse.StatusCode != http.StatusOK {
+		t.Fatalf("large cost query = %d: %s", largeCostResponse.StatusCode, readBody(t, largeCostResponse))
+	}
+	var largeCosts interaction.CostAnalytics
+	decode(t, largeCostResponse, &largeCosts)
+	t.Logf("cost HTTP read: %d calls with %d-byte reports in %s", largeCalls, len(largeReport), time.Since(started))
+	if largeCosts.TotalCalls != largeCalls+1 || largeCosts.PricedCalls != largeCalls || largeCosts.Items[0].Quantity != largeCalls*750000 {
+		t.Fatalf("large cost query lost usage: %+v", largeCosts)
+	}
+	// Correcting source usage must replace the derived estimate immediately.
+	if _, err := pool.Exec(context.Background(), `UPDATE ai_interactions SET transcript=jsonb_set(transcript,'{usage}','[]') WHERE source_call_id='cost-scale-1'`); err != nil {
+		t.Fatal(err)
+	}
+	correctedResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-costs/query", "operator-token", largeCostBody)
+	if correctedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("corrected cost query = %d: %s", correctedResponse.StatusCode, readBody(t, correctedResponse))
+	}
+	var corrected interaction.CostAnalytics
+	decode(t, correctedResponse, &corrected)
+	if corrected.PricedCalls != largeCalls-1 || corrected.Items[0].Quantity != (largeCalls-1)*750000 {
+		t.Fatalf("cost query ignored corrected usage: %+v", corrected)
+	}
 }
 
 type operatorAIInteractionFixture struct {
@@ -404,7 +455,7 @@ type operatorAIInteractionFixture struct {
 }
 
 type operatorAIAnalyticsTestPage struct {
-	Summary struct {
+	Summary *struct {
 		TotalCalls        int     `json:"totalCalls"`
 		BookingCount      int     `json:"bookingCount"`
 		CancellationCount int     `json:"cancellationCount"`

@@ -890,8 +890,11 @@ export type OperatorAiCallAnalytics = {
     transcriptAvailable: boolean;
 };
 
+/**
+ * The first page includes a fresh range summary. Cursor continuations return calls only within the initial reporting window; refresh without a cursor to obtain a new summary and window.
+ */
 export type OperatorAiAnalyticsPage = {
-    summary: OperatorAiAnalyticsSummary;
+    summary?: OperatorAiAnalyticsSummary;
     calls: Array<OperatorAiCallAnalytics>;
     nextCursor: string;
 };

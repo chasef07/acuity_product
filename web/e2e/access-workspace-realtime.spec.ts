@@ -68,7 +68,6 @@ const operatorAnalyticsFixture = {
 }
 
 const operatorAnalyticsNextPageFixture = {
-  summary: operatorAnalyticsFixture.summary,
   calls: [
     {
       ...operatorAnalyticsFixture.calls[0],
@@ -512,6 +511,11 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await expect(
       analyticsRegion.getByRole("button", { name: "Load more calls" }),
     ).toHaveCount(0)
+
+    // Cursor pages omit summary; navigating back must retain the initial metrics.
+    await analyticsRegion.getByRole("button", { name: "Tools", exact: true }).click()
+    await expect(analyticsRegion.getByText("31", { exact: true })).toBeVisible()
+    await analyticsRegion.getByRole("button", { name: "Calls", exact: true }).click()
 
     await operatorPage.getByRole("button", { name: "Last 30 days" }).click()
     await expect
