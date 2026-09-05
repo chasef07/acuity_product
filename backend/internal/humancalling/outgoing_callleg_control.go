@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -14,15 +16,16 @@ func (m *Module) processCommand(
 	ctx context.Context,
 	commandID string,
 ) (ProviderResult, error) {
-	if err := m.claimCallLegCommand(ctx, commandID); err != nil {
+	claim, err := m.claimCallLegCommand(ctx, commandID)
+	if err != nil {
 		return ProviderResult{}, err
 	}
-	return m.executeCallLegCommand(ctx, commandID)
+	return m.executeCallLegCommand(ctx, claim)
 }
 
 const nextCallLegCommandQuery = `
 	WITH call_candidate AS MATERIALIZED (
-		SELECT command.id, command.call_leg_id, command.created_at
+		SELECT command.id, command.call_leg_id, command.created_at, command.action
 		FROM human_calling_provider_commands command
 		JOIN human_calling_calls call ON call.id = command.call_id
 		WHERE command.call_id IS NOT NULL
@@ -54,7 +57,7 @@ const nextCallLegCommandQuery = `
 		LIMIT 1
 	),
 	global_candidate AS MATERIALIZED (
-		SELECT command.id, command.call_leg_id, command.created_at
+		SELECT command.id, command.call_leg_id, command.created_at, command.action
 		FROM human_calling_provider_commands command
 		WHERE command.call_id IS NULL
 			AND command.state = 'PENDING'
@@ -72,35 +75,69 @@ const nextCallLegCommandQuery = `
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	)
-	SELECT candidate.id::text, COALESCE(candidate.call_leg_id::text, '')
+	SELECT candidate.id::text, COALESCE(candidate.call_leg_id::text, ''),
+		candidate.action, candidate.created_at
 	FROM (
-		SELECT id, call_leg_id, created_at FROM call_candidate
+		SELECT id, call_leg_id, created_at, action FROM call_candidate
 		UNION ALL
-		SELECT id, call_leg_id, created_at FROM global_candidate
+		SELECT id, call_leg_id, created_at, action FROM global_candidate
 	) candidate
 	ORDER BY candidate.created_at, candidate.id
 	LIMIT 1
 `
 
-func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, error) {
+// claimedProviderCommand carries the observed commit boundary across the worker
+// handoff without retaining a database connection or changing provider ownership.
+type claimedProviderCommand struct {
+	id          string
+	action      CommandAction
+	createdAt   time.Time
+	attempts    int
+	committedAt time.Time
+}
+
+func (m *Module) observeCommandClaim(
+	claim claimedProviderCommand,
+	started time.Time,
+	ok bool,
+	err error,
+) {
+	if !ok && err == nil {
+		return // Idle polling is not useful work and must not generate a log stream.
+	}
+	outcome := observability.CommandStageSucceeded
+	if err != nil {
+		outcome = observability.CommandStageFailed
+	}
+	m.recordCommandStage(claim.action, observability.CommandStageClaim, outcome, m.now().Sub(started))
+	if ok && err == nil && claim.attempts == 1 {
+		m.recordCommandStage(claim.action, observability.CommandStageCreatedToFirstClaim, observability.CommandStageSucceeded, claim.committedAt.Sub(claim.createdAt))
+	}
+}
+
+func (m *Module) claimNextCallLegCommand(
+	ctx context.Context,
+) (claim claimedProviderCommand, ok bool, err error) {
+	started := m.now()
+	defer func() { m.observeCommandClaim(claim, started, ok, err) }()
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return "", false, fmt.Errorf("begin provider command claim: %w", err)
+		return claim, false, fmt.Errorf("begin provider command claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	for {
-		var commandID, callLegID string
+		var callLegID string
 		err = tx.QueryRow(ctx, nextCallLegCommandQuery, m.now()).Scan(
-			&commandID, &callLegID,
+			&claim.id, &callLegID, &claim.action, &claim.createdAt,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
-				return "", false, err
+				return claim, false, err
 			}
-			return "", false, nil
+			return claim, false, nil
 		}
 		if err != nil {
-			return "", false, fmt.Errorf("select provider command: %w", err)
+			return claim, false, fmt.Errorf("select provider command: %w", err)
 		}
 		if callLegID != "" {
 			var lockedCallLegID string
@@ -109,49 +146,58 @@ func (m *Module) claimNextCallLegCommand(ctx context.Context) (string, bool, err
 				WHERE id = $1
 				FOR UPDATE
 			`, callLegID).Scan(&lockedCallLegID); err != nil {
-				return "", false, fmt.Errorf("lock provider command CallLeg: %w", err)
+				return claim, false, fmt.Errorf("lock provider command CallLeg: %w", err)
 			}
 		}
-		tag, err := tx.Exec(ctx, `
+		err = tx.QueryRow(ctx, `
 			UPDATE human_calling_provider_commands
 			SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
 			WHERE id = $1 AND state = 'PENDING'
-		`, commandID, m.now())
-		if err != nil {
-			return "", false, fmt.Errorf("claim provider command: %w", err)
-		}
-		if tag.RowsAffected() != 1 {
+			RETURNING attempts
+		`, claim.id, m.now()).Scan(&claim.attempts)
+		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return "", false, fmt.Errorf("commit provider command claim: %w", err)
+		if err != nil {
+			return claim, false, fmt.Errorf("claim provider command: %w", err)
 		}
-		return commandID, true, nil
+		if err := tx.Commit(ctx); err != nil {
+			return claim, false, fmt.Errorf("commit provider command claim: %w", err)
+		}
+		claim.committedAt = m.now()
+		return claim, true, nil
 	}
 }
 
-func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) error {
+func (m *Module) claimCallLegCommand(
+	ctx context.Context,
+	commandID string,
+) (claim claimedProviderCommand, err error) {
+	started := m.now()
+	defer func() { m.observeCommandClaim(claim, started, err == nil, err) }()
+	claim.id = commandID
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("begin committed provider command claim: %w", err)
+		return claim, fmt.Errorf("begin committed provider command claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var callID, callLegID string
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(call_id::text, ''), COALESCE(call_leg_id::text, '')
+		SELECT COALESCE(call_id::text, ''), COALESCE(call_leg_id::text, ''),
+			action, created_at
 		FROM human_calling_provider_commands
 		WHERE id = $1 AND state = 'PENDING'
-	`, commandID).Scan(&callID, &callLegID); err != nil {
+	`, commandID).Scan(&callID, &callLegID, &claim.action, &claim.createdAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConflict
+			return claim, ErrConflict
 		}
-		return fmt.Errorf("read committed provider command claim: %w", err)
+		return claim, fmt.Errorf("read committed provider command claim: %w", err)
 	}
 	if callID != "" {
 		if err := tx.QueryRow(ctx, `
 			SELECT id FROM human_calling_calls WHERE id = $1 FOR UPDATE
 		`, callID).Scan(&callID); err != nil {
-			return fmt.Errorf("lock provider command Call: %w", err)
+			return claim, fmt.Errorf("lock provider command Call: %w", err)
 		}
 	}
 	if callLegID != "" {
@@ -161,10 +207,10 @@ func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) erro
 			WHERE id = $1 AND call_id = $2
 			FOR UPDATE
 		`, callLegID, callID).Scan(&lockedCallLegID); err != nil {
-			return fmt.Errorf("lock provider command CallLeg: %w", err)
+			return claim, fmt.Errorf("lock provider command CallLeg: %w", err)
 		}
 	}
-	tag, err := tx.Exec(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE human_calling_provider_commands
 		SET state = 'SENDING', attempts = attempts + 1, updated_at = $2
 		WHERE id = $1 AND state = 'PENDING'
@@ -174,23 +220,31 @@ func (m *Module) claimCallLegCommand(ctx context.Context, commandID string) erro
 					AND active.id <> human_calling_provider_commands.id
 					AND active.state IN ('SENDING', 'AMBIGUOUS')
 			)
-	`, commandID, m.now())
-	if err != nil {
-		return fmt.Errorf("claim committed provider command: %w", err)
+		RETURNING attempts
+	`, commandID, m.now()).Scan(&claim.attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return claim, ErrConflict
 	}
-	if tag.RowsAffected() != 1 {
-		return ErrConflict
+	if err != nil {
+		return claim, fmt.Errorf("claim committed provider command: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit provider command claim: %w", err)
+		return claim, fmt.Errorf("commit provider command claim: %w", err)
 	}
-	return nil
+	claim.committedAt = m.now()
+	return claim, nil
 }
 
 func (m *Module) executeCallLegCommand(
 	ctx context.Context,
-	commandID string,
+	claim claimedProviderCommand,
 ) (ProviderResult, error) {
+	dispatched := false
+	defer func() {
+		if !dispatched {
+			m.recordCommandStage(claim.action, observability.CommandStageClaimToDispatch, observability.CommandStageFailed, m.now().Sub(claim.committedAt))
+		}
+	}()
 	var command ProviderCommand
 	var encoded []byte
 	if err := m.database.QueryRow(ctx, `
@@ -199,7 +253,7 @@ func (m *Module) executeCallLegCommand(
 			COALESCE(target_id, ''), payload, created_at
 		FROM human_calling_provider_commands
 		WHERE id = $1 AND state = 'SENDING'
-	`, commandID).Scan(
+	`, claim.id).Scan(
 		&command.ID,
 		&command.CallLegID,
 		&command.PeerCallLegID,
@@ -217,7 +271,27 @@ func (m *Module) executeCallLegCommand(
 		return ProviderResult{}, fmt.Errorf("provider is unavailable")
 	}
 	claimedAt := m.now()
+	dispatched = true
+	m.recordCommandStage(command.Action, observability.CommandStageClaimToDispatch, observability.CommandStageSucceeded, claimedAt.Sub(claim.committedAt))
 	result, executeErr := m.provider.Execute(ctx, command)
+	providerCompletedAt := m.now()
+	providerOutcome := observability.CommandStageSucceeded
+	if executeErr != nil {
+		providerOutcome = observability.CommandStageFailed
+	}
+	m.recordCommandStage(command.Action, observability.CommandStageProvider, providerOutcome, providerCompletedAt.Sub(claimedAt))
+	persisted := false
+	persistCompletedAt := time.Time{}
+	defer func() {
+		outcome := observability.CommandStageFailed
+		if persisted {
+			outcome = observability.CommandStageSucceeded
+		}
+		if persistCompletedAt.IsZero() {
+			persistCompletedAt = m.now()
+		}
+		m.recordCommandStage(command.Action, observability.CommandStagePersist, outcome, persistCompletedAt.Sub(providerCompletedAt))
+	}()
 	if err := m.finishCallLegCommand(ctx, command, result, executeErr); err != nil {
 		return ProviderResult{}, err
 	}
@@ -227,6 +301,8 @@ func (m *Module) executeCallLegCommand(
 	`, command.ID).Scan(&state); err != nil {
 		return ProviderResult{}, fmt.Errorf("read durable provider command result: %w", err)
 	}
+	persisted = true
+	persistCompletedAt = m.now()
 	if state != "PENDING" {
 		m.recordProviderCommand(
 			command,

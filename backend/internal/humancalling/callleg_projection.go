@@ -1328,6 +1328,12 @@ func (m *Module) applyCallerBridge(ctx context.Context, fact ProviderFact) error
 }
 
 func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
+	return m.applyHangupWithObservation(ctx, fact, nil)
+}
+
+func (m *Module) applyHangupWithObservation(
+	ctx context.Context, fact ProviderFact, observationClaim *callLegObservationClaim,
+) error {
 	state, hasState := parseCallLegClientState(fact.ClientState)
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -1387,6 +1393,12 @@ func (m *Module) applyHangup(ctx context.Context, fact ProviderFact) error {
 			return errRelatedFactPending
 		}
 		return fmt.Errorf("correlate hung-up CallLeg: %w", err)
+	}
+	if observationClaim != nil {
+		if current, err := observationClaim.current(ctx, tx, legID); err != nil || !current {
+			// Roll back the synthetic fact claim along with the stale inference.
+			return err
+		}
 	}
 	if fact.CallControlID != storedControlID || fact.CallLegID != storedProviderLegID {
 		return ErrConflict

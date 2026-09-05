@@ -57,6 +57,7 @@ const (
 	CommandCreateCredential        CommandAction = "create_credential"
 	CommandDisableCredential       CommandAction = "disable_credential"
 	CommandCreateJWT               CommandAction = "create_jwt"
+	CommandTransferStaff           CommandAction = "transfer_staff"
 )
 
 type CommandOutcome string
@@ -67,6 +68,24 @@ const (
 	CommandRejected   CommandOutcome = "rejected"
 	CommandReconciled CommandOutcome = "reconciled"
 	CommandObsolete   CommandOutcome = "obsolete"
+)
+
+// CommandStage identifies a directly observed boundary, never inferred readiness.
+type CommandStage string
+
+const (
+	CommandStageClaim               CommandStage = "claim"
+	CommandStageCreatedToFirstClaim CommandStage = "created_to_first_claim"
+	CommandStageClaimToDispatch     CommandStage = "claim_to_dispatch"
+	CommandStageProvider            CommandStage = "provider"
+	CommandStagePersist             CommandStage = "persist"
+)
+
+type CommandStageOutcome string
+
+const (
+	CommandStageSucceeded CommandStageOutcome = "succeeded"
+	CommandStageFailed    CommandStageOutcome = "failed"
 )
 
 type PoolAcquireOutcome string
@@ -262,6 +281,19 @@ func ProviderCommandCompleted(
 		"outcome", bounded(string(outcome), "sent", "ambiguous", "rejected", "reconciled", "obsolete"),
 		"queue_seconds", positive(queueAge).Seconds(),
 		"duration_seconds", positive(duration).Seconds())
+}
+
+// ProviderCommandStage records elapsed time when that boundary completes. Earlier
+// stages remain observable when a later provider or persistence step fails.
+func ProviderCommandStage(action CommandAction, stage CommandStage, outcome CommandStageOutcome, duration time.Duration) Event {
+	return event("acuity_call_center_provider_command_stage",
+		"action", bounded(string(action), "answer_caller", "start_ring_window", "dial_staff",
+			"bridge", "stop_ring_window", "hangup_leg", "speak_voicemail",
+			"start_voicemail_recording", "dial_outbound_staff", "dial_outbound_destination",
+			"create_credential", "disable_credential", "create_jwt", "transfer_staff"),
+		"stage", bounded(string(stage), "claim", "created_to_first_claim", "claim_to_dispatch", "provider", "persist"),
+		"outcome", bounded(string(outcome), "succeeded", "failed"),
+		"seconds", positive(duration).Seconds())
 }
 
 func DatabasePoolAcquired(outcome PoolAcquireOutcome, duration time.Duration) Event {

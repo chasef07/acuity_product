@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/chasef07/acuity_product/backend/internal/access"
 )
 
 func TestAnalyticsBudgetRejectsOverlapAndReleasesOnFinish(t *testing.T) {
@@ -40,4 +44,29 @@ func TestAnalyticsBudgetRejectsOverlapAndReleasesOnFinish(t *testing.T) {
 		t.Fatal("finished request retained its permit")
 	}
 	nextFinish()
+}
+
+func TestLegacyOperatorAnalyticsUsesSharedAdmission(t *testing.T) {
+	server := &Server{role: "portal-api", config: Config{RequestTimeout: 10 * time.Second}, authenticator: analyticsBudgetAuthenticator{}}
+	_, finish, ok := server.beginAnalytics(httptest.NewRecorder(), httptest.NewRequest("POST", "/v1/analytics/bookings/query", nil))
+	if !ok {
+		t.Fatal("could not occupy shared analytics budget")
+	}
+	defer finish()
+	request := httptest.NewRequest("POST", "/v1/operator/ai-analytics/query", strings.NewReader(`{"practiceId":"11111111-1111-1111-1111-111111111111","range":"24h"}`))
+	request.Header.Set("Authorization", "Bearer synthetic")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	// There is intentionally no database/module: rejected work must never enter
+	// the query path or acquire a connection.
+	server.QueryOperatorAIAnalytics(response, request)
+	if response.Code != 429 || response.Header().Get("Retry-After") != "1" {
+		t.Fatalf("legacy analytics bypassed shared budget: %d %s", response.Code, response.Body.String())
+	}
+}
+
+type analyticsBudgetAuthenticator struct{}
+
+func (analyticsBudgetAuthenticator) Authenticate(context.Context, string) (access.Identity, error) {
+	return access.Identity{Subject: "synthetic-operator"}, nil
 }

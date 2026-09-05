@@ -10,7 +10,7 @@ definitions extract no patient, Practice, Location, User, Call, receipt,
 command, provider, phone, email, URL, SQL, error, request, or raw-body value.
 
 The only metric labels are `metric_contract`, `runtime_role`, `revision`, and
-the fixed `route`, `failure_stage`, `outcome`, `action`, and `cause` values
+the fixed `route`, `failure_stage`, `outcome`, `action`, `stage`, and `cause` values
 where relevant. SSE state is selected by fixed filters instead of becoming
 another label.
 
@@ -155,6 +155,15 @@ The receipt queue sample also exposes `projection_retry_depth` and
 identity is used as a metric label.
 
 ## Live gates
+
+Provider command diagnosis uses the additive
+`acuity_call_center_provider_command_stage_seconds` distribution to separate
+claim, creation-to-first-claim, claim-to-dispatch, provider and persistence time.
+The legacy queue distribution mixes creation-to-dispatch and reconciliation age;
+its existing threshold is a diagnostic trigger, not proof of eligible-work
+pickup delay. No alert threshold changes accompany the new stage metric.
+Definitions in this repository are not evidence that a new metric has been
+applied or ingested in production.
 
 - Apply into the real project and verify every metric descriptor is accepted.
 - Send one PHI-free synthetic observation for each signal and confirm ingestion.

@@ -228,11 +228,11 @@ func queryAnalyticsSummary(
 			interaction.started_at,
 			interaction.status,
 			interaction.appointment_outcome,
-			COALESCE(interaction.transcript, '{}'::jsonb),
-			COALESCE(interaction.closeout_payload, '{}'::jsonb)
+			interaction.analytics_evidence -> 'transcript',
+			interaction.analytics_evidence -> 'closeout'
 		FROM ai_interactions interaction
 		WHERE interaction.practice_id = $1
-			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
 	`, command.PracticeID, locationIDs, from, to)
@@ -251,6 +251,9 @@ func queryAnalyticsSummary(
 			&projection.closeoutPayload,
 		); err != nil {
 			return AnalyticsSummary{}, fmt.Errorf("scan operator AI analytics summary: %w", err)
+		}
+		if len(projection.transcript) == 0 || len(projection.closeoutPayload) == 0 {
+			return AnalyticsSummary{}, errors.New("operator AI analytics evidence backfill is incomplete")
 		}
 		projectAnalyticsEvidence(&projection)
 		summarizeAnalyticsProjection(&summary, projection)
@@ -342,15 +345,15 @@ func queryAnalyticsCalls(
 			interaction.started_at,
 			interaction.ended_at,
 			interaction.status,
-			COALESCE(interaction.transcript, '{}'::jsonb),
-			COALESCE(interaction.closeout_payload, '{}'::jsonb),
+			interaction.analytics_evidence -> 'transcript',
+			interaction.analytics_evidence -> 'closeout',
 			interaction.transcript IS NOT NULL
 		FROM ai_interactions interaction
 		JOIN access_locations location
 			ON location.practice_id = interaction.practice_id
 			AND location.id = interaction.location_id
 		WHERE interaction.practice_id = $1
-			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.started_at >= $3
 			AND interaction.started_at <= $4
 			AND (

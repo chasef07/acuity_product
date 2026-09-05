@@ -359,7 +359,7 @@
   },
   {
     "name": "acuity_call_center_provider_command_queue_seconds",
-    "description": "Distribution of provider command creation-to-claim time, including scheduling, dependency, non-Dial same-Call serialization, and worker polling delay; distinct Staff Dials may overlap.",
+    "description": "Legacy command-age distribution: normal execution measures creation to provider dispatch; reconciliation measures creation to observation. Includes scheduling, dependencies, claim and reload time; not isolated claim latency.",
     "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command\"",
     "metricDescriptor": {
       "metricKind": "DELTA",
@@ -391,7 +391,7 @@
   },
   {
     "name": "acuity_call_center_provider_command_duration_seconds",
-    "description": "Distribution of Telnyx provider command execution time.",
+    "description": "Legacy command execution and durable result processing duration. Use provider-command stage timings to separate external provider time from persistence.",
     "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command\"",
     "metricDescriptor": {
       "metricKind": "DELTA",
@@ -413,6 +413,40 @@
       "outcome": "EXTRACT(jsonPayload.outcome)"
     },
     "valueExtractor": "EXTRACT(jsonPayload.duration_seconds)",
+    "bucketOptions": {
+      "exponentialBuckets": {
+        "numFiniteBuckets": 20,
+        "growthFactor": 2,
+        "scale": 0.001
+      }
+    }
+  },
+  {
+    "name": "acuity_call_center_provider_command_stage_seconds",
+    "description": "Direct provider-command stage durations. Fixed stages separate claim work, creation to first claim, claim to dispatch, provider execution, and result persistence; earlier stages remain visible when later work fails.",
+    "filter": "(resource.type=\"cloud_run_revision\" OR resource.type=\"cloud_run_worker_pool\") AND jsonPayload.msg=\"call_center_metric\" AND jsonPayload.metric_contract=\"1\" AND jsonPayload.metric=\"acuity_call_center_provider_command_stage\"",
+    "metricDescriptor": {
+      "metricKind": "DELTA",
+      "valueType": "DISTRIBUTION",
+      "unit": "s",
+      "labels": [
+        { "key": "metric_contract", "valueType": "STRING" },
+        { "key": "runtime_role", "valueType": "STRING" },
+        { "key": "revision", "valueType": "STRING" },
+        { "key": "action", "valueType": "STRING" },
+        { "key": "stage", "valueType": "STRING" },
+        { "key": "outcome", "valueType": "STRING" }
+      ]
+    },
+    "labelExtractors": {
+      "metric_contract": "EXTRACT(jsonPayload.metric_contract)",
+      "runtime_role": "EXTRACT(jsonPayload.runtime_role)",
+      "revision": "EXTRACT(jsonPayload.revision)",
+      "action": "EXTRACT(jsonPayload.action)",
+      "stage": "EXTRACT(jsonPayload.stage)",
+      "outcome": "EXTRACT(jsonPayload.outcome)"
+    },
+    "valueExtractor": "EXTRACT(jsonPayload.seconds)",
     "bucketOptions": {
       "exponentialBuckets": {
         "numFiniteBuckets": 20,

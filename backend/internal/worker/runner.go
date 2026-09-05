@@ -230,6 +230,7 @@ func (runner *Runner) coordinateProviderCommands(
 	)
 	for ctx.Err() == nil {
 		failed := false
+		claimedCount := 0
 		for range runner.config.ProviderCommandBatchSize {
 			select {
 			case <-ctx.Done():
@@ -264,10 +265,17 @@ func (runner *Runner) coordinateProviderCommands(
 				available <- struct{}{}
 				return
 			case commands <- command:
+				claimedCount++
 			}
 		}
 
 		delay := runner.config.WorkInterval
+		// A full batch is a fairness boundary, not evidence that the queue is
+		// empty. Yield without adding an idle polling interval to ready work.
+		// Executor tokens still bound claimed work; empty/blocked scans sleep.
+		if claimedCount == runner.config.ProviderCommandBatchSize {
+			delay = 0
+		}
 		if failed {
 			delay = backoff.fail(runner.jitter)
 		}
