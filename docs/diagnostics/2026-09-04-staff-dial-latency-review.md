@@ -119,8 +119,10 @@ idle/dependency-release waits. Production attribution remains unverified.
 
 Next design work should evaluate a durable-work wakeup hint after receipt/fanout
 commit and command completion, retaining bounded fallback polling, database
-authority, and existing command ordering. This is a follow-up design candidate;
-PR #267 does not implement new wakeup behavior.
+authority, and existing command ordering.
+The later [worker wakeup exploration](2026-09-04-worker-wakeup-exploration.md)
+tests the smaller local worker hint against this original baseline. Cross-process
+receipt notifications remain outside the implementation.
 
 All seven scenarios passed with the race detector:
 

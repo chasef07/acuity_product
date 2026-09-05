@@ -11,9 +11,15 @@ observations could move the evidence window forward.
 
 The worker used to wait a full 250 ms after every eight successful claims even
 when more work and executor capacity remained. A full batch now yields without
-an idle delay. Empty or dependency-blocked scans retain their polling interval;
+an idle delay. Empty or dependency-blocked scans retain their fallback interval;
 executor limits, error backoff, command identity, and same-Call serialization
 remain enforced.
+
+The subsequent [worker wakeup exploration](2026-09-04-worker-wakeup-exploration.md)
+adds a local coalesced signal after successful receipt processing and command
+completion. It wakes the coordinator from idle or blocked waiting while retaining
+the timer fallback and error backoff. The original measurements below describe
+the initial batch-only patch; the linked comparison measures this follow-up.
 
 A deterministic regression compares the full-batch then blocked-scan waits:
 the original Runner emits `[250ms, 250ms]`, while the new Runner emits

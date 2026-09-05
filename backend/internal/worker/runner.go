@@ -69,6 +69,7 @@ type Runner struct {
 	dependency   Dependency
 	jitter       func(time.Duration) time.Duration
 	wait         func(context.Context, time.Duration) bool
+	commandReady chan struct{}
 }
 
 func New(
@@ -130,6 +131,7 @@ func New(
 		dependency:   dependency,
 		jitter:       equalJitter,
 		wait:         wait,
+		commandReady: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -193,9 +195,27 @@ func (runner *Runner) runCallingReceipts(ctx context.Context) {
 		ctx,
 		runner.config.ReceiptBatchSize,
 		"provider_receipt_processing_failed",
-		runner.work.ProcessNextReceipt,
+		runner.processNextCallingReceipt,
 		runner.config.WorkInterval,
 	)
+}
+
+// A local hint only asks the coordinator to check committed work. PostgreSQL
+// still decides whether any command can run; missed or remote changes retain
+// the regular polling fallback.
+func (runner *Runner) notifyProviderCommands() {
+	select {
+	case runner.commandReady <- struct{}{}:
+	default:
+	}
+}
+
+func (runner *Runner) processNextCallingReceipt(ctx context.Context) (bool, error) {
+	processed, err := runner.work.ProcessNextReceipt(ctx)
+	if processed && err == nil {
+		runner.notifyProviderCommands()
+	}
+	return processed, err
 }
 
 func (runner *Runner) runProviderCommands(ctx context.Context) {
@@ -236,6 +256,13 @@ func (runner *Runner) coordinateProviderCommands(
 			case <-ctx.Done():
 				return
 			case <-available:
+			}
+
+			// A hint that predates this authoritative scan is already covered by
+			// it. Preserve hints arriving during the scan to close the pre-wait race.
+			select {
+			case <-runner.commandReady:
+			default:
 			}
 
 			command, claimed, err := runCommandClaim(
@@ -279,9 +306,26 @@ func (runner *Runner) coordinateProviderCommands(
 		if failed {
 			delay = backoff.fail(runner.jitter)
 		}
-		if !runner.wait(ctx, delay) {
+		waitForNext := runner.wait
+		if !failed && delay > 0 && runner.commandReady != nil {
+			waitForNext = runner.waitForProviderCommandHint
+		}
+		if !waitForNext(ctx, delay) {
 			return
 		}
+	}
+}
+
+func (runner *Runner) waitForProviderCommandHint(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-runner.commandReady:
+		return true
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -313,6 +357,9 @@ func (runner *Runner) runProviderCommandExecutor(
 				}
 			}
 			available <- struct{}{}
+			if err == nil {
+				runner.notifyProviderCommands()
+			}
 		}
 	}
 }
