@@ -2517,6 +2517,10 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	if err != nil {
 		t.Fatalf("upload attachment for expiration: %v", err)
 	}
+	var expiringObjectKey string
+	if err := pool.QueryRow(context.Background(), `SELECT object_key FROM messaging_attachments WHERE id=$1`, expiring.ID).Scan(&expiringObjectKey); err != nil {
+		t.Fatal(err)
+	}
 	now = now.Add(16 * time.Minute)
 	store.deleteError = errors.New("transient protected-object deletion failure")
 	if err := module.ExpirePendingAttachments(
@@ -2539,12 +2543,13 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	}
 	if _, err := memoryStore.Get(
 		context.Background(),
-		"attachments/"+expiring.ID,
+		expiringObjectKey,
 	); err != nil {
 		t.Fatalf("failed expiration lost protected object: %v", err)
 	}
 
 	store.deleteError = nil
+	now = now.Add(31 * time.Second)
 	if err := module.ExpirePendingAttachments(context.Background()); err != nil {
 		t.Fatalf("retry attachment expiration: %v", err)
 	}
@@ -2562,7 +2567,7 @@ func TestAttachmentLifecycleKeepsBytesPrivateAndMessageMembershipImmutable(
 	}
 	if _, err := memoryStore.Get(
 		context.Background(),
-		"attachments/"+expiring.ID,
+		expiringObjectKey,
 	); !errors.Is(err, messaging.ErrObjectNotFound) {
 		t.Fatalf("expired protected object error = %v, want not found", err)
 	}

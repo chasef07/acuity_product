@@ -137,7 +137,7 @@ func New(
 
 func (runner *Runner) Run(ctx context.Context) error {
 	var lanes sync.WaitGroup
-	lanes.Add(7)
+	lanes.Add(11)
 	go func() {
 		defer lanes.Done()
 		runner.runCallingReceipts(ctx)
@@ -185,6 +185,22 @@ func (runner *Runner) Run(ctx context.Context) error {
 	go func() {
 		defer lanes.Done()
 		runner.runMaintenanceLane(ctx)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(ctx, 1, "background_reconciliation_failed", runner.reconcileBackgroundWork)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLane(ctx, 1, "messaging_attachment_processing_failed", runner.messages.ProcessNextAttachment)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runQueueLaneWithIdleMaximum(ctx, 1, "recording_retention_failed", runner.work.ProcessNextRecordingRetention, time.Minute)
+	}()
+	go func() {
+		defer lanes.Done()
+		runner.runCleanupLane(ctx)
 	}()
 	lanes.Wait()
 	return nil
@@ -515,81 +531,57 @@ func (runner *Runner) runMaintenance(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		return failed
 	}
-	if _, err := runBoolWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.work.ProcessNextRecordingReconciliation,
-	); err != nil {
-		warn(ctx, "recording_reconciliation_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runBoolWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.work.ProcessNextCredentialReconciliation,
-	); err != nil {
-		warn(ctx, "provider_credential_reconciliation_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runBoolWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.work.ProcessNextRecordingRetention,
-	); err != nil {
-		warn(ctx, "recording_retention_failed", err)
-		failed = true
-	}
-	if runner.messages == nil || ctx.Err() != nil {
-		return failed
-	}
-	if err := runWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.messages.RecoverInterruptedCommands,
-	); err != nil {
-		warn(ctx, "messaging_command_recovery_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runBoolWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.messages.ReconcileNextCommand,
-	); err != nil {
-		warn(ctx, "messaging_command_reconciliation_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if _, err := runBoolWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.messages.ProcessNextAttachment,
-	); err != nil {
-		warn(ctx, "messaging_attachment_processing_failed", err)
-		failed = true
-	}
-	if ctx.Err() != nil {
-		return failed
-	}
-	if err := runWork(
-		ctx,
-		runner.config.WorkTimeout,
-		runner.messages.ExpirePendingAttachments,
-	); err != nil {
-		warn(ctx, "messaging_attachment_expiry_failed", err)
-		failed = true
-	}
 	return failed
+}
+
+// Reconciliation can wait briefly when no durable work is due. It never delays
+// call deadlines, and storage has its own lane because filesystem calls can stall.
+func (runner *Runner) reconcileBackgroundWork(ctx context.Context) (bool, error) {
+	var failures error
+	if err := runner.messages.RecoverInterruptedCommands(ctx); err != nil {
+		failures = fmt.Errorf("message command recovery: %w", err)
+	}
+	progressed := false
+	for _, operation := range []struct {
+		name string
+		run  func(context.Context) (bool, error)
+	}{
+		{"recording reconciliation", runner.work.ProcessNextRecordingReconciliation},
+		{"credential reconciliation", runner.work.ProcessNextCredentialReconciliation},
+		{"message reconciliation", runner.messages.ReconcileNextCommand},
+	} {
+		if ctx.Err() != nil {
+			return progressed, errors.Join(failures, ctx.Err())
+		}
+		processed, err := operation.run(ctx)
+		if err != nil {
+			failures = errors.Join(failures, fmt.Errorf("%s: %w", operation.name, err))
+		}
+		progressed = progressed || processed
+	}
+	return progressed, failures
+}
+
+const cleanupInterval = 5 * time.Second
+
+func (runner *Runner) runCleanupLane(ctx context.Context) {
+	backoff := newFailureBackoff(runner.config.ErrorBackoffMin, runner.config.ErrorBackoffMax)
+	for ctx.Err() == nil {
+		failed := false
+		if err := runWork(ctx, runner.config.WorkTimeout, runner.messages.ExpirePendingAttachments); err != nil {
+			warn(ctx, "messaging_attachment_expiry_failed", err)
+			failed = true
+		}
+		delay := cleanupInterval
+		if failed {
+			delay = max(delay, backoff.fail(runner.jitter))
+		} else {
+			backoff.reset()
+		}
+		if !runner.wait(ctx, delay) {
+			return
+		}
+	}
 }
 
 func (runner *Runner) reconcileCredentials(ctx context.Context) {
