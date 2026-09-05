@@ -1,6 +1,8 @@
 # Backend latency and recovery hardening
 
 This local change starts from `f34484434b253f03cd2b50425664c8f59e1dffbf`.
+Before PR #267 publication, it was rebased onto release-only
+`fb0f0e54e75cb050067e89c90b66725ee7f89a61`.
 It follows the September 4 health review: Staff Dial timing mixed several kinds
 of waiting, legacy analytics repeatedly parsed raw history, and failed CallLeg
 observations could move the evidence window forward.
@@ -178,3 +180,11 @@ Local raw check logs are retained in
 `/tmp/acuity-health-20260904/`. The temporary PostgreSQL and container runtime
 started for this work are stopped after verification; recreate a disposable
 local database before rerunning database-backed commands.
+
+After publication, the complete serial backend/deploy suite passed again on
+PR commit `10f2b1b67231d545e2b732ff577876b907740bd7`
+(`/tmp/acuity-backend-latency-20260904/backend-pr.log`). All required CI checks
+passed for that commit in run `33932028197`. The subsequent signed-answer
+receipt experiment is recorded in the
+[second latency review](2026-09-04-staff-dial-latency-review.md#follow-up-experiment-after-pr-publication),
+including seven race-enabled scenarios and the remaining polling delays.

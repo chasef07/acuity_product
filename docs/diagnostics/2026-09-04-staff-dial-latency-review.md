@@ -71,5 +71,66 @@ Source locations: `backend/internal/worker/runner.go` (coordinator),
 `backend/internal/humancalling/callleg_projection.go` (caller answer fanout),
 `outgoing_callleg_control.go` (claim/dispatch), `telnyx.go` (provider options),
 `staff_dial_latency_integration_test.go` (measurement start and mixed fixture).
-No additional code changes or tests were required for this review; prior test
-results remain local evidence and production benefits are still unverified.
+## Follow-up experiment after PR publication
+
+PR #267 includes `TestStaffDialLatencyFromSignedAnswerReceipt`. It starts the
+real Runner before submitting a signed synthetic `call.answered` through
+`ReceiveWebhook`, using separate ingress and worker executors. The worker has
+two database connections, ten provider executors, batch size eight, and the
+production 250 ms poll interval. All clocks use `time.Now`.
+
+The test observes the actual fanout transaction's successful commit return
+without adding SQL to that path. It separately verifies receipt APPLIED, every
+Dial and ringback SENT, and exactly one invocation per command. Provider calls
+use a local stub; the endpoint is invocation, not browser ringing.
+
+Final race-enabled observations (milliseconds, rounded):
+
+| Staff | Ringback stub delay | Accepted to fanout commit | BeginTx through commit | Accepted to first Dial | Accepted to last Dial |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 252 | 6 | 757 | 757 |
+| 5 | 0 | 258 | 11 | 766 | 775 |
+| 10 | 0 | 264 | 18 | 760 | 776 |
+| 1 | 200 | 257 | 9 | 758 | 758 |
+| 5 | 200 | 263 | 14 | 756 | 761 |
+| 10 | 200 | 269 | 19 | 758 | 772 |
+| 10, one connection reserved | 0 | 276 | 16 | 770 | 788 |
+
+Signed ingress itself took 4–8 ms. The reserved connection was held for 601 ms;
+the recorded fanout transaction completed during that reservation. This proves
+progress with reduced capacity in this fixture, not forced query blocking or a
+production saturation envelope. An earlier 150 ms reservation ended before the
+next receipt poll and is not used as reduced-capacity evidence.
+
+Ingress is deliberately submitted immediately after the Runner's first empty
+receipt scan. These are controlled observations of that polling phase, not
+representative samples or percentiles. Accepted-to-fanout combines receipt
+queueing, claim, and projection. BeginTx-through-commit includes transaction
+acquisition; there is no independent receipt-processing-start observation.
+
+Ringback ran before the first Dial in every measured case. After the zero-delay
+ringback returned, the first Dial still waited 255–260 ms; with the 200 ms stub,
+that remaining interval was 53–57 ms. Together with the source-level 250 ms
+blocked/idle waits and the 489–508 ms fanout-to-first-Dial interval, this points
+to polling between stages as the next local optimization target. The actual
+fanout transaction took 6–19 ms, and first-to-last Dial spread was 0–19 ms.
+The earlier full-batch fix improves dispatch spread but does not remove these
+idle/dependency-release waits. Production attribution remains unverified.
+
+Next design work should evaluate a durable-work wakeup hint after receipt/fanout
+commit and command completion, retaining bounded fallback polling, database
+authority, and existing command ordering. This is a follow-up design candidate;
+PR #267 does not implement new wakeup behavior.
+
+All seven scenarios passed with the race detector:
+
+```sh
+GOTOOLCHAIN=go1.26.7 \
+TEST_DATABASE_URL='postgres://chasefagen@127.0.0.1:55439/acuity_dial_test?sslmode=disable' \
+go test -race ./backend/internal/humancalling \
+  -run '^TestStaffDialLatencyFromSignedAnswerReceipt$' -count=1 -v
+```
+
+Raw final local evidence: `/tmp/acuity-health-20260904/staff-dial-receipt-race.log`.
+An independent review verified the measurement boundaries and corrected
+reservation case. No production calls, migrations, or deployment were performed.
