@@ -11,7 +11,7 @@ import (
 )
 
 func attachmentObjectKey(attachmentID, token string) string {
-	return "attachment-attempts/" + attachmentID + "/" + token
+	return "attachment-attempts/" + attachmentID + "-" + token
 }
 
 // Reserve cleanup before touching storage. Attempt keys are never reused, so
