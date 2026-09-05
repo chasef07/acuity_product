@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.3](https://github.com/chasef07/acuity_product/compare/v1.2.2...v1.2.3) (2026-09-05)
+
+
+### Bug Fixes
+
+* **workspace:** preserve counts when opening Task context ([cbd23ca](https://github.com/chasef07/acuity_product/commit/cbd23caf73f9d1d2f31e1545e0371d28f3966569))
+
+
+### Performance Improvements
+
+* **analytics:** avoid repeated range scans and transcript reads ([#273](https://github.com/chasef07/acuity_product/issues/273)) ([e85bf0a](https://github.com/chasef07/acuity_product/commit/e85bf0a95bb3a8bf1465956a245075896ce916a3))
+* **auth:** isolate signing-key refresh and cache CORS preflights ([#271](https://github.com/chasef07/acuity_product/issues/271)) ([64f3781](https://github.com/chasef07/acuity_product/commit/64f3781657b993ebd80c82db626c71f04f53d803))
+* **messaging:** release database capacity and isolate storage maintenance ([#274](https://github.com/chasef07/acuity_product/issues/274)) ([997c58d](https://github.com/chasef07/acuity_product/commit/997c58d9b9bbcff55a93b3d3cae8c7361d337929))
+* **workspace:** coalesce refreshes and preserve indexed location reads ([ced8e1e](https://github.com/chasef07/acuity_product/commit/ced8e1e9c26d78856c0375f801ee757a7c27bbb7))
+* **workspace:** coalesce refreshes and preserve indexed location reads ([242bc62](https://github.com/chasef07/acuity_product/commit/242bc628e87c88587e12477e6d648eebbc392f9d))
+* **workspace:** coalesce refreshes and preserve indexed location reads ([#272](https://github.com/chasef07/acuity_product/issues/272)) ([ced8e1e](https://github.com/chasef07/acuity_product/commit/ced8e1e9c26d78856c0375f801ee757a7c27bbb7))
+
 ## [1.2.2](https://github.com/chasef07/acuity_product/compare/v1.2.1...v1.2.2) (2026-09-05)
 
 
