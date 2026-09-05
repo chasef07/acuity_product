@@ -3,31 +3,22 @@ import type {
   AiInteractionCallStatus,
 } from "@/lib/api/generated/types.gen"
 
-export type AppointmentFolder =
-  | "bookings"
-  | "cancellations"
-  | "reschedules"
-
 const appointmentPresentations: Record<
   AiAppointmentOutcome,
   {
-    folder?: AppointmentFolder
     label: string
     title: string
   }
 > = {
   BOOKING: {
-    folder: "bookings",
     label: "Booking",
     title: "Appointment booked",
   },
   CANCELLATION: {
-    folder: "cancellations",
     label: "Cancellation",
     title: "Appointment cancelled",
   },
   RESCHEDULE: {
-    folder: "reschedules",
     label: "Reschedule",
     title: "Appointment rescheduled",
   },
@@ -39,12 +30,6 @@ const appointmentPresentations: Record<
     label: "No appointment actions",
     title: "AI call",
   },
-}
-
-export function appointmentFolder(
-  outcome: AiAppointmentOutcome,
-): AppointmentFolder | undefined {
-  return appointmentPresentations[outcome].folder
 }
 
 export function aiCallCompletionLabel(status: AiInteractionCallStatus) {

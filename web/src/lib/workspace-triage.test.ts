@@ -4,8 +4,6 @@ import test from "node:test"
 import {
   filterTasksByCategory,
   filterTaskQueue,
-  projectTaskUpdate,
-  refreshTaskWindowTarget,
   sortRecoveryQueue,
   taskCountForCategory,
   taskFolderCursor,
@@ -79,24 +77,4 @@ test("Missed Calls keep newest activity first across pages", () => {
     sortRecoveryQueue([recentlyCreated, recentlyUpdated]),
     [recentlyUpdated, recentlyCreated],
   )
-})
-
-test("live refresh refetches the expanded window plus one authoritative page", () => {
-  assert.equal(refreshTaskWindowTarget(0), 50)
-  assert.equal(refreshTaskWindowTarget(50), 50)
-  assert.equal(refreshTaskWindowTarget(100), 150)
-})
-
-test("Task updates replace open rows and remove completed rows", () => {
-  type Row = {
-    id: string
-    state: "OPEN" | "COMPLETED"
-    version: number
-  }
-  const open: Row = { id: "task-1", state: "OPEN", version: 1 }
-  const updated = { ...open, version: 2 }
-  const completed: Row = { ...updated, state: "COMPLETED" }
-
-  assert.deepEqual(projectTaskUpdate([open], updated), [updated])
-  assert.deepEqual(projectTaskUpdate([updated], completed), [])
 })

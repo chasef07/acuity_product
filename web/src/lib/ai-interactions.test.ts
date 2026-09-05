@@ -4,18 +4,9 @@ import test from "node:test"
 import {
   aiCallCompletionLabel,
   aiCallTimelinePresentation,
-  appointmentFolder,
   appointmentOutcomeLabel,
   appointmentOutcomeTitle,
 } from "./ai-interactions.ts"
-
-test("routes verified outcomes to their operator folders", () => {
-  assert.equal(appointmentFolder("BOOKING"), "bookings")
-  assert.equal(appointmentFolder("CANCELLATION"), "cancellations")
-  assert.equal(appointmentFolder("RESCHEDULE"), "reschedules")
-  assert.equal(appointmentFolder("PARTIAL"), undefined)
-  assert.equal(appointmentFolder("INDETERMINATE"), undefined)
-})
 
 test("keeps ambiguous outcomes distinguishable without implying staff work", () => {
   assert.equal(appointmentOutcomeLabel("PARTIAL"), "Partially completed")

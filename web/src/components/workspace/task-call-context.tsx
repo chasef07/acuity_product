@@ -33,6 +33,7 @@ import type {
   Task,
 } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
+import { formatUSPhone } from "@/lib/phone"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
 type TaskCallContextProps = {
@@ -703,7 +704,7 @@ function CallWorkspace({
   onReturnToTask: (() => void) | undefined
   onOpenRecoveryTask: (taskID: string) => void
 }) {
-  const formattedPhone = formatPhone(call.phone)
+  const formattedPhone = formatUSPhone(call.phone)
   const contactName =
     call.displayName &&
     call.displayName !== call.phone &&
@@ -783,12 +784,6 @@ function formatDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60)
   const remainder = seconds % 60
   return `${minutes}:${String(remainder).padStart(2, "0")}`
-}
-
-function formatPhone(phone: string) {
-  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
-  if (!match) return phone
-  return `(${match[1]}) ${match[2]}-${match[3]}`
 }
 
 function callContextTitle(state: CallingCall["state"]) {
