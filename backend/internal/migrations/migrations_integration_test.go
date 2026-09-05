@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -30,12 +31,34 @@ func TestForwardMigrationsAreRepeatableAndExposeCurrentSchema(t *testing.T) {
 		t.Fatalf("repeat migrations: %v", err)
 	}
 
-	var migrationCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+	// Verify the complete applied registry, including independently added migrations.
+	files, err := filepath.Glob("sql/*.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("read migration sources: %v", err)
+	}
+	wantNames := make([]string, 0, len(files))
+	for _, file := range files {
+		wantNames = append(wantNames, filepath.Base(file))
+	}
+	rows, err := pool.Query(ctx, `SELECT name FROM schema_migrations ORDER BY name`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 57 {
-		t.Fatalf("migration count = %d, want 57", migrationCount)
+	var appliedNames []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		appliedNames = append(appliedNames, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(appliedNames, wantNames) {
+		t.Fatalf("applied migrations = %v, want %v", appliedNames, wantNames)
 	}
 	var bookingSearchPreciseExists bool
 	if err := pool.QueryRow(ctx, `
