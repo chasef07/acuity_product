@@ -87,16 +87,16 @@ func (adapter *JWKSAuthenticator) Authenticate(
 	token string,
 ) (access.Identity, error) {
 	if len(token) == 0 || len(token) > 16*1024 {
-		return access.Identity{}, invalid("token size")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return access.Identity{}, invalid("token structure")
+		return access.Identity{}, ErrInvalidCredential
 	}
 
 	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return access.Identity{}, invalid("header encoding")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	var header struct {
 		Algorithm string `json:"alg"`
@@ -106,28 +106,28 @@ func (adapter *JWKSAuthenticator) Authenticate(
 	if err := json.Unmarshal(headerBytes, &header); err != nil ||
 		header.Algorithm != "EdDSA" ||
 		header.KeyID == "" {
-		return access.Identity{}, invalid("header")
+		return access.Identity{}, ErrInvalidCredential
 	}
 
-	key, err := adapter.key(ctx, header.KeyID, false)
+	key, err := adapter.key(ctx, header.KeyID)
 	if err != nil {
 		return access.Identity{}, err
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil || len(signature) != ed25519.SignatureSize {
-		return access.Identity{}, invalid("signature encoding")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	if !ed25519.Verify(key, []byte(parts[0]+"."+parts[1]), signature) {
-		return access.Identity{}, invalid("signature")
+		return access.Identity{}, ErrInvalidCredential
 	}
 
 	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return access.Identity{}, invalid("claims encoding")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	var claims tokenClaims
 	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
-		return access.Identity{}, invalid("claims")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	now := adapter.now()
 	if claims.Issuer != adapter.issuer ||
@@ -137,11 +137,11 @@ func (adapter *JWKSAuthenticator) Authenticate(
 		!claims.EmailVerified ||
 		claims.ExpiresAt == 0 ||
 		!now.Before(time.Unix(claims.ExpiresAt, 0).Add(adapter.clockSkew)) {
-		return access.Identity{}, invalid("claims")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	if claims.NotBefore != nil &&
 		now.Add(adapter.clockSkew).Before(time.Unix(*claims.NotBefore, 0)) {
-		return access.Identity{}, invalid("not before")
+		return access.Identity{}, ErrInvalidCredential
 	}
 	return access.Identity{
 		Subject:       claims.Subject,
@@ -153,13 +153,12 @@ func (adapter *JWKSAuthenticator) Authenticate(
 func (adapter *JWKSAuthenticator) key(
 	ctx context.Context,
 	keyID string,
-	forceRefresh bool,
 ) (ed25519.PublicKey, error) {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
 
 	now := adapter.now()
-	if forceRefresh || len(adapter.keys) == 0 || now.Sub(adapter.fetchedAt) >= adapter.cacheTTL {
+	if len(adapter.keys) == 0 || now.Sub(adapter.fetchedAt) >= adapter.cacheTTL {
 		if err := adapter.refresh(ctx); err != nil {
 			return nil, err
 		}
@@ -167,21 +166,19 @@ func (adapter *JWKSAuthenticator) key(
 	if key, ok := adapter.keys[keyID]; ok {
 		return key, nil
 	}
-	if !forceRefresh {
-		if err := adapter.refresh(ctx); err != nil {
-			return nil, err
-		}
-		if key, ok := adapter.keys[keyID]; ok {
-			return key, nil
-		}
+	if err := adapter.refresh(ctx); err != nil {
+		return nil, err
 	}
-	return nil, invalid("unknown key")
+	if key, ok := adapter.keys[keyID]; ok {
+		return key, nil
+	}
+	return nil, ErrInvalidCredential
 }
 
 func (adapter *JWKSAuthenticator) refresh(ctx context.Context) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, adapter.url, nil)
 	if err != nil {
-		return invalid("JWKS request")
+		return ErrInvalidCredential
 	}
 	response, err := adapter.httpClient.Do(request)
 	if err != nil {
@@ -229,10 +226,6 @@ func (adapter *JWKSAuthenticator) refresh(ctx context.Context) error {
 	adapter.keys = keys
 	adapter.fetchedAt = adapter.now()
 	return nil
-}
-
-func invalid(_ string) error {
-	return ErrInvalidCredential
 }
 
 type tokenClaims struct {

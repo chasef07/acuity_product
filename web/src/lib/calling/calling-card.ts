@@ -1,3 +1,5 @@
+import { formatUSPhone } from "../phone.ts"
+
 export type CallingCardCall = {
   id: string
   direction: "INBOUND" | "OUTBOUND"
@@ -215,7 +217,7 @@ export function projectCallingCard(
         ? { failure: projectCallingFailure(snapshot.failure) }
         : {}),
       offers: activeOffers.map((offer) => {
-        const phone = formatPhone(offer.phone) || "Phone unavailable"
+        const phone = formatUSPhone(offer.phone) || "Phone unavailable"
         const identity = callIdentity(offer, "INBOUND")
         if (offer.offerKind === "STAFF_TRANSFER") {
           if (offer.originatorEmail) {
@@ -476,7 +478,7 @@ function callIdentity(
   >,
   direction: CallingCardCall["direction"],
 ): CallingCardIdentity {
-  const phone = formatPhone(call.phone)
+  const phone = formatUSPhone(call.phone)
   const name = meaningfulName(call.displayName)
   const primary = name || phone || (direction === "INBOUND" ? "Caller" : "Destination")
   return {
@@ -525,10 +527,4 @@ function elapsedTime(connectedAt: string | undefined, now: number) {
 
 function secondsRemaining(deadline: string, now: number) {
   return Math.max(0, Math.ceil((new Date(deadline).getTime() - now) / 1_000))
-}
-
-function formatPhone(phone: string) {
-  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
-  if (!match) return phone
-  return `(${match[1]}) ${match[2]}-${match[3]}`
 }

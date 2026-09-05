@@ -265,7 +265,7 @@ func (server *Server) InspectSignUpEligibility(w http.ResponseWriter, r *http.Re
 	}
 	server.writeJSON(w, http.StatusOK, api.SignUpEligibility{
 		Kind:  api.SignUpEligibilityKind(eligibility.Kind),
-		Email: apiEmail(eligibility.Email),
+		Email: openapi_types.Email(eligibility.Email),
 	})
 }
 
@@ -2848,7 +2848,7 @@ func locationMutationResponse(mutation access.LocationMutation) (api.LocationMut
 func actorResponse(actor access.Actor) api.Actor {
 	return api.Actor{
 		Subject: actor.Subject,
-		Email:   apiEmail(actor.Email),
+		Email:   openapi_types.Email(actor.Email),
 		Type:    api.ActorType(actor.Type),
 	}
 }
@@ -3223,7 +3223,7 @@ func taskResponse(task work.Task) (api.Task, error) {
 		response.AutomaticAcknowledgement = &acknowledgement
 	}
 	if task.CreatedBy.Email != "" {
-		email := apiEmail(task.CreatedBy.Email)
+		email := openapi_types.Email(task.CreatedBy.Email)
 		response.CreatedBy.Email = &email
 	}
 	if task.CompletedBy != nil {
@@ -3232,7 +3232,7 @@ func taskResponse(task work.Task) (api.Task, error) {
 			Subject: task.CompletedBy.Subject,
 		}
 		if task.CompletedBy.Email != "" {
-			email := apiEmail(task.CompletedBy.Email)
+			email := openapi_types.Email(task.CompletedBy.Email)
 			response.CompletedBy.Email = &email
 		}
 	}
@@ -3960,10 +3960,6 @@ func intValue(value *int) int {
 		return 0
 	}
 	return *value
-}
-
-func apiEmail(email string) openapi_types.Email {
-	return openapi_types.Email(email)
 }
 
 var _ IdentityAuthenticator = (*authn.JWKSAuthenticator)(nil)

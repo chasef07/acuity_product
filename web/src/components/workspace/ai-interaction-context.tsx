@@ -13,6 +13,7 @@ import {
   aiCallTimelinePresentation,
   appointmentOutcomeTitle,
 } from "@/lib/ai-interactions"
+import { formatUSPhone } from "@/lib/phone"
 
 export function AIInteractionContext({
   interactionID,
@@ -134,7 +135,7 @@ function AIInteractionDetailView({ detail }: { detail: AiInteractionDetail }) {
           <p className="mt-3 text-sm leading-6">{detail.summary}</p>
         )}
         <p className="mt-3 text-xs tabular-nums text-muted-foreground">
-          {formatPhone(detail.phone)} · {detail.locationName}
+          {formatUSPhone(detail.phone)} · {detail.locationName}
         </p>
       </section>
 
@@ -355,12 +356,6 @@ function EvidenceValue({ label, value }: { label: string; value: string }) {
       </dd>
     </div>
   )
-}
-
-function formatPhone(phone: string) {
-  const match = phone.match(/^\+1(\d{3})(\d{3})(\d{4})$/)
-  if (!match) return phone
-  return `(${match[1]}) ${match[2]}-${match[3]}`
 }
 
 function formatDateTime(value: string) {
