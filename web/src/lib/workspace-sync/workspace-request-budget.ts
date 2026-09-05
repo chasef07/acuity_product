@@ -18,6 +18,7 @@ export type WorkspaceRequestBudget = {
     scopeKey: string,
     refresh: () => Promise<void> | void,
   ) => void
+  pauseAIRefresh: () => () => void
   setDetailRefreshMounted: (mounted: boolean) => void
   signalDetailRefresh: () => void
   visibilityChanged: () => void
@@ -74,7 +75,18 @@ export function createWorkspaceRequestBudget(
     aiGeneration += 1
     hiddenAIRefreshPending = false
     clearAI()
-    if (scopeKey) scheduleAI(0, aiGeneration)
+    if (scopeKey) scheduleAI(aiIntervalMilliseconds, aiGeneration)
+  }
+
+  function pauseAIRefresh() {
+    clearAI()
+    hiddenAIRefreshPending = false
+    const generation = ++aiGeneration
+    return () => {
+      if (generation === aiGeneration && aiScopeKey) {
+        scheduleAI(aiIntervalMilliseconds, generation)
+      }
+    }
   }
 
   function signalDetailRefresh() {
@@ -112,6 +124,7 @@ export function createWorkspaceRequestBudget(
 
   return {
     setAIRefresh,
+    pauseAIRefresh,
     setDetailRefreshMounted,
     signalDetailRefresh,
     visibilityChanged,

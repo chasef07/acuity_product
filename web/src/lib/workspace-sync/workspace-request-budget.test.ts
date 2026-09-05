@@ -12,7 +12,7 @@ test("generic revisions do not restart the AI outcome cadence", async () => {
     aiRequests += 1
   })
   await clock.advance(0)
-  assert.equal(aiRequests, 1)
+  assert.equal(aiRequests, 0)
 
   for (let revision = 1; revision <= 20; revision += 1) {
     budget.setAIRefresh("practice-1:all", async () => {
@@ -20,9 +20,9 @@ test("generic revisions do not restart the AI outcome cadence", async () => {
     })
   }
   await clock.advance(29_999)
-  assert.equal(aiRequests, 1)
+  assert.equal(aiRequests, 0)
   await clock.advance(1)
-  assert.equal(aiRequests, 2)
+  assert.equal(aiRequests, 1)
   budget.stop()
 })
 

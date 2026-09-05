@@ -88,15 +88,16 @@ type TimelinePage struct {
 }
 
 type QueryTasksCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Search     string
-	State      work.TaskState
-	Ordering   work.TaskOrdering
-	Folder     work.TaskFolder
-	Cursor     string
-	Limit      int
+	IncludeCounts *bool
+	Identity      access.Identity
+	PracticeID    string
+	LocationID    string
+	Search        string
+	State         work.TaskState
+	Ordering      work.TaskOrdering
+	Folder        work.TaskFolder
+	Cursor        string
+	Limit         int
 }
 
 func (m *Module) QueryEngagements(
@@ -130,7 +131,7 @@ func (m *Module) QueryEngagements(
 				COALESCE(thread.display_name, '') AS display_name
 			FROM messaging_threads thread
 			WHERE thread.practice_id = $1
-				AND thread.location_id::text = ANY($2::text[])
+				AND thread.location_id = ANY($2::uuid[])
 				AND thread.external_phone = $3
 			UNION ALL
 			SELECT
@@ -140,7 +141,7 @@ func (m *Module) QueryEngagements(
 			FROM human_calling_calls call
 			LEFT JOIN human_calling_handoffs handoff ON handoff.id = call.source_handoff_id
 			WHERE call.practice_id = $1
-				AND call.location_id::text = ANY($2::text[])
+				AND call.location_id = ANY($2::uuid[])
 				AND COALESCE(handoff.phone, call.destination_phone) = $3
 			UNION ALL
 			SELECT
@@ -149,7 +150,7 @@ func (m *Module) QueryEngagements(
 				COALESCE(task.caller_name, '')
 			FROM work_tasks task
 			WHERE task.practice_id = $1
-				AND task.location_id::text = ANY($2::text[])
+				AND task.location_id = ANY($2::uuid[])
 				AND task.phone = $3
 			UNION ALL
 			SELECT
@@ -158,7 +159,7 @@ func (m *Module) QueryEngagements(
 				''
 			FROM ai_interactions interaction
 			WHERE interaction.practice_id = $1
-				AND interaction.location_id::text = ANY($2::text[])
+				AND interaction.location_id = ANY($2::uuid[])
 				AND interaction.phone = $3
 		)
 		SELECT
@@ -175,7 +176,7 @@ func (m *Module) QueryEngagements(
 				SELECT count(*)
 				FROM work_tasks task
 				WHERE task.practice_id = $1
-					AND task.location_id::text = ANY($2::text[])
+					AND task.location_id = ANY($2::uuid[])
 					AND task.phone = $3
 					AND task.state = 'OPEN'
 			),
@@ -184,7 +185,7 @@ func (m *Module) QueryEngagements(
 				FROM messaging_threads thread
 				JOIN messaging_thread_unreads unread ON unread.thread_id = thread.id
 				WHERE thread.practice_id = $1
-					AND thread.location_id::text = ANY($2::text[])
+					AND thread.location_id = ANY($2::uuid[])
 					AND thread.external_phone = $3
 					AND unread.user_subject = $4
 			),

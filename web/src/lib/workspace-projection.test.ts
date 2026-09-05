@@ -515,6 +515,67 @@ test("selection intent clears committed unread markers through the projection", 
   projection.stop()
 })
 
+test("authoritative AI reads replace the next periodic refresh budget", async () => {
+  const realtime = deterministicRealtime()
+  const clock = new ManualClock()
+  let outcomeQueries = 0
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
+      aiOutcomes: async () => {
+        outcomeQueries += 1
+        return success(outcomePage())
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+    environment: { clock, isHidden: () => false },
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await clock.advance(0)
+  assert.equal(outcomeQueries, 3, "startup must not immediately repeat the three authoritative reads")
+  await clock.advance(29_000)
+  await realtime.reconcile(0)
+  assert.equal(outcomeQueries, 6)
+  await clock.advance(29_999)
+  assert.equal(outcomeQueries, 6, "recent authoritative reconciliation satisfies the poll")
+  await clock.advance(1)
+  assert.equal(outcomeQueries, 9, "idle workspaces still refresh AI evidence within 30 seconds")
+  projection.stop()
+})
+
+test("one Task count query serves both folders and pagination preserves those counts", async () => {
+  const realtime = deterministicRealtime()
+  const requests: Array<{ folder?: string; cursor?: string; includeCounts?: boolean }> = []
+  const counts = taskPage(Array.from({ length: 6 }, (_, i) => task(`task-${i}`))).counts
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
+      tasks: async (_token, request) => {
+        requests.push(request)
+        const page = request.cursor
+          ? { items: [task("task-2")], nextCursor: "" }
+          : { items: [task("task-1")], nextCursor: "more" }
+        return success({ ...page, ...(request.includeCounts !== false ? { counts } : {}) })
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.deepEqual(requests.map((request) => request.includeCounts), [true, false])
+  await projection.dispatch({ type: "load-more", window: "tasks" })
+  assert.equal(requests.at(-1)?.includeCounts, false)
+  assert.deepEqual(projection.getSnapshot().tasks.counts, counts)
+  requests.length = 0
+  await realtime.reconcile(0)
+  assert.equal(requests.filter((request) => request.includeCounts !== false).length, 1)
+  assert.deepEqual(projection.getSnapshot().tasks.counts, counts)
+  projection.stop()
+})
+
 test("hidden AI refresh defers and visibility performs one bounded catch-up", async () => {
   const realtime = deterministicRealtime()
   const clock = new ManualClock()
@@ -1157,4 +1218,107 @@ class ManualClock {
     this.now = target
     await new Promise((resolve) => setTimeout(resolve, 0))
   }
+}
+
+test("AI refresh preserves loaded depth using full-size pages and one count query", async () => {
+  const realtime = deterministicRealtime()
+  const requests: Array<{ appointmentAction?: string; cursor?: string; limit?: number; includeCounts?: boolean }> = []
+  const all = Array.from({ length: 50 }, (_, i) => outcome(`booking-${i}`, "BOOKED"))
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
+      aiOutcomes: async (_token, request) => {
+        requests.push(request)
+        const source = request.appointmentAction === "BOOKED" ? all : []
+        const start = Number(request.cursor || "0")
+        const items = source.slice(start, start + (request.limit ?? 10))
+        return success({
+          items,
+          nextCursor: start + items.length < source.length ? String(start + items.length) : "",
+          ...(request.includeCounts ? { counts: { tasks: 0, bookings: 50, cancellations: 0, reschedules: 0 } } : {}),
+        })
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  for (let i = 0; i < 4; i++) await projection.dispatch({ type: "load-more-outcomes", folder: "bookings" })
+  assert.equal(projection.getSnapshot().aiOutcomes.items.length, 50)
+  requests.length = 0
+  await realtime.reconcile(0)
+  assert.equal(requests.length, 3, "one refresh read per outcome folder")
+  assert.equal(requests[0].limit, 50)
+  assert.equal(requests.filter(request => request.includeCounts).length, 1)
+  assert.equal(projection.getSnapshot().aiOutcomes.items.length, 50)
+  projection.stop()
+})
+
+test("requested Task counts cannot silently become zero when omitted", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: taskPage([]) }),
+      tasks: async () => success({ items: [], nextCursor: "" }),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.ok(projection.getSnapshot().tasks.error, "missing authoritative counts must be visible")
+  projection.stop()
+})
+
+
+test("opening Task context preserves pending authoritative count reconciliation", async () => {
+  const realtime = deterministicRealtime()
+  const openTask = task("task-1")
+  let currentPage = taskPage([openTask])
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: currentPage }),
+      tasks: async () => success(currentPage),
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  currentPage = taskPage([openTask, task("task-2")])
+  const pending = await realtime.prepareReconciliation(0)
+  await projection.dispatch({ type: "open-task-context", task: openTask })
+  pending.apply()
+  assert.deepEqual(projection.getSnapshot().tasks.counts, currentPage.counts)
+  assert.equal(projection.getSnapshot().selection.contextPanelOpen, true)
+  projection.stop()
+})
+
+
+for (const type of ["task-committed", "task-created"] as const) {
+  test(`${type} fences counts fetched before the committed change`, async () => {
+    const realtime = deterministicRealtime()
+    const openTask = task("task-1")
+    let currentPage = taskPage([openTask])
+    const projection = createWorkspaceProjection({
+      authority: {
+        ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(13), tasks: currentPage }),
+        tasks: async () => success(currentPage),
+      },
+      realtime: realtime.adapter,
+      preferences: memoryPreferences(),
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    currentPage = taskPage(Array.from({ length: 5 }, (_, i) => task(`task-${i + 1}`)))
+    const pending = await realtime.prepareReconciliation(0)
+    await projection.dispatch({ type, task: type === "task-created" ? task("new-task") : task("task-1", { version: 2 }) })
+    const committedCounts = projection.getSnapshot().tasks.counts
+    assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
+    pending.apply()
+    assert.deepEqual(projection.getSnapshot().tasks.counts, committedCounts)
+    assert.equal(realtime.refreshes, 1)
+    projection.stop()
+  })
 }
