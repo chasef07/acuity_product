@@ -792,6 +792,22 @@ func TestGeneratedHTTPTaskInterfacePreservesTheSharedLifecycle(t *testing.T) {
 		t.Fatalf("Task query counts = %#v, want one Task", page.Counts)
 	}
 
+	countFreeBody, _ := json.Marshal(map[string]any{
+		"practiceId":    authorization.Practice.ID,
+		"search":        "(985) 555-0100",
+		"includeCounts": false,
+	})
+	countFreeResponse := request(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/tasks/query", "task-token", countFreeBody)
+	if countFreeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("count-free Task query status = %d", countFreeResponse.StatusCode)
+	}
+	var countFreePage api.TaskPage
+	decode(t, countFreeResponse, &countFreePage)
+	if countFreePage.Counts != nil || len(countFreePage.Items) != 1 || countFreePage.Items[0].Id.String() != task.ID {
+		t.Fatalf("count-free Task query page = %#v", countFreePage)
+	}
+
 	renameBody, _ := json.Marshal(map[string]any{
 		"expectedVersion": 1,
 		"title":           "Confirm referral receipt",

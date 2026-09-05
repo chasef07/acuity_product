@@ -201,7 +201,7 @@ const messageProjectionSQL = `
 	LEFT JOIN messaging_attachments attachment ON attachment.message_id = message.id
 	WHERE thread.practice_id = $1
 		AND thread.external_phone = $2
-		AND thread.location_id::text = ANY($3::text[])
+		AND thread.location_id = ANY($3::uuid[])
 		AND ($7::uuid IS NULL OR thread.id = $7)
 		AND (
 			$4::timestamptz IS NULL
@@ -366,7 +366,7 @@ const callProjectionSQL = `
 	LEFT JOIN access_platform_operators platform_operator
 		ON platform_operator.user_subject = bridged_staff.staff_subject
 	WHERE call.practice_id = $1
-		AND call.location_id::text = ANY($2::text[])
+		AND call.location_id = ANY($2::uuid[])
 		AND COALESCE(handoff.phone, call.destination_phone) = $3
 		AND (
 			$4::timestamptz IS NULL
@@ -459,7 +459,7 @@ func queryPhoneInteractions(
 			ON location.practice_id = interaction.practice_id
 			AND location.id = interaction.location_id
 		WHERE interaction.practice_id = $1
-			AND interaction.location_id::text = ANY($2::text[])
+			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.phone = $3
 			AND (
 				$4::timestamptz IS NULL

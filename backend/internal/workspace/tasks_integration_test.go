@@ -102,7 +102,7 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		t.Fatalf("query second priority page: %v", err)
 	}
 	assertWorkspaceTaskIDs(t, second.Items, normalNew.ID, nonUrgent.ID)
-	if second.NextCursor != "" || second.Counts != first.Counts {
+	if second.NextCursor != "" || second.Counts == nil || first.Counts == nil || *second.Counts != *first.Counts {
 		t.Fatalf("second priority page metadata = %#v, want counts %#v", second, first.Counts)
 	}
 	timeOrdered, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{

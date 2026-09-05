@@ -101,17 +101,16 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, fmt.Errorf("iterate Tasks: %w", err)
 	}
 	rows.Close()
-	counts, err := queryTaskFolderCounts(
-		ctx,
-		tx,
-		command.PracticeID,
-		locationIDs,
-		command.Search,
-		normalizedDigits(command.Search),
-		command.State,
-	)
-	if err != nil {
-		return work.TaskPage{}, err
+	var counts *work.TaskFolderCounts
+	if command.IncludeCounts == nil || *command.IncludeCounts {
+		value, err := queryTaskFolderCounts(
+			ctx, tx, command.PracticeID, locationIDs,
+			command.Search, normalizedDigits(command.Search), command.State,
+		)
+		if err != nil {
+			return work.TaskPage{}, err
+		}
+		counts = &value
 	}
 	nextCursor := ""
 	if len(items) > limit {
@@ -237,7 +236,7 @@ const taskQuerySelect = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
 	WHERE task.practice_id = $1
-		AND task.location_id::text = ANY($2::text[])
+		AND task.location_id = ANY($2::uuid[])
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -383,7 +382,7 @@ const phoneTaskActivityQuery = `
 		AND acknowledgement.purpose = 'CALLER_TASK_RECEIVED'
 	JOIN work_task_activities activity ON activity.task_id = task.id
 	WHERE task.practice_id = $1
-		AND task.location_id::text = ANY($2::text[])
+		AND task.location_id = ANY($2::uuid[])
 		AND task.phone = $3
 		AND (
 			$4::timestamptz IS NULL
@@ -543,7 +542,7 @@ func queryTaskFolderCounts(
 				ON location.practice_id = task.practice_id
 				AND location.id = task.location_id
 			WHERE task.practice_id = $1
-				AND task.location_id::text = ANY($2::text[])
+				AND task.location_id = ANY($2::uuid[])
 				AND (
 					$3 = ''
 						OR strpos(lower(task.title), lower($3)) > 0

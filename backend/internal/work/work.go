@@ -242,7 +242,7 @@ type ReopenTaskCommand struct {
 type TaskPage struct {
 	Items      []Task
 	NextCursor string
-	Counts     TaskFolderCounts
+	Counts     *TaskFolderCounts
 }
 
 type TaskFolderCounts struct {
