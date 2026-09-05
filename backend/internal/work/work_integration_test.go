@@ -1373,7 +1373,7 @@ func TestWorkspaceQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testi
 		Tasks:      58,
 		Categories: work.TaskCategoryCounts{Appointments: 3, Other: 55},
 	}
-	if firstPage.Counts != wantCounts {
+	if firstPage.Counts == nil || *firstPage.Counts != wantCounts {
 		t.Fatalf("first Task page counts = %#v, want %#v", firstPage.Counts, wantCounts)
 	}
 	secondPage, err := reads.QueryTasks(context.Background(), workspace.QueryTasksCommand{
@@ -1387,7 +1387,7 @@ func TestWorkspaceQueryTasksReturnsStableAuthoritativeCountsAcrossPages(t *testi
 		t.Fatalf("second Task page = %d items, cursor %q; want 8 items and no cursor",
 			len(secondPage.Items), secondPage.NextCursor)
 	}
-	if secondPage.Counts != wantCounts {
+	if secondPage.Counts == nil || *secondPage.Counts != wantCounts {
 		t.Fatalf("second Task page counts = %#v, want %#v", secondPage.Counts, wantCounts)
 	}
 }

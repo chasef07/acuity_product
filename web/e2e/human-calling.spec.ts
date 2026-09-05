@@ -1555,6 +1555,11 @@ async function startAnsweredInboundCall(
     },
   })
   expect(handoffResponse.status()).toBe(201)
+  // Keep the synthetic provider fact causally after the committed handoff.
+  // JavaScript millisecond rounding can otherwise precede its microsecond timestamp.
+  const admittedAt = await database.query<{ occurred_at: string }>(
+    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at`,
+  )
   const caller = {
     callID: "",
     controlID: `${prefix}-caller-control`,
@@ -1564,7 +1569,7 @@ async function startAnsweredInboundCall(
   await deliverProviderEvent(page, {
     eventType: "call.initiated",
     eventId: `${prefix}-caller-initiated`,
-    occurredAt: new Date().toISOString(),
+    occurredAt: admittedAt.rows[0]!.occurred_at,
     payload: {
       connection_id: "fixture-call-control",
       call_control_id: caller.controlID,

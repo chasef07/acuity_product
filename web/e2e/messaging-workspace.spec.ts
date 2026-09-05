@@ -796,6 +796,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     (response) =>
       response.url() === `${portalURL}/v1/tasks/query` &&
       response.request().method() === "POST" &&
+      response.request().postDataJSON()?.includeCounts !== false &&
       response.ok(),
   )
   await createAIStaffTask(page, "medication", "Review medication refill")

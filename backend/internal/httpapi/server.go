@@ -1624,15 +1624,16 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
-		Identity:   identity,
-		PracticeID: body.PracticeId.String(),
-		LocationID: uuidString(body.LocationId),
-		Search:     stringValue(body.Search),
-		State:      state,
-		Ordering:   ordering,
-		Folder:     folder,
-		Cursor:     stringValue(body.Cursor),
-		Limit:      intValue(body.Limit),
+		IncludeCounts: body.IncludeCounts,
+		Identity:      identity,
+		PracticeID:    body.PracticeId.String(),
+		LocationID:    uuidString(body.LocationId),
+		Search:        stringValue(body.Search),
+		State:         state,
+		Ordering:      ordering,
+		Folder:        folder,
+		Cursor:        stringValue(body.Cursor),
+		Limit:         intValue(body.Limit),
 	})
 	if err != nil {
 		server.writeWorkspaceError(w, r, err)
@@ -3511,7 +3512,9 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	response := api.TaskPage{
 		Items:      make([]api.Task, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
-		Counts: api.TaskFolderCounts{
+	}
+	if page.Counts != nil {
+		response.Counts = &api.TaskFolderCounts{
 			Tasks:       page.Counts.Tasks,
 			MissedCalls: page.Counts.MissedCalls,
 			Categories: api.TaskCategoryCounts{
@@ -3523,7 +3526,7 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 				Referrals:     page.Counts.Categories.Referrals,
 				Other:         page.Counts.Categories.Other,
 			},
-		},
+		}
 	}
 	for _, task := range page.Items {
 		item, err := taskResponse(task)

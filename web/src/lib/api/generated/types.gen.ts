@@ -452,7 +452,7 @@ export type TaskInteraction = {
 export type TaskPage = {
     items: Array<Task>;
     nextCursor: string;
-    counts: TaskFolderCounts;
+    counts?: TaskFolderCounts;
 };
 
 export type TaskFolderCounts = {
@@ -982,6 +982,10 @@ export type TaskQueryRequest = {
     state?: 'OPEN' | 'COMPLETED';
     ordering?: 'priority' | 'recent' | 'time';
     folder?: 'work' | 'missed_calls';
+    /**
+     * Include fresh counts across all Task folders in the requested scope and search.
+     */
+    includeCounts?: boolean;
     cursor?: string;
     limit?: number;
 };
