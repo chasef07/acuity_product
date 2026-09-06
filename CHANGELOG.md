@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/chasef07/acuity_product/compare/v1.2.4...v1.3.0) (2026-09-06)
+
+
+### Features
+
+* **analytics:** add tool and pipeline latency diagnostics ([#279](https://github.com/chasef07/acuity_product/issues/279)) ([b05f1d5](https://github.com/chasef07/acuity_product/commit/b05f1d5b742ac9a8be1eba218fe47a092dcc1db7))
+
+
+### Bug Fixes
+
+* **sidebar:** align navigation styling with T3 Code ([#280](https://github.com/chasef07/acuity_product/issues/280)) ([60e124d](https://github.com/chasef07/acuity_product/commit/60e124d8413f004985d881da61a99ad40136c903))
+* **workspace:** unify call history without duplicate entries ([#281](https://github.com/chasef07/acuity_product/issues/281)) ([db8beee](https://github.com/chasef07/acuity_product/commit/db8beeefe5f08b2550184e576642420764f8efa6))
+
 ## [1.2.4](https://github.com/chasef07/acuity_product/compare/v1.2.3...v1.2.4) (2026-09-06)
 
 
