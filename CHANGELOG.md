@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4](https://github.com/chasef07/acuity_product/compare/v1.2.3...v1.2.4) (2026-09-06)
+
+
+### Bug Fixes
+
+* **calling:** clarify call states and simplify controls ([#277](https://github.com/chasef07/acuity_product/issues/277)) ([a1206df](https://github.com/chasef07/acuity_product/commit/a1206dfaa6286b6cd51782baeb94783dbf87a736))
+
 ## [1.2.3](https://github.com/chasef07/acuity_product/compare/v1.2.2...v1.2.3) (2026-09-05)
 
 
