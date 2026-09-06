@@ -16,6 +16,7 @@
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-control: var(--sidebar-control);
+  --color-sidebar-selected: var(--sidebar-selected);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
@@ -77,14 +78,16 @@
   --chart-4: #4f4f4b;
   --chart-5: #171717;
   --radius: 0.75rem;
-  --sidebar: #fafafa;
-  --sidebar-foreground: #27272a;
+  --sidebar: var(--color-zinc-50);
+  --sidebar-foreground: var(--color-zinc-800);
+  --sidebar-muted-foreground: var(--color-zinc-500);
   --sidebar-primary: #0d0d0d;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-control: #f4f4f5;
-  --sidebar-accent: #fcfcfc;
-  --sidebar-accent-foreground: #18181b;
-  --sidebar-border: #e4e4e7;
+  --sidebar-control: var(--color-zinc-100);
+  --sidebar-accent: oklch(99.2% 0 0);
+  --sidebar-selected: #ffffff;
+  --sidebar-accent-foreground: var(--color-zinc-800);
+  --sidebar-border: var(--color-zinc-200);
   --sidebar-ring: #0d0d0d;
 }
 
@@ -116,13 +119,30 @@
   --chart-5: #242424;
   --sidebar: #000000;
   --sidebar-foreground: #f1f3f7;
+  --sidebar-muted-foreground: #a3a3a3;
   --sidebar-primary: #f5f5f3;
   --sidebar-primary-foreground: #0d0d0d;
   --sidebar-control: #0a0a0a;
-  --sidebar-accent: #191a1d;
-  --sidebar-accent-foreground: #f7f9ff;
+  --sidebar-accent: rgb(241 243 247 / 8%);
+  --sidebar-selected: rgb(241 243 247 / 11%);
+  --sidebar-accent-foreground: #f1f3f7;
   --sidebar-border: rgb(255 255 255 / 8%);
   --sidebar-ring: #f5f5f3;
+}
+
+/* Keep sidebar labels and controls on the same zinc palette on desktop and mobile. */
+[data-slot="sidebar"] {
+  --radius: 0.625rem;
+  --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+  --muted-foreground: var(--sidebar-muted-foreground);
+  --border: var(--sidebar-border);
+}
+
+/* Static 256px grain tile, matching T3 Code's chrome surface. */
+[data-sidebar="sidebar"] {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
 @layer base {

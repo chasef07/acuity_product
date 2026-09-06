@@ -14,8 +14,7 @@ import {
   ChartNoAxesCombinedIcon,
   CheckIcon,
   CheckCircle2Icon,
-  ChevronRightIcon,
-  FolderIcon,
+  FolderClosedIcon,
   FolderOpenIcon,
   ListFilterIcon,
   LogOutIcon,
@@ -272,7 +271,7 @@ export function WorkspaceRail({
               onIntent({ type: "submit-search" })
             }}
           >
-            <InputGroup className="h-8 rounded-lg border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
+            <InputGroup className="h-8 rounded-md border-sidebar-border bg-sidebar-control shadow-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-background hover:shadow-sm focus-within:border-sidebar-ring focus-within:bg-background focus-within:ring-2 focus-within:ring-sidebar-ring/30">
               <InputGroupAddon>
                 <SearchIcon />
               </InputGroupAddon>
@@ -307,7 +306,7 @@ export function WorkspaceRail({
         </SidebarHeader>
         <SidebarContent
           ref={scrollContainer}
-          className="gap-1 overflow-y-auto px-2 py-2"
+          className="gap-2 overflow-y-auto px-2 py-2"
           onScroll={rememberScroll}
         >
           <AttentionGroup
@@ -567,6 +566,8 @@ function AttentionGroup({
   action?: React.ReactNode
   children: React.ReactNode
 }) {
+  const FolderStateIcon = expanded ? FolderOpenIcon : FolderClosedIcon
+
   return (
     <Collapsible
       open={expanded}
@@ -580,22 +581,14 @@ function AttentionGroup({
           render={
             <button
               type="button"
-              className="group/disclosure flex h-9 min-w-0 flex-1 shrink-0 items-center rounded-lg px-2 text-left text-sm/5 font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
             />
           }
         >
-          <ChevronRightIcon
+          <FolderStateIcon
             aria-hidden="true"
-            className={cn(
-              "mr-1 size-3.5 shrink-0 stroke-[1.5] text-muted-foreground transition-transform motion-reduce:transition-none",
-              expanded && "rotate-90",
-            )}
+            className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
           />
-          {expanded ? (
-            <FolderOpenIcon className="mr-2 size-4 shrink-0 stroke-[1.65]" />
-          ) : (
-            <FolderIcon className="mr-2 size-4 shrink-0 stroke-[1.65]" />
-          )}
           <span className="truncate">{title}</span>
           {count !== undefined && (
             <span className="ml-auto text-xs tabular-nums text-muted-foreground">
@@ -607,7 +600,7 @@ function AttentionGroup({
       </div>
       <CollapsibleContent>
         <SidebarGroupContent>
-          <SidebarMenu className="mx-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2">
+          <SidebarMenu className="mx-1 w-auto gap-0.5 px-1.5 py-0">
             {children}
           </SidebarMenu>
         </SidebarGroupContent>
@@ -687,6 +680,8 @@ function AppointmentFolder({
   onAIInteractionSelect: (interaction: AiOutcomeItem) => void
   onLoadMore: () => void
 }) {
+  const FolderStateIcon = expanded ? FolderOpenIcon : FolderClosedIcon
+
   return (
     <Collapsible
       open={expanded}
@@ -699,16 +694,13 @@ function AppointmentFolder({
         render={
           <button
             type="button"
-            className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            className="group/disclosure flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           />
         }
       >
-        <ChevronRightIcon
+        <FolderStateIcon
           aria-hidden="true"
-          className={cn(
-            "mr-1.5 size-3.5 shrink-0 stroke-[1.5] transition-transform motion-reduce:transition-none",
-            expanded && "rotate-90",
-          )}
+          className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
         />
         <span className="truncate">{title}</span>
         <span className="ml-auto text-xs tabular-nums text-muted-foreground">
@@ -716,7 +708,7 @@ function AppointmentFolder({
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <SidebarMenu className="ml-3 w-auto gap-0.5 border-l border-sidebar-border py-1 pl-2">
+        <SidebarMenu className="ml-2 w-auto gap-0.5 pl-1.5 py-0">
           {outcomes.map((interaction) => (
             <AIOutcomeRow
               key={interaction.id}
@@ -763,14 +755,14 @@ function AIOutcomeRow({
       >
         <SidebarMenuButton
           isActive={active}
-          className="h-9 rounded-md px-2.5"
+          className="h-7 rounded-lg px-2 text-sidebar-foreground/80"
           onClick={onSelect}
         >
-          <span className="min-w-0 flex-1 truncate text-sm font-medium tabular-nums">
+          <span className="min-w-0 flex-1 truncate text-sm tabular-nums">
             {formatUSPhone(interaction.phone)}
           </span>
           <time
-            className="ml-2 shrink-0 text-xs tabular-nums text-muted-foreground"
+            className="ml-2 shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground"
             dateTime={occurredAt}
           >
             {relativeTime(occurredAt)}
@@ -865,23 +857,26 @@ function TaskRow({
       >
         <SidebarMenuButton
           isActive={active}
-          className="h-9 rounded-md py-0 pr-10 pl-2.5"
+          className={cn(
+            "h-7 rounded-lg py-0 pr-10 pl-2 text-sidebar-foreground/80",
+            task.unread && task.state === "OPEN" && "font-medium text-sidebar-foreground",
+          )}
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 items-center gap-2">
             {task.unread && task.state === "OPEN" && (
-              <span aria-label="Unread conversation" className="size-1.5 shrink-0 rounded-full bg-warning" />
+              <span className="sr-only">Unread conversation: </span>
             )}
             {task.state === "COMPLETED" && (
               <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
             )}
-            <span className="truncate text-sm font-medium">{task.title}</span>
+            <span className="truncate text-sm">{task.title}</span>
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
-      <span className="pointer-events-none absolute top-1 right-1 size-7">
+      <span className="pointer-events-none absolute top-0 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
         <time
-          className="absolute inset-0 flex items-center justify-center text-xs tabular-nums text-muted-foreground transition-opacity duration-150 group-hover/task:opacity-0 group-focus-within/task:opacity-0 motion-reduce:duration-0 motion-reduce:transition-none"
+          className="absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 group-hover/task:opacity-0 group-focus-within/task:opacity-0 motion-reduce:duration-0 motion-reduce:transition-none"
           dateTime={taskRelativeAt(task)}
         >
           {relativeTime(taskRelativeAt(task))}
@@ -957,11 +952,11 @@ function RecoveryRow({
       >
         <SidebarMenuButton
           isActive={active}
-          className="h-9 rounded-md px-2.5"
+          className="h-7 rounded-lg px-2 text-sidebar-foreground/80"
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className="shrink-0 text-sm font-medium tabular-nums">
+            <span className="shrink-0 text-sm tabular-nums">
               {formatUSPhone(row.phone)}
             </span>
             <span className="truncate text-xs text-muted-foreground">
@@ -969,7 +964,7 @@ function RecoveryRow({
             </span>
           </span>
           <time
-            className="ml-2 shrink-0 text-xs tabular-nums text-muted-foreground"
+            className="ml-2 shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground"
             dateTime={row.latestAt}
           >
             {relativeTime(row.latestAt)}
@@ -1006,11 +1001,11 @@ function TextRow({
         <SidebarMenuButton
           isActive={active}
           data-testid="text-attention-row"
-          className="h-9 rounded-md px-2.5"
+          className="h-7 rounded-lg px-2 font-medium text-sidebar-foreground"
           onClick={onSelect}
         >
           <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className="shrink-0 text-sm font-medium tabular-nums">
+            <span className="shrink-0 text-sm tabular-nums">
               {formatUSPhone(row.engagement.phone)}
             </span>
             <span className="truncate text-xs text-muted-foreground">
@@ -1018,7 +1013,7 @@ function TextRow({
             </span>
           </span>
           <time
-            className="ml-2 shrink-0 text-xs tabular-nums text-muted-foreground"
+            className="ml-2 shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground"
             dateTime={row.engagement.latestActivity}
           >
             {relativeTime(row.engagement.latestActivity)}
