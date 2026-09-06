@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import {
   ArrowRightLeftIcon,
   CheckIcon,
+  Grid2X2Icon,
+  LoaderCircleIcon,
   MicIcon,
   MicOffIcon,
   PhoneCallIcon,
@@ -33,6 +35,7 @@ import {
   type CallingDispositionOutcome,
 } from "@/lib/calling/calling-card"
 import type { SoftphoneRuntimeSnapshot } from "@/lib/calling/softphone-runtime"
+import { cn } from "@/lib/utils"
 
 type CallingCardProps = {
   snapshot: SoftphoneRuntimeSnapshot
@@ -66,6 +69,7 @@ export function CallingCard({
   onClose,
 }: CallingCardProps) {
   const [keypadCallID, setKeypadCallID] = useState("")
+  const [transferCallID, setTransferCallID] = useState("")
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 250)
@@ -80,7 +84,7 @@ export function CallingCard({
       role="region"
       aria-label="Call controls"
       data-calling-card-shell={view.shell}
-      size="sm"
+      className="max-h-[calc(100dvh-8rem)] gap-4 overflow-y-auto rounded-2xl shadow-lg shadow-black/5 [--card-spacing:--spacing(5)]"
     >
       {view.kind === "offers" ? (
         <IncomingOfferTray
@@ -106,26 +110,34 @@ export function CallingCard({
             onRetry={onRetry}
             onClose={onClose}
           />
-          <TransferPanel
-            key={view.callId}
-            transfer={view.transfer}
-            onLoadCandidates={onLoadTransferCandidates}
-            onRequest={onRequestTransfer}
-            onCancel={onCancelTransfer}
-          />
           <ActiveCallControls
             view={view}
             keypadOpen={keypadOpen}
+            transferOpen={transferCallID === view.callId}
+            onToggleTransfer={() => {
+              setKeypadCallID("")
+              setTransferCallID((current) => current === view.callId ? "" : view.callId)
+              if (transferCallID !== view.callId) onLoadTransferCandidates()
+            }}
             onEnd={onEnd}
             onMute={onMute}
-            onToggleKeypad={() =>
+            onToggleKeypad={() => {
+              setTransferCallID("")
               setKeypadCallID((current) =>
                 current === view.callId ? "" : view.callId,
               )
-            }
+            }}
+          />
+          <TransferPanel
+            key={view.callId}
+            transfer={view.transfer}
+            open={transferCallID === view.callId}
+            onClose={() => setTransferCallID("")}
+            onRequest={onRequestTransfer}
+            onCancel={onCancelTransfer}
           />
           {keypadOpen && view.controls.slots[2].visible && (
-            <Keypad onDTMF={onDTMF} />
+            <Keypad disabled={view.controls.slots[2].disabled} onDTMF={onDTMF} />
           )}
         </>
       )}
@@ -134,23 +146,35 @@ export function CallingCard({
 }
 
 function ActiveCallHeader({ view }: { view: CallingCardCallView }) {
+  const ended = view.phase === "ended"
   return (
-    <CardHeader>
-      <CardTitle className="min-w-0 text-2xl font-semibold tracking-tight">
-        <h2 className="truncate">{view.identity.primary}</h2>
+    <CardHeader className="gap-2">
+      <CardTitle className="min-w-0 text-xl font-semibold tracking-tight">
+        {ended ? (
+          <h2><span role="status" aria-label={view.status}>{view.status}</span></h2>
+        ) : (
+          <h2 className="truncate">{view.identity.primary}</h2>
+        )}
       </CardTitle>
-      {view.identity.details.length > 0 && (
-        <CardDescription className="flex min-w-0 flex-col">
-          {view.identity.details.map((detail) => (
-            <span key={detail} className="truncate">
-              {detail}
-            </span>
-          ))}
+      {(ended || view.identity.details.length > 0) && (
+        <CardDescription className="min-w-0 break-words text-sm">
+          {[...(ended ? [view.identity.primary] : []), ...view.identity.details].join(" · ")}
         </CardDescription>
       )}
-      <CardAction>
-        <LifecycleStatus status={view.status} />
-      </CardAction>
+      {!ended && (
+        <div className="flex items-center gap-2 text-sm">
+          <span aria-hidden className={cn(
+            "size-2 rounded-full",
+            view.phase === "connected" ? "bg-success" : "bg-muted-foreground motion-safe:animate-pulse",
+          )} />
+          <span role="status" aria-label={view.status}>{view.status}</span>
+          {view.elapsed && (
+            <span aria-label={`Call duration ${view.elapsed}`} className="tabular-nums text-muted-foreground">
+              · {view.elapsed}
+            </span>
+          )}
+        </div>
+      )}
     </CardHeader>
   )
 }
@@ -235,16 +259,17 @@ function IncomingOfferTray({
 
 function TransferPanel({
   transfer,
-  onLoadCandidates,
+  open,
+  onClose,
   onRequest,
   onCancel,
 }: {
   transfer: CallingCardCallView["transfer"]
-  onLoadCandidates: () => void
+  open: boolean
+  onClose: () => void
   onRequest: (recipientSubject: string, handoffNote: string) => void
   onCancel: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const [recipient, setRecipient] = useState("")
   const [note, setNote] = useState("")
   const selectedRecipient =
@@ -275,24 +300,7 @@ function TransferPanel({
     )
   }
 
-  if (!open) {
-    return transfer.canStart ? (
-      <CardContent className="border-t pt-3">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={transfer.pending}
-          onClick={() => {
-            setOpen(true)
-            onLoadCandidates()
-          }}
-        >
-          <ArrowRightLeftIcon />
-          Transfer
-        </Button>
-      </CardContent>
-    ) : null
-  }
+  if (!open || (!transfer.canStart && !transfer.pending)) return null
 
   return (
     <CardContent className="space-y-3 border-t pt-3">
@@ -334,7 +342,7 @@ function TransferPanel({
           size="sm"
           variant="ghost"
           disabled={transfer.pending}
-          onClick={() => setOpen(false)}
+          onClick={onClose}
         >
           Close
         </Button>
@@ -343,14 +351,14 @@ function TransferPanel({
             size="sm"
             disabled={!selectedRecipient || transfer.pending}
             onClick={() => {
-              setOpen(false)
+              onClose()
               setRecipient("")
               setNote("")
               onRequest(selectedRecipient, note)
             }}
           >
             <ArrowRightLeftIcon />
-            {transfer.pending ? "Committing…" : "Transfer"}
+            {transfer.pending ? "Transferring…" : "Transfer call"}
           </Button>
         )}
       </div>
@@ -442,11 +450,12 @@ function ActiveCallActions({
     return null
   }
   return (
-    <CardContent className="flex flex-wrap gap-2">
+    <CardContent className="flex flex-wrap items-center gap-2">
       {view.actions.dispositions.map((action) => (
         <Button
           key={action.outcome}
           size="sm"
+          className="min-h-10 rounded-lg px-3"
           variant={action.primary ? "default" : "outline"}
           disabled={action.disabled}
           onClick={() => onDisposition(action.outcome)}
@@ -458,7 +467,7 @@ function ActiveCallActions({
       {view.actions.retry && (
         <Button
           size="sm"
-          variant="outline"
+          className="min-h-10 rounded-lg px-3"
           disabled={view.actions.retry.disabled}
           onClick={onRetry}
         >
@@ -470,6 +479,7 @@ function ActiveCallActions({
         <Button
           size="sm"
           variant="ghost"
+          className="ml-auto min-h-10 rounded-lg px-3 text-muted-foreground"
           onClick={onClose}
         >
           {view.actions.close.label}
@@ -482,85 +492,111 @@ function ActiveCallActions({
 function ActiveCallControls({
   view,
   keypadOpen,
+  transferOpen,
   onEnd,
   onMute,
   onToggleKeypad,
+  onToggleTransfer,
 }: {
   view: CallingCardCallView
   keypadOpen: boolean
+  transferOpen: boolean
   onEnd: () => void
   onMute: () => void
   onToggleKeypad: () => void
+  onToggleTransfer: () => void
 }) {
   const [mute, end, keypad] = view.controls.slots
+  if (view.phase === "ended") return null
+  if (!view.controls.slots.some((control) => control.visible)) return null
+
   return (
-    <CardFooter className="grid grid-cols-3 items-start gap-3">
-      <ControlSlot control={mute}>
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label={mute.label}
-          disabled={mute.disabled}
-          onClick={onMute}
-        >
-          {mute.label === "Unmute" ? <MicOffIcon /> : <MicIcon />}
-        </Button>
-      </ControlSlot>
-      <ControlSlot control={end}>
-        <Button
-          size="icon"
-          variant="destructive"
-          aria-label={end.label === "Ending…" ? "Ending" : end.label}
-          className="size-12 rounded-full bg-destructive text-background hover:bg-destructive/85 hover:text-background"
-          disabled={end.disabled}
-          onClick={onEnd}
-        >
-          <PhoneOffIcon className="size-5" />
-        </Button>
-      </ControlSlot>
-      <ControlSlot control={keypad}>
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label={keypad.label}
-          aria-expanded={keypadOpen}
-          disabled={keypad.disabled}
-          onClick={onToggleKeypad}
-        >
-          <span aria-hidden className="font-mono tracking-widest">
-            ···
-          </span>
-        </Button>
-      </ControlSlot>
+    <CardFooter className="justify-center gap-3">
+      {mute.visible && (
+        <ControlSlot kind="mute" label={mute.label}>
+          <Button
+            size="icon"
+            variant="secondary"
+            className="size-11 rounded-full aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+            aria-label={mute.label}
+            aria-pressed={mute.label === "Unmute"}
+            disabled={mute.disabled}
+            onClick={onMute}
+          >
+            {mute.label === "Unmute" ? <MicOffIcon /> : <MicIcon />}
+          </Button>
+        </ControlSlot>
+      )}
+      {keypad.visible && (
+        <ControlSlot kind="keypad" label="Keypad">
+          <Button
+            size="icon"
+            variant="secondary"
+            className="size-11 rounded-full"
+            aria-label="Keypad"
+            aria-expanded={keypadOpen}
+            disabled={keypad.disabled}
+            onClick={onToggleKeypad}
+          >
+            <Grid2X2Icon />
+          </Button>
+        </ControlSlot>
+      )}
+      {view.phase === "connected" && (
+        <ControlSlot kind="transfer" label="Transfer">
+          <Button
+            size="icon"
+            variant="secondary"
+            className="size-11 rounded-full"
+            aria-label="Transfer"
+            aria-expanded={transferOpen}
+            disabled={!view.transfer.canStart || view.transfer.pending}
+            onClick={onToggleTransfer}
+          >
+            <ArrowRightLeftIcon />
+          </Button>
+        </ControlSlot>
+      )}
+      {end.visible && (
+        <ControlSlot kind="end" label={end.label}>
+          <Button
+            size="icon"
+            variant="destructive"
+            aria-label={end.label}
+            className="size-11 rounded-full bg-destructive text-white hover:bg-destructive/85 hover:text-white"
+            disabled={end.disabled}
+            onClick={onEnd}
+          >
+            {end.label === "Ending…" ? (
+              <LoaderCircleIcon className="size-5 motion-safe:animate-spin" />
+            ) : (
+              <PhoneOffIcon className="size-5" />
+            )}
+          </Button>
+        </ControlSlot>
+      )}
     </CardFooter>
   )
 }
 
 function ControlSlot({
-  control,
+  kind,
+  label,
   children,
 }: {
-  control: CallingCardCallView["controls"]["slots"][number]
+  kind: string
+  label: string
   children: React.ReactNode
 }) {
   return (
-    <div
-      data-control-slot={control.kind}
-      className="flex min-h-16 flex-col items-center gap-1"
-    >
-      {control.visible ? (
-        <>
-          {children}
-          <span className="text-xs font-medium">{control.label}</span>
-        </>
-      ) : (
-        <div aria-hidden className="invisible size-12" />
-      )}
+    <div data-control-slot={kind} className="flex flex-1 flex-col items-center gap-2">
+      {children}
+      <span className="whitespace-nowrap text-xs font-medium">{label}</span>
     </div>
   )
 }
 
-function Keypad({ onDTMF }: { onDTMF: (digit: string) => void }) {
+function Keypad({ disabled, onDTMF }: { disabled: boolean; onDTMF: (digit: string) => void }) {
   return (
     <CardContent>
       <div aria-label="Keypad" className="grid grid-cols-3 gap-1 border-t pt-3">
@@ -572,6 +608,7 @@ function Keypad({ onDTMF }: { onDTMF: (digit: string) => void }) {
               size="sm"
               variant="outline"
               aria-label={`Send ${digit}`}
+              disabled={disabled}
               onClick={() => onDTMF(digit)}
             >
               {digit}

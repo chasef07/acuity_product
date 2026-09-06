@@ -118,19 +118,19 @@ test("outbound Connected, Ending, and Outcome states retain the End control slot
     ),
     [
       {
-        status: "Connected 00:30",
+        status: "Connected",
         endSlot: 1,
-        end: { kind: "end", visible: true, disabled: false, label: "End" },
+        end: { kind: "end", visible: true, disabled: false, label: "End call" },
       },
       {
-        status: "Ending…",
+        status: "Connected",
         endSlot: 1,
         end: { kind: "end", visible: true, disabled: true, label: "Ending…" },
       },
       {
-        status: "Outcome",
+        status: "Call ended",
         endSlot: 1,
-        end: { kind: "end", visible: false, disabled: true, label: "End" },
+        end: { kind: "end", visible: false, disabled: true, label: "End call" },
       },
     ],
   )
@@ -151,7 +151,7 @@ test("durable endRequested restores the disabled Ending control after reload", (
       ? { status: view.status, end: view.controls.slots[1] }
       : undefined,
     {
-      status: "Ending…",
+      status: "Calling…",
       end: { kind: "end", visible: true, disabled: true, label: "Ending…" },
     },
   )
@@ -458,7 +458,7 @@ test("inbound Connecting, Connected, Ending, and Outcome keep one identity and c
           }
         : undefined,
     ),
-    ["Connecting…", "Connected 00:30", "Ending…", "Outcome"].map(
+    ["Connecting…", "Connected", "Connected", "Call ended"].map(
       (status) => ({
         status,
         identity: {
@@ -614,13 +614,13 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
       dispositions: [
         {
           outcome: "RESOLVED",
-          label: "Resolved",
+          label: "Resolved on call",
           primary: true,
           disabled: false,
         },
         {
           outcome: "FOLLOW_UP_REQUIRED",
-          label: "Follow-up needed",
+          label: "Create follow-up task",
           primary: false,
           disabled: false,
         },
@@ -630,13 +630,13 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
       dispositions: [
         {
           outcome: "COMPLETE_TASK",
-          label: "Resolved",
+          label: "Complete task",
           primary: true,
           disabled: false,
         },
         {
           outcome: "KEEP_OPEN",
-          label: "Follow-up needed",
+          label: "Keep task open",
           primary: false,
           disabled: false,
         },
@@ -644,8 +644,8 @@ test("Outcome exposes only the Staff actions supported by the committed Call", (
     },
     {
       dispositions: [],
-      retry: { label: "Try again", disabled: false },
-      close: { label: "Close" },
+      retry: { label: "Call again", disabled: false },
+      close: { label: "Dismiss" },
     },
   ])
 })
@@ -677,13 +677,13 @@ test("Outcome actions stay visible and disabled while disposition commits", () =
   assert.deepEqual(view?.kind === "call" ? view.actions.dispositions : [], [
     {
       outcome: "RESOLVED",
-      label: "Resolved",
+      label: "Resolved on call",
       primary: true,
       disabled: true,
     },
     {
       outcome: "FOLLOW_UP_REQUIRED",
-      label: "Follow-up needed",
+      label: "Create follow-up task",
       primary: false,
       disabled: true,
     },
@@ -720,7 +720,7 @@ test("settled non-disposition Outcomes always offer Close", () => {
     actions,
     states.map(() => ({
       dispositions: [],
-      close: { label: "Close" },
+      close: { label: "Dismiss" },
     })),
   )
 })
@@ -747,7 +747,7 @@ test("Close waits while a retry or terminal media purge is pending", () => {
 
   assert.deepEqual(view?.kind === "call" ? view.actions : undefined, {
     dispositions: [],
-    retry: { label: "Preparing…", disabled: true },
+    retry: { label: "Calling…", disabled: true },
   })
 
   const purging = projectCallingCard(
@@ -767,4 +767,21 @@ test("Close waits while a retry or terminal media purge is pending", () => {
   assert.deepEqual(purging?.kind === "call" ? purging.actions : undefined, {
     dispositions: [],
   })
+})
+
+test("an unanswered destination, cancellation and failed connection have distinct results", () => {
+  const attempts = [
+    { providerTermination: "NO_ANSWER", endRequested: false, expected: "No answer" },
+    { providerTermination: "BUSY", endRequested: false, expected: "Line busy" },
+    { providerTermination: "DECLINED", endRequested: false, expected: "Call declined" },
+    { providerTermination: "FAILED", endRequested: false, expected: "Call couldn’t connect" },
+    { providerTermination: "MEDIA_READINESS_FAILED", endRequested: false, expected: "Call couldn’t connect" },
+    { providerTermination: "COMPLETED", endRequested: true, expected: "Call ended" },
+    // A provider originator_cancel is normalized to FAILED; Staff intent remains durable.
+    { providerTermination: "FAILED", endRequested: true, expected: "Call ended" },
+  ]
+  for (const { expected, ...attempt } of attempts) {
+    const view = projectCallingCard(snapshot({ ...outboundCall, ...attempt, state: "UNANSWERED" }), now)
+    assert.equal(view?.kind === "call" ? view.status : undefined, expected)
+  }
 })

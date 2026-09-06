@@ -448,7 +448,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     const backendCommittedAt = committed.rows[0]!.committed_at.getTime()
     await expect(
       callCenter(selectedPage).getByRole("status"),
-    ).toHaveText(/^Connected \d{2}:\d{2}$/, { timeout: 1_000 })
+    ).toHaveText("Connected", { timeout: 1_000 })
     const browserRenderedAt = await selectedPage.evaluate(() => Date.now())
     expect(browserRenderedAt - backendCommittedAt).toBeLessThanOrEqual(1_000)
     await deliverProviderEvent(secondaryPage, {
@@ -486,7 +486,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       .toEqual({ loser_state: "ENDED", provider_termination: null })
     await expect(
       callCenter(selectedPage).getByRole("status"),
-    ).toHaveText(/^Connected \d{2}:\d{2}$/, { timeout: 20_000 })
+    ).toHaveText("Connected", { timeout: 20_000 })
     await expect(
       callCenter(selectedPage).getByRole("heading", {
         name: "CallLeg Browser Caller",
@@ -514,23 +514,23 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     await navigationTask.click()
     await expect(
       callCenter(selectedPage).getByRole("status"),
-    ).toHaveText(/^Connected \d{2}:\d{2}$/)
+    ).toHaveText("Connected")
     await expect.poll(() => mediaAnswers(selectedPage)).toBe(
       answersBeforeNavigation,
     )
     await expect(
-      selectedPage.getByRole("button", { name: "End", exact: true }),
+      selectedPage.getByRole("button", { name: "End call", exact: true }),
     ).toBeVisible()
     await selectedPage.reload()
     await expect(
       callCenter(selectedPage).getByRole("status"),
-    ).toHaveText(/^Connected \d{2}:\d{2}$/, { timeout: 20_000 })
+    ).toHaveText("Connected", { timeout: 20_000 })
     await expect(
-      selectedPage.getByRole("button", { name: "End", exact: true }),
+      selectedPage.getByRole("button", { name: "End call", exact: true }),
     ).toBeVisible()
     await expect(
       selectedPage.getByRole("button", { name: "Mute", exact: true }),
-    ).toHaveCount(0)
+    ).toBeDisabled()
     await sendIncomingLeg(
       selectedPage,
       selectedLeg.provider_leg_id,
@@ -539,7 +539,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     )
     await expect.poll(() => mediaAnswers(selectedPage)).toBe(1)
     await expect(
-      selectedPage.getByRole("button", { name: "End", exact: true }),
+      selectedPage.getByRole("button", { name: "End call", exact: true }),
     ).toBeVisible()
     const recordingEndedAt = new Date()
     const recordingStartedAt = new Date(recordingEndedAt.getTime() - 30_000)
@@ -597,7 +597,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       .toBeLessThan(900)
     await expect(callCenter(secondaryPage)).toHaveCount(0)
     await expect(
-      secondaryPage.getByRole("button", { name: "End", exact: true }),
+      secondaryPage.getByRole("button", { name: "End call", exact: true }),
     ).toHaveCount(0)
 
     await expect(
@@ -613,7 +613,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       .getByLabel("Handoff note (optional)")
       .fill("Caller needs the secondary desk")
     await selectedPage
-      .getByRole("button", { name: "Transfer", exact: true })
+      .getByRole("button", { name: "Transfer call", exact: true })
       .click()
 
     type TransferEvidence = {
@@ -737,10 +737,10 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       })
       .toEqual({ transfer: "ACCEPTED", source: "BRIDGED", target: "ANSWERED" })
     await expect(
-      selectedPage.getByRole("button", { name: "End", exact: true }),
+      selectedPage.getByRole("button", { name: "End call", exact: true }),
     ).toBeVisible()
     await expect(
-      secondaryPage.getByRole("button", { name: "End", exact: true }),
+      secondaryPage.getByRole("button", { name: "End call", exact: true }),
     ).toHaveCount(0)
     await deliverProviderEvent(secondaryPage, {
       eventType: "call.bridged",
@@ -756,9 +756,9 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     })
     await expect(
       callCenter(secondaryPage).getByRole("status"),
-    ).toHaveText(/^Connected \d{2}:\d{2}$/, { timeout: 20_000 })
+    ).toHaveText("Connected", { timeout: 20_000 })
     await expect(
-      secondaryPage.getByRole("button", { name: "End", exact: true }),
+      secondaryPage.getByRole("button", { name: "End call", exact: true }),
     ).toBeVisible()
     await expect(callCenter(selectedPage)).toHaveCount(0)
     await expect
@@ -834,7 +834,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       [callID],
     )
     const outcome = callCenter(secondaryPage)
-    await expect(outcome.getByRole("status")).toHaveText("Outcome", {
+    await expect(outcome.getByRole("status")).toHaveText("Call ended", {
       timeout: 1_000,
     })
     const hangupRenderedAt = await selectedPage.evaluate(() => Date.now())
@@ -849,7 +849,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
         exact: false,
       }),
     ).toHaveCount(0)
-    await outcome.getByRole("button", { name: "Resolved", exact: true }).click()
+    await outcome.getByRole("button", { name: "Resolved on call", exact: true }).click()
     await expect(outcome).toHaveCount(0)
     if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
       await tasksSection.click()
@@ -1223,7 +1223,7 @@ async function startAndEndOutboundWhileVoicemail(
   await expect(initialCall.getByRole("status")).toHaveText("Calling…")
   const outboundIdentity = await initialCall.getByRole("heading").textContent()
   expect(outboundIdentity).toBeTruthy()
-  const initialEnd = page.getByRole("button", { name: "End", exact: true })
+  const initialEnd = page.getByRole("button", { name: "Cancel call", exact: true })
   await expect(initialEnd).toBeVisible()
   await expect(initialEnd).toHaveClass(/rounded-full/)
   const stableEndPosition =
@@ -1256,7 +1256,7 @@ async function startAndEndOutboundWhileVoicemail(
     restoredCall.getByRole("button", { name: /^Answer/ }),
   ).toHaveCount(0)
   const restoredEnd = restoredCall.getByRole("button", {
-    name: "End",
+    name: "Cancel call",
     exact: true,
   })
   await expect(restoredEnd).toBeEnabled()
@@ -1381,14 +1381,14 @@ async function startAndEndOutboundWhileVoicemail(
     [outboundCallID],
   )
   await expect(callCenter(page).getByRole("status")).toHaveText(
-    /^Connected \d{2}:\d{2}$/,
+    "Connected",
     { timeout: 1_000 },
   )
   const connectedRenderedAt = await page.evaluate(() => Date.now())
   expect(
     connectedRenderedAt - connectedCommit.rows[0]!.updated_at.getTime(),
   ).toBeLessThanOrEqual(1_000)
-  const connectedEnd = page.getByRole("button", { name: "End", exact: true })
+  const connectedEnd = page.getByRole("button", { name: "End call", exact: true })
   expect(
     (await connectedEnd.locator("..").getAttribute("data-control-slot")) ?? "",
   ).toBe(stableEndPosition)
@@ -1413,7 +1413,7 @@ async function startAndEndOutboundWhileVoicemail(
   })
   await connectedEnd.click()
   await expect.poll(() => hangupRefreshes, { timeout: 10_000 }).toBeGreaterThan(0)
-  const endingButton = page.getByRole("button", { name: "Ending", exact: true })
+  const endingButton = page.getByRole("button", { name: "Ending…", exact: true })
   await expect(endingButton).toBeVisible()
   await expect(endingButton).toBeDisabled()
   await expect(
@@ -1453,7 +1453,7 @@ async function startAndEndOutboundWhileVoicemail(
     [outboundCallID],
   )
   await expect(callCenter(page).getByRole("status")).toHaveText(
-    "Outcome",
+    "Call ended",
     { timeout: 5_000 },
   )
   const remoteRenderedAt = await page.evaluate(() => Date.now())
@@ -1461,7 +1461,7 @@ async function startAndEndOutboundWhileVoicemail(
     remoteRenderedAt - remoteCommit.rows[0]!.updated_at.getTime(),
   ).toBeLessThanOrEqual(1_000)
   await callCenter(page)
-    .getByRole("button", { name: "Resolved", exact: true })
+    .getByRole("button", { name: "Resolved on call", exact: true })
     .click()
   await expect(callCenter(page)).toHaveCount(0)
   await expect(

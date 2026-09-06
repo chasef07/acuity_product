@@ -255,7 +255,7 @@ export function CallingDock({
       {children(snapshot.activeCall, snapshot.occupied)}
       <audio id={remoteAudioElementID} autoPlay className="hidden" />
       {(callingEnabled || snapshot.lease?.owner) && callingCardVisible && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:left-auto md:right-4 md:w-[26rem]">
+        <div className="fixed inset-x-3 bottom-28 z-40 md:left-auto md:right-5 md:w-[23rem]">
           <CallingCard
             snapshot={snapshot}
             onAnswer={(callLegID) => void runtime.answer(callLegID)}
