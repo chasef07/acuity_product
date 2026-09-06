@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/chasef07/acuity_product/compare/v1.3.0...v1.4.0) (2026-09-06)
+
+
+### Features
+
+* **marketing:** add clinical leadership and integration pages ([#284](https://github.com/chasef07/acuity_product/issues/284)) ([c598e75](https://github.com/chasef07/acuity_product/commit/c598e7571e06b7af204eed5fba05703d61da2f4a))
+
+
+### Bug Fixes
+
+* **calling:** restrict NMB inbound ring group to its optical account ([#276](https://github.com/chasef07/acuity_product/issues/276)) ([c52f3e0](https://github.com/chasef07/acuity_product/commit/c52f3e001da51befa19f96fc576d7b5d56b92e25))
+
 ## [1.3.0](https://github.com/chasef07/acuity_product/compare/v1.2.4...v1.3.0) (2026-09-06)
 
 
