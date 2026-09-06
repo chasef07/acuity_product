@@ -203,6 +203,7 @@ type EnsureMessageFollowUpCommand struct {
 }
 
 type EnsureRecoveryTaskCommand struct {
+	TaskID     string
 	CallID     string
 	PracticeID string
 	LocationID string
@@ -455,7 +456,8 @@ func (m *Module) EnsureMessageFollowUp(
 }
 
 // EnsureRecoveryTask attaches compatible missed-call and voicemail evidence to
-// one recovery Task. HumanCalling owns the caller outcome transaction; Work
+// the explicitly linked AI Task, or one recovery Task when no link exists.
+// HumanCalling owns the caller outcome transaction; Work
 // owns the Task and Interaction attachment written inside it. Replays for an
 // exact Call preserve an already completed Task instead of reopening it.
 func (m *Module) EnsureRecoveryTask(
@@ -463,6 +465,7 @@ func (m *Module) EnsureRecoveryTask(
 	tx pgx.Tx,
 	command EnsureRecoveryTaskCommand,
 ) (Task, error) {
+	command.TaskID = strings.TrimSpace(command.TaskID)
 	command.CallID = strings.TrimSpace(command.CallID)
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
@@ -510,6 +513,22 @@ func (m *Module) EnsureRecoveryTask(
 		FOR UPDATE OF task
 	`, command.CallID).Scan(&taskID)
 	inserted := false
+	if err == nil && command.TaskID != "" && taskID != command.TaskID {
+		return Task{}, ErrConflict
+	}
+	if errors.Is(err, pgx.ErrNoRows) && command.TaskID != "" {
+		// The handoff explicitly identifies the same need. Never infer this
+		// relationship from a phone number or another Task on the source call.
+		err = tx.QueryRow(ctx, `
+			SELECT id::text FROM work_tasks
+			WHERE id = $1 AND practice_id = $2 AND location_id = $3
+				AND phone = $4 AND origin = 'ABITA_AI'
+			FOR UPDATE
+		`, command.TaskID, command.PracticeID, command.LocationID, command.Phone).Scan(&taskID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrConflict
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `
 			INSERT INTO work_tasks (
@@ -569,6 +588,18 @@ func (m *Module) EnsureRecoveryTask(
 	} else if err != nil {
 		return Task{}, fmt.Errorf("load exact recovery Task: %w", err)
 	}
+	task, err := loadTask(ctx, tx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.PracticeID != command.PracticeID ||
+		task.LocationID != command.LocationID ||
+		task.Phone != command.Phone ||
+		(task.Origin != TaskOriginVoicemail &&
+			task.Origin != TaskOriginMissedCall &&
+			task.Origin != TaskOriginAbitaAI) {
+		return Task{}, ErrConflict
+	}
 	interaction, err := tx.Exec(ctx, `
 		INSERT INTO work_task_interactions (
 			task_id,
@@ -600,7 +631,8 @@ func (m *Module) EnsureRecoveryTask(
 	}
 	taskChanged := inserted
 	if !inserted {
-		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail
+		upgradeToVoicemail := command.Outcome == RecoveryOutcomeVoicemail &&
+			(task.Origin == TaskOriginVoicemail || task.Origin == TaskOriginMissedCall)
 		updated, err := tx.Exec(ctx, `
 			UPDATE work_tasks
 			SET
@@ -610,7 +642,7 @@ func (m *Module) EnsureRecoveryTask(
 				version = version + 1,
 				updated_at = GREATEST(updated_at, $4)
 			WHERE id = $1
-				AND state = 'OPEN'
+				AND (state = 'OPEN' OR $3)
 				AND (
 					$3
 					OR ($2 AND (
@@ -625,16 +657,9 @@ func (m *Module) EnsureRecoveryTask(
 		}
 		taskChanged = updated.RowsAffected() != 0
 	}
-	task, err := loadTask(ctx, tx, taskID)
+	task, err = loadTask(ctx, tx, taskID)
 	if err != nil {
 		return Task{}, err
-	}
-	if task.PracticeID != command.PracticeID ||
-		task.LocationID != command.LocationID ||
-		task.Phone != command.Phone ||
-		(task.Origin != TaskOriginVoicemail &&
-			task.Origin != TaskOriginMissedCall) {
-		return Task{}, ErrConflict
 	}
 	if inserted || interactionInserted {
 		activityKind := "TASK_CREATED"
@@ -646,7 +671,7 @@ func (m *Module) EnsureRecoveryTask(
 			tx,
 			task,
 			activityKind,
-			task.CreatedBy,
+			ActorSnapshot{Kind: access.ActorService, Subject: "human-calling"},
 			command.OccurredAt,
 		); err != nil {
 			return Task{}, err

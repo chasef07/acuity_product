@@ -17,6 +17,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/chasef07/acuity_product/backend/internal/testaccess"
 	"github.com/chasef07/acuity_product/backend/internal/testdb"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/chasef07/acuity_product/backend/internal/worker"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -7505,9 +7506,26 @@ func prepareInboundFanout(
 	observers ...observability.Observer,
 ) (*pgxpool.Pool, *humancalling.Module, humancalling.ProviderFact, []access.Identity) {
 	t.Helper()
+	return prepareInboundFanoutWithTask(t, now, prefix, provider, staffCount, false, observers...)
+}
+
+func prepareInboundFanoutWithTask(
+	t *testing.T,
+	now time.Time,
+	prefix string,
+	provider *recordingProvider,
+	staffCount int,
+	withTask bool,
+	observers ...observability.Observer,
+) (*pgxpool.Pool, *humancalling.Module, humancalling.ProviderFact, []access.Identity) {
+	t.Helper()
 	pool := testdb.Open(t)
 	accessModule := access.New(pool, func() time.Time { return now })
-	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, staffCount)
+	var officeKeys []string
+	if withTask {
+		officeKeys = []string{prefix + "-office"}
+	}
+	authorization, staff := provisionConcurrentStaff(t, accessModule, now, prefix, staffCount, officeKeys...)
 	var observer observability.Observer
 	if len(observers) > 0 {
 		observer = observers[0]
@@ -7525,7 +7543,23 @@ func prepareInboundFanout(
 	}, func() time.Time { return now })
 	prepareCredentials(t, calling)
 	readyConcurrentStaff(t, calling, staff, prefix+"-browser")
+	var taskID string
+	if withTask {
+		module := work.New(pool, accessModule, func() time.Time { return now })
+		task, _, err := module.CreateAITask(context.Background(), work.CreateAITaskCommand{
+			Service: access.ServiceIdentity{Subject: "abita-" + prefix, PracticeID: authorization.Practice.ID,
+				LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}},
+			OfficeKey: prefix + "-office", OfficePhone: "+15555550199", SourceCallID: prefix + "-source",
+			IdempotencyKey: prefix + "-task", Phone: "+15555550100", Summary: "Review appointment request",
+			Message: "Synthetic caller asks staff to review appointment options.", Category: work.TaskCategoryAppointments, Urgency: work.TaskUrgencyNormal,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		taskID = task.ID
+	}
 	_, err := calling.CreateHandoff(context.Background(), humancalling.CreateHandoffCommand{
+		TaskID: taskID,
 		Service: humancalling.ServiceIdentity{
 			Subject: "abita-" + prefix, PracticeID: authorization.Practice.ID,
 		},
@@ -7609,6 +7643,7 @@ func provisionConcurrentStaff(
 	now time.Time,
 	prefix string,
 	count int,
+	officeKeys ...string,
 ) (access.Authorization, []access.Identity) {
 	t.Helper()
 	accessGrants := make([]access.AccessGrantProvision, count)
@@ -7630,6 +7665,7 @@ func provisionConcurrentStaff(
 			Key: prefix + "-practice", Name: prefix + " practice",
 			Locations: []access.LocationProvision{{
 				Key: prefix + "-location", Name: prefix + " location",
+				AbitaOfficeKeys: officeKeys,
 			}},
 			AccessGrants: accessGrants,
 		}},

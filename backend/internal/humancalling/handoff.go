@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -53,6 +54,17 @@ func (m *Module) CreateHandoff(
 	if err := validateHandoff(command, m.config.HandoffSIPDomain); err != nil {
 		return Handoff{}, err
 	}
+	if command.TaskID != "" {
+		if m.work == nil {
+			return Handoff{}, ErrInvalidInput
+		}
+		if err := m.work.ValidateHandoffTask(ctx, tx, command.Service, command.TaskID, command.LocationID, command.SourceCallID, command.Contact.Phone); err != nil {
+			if errors.Is(err, work.ErrDenied) {
+				return Handoff{}, ErrDenied
+			}
+			return Handoff{}, err
+		}
+	}
 	fingerprint, err := handoffFingerprint(command)
 	if err != nil {
 		return Handoff{}, err
@@ -90,12 +102,12 @@ func (m *Module) CreateHandoff(
 			id, service_subject, practice_id, location_id, source_call_id,
 			idempotency_key, input_fingerprint, phone, phone_source,
 			display_name, name_source, transfer_reason, reason_source, expires_at,
-			created_at
+			created_at, task_id
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''),
-			NULLIF($12, ''), NULLIF($13, ''), $14, $15
+			NULLIF($12, ''), NULLIF($13, ''), $14, $15, NULLIF($16, '')::uuid
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING id::text
@@ -104,7 +116,7 @@ func (m *Module) CreateHandoff(
 		fingerprint[:], command.Contact.Phone,
 		command.Contact.PhoneSource, command.Contact.DisplayName,
 		command.Contact.NameSource, command.Contact.TransferReason,
-		command.Contact.ReasonSource, result.ExpiresAt, issuedAt,
+		command.Contact.ReasonSource, result.ExpiresAt, issuedAt, command.TaskID,
 	).Scan(&insertedID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Handoff{}, fmt.Errorf("create handoff: %w", err)
@@ -216,6 +228,11 @@ func appendTimeline(
 }
 
 func validateHandoff(command CreateHandoffCommand, sipDomain string) error {
+	if command.TaskID != "" {
+		if _, err := uuid.Parse(command.TaskID); err != nil {
+			return ErrInvalidInput
+		}
+	}
 	if strings.TrimSpace(command.Service.Subject) == "" ||
 		strings.TrimSpace(command.Service.PracticeID) == "" ||
 		strings.TrimSpace(command.LocationID) == "" ||
@@ -241,10 +258,11 @@ func handoffFingerprint(command CreateHandoffCommand) ([32]byte, error) {
 		SourceCallID   string
 		IdempotencyKey string
 		Contact        ContactContext
+		TaskID         string `json:",omitempty"`
 	}{
 		Service:    service{Subject: command.Service.Subject, PracticeID: command.Service.PracticeID},
 		LocationID: command.LocationID, SourceCallID: command.SourceCallID,
-		IdempotencyKey: command.IdempotencyKey, Contact: command.Contact,
+		IdempotencyKey: command.IdempotencyKey, Contact: command.Contact, TaskID: command.TaskID,
 	})
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("encode handoff fingerprint: %w", err)
