@@ -24,6 +24,7 @@ export type CallingCardCall = {
   connectedAt?: string
   retryAllowed: boolean
   endRequested: boolean
+  providerTermination?: string
 }
 
 export type CallingCardOffer = {
@@ -92,7 +93,9 @@ export type CallingCardCallView = {
   shell: "calling-card"
   kind: "call"
   callId: string
+  phase: "calling" | "connected" | "ended"
   status: string
+  elapsed?: string
   identity: {
     primary: string
     details: string[]
@@ -184,7 +187,7 @@ export type CallingCardActions = {
     disabled: boolean
   }
   close?: {
-    label: "Close"
+    label: "Dismiss"
   }
 }
 
@@ -263,26 +266,32 @@ export function projectCallingCard(
     shell: "calling-card",
     kind: "call",
     callId: call.id,
-    status: callStatus(call, ending, _now),
+    phase: isOutcomeState(call.state)
+      ? "ended"
+      : call.state === "CONNECTED" ? "connected" : "calling",
+    status: callStatus(call),
+    ...(call.state === "CONNECTED"
+      ? { elapsed: elapsedTime(call.connectedAt, _now) }
+      : {}),
     identity: callIdentity(call, call.direction),
     controls: {
       slots: [
         {
           kind: "mute",
-          visible: snapshot.controls.canMute,
-          disabled: ending,
+          visible: call.state === "CONNECTED",
+          disabled: ending || !snapshot.controls.canMute,
           label: snapshot.muted ? "Unmute" : "Mute",
         },
         {
           kind: "end",
           visible: snapshot.controls.canEnd || ending,
           disabled: ending || !snapshot.controls.canEnd,
-          label: ending ? "Ending…" : "End",
+          label: ending ? "Ending…" : (call.state === "CONNECTED" || call.connectedAt) ? "End call" : "Cancel call",
         },
         {
           kind: "keypad",
-          visible: snapshot.controls.canKeypad,
-          disabled: ending,
+          visible: call.state === "CONNECTED",
+          disabled: ending || !snapshot.controls.canKeypad,
           label: "Keypad",
         },
       ],
@@ -290,7 +299,7 @@ export function projectCallingCard(
     actions: projectActions(call, snapshot),
     transfer: {
       pending: Boolean(snapshot.pending?.transfer),
-      canStart: Boolean(snapshot.controls.canTransfer),
+      canStart: Boolean(snapshot.controls.canTransfer) && !ending,
       candidates: [...snapshot.transferCandidates],
       ...(activeTransfer
         ? {
@@ -301,7 +310,7 @@ export function projectCallingCard(
                 activeTransfer.state === "ACCEPTED"
                   ? "Staff answered · confirming transfer"
                   : `Ringing ${activeTransfer.recipientEmail}`,
-              canCancel: true,
+              canCancel: !ending,
             },
           }
         : {}),
@@ -327,7 +336,7 @@ function projectActions(
     : []
   const retry = snapshot.controls.canRetry && call.retryAllowed
     ? {
-        label: snapshot.pending?.retry ? "Preparing…" : "Try again",
+        label: snapshot.pending?.retry ? "Calling…" : "Call again",
         disabled: Boolean(snapshot.pending?.retry),
       }
     : undefined
@@ -336,7 +345,7 @@ function projectActions(
     !snapshot.mediaAttachment &&
     !snapshot.pending?.retry &&
     !snapshot.pending?.disposition
-      ? { label: "Close" as const }
+      ? { label: "Dismiss" as const }
       : undefined
   return {
     dispositions,
@@ -360,24 +369,24 @@ function dispositionChoices(
 ): Array<Omit<CallingCardActions["dispositions"][number], "disabled">> {
   if (call.direction === "INBOUND") {
     return [
-      { outcome: "RESOLVED", label: "Resolved", primary: true },
+      { outcome: "RESOLVED", label: "Resolved on call", primary: true },
       {
         outcome: "FOLLOW_UP_REQUIRED",
-        label: "Follow-up needed",
+        label: "Create follow-up task",
         primary: false,
       },
     ]
   }
   if (call.entryPoint === "TASK") {
     return [
-      { outcome: "COMPLETE_TASK", label: "Resolved", primary: true },
-      { outcome: "KEEP_OPEN", label: "Follow-up needed", primary: false },
+      { outcome: "COMPLETE_TASK", label: "Complete task", primary: true },
+      { outcome: "KEEP_OPEN", label: "Keep task open", primary: false },
     ]
   }
   if (call.connectedAt) {
     return [
-      { outcome: "RESOLVED", label: "Resolved", primary: true },
-      { outcome: "CREATE_TASK", label: "Follow-up needed", primary: false },
+      { outcome: "RESOLVED", label: "Resolved on call", primary: true },
+      { outcome: "CREATE_TASK", label: "Create follow-up task", primary: false },
     ]
   }
   return [
@@ -494,13 +503,26 @@ function meaningfulName(displayName: string) {
   return name.toLowerCase() === "incoming caller" ? "" : name
 }
 
-function callStatus(call: CallingCardCall, ending: boolean, now: number) {
-  if (ending) return "Ending…"
-  if (call.state === "CONNECTED") {
-    return `Connected ${elapsedTime(call.connectedAt, now)}`
+function callStatus(call: CallingCardCall) {
+  switch (call.state) {
+    case "CONNECTED": return "Connected"
+    case "UNANSWERED":
+      switch (call.providerTermination) {
+        case "BUSY": return "Line busy"
+        case "DECLINED": return "Call declined"
+        case "FAILED":
+        case "MEDIA_READINESS_FAILED": return "Call couldn’t connect"
+        default: return call.endRequested ? "Call ended" : "No answer"
+      }
+    case "MISSED": return "Missed call"
+    case "VOICEMAIL": return "Voicemail"
+    case "VOICEMAIL_GREETING": return "Voicemail greeting"
+    case "VOICEMAIL_RECORDING": return "Recording voicemail"
+    case "NEEDS_DISPOSITION":
+    case "RESOLVED":
+    case "FOLLOW_UP_REQUIRED": return "Call ended"
+    default: return call.direction === "OUTBOUND" ? "Calling…" : "Connecting…"
   }
-  if (isOutcomeState(call.state)) return "Outcome"
-  return call.direction === "OUTBOUND" ? "Calling…" : "Connecting…"
 }
 
 function isOutcomeState(state: CallingCardCall["state"]) {

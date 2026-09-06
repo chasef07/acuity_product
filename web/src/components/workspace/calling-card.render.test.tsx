@@ -6,32 +6,47 @@ import { CallingCard, CallingFailureNotice } from "./calling-card.tsx"
 import type { CallingCall } from "../../lib/api/generated/types.gen.ts"
 import type { SoftphoneRuntimeSnapshot } from "../../lib/calling/softphone-runtime.ts"
 
-test("rendered Call states keep one accessible status and stable control order", () => {
-  const states = [
-    call({ state: "PREPARING" }),
-    call({ state: "CONNECTED", connectedAt: "2026-08-26T15:00:00Z" }),
-    call({ state: "CONNECTED", endRequested: true }),
-  ]
-
-  for (const activeCall of states) {
-    const html = render(snapshot({ activeCall }))
+test("connected controls stay ordered during hangup without claiming the call ended", () => {
+  for (const endRequested of [false, true]) {
+    const html = render(snapshot({ activeCall: call({
+      state: "CONNECTED", connectedAt: "2026-08-26T15:00:00Z", endRequested,
+    }) }))
     assert.equal(matches(html, 'role="status"'), 1)
-    assert.equal(matches(html, 'data-calling-card-shell="calling-card"'), 1)
-    assert.ok(
-      html.indexOf('data-control-slot="mute"') <
-        html.indexOf('data-control-slot="end"'),
-    )
-    assert.ok(
-      html.indexOf('data-control-slot="end"') <
-        html.indexOf('data-control-slot="keypad"'),
-    )
+    assert.match(html, /aria-label="Connected"/)
+    assert.doesNotMatch(html, /Call ended|Outcome/)
+    const controls = ["mute", "keypad", "transfer", "end"]
+    for (let index = 1; index < controls.length; index++) {
+      assert.ok(html.indexOf(`data-control-slot="${controls[index - 1]}"`) <
+        html.indexOf(`data-control-slot="${controls[index]}"`))
+    }
+    if (endRequested) assert.match(html, /aria-label="Ending…"[^>]*disabled/)
   }
-  assert.match(render(snapshot({ activeCall: states[0] })), /aria-label="Calling…"/)
-  assert.match(
-    render(snapshot({ activeCall: states[1] })),
-    /aria-label="Connected \d+:\d{2}"/,
-  )
-  assert.match(render(snapshot({ activeCall: states[2] })), /aria-label="Ending…"/)
+})
+
+test("dialing shows just Calling and Cancel call", () => {
+  const html = render(snapshot({ activeCall: call({ state: "PREPARING" }) }))
+  assert.match(html, /aria-label="Calling…"/)
+  assert.match(html, /aria-label="Cancel call"/)
+  assert.doesNotMatch(html, /data-control-slot="(?:mute|keypad|transfer)"/)
+})
+
+test("no answer has an explicit result, redial and dismissal with no empty controls", () => {
+  const html = render(snapshot({
+    pendingDisposition: call({ state: "UNANSWERED", retryAllowed: true }),
+    controls: { canEnd: false, canMute: false, canKeypad: false, canTransfer: false,
+      canRetry: true, canDispose: false },
+  }))
+  assert.match(html, /aria-label="No answer"/)
+  assert.match(html, />Call again</)
+  assert.match(html, />Dismiss</)
+  assert.doesNotMatch(html, /Outcome|Try again|data-slot="card-footer"|data-control-slot/)
+})
+
+test("muting is a pressed control and the timer is outside the live status", () => {
+  const html = render(snapshot({ muted: true, activeCall: call({ state: "CONNECTED" }) }))
+  assert.match(html, /aria-label="Unmute" aria-pressed="true"/)
+  assert.match(html, /role="status" aria-label="Connected">Connected<\/span>/)
+  assert.match(html, /aria-label="Call duration/)
 })
 
 test("rendered ownership and media failures expose their exact recovery actions", () => {
@@ -127,7 +142,7 @@ test("live call warnings distinguish delayed requests and automatic reconnects w
     assert.match(html, new RegExp(`>${title}<`))
     assert.match(html, /role="alert"/)
     assert.match(html, /aria-label="Connected/)
-    assert.match(html, /aria-label="End"/)
+    assert.match(html, /aria-label="End call"/)
     assert.doesNotMatch(html, /Calling disconnected|Calls are paused|Refresh page/)
     assert.doesNotMatch(html, /technical request detail/)
   }
