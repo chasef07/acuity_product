@@ -310,7 +310,7 @@ at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
 | Abita Eye Group | North Miami Beach Optical | `north-miami-beach-optical` | `+13055095333` | Not activated |
 | Acuity Demo | Rheumatology | `dev`, `rheumatology-demo` | `+14843989071` | `+14843989071` |
 | Acuity Demo | Ophthalmology | `ophthalmology-demo` | `+18027878312` | Not activated |
-| Acuity Demo | Mental Health | `mental-health-demo` | `+13207388132` | Not activated |
+| Acuity Demo | New Tampa Eye Institute | `new-tampa-demo` | `+13207388132` | Not activated |
 
 The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
 voicemail greeting. The Acuity Demo Practice is a separate tenant.
@@ -327,10 +327,31 @@ access does not bypass an explicit group. Migration `0061_location_ring_groups.s
 seeds the existing NMB group from its provisioned account; provisioning also
 sets it for a fresh installation. Deploy the migration and backend together.
 
+New Tampa uses `new-tampa-demo` as both its Location provisioning key and
+canonical Abita Office Route. Migration `0062_new_tampa_demo_key.sql` renames
+the existing `mental-health-demo` Location in place, preserving its ID, access,
+voice configuration, Tasks, and Interaction history. It also updates the visible
+name, so an existing installation does not need full provisioning reconciliation
+for this rename. Fresh provisioning uses the new Location key and retains the legacy inbound
+route during the rollout window.
+
+Deploy Product with this migration before the agent key change accompanying
+[Agent PR #410](https://github.com/chasef07/abita_agent/pull/410). Verify the new
+key and name still identify the original Location and the 320 number. Existing
+installations temporarily retain `mental-health-demo` as an inbound route to
+that same Location for old agent jobs and delayed receipts. Then deploy the
+agent using `new-tampa-demo`; verify a synthetic Interaction, Staff Task, and
+handoff all resolve to the original Location. Remove the old route from provisioning and retire it in a separate migration
+only after old jobs and receipt retries have drained. Do not reconcile
+an older provisioning JSON after this migration: its retired Location key would
+create a duplicate. An agent rollback can use the temporary legacy route without
+reverting the Product Location key. Historical payloads retain their original
+reported office key as evidence.
+
 Rheumatology preserves the stable `demo-484` provisioning key, its existing
 voice and Messaging configuration, and its Acuity Demo greeting while both
 `dev` and `rheumatology-demo` resolve to that one Location. Ophthalmology and
-Mental Health have voice configuration only; neither has an inferred Messaging
+New Tampa Eye Institute have voice configuration only; neither has an inferred Messaging
 sender or profile. Sweetwater Optical also has no voice or Messaging
 configuration yet. The same file contains 32 Abita Access Grants: Jason is the
 sole Admin and the other 31 entries are Staff with reviewed Location Scopes.

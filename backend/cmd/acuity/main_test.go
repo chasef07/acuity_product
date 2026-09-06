@@ -118,7 +118,8 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Office: "crystal-river", Location: "crystal-river"},
 		{Practice: "acuity-demo", Office: "dev", Location: "demo-484"},
 		{Practice: "abita-eye-group", Office: "hollywood", Location: "hollywood"},
-		{Practice: "acuity-demo", Office: "mental-health-demo", Location: "mental-health-demo"},
+		{Practice: "acuity-demo", Office: "mental-health-demo", Location: "new-tampa-demo"},
+		{Practice: "acuity-demo", Office: "new-tampa-demo", Location: "new-tampa-demo"},
 		{Practice: "abita-eye-group", Office: "north-miami-beach-optical", Location: "north-miami-beach-optical"},
 		{Practice: "acuity-demo", Office: "ophthalmology-demo", Location: "ophthalmology-demo"},
 		{Practice: "acuity-demo", Office: "rheumatology-demo", Location: "demo-484"},
@@ -164,7 +165,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Key: "sweetwater", Name: "Sweetwater"},
 		{Practice: "abita-eye-group", Key: "sweetwater-optical", Name: "Sweetwater Optical"},
 		{Practice: "acuity-demo", Key: "demo-484", Name: "Rheumatology"},
-		{Practice: "acuity-demo", Key: "mental-health-demo", Name: "Mental Health"},
+		{Practice: "acuity-demo", Key: "new-tampa-demo", Name: "New Tampa Eye Institute"},
 		{Practice: "acuity-demo", Key: "ophthalmology-demo", Name: "Ophthalmology"},
 	}
 	if !reflect.DeepEqual(locations, wantLocations) {
@@ -191,7 +192,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 			demoLocationNames = append(demoLocationNames, location.Name)
 		}
 	}
-	wantDemoLocationNames := []string{"Mental Health", "Ophthalmology", "Rheumatology"}
+	wantDemoLocationNames := []string{"New Tampa Eye Institute", "Ophthalmology", "Rheumatology"}
 	if !reflect.DeepEqual(demoLocationNames, wantDemoLocationNames) {
 		t.Fatalf(
 			"Acuity Demo selector Locations = %#v, want %#v",
@@ -242,7 +243,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Location: "spring-hill", Phone: "+17275919997"},
 		{Practice: "abita-eye-group", Location: "sweetwater", Phone: "+17864654836"},
 		{Practice: "acuity-demo", Location: "demo-484", Phone: "+14843989071"},
-		{Practice: "acuity-demo", Location: "mental-health-demo", Phone: "+13207388132"},
+		{Practice: "acuity-demo", Location: "new-tampa-demo", Phone: "+13207388132"},
 		{Practice: "acuity-demo", Location: "ophthalmology-demo", Phone: "+18027878312"},
 	}
 	if !reflect.DeepEqual(voiceNumbers, wantVoiceNumbers) {
@@ -388,7 +389,7 @@ func TestProductionProvisioningBuildsAbitaAndIsolatedDemoTopology(t *testing.T) 
 		{Practice: "abita-eye-group", Location: "spring-hill", Greeting: sharedGreeting},
 		{Practice: "abita-eye-group", Location: "sweetwater", Greeting: sharedGreeting},
 		{Practice: "acuity-demo", Location: "demo-484", Greeting: demoGreeting},
-		{Practice: "acuity-demo", Location: "mental-health-demo", Greeting: "Please leave a message after the beep."},
+		{Practice: "acuity-demo", Location: "new-tampa-demo", Greeting: "Please leave a message after the beep."},
 		{Practice: "acuity-demo", Location: "ophthalmology-demo", Greeting: "Please leave a message after the beep."},
 	}
 	if !reflect.DeepEqual(greetings, wantGreetings) {
@@ -624,9 +625,9 @@ func TestProductionProvisioningReconcilesEstablishedConfiguration(t *testing.T) 
 	); err != nil {
 		t.Fatalf("count reconciled demo topology: %v", err)
 	}
-	if demoLocationCount != 3 || demoRouteCount != 4 || demoVoiceCount != 3 || demoMessagingCount != 1 {
+	if demoLocationCount != 3 || demoRouteCount != 5 || demoVoiceCount != 3 || demoMessagingCount != 1 {
 		t.Fatalf(
-			"reconciled demo topology = Locations:%d routes:%d voice:%d Messaging:%d, want 3/4/3/1",
+			"reconciled demo topology = Locations:%d routes:%d voice:%d Messaging:%d, want 3/5/3/1",
 			demoLocationCount,
 			demoRouteCount,
 			demoVoiceCount,
