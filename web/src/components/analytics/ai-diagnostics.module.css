@@ -472,3 +472,25 @@
     transition: none;
   }
 }
+
+.callTrends {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
+  padding: 28px 0;
+}
+.callTrend { min-width: 0; }
+.trendTooltip {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.trendData { margin-top: 12px; font-size: 11px; color: var(--muted-foreground); }
+.trendData summary { cursor: pointer; width: fit-content; }
+.trendData summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+@media (max-width: 800px) {
+  .callTrends { grid-template-columns: 1fr; }
+}

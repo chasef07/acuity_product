@@ -139,11 +139,11 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByText("Availability calls", { exact: true }),
     ).toHaveCount(0)
     await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0)
-    await expect(performance.getByText("Call volume", { exact: true })).toBeVisible()
-    await expect(performance.locator(".recharts-line")).toHaveCount(4)
-    await expectConnectedZeroBaseline(performance, 4)
+    await expect(performance.getByText("Call volume", { exact: true })).toHaveCount(0)
+    await expect(performance.locator(".recharts-line")).toHaveCount(3)
+    await expectConnectedZeroBaseline(performance, 3)
     await page.screenshot({
-      path: testInfo.outputPath("admin-bookings-call-volume.png"),
+      path: testInfo.outputPath("admin-bookings.png"),
       fullPage: true,
     })
     const breakdown = page.getByRole("region", {

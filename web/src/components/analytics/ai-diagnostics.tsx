@@ -3,6 +3,8 @@
 import { useState } from "react"
 import { ArrowUpRightIcon } from "lucide-react"
 import {
+  Bar,
+  ComposedChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -24,7 +26,12 @@ export type SelectDiagnostic = (
   interactionID: string,
   focus?: DiagnosticFocus,
 ) => void
-const stageLabels = { e2e: "Response time", stt: "STT", llm: "LLM", tts: "TTS" }
+const stageLabels = {
+  e2e: "Response time",
+  stt: "STT",
+  llm: "LLM",
+  tts: "TTS",
+}
 const stageNotes = {
   e2e: "Caller stop to first audio",
   stt: "Final transcript",
@@ -173,6 +180,166 @@ function Trend({ stage }: { stage: OperatorAiLatencyDistribution }) {
     </div>
   )
 }
+export function DiagnosticsCallTrends({
+  summary,
+}: {
+  summary: OperatorAiAnalyticsSummary
+}) {
+  return (
+    <div className={styles.callTrends}>
+      {(["volume", "transfers"] as const).map((metric) => {
+        const transfers = metric === "transfers"
+        const title = transfers
+          ? "Transfer rate over time"
+          : "Call volume over time"
+        return (
+          <section key={metric} aria-label={title} className={styles.callTrend}>
+            <div className={styles.sectionHeading}>
+              <h2>{title}</h2>
+              <span>
+                {transfers ? "Transferred / all AI calls" : "AI calls per day"}
+              </span>
+            </div>
+            <strong className={styles.secondaryHeadline}>
+              {transfers
+                ? summary.totalCalls
+                  ? `${(summary.transferRate * 100).toFixed(1)}%`
+                  : "—"
+                : summary.totalCalls.toLocaleString()}
+            </strong>
+            <p className={styles.caption}>
+              {transfers
+                ? `${summary.transferCount.toLocaleString()} of ${summary.totalCalls.toLocaleString()} calls transferred`
+                : "Total in selected range"}
+            </p>
+            <div
+              className={styles.trend}
+              role="img"
+              aria-label={`${title}, daily UTC buckets`}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={summary.daily}
+                  margin={{ top: 24, right: 12, bottom: 0, left: 0 }}
+                >
+                  <CartesianGrid
+                    vertical={false}
+                    stroke="var(--border)"
+                    strokeDasharray="3 4"
+                  />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(date: string) =>
+                      date.slice(5).replace("-", "/")
+                    }
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={30}
+                    tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                  />
+                  <YAxis
+                    domain={transfers ? [0, 1] : [0, "auto"]}
+                    allowDecimals={transfers}
+                    tickFormatter={
+                      transfers
+                        ? (value: number) => `${Math.round(value * 100)}%`
+                        : undefined
+                    }
+                    width={44}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                  />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      const day = payload?.[0]?.payload
+                      if (!active || !day) return null
+                      return (
+                        <div className={styles.trendTooltip}>
+                          <strong>{day.date} · UTC</strong>
+                          <p>{day.totalCalls.toLocaleString()} AI calls</p>
+                          <p>
+                            {day.totalCalls
+                              ? `${day.transferCount} transferred · ${(day.transferRate * 100).toFixed(1)}%`
+                              : "Transfer rate unavailable · no calls"}
+                          </p>
+                        </div>
+                      )
+                    }}
+                  />
+                  {transfers ? (
+                    <Line
+                      dataKey="transferRate"
+                      name="Transfer rate"
+                      type="linear"
+                      stroke="var(--chart-3)"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      activeDot={{ r: 5 }}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  ) : (
+                    <Bar
+                      dataKey="totalCalls"
+                      name="AI calls"
+                      fill="var(--muted-foreground)"
+                      fillOpacity={0.45}
+                      maxBarSize={32}
+                      radius={[3, 3, 0, 0]}
+                      isAnimationActive={false}
+                    />
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <p className={styles.footnote}>
+              UTC call date · First and last days may be partial.
+              {transfers &&
+                " Gaps mean no calls. Transfers use recorded escalated status."}
+            </p>
+            <details className={styles.trendData}>
+              <summary>View daily data</summary>
+              <table className={styles.toolTable}>
+                <thead>
+                  <tr>
+                    <th scope="col">Date · UTC</th>
+                    <th scope="col">AI calls</th>
+                    {transfers && (
+                      <>
+                        <th scope="col">Transferred</th>
+                        <th scope="col">Rate</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.daily.map((day) => (
+                    <tr key={day.date}>
+                      <th scope="row">{day.date}</th>
+                      <td>{day.totalCalls}</td>
+                      {transfers && (
+                        <>
+                          <td>{day.transferCount}</td>
+                          <td>
+                            {day.transferRate === undefined
+                              ? "—"
+                              : `${(day.transferRate * 100).toFixed(1)}%`}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
 export function DiagnosticsPerformance({
   summary,
   onSelect,
@@ -230,7 +397,10 @@ export function DiagnosticsPerformance({
         </div>
         <div>
           <div className={styles.sectionHeading}>
-            <h2>{stage.stage === "e2e" ? "Response" : stageLabels[stage.stage]} timing over time</h2>
+            <h2>
+              {stage.stage === "e2e" ? "Response" : stageLabels[stage.stage]}{" "}
+              timing over time
+            </h2>
             <div className={styles.legend}>
               <span>
                 <i />

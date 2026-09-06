@@ -34,7 +34,24 @@ type QueryAnalyticsCommand struct {
 	Limit      int
 }
 
+type AnalyticsDay struct {
+	Date          string
+	TotalCalls    int
+	TransferCount int
+	TransferRate  *float64
+}
+
+// Include empty UTC dates and partial boundary days in the rolling range.
+func analyticsDays(from, through time.Time) []AnalyticsDay {
+	days := []AnalyticsDay{}
+	for day := from.UTC().Truncate(24 * time.Hour); !day.After(through); day = day.AddDate(0, 0, 1) {
+		days = append(days, AnalyticsDay{Date: day.Format(time.DateOnly)})
+	}
+	return days
+}
+
 type AnalyticsSummary struct {
+	Daily             []AnalyticsDay
 	Diagnostics       AnalyticsDiagnostics
 	diagnostics       *diagnosticsAccumulator
 	TotalCalls        int
@@ -260,7 +277,7 @@ func queryAnalyticsSummary(
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
 	defer rows.Close()
-	summary := AnalyticsSummary{diagnostics: newDiagnosticsAccumulator()}
+	summary := AnalyticsSummary{Daily: analyticsDays(from, to), diagnostics: newDiagnosticsAccumulator()}
 	summary.diagnostics.from, summary.diagnostics.through = from, to
 	for rows.Next() {
 		var projection analyticsProjection
@@ -289,6 +306,17 @@ func queryAnalyticsSummary(
 
 func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analyticsProjection) {
 	summary.TotalCalls++
+	date := projection.call.StartedAt.UTC().Format(time.DateOnly)
+	for i := range summary.Daily {
+		day := &summary.Daily[i]
+		if day.Date == date {
+			day.TotalCalls++
+			if projection.call.Transferred {
+				day.TransferCount++
+			}
+			break
+		}
+	}
 	if summary.diagnostics == nil {
 		summary.diagnostics = newDiagnosticsAccumulator()
 	}
@@ -325,6 +353,13 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 }
 
 func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
+	for i := range summary.Daily {
+		day := &summary.Daily[i]
+		if day.TotalCalls > 0 {
+			rate := float64(day.TransferCount) / float64(day.TotalCalls)
+			day.TransferRate = &rate
+		}
+	}
 	if summary.diagnostics == nil {
 		summary.diagnostics = newDiagnosticsAccumulator()
 	}
