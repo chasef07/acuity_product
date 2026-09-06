@@ -204,7 +204,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await page.getByRole("menuitemradio", { name: "Light" }).click()
   await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
     "background-color",
-    "rgb(250, 250, 250)",
+    "lab(98.26 0 0)",
   )
 
   await createAIStaffTask(
