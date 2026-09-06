@@ -305,9 +305,9 @@
           "VoiceNumber": "+18027878312"
         },
         {
-          "Key": "mental-health-demo",
-          "Name": "Mental Health",
-          "AbitaOfficeKeys": ["mental-health-demo"],
+          "Key": "new-tampa-demo",
+          "Name": "New Tampa Eye Institute",
+          "AbitaOfficeKeys": ["new-tampa-demo", "mental-health-demo"],
           "VoiceNumber": "+13207388132"
         }
       ]
