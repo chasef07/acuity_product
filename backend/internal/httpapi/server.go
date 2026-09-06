@@ -3803,6 +3803,7 @@ func operatorAIAnalyticsPageResponse(
 	}
 	if page.Summary != nil {
 		response.Summary = &api.OperatorAIAnalyticsSummary{
+			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
 			TotalCalls:        page.Summary.TotalCalls,
 			BookingCount:      page.Summary.BookingCount,
 			CancellationCount: page.Summary.CancellationCount,
@@ -3899,6 +3900,8 @@ func operatorAIInteractionAnalyticsResponse(
 	for _, item := range detail.Timeline {
 		payload := item.Payload
 		response.Timeline = append(response.Timeline, api.OperatorAITimelineItem{
+			ItemId:         stringPointer(item.ItemID),
+			DurationMs:     item.DurationMs,
 			Kind:           api.OperatorAITimelineKind(item.Kind),
 			OccurredAt:     item.OccurredAt,
 			Text:           stringPointer(item.Text),
@@ -3914,6 +3917,7 @@ func operatorAIInteractionAnalyticsResponse(
 	}
 	for _, execution := range detail.ToolExecutions {
 		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
+			DurationMs:    execution.DurationMs,
 			CallId:        execution.CallID,
 			Name:          execution.Name,
 			OccurredAt:    execution.OccurredAt,

@@ -20,6 +20,34 @@ const browserReconnectAssertionMilliseconds =
 
 const operatorAnalyticsFixture = {
   summary: {
+    diagnostics: {
+      stages: [
+        { stage: "e2e", p50Ms: 1240, p95Ms: 2600, p99Ms: 4200 },
+        { stage: "stt", p50Ms: 185, p95Ms: 500, p99Ms: 780 },
+        { stage: "llm", p50Ms: 410, p95Ms: 1100, p99Ms: 1600 },
+        { stage: "tts", p50Ms: 265, p95Ms: 600, p99Ms: 900 },
+      ].map((stage) => ({
+        ...stage,
+        sampleCount: 100,
+        measuredCalls: 42,
+        buckets: [{ fromMs: 0, count: 100, examples: [] }],
+        trend: [{
+          date: "2026-08-10",
+          sampleCount: 100,
+          p50Ms: stage.p50Ms,
+          p95Ms: stage.p95Ms,
+        }],
+      })),
+      tools: [{
+        name: "book_appointment",
+        executionCount: 31,
+        errorCount: 2,
+        incompleteCount: 0,
+        sampleCount: 0,
+        examples: [],
+        errors: [],
+      }],
+    },
     totalCalls: 42,
     bookingCount: 8,
     cancellationCount: 3,
@@ -438,38 +466,16 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await analyticsRegion
       .getByRole("button", { name: "Performance", exact: true })
       .click()
-    const latencyPipeline = analyticsRegion.getByRole("region", {
-      name: "Median response pipeline",
-    })
-    await expect(latencyPipeline.getByText("P50 STT")).toBeVisible()
-    const sttLatency = latencyPipeline.getByText("185 ms", { exact: true })
-    await expect(sttLatency).toBeVisible()
-    await expect
-      .poll(() =>
-        sttLatency.evaluate((element) => getComputedStyle(element).fontFamily),
-      )
-      .toContain("SFMono-Regular")
-    await expect(latencyPipeline.getByText("P50 LLM TTFT")).toBeVisible()
-    await expect(latencyPipeline.getByText("410 ms", { exact: true })).toBeVisible()
-    await expect(latencyPipeline.getByText("P50 TTS TTFB")).toBeVisible()
-    await expect(latencyPipeline.getByText("265 ms", { exact: true })).toBeVisible()
-    await expect(
-      analyticsRegion.getByText("1.24 s", { exact: true }).first(),
-    ).toBeVisible()
-    const percentileTable = analyticsRegion.getByRole("table")
-    await expect(
-      percentileTable.getByRole("columnheader", { name: "P50" }),
-    ).toBeVisible()
-    await expect(
-      percentileTable.getByRole("columnheader", { name: "P90" }),
-    ).toBeVisible()
-    await expect(
-      percentileTable.getByRole("columnheader", { name: "P99" }),
-    ).toBeVisible()
-    const e2eRow = percentileTable.getByRole("row", { name: /E2E response/ })
-    await expect(e2eRow).toContainText("1.24 s")
-    await expect(e2eRow).toContainText("2.20 s")
-    await expect(e2eRow).toContainText("4.20 s")
+    const latencyPipeline = analyticsRegion.getByRole("region", { name: "Pipeline stages" })
+    await expect(latencyPipeline.getByRole("button", { name: /^STT/ })).toContainText("P50 185 ms")
+    await expect(latencyPipeline.getByRole("button", { name: /^LLM/ })).toContainText("P50 410 ms")
+    await expect(latencyPipeline.getByRole("button", { name: /^TTS/ })).toContainText("P50 265 ms")
+    const performance = analyticsRegion.getByRole("region", { name: "Response performance" })
+    await expect(performance.getByText("2.60 s", { exact: true }).first()).toBeVisible()
+    await expect(performance.getByText("1.24 s", { exact: true }).first()).toBeVisible()
+    await expect(performance.getByText("4.20 s", { exact: true }).first()).toBeVisible()
+    await expect(performance.getByText("100 samples · 42 of 42 calls measured")).toBeVisible()
+    await expect(analyticsRegion.getByRole("region", { name: "Latency distribution" })).toBeVisible()
     await operatorPage.screenshot({
       path: testInfo.outputPath("operator-analytics-performance.png"),
       fullPage: true,
@@ -478,8 +484,8 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
     await analyticsRegion
       .getByRole("button", { name: "Tools", exact: true })
       .click()
-    await expect(analyticsRegion.getByText("Total tool calls")).toBeVisible()
-    await expect(analyticsRegion.getByText("31", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByText("Tool executions", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByRole("region", { name: "Tool execution summary" }).getByText("31", { exact: true })).toBeVisible()
 
     await analyticsRegion
       .getByRole("button", { name: "Calls", exact: true })
@@ -514,7 +520,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
 
     // Cursor pages omit summary; navigating back must retain the initial metrics.
     await analyticsRegion.getByRole("button", { name: "Tools", exact: true }).click()
-    await expect(analyticsRegion.getByText("31", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByRole("region", { name: "Tool execution summary" }).getByText("31", { exact: true })).toBeVisible()
     await analyticsRegion.getByRole("button", { name: "Calls", exact: true }).click()
 
     await operatorPage.getByRole("button", { name: "Last 30 days" }).click()

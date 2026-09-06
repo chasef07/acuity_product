@@ -8,15 +8,14 @@ import {
   CalendarX2Icon,
   ChartNoAxesCombinedIcon,
   CircleAlertIcon,
-  Clock3Icon,
   InboxIcon,
   PhoneForwardedIcon,
   RefreshCwIcon,
-  WrenchIcon,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AnalyticsFrame } from "@/components/analytics/analytics-layout"
+import { DiagnosticsPerformance, DiagnosticsTools, type DiagnosticFocus, type SelectDiagnostic } from "@/components/analytics/ai-diagnostics"
 import { CostOverview } from "@/components/analytics/cost-overview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -118,7 +117,8 @@ export function OperatorAnalytics({
     state: AnalyticsLoadState
     data?: AnalyticsSnapshot
   }>({ key: "", state: "loading" })
-  const [selectedInteractionID, setSelectedInteractionID] = useState("")
+  const [selectedCall, setSelectedCall] = useState<{ id: string; focus?: DiagnosticFocus }>({ id: "" })
+  const selectCall: SelectDiagnostic = (id, focus) => setSelectedCall({ id, focus })
   const [nextPageRequest, setNextPageRequest] = useState<{
     key: string
     state: AnalyticsNextPageState
@@ -316,20 +316,22 @@ export function OperatorAnalytics({
             )}
             {currentRequest.state === "ready" && currentRequest.data && (
               <AnalyticsReady
+                key={requestKey}
                 data={currentRequest.data}
                 tab={tab}
                 range={range}
                 nextPageState={nextPageState}
                 onLoadNextPage={loadNextPage}
-                onSelect={setSelectedInteractionID}
+                onSelect={selectCall}
               />
             )}
           </>
         )}
       </AnalyticsFrame>
       <OperatorAnalyticsDetailSheet
-        interactionID={selectedInteractionID}
-        onClose={() => setSelectedInteractionID("")}
+        interactionID={selectedCall.id}
+        focus={selectedCall.focus}
+        onClose={() => setSelectedCall({ id: "" })}
       />
     </section>
   )
@@ -348,13 +350,13 @@ function AnalyticsReady({
   range: OperatorAiAnalyticsRange
   nextPageState: AnalyticsNextPageState
   onLoadNextPage: () => void
-  onSelect: (interactionID: string) => void
+  onSelect: SelectDiagnostic
 }) {
   return (
     <>
       {tab === "overview" && <AnalyticsOverview summary={data.summary} />}
-      {tab === "performance" && <AnalyticsPerformance summary={data.summary} />}
-      {tab === "tools" && <AnalyticsTools summary={data.summary} />}
+      {tab === "performance" && <DiagnosticsPerformance summary={data.summary} onSelect={onSelect} />}
+      {tab === "tools" && <DiagnosticsTools summary={data.summary} onSelect={onSelect} />}
       {tab === "calls" && data.calls.length === 0 ? (
         <Empty className="mt-5 min-h-72 border bg-card sm:mt-6">
           <EmptyHeader>
@@ -470,215 +472,6 @@ function AnalyticsOverview({ summary }: { summary: OperatorAiAnalyticsSummary })
   )
 }
 
-function AnalyticsPerformance({
-  summary,
-}: {
-  summary: OperatorAiAnalyticsSummary
-}) {
-  return (
-    <div className="space-y-6">
-      <LatencyPipeline summary={summary} />
-      <LatencyPercentiles summary={summary} />
-    </div>
-  )
-}
-
-function LatencyPercentiles({
-  summary,
-}: {
-  summary: OperatorAiAnalyticsSummary
-}) {
-  const rows = [
-    {
-      label: "STT final transcript",
-      p50: summary.p50SttMs,
-      p90: summary.p90SttMs,
-      p99: summary.p99SttMs,
-    },
-    {
-      label: "LLM TTFT",
-      p50: summary.p50TtftMs,
-      p90: summary.p90TtftMs,
-      p99: summary.p99TtftMs,
-    },
-    {
-      label: "TTS TTFB",
-      p50: summary.p50TtsTtfbMs,
-      p90: summary.p90TtsTtfbMs,
-      p99: summary.p99TtsTtfbMs,
-    },
-    {
-      label: "E2E response",
-      p50: summary.p50TotalLatencyMs,
-      p90: summary.p90TotalLatencyMs,
-      p99: summary.p99TotalLatencyMs,
-    },
-  ]
-
-  return (
-    <Card size="sm" className="gap-0 py-0">
-      <CardHeader className="border-b py-4">
-        <CardTitle>Latency percentiles</CardTitle>
-        <CardDescription>
-          Median, tail, and worst-tail response timing across measured turns.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table className="min-w-[38rem]">
-          <TableHeader className="bg-muted text-muted-foreground">
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="px-4">Pipeline stage</TableHead>
-              <TableHead>P50</TableHead>
-              <TableHead>P90</TableHead>
-              <TableHead>P99</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.label}>
-                <TableCell className="px-4 py-3 font-medium">{row.label}</TableCell>
-                <PercentileCell value={row.p50} />
-                <PercentileCell value={row.p90} />
-                <PercentileCell value={row.p99} emphasized />
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  )
-}
-
-function PercentileCell({
-  value,
-  emphasized = false,
-}: {
-  value?: number
-  emphasized?: boolean
-}) {
-  return (
-    <TableCell
-      className={emphasized ? "px-3 py-3 font-mono font-semibold" : "px-3 py-3 font-mono"}
-    >
-      {formatLatency(value)}
-    </TableCell>
-  )
-}
-
-function AnalyticsTools({ summary }: { summary: OperatorAiAnalyticsSummary }) {
-  const items = [
-    {
-      label: "Total tool calls",
-      value: summary.toolCallCount.toLocaleString(),
-      note: "Across selected calls",
-      icon: WrenchIcon,
-    },
-    {
-      label: "Failure rate",
-      value: formatRate(summary.toolFailureRate),
-      note: `${summary.toolErrorCount.toLocaleString()} / ${summary.toolCallCount.toLocaleString()} tool calls`,
-      icon: CircleAlertIcon,
-    },
-    {
-      label: "Avg tools / call",
-      value:
-        summary.totalCalls > 0
-          ? (summary.toolCallCount / summary.totalCalls).toFixed(1)
-          : "—",
-      note: "Tool activity per conversation",
-      icon: ChartNoAxesCombinedIcon,
-    },
-  ]
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {items.map((item) => (
-        <Card key={item.label} size="sm">
-          <CardHeader className="grid-cols-[1fr_auto]">
-            <div>
-              <CardDescription>{item.label}</CardDescription>
-              <CardTitle className="mt-1 font-mono text-2xl font-semibold tracking-[-0.03em]">
-                {item.value}
-              </CardTitle>
-            </div>
-            <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-              <item.icon className="size-3.5" aria-hidden="true" />
-            </span>
-          </CardHeader>
-          <CardContent className="text-[0.6875rem] text-muted-foreground">
-            {item.note}
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  )
-}
-
-function LatencyPipeline({ summary }: { summary: OperatorAiAnalyticsSummary }) {
-  const stages = [
-    {
-      label: "P50 STT",
-      value: summary.p50SttMs,
-      note: "Final transcript",
-    },
-    {
-      label: "P50 LLM TTFT",
-      value: summary.p50TtftMs,
-      note: "First token",
-    },
-    {
-      label: "P50 TTS TTFB",
-      value: summary.p50TtsTtfbMs,
-      note: "First audio byte",
-    },
-    {
-      label: "P50 E2E",
-      value: summary.p50TotalLatencyMs,
-      note: "Caller stop to audio",
-    },
-  ]
-
-  return (
-    <Card
-      role="region"
-      aria-label="Median response pipeline"
-      size="sm"
-      className="min-w-0 gap-0 overflow-hidden py-0"
-    >
-      <CardHeader className="border-b">
-        <div className="flex items-center gap-2">
-          <Clock3Icon className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <CardTitle className="text-sm">Median response pipeline</CardTitle>
-        </div>
-        <CardDescription>
-          Measured turns across the selected range
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-px bg-border p-0 sm:grid-cols-4">
-        {stages.map((stage, index) => (
-          <div key={stage.label} className="relative min-w-0 bg-card px-4 py-3">
-            <p className="text-[0.6875rem] font-medium text-muted-foreground">
-              {stage.label}
-            </p>
-            <p className="mt-1 font-mono text-base font-semibold tracking-[-0.02em]">
-              {formatLatency(stage.value)}
-            </p>
-            <p className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">
-              {stage.note}
-            </p>
-            {index < stages.length - 1 && (
-              <ArrowRightIcon
-                className="absolute top-1/2 right-0 z-10 hidden size-3 -translate-y-1/2 translate-x-1/2 rounded-full bg-card text-muted-foreground sm:block"
-                aria-hidden="true"
-              />
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
 function OperationalHealth({ summary }: { summary: OperatorAiAnalyticsSummary }) {
   return (
     <Card size="sm" className="min-w-0">
@@ -719,7 +512,7 @@ function CallLedger({
   hasNextPage: boolean
   nextPageState: AnalyticsNextPageState
   onLoadNextPage: () => void
-  onSelect: (interactionID: string) => void
+  onSelect: SelectDiagnostic
 }) {
   return (
     <section aria-labelledby="call-ledger-title" className="mt-5 sm:mt-6">

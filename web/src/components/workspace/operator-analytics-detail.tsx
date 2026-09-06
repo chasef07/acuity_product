@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   BotIcon,
   CalendarCheck2Icon,
@@ -12,6 +12,10 @@ import {
   WrenchIcon,
 } from "lucide-react"
 
+import {
+  latencyLabel,
+  type DiagnosticFocus,
+} from "@/components/analytics/ai-diagnostics"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -37,9 +41,11 @@ import { getAccessToken } from "@/lib/auth-client"
 
 export function OperatorAnalyticsDetailSheet({
   interactionID,
+  focus,
   onClose,
 }: {
   interactionID: string
+  focus?: DiagnosticFocus
   onClose: () => void
 }) {
   const [request, setRequest] = useState<{
@@ -128,7 +134,9 @@ export function OperatorAnalyticsDetailSheet({
             </Alert>
           </div>
         )}
-        {!loading && detail && <OperatorAnalyticsDetailView detail={detail} />}
+        {!loading && detail && (
+          <OperatorAnalyticsDetailView detail={detail} focus={focus} />
+        )}
       </SheetContent>
     </Sheet>
   )
@@ -136,18 +144,29 @@ export function OperatorAnalyticsDetailSheet({
 
 function OperatorAnalyticsDetailView({
   detail,
+  focus,
 }: {
   detail: OperatorAiInteractionAnalytics
+  focus?: DiagnosticFocus
 }) {
+  const selectedRef = useRef<HTMLLIElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const target = selectedRef.current
+    const container = scrollRef.current
+    if (!target || !container) return
+    container.scrollTop +=
+      target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24
+  }, [detail, focus])
   const messageCount = detail.timeline.filter(
-    (item) =>
-      item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
+    (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
   ).length
 
   const entries = timelineEntries(detail.timeline)
 
   return (
     <div
+      ref={scrollRef}
       aria-label="Scrollable call evidence"
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
     >
@@ -237,6 +256,11 @@ function OperatorAnalyticsDetailView({
                 key={`${item.occurredAt}-${item.kind}-${item.callId ?? index}`}
                 item={item}
                 result={result}
+                selected={Boolean(
+                  (focus?.itemID && item.itemId === focus.itemID) ||
+                    (focus?.callID && item.callId === focus.callID),
+                )}
+                selectedRef={selectedRef}
               />
             ))}
           </ol>
@@ -294,7 +318,8 @@ function OperatorAnalyticsDetailView({
                         </Badge>
                         {(execution.domainOutcome || execution.outputClass) && (
                           <Badge variant="outline">
-                            outcome: {execution.domainOutcome ?? execution.outputClass}
+                            outcome:{" "}
+                            {execution.domainOutcome ?? execution.outputClass}
                           </Badge>
                         )}
                         {execution.domainStatus && (
@@ -303,7 +328,9 @@ function OperatorAnalyticsDetailView({
                           </Badge>
                         )}
                         {execution.taskId && (
-                          <Badge variant="outline">task: {execution.taskId}</Badge>
+                          <Badge variant="outline">
+                            task: {execution.taskId}
+                          </Badge>
                         )}
                         <time className="ml-auto text-[0.625rem] tabular-nums text-muted-foreground">
                           {formatTime(execution.occurredAt)}
@@ -342,7 +369,8 @@ function AppointmentEvidence({
   )
   const hasCurrentAppointment = hasAppointmentFacts(detail.appointment)
   const hasPreviousAppointment =
-    detail.previousAppointment && hasAppointmentFacts(detail.previousAppointment)
+    detail.previousAppointment &&
+    hasAppointmentFacts(detail.previousAppointment)
 
   return (
     <section
@@ -424,14 +452,22 @@ function AppointmentFacts({ facts }: { facts: AiAppointmentFacts }) {
 function TimelineItem({
   item,
   result,
+  selected,
+  selectedRef,
 }: {
   item: OperatorAiTimelineItem
   result?: OperatorAiTimelineItem
+  selected: boolean
+  selectedRef: React.RefObject<HTMLLIElement | null>
 }) {
   if (item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE") {
     const agent = item.kind === "AGENT_MESSAGE"
     return (
-      <li className="relative pl-8 sm:pl-10">
+      <li
+        ref={selected ? selectedRef : undefined}
+        data-diagnostic-selected={selected || undefined}
+        className="relative rounded-lg pl-8 sm:pl-10 data-[diagnostic-selected]:ring-2 data-[diagnostic-selected]:ring-ring data-[diagnostic-selected]:ring-offset-4"
+      >
         <span className="absolute top-2 left-0 z-10 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground">
           {agent ? (
             <BotIcon className="size-3.5" aria-hidden="true" />
@@ -458,6 +494,21 @@ function TimelineItem({
           <p className="whitespace-pre-wrap break-words text-sm leading-6">
             {item.text || "Message content unavailable"}
           </p>
+          <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+            {[
+              ["STT", item.sttMs],
+              ["LLM", item.ttftMs],
+              ["TTS", item.ttsTtfbMs],
+              ["Response", item.totalLatencyMs],
+            ].map(
+              ([label, value]) =>
+                typeof value === "number" && (
+                  <span key={String(label)}>
+                    {label} {latencyLabel(value)}
+                  </span>
+                ),
+            )}
+          </div>
         </div>
       </li>
     )
@@ -467,11 +518,18 @@ function TimelineItem({
   const toolCall = item.kind === "TOOL_CALL" ? item : undefined
   const failed = Boolean(toolResult?.error)
   return (
-    <li className="relative pl-8 sm:pl-10">
+    <li
+      ref={selected ? selectedRef : undefined}
+      data-diagnostic-selected={selected || undefined}
+      className="relative rounded-lg pl-8 sm:pl-10 data-[diagnostic-selected]:ring-2 data-[diagnostic-selected]:ring-ring data-[diagnostic-selected]:ring-offset-4"
+    >
       <span className="absolute top-2 left-0 z-10 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground">
         <WrenchIcon className="size-3.5" aria-hidden="true" />
       </span>
-      <details className="group rounded-lg border bg-card px-4 py-3">
+      <details
+        open={selected || undefined}
+        className="group rounded-lg border bg-card px-4 py-3"
+      >
         <summary className="cursor-pointer list-none focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
           <div className="flex flex-wrap items-center gap-2">
             <ChevronRightIcon
@@ -488,16 +546,15 @@ function TimelineItem({
               {failed ? "Error" : toolResult ? "Complete" : "Called"}
             </Badge>
             <span className="ml-auto font-mono text-[0.625rem] text-muted-foreground">
-              {(toolResult?.totalLatencyMs ?? item.totalLatencyMs) !== undefined &&
-                `${formatLatency(toolResult?.totalLatencyMs ?? item.totalLatencyMs)} · `}
+              {(toolResult?.durationMs ?? item.durationMs) !== undefined
+                ? `${formatLatency(toolResult?.durationMs ?? item.durationMs)} execution · `
+                : "Execution timing unavailable · "}
               {formatTime(item.occurredAt)}
             </span>
           </div>
         </summary>
         <div className="mt-3 space-y-3 border-t pt-3">
-          {toolCall && (
-            <ToolPayload label="Request" value={toolCall.payload} />
-          )}
+          {toolCall && <ToolPayload label="Request" value={toolCall.payload} />}
           {toolResult && (
             <ToolPayload
               label={failed ? "Error" : "Response"}
@@ -588,9 +645,9 @@ function formatToolLabel(name?: string) {
       return "Transfer call"
     default:
       return name
-        ? name.replaceAll("_", " ").replace(/\b\w/g, (character) =>
-            character.toUpperCase(),
-          )
+        ? name
+            .replaceAll("_", " ")
+            .replace(/\b\w/g, (character) => character.toUpperCase())
         : "Unknown tool"
   }
 }

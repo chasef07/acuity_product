@@ -846,6 +846,7 @@ export type OperatorAiAnalyticsQueryRequest = {
 };
 
 export type OperatorAiAnalyticsSummary = {
+    diagnostics?: OperatorAiAnalyticsDiagnostics;
     totalCalls: number;
     bookingCount: number;
     cancellationCount: number;
@@ -867,6 +868,63 @@ export type OperatorAiAnalyticsSummary = {
     toolCallCount: number;
     toolErrorCount: number;
     toolFailureRate: number;
+};
+
+export type OperatorAiDiagnosticExample = {
+    interactionId: string;
+    itemId?: string;
+    callId?: string;
+    startedAt: string;
+    durationMs?: number;
+    status?: string;
+};
+
+export type OperatorAiLatencyBucket = {
+    fromMs: number;
+    toMs?: number;
+    count: number;
+    /**
+     * Up to five slowest measured samples in this half-open bucket; not all matching calls.
+     */
+    examples: Array<OperatorAiDiagnosticExample>;
+};
+
+export type OperatorAiLatencyTrend = {
+    /**
+     * UTC call-start date in YYYY-MM-DD format.
+     */
+    date: string;
+    sampleCount: number;
+    p50Ms?: number;
+    p95Ms?: number;
+};
+
+export type OperatorAiLatencyDistribution = {
+    stage: 'e2e' | 'stt' | 'llm' | 'tts';
+    sampleCount: number;
+    measuredCalls: number;
+    p50Ms?: number;
+    p95Ms?: number;
+    p99Ms?: number;
+    buckets: Array<OperatorAiLatencyBucket>;
+    trend: Array<OperatorAiLatencyTrend>;
+};
+
+export type OperatorAiToolDiagnostics = {
+    name: string;
+    executionCount: number;
+    errorCount: number;
+    incompleteCount: number;
+    sampleCount: number;
+    p50Ms?: number;
+    p95Ms?: number;
+    examples: Array<OperatorAiDiagnosticExample>;
+    errors: Array<OperatorAiDiagnosticExample>;
+};
+
+export type OperatorAiAnalyticsDiagnostics = {
+    stages: Array<OperatorAiLatencyDistribution>;
+    tools: Array<OperatorAiToolDiagnostics>;
 };
 
 export type OperatorAiCallAnalytics = {
@@ -902,6 +960,8 @@ export type OperatorAiAnalyticsPage = {
 export type OperatorAiTimelineKind = 'CALLER_MESSAGE' | 'AGENT_MESSAGE' | 'TOOL_CALL' | 'TOOL_RESULT';
 
 export type OperatorAiTimelineItem = {
+    durationMs?: number;
+    itemId?: string;
     kind: OperatorAiTimelineKind;
     occurredAt: string;
     text?: string;
@@ -918,6 +978,7 @@ export type OperatorAiTimelineItem = {
 };
 
 export type OperatorAiToolExecution = {
+    durationMs?: number;
     callId: string;
     name: string;
     occurredAt: string;
