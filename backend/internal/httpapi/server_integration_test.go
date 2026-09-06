@@ -1547,7 +1547,18 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
+	aiTask, _, err := work.New(pool, accessModule, func() time.Time { return now }).CreateAITask(context.Background(), work.CreateAITaskCommand{
+		Service: access.ServiceIdentity{Subject: "abita-eye-group", PracticeID: authorization.Practice.ID,
+			LocationScope: access.LocationScopeAll, Capabilities: []access.ServiceCapability{access.ServiceCapabilityCreateTask}},
+		OfficeKey: "calling-office", OfficePhone: "+15555550199", SourceCallID: "http-source-call",
+		IdempotencyKey: "http-task", Phone: "+15555550100", Summary: "Review appointment request",
+		Message: "Synthetic caller asks staff to review appointment options.", Category: work.TaskCategoryAppointments, Urgency: work.TaskUrgencyNormal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handoffBody, _ := json.Marshal(map[string]any{
+		"taskId":         aiTask.ID,
 		"practiceId":     authorization.Practice.ID,
 		"officeKey":      "calling-office",
 		"sourceCallId":   "http-source-call",
@@ -1614,10 +1625,19 @@ func TestCallingHTTPInterfacePreservesServiceAndCurrentUserAuthority(t *testing.
 		ExpiresAt      time.Time `json:"expiresAt"`
 	}
 	decode(t, created, &handoff)
+	var handoffTaskID string
+	if err := pool.QueryRow(context.Background(), `SELECT task_id::text FROM human_calling_handoffs WHERE id = $1`, handoff.ID).Scan(&handoffTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if handoffTaskID != aiTask.ID {
+		t.Fatalf("HTTP handoff lost Task: %s", handoffTaskID)
+	}
+
 	if handoff.SIPDestination != "sip:acuity-handoff@synthetic.sip.telnyx.com" {
 		t.Fatalf("handoff response = %#v", handoff)
 	}
 	legacyBody, _ := json.Marshal(map[string]any{
+		"taskId":         aiTask.ID,
 		"practiceId":     authorization.Practice.ID,
 		"locationId":     authorization.Locations[0].ID,
 		"sourceCallId":   "http-source-call",
