@@ -706,6 +706,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 50
+        - name: groupCalls
+          in: query
+          description: Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Chronological Contact Context Engagement History.
@@ -928,6 +934,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 50
+        - name: groupCalls
+          in: query
+          description: Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Chronological exact-phone Engagement History.
@@ -1450,6 +1462,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 50
+        - name: groupCalls
+          in: query
+          description: Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Chronological exact-phone Engagement History.
@@ -4541,7 +4559,7 @@ components:
       properties:
         type:
           type: string
-          enum: [MESSAGE, CALL, AI_INTERACTION, TASK]
+          enum: [MESSAGE, CALL, AI_INTERACTION, TASK, CALL_HISTORY]
         id:
           type: string
           format: uuid
@@ -4567,6 +4585,11 @@ components:
           $ref: "#/components/schemas/CallHistoryItem"
         aiInteraction:
           $ref: "#/components/schemas/AIOutcomeItem"
+        entries:
+          description: Authorized call, AI, and linked Task evidence for one CALL_HISTORY item. Never contains nested histories. Pagination counts the whole history once.
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationTimelineItem"
     ConversationTimelinePage:
       type: object
       additionalProperties: false

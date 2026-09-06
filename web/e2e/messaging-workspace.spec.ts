@@ -118,6 +118,16 @@ test("an AI call without appointment actions stays call-first", async ({
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
   await createAINoAppointmentCall(page)
+  const followUp = await page.request.post(`${portalURL}/v1/tasks`, {
+    headers: { authorization: "Bearer synthetic-service-token" },
+    data: {
+      callId: "messaging-no-appointment-call", callerPhone: "+17275550187",
+      category: "documentation", idempotencyKey: "history-paperwork",
+      message: "Caller also requested paperwork.", summary: "Confirm office paperwork",
+      officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal",
+    },
+  })
+  expect([200, 201]).toContain(followUp.status())
 
   const searchInput = page.getByLabel("Search tasks, names, or phone")
   await searchInput.fill("7275550187")
@@ -145,6 +155,10 @@ test("an AI call without appointment actions stays call-first", async ({
   )
 
   const callRow = page.getByRole("button", { name: "View AI call: AI call" })
+  await expect(callRow).toHaveCount(1)
+  await expect(callRow).toContainText("Confirm office paperwork")
+  await expect(page.getByRole("region", { name: "Conversation activity" }).locator("button[aria-expanded]")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "View task: Confirm office paperwork" })).toBeVisible()
   await expect(callRow).toContainText("AI call")
   await expect(callRow).not.toContainText("No appointment actions")
   await callRow.click()
@@ -152,17 +166,20 @@ test("an AI call without appointment actions stays call-first", async ({
   await expect(callRow).toHaveAttribute("data-selected", "true")
   await expect
     .poll(() =>
-      callRow.evaluate((element) => ({
-        background: getComputedStyle(element).backgroundColor,
-        marker: getComputedStyle(element, "::before").backgroundColor,
-      })),
+      callRow.evaluate((element) => {
+        element = element.closest("[data-slot=item]") ?? element
+        return {
+          background: getComputedStyle(element).backgroundColor,
+          marker: getComputedStyle(element, "::before").backgroundColor,
+        }
+      }),
     )
     .toMatchObject({
       background: "rgba(0, 0, 0, 0)",
     })
   expect(
     await callRow.evaluate(
-      (element) => getComputedStyle(element, "::before").backgroundColor,
+      (element) => getComputedStyle(element.closest("[data-slot=item]") ?? element, "::before").backgroundColor,
     ),
   ).not.toBe("rgba(0, 0, 0, 0)")
 
@@ -180,9 +197,15 @@ test("an AI call without appointment actions stays call-first", async ({
   await expect(callContext).not.toContainText("No appointment actions")
   await expect(callContext).not.toContainText("Patient")
   await page.screenshot({
-    path: testInfo.outputPath("ai-call-routine-context.png"),
+    path: testInfo.outputPath("shared-call-history.png"),
     fullPage: true,
   })
+
+  await page.getByRole("button", { name: "View task: Confirm office paperwork" }).click()
+  const taskContext = page.getByRole("complementary", { name: "Task context" })
+  await taskContext.getByRole("button", { name: "Complete", exact: true }).click()
+  await expect(callRow).toContainText("Confirm office paperwork — Completed")
+  await expect(page.getByText(/Task completed ·/)).toBeVisible()
 })
 
 test("rail hover details and the message composer preserve compact context", async ({
@@ -204,7 +227,7 @@ test("rail hover details and the message composer preserve compact context", asy
   await page.getByRole("menuitemradio", { name: "Light" }).click()
   await expect(page.locator('[data-slot="sidebar-inner"]')).toHaveCSS(
     "background-color",
-    "rgb(250, 250, 250)",
+    "lab(98.26 0 0)",
   )
 
   await createAIStaffTask(

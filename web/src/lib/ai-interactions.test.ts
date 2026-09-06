@@ -39,7 +39,7 @@ test("AI call timeline copy leads with meaningful outcomes and exceptions", () =
     detail: "AI call failed",
   })
   assert.deepEqual(aiCallTimelinePresentation("INDETERMINATE", "ESCALATED"), {
-    title: "Transferred to staff",
+    title: "Transfer requested",
     detail: "AI call",
   })
   assert.deepEqual(aiCallTimelinePresentation("INDETERMINATE", "FAILED"), {

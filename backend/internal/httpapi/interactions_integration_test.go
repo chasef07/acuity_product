@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/api"
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
@@ -1189,7 +1190,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 
 	timeline := request(
 		t, server.Client(), http.MethodGet,
-		server.URL+"/v1/engagements/+17275550199/timeline?practiceId="+
+		server.URL+"/v1/engagements/+17275550199/timeline?groupCalls=true&practiceId="+
 			url.QueryEscape(practiceID),
 		"admin-token", nil,
 	)
@@ -1197,23 +1198,16 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("AI Interaction Engagement History status = %d, body = %s",
 			timeline.StatusCode, readBody(t, timeline))
 	}
-	var history struct {
-		Items []struct {
-			Type          string `json:"type"`
-			AIInteraction *struct {
-				ID                 string `json:"id"`
-				AppointmentOutcome string `json:"appointmentOutcome"`
-			} `json:"aiInteraction"`
-		} `json:"items"`
-	}
+	var history api.ConversationTimelinePage
 	decode(t, timeline, &history)
-	if len(history.Items) != 2 ||
-		history.Items[0].Type != "AI_INTERACTION" ||
-		history.Items[0].AIInteraction == nil ||
-		history.Items[0].AIInteraction.ID != first.InteractionID ||
-		history.Items[0].AIInteraction.AppointmentOutcome != "RESCHEDULE" ||
-		history.Items[1].Type != "TASK" {
+	if len(history.Items) != 1 || history.Items[0].Type != "CALL_HISTORY" || history.Items[0].Entries == nil {
 		t.Fatalf("AI Interaction Engagement History = %#v", history)
+	}
+	entries := *history.Items[0].Entries
+	if len(entries) != 2 || entries[0].AiInteraction == nil ||
+		entries[0].AiInteraction.Id.String() != first.InteractionID ||
+		entries[0].AiInteraction.AppointmentOutcome != "RESCHEDULE" || entries[1].Task == nil {
+		t.Fatalf("AI outcome and follow-up were not preserved together: %#v", entries)
 	}
 
 	sequenceStartBody, _ := json.Marshal(map[string]any{

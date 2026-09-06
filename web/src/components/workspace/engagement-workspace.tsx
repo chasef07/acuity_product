@@ -103,9 +103,9 @@ import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
 import {
+  callHistoryPresentation,
   conversationDateLabel,
   presentTimeline,
-  recoveryFollowUpCallIDs,
   sameConversationDate,
 } from "@/lib/workspace-history"
 
@@ -361,6 +361,7 @@ function MessageConversation({
         path: { phone: timelineSource.phone },
         query: {
           practiceId: timelineSource.practiceID,
+          groupCalls: true,
           ...(cursor ? { cursor } : {}),
           limit: 50,
         },
@@ -440,6 +441,7 @@ function MessageConversation({
 
   async function loadOlder() {
     if (!cursor || loadingOlder) return
+    const requestGeneration = generation.current
     setLoadingOlder(true)
     const token = await getAccessToken()
     if (!token) {
@@ -448,8 +450,8 @@ function MessageConversation({
     }
     const result = await loadPage(token, cursor)
     setLoadingOlder(false)
-    if (!result?.data) return
-    setItems((current) => [...result.data.items, ...current])
+    if (requestGeneration !== generation.current || !result?.data) return
+    setItems((current) => presentTimeline([...current, ...result.data.items]))
     setCursor(result.data.nextCursor)
   }
 
@@ -458,7 +460,6 @@ function MessageConversation({
   )?.message?.thread
   const composerThreadID = conversationThread?.id ?? ""
   const presentedItems = presentTimeline(items)
-  const followUpCallIDs = recoveryFollowUpCallIDs(items)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <MessageScrollerProvider
@@ -541,10 +542,6 @@ function MessageConversation({
                       selectedTaskID={selectedTaskID}
                       selectedCallID={selectedCallID}
                       selectedAIInteractionID={selectedAIInteractionID}
-                      recoveryFollowUp={
-                        item.type === "CALL" &&
-                        followUpCallIDs.has(item.call?.id ?? "")
-                      }
                     />
                   </Fragment>
                 </MessageScrollerItem>
@@ -649,7 +646,6 @@ function TimelineEntry({
   selectedTaskID,
   selectedCallID,
   selectedAIInteractionID,
-  recoveryFollowUp,
 }: {
   item: ConversationTimelineItem
   contextLocationID: string
@@ -662,8 +658,60 @@ function TimelineEntry({
   selectedTaskID?: string
   selectedCallID?: string
   selectedAIInteractionID?: string
-  recoveryFollowUp: boolean
 }) {
+  if (item.type === "CALL_HISTORY") {
+    const entries = item.entries ?? []
+    const primary = entries.find((entry) => entry.aiInteraction) ??
+      entries.find((entry) => entry.call)
+    const presentation = callHistoryPresentation(item)
+    const selected = entries.some((entry) =>
+      (entry.call && entry.call.id === selectedCallID) ||
+      (entry.aiInteraction && entry.aiInteraction.id === selectedAIInteractionID) ||
+      (entry.task && entry.task.id === selectedTaskID),
+    )
+    const title = primary?.aiInteraction
+      ? aiCallTimelinePresentation(primary.aiInteraction.appointmentOutcome, primary.aiInteraction.status).title
+      : primary?.call ? callTouchpoint(primary.call).label : presentation.title
+    const related = entries.filter((entry) => entry !== primary)
+    return (
+      <ActivityItem
+        title={title}
+        selected={selected}
+        metadata={[
+          ...presentation.details.filter((detail) =>
+            detail !== title && detail !== "No appointment action recorded",
+          ),
+          ...presentation.tasks.map((task) =>
+            `${task.title} — ${task.state === "OPEN" ? "Open" : "Completed"}`,
+          ),
+          formatTime(item.occurredAt),
+        ]}
+        actionLabel={primary?.aiInteraction ? "View AI call" : primary?.call?.outcome === "VOICEMAIL" ? "View voicemail" : "View call"}
+        onOpen={primary?.aiInteraction && onAIInteractionOpen
+          ? () => onAIInteractionOpen(primary.aiInteraction!.id)
+          : primary?.call && onCallOpen ? () => onCallOpen(primary.call!.id) : undefined}
+        relatedActions={related.length > 0 ? related.map((entry) => {
+          const task = entry.task
+          const call = entry.call
+          const label = task ? `View task: ${task.title}` : call?.outcome === "VOICEMAIL" ? "View voicemail" : "View staff call"
+          const onOpen = task && onTaskOpen ? () => onTaskOpen(task)
+            : call && onCallOpen ? () => onCallOpen(call.id) : undefined
+          if (!onOpen) return null
+          return (
+            <button
+              key={`${entry.type}:${entry.id}`}
+              type="button"
+              aria-label={label}
+              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:underline"
+              onClick={onOpen}
+            >
+              {task ? "Task" : call?.outcome === "VOICEMAIL" ? "Voicemail" : "Staff call"}
+            </button>
+          )
+        }) : undefined}
+      />
+    )
+  }
   if (item.type === "MESSAGE" && item.message) {
     return (
       <MessageEntry
@@ -683,7 +731,6 @@ function TimelineEntry({
         title={item.call.transferReason || touchpoint.label}
         metadata={[
           item.call.transferReason ? touchpoint.label : "",
-          recoveryFollowUp ? "Follow-up created" : "",
           touchpoint.detail,
           item.call.locationId !== contextLocationID
             ? item.call.locationName
@@ -1016,12 +1063,14 @@ function ActivityItem({
   actionLabel,
   selected,
   onOpen,
+  relatedActions,
 }: {
   title: string
   metadata: string[]
   actionLabel: string
   selected: boolean
   onOpen?: () => void
+  relatedActions?: ReactNode
 }) {
   const content = (
     <span className="flex flex-1 flex-col gap-1">
@@ -1047,16 +1096,30 @@ function ActivityItem({
       size="sm"
       data-selected={selected || undefined}
       className="relative mx-auto max-w-xl cursor-pointer text-left before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent hover:bg-muted data-[selected=true]:bg-transparent data-[selected=true]:before:bg-foreground data-[selected=true]:hover:bg-transparent"
-      render={
+      render={relatedActions ? <div /> : (
         <button
           type="button"
           aria-current={selected ? "true" : undefined}
           aria-label={`${actionLabel}: ${title}`}
           onClick={onOpen}
         />
-      }
+      )}
     >
-      {content}
+      {relatedActions ? (
+        <>
+          <button
+            type="button"
+            aria-current={selected ? "true" : undefined}
+            data-selected={selected || undefined}
+            aria-label={`${actionLabel}: ${title}`}
+            className="flex min-w-0 flex-1 text-left"
+            onClick={onOpen}
+          >
+            {content}
+          </button>
+          <span className="flex shrink-0 items-center gap-2">{relatedActions}</span>
+        </>
+      ) : content}
     </Item>
   )
 }

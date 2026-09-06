@@ -42,7 +42,7 @@ func (m *Module) QueryPhoneTimeline(
 	if err != nil {
 		return TimelinePage{}, ErrInvalidInput
 	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("begin phone Engagement History: %w", err)
 	}
@@ -54,41 +54,47 @@ func (m *Module) QueryPhoneTimeline(
 		return TimelinePage{}, err
 	}
 
-	items := make([]TimelineItem, 0, (limit+1)*4)
-	messages, err := queryTimelineMessages(
-		ctx, tx, command.PracticeID, locationIDs, command.Phone, "", cursor, limit, true,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query phone Messages: %w", err)
+	var page TimelinePage
+	if command.Ungrouped {
+		page, err = queryFlatPhoneHistory(ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit)
+	} else {
+		page, err = queryPhoneHistory(ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit)
 	}
-	items = append(items, messages...)
-	calls, err := queryTimelineCalls(
-		ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit, true,
-	)
-	if err != nil {
-		return TimelinePage{}, fmt.Errorf("query phone Calls: %w", err)
-	}
-	items = append(items, calls...)
-	aiInteractions, err := queryPhoneInteractions(
-		ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit,
-	)
 	if err != nil {
 		return TimelinePage{}, err
 	}
-	items = append(items, aiInteractions...)
-	tasks, err := queryPhoneTaskActivities(
-		ctx, tx, command.PracticeID, locationIDs, command.Phone, cursor, limit,
-	)
-	if err != nil {
-		return TimelinePage{}, err
-	}
-	items = append(items, tasks...)
 
-	page := paginateTimeline(items, limit, true)
 	if err := tx.Commit(ctx); err != nil {
 		return TimelinePage{}, fmt.Errorf("commit phone Engagement History: %w", err)
 	}
 	return page, nil
+}
+
+// Existing clients keep the flat contract while independently deployed web
+// revisions opt into grouped histories. Both paths use the same evidence reads.
+func queryFlatPhoneHistory(ctx context.Context, tx pgx.Tx, practiceID string, locationIDs []string,
+	phone string, cursor *pageCursor, limit int,
+) (TimelinePage, error) {
+	messages, err := queryTimelineMessages(ctx, tx, practiceID, locationIDs, phone, "", cursor, limit, true, nil)
+	if err != nil {
+		return TimelinePage{}, err
+	}
+	calls, err := queryTimelineCalls(ctx, tx, practiceID, locationIDs, phone, cursor, limit, true, nil)
+	if err != nil {
+		return TimelinePage{}, err
+	}
+	ai, err := queryPhoneInteractions(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
+	if err != nil {
+		return TimelinePage{}, err
+	}
+	tasks, err := queryPhoneTaskActivities(ctx, tx, practiceID, locationIDs, phone, cursor, limit, nil)
+	if err != nil {
+		return TimelinePage{}, err
+	}
+	items := append(messages, calls...)
+	items = append(items, ai...)
+	items = append(items, tasks...)
+	return paginateTimeline(items, limit, true), nil
 }
 
 func (m *Module) QueryTimeline(
@@ -129,14 +135,14 @@ func (m *Module) QueryTimeline(
 	items := make([]TimelineItem, 0, (limit+1)*3)
 	messages, err := queryTimelineMessages(
 		ctx, tx, thread.PracticeID, locationIDs, thread.ExternalPhone,
-		thread.ID, cursor, limit, false,
+		thread.ID, cursor, limit, false, nil,
 	)
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("query conversation Messages: %w", err)
 	}
 	items = append(items, messages...)
 	calls, err := queryTimelineCalls(
-		ctx, tx, thread.PracticeID, locationIDs, thread.ExternalPhone, cursor, limit, false,
+		ctx, tx, thread.PracticeID, locationIDs, thread.ExternalPhone, cursor, limit, false, nil,
 	)
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("query conversation Calls: %w", err)
@@ -203,6 +209,7 @@ const messageProjectionSQL = `
 		AND thread.external_phone = $2
 		AND thread.location_id = ANY($3::uuid[])
 		AND ($7::uuid IS NULL OR thread.id = $7)
+		AND ($9::uuid[] IS NULL OR message.id = ANY($9))
 		AND (
 			$4::timestamptz IS NULL
 			OR message.created_at < $4
@@ -227,6 +234,7 @@ func queryTimelineMessages(
 	cursor *pageCursor,
 	limit int,
 	keyedCursor bool,
+	selectedIDs []string,
 ) ([]TimelineItem, error) {
 	var threadArgument any
 	if threadID != "" {
@@ -234,7 +242,7 @@ func queryTimelineMessages(
 	}
 	rows, err := tx.Query(ctx, messageProjectionSQL,
 		practiceID, phone, locationIDs, nullableCursorTime(cursor),
-		nullableCursorID(cursor), limit+1, threadArgument, keyedCursor,
+		nullableCursorID(cursor), limit+1, threadArgument, keyedCursor, selectedIDs,
 	)
 	if err != nil {
 		return nil, err
@@ -368,6 +376,7 @@ const callProjectionSQL = `
 	WHERE call.practice_id = $1
 		AND call.location_id = ANY($2::uuid[])
 		AND COALESCE(handoff.phone, call.destination_phone) = $3
+		AND ($8::uuid[] IS NULL OR call.id = ANY($8))
 		AND (
 			$4::timestamptz IS NULL
 			OR call.created_at < $4
@@ -391,10 +400,11 @@ func queryTimelineCalls(
 	cursor *pageCursor,
 	limit int,
 	keyedCursor bool,
+	selectedIDs []string,
 ) ([]TimelineItem, error) {
 	rows, err := tx.Query(ctx, callProjectionSQL,
 		practiceID, locationIDs, phone, nullableCursorTime(cursor),
-		nullableCursorID(cursor), limit+1, keyedCursor,
+		nullableCursorID(cursor), limit+1, keyedCursor, selectedIDs,
 	)
 	if err != nil {
 		return nil, err
@@ -437,6 +447,7 @@ func queryPhoneInteractions(
 	phone string,
 	cursor *pageCursor,
 	limit int,
+	selectedIDs []string,
 ) ([]TimelineItem, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT
@@ -461,6 +472,7 @@ func queryPhoneInteractions(
 		WHERE interaction.practice_id = $1
 			AND interaction.location_id = ANY($2::uuid[])
 			AND interaction.phone = $3
+			AND ($7::uuid[] IS NULL OR interaction.id = ANY($7))
 			AND (
 				$4::timestamptz IS NULL
 				OR interaction.started_at < $4
@@ -472,7 +484,7 @@ func queryPhoneInteractions(
 		ORDER BY interaction.started_at DESC, interaction.id DESC
 		LIMIT $6
 	`, practiceID, locationIDs, phone, nullableCursorTime(cursor),
-		nullableCursorID(cursor), limit+1)
+		nullableCursorID(cursor), limit+1, selectedIDs)
 	if err != nil {
 		return nil, fmt.Errorf("query phone AI Interactions: %w", err)
 	}
@@ -517,10 +529,11 @@ func queryPhoneTaskActivities(
 	phone string,
 	cursor *pageCursor,
 	limit int,
+	selectedIDs []string,
 ) ([]TimelineItem, error) {
 	rows, err := tx.Query(ctx, phoneTaskActivityQuery,
 		practiceID, locationIDs, phone, nullableCursorTime(cursor),
-		nullableCursorID(cursor), limit+1,
+		nullableCursorID(cursor), limit+1, selectedIDs,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query phone Tasks: %w", err)
@@ -698,7 +711,7 @@ func decodeCursor(raw string, keyed bool) (*pageCursor, error) {
 	}
 	parts := strings.SplitN(cursor.ID, ":", 2)
 	if len(parts) != 2 ||
-		(parts[0] != "MESSAGE" && parts[0] != "CALL" && parts[0] != "TASK") ||
+		(parts[0] != "MESSAGE" && parts[0] != "CALL" && parts[0] != "TASK" && parts[0] != "CALL_HISTORY" && parts[0] != "AI_INTERACTION") ||
 		uuid.Validate(parts[1]) != nil {
 		return nil, ErrInvalidInput
 	}

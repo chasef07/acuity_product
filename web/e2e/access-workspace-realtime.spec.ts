@@ -606,7 +606,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
         background: "#fff",
         foreground: "#0d0d0d",
         primary: "#0d0d0d",
-        sidebar: "#fafafa",
+        sidebar: "lab(98.26% 0 0)",
       })
     await page.screenshot({
       path: testInfo.outputPath("workspace-light.png"),
