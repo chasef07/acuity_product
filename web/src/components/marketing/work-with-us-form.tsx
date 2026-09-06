@@ -77,9 +77,16 @@ export function WorkWithUsForm() {
           <span>Number of locations</span>
           <input inputMode="numeric" min="1" name="locationCount" required type="number" />
         </label>
-        <label className={`${styles.formField} ${styles.formFieldWide}`}>
+        <label className={styles.formField}>
           <span>Practice</span>
           <input autoComplete="organization" name="practice" required type="text" />
+        </label>
+        <label className={styles.formField}>
+          <span>EMR / PM system</span>
+          <input
+            name="emrPmSystem"
+            type="text"
+          />
         </label>
       </div>
 

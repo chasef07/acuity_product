@@ -18,6 +18,7 @@ import styles from "./enterprise-site.module.css"
 
 import chasePortrait from "../../../public/marketing/chase-fagen-v2.png"
 import kylePortrait from "../../../public/marketing/kyle-shechtman-2026.png"
+import venincasaPortrait from "../../../public/marketing/michael-venincasa-md.jpg"
 
 const sans = Geist({
   subsets: ["latin"],
@@ -37,6 +38,8 @@ const mono = JetBrains_Mono({
 export type MarketingRoute =
   | "/"
   | "/method"
+  | "/integrations"
+  | "/integrations/advancedmd"
   | "/who-we-are"
   | "/work-with-us"
   | "/privacy-policy"
@@ -54,6 +57,7 @@ const footerNavigation = [
     label: "Product",
     links: [
       { href: "/method", label: "The Acuity Health Method" },
+      { href: "/integrations", label: "Partnerships & Integrations" },
     ],
   },
   {
@@ -297,6 +301,139 @@ export function EnterpriseHome({
   )
 }
 
+export function IntegrationsPageContent() {
+  return (
+    <MarketingFrame current="/integrations">
+      <section
+        aria-labelledby="integrations-title"
+        className={styles.integrationsSection}
+        id="integrations"
+      >
+        <header className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>Partnerships & integrations</p>
+            <h1 id="integrations-title">Medical AI, connected to your EHR & PMS.</h1>
+          </div>
+          <p>
+            Bring AI-powered patient access to the electronic health record
+            (EHR) and practice management systems (PMS) your team already uses.
+          </p>
+        </header>
+        <div className={styles.integrationsGrid}>
+          <article className={styles.integrationPartner}>
+            <p className={styles.eyebrow}>Marketplace partner</p>
+            <h2>AdvancedMD</h2>
+            <p className={styles.integrationDescription}>
+              Acuity Health is an AdvancedMD partner. Our AI receptionist connects
+              patient calls with scheduling in AdvancedMD, shaped around your
+              practice’s providers, locations, and appointment rules.
+            </p>
+            <Link
+              className={styles.inlineArrowLink}
+              href="/integrations/advancedmd"
+            >
+              Explore the AdvancedMD integration
+              <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+          </article>
+          <div className={styles.additionalIntegrations}>
+            <h2>More EHR & PMS integrations</h2>
+            <p className={styles.integrationDescription}>
+              Alongside AdvancedMD, Acuity Health connects with these EHR and PMS
+              platforms and more, adapting each integration to your practice’s
+              workflows.
+            </p>
+            <ul className={styles.integrationNames}>
+              <li>Nextech</li>
+              <li>Athenahealth</li>
+              <li>ModMed</li>
+              <li>Compulink</li>
+            </ul>
+          </div>
+        </div>
+        <div className={styles.customIntegration} id="custom-integrations">
+          <div>
+            <p className={styles.eyebrow}>Custom integrations</p>
+            <h2>Don’t see your EHR or PMS?</h2>
+            <p className={styles.integrationDescription}>
+              Acuity Health’s integrations go beyond this list. We build custom
+              connections with additional EHR and PMS platforms. Tell us which
+              system you use and what you want to automate, and we’ll confirm
+              what’s possible for your practice.
+            </p>
+          </div>
+          <Link className={styles.inlineArrowLink} href="/work-with-us">
+            Discuss your integration
+            <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
+
+      <PartnershipCta />
+    </MarketingFrame>
+  )
+}
+
+export function AdvancedMDPageContent() {
+  return (
+    <MarketingFrame current="/integrations/advancedmd">
+      <section className={styles.integrationsSection}>
+        <header className={styles.sectionHeader}>
+          <div>
+            <p className={styles.eyebrow}>AdvancedMD marketplace partner</p>
+            <h1>AI Agents for AdvancedMD.</h1>
+          </div>
+          <p>
+            Acuity Health answers patient calls and schedules directly in
+            AdvancedMD, with medical AI built around your practice’s rules.
+          </p>
+        </header>
+        <div className={styles.platformActions}>
+          <Link className={styles.darkButton} href="/work-with-us">
+            Discuss AdvancedMD <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+          <a
+            className={styles.inlineArrowLink}
+            href="https://www.advancedmd.com/integrations/marketplace/acuity-health/"
+            rel="noreferrer"
+            target="_blank"
+          >
+            View our AdvancedMD marketplace listing
+            <ArrowRight size={16} aria-hidden="true" />
+          </a>
+        </div>
+        <div className={styles.platformDetails}>
+          <article>
+            <h2>Calls answered, 24/7</h2>
+            <p>Handle common questions, scheduling requests, and after-hours calls.</p>
+          </article>
+          <article>
+            <h2>Scheduling that follows your rules</h2>
+            <p>Book in AdvancedMD using your providers, locations, appointment types, and insurance requirements.</p>
+          </article>
+          <article>
+            <h2>Clear staff handoffs</h2>
+            <p>Turn unresolved requests into staff work with the context, ownership, and next action to follow through.</p>
+          </article>
+        </div>
+        <div className={styles.customIntegration}>
+          <div>
+            <h2>What does setup involve?</h2>
+            <p className={styles.integrationDescription}>
+              We review your AdvancedMD setup and scheduling workflows with your
+              team, then confirm the integration requirements and work your AI
+              should handle before rollout.
+            </p>
+          </div>
+          <Link className={styles.inlineArrowLink} href="/integrations">
+            All EHR & PMS integrations <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
+    </MarketingFrame>
+  )
+}
+
 export function MethodPageContent() {
   return (
     <MarketingFrame current="/method">
@@ -405,6 +542,20 @@ export function WhoWeArePageContent() {
                 sameAs: ["https://www.linkedin.com/in/chase-fagen-198947180"],
                 worksFor: { "@id": "https://acuityhealth.io/#organization" },
               },
+              {
+                "@type": "Person",
+                "@id": "https://acuityhealth.io/who-we-are#dr-venincasa",
+                name: "Michael Venincasa, MD",
+                jobTitle: "Chief Medical Officer",
+                image: {
+                  "@type": "ImageObject",
+                  url: "https://acuityhealth.io/marketing/michael-venincasa-md.jpg",
+                  width: venincasaPortrait.width,
+                  height: venincasaPortrait.height,
+                  caption: "Michael Venincasa, MD, Acuity Health Chief Medical Officer",
+                },
+                worksFor: { "@id": "https://acuityhealth.io/#organization" },
+              },
             ],
           }).replace(/</g, "\\u003c"),
         }}
@@ -467,6 +618,37 @@ export function WhoWeArePageContent() {
             </p>
           </FounderPanel>
         </div>
+        <article
+          aria-labelledby="dr-venincasa"
+          className={styles.clinicalLeadership}
+        >
+          <Image
+            alt="Michael Venincasa, MD, Acuity Health Chief Medical Officer"
+            className={styles.clinicalPortrait}
+            placeholder="blur"
+            loading="lazy"
+            sizes="(max-width: 427px) calc(100vw - 48px), (max-width: 640px) 380px, (max-width: 860px) 300px, 380px"
+            src={venincasaPortrait}
+          />
+          <div className={styles.clinicalProfile}>
+            <p className={styles.eyebrow}>Clinical leadership</p>
+            <h2 id="dr-venincasa">Michael Venincasa<span>, MD</span></h2>
+            <p className={styles.clinicalRole}>Chief Medical Officer</p>
+            <div className={styles.clinicalBio}>
+              <p>
+                Dr. Venincasa is a comprehensive ophthalmologist with a special
+                interest in cataract surgery and advanced lens replacement.
+              </p>
+              <p>
+                He earned his medical degree at the University of Miami Miller
+                School of Medicine and completed his residency at Bascom Palmer
+                Eye Institute. His commitment to improving patients’ vision and
+                lives guides his work at Acuity Health, where he helps shape AI
+                that gives medical teams more time to focus on care.
+              </p>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section
@@ -544,22 +726,22 @@ export function WorkWithUsPageContent() {
         <div className={styles.collaborationSteps}>
           <article>
             <span>01</span>
-            <h3>Baseline</h3>
+            <h2>Baseline</h2>
             <p>Agree on volumes, failure modes, handoffs, and the KPIs that matter.</p>
           </article>
           <article>
             <span>02</span>
-            <h3>Redesign</h3>
+            <h2>Redesign</h2>
             <p>Map the rules, exceptions, ownership, and new workflow with the people who run it.</p>
           </article>
           <article>
             <span>03</span>
-            <h3>Test</h3>
+            <h2>Test</h2>
             <p>Launch a bounded pilot that tests the highest-risk assumptions in real operations.</p>
           </article>
           <article>
             <span>04</span>
-            <h3>Prove</h3>
+            <h2>Prove</h2>
             <p>Compare results with the agreed KPIs, strengthen weak points, and expand when the evidence holds.</p>
           </article>
         </div>
