@@ -48,6 +48,7 @@ const operatorAnalyticsFixture = {
         errors: [],
       }],
     },
+    daily: [{ date: "2026-08-10", totalCalls: 42, transferCount: 5, transferRate: 5 / 42 }],
     totalCalls: 42,
     bookingCount: 8,
     cancellationCount: 3,
@@ -443,7 +444,7 @@ test("workspace authority, operator analytics, browser state, and reconnect", as
       name: "AI call analytics",
     })
     await expect(analyticsRegion.getByText("Total calls")).toBeVisible()
-    await expect(analyticsRegion.getByText("42", { exact: true })).toBeVisible()
+    await expect(analyticsRegion.getByRole("region", { name: "Call volume over time", exact: true }).getByRole("strong")).toHaveText("42")
     await expect(analyticsRegion.getByText("Booked", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByText("8", { exact: true })).toBeVisible()
     await expect(analyticsRegion.getByText("Cancelled", { exact: true })).toBeVisible()

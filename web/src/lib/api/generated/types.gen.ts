@@ -845,7 +845,27 @@ export type OperatorAiAnalyticsQueryRequest = {
     limit?: number;
 };
 
+export type OperatorAiAnalyticsDay = {
+    /**
+     * UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
+     */
+    date: string;
+    totalCalls: number;
+    /**
+     * Calls with persisted ESCALATED status, matching the summary transfer count.
+     */
+    transferCount: number;
+    /**
+     * Transferred calls divided by all AI calls on this date. Absent when there are no calls.
+     */
+    transferRate?: number;
+};
+
 export type OperatorAiAnalyticsSummary = {
+    /**
+     * All UTC dates in the full selected range, including dates without calls; independent of call pagination.
+     */
+    daily: Array<OperatorAiAnalyticsDay>;
     diagnostics?: OperatorAiAnalyticsDiagnostics;
     totalCalls: number;
     bookingCount: number;

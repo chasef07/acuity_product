@@ -281,6 +281,18 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		firstPage.Summary.P99TotalLatencyMs != 2000 {
 		t.Fatalf("operator analytics summary = %#v", firstPage.Summary)
 	}
+	totalCalls, transfers := 0, 0
+	for _, day := range firstPage.Summary.Daily {
+		totalCalls += day.TotalCalls
+		transfers += day.TransferCount
+		if day.TotalCalls == 0 && day.TransferRate != nil {
+			t.Fatalf("empty date has rate: %#v", day)
+		}
+	}
+	if len(firstPage.Summary.Daily) < 2 || totalCalls != firstPage.Summary.TotalCalls || transfers != firstPage.Summary.TransferCount {
+		t.Fatalf("daily trends do not cover full range: %#v", firstPage.Summary.Daily)
+	}
+
 	if len(firstPage.Calls) != 1 || firstPage.Calls[0].ID != escalatedID ||
 		!firstPage.Calls[0].Transferred || firstPage.Calls[0].TranscriptAvailable ||
 		firstPage.Calls[0].ToolCallCount != 1 || firstPage.Calls[0].ToolErrorCount != 0 ||
@@ -456,6 +468,12 @@ type operatorAIInteractionFixture struct {
 
 type operatorAIAnalyticsTestPage struct {
 	Summary *struct {
+		Daily []struct {
+			Date          string   `json:"date"`
+			TotalCalls    int      `json:"totalCalls"`
+			TransferCount int      `json:"transferCount"`
+			TransferRate  *float64 `json:"transferRate"`
+		} `json:"daily"`
 		TotalCalls        int     `json:"totalCalls"`
 		BookingCount      int     `json:"bookingCount"`
 		CancellationCount int     `json:"cancellationCount"`

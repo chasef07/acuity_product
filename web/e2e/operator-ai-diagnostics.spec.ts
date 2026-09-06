@@ -97,7 +97,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       }
       await client.query(
         `INSERT INTO ai_interactions (id, service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage, appointment_outcome, transcript, closeout_payload)
-        VALUES ($1, 'diagnostics-e2e', $2, $3, $1::uuid::text, '+15555550199', '+17275550106', $4, $5, 'COMPLETED', 3, 'INDETERMINATE', $6, '{"domainOutcomes":[]}'::jsonb)`,
+        VALUES ($1, 'diagnostics-e2e', $2, $3, $1::uuid::text, '+15555550199', '+17275550106', $4, $5, $7, 3, 'INDETERMINATE', $6, '{"domainOutcomes":[]}'::jsonb)`,
         [
           id,
           scope.practice_id,
@@ -105,6 +105,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
           start,
           new Date(start.getTime() + 120_000),
           { items },
+          call % 2 === 0 ? "ESCALATED" : "COMPLETED",
         ],
       )
     }
@@ -120,6 +121,124 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await page
       .getByRole("option", { name: "Fixture Location 6", exact: true })
       .click()
+    const volume = diagnostics.getByRole("region", {
+      name: "Call volume over time",
+      exact: true,
+    })
+    const transfers = diagnostics.getByRole("region", {
+      name: "Transfer rate over time",
+      exact: true,
+    })
+    await expect(volume.getByRole("strong")).toHaveText("70")
+    await expect(transfers.getByRole("strong")).toHaveText("50.0%")
+    await expect(
+      transfers.getByText("35 of 70 calls transferred"),
+    ).toBeVisible()
+    await expect(volume.locator(".recharts-bar-rectangle")).not.toHaveCount(0)
+    await expect(transfers.locator(".recharts-line-curve")).toHaveCount(1)
+    await transfers.getByText("View daily data", { exact: true }).click()
+    const dailyRows = transfers.getByRole("table").locator("tbody tr")
+    const dailyCounts = await dailyRows.evaluateAll((rows) =>
+      rows.reduce(
+        (sum, row) => sum + Number(row.querySelector("td")?.textContent),
+        0,
+      ),
+    )
+    expect(dailyCounts).toBe(70)
+    await transfers.getByText("View daily data", { exact: true }).click()
+    await page.screenshot({
+      path: testInfo.outputPath("call-trends.png"),
+      fullPage: true,
+      animations: "disabled",
+    })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(volume).toBeVisible()
+    expect(
+      await diagnostics.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true)
+    await page.screenshot({
+      path: testInfo.outputPath("call-trends-mobile.png"),
+      fullPage: true,
+      animations: "disabled",
+    })
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await diagnostics
+      .getByRole("button", { name: "Calls", exact: true })
+      .click()
+    await diagnostics
+      .getByRole("button", { name: /Open analytics for call from/ })
+      .first()
+      .click()
+    const callSheet = page.getByRole("dialog", { name: "AI call evidence" })
+    await expect(
+      callSheet.getByRole("button", { name: "Turn timing" }),
+    ).toHaveAttribute("aria-pressed", "true")
+    await expect(callSheet.getByText("P50 STT", { exact: true })).toBeVisible()
+    await expect(callSheet.getByLabel("Caller message").first()).toContainText("STT final")
+    await expect(callSheet.getByLabel("Agent message").first()).toContainText("TTFT")
+    await expect(
+      callSheet.getByRole("heading", {
+        name: "Appointment and receipt evidence",
+      }),
+    ).toHaveCount(0)
+    await expect(
+      callSheet.getByLabel("Caller message").first(),
+    ).toBeInViewport()
+    await expect(
+      callSheet.getByLabel("Caller message").first(),
+    ).toHaveAttribute("data-align", "end")
+    await expect(callSheet.getByLabel("Agent message").first()).toHaveAttribute(
+      "data-align",
+      "start",
+    )
+    await expect(
+      callSheet
+        .getByLabel("Caller message")
+        .first()
+        .locator('[data-slot="bubble"]'),
+    ).toHaveCount(1)
+    await expect(
+      callSheet
+        .getByLabel("Agent message")
+        .first()
+        .locator('[data-slot="bubble"]'),
+    ).toHaveCount(1)
+    const transcript = callSheet.getByLabel("Scrollable call evidence")
+    await transcript.evaluate((element) => {
+      element.scrollTop = 500
+    })
+    await expect(
+      callSheet.getByText("P50 STT", { exact: true }),
+    ).toBeInViewport()
+    await expect(
+      callSheet.getByText("P50 E2E", { exact: true }),
+    ).toBeInViewport()
+    await transcript.evaluate((element) => {
+      element.scrollTop = 0
+    })
+    await page.screenshot({
+      path: testInfo.outputPath("conversation.png"),
+      fullPage: true,
+      animations: "disabled",
+    })
+    await callSheet.getByRole("button", { name: "Turn timing" }).click()
+    await expect(callSheet.getByText("P50 STT", { exact: true })).toBeVisible()
+    await callSheet.getByRole("button", { name: "Turn timing" }).click()
+    await page.setViewportSize({ width: 390, height: 844 })
+    expect(
+      await callSheet.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true)
+    await page.screenshot({
+      path: testInfo.outputPath("conversation-mobile.png"),
+      fullPage: true,
+      animations: "disabled",
+    })
+    await page.getByRole("button", { name: "Close", exact: true }).click()
+    await page.setViewportSize({ width: 1440, height: 1320 })
     await diagnostics
       .getByRole("button", { name: "Performance", exact: true })
       .click()

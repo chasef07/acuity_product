@@ -3812,6 +3812,7 @@ func operatorAIAnalyticsPageResponse(
 	}
 	if page.Summary != nil {
 		response.Summary = &api.OperatorAIAnalyticsSummary{
+			Daily:             make([]api.OperatorAIAnalyticsDay, 0, len(page.Summary.Daily)),
 			Diagnostics:       analyticsDiagnosticsResponse(page.Summary.Diagnostics),
 			TotalCalls:        page.Summary.TotalCalls,
 			BookingCount:      page.Summary.BookingCount,
@@ -3834,6 +3835,9 @@ func operatorAIAnalyticsPageResponse(
 			ToolCallCount:     page.Summary.ToolCallCount,
 			ToolErrorCount:    page.Summary.ToolErrorCount,
 			ToolFailureRate:   page.Summary.ToolFailureRate,
+		}
+		for _, day := range page.Summary.Daily {
+			response.Summary.Daily = append(response.Summary.Daily, api.OperatorAIAnalyticsDay{Date: day.Date, TotalCalls: day.TotalCalls, TransferCount: day.TransferCount, TransferRate: day.TransferRate})
 		}
 	}
 	for _, call := range page.Calls {

@@ -3784,10 +3784,32 @@ components:
           minimum: 1
           maximum: 100
           default: 50
+    OperatorAIAnalyticsDay:
+      type: object
+      additionalProperties: false
+      required: [date, totalCalls, transferCount]
+      properties:
+        date:
+          type: string
+          description: UTC call-start date in YYYY-MM-DD format. Boundary dates may cover partial days in the rolling range.
+        totalCalls:
+          type: integer
+          minimum: 0
+        transferCount:
+          type: integer
+          minimum: 0
+          description: Calls with persisted ESCALATED status, matching the summary transfer count.
+        transferRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Transferred calls divided by all AI calls on this date. Absent when there are no calls.
     OperatorAIAnalyticsSummary:
       type: object
       additionalProperties: false
       required:
+        - daily
         - totalCalls
         - bookingCount
         - cancellationCount
@@ -3798,6 +3820,10 @@ components:
         - toolErrorCount
         - toolFailureRate
       properties:
+        daily:
+          type: array
+          description: All UTC dates in the full selected range, including dates without calls; independent of call pagination.
+          items: {$ref: "#/components/schemas/OperatorAIAnalyticsDay"}
         diagnostics: {$ref: "#/components/schemas/OperatorAIAnalyticsDiagnostics"}
         totalCalls:
           type: integer
