@@ -777,6 +777,8 @@ test("an unanswered destination, cancellation and failed connection have distinc
     { providerTermination: "FAILED", endRequested: false, expected: "Call couldn’t connect" },
     { providerTermination: "MEDIA_READINESS_FAILED", endRequested: false, expected: "Call couldn’t connect" },
     { providerTermination: "COMPLETED", endRequested: true, expected: "Call ended" },
+    // A provider originator_cancel is normalized to FAILED; Staff intent remains durable.
+    { providerTermination: "FAILED", endRequested: true, expected: "Call ended" },
   ]
   for (const { expected, ...attempt } of attempts) {
     const view = projectCallingCard(snapshot({ ...outboundCall, ...attempt, state: "UNANSWERED" }), now)

@@ -507,12 +507,13 @@ function callStatus(call: CallingCardCall) {
   switch (call.state) {
     case "CONNECTED": return "Connected"
     case "UNANSWERED":
+      if (call.endRequested) return "Call ended"
       switch (call.providerTermination) {
         case "BUSY": return "Line busy"
         case "DECLINED": return "Call declined"
         case "FAILED":
         case "MEDIA_READINESS_FAILED": return "Call couldn’t connect"
-        default: return call.endRequested ? "Call ended" : "No answer"
+        default: return "No answer"
       }
     case "MISSED": return "Missed call"
     case "VOICEMAIL": return "Voicemail"
