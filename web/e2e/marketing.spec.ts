@@ -170,7 +170,6 @@ test("retired commercial routes and their legacy aliases return 404", async ({
   request,
 }) => {
   for (const route of [
-    "/advancedmd-ai-receptionist",
     "/ai-receptionist-for-ophthalmology",
     "/ai-receptionist-vs-medical-answering-service",
     "/case-studies/ophthalmology-patient-access",
@@ -180,7 +179,6 @@ test("retired commercial routes and their legacy aliases return 404", async ({
     "/after-hours-answering-service-ophthalmology",
     "/insights/best-ai-answering-service-ophthalmology",
     "/insights/ai-receptionist-vs-traditional-answering-service",
-    "/partners/advancedmd",
   ]) {
     expect((await request.get(route, { maxRedirects: 0 })).status()).toBe(404)
   }
@@ -268,13 +266,27 @@ test("trust and legal pages publish bounded evidence", async ({ page }) => {
 })
 
 test("legacy SEO routes redirect only to equivalent current pages", async ({ request }) => {
-  const redirects = [["/about", "/who-we-are"]] as const
+  const redirects = [
+    ["/about", "/who-we-are"],
+    ["/advancedmd-ai-receptionist", "/integrations/advancedmd"],
+    ["/partners/advancedmd", "/integrations/advancedmd"],
+  ] as const
 
   for (const [source, destination] of redirects) {
     const response = await request.get(source, { maxRedirects: 0 })
     expect(response.status()).toBe(308)
     expect(response.headers().location).toBe(destination)
+    expect((await request.get(destination)).status()).toBe(200)
   }
+
+  const campaignRedirect = await request.get(
+    "/advancedmd-ai-receptionist?utm_source=marketplace",
+    { maxRedirects: 0 },
+  )
+  expect(campaignRedirect.status()).toBe(308)
+  expect(campaignRedirect.headers().location).toBe(
+    "/integrations/advancedmd?utm_source=marketplace",
+  )
 
   for (const route of [
     "/insights",
@@ -358,6 +370,20 @@ test("public pages expose canonical metadata and browser identity assets", async
         "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
     },
     {
+      route: "/integrations",
+      canonical: "https://acuityhealth.io/integrations",
+      title: "EHR & PMS Integrations | Acuity Health",
+      description:
+        "Explore Acuity Health’s AdvancedMD partnership and medical AI integrations with Nextech, Athenahealth, ModMed, Compulink, and custom EHR & PMS platforms.",
+    },
+    {
+      route: "/integrations/advancedmd",
+      canonical: "https://acuityhealth.io/integrations/advancedmd",
+      title: "AI Agents for AdvancedMD | Acuity Health",
+      description:
+        "Acuity Health is an AdvancedMD marketplace partner. Answer calls 24/7, schedule directly in AdvancedMD, and hand unresolved requests to staff with context.",
+    },
+    {
       route: "/method",
       canonical: "https://acuityhealth.io/method",
       title: "The Acuity Health Method | Acuity Health",
@@ -369,7 +395,7 @@ test("public pages expose canonical metadata and browser identity assets", async
       canonical: "https://acuityhealth.io/who-we-are",
       title: "Patient Access AI Company & Founders | Acuity Health",
       description:
-        "Acuity Health is a founder-deployed medical voice company built from the consulting relationship required to transform patient access.",
+        "Meet Acuity Health’s founders and Chief Medical Officer Michael Venincasa, MD, bringing operational and clinical expertise to medical AI.",
     },
     {
       route: "/work-with-us",
@@ -457,7 +483,7 @@ test("public pages expose canonical metadata and browser identity assets", async
   expect(sitemap.ok()).toBe(true)
   expect(sitemap.headers()["content-type"]).toContain("application/xml")
   const sitemapXml = await sitemap.text()
-  expect(sitemapXml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+  expect(sitemapXml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"')
   for (const { route, canonical } of publicPages) {
     const sitemapUrl = route === "/" ? `${canonical}/` : canonical
     expect(sitemapXml).toContain(`<loc>${sitemapUrl}</loc>`)
@@ -543,6 +569,7 @@ test("working-session form submits to Formspree and confirms in place", async ({
   await page.getByLabel("Role").fill("Practice administrator")
   await page.getByLabel("Number of locations").fill("4")
   await page.getByLabel("Practice").fill("Example Medical Group")
+  await page.getByLabel("EMR / PM system").fill("AdvancedMD")
   await page
     .getByLabel("Which patient-access workflow should we focus on?")
     .fill("New-patient scheduling")
@@ -561,9 +588,11 @@ test("working-session form submits to Formspree and confirms in place", async ({
     "Practice administrator",
     "4",
     "Example Medical Group",
+    "AdvancedMD",
     "New-patient scheduling",
     "Time to appointment and call abandonment",
   ]) {
     expect(submittedPayload).toContain(value)
   }
+  expect(submittedPayload).toContain('name="emrPmSystem"')
 })

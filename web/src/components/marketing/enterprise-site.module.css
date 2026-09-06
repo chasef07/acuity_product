@@ -472,6 +472,164 @@
   padding-bottom: 6px;
 }
 
+.integrationsSection {
+  padding: clamp(64px, 8vw, 112px) max(6vw, calc((100vw - 1320px) / 2));
+  scroll-margin-top: 140px;
+}
+
+.integrationsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  margin-top: clamp(32px, 5vw, 64px);
+  gap: clamp(32px, 6vw, 80px);
+  align-items: start;
+}
+
+.platformActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px 32px;
+  margin-top: 36px;
+}
+
+.platformActions svg {
+  flex-shrink: 0;
+}
+
+.platformDetails {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 32px;
+  margin-top: clamp(48px, 6vw, 80px);
+}
+
+.platformDetails article {
+  padding-top: 24px;
+  border-top: 1px solid var(--marketing-line);
+}
+
+.platformDetails h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+  line-height: 1.4;
+}
+
+.platformDetails p {
+  margin: 14px 0 0;
+  color: var(--marketing-ink-soft);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.integrationPartner {
+  padding: clamp(28px, 3vw, 44px);
+  background: #edf2ef;
+  border-left: 3px solid var(--marketing-sage-deep);
+}
+
+.integrationPartner h2 {
+  margin: 0;
+  font-size: clamp(2.2rem, 3.5vw, 3.2rem);
+  font-weight: 550;
+  letter-spacing: -0.055em;
+  line-height: 1.1;
+}
+
+.additionalIntegrations {
+  padding-top: clamp(28px, 3vw, 44px);
+}
+
+.additionalIntegrations h2,
+.customIntegration h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+}
+
+.integrationDescription {
+  margin: 20px 0 24px;
+  color: var(--marketing-ink-soft);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.integrationNames {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+  margin: 28px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.integrationNames li {
+  padding: 18px 0;
+  border-top: 1px solid var(--marketing-line);
+  font-size: clamp(1.1rem, 2vw, 1.45rem);
+  font-weight: 550;
+  letter-spacing: -0.035em;
+}
+
+.customIntegration {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  margin-top: clamp(36px, 5vw, 64px);
+  padding-top: clamp(28px, 4vw, 44px);
+  border-top: 1px solid var(--marketing-line);
+  scroll-margin-top: 140px;
+}
+
+.customIntegration > div {
+  max-width: 68ch;
+}
+
+.customIntegration .integrationDescription {
+  margin-bottom: 0;
+}
+
+.customIntegration > a {
+  flex-shrink: 0;
+}
+
+.integrationsGrid .inlineArrowLink {
+  align-items: center;
+  line-height: 1.5;
+}
+
+.integrationsGrid .inlineArrowLink svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 860px) {
+  .integrationsGrid,
+  .platformDetails {
+    grid-template-columns: 1fr;
+  }
+
+  .additionalIntegrations {
+    padding-top: 0;
+  }
+
+  .customIntegration {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .integrationsSection {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+}
+
 .storyPreview {
   padding: clamp(90px, 11vw, 160px) max(6vw, calc((100vw - 1320px) / 2));
   display: grid;
@@ -544,7 +702,7 @@
 }
 
 .partnershipCta .eyebrow {
-  color: var(--marketing-sage);
+  color: var(--marketing-paper);
 }
 
 .partnershipCta h2 {
@@ -554,7 +712,7 @@
 .partnershipCta p:not(.eyebrow) {
   max-width: 680px;
   margin: 24px 0 0;
-  color: rgb(255 255 255 / 0.72);
+  color: rgb(255 255 255 / 0.9);
   font-size: 1.04rem;
 }
 
@@ -590,7 +748,7 @@
 
 .footerGroup h2 {
   margin: 0 0 22px;
-  color: rgb(251 250 247 / 0.42);
+  color: rgb(251 250 247 / 0.6);
   font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
   font-size: 9px;
   font-weight: 600;
@@ -787,6 +945,83 @@
 
 .founderPanel {
   min-width: 0;
+}
+
+.clinicalLeadership {
+  display: grid;
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(32px, 6vw, 88px);
+  margin-top: clamp(40px, 6vw, 80px);
+  padding-top: clamp(32px, 4vw, 54px);
+  border-top: 1px solid var(--marketing-line);
+}
+
+.clinicalPortrait {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  object-position: center 20%;
+  filter: saturate(0.8);
+}
+
+.clinicalProfile {
+  min-width: 0;
+}
+
+.clinicalProfile h2 {
+  margin: 0;
+  font-family: var(--font-acuity-display), Georgia, serif;
+  font-size: clamp(2.7rem, 4.2vw, 4rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+
+.clinicalProfile h2 span {
+  white-space: nowrap;
+}
+
+.clinicalRole {
+  margin: 16px 0 0;
+  color: var(--marketing-blue-deep);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.clinicalBio {
+  max-width: 58ch;
+  margin-top: 28px;
+  color: var(--marketing-ink-soft);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.clinicalBio p {
+  margin: 0;
+}
+
+.clinicalBio p + p {
+  margin-top: 18px;
+}
+
+@media (max-width: 860px) {
+  .clinicalLeadership {
+    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+@media (max-width: 640px) {
+  .clinicalLeadership {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+
+  .clinicalPortrait {
+    max-width: 380px;
+  }
 }
 
 .founderPortrait {
@@ -1088,7 +1323,7 @@
   letter-spacing: 0.14em;
 }
 
-.collaborationSteps h3 {
+.collaborationSteps h2 {
   margin: 0 0 12px;
   font-family: var(--font-acuity-display), Georgia, serif;
   font-size: clamp(1.8rem, 2.6vw, 2.7rem);
@@ -1147,12 +1382,9 @@
   gap: 20px 22px;
 }
 
-.formFieldWide {
-  grid-column: span 2;
-}
-
 .formField {
   display: grid;
+  grid-template-rows: 1fr auto;
   gap: 8px;
 }
 
@@ -1738,10 +1970,6 @@
 
   .collaborationSteps span {
     margin-bottom: 24px;
-  }
-
-  .formFieldWide {
-    grid-column: span 2;
   }
 
   .formFooter {

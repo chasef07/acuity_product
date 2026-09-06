@@ -1,10 +1,9 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { Suspense, useState } from "react"
+import { lazy, Suspense, useState } from "react"
 
 import { AcuityMark } from "@/components/acuity-mark"
-import { SignInForm } from "@/components/auth/sign-in-form"
 import {
   Card,
   CardContent,
@@ -20,6 +19,12 @@ import {
 } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+
+const SignInForm = lazy(() =>
+  import("@/components/auth/sign-in-form").then((module) => ({
+    default: module.SignInForm,
+  })),
+)
 
 export function PortalSignInTrigger({ className }: { className?: string }) {
   return (
