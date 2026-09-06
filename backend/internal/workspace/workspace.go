@@ -64,6 +64,7 @@ type QueryTimelineCommand struct {
 }
 
 type QueryPhoneTimelineCommand struct {
+	Ungrouped  bool
 	Identity   access.Identity
 	PracticeID string
 	Phone      string
@@ -72,6 +73,7 @@ type QueryPhoneTimelineCommand struct {
 }
 
 type TimelineItem struct {
+	Entries       []TimelineItem
 	Type          string
 	ID            string
 	OccurredAt    time.Time

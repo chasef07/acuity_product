@@ -384,6 +384,7 @@ const phoneTaskActivityQuery = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])
 		AND task.phone = $3
+		AND ($7::uuid[] IS NULL OR activity.id = ANY($7))
 		AND (
 			$4::timestamptz IS NULL
 			OR activity.occurred_at < $4

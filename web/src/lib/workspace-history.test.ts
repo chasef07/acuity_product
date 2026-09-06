@@ -1,102 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-
 import type { ConversationTimelineItem } from "./api/generated/types.gen.ts"
-import {
-  conversationDateLabel,
-  presentTimeline,
-  recoveryFollowUpCallIDs,
-} from "./workspace-history.ts"
+import { callHistoryPresentation, conversationDateLabel, presentTimeline } from "./workspace-history.ts"
 
-const base = {
-  id: "item",
-  occurredAt: "2026-08-13T12:00:00Z",
-} as const
-
-test("history suppresses a transfer-only AI entry when the inbound staff call exists", () => {
-  const items = [
-    {
-      ...base,
-      type: "AI_INTERACTION",
-      aiInteraction: {
-        id: "ai",
-        locationId: "location",
-        locationName: "Office",
-        sourceCallId: "source-call",
-        phone: "+12025550123",
-        startedAt: base.occurredAt,
-        status: "ESCALATED",
-        appointmentOutcome: "INDETERMINATE",
-      },
-    },
-    {
-      ...base,
-      id: "staff-call",
-      type: "CALL",
-      call: {
-        id: "staff-call",
-        type: "CALL",
-        locationId: "location",
-        locationName: "Office",
-        direction: "INBOUND",
-        outcome: "RESOLVED",
-        startedAt: base.occurredAt,
-        durationSeconds: 40,
-        answeredByEmail: "",
-        transferReason: "",
-        current: false,
-        originating: false,
-        sourceCallId: "source-call",
-      },
-    },
-  ] as ConversationTimelineItem[]
-
-  assert.deepEqual(presentTimeline(items).map((item) => item.id), ["staff-call"])
-})
-
-test("history keeps a meaningful AI outcome beside the inbound staff call", () => {
-  const items = [
-    {
-      ...base,
-      type: "AI_INTERACTION",
-      aiInteraction: {
-        id: "ai",
-        locationId: "location",
-        locationName: "Office",
-        sourceCallId: "source-call",
-        phone: "+12025550123",
-        startedAt: base.occurredAt,
-        status: "ESCALATED",
-        appointmentOutcome: "BOOKING",
-      },
-    },
-    {
-      ...base,
-      id: "staff-call",
-      type: "CALL",
-      call: {
-        id: "staff-call",
-        type: "CALL",
-        locationId: "location",
-        locationName: "Office",
-        direction: "INBOUND",
-        outcome: "RESOLVED",
-        startedAt: base.occurredAt,
-        durationSeconds: 40,
-        answeredByEmail: "",
-        transferReason: "",
-        current: false,
-        originating: false,
-        sourceCallId: "source-call",
-      },
-    },
-  ] as ConversationTimelineItem[]
-
-  assert.deepEqual(presentTimeline(items).map((item) => item.id), [
-    "item",
-    "staff-call",
-  ])
-})
+const base = { id: "item", occurredAt: "2026-08-13T12:00:00Z" } as const
 
 test("history presents activity oldest to newest without mutating the API page", () => {
   const items = [
@@ -124,59 +31,30 @@ test("conversation date labels keep recent boundaries subtle and readable", () =
   )
 })
 
-test("history combines recovery bookkeeping with its call and keeps the evidence available", () => {
-  const items = [
-    {
-      ...base,
-      type: "CALL",
-      call: {
-        id: "call",
-        type: "CALL",
-        locationId: "location",
-        locationName: "Office",
-        direction: "INBOUND",
-        outcome: "VOICEMAIL",
-        startedAt: base.occurredAt,
-        durationSeconds: 0,
-        answeredByEmail: "",
-        transferReason: "",
-        current: false,
-        originating: false,
-      },
-    },
-    {
-      ...base,
-      id: "task",
-      type: "TASK",
-      taskActivity: "TASK_CREATED",
-      task: {
-        id: "task",
-        practiceId: "practice",
-        locationId: "location",
-        locationName: "Office",
-        phone: "+12025550123",
-        title: "Return voicemail",
-        state: "OPEN",
-        origin: "VOICEMAIL_RECOVERY",
-        urgency: "normal",
-        createdBy: { kind: "SERVICE", subject: "service" },
-        createdAt: base.occurredAt,
-        updatedAt: base.occurredAt,
-        version: 1,
-        callId: "call",
-        relatedInteractionCount: 1,
-        unread: false,
-        interactions: [
-          {
-            callId: "later-call",
-            type: "MISSED_CALL",
-            occurredAt: "2026-08-13T12:05:00Z",
-          },
-        ],
-      },
-    },
-  ] as ConversationTimelineItem[]
 
-  assert.deepEqual(presentTimeline(items).map((item) => item.id), ["item"])
-  assert.deepEqual([...recoveryFollowUpCallIDs(items)], ["call", "later-call"])
+test("overlapping history pages replace a call with its latest complete evidence", () => {
+  const earlier = { ...base, type: "CALL_HISTORY", entries: [] } as ConversationTimelineItem
+  const updated = { ...earlier, entries: [{ ...base, type: "TASK" }] } as ConversationTimelineItem
+  assert.deepEqual(presentTimeline([earlier, updated]), [updated])
+})
+
+test("call summary preserves booking and failed transfer without claiming staff connection", () => {
+  const history = { ...base, type: "CALL_HISTORY", entries: [
+    { ...base, type: "AI_INTERACTION", aiInteraction: { status: "ESCALATED", appointmentOutcome: "BOOKING", locationName: "Office" } },
+    { ...base, type: "CALL", call: { direction: "INBOUND", outcome: "MISSED", locationName: "Office" } },
+    { ...base, type: "TASK", task: { id: "task", title: "Review instructions", state: "OPEN" } },
+  ] } as ConversationTimelineItem
+  const result = callHistoryPresentation(history)
+  assert.equal(result.title, "AI call")
+  assert.deepEqual(result.details, ["Appointment booked", "Staff not reached", "Office"])
+  assert.equal(result.tasks[0]?.title, "Review instructions")
+})
+
+test("AI transfer intent and no appointment action do not imply resolution", () => {
+  const history = { ...base, type: "CALL_HISTORY", entries: [
+    { ...base, type: "AI_INTERACTION", aiInteraction: { status: "ESCALATED", appointmentOutcome: "INDETERMINATE", locationName: "Office" } },
+  ] } as ConversationTimelineItem
+  assert.deepEqual(callHistoryPresentation(history).details, ["Transfer requested · Staff outcome unknown", "Office"])
+  history.entries![0]!.aiInteraction!.status = "COMPLETED"
+  assert.deepEqual(callHistoryPresentation(history).details, ["No appointment action recorded", "Office"])
 })
