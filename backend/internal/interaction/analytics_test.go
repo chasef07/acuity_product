@@ -2,6 +2,7 @@ package interaction
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -91,8 +92,8 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 				{"callId":"book-1","toolName":"book_appointment","outcome":"booked","status":"success","occurredAt":"2026-08-25T09:00:02Z","evidence":{"action":"booked"}}
 			]}`,
 			want: []ToolExecution{
-				{CallID: "book-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "booked", DomainStatus: "success"},
-				{CallID: "cancel-2", Name: "cancel_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 4, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "cancelled", DomainStatus: "success"},
+				{DurationMs: diagnosticInt(1000), CallID: "book-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "booked", DomainStatus: "success"},
+				{DurationMs: diagnosticInt(1000), CallID: "cancel-2", Name: "cancel_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 4, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "cancelled", DomainStatus: "success"},
 			},
 		},
 		{
@@ -117,11 +118,11 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 				{"callId":"failed-1","toolName":"add_patient","outcome":"patient_creation_failed","status":"failed","occurredAt":"2026-08-25T09:00:02Z"}
 			]}`,
 			want: []ToolExecution{
-				{CallID: "failed-1", Name: "add_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "patient_creation_failed", DomainStatus: "failed"},
-				{CallID: "partial-2", Name: "reschedule_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "rescheduled", DomainStatus: "partial"},
-				{CallID: "blocked-3", Name: "resolve_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 5, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "patient_lookup_needs_identity", DomainStatus: "blocked"},
-				{CallID: "ambiguous-4", Name: "transfer_call", OccurredAt: time.Date(2026, 8, 25, 9, 0, 7, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "transfer_ambiguous", DomainStatus: "ambiguous"},
-				{CallID: "replay-5", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 9, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "booked", DomainStatus: "success"},
+				{DurationMs: diagnosticInt(1000), CallID: "failed-1", Name: "add_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "patient_creation_failed", DomainStatus: "failed"},
+				{DurationMs: diagnosticInt(1000), CallID: "partial-2", Name: "reschedule_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "rescheduled", DomainStatus: "partial"},
+				{DurationMs: diagnosticInt(1000), CallID: "blocked-3", Name: "resolve_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 5, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "patient_lookup_needs_identity", DomainStatus: "blocked"},
+				{DurationMs: diagnosticInt(1000), CallID: "ambiguous-4", Name: "transfer_call", OccurredAt: time.Date(2026, 8, 25, 9, 0, 7, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "transfer_ambiguous", DomainStatus: "ambiguous"},
+				{DurationMs: diagnosticInt(1000), CallID: "replay-5", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 9, 0, time.UTC), Status: "SUCCESS", DomainOutcome: "booked", DomainStatus: "success"},
 			},
 		},
 		{
@@ -134,8 +135,8 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 			]}}`,
 			closeout: `{ "domainOutcomes": [] }`,
 			want: []ToolExecution{
-				{CallID: "invalid-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "ERROR"},
-				{CallID: "unknown-2", Name: "reticulating_splines", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "ERROR"},
+				{DurationMs: diagnosticInt(1000), CallID: "invalid-1", Name: "book_appointment", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "ERROR"},
+				{DurationMs: diagnosticInt(1000), CallID: "unknown-2", Name: "reticulating_splines", OccurredAt: time.Date(2026, 8, 25, 9, 0, 3, 0, time.UTC), Status: "ERROR"},
 			},
 		},
 		{
@@ -158,7 +159,7 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 			]}}`,
 			closeout: `{ "domainOutcomes": [] }`,
 			want: []ToolExecution{
-				{CallID: "malformed-1", Name: "resolve_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "INCOMPLETE"},
+				{DurationMs: diagnosticInt(1000), CallID: "malformed-1", Name: "resolve_patient", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "INCOMPLETE"},
 			},
 		},
 		{
@@ -171,7 +172,7 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 				{"callId":"task-missing","toolName":"create_staff_task","outcome":"staff_task_created","status":"success","occurredAt":"2026-08-25T09:00:02Z"}
 			]}`,
 			want: []ToolExecution{
-				{CallID: "task-missing", Name: "create_staff_task", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS"},
+				{DurationMs: diagnosticInt(1000), CallID: "task-missing", Name: "create_staff_task", OccurredAt: time.Date(2026, 8, 25, 9, 0, 1, 0, time.UTC), Status: "SUCCESS"},
 			},
 		},
 	}
@@ -187,7 +188,7 @@ func TestNormalizeToolExecutionsConsumesNativeAgentCloseout(t *testing.T) {
 				t.Fatalf("tool executions = %#v, want %#v", got, test.want)
 			}
 			for index := range test.want {
-				if got[index] != test.want[index] {
+				if !reflect.DeepEqual(got[index], test.want[index]) {
 					t.Fatalf("tool execution %d = %#v, want %#v", index, got[index], test.want[index])
 				}
 			}

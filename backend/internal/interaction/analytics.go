@@ -35,6 +35,8 @@ type QueryAnalyticsCommand struct {
 }
 
 type AnalyticsSummary struct {
+	Diagnostics       AnalyticsDiagnostics
+	diagnostics       *diagnosticsAccumulator
 	TotalCalls        int
 	BookingCount      int
 	CancellationCount int
@@ -96,6 +98,8 @@ const (
 )
 
 type TimelineItem struct {
+	ItemID         string
+	DurationMs     *int
 	Kind           TimelineKind
 	OccurredAt     time.Time
 	Text           string
@@ -110,6 +114,7 @@ type TimelineItem struct {
 }
 
 type ToolExecution struct {
+	DurationMs    *int
 	CallID        string
 	Name          string
 	OccurredAt    time.Time
@@ -140,6 +145,7 @@ type analyticsCursor struct {
 }
 
 type analyticsProjection struct {
+	executions         []ToolExecution
 	call               AnalyticsCall
 	appointmentOutcome AppointmentOutcome
 	transcript         json.RawMessage
@@ -238,6 +244,7 @@ func queryAnalyticsSummary(
 ) (AnalyticsSummary, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT
+			interaction.id::text,
 			interaction.started_at,
 			interaction.status,
 			interaction.appointment_outcome,
@@ -253,10 +260,12 @@ func queryAnalyticsSummary(
 		return AnalyticsSummary{}, fmt.Errorf("query operator AI analytics summary: %w", err)
 	}
 	defer rows.Close()
-	summary := AnalyticsSummary{}
+	summary := AnalyticsSummary{diagnostics: newDiagnosticsAccumulator()}
+	summary.diagnostics.from, summary.diagnostics.through = from, to
 	for rows.Next() {
 		var projection analyticsProjection
 		if err := rows.Scan(
+			&projection.call.ID,
 			&projection.call.StartedAt,
 			&projection.call.Status,
 			&projection.appointmentOutcome,
@@ -280,6 +289,10 @@ func queryAnalyticsSummary(
 
 func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analyticsProjection) {
 	summary.TotalCalls++
+	if summary.diagnostics == nil {
+		summary.diagnostics = newDiagnosticsAccumulator()
+	}
+	summary.diagnostics.add(projection)
 	switch projection.appointmentOutcome {
 	case OutcomeBooking:
 		summary.BookingCount++
@@ -312,6 +325,11 @@ func summarizeAnalyticsProjection(summary *AnalyticsSummary, projection analytic
 }
 
 func finalizeAnalyticsSummary(summary *AnalyticsSummary) {
+	if summary.diagnostics == nil {
+		summary.diagnostics = newDiagnosticsAccumulator()
+	}
+	summary.Diagnostics = summary.diagnostics.finish()
+	summary.diagnostics = nil
 	if summary.TotalCalls > 0 {
 		summary.TransferRate = float64(summary.TransferCount) / float64(summary.TotalCalls)
 	}
@@ -527,6 +545,7 @@ func projectAnalyticsEvidence(projection *analyticsProjection) {
 		projection.closeoutPayload,
 		projection.call.StartedAt,
 	)
+	projection.executions = executions
 	projection.call.ToolCallCount = len(executions)
 	projection.call.ToolActions = []string{}
 	seenActions := map[string]struct{}{}
@@ -579,10 +598,11 @@ func decodeAnalyticsCursor(command QueryAnalyticsCommand) (*analyticsCursor, err
 }
 
 type latencyValueSet struct {
-	stt     []float64
-	ttft    []float64
-	ttsTtfb []float64
-	total   []float64
+	observations []latencyObservation
+	stt          []float64
+	ttft         []float64
+	ttsTtfb      []float64
+	total        []float64
 }
 
 func latencySamples(raw json.RawMessage) latencyValueSet {
@@ -592,7 +612,7 @@ func latencySamples(raw json.RawMessage) latencyValueSet {
 	for _, value := range entries {
 		entry := recordValue(value)
 		metrics := recordValue(entry["metrics"])
-		appendLatencyValues(&result, metrics)
+		appendLatencyObservation(&result, metrics, firstRecordString(entry, "itemId", "item_id"))
 	}
 	return result
 }
@@ -612,7 +632,7 @@ func analyticsLatencySamples(
 		if itemID := firstRecordString(record, "id"); itemID != "" && len(turnMetrics[itemID]) > 0 {
 			metrics = mergeRecords(metrics, turnMetrics[itemID])
 		}
-		appendLatencyValues(&transcriptSamples, metrics)
+		appendLatencyObservation(&transcriptSamples, metrics, firstRecordString(record, "id"))
 	}
 	return latencySamplesWithFallback(turnSamples, transcriptSamples)
 }
@@ -621,6 +641,11 @@ func latencySamplesWithFallback(
 	primary latencyValueSet,
 	fallback latencyValueSet,
 ) latencyValueSet {
+	for _, observation := range fallback.observations {
+		if len(latencyStageValues(primary, observation.stage)) == 0 {
+			primary.observations = append(primary.observations, observation)
+		}
+	}
 	if len(primary.stt) == 0 {
 		primary.stt = fallback.stt
 	}
@@ -792,6 +817,7 @@ func nativeToolExecutions(
 			),
 		)
 		result = append(result, ToolExecution{
+			DurationMs:    toolDuration(call, output),
 			CallID:        callID,
 			Name:          name,
 			OccurredAt:    occurredAt,
@@ -915,6 +941,13 @@ func normalizeTimeline(
 		result = append(result, item)
 	}
 	samples := latencySamplesWithFallback(turnSamples, transcriptSamples)
+	executionDurations := map[string]*int{}
+	for _, execution := range normalizeToolExecutions(transcript, closeoutPayload, fallback) {
+		executionDurations[execution.CallID] = execution.DurationMs
+	}
+	for index := range result {
+		result[index].DurationMs = executionDurations[result[index].CallID]
+	}
 	sort.SliceStable(result, func(left, right int) bool {
 		return result[left].OccurredAt.Before(result[right].OccurredAt)
 	})
@@ -937,7 +970,7 @@ func transcriptItems(report map[string]any) []any {
 func normalizeTimelineItem(record map[string]any, fallback time.Time) (TimelineItem, bool) {
 	typeName := strings.ToLower(firstRecordString(record, "type"))
 	role := strings.ToLower(firstRecordString(record, "role"))
-	item := TimelineItem{OccurredAt: timestampValue(
+	item := TimelineItem{ItemID: firstRecordString(record, "id"), OccurredAt: timestampValue(
 		firstRecordValue(record, "created_at", "createdAt", "occurredAt"),
 		fallback,
 	)}
