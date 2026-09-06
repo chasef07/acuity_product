@@ -506,6 +506,7 @@ func runMigrate(
 		}
 	}
 	voiceLocations := make([]humancalling.LocationVoiceProvision, 0)
+	ringGroups := make([]humancalling.LocationRingGroupProvision, 0)
 	voiceFallbacks := make([]humancalling.OutboundVoiceFallbackProvision, 0, len(input.Practices))
 	for _, practice := range input.Practices {
 		voiceFallbacks = append(voiceFallbacks, humancalling.OutboundVoiceFallbackProvision{
@@ -513,6 +514,12 @@ func runMigrate(
 			LocationKey: practice.OutboundVoiceFallbackLocationKey,
 		})
 		for _, location := range practice.Locations {
+			if location.InboundRingEmails != nil {
+				ringGroups = append(ringGroups, humancalling.LocationRingGroupProvision{
+					PracticeKey: practice.Key, LocationKey: location.Key,
+					MemberEmails: location.InboundRingEmails,
+				})
+			}
 			if location.VoiceNumber == "" {
 				if location.VoicemailGreeting != "" {
 					return fmt.Errorf(
@@ -552,6 +559,9 @@ func runMigrate(
 		return err
 	}
 	callingModule := humancalling.New(pool, nil, nil, humancalling.Config{}, nil)
+	if err := callingModule.ProvisionLocationRingGroupsInTx(ctx, tx, ringGroups, input.RequestedBy); err != nil {
+		return err
+	}
 	if err := callingModule.ProvisionLocationVoicesInTx(ctx, tx, voiceLocations); err != nil {
 		return err
 	}

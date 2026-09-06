@@ -314,6 +314,19 @@ at `/etc/acuity/production-provisioning.json`. Its steady-state topology is:
 
 The configured Abita voice Locations share the reviewed “Abeeta Eye Group”
 voicemail greeting. The Acuity Demo Practice is a separate tenant.
+
+North Miami Beach Optical has an explicit incoming-call ring group containing
+only the `bright-vu-miami` account. `InboundRingEmails` in the Location's
+provisioning configuration replaces that complete group, independently of
+workspace access. Omitted groups preserve existing routing; an explicit empty
+group is rejected. Locations without a group keep location-scoped fanout.
+Configured members must still have active Staff access and a ready, available
+softphone. Unavailable or unclaimed members do not cause a wider fanout;
+unanswered calls retain the existing voicemail recovery. Platform Operator
+access does not bypass an explicit group. Migration `0061_location_ring_groups.sql`
+seeds the existing NMB group from its provisioned account; provisioning also
+sets it for a fresh installation. Deploy the migration and backend together.
+
 Rheumatology preserves the stable `demo-484` provisioning key, its existing
 voice and Messaging configuration, and its Acuity Demo greeting while both
 `dev` and `rheumatology-demo` resolve to that one Location. Ophthalmology and

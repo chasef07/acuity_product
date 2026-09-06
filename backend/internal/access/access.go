@@ -102,6 +102,7 @@ type LocationProvision struct {
 	VoiceNumber        string
 	VoiceEnabled       *bool
 	VoicemailGreeting  string
+	InboundRingEmails  []string
 }
 
 type AccessGrantProvision struct {
