@@ -150,19 +150,35 @@ function OperatorAnalyticsDetailView({
   focus?: DiagnosticFocus
 }) {
   const selectedRef = useRef<HTMLLIElement>(null)
+  const selectedExecutionRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const target = selectedRef.current
+    const target = selectedRef.current ?? selectedExecutionRef.current
     const container = scrollRef.current
     if (!target || !container) return
     container.scrollTop +=
-      target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24
+      target.getBoundingClientRect().top -
+      container.getBoundingClientRect().top -
+      24
   }, [detail, focus])
   const messageCount = detail.timeline.filter(
     (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
   ).length
 
   const entries = timelineEntries(detail.timeline)
+  const focusedTimelineIndex = entries.findIndex(({ item }) =>
+    Boolean(
+      (focus?.itemID && item.itemId === focus.itemID) ||
+        (focus?.callID && item.callId === focus.callID),
+    ),
+  )
+  // Historical executions can exist without a transcript tool event.
+  const focusedExecutionID =
+    focusedTimelineIndex === -1
+      ? detail.toolExecutions.find(
+          (execution) => execution.callId === focus?.callID,
+        )?.callId
+      : undefined
 
   return (
     <div
@@ -256,10 +272,7 @@ function OperatorAnalyticsDetailView({
                 key={`${item.occurredAt}-${item.kind}-${item.callId ?? index}`}
                 item={item}
                 result={result}
-                selected={Boolean(
-                  (focus?.itemID && item.itemId === focus.itemID) ||
-                    (focus?.callID && item.callId === focus.callID),
-                )}
+                selected={index === focusedTimelineIndex}
                 selectedRef={selectedRef}
               />
             ))}
@@ -274,7 +287,10 @@ function OperatorAnalyticsDetailView({
       <AppointmentEvidence detail={detail} />
 
       <section className="px-5 py-5 sm:px-6">
-        <details className="group rounded-lg border px-4 py-3">
+        <details
+          open={Boolean(focusedExecutionID) || undefined}
+          className="group rounded-lg border px-4 py-3"
+        >
           <summary className="cursor-pointer text-sm font-medium focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
             Technical evidence
           </summary>
@@ -299,7 +315,15 @@ function OperatorAnalyticsDetailView({
                   {detail.toolExecutions.map((execution) => (
                     <div
                       key={execution.callId}
-                      className="rounded-md bg-muted px-3 py-2"
+                      ref={
+                        execution.callId === focusedExecutionID
+                          ? selectedExecutionRef
+                          : undefined
+                      }
+                      data-diagnostic-selected={
+                        execution.callId === focusedExecutionID || undefined
+                      }
+                      className="rounded-md bg-muted px-3 py-2 data-[diagnostic-selected]:ring-2 data-[diagnostic-selected]:ring-ring data-[diagnostic-selected]:ring-offset-4"
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs font-medium">

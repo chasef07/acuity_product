@@ -224,3 +224,95 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     await client.end()
   }
 })
+
+test("historical tool failures reveal and focus their technical evidence", async ({
+  page,
+}) => {
+  const databaseURL = process.env.E2E_DATABASE_URL
+  test.skip(!databaseURL, "E2E_DATABASE_URL is required")
+  if (!new URL(databaseURL!).pathname.endsWith("_e2e"))
+    throw new Error("Disposable E2E database required")
+  const client = new Client({ connectionString: databaseURL })
+  await client.connect()
+  const id = randomUUID()
+  try {
+    const {
+      rows: [scope],
+    } = await client.query(
+      "SELECT l.id, l.practice_id FROM access_locations l JOIN access_practices p ON p.id=l.practice_id WHERE p.provisioning_key='abita-eye-group' AND l.provisioning_key='fixture-location-6'",
+    )
+    const start = new Date(Date.now() - 60_000)
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      id: `historical-message-${index}`,
+      type: "message",
+      role: index % 2 ? "assistant" : "user",
+      content: ["Synthetic historical conversation"],
+      created_at: start.getTime() / 1000 + index,
+    }))
+    await client.query(
+      `INSERT INTO ai_interactions (id, service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage, appointment_outcome, transcript, closeout_payload)
+       VALUES ($1, 'diagnostics-e2e', $2, $3, $1::uuid::text, '+15555550198', '+17275550106', $4, $5, 'COMPLETED', 3, 'INDETERMINATE', $6, $7)`,
+      [
+        id,
+        scope.practice_id,
+        scope.id,
+        start,
+        new Date(start.getTime() + 30_000),
+        { items },
+        {
+          toolExecutions: [
+            {
+              callId: "historical-failure",
+              toolName: "historical_lookup",
+              status: "ERROR",
+              createdAt: start.toISOString(),
+            },
+          ],
+        },
+      ],
+    )
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await signInAs(page, "founder@acuity.test", "Fixture Founder")
+    await page
+      .getByRole("button", { name: "AI diagnostics", exact: true })
+      .click()
+    const diagnostics = page.getByRole("region", { name: "AI call analytics" })
+    await diagnostics
+      .getByRole("combobox", { name: "Office", exact: true })
+      .click()
+    await page
+      .getByRole("option", { name: "Fixture Location 6", exact: true })
+      .click()
+    await diagnostics
+      .getByRole("button", { name: "Tools", exact: true })
+      .click()
+    const tool = diagnostics
+      .getByRole("row")
+      .filter({ hasText: "historical_lookup" })
+    await tool.getByRole("button", { name: /100.0%/ }).click()
+    await diagnostics
+      .getByRole("region", { name: "Failed executions · historical lookup" })
+      .getByRole("button")
+      .click()
+    const selected = page.locator("[data-diagnostic-selected=true]")
+    await expect(selected).toHaveCount(1)
+    await expect(selected).toContainText("historical-failure")
+    await expect(selected).toContainText("execution: ERROR")
+    await expect(selected).toBeInViewport()
+    await expect(
+      page
+        .locator("details")
+        .filter({ has: page.getByText("Technical evidence", { exact: true }) }),
+    ).toHaveAttribute("open", "")
+    await expect
+      .poll(() =>
+        page
+          .getByLabel("Scrollable call evidence")
+          .evaluate((element) => element.scrollTop),
+      )
+      .toBeGreaterThan(0)
+  } finally {
+    await client.query("DELETE FROM ai_interactions WHERE id=$1", [id])
+    await client.end()
+  }
+})
