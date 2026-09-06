@@ -1115,7 +1115,7 @@ export type CreateMessageFollowUpTaskRequest = {
 };
 
 export type ConversationTimelineItem = {
-    type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK';
+    type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK' | 'CALL_HISTORY';
     id: string;
     occurredAt: string;
     taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
@@ -1123,6 +1123,10 @@ export type ConversationTimelineItem = {
     task?: Task;
     call?: CallHistoryItem;
     aiInteraction?: AiOutcomeItem;
+    /**
+     * Authorized call, AI, and linked Task evidence for one CALL_HISTORY item. Never contains nested histories. Pagination counts the whole history once.
+     */
+    entries?: Array<ConversationTimelineItem>;
 };
 
 export type ConversationTimelinePage = {
@@ -2098,6 +2102,10 @@ export type GetCallingEngagementHistoryData = {
     query?: {
         cursor?: string;
         limit?: number;
+        /**
+         * Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
+         */
+        groupCalls?: boolean;
     };
     url: '/v1/calling/calls/{callId}/engagement-history';
 };
@@ -2354,6 +2362,10 @@ export type GetEngagementTimelineData = {
         practiceId: string;
         cursor?: string;
         limit?: number;
+        /**
+         * Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
+         */
+        groupCalls?: boolean;
     };
     url: '/v1/engagements/{phone}/timeline';
 };
@@ -3081,6 +3093,10 @@ export type GetTaskEngagementHistoryData = {
     query?: {
         cursor?: string;
         limit?: number;
+        /**
+         * Return each call with its linked AI and Task evidence as one shared call history item. Defaults to the flat history for existing clients.
+         */
+        groupCalls?: boolean;
     };
     url: '/v1/tasks/{taskId}/engagement-history';
 };

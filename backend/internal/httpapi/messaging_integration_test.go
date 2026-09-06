@@ -369,7 +369,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 		t,
 		portal.Client(),
 		http.MethodGet,
-		portal.URL+"/v1/calling/calls/"+engagementCallID+"/engagement-history",
+		portal.URL+"/v1/calling/calls/"+engagementCallID+"/engagement-history?groupCalls=true",
 		"message-token",
 		nil,
 	)
@@ -383,7 +383,16 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	var engagement api.ConversationTimelinePage
 	decode(t, engagementResponse, &engagement)
 	types := map[api.ConversationTimelineItemType]bool{}
+	evidence := append([]api.ConversationTimelineItem(nil), engagement.Items...)
 	for _, item := range engagement.Items {
+		if item.Type == "CALL_HISTORY" {
+			if item.Entries == nil || len(*item.Entries) == 0 {
+				t.Fatal("empty call history")
+			}
+			evidence = append(evidence, (*item.Entries)...)
+		}
+	}
+	for _, item := range evidence {
 		types[item.Type] = true
 		switch item.Type {
 		case api.ConversationTimelineItemTypeMESSAGE:
@@ -448,7 +457,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	for _, endpoint := range []string{
 		portal.URL + "/v1/engagements/+17275550199/timeline?practiceId=" +
 			url.QueryEscape(authorization.Practice.ID),
-		portal.URL + "/v1/tasks/" + task.Id.String() + "/engagement-history",
+		portal.URL + "/v1/tasks/" + task.Id.String() + "/engagement-history?groupCalls=true",
 	} {
 		response := request(
 			t,
@@ -476,7 +485,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	cursor := ""
 	for pageNumber := 0; pageNumber < 10; pageNumber++ {
 		endpoint := portal.URL + "/v1/calling/calls/" + engagementCallID +
-			"/engagement-history?limit=2"
+			"/engagement-history?groupCalls=true&limit=2"
 		if cursor != "" {
 			endpoint += "&cursor=" + url.QueryEscape(cursor)
 		}

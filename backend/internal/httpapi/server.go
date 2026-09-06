@@ -1090,6 +1090,7 @@ func (server *Server) GetCallingEngagementHistory(
 	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
 		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  params.GroupCalls == nil || !*params.GroupCalls,
 			Identity:   identity,
 			PracticeID: call.PracticeID,
 			Phone:      call.Phone,
@@ -1160,6 +1161,7 @@ func (server *Server) GetEngagementTimeline(
 	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
 		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  params.GroupCalls == nil || !*params.GroupCalls,
 			Identity:   identity,
 			PracticeID: params.PracticeId.String(),
 			Phone:      normalized,
@@ -1827,6 +1829,7 @@ func (server *Server) GetTaskEngagementHistory(
 	timeline, err := server.workspace.QueryPhoneTimeline(
 		ctx,
 		workspace.QueryPhoneTimelineCommand{
+			Ungrouped:  params.GroupCalls == nil || !*params.GroupCalls,
 			Identity:   identity,
 			PracticeID: task.PracticeID,
 			Phone:      task.Phone,
@@ -3466,6 +3469,12 @@ func conversationTimelineResponse(
 			converted.TaskActivity = &activity
 		}
 		switch item.Type {
+		case "CALL_HISTORY":
+			entries, err := conversationTimelineResponse(workspace.TimelinePage{Items: item.Entries})
+			if err != nil {
+				return api.ConversationTimelinePage{}, err
+			}
+			converted.Entries = &entries.Items
 		case "MESSAGE":
 			message, err := messageResponse(item.Message)
 			if err != nil {

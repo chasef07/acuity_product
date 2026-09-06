@@ -218,6 +218,41 @@ test("a missing access token leaves a retryable conversation error instead of a 
   assert.equal(Boolean(conversation.host.querySelector("[role='alert']")), false)
 })
 
+test("linked call history stays brief and opens its existing detail panels", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = projectedTask()
+  const occurredAt = "2026-09-05T12:00:00Z"
+  conversation.items = [{
+    id: "history", type: "CALL_HISTORY", occurredAt,
+    entries: [
+      { id: "ai", type: "AI_INTERACTION", occurredAt, aiInteraction: {
+        id: "ai", locationId: task.locationId, locationName: "Office", sourceCallId: "source", phone: task.phone,
+        startedAt: occurredAt, status: "ESCALATED", appointmentOutcome: "BOOKING",
+      } },
+      { id: "call", type: "CALL", occurredAt, call: {
+        id: "call", type: "CALL", direction: "INBOUND", startedAt: occurredAt,
+        durationSeconds: 0, locationId: task.locationId, locationName: "Office",
+        answeredByEmail: "", transferReason: "", sourceCallId: "source", outcome: "VOICEMAIL", current: false, originating: false,
+      } },
+      { id: "created", type: "TASK", occurredAt, taskActivity: "TASK_CREATED", task },
+    ],
+  }]
+  await conversation.render(0)
+  const timeline = conversation.host.querySelector('[aria-label="Conversation activity"]')!
+  assert.equal(timeline.querySelectorAll("button[aria-expanded]").length, 0)
+  const call = timeline.querySelector<HTMLButtonElement>('button[aria-label="View AI call: Appointment booked"]')!
+  assert.ok(call)
+  assert.match(call.textContent!, /Voicemail received/)
+  assert.match(call.textContent!, /Projected follow-up/)
+  for (const label of ["View AI call", "View voicemail", "View task"]) {
+    const button = [...timeline.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label")?.startsWith(label))
+    assert.ok(button, label)
+    await act(async () => button.click())
+  }
+  assert.deepEqual(conversation.opened, ["ai:ai", "call:call", `task:${task.id}`])
+
+})
+
 function conversationHarness(t: TestContext) {
   const dom = installDOM()
   const host = document.createElement("div")
@@ -233,6 +268,7 @@ function conversationHarness(t: TestContext) {
     timelineRequests: 0,
     tokenStatus: 200,
     items: [] as ConversationTimelineItem[],
+    opened: [] as string[],
   }
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
     const url =
@@ -266,9 +302,9 @@ function conversationHarness(t: TestContext) {
           canMutate={false}
           revision={revision}
           onTaskCreated={() => {}}
-          onTaskOpen={() => {}}
-          onCallOpen={() => {}}
-          onAIInteractionOpen={() => {}}
+          onTaskOpen={(task) => conversation.opened.push(`task:${task.id}`)}
+          onCallOpen={(id) => conversation.opened.push(`call:${id}`)}
+          onAIInteractionOpen={(id) => conversation.opened.push(`ai:${id}`)}
           calling={{
             callingOccupied: false,
             callingEnabled: false,

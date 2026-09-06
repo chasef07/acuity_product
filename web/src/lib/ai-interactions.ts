@@ -60,7 +60,7 @@ export function aiCallTimelinePresentation(
     case "COMPLETED":
       return { title: "AI call", detail: "" }
     case "ESCALATED":
-      return { title: "Transferred to staff", detail: "AI call" }
+      return { title: "Transfer requested", detail: "AI call" }
     case "FAILED":
       return { title: "AI call failed", detail: "" }
     default:
@@ -73,7 +73,7 @@ function aiCallTimelineDetail(status: AiInteractionCallStatus) {
     case "COMPLETED":
       return "AI call"
     case "ESCALATED":
-      return "AI call transferred to staff"
+      return "AI call · Transfer requested"
     case "FAILED":
       return "AI call failed"
     default:
