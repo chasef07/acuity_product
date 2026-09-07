@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/chasef07/acuity_product/compare/v1.4.0...v1.5.0) (2026-09-07)
+
+
+### Features
+
+* **analytics:** add AI call trends and refine call diagnostics ([#288](https://github.com/chasef07/acuity_product/issues/288)) ([3fdfe22](https://github.com/chasef07/acuity_product/commit/3fdfe22292a368f3fe5bf667d9c0911df5fcba52))
+
+
+### Bug Fixes
+
+* **demo:** migrate New Tampa office identity in place ([#286](https://github.com/chasef07/acuity_product/issues/286)) ([2cc3800](https://github.com/chasef07/acuity_product/commit/2cc38005fdf274396793d2c37d6ea204d74b2e18))
+
 ## [1.4.0](https://github.com/chasef07/acuity_product/compare/v1.3.0...v1.4.0) (2026-09-06)
 
 
