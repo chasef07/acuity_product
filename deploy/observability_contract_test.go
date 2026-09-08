@@ -112,6 +112,7 @@ func TestCallCenterLogMetricDefinitionsAreBoundedAndComplete(t *testing.T) {
 		"revision",
 		"route",
 		"runtime_role",
+		"reason",
 		"stage",
 	}
 	seen := make(map[string]bool, len(metrics))
@@ -492,6 +493,9 @@ func expectedLogMetrics() map[string]expectedMetric {
 		}
 	}
 	expected := map[string]expectedMetric{
+		"acuity_backend_route_availability_count":                 counter("acuity_backend_route_availability"),
+		"acuity_backend_route_availability_seconds":               distribution("acuity_backend_route_availability", "seconds"),
+		"acuity_call_center_handoff_rejection_count":              counter("acuity_call_center_handoff_rejection"),
 		"acuity_backend_availability_count":                       counter("acuity_backend_availability"),
 		"acuity_backend_availability_seconds":                     distribution("acuity_backend_availability", "seconds"),
 		"acuity_call_center_webhook_acknowledgement_count":        counter("acuity_call_center_webhook_acknowledgement"),
@@ -529,6 +533,8 @@ func expectedLogMetrics() map[string]expectedMetric {
 
 func expectedAlerts() map[string]expectedAlert {
 	return map[string]expectedAlert{
+		"Any unavailable additional backend route":                  {"acuity_backend_route_availability_count", 0, "0s"},
+		"Additional backend route p99 above one second":             {"acuity_backend_route_availability_seconds", 1, "0s"},
 		"Any unavailable webhook acknowledgement":                   {"acuity_call_center_webhook_acknowledgement_count", 0, "0s"},
 		"Webhook acknowledgement p99 above one second":              {"acuity_call_center_webhook_acknowledgement_seconds", 1, "0s"},
 		"Oldest receipt above 30 seconds":                           {"acuity_call_center_receipt_queue_oldest_age_seconds", 30, "60s"},

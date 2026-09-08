@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +36,7 @@ type Cause string
 
 const (
 	CauseAcquireTimeout   Cause = "acquire_timeout"
+	CauseOperationTimeout Cause = "operation_timeout"
 	CauseStatementTimeout Cause = "statement_timeout"
 	CauseLockTimeout      Cause = "lock_timeout"
 	CauseSerialization    Cause = "serialization"
@@ -65,11 +68,25 @@ func CauseOf(err error) Cause {
 	if errors.Is(err, context.Canceled) {
 		return CauseCanceled
 	}
+	// Keep caller cancellation and timeouts distinct from transport failures,
+	// even when a network operation wraps the context error.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return CauseOperationTimeout
+	}
+	var networkError *net.OpError
+	var connectError *pgconn.ConnectError
+	if errors.Is(err, pgconn.ErrConnClosed) || errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &networkError) ||
+		errors.As(err, &connectError) {
+		return CauseConnection
+	}
 	var postgresError *pgconn.PgError
 	if !errors.As(err, &postgresError) {
 		return CauseOther
 	}
 	switch postgresError.Code {
+	case "57P01", "57P02", "57P03":
+		return CauseConnection
 	case "40001":
 		return CauseSerialization
 	case "40P01":
@@ -241,15 +258,18 @@ func (executor *Executor) BeginTx(
 func (executor *Executor) acquire(
 	ctx context.Context,
 ) (acquiredConnection, context.Context, func(), error) {
-	acquireContext, cancelAcquire := context.WithTimeout(ctx, executor.config.AcquireTimeout)
+	acquireContext, cancelAcquire := context.WithTimeoutCause(ctx, executor.config.AcquireTimeout, observability.PoolAcquireTimeoutCause)
 	started := time.Now()
 	connection, err := executor.pool.Acquire(acquireContext)
+	acquireCause := context.Cause(acquireContext)
 	deadlineReached := errors.Is(acquireContext.Err(), context.DeadlineExceeded)
 	cancelAcquire()
 	if err != nil {
 		cause := CauseOf(err)
-		if deadlineReached {
+		if errors.Is(acquireCause, observability.PoolAcquireTimeoutCause) {
 			cause = CauseAcquireTimeout
+		} else if deadlineReached {
+			cause = CauseOperationTimeout
 		}
 		executor.record(cause, time.Since(started))
 		return nil, nil, nil, &executionError{cause: cause, err: err}
@@ -284,7 +304,7 @@ func (executor *Executor) finishOperation(
 	}
 	cause := CauseOf(err)
 	deadlineReached := errors.Is(context.Cause(ctx), context.DeadlineExceeded)
-	if deadlineReached && (cause == CauseOther || cause == CauseCanceled) {
+	if deadlineReached && (cause == CauseOther || cause == CauseCanceled || cause == CauseOperationTimeout) {
 		cause = CauseStatementTimeout
 	}
 	executor.record(cause, time.Since(started))

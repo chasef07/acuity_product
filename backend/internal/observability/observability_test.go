@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -209,8 +210,10 @@ func TestPoolTracerClassifiesBoundedAcquisitionOutcome(t *testing.T) {
 		slog.New(slog.NewJSONHandler(&output, nil)),
 	)
 	tracer := observability.NewPoolTracer(observer)
+	budget, cancel := context.WithTimeoutCause(context.Background(), -time.Second, observability.PoolAcquireTimeoutCause)
+	defer cancel()
 	ctx := tracer.TraceAcquireStart(
-		context.Background(),
+		budget,
 		nil,
 		pgxpool.TraceAcquireStartData{},
 	)
@@ -338,5 +341,50 @@ func TestProviderCommandStagesPreserveStaffTransferAction(t *testing.T) {
 	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_provider_command_stage")
 	if entry["action"] != "transfer_staff" {
 		t.Fatalf("Staff Transfer action = %#v, want transfer_staff", entry["action"])
+	}
+}
+
+func TestPoolTracerDoesNotReportExpiredOperationAsPoolTimeout(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
+	tracer := observability.NewPoolTracer(observer)
+	parent, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	ctx := tracer.TraceAcquireStart(parent, nil, pgxpool.TraceAcquireStartData{})
+	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
+	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
+	if entry["outcome"] != "operation_timeout" {
+		t.Fatalf("pool acquisition metric = %#v", entry)
+	}
+}
+
+func TestPoolTracerRetainsPoolBudgetTimeoutCause(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
+	tracer := observability.NewPoolTracer(observer)
+	parent, cancelParent := context.WithTimeout(context.Background(), time.Second)
+	defer cancelParent()
+	budget, cancelBudget := context.WithTimeoutCause(parent, time.Millisecond, observability.PoolAcquireTimeoutCause)
+	defer cancelBudget()
+	ctx := tracer.TraceAcquireStart(budget, nil, pgxpool.TraceAcquireStartData{})
+	<-ctx.Done()
+	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
+	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
+	if entry["outcome"] != "timeout" {
+		t.Fatalf("pool acquisition metric = %#v", entry)
+	}
+}
+
+func TestPoolTracerDoesNotReportCustomParentDeadlineAsPoolTimeout(t *testing.T) {
+	var output bytes.Buffer
+	observer := observability.NewLogger(observability.RuntimeWorker, "worker-test", slog.New(slog.NewJSONHandler(&output, nil)))
+	tracer := observability.NewPoolTracer(observer)
+	parent, cancel := context.WithTimeoutCause(context.Background(), -time.Second, fmt.Errorf("synthetic worker deadline"))
+	defer cancel()
+	ctx := tracer.TraceAcquireStart(parent, nil, pgxpool.TraceAcquireStartData{})
+	tracer.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{Err: ctx.Err()})
+	entry := findMetric(t, entries(t, output.String()), "acuity_call_center_database_pool_acquire")
+	if entry["outcome"] != "operation_timeout" {
+		t.Fatalf("pool acquisition metric = %#v", entry)
 	}
 }

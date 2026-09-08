@@ -10,7 +10,7 @@ definitions extract no patient, Practice, Location, User, Call, receipt,
 command, provider, phone, email, URL, SQL, error, request, or raw-body value.
 
 The only metric labels are `metric_contract`, `runtime_role`, `revision`, and
-the fixed `route`, `failure_stage`, `outcome`, `action`, `stage`, and `cause` values
+the fixed `route`, `failure_stage`, `outcome`, `action`, `stage`, `cause`, and `reason` values
 where relevant. SSE state is selected by fixed filters instead of becoming
 another label.
 
@@ -42,6 +42,41 @@ validate the SLO filter against ingested `acuity_backend_availability_count`
 series, attach notification channels, and exercise one reversible fast- and
 slow-burn test incident. No Cloud resources were changed while producing these
 artifacts.
+
+## Additional route diagnostics
+
+`acuity_backend_route_availability_count` and
+`acuity_backend_route_availability_seconds` cover the routes omitted by the
+critical-read SLO:
+
+- `POST /v1/message-threads/query`
+- `POST /v1/ai/interactions/outcomes/query`
+- `PUT /v1/calling/readiness`
+- `GET /v1/events` on the realtime runtime
+
+Finite requests count `200` as available and time the complete handler response.
+Calling readiness measures the committed readiness response; it does not prove
+a provider Call or patient outcome. SSE records availability and duration once,
+after the stream owner writes and flushes its first `ready` event. Authentication,
+authorization, dependency failure, or a return before that flush remains
+unavailable, even if HTTP headers say `200`. SSE stream lifetime is never used as
+establishment latency. This proves server-side delivery only; browser receipt
+and time from disconnect to a replacement ready event remain browser acceptance
+gates. Listener disconnect/reconnect metrics continue to diagnose server recovery.
+
+The separate diagnostic policy reports unavailable outcomes by route and runtime,
+plus a provisional one-second p99 threshold. It does not alter the original
+99.9% two-route SLO. Missing series are unknown coverage, not zero errors or
+healthy traffic. Verify each route emits a series after rollout before using a
+quiet policy as supporting evidence. Do not synthesize Calling readiness writes
+in production to test ingestion; use an observed normal staff session or a
+synthetic staging journey.
+
+`acuity_call_center_handoff_rejection_count` counts initial durable provider fact
+admission rejections with only these reason labels: `provider_identity`,
+`connection`, `address`, `missing_handoff`, and `ambiguous_handoff`. Related events
+on an already rejected leg do not increment it. These reasons diagnose admission
+without weakening its checks or equating receipt failures with failed Calls.
 
 ## Authenticated portal canary
 
@@ -117,6 +152,8 @@ availability SLO:
 
 | Condition | Initial trigger |
 | --- | --- |
+| Any unavailable additional backend route | any in 60 seconds, grouped by route and runtime |
+| Additional backend route p99 above one second | p99 over 10 minutes, grouped by route and runtime |
 | Any unavailable webhook acknowledgement | any in 60 seconds |
 | Webhook acknowledgement p99 above one second | p99 over 10 minutes |
 | Oldest receipt above 30 seconds | p99 over 10 minutes for 60 seconds |
@@ -128,8 +165,8 @@ availability SLO:
 | Degraded caller audio after ambiguous stop ring-window | any ambiguous failure in 60 seconds |
 | Ambiguous service provider command | any in 60 seconds |
 | Ambiguous worker provider command | any in 60 seconds |
-| Service database acquisition timeout | any deadline exhaustion in 60 seconds |
-| Worker database acquisition timeout | any deadline exhaustion in 60 seconds |
+| Service database acquisition timeout | any pool acquisition budget exhaustion in 60 seconds |
+| Worker database acquisition timeout | any pool acquisition budget exhaustion in 60 seconds |
 | Service database saturation above 0.8 | p99 over 10 minutes for 5 minutes |
 | Worker database saturation above 0.8 | p99 over 10 minutes for 5 minutes |
 | More than three listener disconnects in five minutes | four in 5 minutes |
@@ -155,6 +192,18 @@ The receipt queue sample also exposes `projection_retry_depth` and
 identity is used as a metric label.
 
 ## Live gates
+
+The existing apply command reconciles the stage-duration metric, exact nonzero
+terminal-occupancy counter, new route diagnostics, and their checked policies by
+name. Deploying the backend alone does not apply these definitions. A full apply
+first requires an enabled notification channel; it deliberately fails before
+any mutation when the configured channel is disabled. Restore the approved
+channel separately, then perform the full apply and delivery test. A metrics-only
+apply can establish descriptors while channel repair is pending, but cannot fix
+alert coverage or delivery. The obsolete terminal-occupancy histogram is not
+deleted by apply; after verifying the new counter and updated policy, it can be
+retired separately if no other dashboard consumes it.
+
 
 Provider command diagnosis uses the additive
 `acuity_call_center_provider_command_stage_seconds` distribution to separate

@@ -16,6 +16,10 @@ type PoolTracer struct {
 	observer Observer
 }
 
+// PoolAcquireTimeoutCause distinguishes the pool acquisition budget from the
+// enclosing operation deadline. The database executor sets this timeout cause.
+var PoolAcquireTimeoutCause = errors.New("database pool acquisition deadline exceeded")
+
 type acquireStartedAt struct{}
 
 func NewPoolTracer(observer Observer) *PoolTracer {
@@ -40,10 +44,13 @@ func (tracer *PoolTracer) TraceAcquireEnd(
 		startedAt = time.Now()
 	}
 	outcome := PoolAcquireSucceeded
-	if errors.Is(data.Err, context.Canceled) {
+	if data.Err != nil && (errors.Is(data.Err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+		outcome = PoolAcquireOperationTimeout
+		if errors.Is(context.Cause(ctx), PoolAcquireTimeoutCause) {
+			outcome = PoolAcquireTimeout
+		}
+	} else if errors.Is(data.Err, context.Canceled) {
 		outcome = PoolAcquireCanceled
-	} else if errors.Is(data.Err, context.DeadlineExceeded) {
-		outcome = PoolAcquireTimeout
 	} else if data.Err != nil {
 		outcome = PoolAcquireFailed
 	}

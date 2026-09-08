@@ -2,7 +2,6 @@ package humancalling
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -508,48 +507,6 @@ func (adapter *TelnyxAdapter) ResolveRecording(
 	return *resolved, nil
 }
 
-func (adapter *TelnyxAdapter) recordingFailed(
-	ctx context.Context,
-	callLegID string,
-	callSessionID string,
-) (time.Time, error) {
-	response, err := adapter.client.CallEvents.List(
-		ctx,
-		telnyx.CallEventListParams{
-			PageSize: telnyx.Int(2),
-			Filter: telnyx.CallEventListParamsFilter{
-				LegID:                telnyx.String(callLegID),
-				ApplicationSessionID: telnyx.String(callSessionID),
-				Name:                 telnyx.String(string(FactRecordingError)),
-				Type:                 "webhook",
-			},
-		},
-	)
-	if err != nil {
-		return time.Time{}, classifyTelnyxSDKError(err)
-	}
-	if response == nil {
-		return time.Time{}, fmt.Errorf(
-			"%w: invalid Telnyx recording events response",
-			ErrAmbiguousEffect,
-		)
-	}
-	for _, event := range response.Data {
-		eventTimestamp, timestampErr := parseTelnyxTime(event.EventTimestamp)
-		if event.Name != string(FactRecordingError) ||
-			event.CallLegID != callLegID ||
-			event.CallSessionID != callSessionID ||
-			timestampErr != nil {
-			return time.Time{}, fmt.Errorf(
-				"%w: contradictory Telnyx recording error identity",
-				ErrDefinitiveProviderFailure,
-			)
-		}
-		return eventTimestamp, nil
-	}
-	return time.Time{}, nil
-}
-
 func (adapter *TelnyxAdapter) DeleteRecording(
 	ctx context.Context,
 	recordingID string,
@@ -563,140 +520,6 @@ func (adapter *TelnyxAdapter) DeleteRecording(
 		return nil
 	}
 	return err
-}
-
-func (adapter *TelnyxAdapter) ObserveCall(
-	ctx context.Context,
-	connectionID string,
-	callControlID string,
-	callLegID string,
-	clientState string,
-	since time.Time,
-) (ProviderCallObservation, error) {
-	if !validTelnyxResourceID(connectionID) || since.IsZero() ||
-		(strings.TrimSpace(callLegID) == "" && strings.TrimSpace(clientState) == "") {
-		return ProviderCallObservation{}, ErrInvalidInput
-	}
-	activeCalls := adapter.client.Connections.ListActiveCallsAutoPaging(
-		ctx,
-		connectionID,
-		telnyx.ConnectionListActiveCallsParams{PageSize: telnyx.Int(250)},
-	)
-	observation := ProviderCallObservation{}
-	for activeCalls.Next() {
-		active := activeCalls.Current()
-		matchesLeg := callLegID != "" && active.CallLegID == callLegID
-		matchesState := callLegID == "" && clientState != "" && active.ClientState == clientState
-		if !matchesLeg && !matchesState {
-			continue
-		}
-		if observation.Active {
-			return ProviderCallObservation{}, fmt.Errorf(
-				"%w: multiple active Telnyx Calls match one CallLeg",
-				ErrAmbiguousEffect,
-			)
-		}
-		observation.Active = true
-		observation.CallControlID = active.CallControlID
-		observation.CallLegID = active.CallLegID
-		observation.CallSessionID = active.CallSessionID
-	}
-	if err := activeCalls.Err(); err != nil {
-		return ProviderCallObservation{}, classifyTelnyxSDKError(err)
-	}
-	if observation.Active {
-		if callControlID != "" && observation.CallControlID != callControlID {
-			return ProviderCallObservation{}, fmt.Errorf(
-				"%w: active Telnyx Call identity changed",
-				ErrDefinitiveProviderFailure,
-			)
-		}
-		callLegID = observation.CallLegID
-	}
-	if callLegID == "" {
-		return observation, nil
-	}
-
-	events := adapter.client.CallEvents.ListAutoPaging(
-		ctx,
-		telnyx.CallEventListParams{
-			PageSize: telnyx.Int(100),
-			Filter: telnyx.CallEventListParamsFilter{
-				LegID: telnyx.String(callLegID),
-				Type:  "webhook",
-				OccurredAt: telnyx.CallEventListParamsFilterOccurredAt{
-					Gte: telnyx.String(since.UTC().Format(time.RFC3339Nano)),
-				},
-			},
-		},
-	)
-	for events.Next() {
-		event := events.Current()
-		if raw, ok := rawCallEvent(event.Metadata); ok {
-			fact, known, normalizeErr := normalizeTelnyxFact(raw)
-			if normalizeErr != nil {
-				return ProviderCallObservation{}, fmt.Errorf(
-					"%w: invalid Telnyx raw Call event",
-					ErrAmbiguousEffect,
-				)
-			}
-			if !known {
-				continue
-			}
-			if fact.CallLegID != event.CallLegID ||
-				fact.CallSessionID != event.CallSessionID {
-				return ProviderCallObservation{}, fmt.Errorf(
-					"%w: contradictory Telnyx raw Call event identity",
-					ErrDefinitiveProviderFailure,
-				)
-			}
-			observation.Events = append(observation.Events, fact)
-			continue
-		}
-		factType := FactType(event.Name)
-		switch factType {
-		case FactCallInitiated, FactCallAnswered, FactCallBridged, FactCallHangup:
-		default:
-			continue
-		}
-		eventTimestamp, timestampErr := parseTelnyxTime(event.EventTimestamp)
-		if event.CallLegID != callLegID || timestampErr != nil {
-			return ProviderCallObservation{}, fmt.Errorf(
-				"%w: contradictory Telnyx Call event identity",
-				ErrDefinitiveProviderFailure,
-			)
-		}
-		digest := sha256.Sum256([]byte(
-			event.Name + "\x00" + event.CallLegID + "\x00" +
-				event.CallSessionID + "\x00" + eventTimestamp.UTC().Format(time.RFC3339Nano),
-		))
-		observation.Events = append(observation.Events, ProviderFact{
-			EventID:       fmt.Sprintf("telnyx-call-event-%x", digest[:]),
-			Type:          factType,
-			OccurredAt:    eventTimestamp,
-			CallLegID:     event.CallLegID,
-			CallSessionID: event.CallSessionID,
-		})
-	}
-	if err := events.Err(); err != nil {
-		return ProviderCallObservation{}, classifyTelnyxSDKError(err)
-	}
-	return observation, nil
-}
-
-func rawCallEvent(metadata map[string]any) ([]byte, bool) {
-	for _, key := range []string{"raw", "raw_event", "event"} {
-		raw, ok := metadata[key]
-		if !ok || raw == nil {
-			continue
-		}
-		if encoded, ok := raw.(string); ok {
-			return []byte(encoded), true
-		}
-		encoded, err := json.Marshal(raw)
-		return encoded, err == nil
-	}
-	return nil, false
 }
 
 func parseTelnyxTime(value string) (time.Time, error) {

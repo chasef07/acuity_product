@@ -301,3 +301,83 @@ func TestOutgoingReconciliationPreservesEvidenceWindowAcrossFailure(t *testing.T
 		t.Fatalf("delayed provider hangup did not converge durable CallLeg: %s", state)
 	}
 }
+
+func TestOutgoingReconciliationProviderDeadlinePreservesDurableBackoff(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.September, 8, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "observation-deadline", 1)
+	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "deadline")
+	provider := &blockedObservationProvider{started: make(chan struct{}), release: make(chan struct{})}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	// A prior failed observation makes this attempt's backoff distinguishable
+	// from the one-minute crash-recovery lease written before provider I/O.
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE human_calling_call_legs SET reconciliation_attempts = 1,
+			reconciliation_checked_at = $2 WHERE id = $1
+	`, legID, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	maintained, err := calling.MaintainOutgoingCallLegs(ctx)
+	if !maintained || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("maintained:%t err:%v", maintained, err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("provider consumed result persistence budget: %v", ctx.Err())
+	}
+	var next time.Time
+	var attempts, commands int
+	var code, state string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT reconciliation_next_attempt_at, reconciliation_attempts,
+			COALESCE(reconciliation_error_code, ''), state,
+			(SELECT count(*) FROM human_calling_provider_commands WHERE call_leg_id = $1)
+		FROM human_calling_call_legs WHERE id = $1
+	`, legID).Scan(&next, &attempts, &code, &state, &commands); err != nil {
+		t.Fatal(err)
+	}
+	if !next.Equal(now.Add(2*time.Minute)) || attempts != 2 || code == "" || state != "RINGING" || commands != 0 {
+		t.Fatalf("deadline result = next:%s attempts:%d code:%q state:%s commands:%d", next, attempts, code, state, commands)
+	}
+}
+
+func TestOutgoingReconciliationCancellationLeavesRecoverableLease(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Date(2026, time.September, 8, 13, 0, 0, 0, time.UTC)
+	accessModule := access.New(pool, func() time.Time { return now })
+	authorization, _ := provisionConcurrentStaff(t, accessModule, now, "observation-cancel", 1)
+	legID := seedScheduledObservationLeg(t, pool, authorization, now.Add(-2*time.Minute), "canceled")
+	provider := &blockedObservationProvider{started: make(chan struct{}), release: make(chan struct{})}
+	calling := humancalling.New(pool, accessModule, provider, humancalling.Config{}, func() time.Time { return now })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { _, err := calling.MaintainOutgoingCallLegs(ctx); result <- err }()
+	select {
+	case <-provider.started:
+	case err := <-result:
+		t.Fatalf("observation did not start: %v", err)
+	case <-ctx.Done():
+		t.Fatal("observation did not start before deadline")
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation = %v", err)
+	}
+	var checked, next time.Time
+	var attempts, commands int
+	var code, state string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT reconciliation_checked_at, reconciliation_next_attempt_at,
+			reconciliation_attempts, COALESCE(reconciliation_error_code, ''), state,
+			(SELECT count(*) FROM human_calling_provider_commands WHERE call_leg_id = $1)
+		FROM human_calling_call_legs WHERE id = $1
+	`, legID).Scan(&checked, &next, &attempts, &code, &state, &commands); err != nil {
+		t.Fatal(err)
+	}
+	if !checked.Equal(now) || !next.Equal(now.Add(time.Minute)) || attempts != 1 || code != "" || state != "RINGING" || commands != 0 {
+		t.Fatalf("canceled lease = checked:%s next:%s attempts:%d code:%q state:%s commands:%d", checked, next, attempts, code, state, commands)
+	}
+}
