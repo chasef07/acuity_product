@@ -23,11 +23,11 @@ appointment identifiers, transcript content, or provider payloads.
   calls whose completed Product outcome is `RESCHEDULE` or `CANCELLATION`. A
   call counts once regardless of repeat executions. A completed search with no
   openings remains in the denominator; failed and incomplete executions do not.
-- **Booked-call duration:** call start to call end, across calls with confirmed
-  bookings and valid timing. This is the only duration metric; appointment
-  confirmation does not stop the clock. Missing or out-of-order timestamps
+- **Booking-attempt duration:** call start to call end, across calls with a
+  confirmed booking or completed availability search and valid timing. This is
+  the only duration metric; appointment confirmation does not stop the clock. Missing or out-of-order timestamps
   are excluded from duration samples, not represented as zero.
-- **p50/p90:** linear interpolation over all valid call durations in the
+- **p50:** linear interpolation over all valid booking-attempt durations in the
   selected cohort. Period percentiles and rates are calculated from pooled
   observations, never averaged from daily percentiles or percentages.
 
@@ -42,38 +42,30 @@ denominator in the table.
 
 ## Evidence and reporting boundaries
 
-For a completed availability search, patient status follows one explicit rule:
-a preceding `add_patient` tool call means new; every other completed search
-means existing. This makes the two patient rows exhaustive for conversion and
-their denominators add up to the overall denominator.
+All metrics use the same per-call patient category. Successful, non-superseded
+patient creation/new results establish new; verification or switching establishes
+existing. A successful switch discards earlier patient outcomes. Legacy closeouts
+without `domainOutcomes` use outcome-specific `toolExecutions.outputClass` values;
+a successful tool transport alone does not verify a patient.
 
-When a call has no completed availability search, new versus existing uses the
-explicit new/established appointment type on the confirmed booking receipt
-matched to `new_appointment_id`, then explicit patient receipts. This preserves
-useful booking and duration classification outside the conversion cohort.
+Without a conclusive identity result, a successful patient-not-found result assumes
+new. Otherwise a saved phone lookup with one or multiple matches assumes existing.
+Explicit no-match or failed lookup status follows the current assume-new fallback.
+These reporting assumptions do not establish verified identity.
 
-Recognized receipt labels are New Adult/Pediatric Medical, New Adult/Pediatric
-Vision, Crystal River New Patient, their Established equivalents (Medical
-includes “Follow Up”), and Crystal River Established Patient. These labels
-come from the middleware appointment catalog; numeric EHR type IDs alone are
-not interpreted globally across Practices. **Post Op and Crystal River Post Op
-count as existing patients**, per the September 2 product decision, even when
-that call also created a chart. Unrecognized labels do not imply a patient category.
+When both native phone-lookup status and historical backfill are absent, retain a
+previous existing-patient category as `legacy_existing`. This is a compatibility
+rule for incomplete historical telemetry, not a verified patient result. The
+previous projection classified a completed search without an earlier `add_patient`
+as existing; outside completed searches it recognized a matching established or
+post-op booking receipt. Stronger patient or phone evidence overrides this fallback.
+Calls without either stronger evidence or a previous existing category assume new.
+Migration 0064 corrects already-stored assumptions and keeps source corrections in
+sync. Historical phone matches can still be supplied through the explicit backfill.
 
-When no typed receipt is available, explicit successful `patient_new` or
-`patient_created` establishes new; `patient_verified` establishes existing.
-Superseded outcomes are ignored. Creation takes precedence over later
-verification of that newly created patient. A patient switch leaves unbound
-call-wide evidence ambiguous. Calls without completed searches therefore still
-require explicit patient evidence for the Bookings and Duration breakdowns.
-
-Conversion has New, Existing, and Total rows. It never shows Unclassified:
-absence of a preceding `add_patient` call is the Product rule for existing
-within this completed-search cohort. The overall conversion rate is therefore
-the weighted result of the New and Existing rows.
-
-The Bookings chart also plots daily total call volume on the same count axis,
-using a dotted line and the existing daily call aggregates.
+Conversion has New, Existing, and Total rows. Their denominators add up to the
+overall denominator, and the overall conversion rate is weighted by those counts.
+The deprecated Unknown API group remains empty with the current classification.
 
 Bookings, Conversion, and Duration share the same chart treatment: monotone
 total, new-patient, and existing-patient lines with subtle area fills. The total
@@ -121,7 +113,7 @@ standalone design preview and its duplicate aggregation implementation were
 removed; browser journeys use synthetic records in a disposable database.
 
 The duration view uses one chart with total, new, and existing patient p50
-lines. P90 remains in the Breakdown table. Staff task duration uses the same
-monotone line and subtle area treatment. The Staff table initially sorts by
+lines. The Breakdown table also shows P50; P90 is retained only in the API for
+compatibility. Staff task duration uses the same monotone line and subtle area treatment. The Staff table initially sorts by
 inbound time descending, with missing durations last. The page ends at the
 Total row.

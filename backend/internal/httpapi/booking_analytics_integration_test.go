@@ -147,6 +147,32 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if report.Total.Conversion != nil || report.Total.P50 != nil || report.Total.Bookings != 0 {
 		t.Fatalf("empty report: %+v", report.Total)
 	}
+	// Older calls have completed search evidence but no phoneLookup field. The
+	// report must preserve their historical category until stronger evidence arrives.
+	// Seed migration eligibility here; the migration suite covers its one-time capture.
+	for index, booked := range []bool{true, false} {
+		id := "20000000-0000-0000-0000-00000000000" + string(rune('1'+index))
+		outcome := "INDETERMINATE"
+		if booked {
+			outcome = "BOOKING"
+		}
+		insertOperatorAIInteraction(t, pool, operatorAIInteractionFixture{
+			ID: id, PracticeID: practice, LocationID: north, SourceCall: id, Phone: "+15555550199",
+			StartedAt: yesterday, EndedAt: yesterday.Add(300 * time.Second), Status: "COMPLETED",
+			AppointmentOutcome: outcome, BookingResult: map[string]any{"status": "booked"},
+			Closeout: map[string]any{"toolExecutions": []map[string]any{{"toolName": "get_availability", "status": "success"}}},
+		})
+		if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET new_appointment_id=$2, booking_historical_existing=true WHERE id=$1::uuid`, id, "appointment-"+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := json.Unmarshal(query("admin", practice, north, "UTC", 200), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Total.Calls != 5 || report.Total.Bookings != 3 || report.Total.Searched != 4 || report.Total.Converted != 2 ||
+		report.Groups.New.Bookings != 2 || report.Groups.Existing.Bookings != 1 || report.Groups.Existing.Searched != 3 || report.Groups.Existing.Converted != 1 {
+		t.Fatalf("historical patient classification changed report groups: %+v", report)
+	}
 	// Customer access never unlocks the existing operator evidence endpoint.
 	response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/ai-analytics/query", "admin", []byte(`{"practiceId":"`+practice+`","range":"7d","limit":1}`))
 	defer response.Body.Close()

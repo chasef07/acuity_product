@@ -67,8 +67,13 @@ New/existing classification uses successful patient outcomes, including legacy
 outcome-specific tool execution results. Successful verification or switching
 means existing; successful creation means new. Without a conclusive identity
 outcome, a saved phone lookup with one or multiple records assumes existing;
-missing or no-match evidence assumes new. Historical phone-match assumptions
-are stored separately by an explicit release backfill. These reporting
+an explicit no-match result assumes new. When phone-lookup telemetry is absent,
+retain the previous existing-patient reporting category as `legacy_existing`
+unless a successful patient-not-found result overrides it. This prevents a
+partial evidence rollout from relabeling historical existing calls as new.
+Calls with neither evidence nor a previous existing category assume new.
+Historical phone-match assumptions are stored separately by an explicit release
+backfill and replace the legacy fallback when available. These reporting
 assumptions do not establish verified patient identity or alter provider evidence.
 
 All metrics use the same per-call patient classification. Bookings count distinct
