@@ -5,7 +5,7 @@
   inset: 0;
   isolation: isolate;
   overflow: hidden;
-  color: #25334a;
+  color: #343a35;
 }
 
 .field canvas {
@@ -14,6 +14,7 @@
   position: absolute;
   top: -8%;
   left: 30%;
+  mask-image: linear-gradient(to right, transparent, black 58%);
 }
 
 .caption {
@@ -21,16 +22,16 @@
   margin: 0;
   position: absolute;
   z-index: 2;
-  right: 1%;
+  right: 5%;
   bottom: 6.5%;
   display: grid;
   justify-items: end;
-  color: #25334a;
+  color: #343a35;
   text-align: right;
 }
 
 .caption span {
-  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-family: var(--font-acuity-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 8px;
   font-weight: 650;
   letter-spacing: 0.18em;
@@ -39,19 +40,25 @@
 
 .caption strong {
   margin-top: 5px;
-  font-family: var(--font-acuity-display), Georgia, serif;
+  font-family: var(--font-acuity-display), ui-sans-serif, system-ui, sans-serif;
   font-size: clamp(1.65rem, 2.4vw, 2.65rem);
-  font-weight: 400;
+  font-weight: 350;
   letter-spacing: -0.045em;
   line-height: 1;
 }
 
 @media (max-width: 640px) {
   .field {
-    min-height: 410px;
+    min-height: 280px;
     margin: 0 -14px;
     position: relative;
     inset: auto;
+  }
+
+  .field canvas {
+    width: 116%;
+    left: -8%;
+    mask-image: none;
   }
 
   .caption {

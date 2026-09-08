@@ -24,7 +24,7 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
 
   await expect(
     page.getByRole("heading", {
-      name: "Redesign patient access with medical AI agents.",
+      name: "Voice AI agents for patient access.",
     }),
   ).toBeVisible()
   await expect(page.getByText("AI agents", { exact: true })).toBeVisible()
@@ -33,21 +33,21 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
-  const methodVenn = page.getByTestId("method-venn")
-  await expect(methodVenn).toContainText("Agentic")
-  await expect(methodVenn).toContainText("system design")
-  await expect(methodVenn).toContainText("Workflow")
-  await expect(methodVenn).toContainText("transformation")
+  const methodCapabilities = page.getByTestId("method-capabilities")
+  await expect(methodCapabilities).toContainText("Agentic")
+  await expect(methodCapabilities).toContainText("system design")
+  await expect(methodCapabilities).toContainText("Workflow")
+  await expect(methodCapabilities).toContainText("transformation")
   await expect(page.getByText("Built for enterprise")).toHaveCount(0)
   await expect(
-    page.getByRole("link", { name: "Work with us" }).first().locator("svg"),
+    page.getByRole("main").getByRole("link", { name: "Build with us", exact: true }).locator("svg"),
   ).toHaveCount(0)
   await expect(
-    page.getByRole("link", { name: "See the Acuity Health Method" }),
+    page.getByRole("link", { name: "Explore our method" }),
   ).toHaveCSS("border-bottom-width", "0px")
   await expect(
     page.getByText(
-      "Acuity answers calls, completes approved work in the systems your team already uses, and brings staff in when judgment or ownership is required. Then we stay until the new operating model works.",
+      "Acuity Health helps medical enterprises onboard voice AI agents that answer calls, check insurance eligibility, and book appointments.",
     ),
   ).toBeVisible()
 
@@ -76,7 +76,7 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
-  await expect(page.getByText("Medical AI agents")).toBeVisible()
+  await expect(page.getByText("Data security + HIPAA safeguards")).toBeVisible()
   await expect(
     page.getByRole("heading", { name: "A deployed operation created measurable capacity." }),
   ).toHaveCount(0)
@@ -85,7 +85,7 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   await expect(page).toHaveURL(/\/who-we-are$/)
   await expect(
     page.getByRole("heading", {
-      name: "Acuity Health began close to the patient-access work.",
+      name: "From consulting to Acuity.",
     }),
   ).toBeVisible()
   await expect(page.getByRole("heading", { name: "Kyle Shechtman" })).toBeVisible()
@@ -150,7 +150,7 @@ test("marketing shell uses one navigation surface and an organized footer", asyn
   const footer = page.getByRole("contentinfo")
   const footerNavigation = footer.getByRole("navigation", { name: "Footer navigation" })
   await expect(footerNavigation).toBeVisible()
-  for (const group of ["Product", "Company", "Resources"]) {
+  for (const group of ["Product", "Company", "Social", "Legal"]) {
     await expect(footer.getByRole("heading", { name: group })).toBeVisible()
   }
   for (const label of [
@@ -191,7 +191,7 @@ test("work with us links land at the top with the pinned glass navigation visibl
 
   await page
     .getByRole("banner")
-    .getByRole("link", { name: "Work with us" })
+    .getByRole("link", { name: "Build with us", exact: true })
     .click()
   await expect(page).toHaveURL(/\/work-with-us$/)
   await expect(
@@ -224,7 +224,7 @@ test("mobile homepage does not overflow horizontally", async ({ page }) => {
   await expectPinnedGlassNavigation(page, 0)
   await expect(
     page.getByRole("heading", {
-      name: "Redesign patient access with medical AI agents.",
+      name: "Voice AI agents for patient access.",
     }),
   ).toBeVisible()
 })
@@ -365,9 +365,9 @@ test("public pages expose canonical metadata and browser identity assets", async
     {
       route: "/",
       canonical: "https://acuityhealth.io",
-      title: "AI Agents for Patient Access | Acuity Health",
+      title: "Voice AI Agents for Patient Access | Acuity Health",
       description:
-        "Acuity Health deploys medical AI agents that answer calls, complete patient-access workflows, and bring staff in when judgment or ownership is required.",
+        "Acuity Health helps medical enterprises onboard voice AI agents to answer calls, check insurance eligibility, book appointments, and support staff.",
     },
     {
       route: "/integrations",
@@ -448,6 +448,14 @@ test("public pages expose canonical metadata and browser identity assets", async
     await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
       "content",
       "summary_large_image",
+    )
+    await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute(
+      "content",
+      /\/opengraph-image/,
+    )
+    await expect(page.locator('meta[name="twitter:image:alt"]')).toHaveAttribute(
+      "content",
+      "Acuity Health: Voice AI agents for patient access",
     )
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
       "href",

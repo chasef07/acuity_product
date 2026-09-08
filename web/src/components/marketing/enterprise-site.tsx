@@ -3,7 +3,7 @@ import type { StaticImageData } from "next/image"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight, Check } from "lucide-react"
-import { Geist, JetBrains_Mono, Newsreader } from "next/font/google"
+import { Geist, Inter } from "next/font/google"
 
 import { AcuityMark } from "@/components/acuity-mark"
 import {
@@ -20,19 +20,16 @@ import chasePortrait from "../../../public/marketing/chase-fagen-v2.png"
 import kylePortrait from "../../../public/marketing/kyle-shechtman-2026.png"
 import venincasaPortrait from "../../../public/marketing/michael-venincasa-md.jpg"
 
-const sans = Geist({
+const sans = Inter({
   subsets: ["latin"],
   variable: "--font-acuity-sans",
 })
 
-const display = Newsreader({
+// ABC Favorit Light is the reference display face. Keep Geist until the
+// licensed webfont is available; Inter matches the reference body and navigation.
+const display = Geist({
   subsets: ["latin"],
   variable: "--font-acuity-display",
-})
-
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-jetbrains-mono",
 })
 
 export type MarketingRoute =
@@ -65,6 +62,12 @@ const footerNavigation = [
     links: [
       { href: "/who-we-are", label: "Who We Are" },
       { href: "/work-with-us", label: "Work With Us" },
+      { href: "/sign-in", label: "Sign in" },
+    ],
+  },
+  {
+    label: "Social",
+    links: [
       {
         href: "https://www.linkedin.com/company/acuityhealth/",
         label: "LinkedIn",
@@ -73,9 +76,8 @@ const footerNavigation = [
     ],
   },
   {
-    label: "Resources",
+    label: "Legal",
     links: [
-      { href: "/sign-in", label: "Sign in" },
       { href: "/security", label: "Security, Privacy & HIPAA" },
       { href: "/privacy-policy", label: "Privacy Policy" },
       { href: "/terms-of-service", label: "Terms of Service" },
@@ -107,7 +109,7 @@ function SiteHeader({ current }: { current: MarketingRoute }) {
       <div className={styles.headerActions}>
         <PortalSignInTrigger className={styles.portalLink} />
         <Link className={styles.workLink} href="/work-with-us">
-          Work With Us
+          Build with us
         </Link>
       </div>
     </header>
@@ -118,6 +120,17 @@ function SiteFooter() {
   return (
     <footer className={styles.siteFooter}>
       <div className={styles.footerPrimary}>
+        <div className={styles.footerIdentity}>
+          <Link className={styles.footerBrand} href="/" aria-label="Acuity Health home">
+            <AcuityMark className={styles.footerBrandMark} />
+            <span>Acuity Health</span>
+          </Link>
+          <p className={styles.footerDescription}>Voice AI agents for patient access.</p>
+          <Link className={styles.footerContact} href="/work-with-us">
+            Work with us
+          </Link>
+          <p className={styles.footerCopyright}>© {new Date().getFullYear()} Acuity Health.</p>
+        </div>
         <nav className={styles.footerNavigation} aria-label="Footer navigation">
           {footerNavigation.map((section) => (
             <section className={styles.footerGroup} key={section.label}>
@@ -140,12 +153,6 @@ function SiteFooter() {
         </nav>
       </div>
 
-      <div className={styles.footerClose}>
-        <Link className={styles.footerWordmark} href="/" aria-label="Acuity Health home">
-          <AcuityMark className={styles.footerWordmarkMark} />
-          <span>Acuity Health</span>
-        </Link>
-      </div>
     </footer>
   )
 }
@@ -164,7 +171,7 @@ export function MarketingFrame({
       key={initiallyOpen ? "sign-in-open" : "sign-in-closed"}
       initiallyOpen={initiallyOpen}
     >
-      <div className={cn(styles.site, sans.variable, display.variable, mono.variable)}>
+      <div className={cn(styles.site, sans.variable, display.variable)}>
         <a className={styles.skipLink} href="#main-content">
           Skip to main content
         </a>
@@ -189,31 +196,40 @@ function Waveform({ compact = false }: { compact?: boolean }) {
   )
 }
 
-export function MethodVenn() {
+function MethodCapabilities({ headingLevel = 3 }: { headingLevel?: 2 | 3 }) {
+  const Heading = headingLevel === 2 ? "h2" : "h3"
+
   return (
-    <div className={styles.venn} data-testid="method-venn">
-      <div className={cn(styles.vennCircle, styles.vennSystem)}>
-        <div className={styles.vennCopy}>
-          <p>Agentic<br /><span>system design</span></p>
+    <div className={styles.methodCapabilities} data-testid="method-capabilities">
+      <div className={styles.methodColumns}>
+        <article className={styles.methodSystem}>
+          <p className={styles.methodLabel}>The technology</p>
+          <Heading>Agentic<br />system design</Heading>
+          <p className={styles.methodDescription}>
+            Voice AI agents built around medical workflows, privacy, and control.
+          </p>
           <ul>
-            <li>Medical AI agents</li>
-            <li>Evals + safeguards</li>
-            <li>Enterprise integrations</li>
+            <li>Data security + HIPAA safeguards</li>
+            <li>Analytics + guardrails</li>
+            <li>EMR integrations</li>
           </ul>
-        </div>
-      </div>
-      <div className={cn(styles.vennCircle, styles.vennTransformation)}>
-        <div className={styles.vennCopy}>
-          <p>Workflow<br />transformation</p>
+        </article>
+        <article className={styles.methodWorkflow}>
+          <p className={styles.methodLabel}>The operation</p>
+          <Heading>Workflow<br />transformation</Heading>
+          <p className={styles.methodDescription}>
+            Workflows shaped with the people who run them, from rollout onward.
+          </p>
           <ul>
             <li>Change management</li>
             <li>Workflow redesign</li>
             <li>Frontline training</li>
           </ul>
-        </div>
+        </article>
       </div>
-      <div className={styles.vennCenter}>
-        <strong>The Acuity Health Method</strong>
+      <div className={styles.methodConnection}>
+        <p>Built together.<br />Improved in the operation.</p>
+        <span>One team, from system design to the way work gets done.</span>
       </div>
     </div>
   )
@@ -245,25 +261,24 @@ export function EnterpriseHome({
     <MarketingFrame current="/" initiallyOpen={initiallyOpen}>
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <h1>Redesign patient access with medical AI agents.</h1>
+          <h1>Voice AI agents<br />for patient access.</h1>
           <p className={styles.heroBody}>
-            Acuity answers calls, completes approved work in the systems your
-            team already uses, and brings staff in when judgment or ownership is
-            required. Then we stay until the new operating model works.
+            Acuity Health helps medical enterprises onboard voice AI agents that
+            answer calls, check insurance eligibility, and book appointments.
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.darkButton} href="/work-with-us">
-              Work with us
+              Build with us
             </Link>
             <Link className={styles.textLink} href="/method">
-              See the Acuity Health Method
+              Explore our method
             </Link>
           </div>
         </div>
         <PixelWaveField />
       </section>
 
-      <section className={styles.methodPageVenn}>
+      <section className={styles.methodSection}>
         <header className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>The Acuity Health Method</p>
@@ -274,7 +289,7 @@ export function EnterpriseHome({
             needed to deploy it across the enterprise.
           </p>
         </header>
-        <MethodVenn />
+        <MethodCapabilities />
       </section>
 
       <section className={styles.storyPreview}>
@@ -286,17 +301,14 @@ export function EnterpriseHome({
           <p className={styles.eyebrow}>The founding story</p>
           <h2>We started close to the work.</h2>
           <p>
-            Consulting taught us the hard part was not answering the phone. It
-            was understanding the workflow and staying long enough to redesign
-            it with the people who run it.
+            Acuity grew out of our consulting work with medical practices. We build
+            voice AI agents around real workflows and support teams through rollout.
           </p>
           <Link className={styles.inlineArrowLink} href="/who-we-are">
             Read our story <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </div>
       </section>
-
-      <PartnershipCta />
     </MarketingFrame>
   )
 }
@@ -437,7 +449,7 @@ export function AdvancedMDPageContent() {
 export function MethodPageContent() {
   return (
     <MarketingFrame current="/method">
-      <section className={styles.methodPageVenn}>
+      <section className={styles.methodSection}>
         <header className={styles.sectionHeader}>
           <div>
             <p className={styles.eyebrow}>The Acuity Health Method</p>
@@ -448,7 +460,7 @@ export function MethodPageContent() {
             expertise needed to deploy it across the enterprise.
           </p>
         </header>
-        <MethodVenn />
+        <MethodCapabilities headingLevel={2} />
       </section>
 
       <section className={styles.commitmentSection}>
@@ -538,7 +550,7 @@ export function WhoWeArePageContent() {
                 "@type": "Person",
                 "@id": "https://acuityhealth.io/who-we-are#chase-fagen",
                 name: "Chase Fagen",
-                jobTitle: "Co-founder",
+                jobTitle: "Co-founder and Head of AI Engineering",
                 sameAs: ["https://www.linkedin.com/in/chase-fagen-198947180"],
                 worksFor: { "@id": "https://acuityhealth.io/#organization" },
               },
@@ -561,28 +573,45 @@ export function WhoWeArePageContent() {
         }}
         type="application/ld+json"
       />
-      <section className={styles.foundingStory}>
-        <p className={styles.eyebrow}>The founding story</p>
-        <div>
-          <h1>Acuity Health began close to the patient-access work.</h1>
-          <div className={styles.storyColumns}>
-            <p>
-              Working closely with medical practices taught us that the hard part
-              was never simply teaching a model to answer the phone. It was
-              understanding how the practice actually worked: how scheduling rules
-              changed by location, where handoffs failed, which exceptions required
-              judgment, and what staff and patients needed to trust the system.
-              Making the technology useful required workflow redesign, frontline
-              change management, and a new operating model that people could
-              actually adopt.
-            </p>
-            <p>
-              That understanding cannot be handed from a sales team to an
-              implementation queue. So we built Acuity Health the same way we learned to
-              solve the problem: founder-deployed, inside the operation, with the
-              relationship treated as part of the product.
-            </p>
-          </div>
+      <section
+        aria-labelledby="company-mission"
+        className={styles.missionVision}
+      >
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Our mission</p>
+          <h1 id="company-mission">
+            Free medical practices from administrative overload so every patient
+            can be treated like a VIP.
+          </h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>Our vision</p>
+          <p>
+            A future where AI runs the administration, humans elevate the care,
+            and no patient falls through the cracks.
+          </p>
+        </div>
+      </section>
+
+      <section className={styles.foundingStory} aria-labelledby="founding-story">
+        <header>
+          <p className={styles.eyebrow}>The founding story</p>
+          <h2 id="founding-story">From consulting<br />to Acuity.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>
+            Acuity grew out of consulting work with medical practices. We learned
+            how scheduling rules, insurance requirements, and handoffs shape the
+            work of staff and the experience of patients.
+          </p>
+          <p>
+            We built our voice AI agents around those realities, connecting them
+            to existing systems and giving staff clear roles in the workflow.
+          </p>
+          <p>
+            Today, our founders stay involved from workflow design through rollout.
+            We build alongside your team and keep improving the operation together.
+          </p>
         </div>
       </section>
 
@@ -609,7 +638,7 @@ export function WhoWeArePageContent() {
             linkedinHref="https://www.linkedin.com/in/chase-fagen-198947180"
             location="August 2026"
             portraitClassName={styles.founderPortraitChase}
-            role="Co-founder"
+            role="Co-founder & Head of AI Engineering"
           >
             <p>
               When intelligence has negligible marginal cost and is abundant,
@@ -651,28 +680,11 @@ export function WhoWeArePageContent() {
         </article>
       </section>
 
-      <section
-        aria-labelledby="company-mission"
-        className={styles.missionVision}
-      >
-        <div className={styles.missionStatement}>
-          <p className={styles.eyebrow}>Our mission</p>
-          <h2 id="company-mission">
-            Free medical practices from administrative overload so every patient
-            can be treated like a VIP.
-          </h2>
-        </div>
-        <div className={styles.visionStatement}>
-          <p className={styles.eyebrow}>Our vision</p>
-          <p>
-            A future where AI runs the administration, humans elevate the care,
-            and no patient falls through the cracks.
-          </p>
-        </div>
-      </section>
-
       <section className={styles.principlesSection}>
-        <p className={styles.eyebrow}>How we build</p>
+        <header>
+          <p className={styles.eyebrow}>Our principles</p>
+          <h2>How we build</h2>
+        </header>
         <div>
           <article>
             <div>
@@ -702,8 +714,6 @@ export function WhoWeArePageContent() {
           </article>
         </div>
       </section>
-
-      <PartnershipCta />
     </MarketingFrame>
   )
 }

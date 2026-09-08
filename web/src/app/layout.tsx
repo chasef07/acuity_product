@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next"
 
 import { Providers } from "@/components/providers"
-import { siteConfig, siteStructuredData } from "@/lib/site"
+import { siteConfig, siteSocialImage, siteStructuredData } from "@/lib/site"
 
 import "./globals.css"
 
@@ -43,9 +43,11 @@ export const metadata: Metadata = {
     siteName: siteConfig.name,
     locale: "en_US",
     type: "website",
+    images: [siteSocialImage],
   },
   twitter: {
     card: "summary_large_image",
+    images: [siteSocialImage],
     title: siteConfig.title,
     description: siteConfig.description,
   },
