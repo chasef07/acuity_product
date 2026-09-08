@@ -1118,6 +1118,35 @@ paths:
           $ref: "#/components/responses/AnalyticsBusy"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/analytics/bookings/non-conversions/query:
+    post:
+      operationId: queryBookingNonConversions
+      summary: Read the exact non-converting booking cohort as a Platform Operator.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PracticeAnalyticsQueryRequest"
+      responses:
+        "200":
+          description: One snapshot of aggregate metrics and individual non-converting calls.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingNonConversions"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "429":
+          $ref: "#/components/responses/AnalyticsBusy"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/analytics/staff/query:
     post:
       operationId: queryStaffAnalytics
@@ -3588,6 +3617,26 @@ components:
           minLength: 1
           maxLength: 100
           description: IANA timezone used for reporting-day boundaries.
+    BookingNonConversion:
+      type: object
+      additionalProperties: false
+      required: [id, locationId, startedAt, patientGroup]
+      properties:
+        id: {type: string, format: uuid}
+        locationId: {type: string, format: uuid}
+        startedAt: {type: string, format: date-time}
+        patientGroup: {type: string, enum: [new, existing, unknown]}
+    BookingNonConversions:
+      type: object
+      additionalProperties: false
+      required: [report, calls]
+      properties:
+        report:
+          $ref: "#/components/schemas/BookingAnalytics"
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/BookingNonConversion"
     BookingMetrics:
       type: object
       additionalProperties: false
@@ -3611,7 +3660,7 @@ components:
         p50:
           type: number
           nullable: true
-          description: Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+          description: Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
         p90:
           type: number
           nullable: true

@@ -34,3 +34,31 @@ func (server *Server) QueryBookingAnalytics(w http.ResponseWriter, r *http.Reque
 	}
 	server.writeJSON(w, http.StatusOK, page)
 }
+
+func (server *Server) QueryBookingNonConversions(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.PracticeAnalyticsQueryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, finish, ok := server.beginAnalytics(w, r)
+	if !ok {
+		return
+	}
+	defer finish()
+	page, err := server.interactions.QueryBookingNonConversions(ctx, interaction.QueryBookingAnalyticsCommand{
+		Identity: identity, PracticeID: body.PracticeId.String(), LocationID: uuidString(body.LocationId),
+		Days: int(body.Days), TimeZone: body.TimeZone,
+	})
+	if err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, page)
+}

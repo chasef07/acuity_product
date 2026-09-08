@@ -56,6 +56,28 @@ receipt-backed appointment and call details through a typed, transcript-free
 response. Transcript and raw closeout access use a separate endpoint restricted
 to Practice Admins and Platform Operators.
 
+### Booking reporting
+
+Booking conversion counts individual completed availability-search calls within
+an authorized Practice, Locations, and reporting window. Repeated searches
+within a call count once; separate calls count separately even when they share
+a number. A call converts only when that same call confirms a booking. Each
+non-converting call remains independently available for review.
+
+New/existing classification uses successful patient outcomes, including legacy
+outcome-specific tool execution results. Successful verification or switching
+means existing; successful creation means new. Without a conclusive identity
+outcome, a saved phone lookup with one or multiple records assumes existing;
+missing or no-match evidence assumes new. Historical phone-match assumptions
+are stored separately by an explicit release backfill. These reporting
+assumptions do not establish verified patient identity or alter provider evidence.
+
+All metrics use the same per-call patient classification. Bookings count distinct
+confirmed appointment identifiers. P50 pools valid individual booking-attempt
+durations from call start to hang-up, including non-converting attempts; it is
+neither an average nor a median of daily medians. The booking interface displays
+bookings, conversion, and P50, with no P90 column.
+
 AI Interaction ingestion has one authoritative lifecycle: `START`, an optional
 `OUTCOME_CHECKPOINT`, and terminal `CLOSEOUT`. `CLOSEOUT` is the only terminal
 message and owns terminal status, `endedAt`, the optional call summary, the full

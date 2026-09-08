@@ -325,6 +325,8 @@ export function PortalWorkspace() {
           )}
           {view === "analytics" && canViewPracticeAnalytics(discovery, state.scope.practiceID) ? (
             <PracticeAnalytics
+              platformOperator={discovery.platformOperator}
+              actorSubject={discovery.actor.subject}
               key={`${state.scope.practiceID}:${state.scope.locationScopeID}`}
               practiceID={state.scope.practiceID}
               locationScopeID={state.scope.locationScopeID}

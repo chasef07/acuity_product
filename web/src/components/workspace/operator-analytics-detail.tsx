@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import {
   CalendarCheck2Icon,
   ChevronRightIcon,
@@ -51,7 +51,9 @@ export function OperatorAnalyticsDetailSheet({
   interactionID,
   focus,
   onClose,
+  reviewControls,
 }: {
+  reviewControls?: ReactNode
   interactionID: string
   focus?: DiagnosticFocus
   onClose: () => void
@@ -126,6 +128,7 @@ export function OperatorAnalyticsDetailSheet({
           </SheetDescription>
         </SheetHeader>
 
+        {reviewControls && <div className="max-h-[40vh] shrink-0 overflow-y-auto border-b px-5 py-4">{reviewControls}</div>}
         {loading && (
           <div className="flex min-h-80 items-center justify-center gap-2 text-muted-foreground">
             <Spinner />
@@ -153,7 +156,7 @@ export function OperatorAnalyticsDetailSheet({
   )
 }
 
-function OperatorAnalyticsDetailView({
+export function OperatorAnalyticsDetailView({
   detail,
   focus,
 }: {
@@ -183,7 +186,7 @@ function OperatorAnalyticsDetailView({
   return (
     <>
       <section className="shrink-0 border-b px-5 py-4 sm:px-6">
-        <p className="text-sm font-medium">{formatPhone(detail.phone)}</p>
+        <p aria-label="Caller phone number" className="text-sm font-medium">{formatPhone(detail.phone)}</p>
         <p className="mt-1 text-sm text-muted-foreground">
           {detail.locationName}
         </p>
