@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/observability"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -143,6 +144,7 @@ func (m *Module) resolveHandoffForRefer(
 	fact ProviderFact,
 ) (string, string, string, error) {
 	if !canonicalE164.MatchString(fact.From) || !canonicalE164.MatchString(fact.To) {
+		observability.Record(m.observer, observability.HandoffRejected("address"))
 		return "", "", "", ErrInvalidHandoff
 	}
 	rows, err := tx.Query(ctx, `
@@ -171,6 +173,11 @@ func (m *Module) resolveHandoffForRefer(
 		return "", "", "", fmt.Errorf("read handoff admission: %w", err)
 	}
 	if candidateCount != 1 {
+		reason := "missing_handoff"
+		if candidateCount > 1 {
+			reason = "ambiguous_handoff"
+		}
+		observability.Record(m.observer, observability.HandoffRejected(reason))
 		return "", "", "", ErrInvalidHandoff
 	}
 	return handoffID, practiceID, locationID, nil

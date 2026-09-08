@@ -2633,6 +2633,10 @@ func (server *Server) withRequestMetadata(next http.Handler) http.Handler {
 		if server.role == "portal-api" {
 			route = availabilityRoute(r.Method, r.URL.Path)
 		}
+		if diagnostic := diagnosticRoute(server.role, r.Method, r.URL.Path); diagnostic != "" {
+			server.serveDiagnosticRoute(next, w, r.WithContext(ctx), diagnostic)
+			return
+		}
 		if route == "" {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return

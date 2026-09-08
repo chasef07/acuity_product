@@ -1,5 +1,63 @@
 [
   {
+    "displayName": "Acuity backend - additional route availability",
+    "combiner": "OR",
+    "enabled": true,
+    "userLabels": {
+      "acuity_contract": "call_center_v1",
+      "acuity_policy": "route_availability"
+    },
+    "documentation": {
+      "mimeType": "text/markdown",
+      "content": "Diagnostic coverage for messaging queries, AI outcome queries, Calling readiness commits, and server-side SSE first-ready delivery. Separate from the two-route critical-read SLO. Missing data does not prove healthy traffic; verify ingestion and staffed-hour volume. Latency threshold is an initial diagnostic hypothesis, not an accepted journey target."
+    },
+    "alertStrategy": {
+      "autoClose": "1800s"
+    },
+    "conditions": [
+      {
+        "displayName": "Any unavailable additional backend route",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_backend_route_availability_count\" AND resource.type=\"cloud_run_revision\" AND metric.label.outcome=\"unavailable\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "60s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM",
+              "groupByFields": [
+                "metric.label.route",
+                "metric.label.runtime_role"
+              ]
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s"
+        }
+      },
+      {
+        "displayName": "Additional backend route p99 above one second",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/acuity_backend_route_availability_seconds\" AND resource.type=\"cloud_run_revision\"",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_PERCENTILE_99",
+              "crossSeriesReducer": "REDUCE_MAX",
+              "groupByFields": [
+                "metric.label.route",
+                "metric.label.runtime_role"
+              ]
+            }
+          ],
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 1,
+          "duration": "0s"
+        }
+      }
+    ]
+  },
+  {
     "displayName": "Acuity call center - webhook ingress",
     "combiner": "OR",
     "enabled": true,

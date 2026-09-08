@@ -171,8 +171,12 @@ func (m *Module) admitHandoff(ctx context.Context, fact ProviderFact) error {
 		return ErrHandoffAdmissionClosed
 	}
 	if fact.CallControlID == "" || fact.CallLegID == "" ||
-		fact.CallSessionID == "" || fact.ConnectionID == "" ||
-		fact.ConnectionID != m.config.CallControlID {
+		fact.CallSessionID == "" || fact.ConnectionID == "" {
+		observability.Record(m.observer, observability.HandoffRejected("provider_identity"))
+		return ErrInvalidHandoff
+	}
+	if fact.ConnectionID != m.config.CallControlID {
+		observability.Record(m.observer, observability.HandoffRejected("connection"))
 		return ErrInvalidHandoff
 	}
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
