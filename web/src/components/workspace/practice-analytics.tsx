@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { BookingReview } from "@/components/analytics/booking-review"
 import {
   AnalyticsLayout,
   type AnalyticsTab,
@@ -34,23 +33,11 @@ export function PracticeAnalytics({
   practiceID,
   locationScopeID,
   locations,
-  platformOperator = false,
-  actorSubject,
 }: {
   practiceID: string
   locationScopeID: string
-  platformOperator?: boolean
-  actorSubject: string
   locations: Location[]
 }) {
-  const [reviewDirty, setReviewDirty] = useState(false)
-  function navigateReview(action: () => void) {
-    if (reviewDirty && !window.confirm("Discard the unsaved review changes?"))
-      return
-    setReviewDirty(false)
-    action()
-  }
-  const [reviewing, setReviewing] = useState(false)
   const [metric, setMetric] = useState<AnalyticsTab>("bookings")
   const [period, setPeriod] = useState(30)
   const [office, setOffice] = useState(locationScopeID || "all")
@@ -124,16 +111,11 @@ export function PracticeAnalytics({
   return (
     <AnalyticsLayout
       metric={metric}
-      setMetric={(value) =>
-        navigateReview(() => {
-          setReviewing(false)
-          setMetric(value)
-        })
-      }
+      setMetric={setMetric}
       period={period}
-      setPeriod={(value) => navigateReview(() => setPeriod(value))}
+      setPeriod={setPeriod}
       office={office}
-      setOffice={(value) => navigateReview(() => setOffice(value))}
+      setOffice={setOffice}
       offices={[
         { value: "all", label: "All offices" },
         ...locations.map((location) => ({
@@ -145,24 +127,7 @@ export function PracticeAnalytics({
       through={current.state === "ready" ? current.report.through : undefined}
       headerLeading={<SidebarTrigger collapsedOnly />}
     >
-      {reviewing && platformOperator ? (
-        <BookingReview
-          key={`${practiceID}:${office}:${period}:${timeZone}`}
-          practiceID={practiceID}
-          actorSubject={actorSubject}
-          locationID={office === "all" ? undefined : office}
-          days={period as 7 | 30 | 90}
-          timeZone={timeZone}
-          locations={locations}
-          onDirtyChange={setReviewDirty}
-          onClose={() =>
-            navigateReview(() => {
-              setReviewing(false)
-              setRevision((v) => v + 1)
-            })
-          }
-        />
-      ) : current.state === "loading" ? (
+      {current.state === "loading" ? (
         <div
           aria-label="Loading analytics"
           aria-busy="true"
@@ -174,22 +139,10 @@ export function PracticeAnalytics({
         current.kind === "staff" ? (
           <StaffOverview report={current.report} />
         ) : (
-          <>
-            {platformOperator && (
-              <div className="mb-5 flex justify-end">
-                <Button variant="outline" onClick={() => setReviewing(true)}>
-                  Review non-converting calls (
-                  {current.report.total.searched -
-                    current.report.total.converted}
-                  )
-                </Button>
-              </div>
-            )}
-            <BookingOverview
-              report={current.report}
-              metric={metric === "staff" ? "bookings" : metric}
-            />
-          </>
+          <BookingOverview
+            report={current.report}
+            metric={metric === "staff" ? "bookings" : metric}
+          />
         )
       ) : (
         <Alert>

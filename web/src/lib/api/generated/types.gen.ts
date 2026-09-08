@@ -695,18 +695,6 @@ export type PracticeAnalyticsQueryRequest = {
     timeZone: string;
 };
 
-export type BookingNonConversion = {
-    id: string;
-    locationId: string;
-    startedAt: string;
-    patientGroup: 'new' | 'existing' | 'unknown';
-};
-
-export type BookingNonConversions = {
-    report: BookingAnalytics;
-    calls: Array<BookingNonConversion>;
-};
-
 export type BookingMetrics = {
     calls: number;
     /**
@@ -2732,47 +2720,6 @@ export type QueryBookingAnalyticsResponses = {
 };
 
 export type QueryBookingAnalyticsResponse = QueryBookingAnalyticsResponses[keyof QueryBookingAnalyticsResponses];
-
-export type QueryBookingNonConversionsData = {
-    body: PracticeAnalyticsQueryRequest;
-    path?: never;
-    query?: never;
-    url: '/v1/analytics/bookings/non-conversions/query';
-};
-
-export type QueryBookingNonConversionsErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * Another analytics request is running on this portal instance. Retry later.
-     */
-    429: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type QueryBookingNonConversionsError = QueryBookingNonConversionsErrors[keyof QueryBookingNonConversionsErrors];
-
-export type QueryBookingNonConversionsResponses = {
-    /**
-     * One snapshot of aggregate metrics and individual non-converting calls.
-     */
-    200: BookingNonConversions;
-};
-
-export type QueryBookingNonConversionsResponse = QueryBookingNonConversionsResponses[keyof QueryBookingNonConversionsResponses];
 
 export type QueryStaffAnalyticsData = {
     body: PracticeAnalyticsQueryRequest;

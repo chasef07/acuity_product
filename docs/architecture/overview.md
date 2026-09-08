@@ -61,8 +61,7 @@ to Practice Admins and Platform Operators.
 Booking conversion counts individual completed availability-search calls within
 an authorized Practice, Locations, and reporting window. Repeated searches
 within a call count once; separate calls count separately even when they share
-a number. A call converts only when that same call confirms a booking. Each
-non-converting call remains independently available for review.
+a number. A call converts only when that same call confirms a booking.
 
 New/existing classification uses successful patient outcomes, including legacy
 outcome-specific tool execution results. Successful verification or switching

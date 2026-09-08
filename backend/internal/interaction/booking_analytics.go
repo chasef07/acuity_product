@@ -59,8 +59,6 @@ type BookingAnalytics struct {
 }
 
 type bookingFact struct {
-	id            string
-	locationID    string
 	started       time.Time
 	ended         *time.Time
 	booked        bool
@@ -72,80 +70,43 @@ type bookingFact struct {
 }
 
 func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBookingAnalyticsCommand) (BookingAnalytics, error) {
-	facts, from, to, err := m.queryBookingFacts(ctx, command, false)
-	if err != nil {
-		return BookingAnalytics{}, err
-	}
-	return summarizeBookingFacts(facts, from, to), nil
-}
-
-type BookingNonConversion struct {
-	ID           string    `json:"id"`
-	LocationID   string    `json:"locationId"`
-	StartedAt    time.Time `json:"startedAt"`
-	PatientGroup string    `json:"patientGroup"`
-}
-
-type BookingNonConversions struct {
-	Report BookingAnalytics       `json:"report"`
-	Calls  []BookingNonConversion `json:"calls"`
-}
-
-// Use the same authorized facts and calendar boundaries for the denominator and
-// its review cohort. Detailed transcript evidence remains a separate read.
-func (m *Module) QueryBookingNonConversions(ctx context.Context, command QueryBookingAnalyticsCommand) (BookingNonConversions, error) {
-	facts, from, to, err := m.queryBookingFacts(ctx, command, true)
-	if err != nil {
-		return BookingNonConversions{}, err
-	}
-	calls := make([]BookingNonConversion, 0)
-	for i := len(facts) - 1; i >= 0; i-- {
-		f := facts[i]
-		if f.searched && !f.booked {
-			calls = append(calls, BookingNonConversion{ID: f.id, LocationID: f.locationID, StartedAt: f.started, PatientGroup: f.patientGroup})
-		}
-	}
-	return BookingNonConversions{Report: summarizeBookingFacts(facts, from, to), Calls: calls}, nil
-}
-
-func (m *Module) queryBookingFacts(ctx context.Context, command QueryBookingAnalyticsCommand, operatorOnly bool) ([]bookingFact, time.Time, time.Time, error) {
 	zone, zoneErr := time.LoadLocation(command.TimeZone)
 	if m.database == nil || m.access == nil || !validUUID(command.PracticeID) ||
 		(command.LocationID != "" && !validUUID(command.LocationID)) ||
 		(command.Days != 7 && command.Days != 30 && command.Days != 90) ||
 		command.TimeZone == "" || command.TimeZone == "Local" || zoneErr != nil {
-		return nil, time.Time{}, time.Time{}, ErrInvalidInput
+		return BookingAnalytics{}, ErrInvalidInput
 	}
 	now := m.now().In(zone)
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
 	from := to.AddDate(0, 0, -command.Days)
 	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, time.Time{}, time.Time{}, fmt.Errorf("begin booking analytics: %w", err)
+		return BookingAnalytics{}, fmt.Errorf("begin booking analytics: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '1500ms'; SET LOCAL lock_timeout = '100ms'; SET LOCAL max_parallel_workers_per_gather = 0; SET LOCAL work_mem = '4MB'`); err != nil {
-		return nil, time.Time{}, time.Time{}, err
+		return BookingAnalytics{}, err
 	}
 	authorization, err := m.access.LockReadAuthorization(ctx, tx, command.Identity, command.PracticeID, command.LocationID)
 	if errors.Is(err, access.ErrDenied) {
-		return nil, time.Time{}, time.Time{}, ErrDenied
+		return BookingAnalytics{}, ErrDenied
 	}
 	if err != nil {
-		return nil, time.Time{}, time.Time{}, err
+		return BookingAnalytics{}, err
 	}
-	if (operatorOnly && !authorization.PlatformOperator) || (!authorization.PlatformOperator && authorization.Membership.Role != access.RoleAdmin) {
-		return nil, time.Time{}, time.Time{}, ErrDenied
+	if !authorization.PlatformOperator && authorization.Membership.Role != access.RoleAdmin {
+		return BookingAnalytics{}, ErrDenied
 	}
 	locations := authorizedLocationIDs(authorization, command.LocationID)
 	if len(locations) == 0 {
-		return nil, time.Time{}, time.Time{}, ErrDenied
+		return BookingAnalytics{}, ErrDenied
 	}
 
 	// Read only stored facts maintained alongside source evidence. Transcript JSON
 	// is never parsed on this path. Fail visibly rather than truncating a report.
 	rows, err := tx.Query(ctx, `
-        SELECT id::text, location_id::text, started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
+        SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
             booking_searched, booking_search_known,
             CASE WHEN booking_patient_basis IN ('confirmed_existing', 'phone_match') THEN 'existing' ELSE 'new' END
         FROM ai_interactions
@@ -156,28 +117,28 @@ func (m *Module) queryBookingFacts(ctx context.Context, command QueryBookingAnal
         LIMIT 50001
 	`, command.PracticeID, locations, from, to)
 	if err != nil {
-		return nil, time.Time{}, time.Time{}, fmt.Errorf("query booking analytics: %w", err)
+		return BookingAnalytics{}, fmt.Errorf("query booking analytics: %w", err)
 	}
 	facts := make([]bookingFact, 0)
 	for rows.Next() {
 		var fact bookingFact
-		if err := rows.Scan(&fact.id, &fact.locationID, &fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &fact.patientGroup); err != nil {
+		if err := rows.Scan(&fact.started, &fact.ended, &fact.booked, &fact.appointmentID, &fact.searched, &fact.searchKnown, &fact.patientGroup); err != nil {
 			rows.Close()
-			return nil, time.Time{}, time.Time{}, fmt.Errorf("read booking analytics: %w", err)
+			return BookingAnalytics{}, fmt.Errorf("read booking analytics: %w", err)
 		}
 		facts = append(facts, fact)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, time.Time{}, fmt.Errorf("read booking analytics: %w", err)
+		return BookingAnalytics{}, fmt.Errorf("read booking analytics: %w", err)
 	}
 	if len(facts) > 50000 {
-		return nil, time.Time{}, time.Time{}, fmt.Errorf("booking analytics exceeds bounded reporting window")
+		return BookingAnalytics{}, fmt.Errorf("booking analytics exceeds bounded reporting window")
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, time.Time{}, time.Time{}, fmt.Errorf("commit booking analytics: %w", err)
+		return BookingAnalytics{}, fmt.Errorf("commit booking analytics: %w", err)
 	}
-	return facts, from, to, nil
+	return summarizeBookingFacts(facts, from, to), nil
 }
 
 type bookingAccumulator struct {
@@ -199,13 +160,15 @@ func (a *bookingAccumulator) add(f bookingFact) {
 	if f.countBooking {
 		a.metrics.Bookings++
 	}
-	// P50 measures individual booking-attempt conversations, including misses.
-	if !f.searched && !f.booked {
+	// Include each booking-attempt conversation, whether or not it booked.
+	if !f.booked && !f.searched {
 		return
 	}
-	if f.ended != nil && !f.ended.Before(f.started) {
-		a.durations = append(a.durations, f.ended.Sub(f.started).Seconds())
+	end := f.ended
+	if end == nil || end.Before(f.started) {
+		return
 	}
+	a.durations = append(a.durations, end.Sub(f.started).Seconds())
 }
 
 func (a *bookingAccumulator) finish() BookingMetrics {
