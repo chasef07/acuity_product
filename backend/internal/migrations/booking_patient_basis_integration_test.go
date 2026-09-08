@@ -24,6 +24,11 @@ func TestBookingPatientBasisUsesOutcomesAndPhoneEvidence(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ name, payload, want string }{
+		{"historical completed search retains existing assumption", `{"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "legacy_existing"},
+		{"historical explicit no match stays new", `{"toolExecutions":[{"outputClass":"patient_not_found","status":"success"},{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
+		{"native no match overrides historical search assumption", `{"phoneLookup":{"status":"no_match"},"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
+		{"native failed lookup follows current fallback", `{"phoneLookup":{"status":"lookup_failed"},"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
+		{"explicit creation overrides historical search assumption", `{"toolExecutions":[{"outputClass":"patient_created","status":"success"},{"toolName":"get_availability","status":"success"}]}`, "confirmed_new"},
 		{"legacy verified output", `{"toolExecutions":[{"outputClass":"patient_verified","status":"success"}]}`, "confirmed_existing"},
 		{"legacy transport success is not verification", `{"toolExecutions":[{"toolName":"existing_patient","outputClass":"patient_not_found","status":"success"}]}`, "assumed_new"},
 		{"legacy failed verification", `{"toolExecutions":[{"outputClass":"patient_verified","status":"failed"}]}`, "assumed_new"},
@@ -159,5 +164,57 @@ func TestBookingPatientBasisMigrationPreservesExistingFacts(t *testing.T) {
 	}
 	if before != after || basis != "confirmed_existing" {
 		t.Fatal("upgrade must classify legacy success without changing existing facts")
+	}
+}
+
+func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
+	pool := testdb.OpenThrough(t, "0063_booking_patient_basis.sql")
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+ INSERT INTO access_practices(id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000101','historical','Synthetic');
+ INSERT INTO access_locations(id,practice_id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000102','00000000-0000-0000-0000-000000000101','location','Synthetic');
+ INSERT INTO ai_interactions(id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,appointment_outcome,new_appointment_id,booking_result,transcript,closeout_payload)
+ VALUES('00000000-0000-0000-0000-000000000103','fixture','00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000102','historical','+15555550199','+15555550100',now()-interval '1 day',now()-interval '23 hours','COMPLETED',3,'BOOKING','synthetic-appointment','{"status":"booked"}',
+ '{"items":[{"type":"function_call","name":"get_availability","call_id":"search"},{"type":"function_call_output","call_id":"search","is_error":false}]}','{"domainOutcomes":[]}');
+ `); err != nil {
+		t.Fatal(err)
+	}
+	var before, after, basis string
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
+		t.Fatal(err)
+	}
+	if basis != "assumed_new" {
+		t.Fatalf("pre-fix basis=%s want assumed_new", basis)
+	}
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
+		t.Fatal(err)
+	}
+	if before != after || basis != "legacy_existing" {
+		t.Fatalf("upgrade must preserve source and other facts; basis=%s", basis)
+	}
+	for _, tc := range []struct{ name, update, want string }{
+		{"corrected transcript removes search", `transcript='{}'`, "assumed_new"},
+		{"typed historical receipt establishes existing", `booking_result='{"status":"booked","appointmentId":"synthetic-appointment","appointmentTypeName":"Established Adult Vision"}'`, "legacy_existing"},
+		{"appointment correction invalidates receipt", `new_appointment_id='different-appointment'`, "assumed_new"},
+		{"matching receipt restored", `new_appointment_id='synthetic-appointment'`, "legacy_existing"},
+		{"historical phone evidence replaces fallback", `booking_phone_lookup_status='verified'`, "phone_match"},
+		{"native no match overrides historical fallback", `closeout_payload='{"domainOutcomes":[],"phoneLookup":{"status":"no_match"}}'`, "assumed_new"},
+		{"explicit new identity overrides historical fallback", `closeout_payload='{"domainOutcomes":[{"outcome":"patient_new","status":"success"}]}'`, "confirmed_new"},
+		{"explicit existing identity overrides historical fallback", `closeout_payload='{"domainOutcomes":[{"outcome":"patient_verified","status":"success"}]}'`, "confirmed_existing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, "UPDATE ai_interactions SET "+tc.update+" WHERE source_call_id='historical'"); err != nil {
+				t.Fatal(err)
+			}
+			if err := pool.QueryRow(ctx, `SELECT booking_patient_basis FROM ai_interactions WHERE source_call_id='historical'`).Scan(&basis); err != nil {
+				t.Fatal(err)
+			}
+			if basis != tc.want {
+				t.Fatalf("basis=%s want=%s", basis, tc.want)
+			}
+		})
 	}
 }

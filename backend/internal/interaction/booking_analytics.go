@@ -108,7 +108,7 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
             booking_searched, booking_search_known,
-            CASE WHEN booking_patient_basis IN ('confirmed_existing', 'phone_match') THEN 'existing' ELSE 'new' END
+            CASE WHEN booking_patient_basis IN ('confirmed_existing', 'phone_match', 'legacy_existing') THEN 'existing' ELSE 'new' END
         FROM ai_interactions
         WHERE practice_id = $1::uuid AND location_id = ANY($2::uuid[])
             AND started_at >= $3 AND started_at < $4

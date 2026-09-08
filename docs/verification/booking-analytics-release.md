@@ -17,7 +17,9 @@ The one-time data migration is `scripts/backfill-booking-phone-lookups.sql`.
 Supply a CSV with `interaction_id,status` and only the accepted single/multiple
 phone matches (`verified` or `multiple_matches`). The current historical matching
 rule uses exactly one nearby request within five seconds of call start. Missing,
-ambiguous, and no-match results need no backfill because their default is new.
+ambiguous, and no-match results are not phone-match evidence. Migration 0064
+preserves the previous existing category when lookup telemetry is absent; explicit
+patient-not-found and native no-match results still assume new.
 This is a reporting assumption, not identity verification.
 
 At release, run against the intended Practice after schema migration:
@@ -41,3 +43,16 @@ and pooled P50. The local preview must use this same schema and backfill procedu
 enriching only the local closeout payload does not prove release parity.
 
 No production migration or backfill has been executed during development.
+
+## Historical classification correction (0064)
+
+Ship `0064_preserve_historical_patient_classification.sql` with the matching API
+change. It adds the explicit `legacy_existing` reporting basis and reprojects only
+completed calls currently marked `assumed_new` with a previous existing category.
+Successful patient results and saved phone lookups retain precedence. The migration
+changes no provider payload, booking/search fact, duration, or lookup evidence.
+It also refreshes this basis when transcript, booking, or lifecycle evidence changes.
+
+No private CSV is required for this correction. The optional historical phone-match
+backfill remains a separate operation and replaces the fallback when evidence exists.
+See [the regression evidence](patient-classification-regression-2026-09-08.md).
