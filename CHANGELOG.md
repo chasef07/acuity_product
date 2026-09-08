@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/chasef07/acuity_product/compare/v1.5.0...v1.5.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **analytics:** classify patient outcomes and remove P90 ([43d6a25](https://github.com/chasef07/acuity_product/commit/43d6a251cd3d32a362649b3b3c44dbe4055b791e))
+
 ## [1.5.0](https://github.com/chasef07/acuity_product/compare/v1.4.0...v1.5.0) (2026-09-07)
 
 
