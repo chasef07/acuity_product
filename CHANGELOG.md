@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.6.0](https://github.com/chasef07/acuity_product/compare/v1.5.1...v1.6.0) (2026-09-08)
+
+
+### Features
+
+* **marketing:** refresh website design and brand assets ([#294](https://github.com/chasef07/acuity_product/issues/294)) ([896229d](https://github.com/chasef07/acuity_product/commit/896229dcf75ec3fac3e18d284ccb098a318debbd))
+
+
+### Bug Fixes
+
+* **analytics:** preserve historical patient classification ([#291](https://github.com/chasef07/acuity_product/issues/291)) ([5dfeb1f](https://github.com/chasef07/acuity_product/commit/5dfeb1fe257e18bceddec9602a7cc53811a2cca8))
+* **backend:** repair provider reconciliation and reliability monitoring ([#292](https://github.com/chasef07/acuity_product/issues/292)) ([b6436e2](https://github.com/chasef07/acuity_product/commit/b6436e27d8d4210f3303fc880072c143f0ce3153))
+
 ## [1.5.1](https://github.com/chasef07/acuity_product/compare/v1.5.0...v1.5.1) (2026-09-08)
 
 
