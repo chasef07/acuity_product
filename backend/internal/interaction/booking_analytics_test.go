@@ -60,3 +60,36 @@ func TestBookingDailyTotalPoolsDurationsAcrossPatientGroups(t *testing.T) {
 		t.Fatalf("daily total must aggregate all source observations: %+v", daily)
 	}
 }
+
+func TestBookingCallsKeepIndependentConversionAndDurations(t *testing.T) {
+	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var facts []bookingFact
+	for i, seconds := range []int{100, 300, 800} {
+		start := from.AddDate(0, 0, i)
+		end := start.Add(time.Duration(seconds) * time.Second)
+		facts = append(facts, bookingFact{started: start, ended: &end, searched: true, patientGroup: "existing"})
+	}
+	facts[2].booked = true
+	facts[2].appointmentID = "synthetic-booking"
+	report := summarizeBookingFacts(facts, from, from.AddDate(0, 0, 7))
+	if report.Total.Searched != 3 || report.Total.Converted != 1 || report.Total.Bookings != 1 {
+		t.Fatalf("calls must remain independent: %+v", report.Total)
+	}
+	if report.Total.DurationSamples != 3 || *report.Total.P50 != 300 {
+		t.Fatalf("P50 must pool all booking-attempt calls: %+v", report.Total)
+	}
+	if report.Groups.Existing.Searched != 3 || report.Groups.Existing.Converted != 1 || *report.Groups.Existing.P50 != 300 {
+		t.Fatalf("cohort must use same calls: %+v", report.Groups.Existing)
+	}
+}
+
+func TestBookingWithoutSearchDoesNotConvertAnotherCall(t *testing.T) {
+	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	report := summarizeBookingFacts([]bookingFact{
+		{started: from, searched: true, patientGroup: "new"},
+		{started: from.Add(time.Hour), booked: true, appointmentID: "synthetic-booking", patientGroup: "new"},
+	}, from, from.AddDate(0, 0, 7))
+	if report.Total.Searched != 1 || report.Total.Converted != 0 || report.Total.Bookings != 1 {
+		t.Fatalf("a booking cannot convert another call: %+v", report.Total)
+	}
+}

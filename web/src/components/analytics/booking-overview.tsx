@@ -98,7 +98,7 @@ function DayTooltip({
                       ? "No activity"
                       : formatPercent(summary.conversion)
                     : summary.p50 === null
-                      ? summary.bookings === 0
+                      ? summary.bookings === 0 && summary.searched === 0
                         ? "No activity"
                         : "Duration unavailable"
                       : formatDuration(summary.p50)}
@@ -114,8 +114,8 @@ function DayTooltip({
             {metric === "duration" && (
               <span className={styles.tooltipSub}>
                 {summary.durationSamples === 0
-                  ? summary.bookings === 0
-                    ? "No booked calls"
+                  ? summary.bookings === 0 && summary.searched === 0
+                    ? "No booking attempts"
                     : "No recorded call durations"
                   : `p50 · ${count(summary.durationSamples)} calls`}
               </span>
@@ -266,7 +266,7 @@ function ConversionSummary({
         })}
       </div>
       <p className={styles.summaryNote}>
-        Repeated completed searches count once. Searches with no openings remain
+        Repeated completed searches count once per call. Searches with no openings remain
         included. Failed searches, reschedules, and cancellations are excluded.
       </p>
       {missingHistory > 0 && (
@@ -293,7 +293,7 @@ function Summary({
   if (metric === "conversion")
     return <ConversionSummary total={total} groups={groups} />
   const label =
-    metric === "bookings" ? "Confirmed bookings" : "Median booked-call duration"
+    metric === "bookings" ? "Confirmed bookings" : "Median call duration"
   return (
     <div className={styles.summary}>
       <div>
@@ -305,7 +305,7 @@ function Summary({
         </output>
         {metric === "duration" && (
           <p className={styles.summaryCaption}>
-            p50 · {count(total.durationSamples)} booked calls
+            p50 · {count(total.durationSamples)} calls
           </p>
         )}
       </div>
@@ -333,7 +333,7 @@ function Summary({
       </div>
       {metric === "duration" && (
         <p className={styles.summaryNote}>
-          From call start to hang-up, for calls that booked.
+          From call start to hang-up, for booking attempts.
         </p>
       )}
     </div>
@@ -420,7 +420,7 @@ export function BookingOverview({
                 ? "Bookings"
                 : metric === "conversion"
                   ? "Daily booking conversion"
-                  : "Median booked-call duration"}
+                  : "Median call duration"}
             </h2>
             <div className={styles.chartLegend}>
               {(metric === "conversion" || partialBreakdown) && (
@@ -465,7 +465,6 @@ export function BookingOverview({
                 <TableHead className="text-right">Bookings</TableHead>
                 <TableHead className="text-right">Conversion</TableHead>
                 <TableHead className="text-right">p50 duration</TableHead>
-                <TableHead className="text-right">p90 duration</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -483,9 +482,6 @@ export function BookingOverview({
                   <TableCell className="text-right tabular-nums">
                     {formatDuration(report.groups[group].p50)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatDuration(report.groups[group].p90)}
-                  </TableCell>
                 </TableRow>
               ))}
               <TableRow>
@@ -500,9 +496,6 @@ export function BookingOverview({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatDuration(report.total.p50)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatDuration(report.total.p90)}
                 </TableCell>
               </TableRow>
             </TableBody>

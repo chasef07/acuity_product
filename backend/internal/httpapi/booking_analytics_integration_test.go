@@ -126,7 +126,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	if report.Total.Calls != 3 || report.Total.Bookings != 2 || report.Total.Searched != 2 || report.Total.Converted != 1 || report.Total.SearchEvidenceCalls != 2 || report.Total.PreciseSearchCalls != 0 || report.Total.Conversion == nil || *report.Total.Conversion != 50 {
 		t.Fatalf("unexpected totals: %+v", report.Total)
 	}
-	if len(report.Daily) != 7 || report.Groups.New.Bookings != 1 || report.Groups.Unknown.Bookings != 1 || report.Total.P50 == nil || *report.Total.P50 != 300 {
+	if len(report.Daily) != 7 || report.Groups.New.Bookings != 2 || report.Groups.Unknown.Bookings != 0 || report.Total.P50 == nil || *report.Total.P50 != 300 {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 	if strings.Contains(string(raw), "PRIVATE-CALL-CONTENT") || strings.Contains(string(raw), "1727555") || strings.Contains(string(raw), "appointment-") {

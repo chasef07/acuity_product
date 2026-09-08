@@ -714,7 +714,7 @@ export type BookingMetrics = {
      */
     conversion: number | null;
     /**
-     * Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+     * Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
      */
     p50: number | null;
     /**

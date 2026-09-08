@@ -23,12 +23,10 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     for (let i = 0; i < 11; i++) {
       const id = randomUUID()
       ids.push(id)
-      const start = new Date(
-        Date.now() - (3 - (i % 3)) * 86400000 + i * 1000,
-      )
+      const start = new Date(Date.now() - (3 - (i % 3)) * 86400000 + i * 1000)
       const booked = i < 4
       const domainOutcomes: Array<Record<string, unknown>> =
-        i === 0 || i === 3 || i === 4
+        i === 0 || i === 2 || i === 3 || i === 4
           ? [
               {
                 outcome: i % 2 ? "patient_verified" : "patient_new",
@@ -77,7 +75,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       await client.query(
         `INSERT INTO ai_interactions
         (id, service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage, appointment_outcome, new_appointment_id, booking_result, appointment_occurred_at, transcript, closeout_payload)
-        VALUES ($1::uuid, 'booking-design-e2e', $2, $3, $1::uuid::text, '+15555550199', '+17275550106', $4, $5, 'COMPLETED', 3, $6, $7, $8, $9, $10, $11)`,
+        VALUES ($1::uuid, 'booking-design-e2e', $2, $3, $1::uuid::text, $12, '+17275550106', $4, $5, 'COMPLETED', 3, $6, $7, $8, $9, $10, $11)`,
         [
           id,
           scope.rows[0].practice_id,
@@ -103,12 +101,20 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
               }
             : null,
           booked ? new Date(start.getTime() + (200 + i * 30) * 1000) : null,
-          i === 5
-            ? null
-            : { items: toolItems },
+          i === 5 ? null : { items: toolItems },
           i === 5
             ? { domainOutcomes: [], sessionReportUnavailable: true }
-            : { domainOutcomes },
+            : {
+                domainOutcomes,
+                ...([1, 6].includes(i)
+                  ? {
+                      phoneLookup: {
+                        status: i === 1 ? "verified" : "multiple_matches",
+                      },
+                    }
+                  : {}),
+              },
+          `+155555501${String(i).padStart(2, "0")}`,
         ],
       )
     }
@@ -139,9 +145,11 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
       page.getByText("Availability calls", { exact: true }),
     ).toHaveCount(0)
     await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0)
-    await expect(performance.getByText("Call volume", { exact: true })).toHaveCount(0)
-    await expect(performance.locator(".recharts-line")).toHaveCount(3)
-    await expectConnectedZeroBaseline(performance, 3)
+    await expect(
+      performance.getByText("Call volume", { exact: true }),
+    ).toHaveCount(0)
+    await expect(performance.locator(".recharts-line")).toHaveCount(2)
+    await expectConnectedZeroBaseline(performance, 2)
     await page.screenshot({
       path: testInfo.outputPath("admin-bookings.png"),
       fullPage: true,
@@ -164,6 +172,19 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
         .getByRole("cell")
         .nth(1),
     ).toHaveText("2")
+    await expect(breakdown.getByRole("row")).toHaveCount(4)
+    await expect(breakdown.getByRole("columnheader")).toHaveText([
+      "Patient status", "Bookings", "Conversion", "p50 duration",
+    ])
+    await expect(
+      breakdown.getByRole("row").filter({ hasText: "New patients" }).getByRole("cell"),
+    ).toHaveText(["New patients", "2", "66.7%", "7m 00s"])
+    await expect(
+      breakdown.getByRole("row").filter({ hasText: "Existing patients" }).getByRole("cell"),
+    ).toHaveText(["Existing patients", "2", "66.7%", "8m 00s"])
+    await expect(
+      breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
+    ).toHaveText(["Total", "4", "66.7%", "7m 30s"])
     await page.getByRole("button", { name: "Conversion", exact: true }).click()
     await expect(
       performance.getByRole("status", {
@@ -179,7 +200,7 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     ).toBeVisible()
     await expect(
       performance.getByText(
-        "Repeated completed searches count once. Searches with no openings remain included. Failed searches, reschedules, and cancellations are excluded.",
+        "Repeated completed searches count once per call. Searches with no openings remain included. Failed searches, reschedules, and cancellations are excluded.",
         { exact: true },
       ),
     ).toBeVisible()
@@ -189,55 +210,44 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
         { exact: true },
       ),
     ).toBeVisible()
+    await expect(breakdown.getByRole("row")).toHaveCount(4)
     await expect(
-      page.getByText(
-        "New and existing rows cover all 6 completed availability searches.",
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await expect(
-      breakdown
-        .getByRole("row")
-        .filter({ hasText: "New patients" })
-        .getByRole("cell"),
+      breakdown.getByRole("row").filter({ hasText: "New patients" }).getByRole("cell"),
     ).toHaveText(["New patients", "2", "3", "66.7%"])
     await expect(
-      breakdown
-        .getByRole("row")
-        .filter({ hasText: "Existing patients" })
-        .getByRole("cell"),
+      breakdown.getByRole("row").filter({ hasText: "Existing patients" }).getByRole("cell"),
     ).toHaveText(["Existing patients", "2", "3", "66.7%"])
-    await expect(
-      breakdown.getByRole("row").filter({ hasText: "Unclassified" }),
-    ).toHaveCount(0)
     await expect(
       breakdown.getByRole("row").filter({ hasText: "Total" }).getByRole("cell"),
     ).toHaveText(["Total", "4", "6", "66.7%"])
-    await expect(
-      breakdown.getByRole("columnheader", {
-        name: "p50 duration",
-        exact: true,
-      }),
-    ).toHaveCount(0)
     // Conversion uses the same total/new/existing chart treatment as Bookings.
     await expect(performance.locator(".recharts-line")).toHaveCount(3)
     await expect(performance.locator(".recharts-area")).toHaveCount(3)
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
+    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
+      0,
+    )
     await expectConnectedZeroBaseline(performance, 3)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-conversion.png"),
       fullPage: true,
     })
     await page.getByRole("button", { name: "Duration", exact: true }).click()
-    await expect(performance.getByText("6m 30s", { exact: true })).toBeVisible()
+    await expect(
+      performance.getByRole("status", {
+        name: "Median call duration",
+        exact: true,
+      }),
+    ).toBeVisible()
     await expect(
       page.getByRole("button", { name: "Duration", exact: true }),
     ).toHaveAttribute("aria-pressed", "true")
-    await expect(performance.locator(".recharts-line")).toHaveCount(3)
-    await expect(performance.locator(".recharts-area")).toHaveCount(3)
+    await expect(performance.locator(".recharts-line")).toHaveCount(2)
+    await expect(performance.locator(".recharts-area")).toHaveCount(2)
     // The two new-patient observations connect through zero on the inactive day.
-    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(0)
-    await expectConnectedZeroBaseline(performance, 3)
+    await expect(performance.locator(".recharts-line-dots circle")).toHaveCount(
+      0,
+    )
+    await expectConnectedZeroBaseline(performance, 2)
     await page.screenshot({
       path: testInfo.outputPath("admin-booking-duration.png"),
       fullPage: true,
@@ -249,7 +259,11 @@ test("Practice Admin booking analytics uses real scoped aggregates and clear cop
     await expect(
       page.getByText("Analytics couldn’t load", { exact: true }),
     ).toBeVisible()
-    await page.getByRole("button", { name: "Retry", exact: true }).click()
+    await page
+      .getByRole("alert")
+      .filter({ hasText: "Analytics couldn’t load" })
+      .getByRole("button", { name: "Retry", exact: true })
+      .click()
     await expect(
       page.getByRole("region", { name: "Booking performance", exact: true }),
     ).toBeVisible()

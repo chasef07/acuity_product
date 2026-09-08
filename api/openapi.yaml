@@ -3611,7 +3611,7 @@ components:
         p50:
           type: number
           nullable: true
-          description: Median call-start-to-hang-up duration in seconds across booked calls with valid timing evidence.
+          description: Median call-start-to-hang-up duration in seconds across calls with a completed booking search or confirmed booking and valid timing evidence. Includes non-converting attempts.
         p90:
           type: number
           nullable: true

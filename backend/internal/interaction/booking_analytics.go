@@ -107,7 +107,8 @@ func (m *Module) QueryBookingAnalytics(ctx context.Context, command QueryBooking
 	// is never parsed on this path. Fail visibly rather than truncating a report.
 	rows, err := tx.Query(ctx, `
         SELECT started_at, ended_at, booking_confirmed, COALESCE(new_appointment_id, ''),
-            booking_searched, booking_search_known, booking_patient_group
+            booking_searched, booking_search_known,
+            CASE WHEN booking_patient_basis IN ('confirmed_existing', 'phone_match') THEN 'existing' ELSE 'new' END
         FROM ai_interactions
         WHERE practice_id = $1::uuid AND location_id = ANY($2::uuid[])
             AND started_at >= $3 AND started_at < $4
@@ -156,11 +157,12 @@ func (a *bookingAccumulator) add(f bookingFact) {
 			a.metrics.Converted++
 		}
 	}
-	if !f.booked {
-		return
-	}
 	if f.countBooking {
 		a.metrics.Bookings++
+	}
+	// Include each booking-attempt conversation, whether or not it booked.
+	if !f.booked && !f.searched {
+		return
 	}
 	end := f.ended
 	if end == nil || end.Before(f.started) {
