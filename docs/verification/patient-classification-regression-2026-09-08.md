@@ -31,7 +31,9 @@ Migration 0064 adds `legacy_existing` as an explicit reporting assumption. The
 existing successful patient-outcome and phone-lookup precedence is unchanged.
 Only when native and backfilled lookup status are both missing, and no successful
 identity result has already classified the call, does the classifier retain the
-previous existing category. An explicit patient-not-found result still assumes
+previous existing category, provided migration 0064 captured that completed call
+as historically Existing. New inserts (even backdated imports) and later closeouts
+cannot gain that eligibility. An explicit patient-not-found result still assumes
 new. This intentionally narrows #289's assume-new rule: unavailable historical
 telemetry no longer overrides a previous reporting category.
 
@@ -59,7 +61,8 @@ basis=assumed_new want=legacy_existing
 After the fix, the same regression passes. Additional local tests cover:
 
 - Upgrade from migration 0063, comparing every stored field except the corrected
-  reporting basis before and after.
+  reporting basis and historical eligibility flag before and after.
+- New inserts and later closeouts without telemetry remaining assumed new.
 - Native transcript and legacy execution formats; explicit negative lookups,
   patient creation, verification, and saved phone matches.
 - Transcript and appointment corrections invalidating stale categories.
@@ -68,25 +71,28 @@ After the fix, the same regression passes. Additional local tests cover:
 
 ## Verification
 
-Commands use a newly initialized local PostgreSQL 16 database named
-`acuity_patient_test` on port 55439, with synthetic fixtures only.
+Follow-up checks use a fresh local database named `acuity_pr291_guard_test`
+on port 5432, with synthetic fixtures only.
 
 ```sh
-export TEST_DATABASE_URL='postgres://127.0.0.1:55439/acuity_patient_test?sslmode=disable'
+export TEST_DATABASE_URL='postgres://127.0.0.1/acuity_pr291_guard_test?sslmode=disable'
 go test -p 1 ./backend/internal/migrations ./backend/internal/httpapi \
   -run 'Test(Booking(Patient|Phone|Analytics)|HistoricalPatient)' -count=1
 go test -p 1 ./backend/... ./deploy -count=1
+go test ./backend/internal/postgres -count=1
 go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
 bash ./scripts/test-release-container.sh
 git diff --check
 ```
 
 - Targeted migration and API tests: passed.
-- Full serial database-backed Go suite: passed, including migration, HTTP API,
-  interaction, and deployment packages; no database environment skips.
+- Full serial database-backed Go suite: all packages passed except the unchanged
+  PostgreSQL `TestExecutorOwnsTransactionDeadlineAndRelease` (rollback timeout).
+  The isolated PostgreSQL package rerun reproduced it, as did the same command
+  on the untouched original checkout (`69a0f08`). No database environment skips.
 - Vulnerability check: passed, no vulnerabilities found.
-- Release container test: could not run because the Docker daemon was unavailable
-  at `/var/run/docker.sock`. Deployment runtime validation remains unverified.
+- Release container test: could not run because `docker` was unavailable
+  (`command not found`). Deployment runtime validation remains unverified.
 - Whitespace check: passed.
 
 No frontend or API schema changed, so frontend/browser and contract-generation

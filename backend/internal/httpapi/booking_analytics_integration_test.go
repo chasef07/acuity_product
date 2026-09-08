@@ -149,6 +149,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 	}
 	// Older calls have completed search evidence but no phoneLookup field. The
 	// report must preserve their historical category until stronger evidence arrives.
+	// Seed migration eligibility here; the migration suite covers its one-time capture.
 	for index, booked := range []bool{true, false} {
 		id := "20000000-0000-0000-0000-00000000000" + string(rune('1'+index))
 		outcome := "INDETERMINATE"
@@ -161,7 +162,7 @@ func TestBookingAnalyticsAdminScopeAndDurableEvidence(t *testing.T) {
 			AppointmentOutcome: outcome, BookingResult: map[string]any{"status": "booked"},
 			Closeout: map[string]any{"toolExecutions": []map[string]any{{"toolName": "get_availability", "status": "success"}}},
 		})
-		if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET new_appointment_id=$2 WHERE id=$1::uuid`, id, "appointment-"+id); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE ai_interactions SET new_appointment_id=$2, booking_historical_existing=true WHERE id=$1::uuid`, id, "appointment-"+id); err != nil {
 			t.Fatal(err)
 		}
 	}

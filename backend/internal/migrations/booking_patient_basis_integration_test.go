@@ -18,13 +18,21 @@ func TestBookingPatientBasisUsesOutcomesAndPhoneEvidence(t *testing.T) {
  INSERT INTO access_practices(id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000101','classification','Synthetic');
  INSERT INTO access_locations(id,practice_id,provisioning_key,name) VALUES('00000000-0000-0000-0000-000000000102','00000000-0000-0000-0000-000000000101','location','Synthetic');
  INSERT INTO ai_interactions(id,service_subject,practice_id,location_id,source_call_id,phone,office_phone,started_at,ended_at,status,lifecycle_stage,appointment_outcome,new_appointment_id,booking_result,closeout_payload)
- VALUES('00000000-0000-0000-0000-000000000103','fixture','00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000102','classification','+15555550199','+15555550100',now()-interval '1 day',now()-interval '23 hours','COMPLETED',3,'BOOKING','synthetic-appointment','{"status":"booked"}','{"domainOutcomes":[{"outcome":"patient_created","status":"success"}]}');
+ VALUES('00000000-0000-0000-0000-000000000103','fixture','00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000102','classification','+15555550199','+15555550100',now()-interval '1 day',now()-interval '23 hours','COMPLETED',3,'BOOKING','synthetic-appointment','{"status":"booked"}','{"toolExecutions":[{"toolName":"get_availability","status":"success"}]}');
  `); err != nil {
 		t.Fatal(err)
 	}
 
+	var insertedBasis string
+	if err := pool.QueryRow(ctx, `SELECT booking_patient_basis FROM ai_interactions WHERE source_call_id='classification'`).Scan(&insertedBasis); err != nil {
+		t.Fatal(err)
+	}
+	if insertedBasis != "assumed_new" {
+		t.Fatalf("new insert missing telemetry: basis=%s want=assumed_new", insertedBasis)
+	}
+
 	for _, tc := range []struct{ name, payload, want string }{
-		{"historical completed search retains existing assumption", `{"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "legacy_existing"},
+		{"new closeout missing telemetry assumes new", `{"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
 		{"historical explicit no match stays new", `{"toolExecutions":[{"outputClass":"patient_not_found","status":"success"},{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
 		{"native no match overrides historical search assumption", `{"phoneLookup":{"status":"no_match"},"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
 		{"native failed lookup follows current fallback", `{"phoneLookup":{"status":"lookup_failed"},"toolExecutions":[{"toolName":"get_availability","status":"success"}]}`, "assumed_new"},
@@ -159,7 +167,7 @@ func TestBookingPatientBasisMigrationPreservesExistingFacts(t *testing.T) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_phone_lookup_status')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='upgrade'`).Scan(&after, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_phone_lookup_status'-'booking_historical_existing')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='upgrade'`).Scan(&after, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if before != after || basis != "confirmed_existing" {
@@ -180,7 +188,7 @@ func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before, after, basis string
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&before, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if basis != "assumed_new" {
@@ -189,7 +197,7 @@ func TestHistoricalPatientBasisUpgradeAndSourceCorrections(t *testing.T) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(a)-'booking_patient_basis'-'booking_historical_existing')::text,booking_patient_basis FROM ai_interactions a WHERE source_call_id='historical'`).Scan(&after, &basis); err != nil {
 		t.Fatal(err)
 	}
 	if before != after || basis != "legacy_existing" {

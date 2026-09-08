@@ -3,6 +3,10 @@
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '30s';
 
+-- Only completed calls already categorized as Existing at migration time qualify.
+-- New calls default to false, including imports with backdated timestamps.
+ALTER TABLE ai_interactions ADD COLUMN booking_historical_existing boolean NOT NULL DEFAULT false;
+
 ALTER TABLE ai_interactions DROP CONSTRAINT ai_interactions_booking_patient_basis_check;
 ALTER TABLE ai_interactions ADD CONSTRAINT ai_interactions_booking_patient_basis_check
     CHECK (booking_patient_basis IN (
@@ -47,6 +51,7 @@ BEGIN
         -- previous reporting category until native or backfilled evidence exists.
         WHEN NEW.closeout_payload #>> '{phoneLookup,status}' IS NULL
             AND NEW.booking_phone_lookup_status IS NULL
+            AND NEW.booking_historical_existing
             AND NEW.booking_patient_group = 'existing' THEN 'legacy_existing'
         ELSE 'assumed_new'
     END;
@@ -63,6 +68,7 @@ FOR EACH ROW EXECUTE FUNCTION ai_interactions_project_booking_patient_basis();
 
 -- Reproject only the potentially affected reporting facts. Provider payloads,
 -- appointment/search facts, timestamps, and saved lookup evidence remain intact.
-UPDATE ai_interactions SET booking_phone_lookup_status = booking_phone_lookup_status
+UPDATE ai_interactions SET booking_historical_existing = true,
+    booking_phone_lookup_status = booking_phone_lookup_status
 WHERE status <> 'IN_PROGRESS' AND lifecycle_stage = 3
-    AND booking_patient_basis = 'assumed_new' AND booking_patient_group = 'existing';
+    AND booking_patient_group = 'existing';
