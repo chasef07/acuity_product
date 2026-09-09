@@ -1116,22 +1116,21 @@ async function createAIStaffTask(
   expect([200, 201]).toContain(response.status())
 }
 
-async function createAIAppointmentReview(page: Page) {
-  const occurredAt = new Date()
+async function createAIAppointmentReview(page: Page, sourceCallId = "messaging-booking-review", occurredAt = new Date()) {
   const startedAt = new Date(occurredAt.getTime() - 60_000)
   const response = await page.request.post(`${portalURL}/v1/ai/interactions`, {
     headers: { authorization: "Bearer synthetic-production-token" },
     data: {
       kind: "CLOSEOUT",
       officeKey: "spring-hill",
-      sourceCallId: "messaging-booking-review",
+      sourceCallId,
       callerPhone: "+17275550188",
       officePhone: "+17275550101",
       startedAt: startedAt.toISOString(),
       endedAt: occurredAt.toISOString(),
       status: "COMPLETED",
       summary: "Caller booked an appointment.",
-      closeoutPayload: { callId: "messaging-booking-review" },
+      closeoutPayload: { callId: sourceCallId },
       appointmentOutcome: {
         action: "BOOKED",
         occurredAt: occurredAt.toISOString(),
@@ -1166,3 +1165,49 @@ async function createAINoAppointmentCall(page: Page) {
   })
   expect([200, 201]).toContain(response.status())
 }
+
+
+test("recent sidebar totals and bulk clearing include unloaded pages", async ({ page }) => {
+  test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
+  await expect(page.getByTestId("mounted-workspace")).toBeVisible()
+  async function clear(label: string) {
+    await page.getByRole("button", { name: `${label} options`, exact: true }).click()
+    const item = page.getByRole("menuitem", { name: label, exact: true })
+    await expect(item).toBeVisible()
+    if (await item.isEnabled()) await item.click()
+    else await page.keyboard.press("Escape")
+  }
+  await clear("Mark all read")
+  await clear("Mark all reviewed")
+  const texts = page.getByRole("button", { name: /^Texts/ })
+  const appointments = page.getByRole("button", { name: /^Appointments/ })
+  await expect(texts).toHaveText(/Texts7d0$/)
+  await expect(appointments).toHaveText(/Appointments7d0$/)
+  for (let index = 0; index < 64; index += 1) {
+    await sendInbound(page, `recent-attention-${index}`, "Synthetic recent question", `+1555040${String(index).padStart(4, "0")}`)
+  }
+  await createAIAppointmentReview(page, "recent-attention-booking")
+  await createAIAppointmentReview(page, "expired-attention-booking", new Date(Date.now() - 8 * 24 * 60 * 60 * 1000))
+  await page.reload()
+  await expect(texts).toHaveText(/Texts7d64$/)
+  await expect(appointments).toHaveText(/Appointments7d1$/)
+  if ((await texts.getAttribute("aria-expanded")) === "false") await texts.click()
+  await expect(page.getByTestId("text-attention-row")).toHaveCount(50)
+  // A failed save must retain the count and expose a retryable error.
+  await page.route("**/v1/message-threads/read", (route) => route.fulfill({ status: 503, body: "{}" }))
+  await clear("Mark all read")
+  await expect(page.getByRole("alert").filter({ hasText: "Texts could not be marked read" })).toBeVisible()
+  await expect(texts).toHaveText(/Texts7d64$/)
+  await page.unroute("**/v1/message-threads/read")
+  await clear("Mark all read")
+  await expect(texts).toHaveText(/Texts7d0$/)
+  await expect(page.getByTestId("text-attention-row")).toHaveCount(0)
+  await clear("Mark all reviewed")
+  await expect(appointments).toHaveText(/Appointments7d0$/)
+  await page.reload()
+  await expect(texts).toHaveText(/Texts7d0$/)
+  await expect(appointments).toHaveText(/Appointments7d0$/)
+  await sendInbound(page, "recent-attention-return", "Another synthetic question", "+15550400000")
+  await expect(texts).toHaveText(/Texts7d1$/)
+})

@@ -6,6 +6,8 @@ import {
   getCallingCall,
   getWorkspace,
   markMessageThreadRead,
+  markRecentMessageThreadsRead,
+  reviewRecentAiInteractionOutcomes,
   queryAiInteractionOutcomes,
   queryMessageThreads,
   queryTasks,
@@ -109,6 +111,11 @@ export function createWorkspaceAuthorityAdapter(): WorkspaceAuthorityAdapter {
         path: { interactionId: interactionID },
         signal,
       }).catch(() => undefined)
+      return emptyAuthorityResult(result)
+    },
+    async clearRecentAttention(token, window, scope, signal) {
+      const command = window === "messages" ? markRecentMessageThreadsRead : reviewRecentAiInteractionOutcomes
+      const result = await command({ client: portalClient(token), body: scope, signal }).catch(() => undefined)
       return emptyAuthorityResult(result)
     },
     async markMessageThreadRead(token, threadID, signal) {

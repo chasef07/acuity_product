@@ -145,7 +145,8 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("provision AI Interaction voice route: %v", err)
 	}
-	interactionModule := interaction.New(pool, accessModule, func() time.Time { return now })
+	interactionClock := now
+	interactionModule := interaction.New(pool, accessModule, func() time.Time { return interactionClock })
 	handler, err := httpapi.NewPortal(
 		httpapi.Config{AcquireTimeout: time.Second},
 		pool,
@@ -798,6 +799,9 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("seed duplicate unread AI outcome attention: %v", err)
 	}
 
+	// The fixture closeouts occur a few minutes after their call starts. Query
+	// after those events, within the recent attention window.
+	interactionClock = now.Add(10 * time.Minute)
 	outcomeQueryBody, _ := json.Marshal(map[string]any{
 		"practiceId": practiceID,
 	})
