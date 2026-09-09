@@ -643,6 +643,10 @@ export type StaffPhoneMetrics = {
     missingInboundDurationCalls: number;
     missingOutboundDurationCalls: number;
     tasksCompleted: number;
+    /**
+     * Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
+     */
+    textsSent: number;
     inboundSeconds: number;
     outboundSeconds: number;
 };
@@ -657,6 +661,10 @@ export type StaffAccountAnalytics = {
     missingInboundDurationCalls: number;
     missingOutboundDurationCalls: number;
     tasksCompleted: number;
+    /**
+     * Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
+     */
+    textsSent: number;
     inboundSeconds: number;
     outboundSeconds: number;
 };

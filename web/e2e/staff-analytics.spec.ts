@@ -19,6 +19,7 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
   })
   const calls: string[] = [],
     tasks: string[] = []
+  const threadID = randomUUID()
   try {
     await signInAs(page, "selected@abita.test", "Fixture Staff")
     await expect(page.getByTestId("mounted-workspace")).toBeVisible()
@@ -35,10 +36,14 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       [location.practice_id],
     )
     const day = new Date(Date.now() - 3 * 86400000)
-    for (const direction of ["INBOUND", "OUTBOUND"]) {
+    for (const [direction, seconds] of [
+      ["INBOUND", 120],
+      ["INBOUND", 60],
+      ["OUTBOUND", 300],
+    ] as const) {
       const id = randomUUID()
       calls.push(id)
-      const end = new Date(+day + (direction === "INBOUND" ? 120 : 300) * 1000)
+      const end = new Date(+day + seconds * 1000)
       await db.query(
         "INSERT INTO human_calling_calls(id,practice_id,location_id,direction,entry_point,terminal_outcome,created_at,ended_at,outbound_idempotency_key) VALUES($1::uuid,$2,$3,$4,'STANDALONE','RESOLVED',$5,$6,'staff-e2e-'||$1::uuid::text)",
         [id, location.practice_id, location.id, direction, day, end],
@@ -46,6 +51,23 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       await db.query(
         "INSERT INTO human_calling_call_legs(call_id,role,sequence,staff_subject,state,answered_at,bridge_pending_at,bridged_at,ended_at) VALUES($1,'STAFF',1,$2,'ENDED',$3,$3,$3,$4)",
         [id, staff.user_subject, day, end],
+      )
+    }
+    await db.query(
+      "INSERT INTO messaging_threads(id,practice_id,location_id,office_phone,external_phone) VALUES($1,$2,$3,'+15555550198','+15555550199')",
+      [threadID, location.practice_id, location.id],
+    )
+    for (const state of ["SENT", "DELIVERED", "DELIVERED", "FAILED"]) {
+      await db.query(
+        "INSERT INTO messaging_messages(thread_id,practice_id,location_id,direction,body,sender,destination,delivery_state,created_by_kind,created_by_subject,created_at) VALUES($1,$2,$3,'OUTBOUND','Synthetic staff text','+15555550198','+15555550199',$4,'HUMAN',$5,$6)",
+        [
+          threadID,
+          location.practice_id,
+          location.id,
+          state,
+          staff.user_subject,
+          day,
+        ],
       )
     }
     for (const [index, completed] of [true, true, false].entries()) {
@@ -94,13 +116,22 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         .getByRole("row")
         .filter({ hasText: "selected@abita.test" })
         .getByRole("cell"),
-    ).toHaveText(["selected@abita.testStaff", "1", "1", "2m", "5m", "2"])
+    ).toHaveText([
+      "selected@abita.testStaff", "21m 30s avg/call", "15m 00s avg/call",
+      "3m", "5m", "3", "2",
+    ])
     await expect(
       accounts
         .getByRole("row")
         .filter({ hasText: "admin@abita.test" })
         .getByRole("cell"),
-    ).toHaveText(["admin@abita.testAdmin", "0", "0", "0m", "0m", "0"])
+    ).toHaveText([
+      "admin@abita.testAdmin", "0— avg/call", "0— avg/call",
+      "0m", "0m", "0", "0",
+    ])
+    await expect(accounts.getByRole("row").last().getByRole("cell")).toHaveText([
+      "Total", "21m 30s avg/call", "15m 00s avg/call", "3m", "5m", "3", "2",
+    ])
     await expect(accounts.getByRole("row").nth(1)).toContainText(
       "selected@abita.test",
     )
@@ -136,6 +167,18 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       "selected@abita.test",
     )
     await accounts
+      .getByRole("button", { name: "Sort by texts sent", exact: true })
+      .click()
+    await expect(accounts.getByRole("row").nth(1)).toContainText(
+      "selected@abita.test",
+    )
+    await accounts
+      .getByRole("button", { name: "Sort by texts sent", exact: true })
+      .click()
+    await expect(accounts.getByRole("row").nth(1)).toContainText(
+      "admin@abita.test",
+    )
+    await accounts
       .getByRole("button", { name: "Sort by tasks completed", exact: true })
       .click()
     await expect(accounts.getByRole("row").nth(1)).toContainText(
@@ -165,10 +208,30 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
         })
       expect(clipped).toBe(false)
     }).toPass()
+    await accounts.scrollIntoViewIfNeeded()
+    await accounts.screenshot({
+      path: testInfo.outputPath("staff-texts-call-averages.png"),
+    })
     await page.screenshot({
       path: testInfo.outputPath("admin-staff-analytics.png"),
       fullPage: true,
     })
+    // Incomplete timing must not appear as a shorter average, and must not
+    // affect the other direction or the count of successfully sent texts.
+    await db.query(
+      "UPDATE human_calling_call_legs SET state='ENDING',ended_at=NULL WHERE call_id=$1",
+      [calls[0]],
+    )
+    await page.getByRole("button", { name: "30 days", exact: true }).click()
+    await expect(
+      accounts
+        .getByRole("row")
+        .filter({ hasText: "selected@abita.test" })
+        .getByRole("cell"),
+    ).toHaveText([
+      "selected@abita.testStaff", "2— avg/call", "15m 00s avg/call",
+      "—", "5m", "3", "2",
+    ])
     await page.getByRole("button", { name: "Bookings", exact: true }).click()
     await expect(
       page.getByRole("region", { name: "Booking performance", exact: true }),
@@ -177,6 +240,10 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
       page.getByRole("region", { name: "Staff performance", exact: true }),
     ).toHaveCount(0)
   } finally {
+    await db.query("DELETE FROM messaging_messages WHERE thread_id=$1", [
+      threadID,
+    ])
+    await db.query("DELETE FROM messaging_threads WHERE id=$1", [threadID])
     await db.query(
       "DELETE FROM work_task_acknowledgements WHERE task_id=ANY($1::uuid[])",
       [tasks],
