@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.7.0](https://github.com/chasef07/acuity_product/compare/v1.6.2...v1.7.0) (2026-09-09)
+
+
+### Features
+
+* **analytics:** add staff text counts and average call time ([#300](https://github.com/chasef07/acuity_product/issues/300)) ([d34114f](https://github.com/chasef07/acuity_product/commit/d34114ffef50a3035473dd09d410e9527b3b971a))
+
+
+### Bug Fixes
+
+* **calling:** prevent operator readiness workspace deadlocks ([#305](https://github.com/chasef07/acuity_product/issues/305)) ([4a9485a](https://github.com/chasef07/acuity_product/commit/4a9485a271094f5f0e7597154d1c98ea82959f6c))
+
+
+### Performance Improvements
+
+* **ci:** streamline verification and isolate build caches ([#303](https://github.com/chasef07/acuity_product/issues/303)) ([acdd464](https://github.com/chasef07/acuity_product/commit/acdd46491f51447dd870bfa7f29940b7108697be))
+
 ## [1.6.2](https://github.com/chasef07/acuity_product/compare/v1.6.1...v1.6.2) (2026-09-09)
 
 
