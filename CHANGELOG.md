@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/chasef07/acuity_product/compare/v1.6.0...v1.6.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **calling:** play quiet keypad feedback through call output ([#299](https://github.com/chasef07/acuity_product/issues/299)) ([f06c7cc](https://github.com/chasef07/acuity_product/commit/f06c7cc438a4c3eed0b3e11d93290ec067120f8f))
+* repair calling failures and remove unused vulnerable dependency ([#295](https://github.com/chasef07/acuity_product/issues/295)) ([87a2930](https://github.com/chasef07/acuity_product/commit/87a293058f72228268cc459293db0db01101a409))
+
 ## [1.6.0](https://github.com/chasef07/acuity_product/compare/v1.5.1...v1.6.0) (2026-09-08)
 
 
