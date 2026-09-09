@@ -800,11 +800,13 @@ func (m *Module) LockOperationalActor(
 		return nil, err
 	}
 	if isOperator {
+		// Protect Practice identity without blocking workspace-version updates
+		// from call processing that already holds a Call or softphone lease.
 		rows, err := tx.Query(ctx, `
 			SELECT id::text
 			FROM access_practices
 			ORDER BY id
-			FOR SHARE
+			FOR KEY SHARE
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("lock operator Practices: %w", err)
