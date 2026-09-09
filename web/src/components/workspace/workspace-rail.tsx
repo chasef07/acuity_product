@@ -19,6 +19,7 @@ import {
   ListFilterIcon,
   LogOutIcon,
   MonitorIcon,
+  EllipsisIcon,
   MoonIcon,
   PhoneIcon,
   SearchIcon,
@@ -35,7 +36,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -397,6 +400,14 @@ export function WorkspaceRail({
           <AttentionGroup
             title="Appointments"
             count={appointmentCount}
+            action={
+              <AttentionActions
+                label="Mark all reviewed"
+                count={appointmentCount}
+                pending={projection.aiOutcomes.clearing}
+                onClear={() => onIntent({ type: "clear-recent-attention", window: "aiOutcomes" })}
+              />
+            }
             expanded={expanded.includes("appointments")}
             onToggle={() => toggle("appointments")}
           >
@@ -426,7 +437,15 @@ export function WorkspaceRail({
           </AttentionGroup>
           <AttentionGroup
             title="Texts"
-            count={textRows.length}
+            count={projection.messages.total}
+            action={
+              <AttentionActions
+                label="Mark all read"
+                count={projection.messages.total ?? 0}
+                pending={projection.messages.clearing}
+                onClear={() => onIntent({ type: "clear-recent-attention", window: "messages" })}
+              />
+            }
             expanded={expanded.includes("texts")}
             onToggle={() => toggle("texts")}
           >
@@ -446,8 +465,8 @@ export function WorkspaceRail({
             {messageLoading && textRows.length === 0 && (
               <RailLoading inMenu label="Loading Texts" />
             )}
-            {!messageLoading && textRows.length === 0 && (
-              <RailEmpty inMenu>No unread Texts</RailEmpty>
+            {!messageLoading && projection.messages.total === 0 && (
+              <RailEmpty inMenu>No unread Texts in the past week</RailEmpty>
             )}
             {messageError && (
               <WorkspaceWindowFailure
@@ -551,6 +570,45 @@ export function WorkspaceRail({
   )
 }
 
+function AttentionActions({
+  label,
+  count,
+  pending,
+  onClear,
+}: {
+  label: string
+  count: number
+  pending?: boolean
+  onClear: () => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`${label} options`}
+            aria-busy={pending}
+            disabled={pending}
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent disabled:opacity-50"
+          />
+        }
+      >
+        {pending ? <Spinner /> : <EllipsisIcon className="size-4" />}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Past seven days · Only for you</DropdownMenuLabel>
+          <DropdownMenuItem disabled={count === 0 || pending} onClick={onClear}>
+            <CheckIcon />
+            {label}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function AttentionGroup({
   title,
   count,
@@ -590,6 +648,14 @@ function AttentionGroup({
             className="size-4 shrink-0 text-[var(--sidebar-icon-color)] group-hover/disclosure:text-sidebar-foreground"
           />
           <span className="truncate">{title}</span>
+          {(title === "Appointments" || title === "Texts") && (
+            <span
+              title="Past seven days"
+              className="shrink-0 whitespace-nowrap text-[10px] font-normal text-muted-foreground"
+            >
+              7d
+            </span>
+          )}
           {count !== undefined && (
             <span className="ml-auto text-xs tabular-nums text-muted-foreground">
               {count}

@@ -1863,12 +1863,13 @@ func (server *Server) QueryMessageThreads(w http.ResponseWriter, r *http.Request
 	page, err := server.messaging.QueryThreads(
 		ctx,
 		messaging.QueryThreadsCommand{
-			Identity:   identity,
-			PracticeID: body.PracticeId.String(),
-			LocationID: uuidString(body.LocationId),
-			Search:     stringValue(body.Search),
-			Cursor:     stringValue(body.Cursor),
-			Limit:      intValue(body.Limit),
+			Identity:        identity,
+			RecentAttention: body.RecentAttention != nil && *body.RecentAttention,
+			PracticeID:      body.PracticeId.String(),
+			LocationID:      uuidString(body.LocationId),
+			Search:          stringValue(body.Search),
+			Cursor:          stringValue(body.Cursor),
+			Limit:           intValue(body.Limit),
 		},
 	)
 	if err != nil {
@@ -3290,6 +3291,7 @@ func messageThreadPageResponse(
 	response := api.MessageThreadPage{
 		Items:      make([]api.MessageThreadSummary, 0, len(page.Items)),
 		NextCursor: page.NextCursor,
+		Total:      page.Total,
 	}
 	for _, item := range page.Items {
 		thread, err := messageThreadResponse(item.Thread)
@@ -3993,3 +3995,44 @@ func intValue(value *int) int {
 }
 
 var _ IdentityAuthenticator = (*authn.JWKSAuthenticator)(nil)
+
+// Bulk attention commands use domain-owned mutations and the current User's
+// authorized Location scope, never IDs supplied from a loaded browser page.
+func (server *Server) MarkRecentMessageThreadsRead(w http.ResponseWriter, r *http.Request) {
+	identity, ok := server.messagingIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.RecentAttentionScope
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	if err := server.messaging.MarkRecentRead(ctx, identity, body.PracticeId.String(), uuidString(body.LocationId)); err != nil {
+		server.writeMessagingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) ReviewRecentAIInteractionOutcomes(w http.ResponseWriter, r *http.Request) {
+	if !server.portalOnly(w, r) {
+		return
+	}
+	identity, ok := server.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var body api.RecentAttentionScope
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	if err := server.interactions.ReviewRecentOutcomes(ctx, identity, body.PracticeId.String(), uuidString(body.LocationId)); err != nil {
+		server.writeInteractionError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

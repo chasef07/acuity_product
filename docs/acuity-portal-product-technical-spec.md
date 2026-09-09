@@ -272,6 +272,32 @@ Visual system:
   already in progress remains evidence-driven.
 - Opening a conversation marks it read only for the current user. An `OPEN`
   linked Task shows the same unread state; completed Tasks never show unread.
+- The Texts sidebar is a rolling seven-day personal attention view, measured
+  from the latest inbound message, not an outgoing reply or other activity.
+  Only unread conversations without a linked `OPEN` Task qualify. Eligible
+  conversations are grouped by normalized phone within the selected authorized
+  Practice/Location scope before pagination; the badge is the full group count.
+- Texts older than seven days leave the sidebar even when unread. This changes
+  visibility only: history, unread markers, and Tasks remain intact. A new
+  inbound text makes the conversation eligible again.
+- `Mark all read` clears the current User's eligible Texts throughout the
+  selected scope, including unloaded pages. It does not change another User's
+  markers or complete any Task.
+
+### Recent appointment attention
+
+- Appointments shows unreviewed booking, cancellation, and reschedule events
+  from the past seven days, measured from the outcome event, not the scheduled
+  appointment date. An open Task for the same call suppresses duplicate attention.
+- Opening appointment details clears that outcome only for the current User
+  after the review saves. Failures remain visible and retryable.
+- `Mark all reviewed` clears every eligible outcome in the selected authorized
+  Practice/Location scope for the current User, including unloaded pages.
+- Both badges count their full eligible sets before pagination. Refreshes also
+  expire old sidebar rows when no new activity arrives. Aging out does not mark
+  evidence read/reviewed, delete history, or complete Tasks. Durable follow-up
+  belongs in Tasks, which never age out of the open queue.
+
 - AI may draft a message, but staff confirms before sending in this release.
 
 ### 9. Service architecture

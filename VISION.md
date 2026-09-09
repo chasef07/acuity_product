@@ -96,8 +96,10 @@ Activity without an outcome is not success.
 
 ## Non-Negotiables
 
-- No unresolved patient need disappears inside a transcript, voicemail,
-  notification, channel inbox, or individual memory.
+- Patient needs requiring durable follow-up belong in Tasks. Appointment and
+  Text sidebar sections show only the past seven days of personal attention;
+  aging out preserves history and unread/review state and does not resolve work.
+  An unread text can leave this recent view without having been answered.
 - No Task becomes invisible because it is assigned, deprioritized, or
   completed.
 - No call, message, automated action, or completion is represented as

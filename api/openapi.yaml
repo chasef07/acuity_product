@@ -1508,6 +1508,48 @@ paths:
           $ref: "#/components/responses/Denied"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/message-threads/read:
+    post:
+      operationId: markRecentMessageThreadsRead
+      summary: Mark all eligible Texts from the past seven days read for the current User.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecentAttentionScope"
+      responses:
+        "204":
+          description: Current User attention cleared within the authorized scope, including unloaded pages.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/ai/interactions/outcomes/review:
+    post:
+      operationId: reviewRecentAIInteractionOutcomes
+      summary: Review all eligible appointment outcomes from the past seven days for the current User.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecentAttentionScope"
+      responses:
+        "204":
+          description: Current User attention cleared within the authorized scope, including unloaded pages.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/message-threads/{threadId}/timeline:
     get:
       operationId: getMessageThreadTimeline
@@ -4397,6 +4439,17 @@ components:
               minimum: 0
             unread:
               type: boolean
+    RecentAttentionScope:
+      type: object
+      additionalProperties: false
+      required: [practiceId]
+      properties:
+        practiceId:
+          type: string
+          format: uuid
+        locationId:
+          type: string
+          format: uuid
     MessageThreadPage:
       type: object
       additionalProperties: false
@@ -4406,6 +4459,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MessageThreadSummary"
+        total:
+          type: integer
+          minimum: 0
+          description: Full eligible phone-number count before pagination, supplied for recentAttention queries.
         nextCursor:
           type: string
     MessageThreadQueryRequest:
@@ -4419,6 +4476,10 @@ components:
         locationId:
           type: string
           format: uuid
+        recentAttention:
+          type: boolean
+          default: false
+          description: Return only unread conversations with an inbound message in the past seven days and no linked open Task. Paginate phone-number groups and return their full total.
         search:
           type: string
           maxLength: 40

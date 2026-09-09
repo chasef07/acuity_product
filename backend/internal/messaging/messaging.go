@@ -122,15 +122,17 @@ type ActorSnapshot struct {
 }
 
 type QueryThreadsCommand struct {
-	Identity   access.Identity
-	PracticeID string
-	LocationID string
-	Search     string
-	Cursor     string
-	Limit      int
+	RecentAttention bool
+	Identity        access.Identity
+	PracticeID      string
+	LocationID      string
+	Search          string
+	Cursor          string
+	Limit           int
 }
 
 type ThreadPage struct {
+	Total      *int
 	Items      []ThreadSummary
 	NextCursor string
 }
@@ -1963,6 +1965,9 @@ func (m *Module) QueryThreads(
 	ctx context.Context,
 	command QueryThreadsCommand,
 ) (ThreadPage, error) {
+	if command.RecentAttention {
+		return m.queryRecentThreads(ctx, command)
+	}
 	command.PracticeID = strings.TrimSpace(command.PracticeID)
 	command.LocationID = strings.TrimSpace(command.LocationID)
 	command.Search = strings.TrimSpace(command.Search)

@@ -11,6 +11,7 @@ import type {
   MessageThreadPage,
   MessageThreadQueryRequest,
   MessageThreadSummary,
+  RecentAttentionScope,
   Task,
   TaskFolderCounts,
   TaskPage,
@@ -74,6 +75,7 @@ export type WorkspaceQueryWindow<T> = {
   nextCursor: string
   loading: boolean
   error: string
+  clearing?: boolean
 }
 
 export type WorkspaceProjectionState = {
@@ -89,7 +91,7 @@ export type WorkspaceProjectionState = {
   }
   tasks: WorkspaceQueryWindow<Task> & { counts: TaskFolderCounts }
   recoveryTasks: WorkspaceQueryWindow<Task>
-  messages: WorkspaceQueryWindow<MessageThreadSummary>
+  messages: WorkspaceQueryWindow<MessageThreadSummary> & { total?: number }
   aiOutcomes: WorkspaceQueryWindow<AiOutcomeItem> & {
     counts: AiOutcomeCounts
     nextCursors: AppointmentOutcomeCursors
@@ -183,6 +185,12 @@ export type WorkspaceAuthorityAdapter = {
     interactionID: string,
     signal: AbortSignal,
   ) => Promise<WorkspaceAuthorityResult<unknown>>
+  clearRecentAttention: (
+    token: string,
+    window: "messages" | "aiOutcomes",
+    scope: RecentAttentionScope,
+    signal: AbortSignal,
+  ) => Promise<WorkspaceAuthorityResult<unknown>>
   markMessageThreadRead: (
     token: string,
     threadID: string,
@@ -243,6 +251,7 @@ export type WorkspaceProjection = {
 }
 
 export type WorkspaceProjectionIntent =
+  | { type: "clear-recent-attention"; window: "messages" | "aiOutcomes" }
   | {
       type: "select-scope"
       practiceID: string
@@ -349,7 +358,7 @@ export function createWorkspaceProjection({
       next.loadState === "ready" && next.scope.practiceID
         ? `${next.scope.practiceID}:${next.scope.locationScopeID}`
         : "",
-      refreshAIOutcomes,
+      refreshRecentAttention,
     )
     for (const listener of listeners) listener()
   }
@@ -671,6 +680,8 @@ export function createWorkspaceProjection({
                 : currentState.recoveryTasks,
             messages: messageWindowCurrent && messageResult.kind === "success"
               ? {
+                  ...currentState.messages,
+                  total: messageResult.data.total,
                   items: messageResult.data.items,
                   nextCursor: messageResult.data.nextCursor,
                   loading: false,
@@ -686,6 +697,7 @@ export function createWorkspaceProjection({
             aiOutcomes:
               outcomeWindowCurrent && outcomeResult.kind === "success"
               ? {
+                  ...currentState.aiOutcomes,
                   items: outcomeResult.data.items,
                   nextCursor: "",
                   nextCursors: outcomeResult.data.nextCursors,
@@ -800,6 +812,10 @@ export function createWorkspaceProjection({
     }
     if (intent.type === "submit-search") {
       await submitSearch()
+      return
+    }
+    if (intent.type === "clear-recent-attention") {
+      await clearRecentAttention(intent.window)
       return
     }
     if (intent.type === "complete-task") {
@@ -1102,13 +1118,15 @@ export function createWorkspaceProjection({
         stopped
       ) return
       if (failIfAccessLost(result)) return
-      if (result.kind !== "success") {
+      if (result.kind !== "success" || result.data.total === undefined) {
         setWindowFailure(window)
         return
       }
       patch((current) => ({
         ...current,
         messages: {
+          ...current.messages,
+          total: result.data.total,
           items: appendUniqueByID(current.messages.items, result.data.items),
           nextCursor: result.data.nextCursor,
           loading: false,
@@ -1228,6 +1246,80 @@ export function createWorkspaceProjection({
     })
   }
 
+  async function refreshRecentAttention() {
+    await Promise.all([refreshAIOutcomes(), refreshRecentTexts()])
+  }
+
+  async function refreshRecentTexts() {
+    if (state.loadState !== "ready") return
+    const generation = scopeGeneration
+    const queryGeneration = ++queryGenerations.messages
+    const scope = state.scope
+    const loaded = state.messages.items.length
+    const result = await authenticatedRequest((token, signal) =>
+      loadMessageWindow(token, messageQueryRequest(scope), loaded, signal),
+    )
+    if (
+      generation !== scopeGeneration ||
+      queryGeneration !== queryGenerations.messages ||
+      stopped
+    ) return
+    if (failIfAccessLost(result)) return
+    if (result.kind !== "success") {
+      setWindowFailure("messages")
+      return
+    }
+    patch((current) => ({
+      ...current,
+      messages: {
+        ...current.messages,
+        ...result.data,
+        loading: false,
+        error: "",
+      },
+    }))
+  }
+
+  async function clearRecentAttention(window: "messages" | "aiOutcomes") {
+    if (state.loadState !== "ready" || state[window].clearing) return
+    const generation = scopeGeneration
+    const scope = state.scope
+    patch((current) => ({
+      ...current,
+      [window]: { ...current[window], clearing: true, error: "" },
+    }))
+    const result = await authenticatedRequest((token, signal) =>
+      authority.clearRecentAttention(token, window, {
+        practiceId: scope.practiceID,
+        ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
+      }, signal),
+    )
+    if (generation !== scopeGeneration || stopped) return
+    if (failIfAccessLost(result)) return
+    if (result.kind !== "success") {
+      patch((current) => ({
+        ...current,
+        [window]: {
+          ...current[window],
+          clearing: false,
+          error: window === "messages"
+            ? "Texts could not be marked read. Try again."
+            : "Appointments could not be marked reviewed. Try again.",
+        },
+      }))
+      return
+    }
+    // Refetch rather than assuming zero: another event may have arrived during the command.
+    if (window === "messages") await refreshRecentTexts()
+    else await refreshAIOutcomes()
+    if (generation !== scopeGeneration || stopped) return
+    patch((current) => ({
+      ...current,
+      [window]: { ...current[window], clearing: false },
+    }))
+    realtimeController.refresh()
+  }
+
   async function refreshAIOutcomes() {
     if (state.loadState !== "ready") return
     const controller = new AbortController()
@@ -1254,6 +1346,7 @@ export function createWorkspaceProjection({
     patch((currentState) => ({
       ...currentState,
       aiOutcomes: {
+        ...currentState.aiOutcomes,
         items: result.data.items,
         nextCursor: "",
         nextCursors: result.data.nextCursors,
@@ -1408,9 +1501,17 @@ export function createWorkspaceProjection({
   }
 
   async function markEngagementRead(phone: string) {
-    const unreadThreadIDs = state.messages.items
-      .filter((thread) => thread.externalPhone === phone && thread.unread)
-      .map((thread) => thread.id)
+    const unreadThreadIDs = [...new Set([
+      ...state.messages.items
+        .filter((thread) => thread.externalPhone === phone && thread.unread)
+        .map((thread) => thread.id),
+      ...[...state.tasks.items, ...state.recoveryTasks.items, ...(state.selection.task ? [state.selection.task] : [])]
+        .filter((task) => task.phone === phone && task.unread)
+        .flatMap((task) =>
+          [task.conversationThreadId, task.messageThreadId]
+            .filter((id): id is string => Boolean(id)),
+        ),
+    ])]
     if (unreadThreadIDs.length === 0) return
     const generation = scopeGeneration
     const result = await authenticatedRequest(async (token, signal) => {
@@ -1435,35 +1536,47 @@ export function createWorkspaceProjection({
     if (failIfAccessLost(result) || result.kind !== "success") return
     const readThreadIDs = new Set(result.data)
     if (readThreadIDs.size === 0) return
-    patch((current) => ({
-      ...current,
-      messages: {
-        ...current.messages,
-        items: current.messages.items.map((thread) =>
-          readThreadIDs.has(thread.id) ? { ...thread, unread: false } : thread,
-        ),
-      },
-      tasks: {
-        ...current.tasks,
-        items: current.tasks.items.map((task) =>
-          (task.conversationThreadId &&
-            readThreadIDs.has(task.conversationThreadId)) ||
-          (task.messageThreadId && readThreadIDs.has(task.messageThreadId))
-            ? { ...task, unread: false }
-            : task,
-        ),
-      },
-      selection:
-        current.selection.engagement?.phone === phone
-          ? {
-              ...current.selection,
-              engagement: { ...current.selection.engagement, unread: false },
-              task: current.selection.task
-                ? { ...current.selection.task, unread: false }
-                : undefined,
-            }
-          : current.selection,
-    }))
+    queryGenerations.messages += 1
+    patch((current) => {
+      const unreadForPhone = current.messages.items.filter(
+        (thread) => thread.externalPhone === phone && thread.unread,
+      )
+      const clearedPhone = unreadForPhone.length > 0 &&
+        unreadForPhone.every((thread) => readThreadIDs.has(thread.id))
+      return {
+        ...current,
+        messages: {
+          ...current.messages,
+          total: current.messages.total === undefined
+            ? undefined
+            : Math.max(0, current.messages.total - (clearedPhone ? 1 : 0)),
+          items: current.messages.items.map((thread) =>
+            readThreadIDs.has(thread.id) ? { ...thread, unread: false } : thread,
+          ),
+        },
+        tasks: {
+          ...current.tasks,
+          items: current.tasks.items.map((task) =>
+            (task.conversationThreadId &&
+              readThreadIDs.has(task.conversationThreadId)) ||
+            (task.messageThreadId && readThreadIDs.has(task.messageThreadId))
+              ? { ...task, unread: false }
+              : task,
+          ),
+        },
+        selection:
+          current.selection.engagement?.phone === phone
+            ? {
+                ...current.selection,
+                engagement: { ...current.selection.engagement, unread: false },
+                task: current.selection.task
+                  ? { ...current.selection.task, unread: false }
+                  : undefined,
+              }
+            : current.selection,
+      }
+    })
+    realtimeController.refresh()
   }
 
   function projectTaskIntent(task: Task, select: boolean) {
@@ -1601,6 +1714,7 @@ export function createWorkspaceProjection({
     if (generation !== scopeGeneration || stopped) return false
     if (failIfAccessLost(result)) return false
     if (result.kind !== "success") return false
+    queryGenerations.aiOutcomes += 1
     patch((current) => {
       const reviewed = current.aiOutcomes.items.find(
         (outcome) => outcome.id === interactionID,
@@ -1621,6 +1735,7 @@ export function createWorkspaceProjection({
         },
       }
     })
+    realtimeController.refresh()
     return true
   }
 
@@ -1828,6 +1943,7 @@ export function createWorkspaceProjection({
   ): Promise<WorkspaceAuthorityResult<MessageThreadPage>> {
     const target = refreshLoadedWindowTarget(loadedCount)
     const items: MessageThreadSummary[] = []
+    let total: number | undefined
     let cursor = ""
     do {
       const result = await authority.messageThreads(
@@ -1836,10 +1952,12 @@ export function createWorkspaceProjection({
         signal,
       )
       if (result.kind !== "success") return result
+      if (result.data.total === undefined) return { kind: "unavailable" }
+      if (!cursor) total = result.data.total
       items.push(...appendUniqueByID(items, result.data.items).slice(items.length))
       cursor = result.data.nextCursor
     } while (cursor && items.length < target)
-    return { kind: "success", data: { items, nextCursor: cursor } }
+    return { kind: "success", data: { items, nextCursor: cursor, total } }
   }
 
   async function loadOutcomeWindows(
@@ -2092,6 +2210,7 @@ function messageQueryRequest(scope: WorkspaceScope): MessageThreadQueryRequest {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
     limit: 50,
+    recentAttention: true,
   }
 }
 

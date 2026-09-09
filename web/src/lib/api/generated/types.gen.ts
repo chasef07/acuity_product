@@ -1147,14 +1147,27 @@ export type MessageThreadSummary = MessageThread & {
     unread: boolean;
 };
 
+export type RecentAttentionScope = {
+    practiceId: string;
+    locationId?: string;
+};
+
 export type MessageThreadPage = {
     items: Array<MessageThreadSummary>;
+    /**
+     * Full eligible phone-number count before pagination, supplied for recentAttention queries.
+     */
+    total?: number;
     nextCursor: string;
 };
 
 export type MessageThreadQueryRequest = {
     practiceId: string;
     locationId?: string;
+    /**
+     * Return only unread conversations with an inbound message in the past seven days and no linked open Task. Paginate phone-number groups and return their full total.
+     */
+    recentAttention?: boolean;
     search?: string;
     cursor?: string;
     limit?: number;
@@ -3285,6 +3298,80 @@ export type QueryMessageThreadsResponses = {
 };
 
 export type QueryMessageThreadsResponse = QueryMessageThreadsResponses[keyof QueryMessageThreadsResponses];
+
+export type MarkRecentMessageThreadsReadData = {
+    body: RecentAttentionScope;
+    path?: never;
+    query?: never;
+    url: '/v1/message-threads/read';
+};
+
+export type MarkRecentMessageThreadsReadErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type MarkRecentMessageThreadsReadError = MarkRecentMessageThreadsReadErrors[keyof MarkRecentMessageThreadsReadErrors];
+
+export type MarkRecentMessageThreadsReadResponses = {
+    /**
+     * Current User attention cleared within the authorized scope, including unloaded pages.
+     */
+    204: void;
+};
+
+export type MarkRecentMessageThreadsReadResponse = MarkRecentMessageThreadsReadResponses[keyof MarkRecentMessageThreadsReadResponses];
+
+export type ReviewRecentAiInteractionOutcomesData = {
+    body: RecentAttentionScope;
+    path?: never;
+    query?: never;
+    url: '/v1/ai/interactions/outcomes/review';
+};
+
+export type ReviewRecentAiInteractionOutcomesErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ReviewRecentAiInteractionOutcomesError = ReviewRecentAiInteractionOutcomesErrors[keyof ReviewRecentAiInteractionOutcomesErrors];
+
+export type ReviewRecentAiInteractionOutcomesResponses = {
+    /**
+     * Current User attention cleared within the authorized scope, including unloaded pages.
+     */
+    204: void;
+};
+
+export type ReviewRecentAiInteractionOutcomesResponse = ReviewRecentAiInteractionOutcomesResponses[keyof ReviewRecentAiInteractionOutcomesResponses];
 
 export type GetMessageThreadTimelineData = {
     body?: never;
