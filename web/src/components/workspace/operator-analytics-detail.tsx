@@ -1,5 +1,8 @@
 "use client"
 
+import type { MiddlewareRequestDiagnostic } from "@/lib/api/generated"
+import { MiddlewareRequestDetails } from "./middleware-request-details"
+
 import { useEffect, useState } from "react"
 import {
   CalendarCheck2Icon,
@@ -165,11 +168,14 @@ function OperatorAnalyticsDetailView({
     (item) => item.kind === "CALLER_MESSAGE" || item.kind === "AGENT_MESSAGE",
   ).length
 
+  const executionByCallID = new Map(
+    detail.toolExecutions.map((execution) => [execution.callId, execution]),
+  )
   const entries = timelineEntries(detail.timeline)
   const focusedTimelineIndex = entries.findIndex(({ item }) =>
     Boolean(
       (focus?.itemID && item.itemId === focus.itemID) ||
-        (focus?.callID && item.callId === focus.callID),
+      (focus?.callID && item.callId === focus.callID),
     ),
   )
   // Historical executions can exist without a transcript tool event.
@@ -259,6 +265,10 @@ function OperatorAnalyticsDetailView({
                           result={result}
                           showTiming={showTiming}
                           selected={index === focusedTimelineIndex}
+                          middlewareRequests={
+                            executionByCallID.get(item.callId ?? "")
+                              ?.middlewareRequests
+                          }
                         />
                       ))}
                     </div>
@@ -358,6 +368,9 @@ function OperatorAnalyticsDetailView({
                                     {formatTime(execution.occurredAt)}
                                   </time>
                                 </div>
+                                <MiddlewareRequestDetails
+                                  requests={execution.middlewareRequests}
+                                />
                                 <p className="mt-1 truncate font-mono text-[0.6875rem] text-muted-foreground">
                                   {execution.callId}
                                 </p>
@@ -491,7 +504,9 @@ function TimelineItem({
   result,
   selected,
   showTiming,
+  middlewareRequests,
 }: {
+  middlewareRequests?: MiddlewareRequestDiagnostic[]
   item: OperatorAiTimelineItem
   result?: OperatorAiTimelineItem
   selected: boolean
@@ -587,6 +602,10 @@ function TimelineItem({
               ? `${formatLatency(toolResult?.durationMs ?? item.durationMs)} execution`
               : "Execution timing unavailable"}
           </p>
+          <MiddlewareRequestDetails
+            requests={middlewareRequests}
+            open={selected}
+          />
           {toolCall && <ToolPayload label="Request" value={toolCall.payload} />}
           {toolResult && (
             <ToolPayload

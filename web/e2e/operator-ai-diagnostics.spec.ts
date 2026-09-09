@@ -97,7 +97,7 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       }
       await client.query(
         `INSERT INTO ai_interactions (id, service_subject, practice_id, location_id, source_call_id, phone, office_phone, started_at, ended_at, status, lifecycle_stage, appointment_outcome, transcript, closeout_payload)
-        VALUES ($1, 'diagnostics-e2e', $2, $3, $1::uuid::text, '+15555550199', '+17275550106', $4, $5, $7, 3, 'INDETERMINATE', $6, '{"domainOutcomes":[]}'::jsonb)`,
+        VALUES ($1, 'diagnostics-e2e', $2, $3, $1::uuid::text, '+15555550199', '+17275550106', $4, $5, $7, 3, 'INDETERMINATE', $6, $8)`,
         [
           id,
           scope.practice_id,
@@ -106,6 +106,39 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
           new Date(start.getTime() + 120_000),
           { items },
           call % 2 === 0 ? "ESCALATED" : "COMPLETED",
+          {
+            domainOutcomes: [
+              {
+                callId: "tool-0",
+                toolName: "get_availability",
+                outcome: "middleware_diagnostics",
+                status: "observed",
+                middlewareRequests: [
+                  {
+                    requestId: "fb672b37-0211-4e69-baf1-b0f56b181911",
+                    operation: "getAvailability",
+                    attempt: 1,
+                    durationMs: 1400,
+                    result: "response",
+                    httpStatus: 200,
+                    outcome: "availability_search_incomplete",
+                    category: "invalid_response",
+                    failureReason: "request_rejected",
+                    retryable: false,
+                    providerErrorCount: 1,
+                    providerErrors: [
+                      {
+                        operation: "get_appointments",
+                        category: "upstream_status",
+                        httpStatus: 503,
+                        durationMs: 1300,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
         ],
       )
     }
@@ -176,8 +209,12 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
       callSheet.getByRole("button", { name: "Turn timing" }),
     ).toHaveAttribute("aria-pressed", "true")
     await expect(callSheet.getByText("P50 STT", { exact: true })).toBeVisible()
-    await expect(callSheet.getByLabel("Caller message").first()).toContainText("STT final")
-    await expect(callSheet.getByLabel("Agent message").first()).toContainText("TTFT")
+    await expect(callSheet.getByLabel("Caller message").first()).toContainText(
+      "STT final",
+    )
+    await expect(callSheet.getByLabel("Agent message").first()).toContainText(
+      "TTFT",
+    )
     await expect(
       callSheet.getByRole("heading", {
         name: "Appointment and receipt evidence",
@@ -301,7 +338,24 @@ test("AI diagnostics connect measured distributions and tool failures to exact c
     const selected = page.locator("[data-diagnostic-selected=true]")
     await expect(selected).toContainText("get_availability")
     await expect(selected).toContainText("execution")
-    await expect(selected.locator("details")).toHaveAttribute("open", "")
+    await expect(selected.locator("details").first()).toHaveAttribute(
+      "open",
+      "",
+    )
+    await expect(
+      selected.getByText("Request ID: fb672b37-0211-4e69-baf1-b0f56b181911", {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      selected.getByText(/Provider: get_appointments.*HTTP 503/),
+    ).toBeVisible()
+    await expect(
+      selected.getByText(/response · HTTP 200.*availability_search_incomplete/),
+    ).toBeVisible()
+    await expect(
+      selected.getByText(/retry not allowed by agent policy/),
+    ).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath("tool-evidence.png"),
       fullPage: true,

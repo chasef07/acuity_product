@@ -4131,6 +4131,45 @@ components:
         taskId:
           type: string
           description: Durable Product Task proving Staff Task follow-up.
+        middlewareRequests:
+          type: array
+          maxItems: 32
+          description: Sanitized middleware attempts correlated to this tool call, including recovered failures.
+          items:
+            $ref: "#/components/schemas/MiddlewareRequestDiagnostic"
+    MiddlewareRequestDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [requestId, operation, attempt, durationMs, result]
+      properties:
+        requestId: {type: string, format: uuid}
+        operation: {type: string}
+        attempt: {type: integer, minimum: 1}
+        durationMs: {type: integer, minimum: 0}
+        result: {type: string}
+        httpStatus: {type: integer, minimum: 100, maximum: 599}
+        responseStatus: {type: string}
+        appointmentsStatus: {type: string, enum: [found, none, error]}
+        outcome: {type: string}
+        category: {type: string}
+        failureReason: {type: string}
+        retryable: {type: boolean}
+        providerErrorCount: {type: integer, minimum: 0}
+        providerErrors:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/ProviderErrorDiagnostic"
+    ProviderErrorDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [operation, category, durationMs]
+      properties:
+        operation: {type: string}
+        category: {type: string}
+        durationMs: {type: integer, minimum: 0}
+        httpStatus: {type: integer, minimum: 100, maximum: 599}
+        code: {type: string, pattern: '^-?[0-9]{1,6}$'}
     OperatorAIInteractionAnalytics:
       type: object
       additionalProperties: false

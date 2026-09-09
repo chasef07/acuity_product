@@ -131,15 +131,16 @@ type TimelineItem struct {
 }
 
 type ToolExecution struct {
-	DurationMs    *int
-	CallID        string
-	Name          string
-	OccurredAt    time.Time
-	Status        string // Native LiveKit execution status.
-	OutputClass   string // Historical Agent output classification only.
-	DomainOutcome string // Correlated Acuity domain outcome, when present.
-	DomainStatus  string // Correlated Acuity business-result status, when present.
-	TaskID        string // Durable Product Task proving Staff Task follow-up.
+	MiddlewareRequests []MiddlewareRequestDiagnostic
+	DurationMs         *int
+	CallID             string
+	Name               string
+	OccurredAt         time.Time
+	Status             string // Native LiveKit execution status.
+	OutputClass        string // Historical Agent output classification only.
+	DomainOutcome      string // Correlated Acuity domain outcome, when present.
+	DomainStatus       string // Correlated Acuity business-result status, when present.
+	TaskID             string // Durable Product Task proving Staff Task follow-up.
 }
 
 type OperatorAnalyticsDetail struct {
@@ -852,14 +853,15 @@ func nativeToolExecutions(
 			),
 		)
 		result = append(result, ToolExecution{
-			DurationMs:    toolDuration(call, output),
-			CallID:        callID,
-			Name:          name,
-			OccurredAt:    occurredAt,
-			Status:        status,
-			DomainOutcome: domainOutcome,
-			DomainStatus:  domainStatus,
-			TaskID:        taskID,
+			DurationMs:         toolDuration(call, output),
+			CallID:             callID,
+			Name:               name,
+			OccurredAt:         occurredAt,
+			Status:             status,
+			DomainOutcome:      domainOutcome,
+			DomainStatus:       domainStatus,
+			MiddlewareRequests: middlewareRequestDiagnostics(receipt["middlewareRequests"]),
+			TaskID:             taskID,
 		})
 	}
 	sort.SliceStable(result, func(left, right int) bool {

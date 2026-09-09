@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/chasef07/acuity_product/backend/internal/api"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -103,7 +104,13 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 				{"itemId": "agent", "metrics": map[string]any{"e2eLatency": 1.2}},
 			},
 			"domainOutcomes": []map[string]any{
-				{"callId": "tool-call-1", "toolName": "reschedule_appointment", "outcome": "rescheduled", "status": "failed", "occurredAt": now.Add(-114 * time.Minute)},
+				{"callId": "tool-call-1", "toolName": "reschedule_appointment", "outcome": "rescheduled", "status": "failed", "occurredAt": now.Add(-114 * time.Minute),
+					"middlewareRequests": []map[string]any{{
+						"requestId": "fb672b37-0211-4e69-baf1-b0f56b181911", "operation": "cancelAppointment", "attempt": 1, "durationMs": 1400,
+						"result": "response", "httpStatus": 200, "outcome": "indeterminate_write", "failureReason": "request_rejected", "retryable": false,
+						"providerErrors": []map[string]any{{"operation": "cancel_appointment", "category": "upstream_status", "httpStatus": 503, "durationMs": 1300}},
+					}},
+				},
 				{"callId": "transfer-attempt", "toolName": "transfer_call", "outcome": "transfer_started", "status": "success", "occurredAt": now.Add(-116 * time.Minute)},
 			},
 		},
@@ -375,12 +382,13 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 			Error   string         `json:"error"`
 		} `json:"timeline"`
 		ToolExecutions []struct {
-			Name          string `json:"name"`
-			Status        string `json:"status"`
-			OutputClass   string `json:"outputClass"`
-			DomainOutcome string `json:"domainOutcome"`
-			DomainStatus  string `json:"domainStatus"`
-			TaskID        string `json:"taskId"`
+			MiddlewareRequests []api.MiddlewareRequestDiagnostic `json:"middlewareRequests"`
+			Name               string                            `json:"name"`
+			Status             string                            `json:"status"`
+			OutputClass        string                            `json:"outputClass"`
+			DomainOutcome      string                            `json:"domainOutcome"`
+			DomainStatus       string                            `json:"domainStatus"`
+			TaskID             string                            `json:"taskId"`
 		} `json:"toolExecutions"`
 	}
 	decode(t, detailResponse, &detail)
@@ -402,6 +410,11 @@ func TestOperatorAIAnalyticsIsScopedPaginatedAndNormalized(t *testing.T) {
 		detail.ToolExecutions[1].DomainOutcome != "rescheduled" ||
 		detail.ToolExecutions[1].DomainStatus != "failed" {
 		t.Fatalf("normalized operator tool evidence = %#v / %#v", detail.Timeline, detail.ToolExecutions)
+	}
+
+	requests := detail.ToolExecutions[1].MiddlewareRequests
+	if len(requests) != 1 || requests[0].RequestId.String() != "fb672b37-0211-4e69-baf1-b0f56b181911" || requests[0].Outcome == nil || *requests[0].Outcome != "indeterminate_write" || requests[0].ProviderErrors == nil || len(*requests[0].ProviderErrors) != 1 || (*requests[0].ProviderErrors)[0].HttpStatus == nil || *(*requests[0].ProviderErrors)[0].HttpStatus != 503 {
+		t.Fatalf("persisted middleware diagnostics were lost: %+v", requests)
 	}
 
 	deniedDetail := request(t, server.Client(), http.MethodGet,

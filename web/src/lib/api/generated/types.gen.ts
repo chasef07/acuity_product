@@ -1030,6 +1030,35 @@ export type OperatorAiToolExecution = {
      * Durable Product Task proving Staff Task follow-up.
      */
     taskId?: string;
+    /**
+     * Sanitized middleware attempts correlated to this tool call, including recovered failures.
+     */
+    middlewareRequests?: Array<MiddlewareRequestDiagnostic>;
+};
+
+export type MiddlewareRequestDiagnostic = {
+    requestId: string;
+    operation: string;
+    attempt: number;
+    durationMs: number;
+    result: string;
+    httpStatus?: number;
+    responseStatus?: string;
+    appointmentsStatus?: 'found' | 'none' | 'error';
+    outcome?: string;
+    category?: string;
+    failureReason?: string;
+    retryable?: boolean;
+    providerErrorCount?: number;
+    providerErrors?: Array<ProviderErrorDiagnostic>;
+};
+
+export type ProviderErrorDiagnostic = {
+    operation: string;
+    category: string;
+    durationMs: number;
+    httpStatus?: number;
+    code?: string;
 };
 
 export type OperatorAiInteractionAnalytics = {
