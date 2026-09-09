@@ -891,6 +891,7 @@ function deterministicAuthority({
     call: async () => missing(),
     completeTask: async () => unavailable(),
     reviewAIOutcome: async () => unavailable(),
+    clearRecentAttention: async () => unavailable(),
     markMessageThreadRead: async () => unavailable(),
   }
 }
@@ -1084,7 +1085,7 @@ function taskPage(items: Task[]): TaskPage {
 function messagePage(
   items: MessageThreadPage["items"] = [],
 ): MessageThreadPage {
-  return { items, nextCursor: "" }
+  return { items, nextCursor: "", total: new Set(items.filter((item) => item.unread && item.openTaskCount === 0).map((item) => item.externalPhone)).size }
 }
 
 function outcomePage(items: AiOutcomePage["items"] = []): AiOutcomePage {
@@ -1322,3 +1323,96 @@ for (const type of ["task-committed", "task-created"] as const) {
     projection.stop()
   })
 }
+
+test("Texts keep the server total across pages and bulk clearing refetches new arrivals", async () => {
+  const realtime = deterministicRealtime()
+  let cleared = false
+  let requestedScope: unknown
+  const initial = Array.from({ length: 14 }, (_, index) => message(`text-${index}`, { externalPhone: `+1555000${String(index).padStart(4, "0")}` }))
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(80), tasks: taskPage([]) }),
+      messageThreads: async (_token, request) => {
+        assert.equal(request.recentAttention, true)
+        if (cleared) return success({ items: [message("new-arrival")], nextCursor: "", total: 1 })
+        return success({ items: request.cursor ? [message("next-page")] : initial, nextCursor: request.cursor ? "" : "page-2", total: 64 })
+      },
+      clearRecentAttention: async (_token, window, scope) => {
+        assert.equal(window, "messages")
+        requestedScope = scope
+        cleared = true
+        return success({})
+      },
+    },
+    realtime: realtime.adapter,
+    preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().messages.total, 64)
+  await projection.dispatch({ type: "clear-recent-attention", window: "messages" })
+  assert.deepEqual(requestedScope, { practiceId: "practice-1" })
+  assert.equal(projection.getSnapshot().messages.total, 1)
+  assert.equal(projection.getSnapshot().messages.items[0]?.id, "new-arrival")
+  assert.equal(projection.getSnapshot().messages.clearing, false)
+  projection.stop()
+})
+
+test("failed bulk clearing retains attention and can be retried for each section", async () => {
+  for (const window of ["messages", "aiOutcomes"] as const) {
+    const realtime = deterministicRealtime()
+    let fail = true
+    const projection = createWorkspaceProjection({
+      authority: {
+        ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(81), tasks: taskPage([]) }),
+        messageThreads: async () => success({ items: [message("unread")], nextCursor: "", total: 9 }),
+        aiOutcomes: async () => success(outcomePage([outcome("unreviewed", "BOOKED")])),
+        clearRecentAttention: async () => fail ? unavailable() : success({}),
+      }, realtime: realtime.adapter, preferences: memoryPreferences(),
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    const before = projection.getSnapshot()[window].items
+    await projection.dispatch({ type: "clear-recent-attention", window })
+    assert.deepEqual(projection.getSnapshot()[window].items, before)
+    assert.match(projection.getSnapshot()[window].error, /could not be marked/)
+    assert.equal(projection.getSnapshot()[window].clearing, false)
+    fail = false
+    await projection.dispatch({ type: "clear-recent-attention", window })
+    assert.equal(projection.getSnapshot()[window].error, "")
+    projection.stop()
+  }
+})
+
+test("missing Text totals fail visibly rather than substituting the loaded row count", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(82), tasks: taskPage([]) }),
+      messageThreads: async () => success({ items: [message("unread")], nextCursor: "" }),
+    }, realtime: realtime.adapter, preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  assert.equal(projection.getSnapshot().messages.total, undefined)
+  assert.match(projection.getSnapshot().messages.error, /unavailable/)
+  projection.stop()
+})
+
+test("a reviewed appointment cannot be restored by an older in-flight snapshot", async () => {
+  const realtime = deterministicRealtime()
+  const projection = createWorkspaceProjection({
+    authority: {
+      ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(83), tasks: taskPage([]) }),
+      aiOutcomes: async () => success(outcomePage([outcome("reviewed", "BOOKED")])),
+      reviewAIOutcome: async () => success({}),
+    }, realtime: realtime.adapter, preferences: memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  const stale = await realtime.prepareReconciliation(0)
+  assert.equal(await projection.reviewAIOutcome("reviewed"), true)
+  stale.apply()
+  assert.equal(projection.getSnapshot().aiOutcomes.items.length, 0)
+  projection.stop()
+})
