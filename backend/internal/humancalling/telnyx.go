@@ -822,6 +822,10 @@ func classifyTelnyxError(status int, body []byte) *ProviderError {
 	}
 	result := &ProviderError{HTTPStatus: status, Code: code}
 	switch code {
+	case "10010":
+		result.SafeCode = "TELNYX_DESTINATION_COUNTRY_REJECTED"
+		result.Definitive = true
+		return result
 	case "90018":
 		result.SafeCode = "TELNYX_CALL_ENDED"
 		result.Definitive = true

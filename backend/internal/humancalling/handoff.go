@@ -143,7 +143,13 @@ func (m *Module) resolveHandoffForRefer(
 	tx pgx.Tx,
 	fact ProviderFact,
 ) (string, string, string, error) {
-	if !canonicalE164.MatchString(fact.From) || !canonicalE164.MatchString(fact.To) {
+	// REFER webhooks can retain the configured SIP destination, with or
+	// without its scheme, instead of normalizing it to a phone number.
+	sipDestination := m.sipDestination()
+	validDestination := canonicalE164.MatchString(fact.To) ||
+		(m.config.HandoffSIPDomain != "" &&
+			(fact.To == sipDestination || fact.To == strings.TrimPrefix(sipDestination, "sip:")))
+	if !canonicalE164.MatchString(fact.From) || !validDestination {
 		observability.Record(m.observer, observability.HandoffRejected("address"))
 		return "", "", "", ErrInvalidHandoff
 	}
