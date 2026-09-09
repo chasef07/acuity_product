@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.0](https://github.com/chasef07/acuity_product/compare/v1.7.0...v1.8.0) (2026-09-09)
+
+
+### Features
+
+* **workspace:** add seven-day sidebar attention and bulk clearing ([#306](https://github.com/chasef07/acuity_product/issues/306)) ([a23bb08](https://github.com/chasef07/acuity_product/commit/a23bb08b2f3a9667e6b402a1606e74b33ac622c3))
+
+
+### Bug Fixes
+
+* **analytics:** surface correlated middleware tool diagnostics ([#308](https://github.com/chasef07/acuity_product/issues/308)) ([c2c2f27](https://github.com/chasef07/acuity_product/commit/c2c2f27ac52b059a84a9feddb0cc4baa29dbf4c3))
+* **auth:** remove loading flash when opening sign-in dialog ([#307](https://github.com/chasef07/acuity_product/issues/307)) ([b03ae16](https://github.com/chasef07/acuity_product/commit/b03ae162147bd3effa5f046140613591445eda15))
+
 ## [1.7.0](https://github.com/chasef07/acuity_product/compare/v1.6.2...v1.7.0) (2026-09-09)
 
 
