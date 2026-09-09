@@ -3514,19 +3514,23 @@ components:
     StaffPhoneMetrics:
       type: object
       additionalProperties: false
-      required: ["inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "inboundSeconds", "outboundSeconds"]
+      required: ["inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "textsSent", "inboundSeconds", "outboundSeconds"]
       properties:
         inboundCalls: {"type": "integer", "minimum": 0}
         outboundCalls: {"type": "integer", "minimum": 0}
         missingInboundDurationCalls: {"type": "integer", "minimum": 0}
         missingOutboundDurationCalls: {"type": "integer", "minimum": 0}
         tasksCompleted: {"type": "integer", "minimum": 0}
+        textsSent:
+          type: integer
+          minimum: 0
+          description: Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
         inboundSeconds: {"type": "number", "minimum": 0}
         outboundSeconds: {"type": "number", "minimum": 0}
     StaffAccountAnalytics:
       type: object
       additionalProperties: false
-      required: ["id", "email", "role", "status", "inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "inboundSeconds", "outboundSeconds"]
+      required: ["id", "email", "role", "status", "inboundCalls", "outboundCalls", "missingInboundDurationCalls", "missingOutboundDurationCalls", "tasksCompleted", "textsSent", "inboundSeconds", "outboundSeconds"]
       properties:
         id: {"type": "string"}
         email: {"type": "string"}
@@ -3537,6 +3541,10 @@ components:
         missingInboundDurationCalls: {"type": "integer", "minimum": 0}
         missingOutboundDurationCalls: {"type": "integer", "minimum": 0}
         tasksCompleted: {"type": "integer", "minimum": 0}
+        textsSent:
+          type: integer
+          minimum: 0
+          description: Staff-authored outbound message records created in the reporting period with current SENT or DELIVERED state. Excludes automated messages and unconfirmed or failed attempts; counts messages, not billing segments.
         inboundSeconds: {"type": "number", "minimum": 0}
         outboundSeconds: {"type": "number", "minimum": 0}
     StaffTaskMetrics:

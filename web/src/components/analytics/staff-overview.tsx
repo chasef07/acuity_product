@@ -39,6 +39,12 @@ function hours(seconds: number | null) {
 }
 const count = (value: number) => value.toLocaleString("en-US")
 
+function averageCallTime(seconds: number, calls: number, missing: number) {
+  if (calls === 0 || missing > 0) return "—"
+  const average = Math.round(seconds / calls)
+  return `${Math.floor(average / 60)}m ${String(average % 60).padStart(2, "0")}s`
+}
+
 function TaskTooltip({
   active,
   payload,
@@ -70,9 +76,25 @@ function PhoneCells({ metrics }: { metrics: StaffPhoneMetrics }) {
     <>
       <TableCell className="text-right tabular-nums">
         {count(metrics.inboundCalls)}
+        <div className="text-xs text-muted-foreground">
+          {averageCallTime(
+            metrics.inboundSeconds,
+            metrics.inboundCalls,
+            metrics.missingInboundDurationCalls,
+          )}{" "}
+          avg/call
+        </div>
       </TableCell>
       <TableCell className="text-right tabular-nums">
         {count(metrics.outboundCalls)}
+        <div className="text-xs text-muted-foreground">
+          {averageCallTime(
+            metrics.outboundSeconds,
+            metrics.outboundCalls,
+            metrics.missingOutboundDurationCalls,
+          )}{" "}
+          avg/call
+        </div>
       </TableCell>
       <TableCell className="text-right tabular-nums">
         {metrics.missingInboundDurationCalls
@@ -83,6 +105,9 @@ function PhoneCells({ metrics }: { metrics: StaffPhoneMetrics }) {
         {metrics.missingOutboundDurationCalls
           ? "—"
           : hours(metrics.outboundSeconds)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {count(metrics.textsSent)}
       </TableCell>
       <TableCell className="text-right tabular-nums">
         {count(metrics.tasksCompleted)}
@@ -97,6 +122,7 @@ type SortKey =
   | "outboundCalls"
   | "inboundSeconds"
   | "outboundSeconds"
+  | "textsSent"
   | "tasksCompleted"
 const columns: Array<{ key: SortKey; label: string }> = [
   { key: "email", label: "Staff" },
@@ -104,6 +130,7 @@ const columns: Array<{ key: SortKey; label: string }> = [
   { key: "outboundCalls", label: "Outbound calls" },
   { key: "inboundSeconds", label: "Inbound time" },
   { key: "outboundSeconds", label: "Outbound time" },
+  { key: "textsSent", label: "Texts sent" },
   { key: "tasksCompleted", label: "Tasks completed" },
 ]
 
@@ -258,6 +285,10 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
         <div className={styles.sectionHeading}>
           <h2>Staff accounts</h2>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Texts sent includes staff messages marked sent or delivered. Average
+          time uses connected call time; — means no calls or incomplete timing.
+        </p>
         <Table>
           <TableHeader>
             <TableRow>
