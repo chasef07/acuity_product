@@ -23,7 +23,15 @@ test("Telnyx error codes distinguish authentication browser network and provider
 })
 
 class FakeAudioElement {
+  static created: FakeAudioElement[] = []
+  static configure?: (audio: FakeAudioElement) => void
   id = ""
+  src = ""
+  sinkId = ""
+  paused = true
+  onended: (() => void) | null = null
+  onerror: (() => void) | null = null
+  setSinkImplementation?: (id: string) => Promise<void>
   autoplay = false
   muted = false
   volume = 1
@@ -32,8 +40,27 @@ class FakeAudioElement {
   plays = 0
   playImplementation?: () => Promise<void>
 
+  constructor() {
+    FakeAudioElement.created.push(this)
+    FakeAudioElement.configure?.(this)
+  }
+
+  async setSinkId(id: string) {
+    await this.setSinkImplementation?.(id)
+    this.sinkId = id
+  }
+
+  pause() {
+    this.paused = true
+  }
+  removeAttribute(name: string) {
+    if (name === "src") this.src = ""
+  }
+  load() {}
+
   async play() {
     this.plays += 1
+    this.paused = false
     await this.playImplementation?.()
   }
 
@@ -76,6 +103,8 @@ class FakePeerConnection {
 }
 
 function installMediaDOM() {
+  FakeAudioElement.created = []
+  FakeAudioElement.configure = undefined
   const output = new FakeAudioElement()
   output.id = "remote"
   const elements = new Map<string, FakeAudioElement>([[output.id, output]])
@@ -532,12 +561,159 @@ test("DTMF is sent only through the current healthy attachment", async () => {
   await legs[0].answer()
   call.state = "active"
 
+  const before = FakeAudioElement.created.length
   assert.equal(legs[0].sendDTMF("5"), true)
+  const feedback = FakeAudioElement.created.at(-1)!
+  assert.equal(FakeAudioElement.created.length, before + 1)
+  assert.equal(feedback.plays, 1)
   assert.equal(legs[0].sendDTMF("12"), false)
+  assert.equal(FakeAudioElement.created.length, before + 1)
   sdk.emit("telnyx.socket.close")
+  assert.equal(feedback.paused, true)
+  assert.equal(feedback.src, "")
   assert.equal(legs[0].sendDTMF("6"), false)
+  assert.equal(FakeAudioElement.created.length, before + 1)
 
   assert.deepEqual(actions, ["answer", "unmute", "dtmf:5", "mute"])
+})
+
+async function connectedKeypad() {
+  const output = installMediaDOM()
+  const sdk = fakeClient()
+  const legs: IncomingMediaLeg[] = []
+  const actions: string[] = []
+  const call = fakeCall("keypad-leg", "k".repeat(43), actions)
+  const adapter = createCallingMediaAdapter(async () => sdk.client)
+  await adapter.connect("jwt", output.id, {
+    onState: () => {},
+    onIncoming: (leg) => legs.push(leg),
+  })
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  await legs[0].answer()
+  call.state = "active"
+  return { output, sdk, leg: legs[0], call, adapter, actions }
+}
+
+test("keypad feedback follows the call output without changing remote media or microphone", async () => {
+  const { output, leg, actions, adapter } = await connectedKeypad()
+  const remoteStream = output.srcObject
+  output.sinkId = "selected-headset"
+  output.volume = 0.6
+  leg.mute()
+  assert.equal(leg.sendDTMF("5"), true)
+  const feedback = FakeAudioElement.created.at(-1)!
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(feedback.sinkId, "selected-headset")
+  assert.equal(feedback.volume, 0.6)
+  assert.equal(feedback.plays, 1)
+  assert.equal(feedback.srcObject, null)
+  assert.equal(output.srcObject, remoteStream)
+  assert.deepEqual(actions, ["answer", "unmute", "mute", "dtmf:5"])
+
+  output.sinkId = "other-speaker"
+  output.muted = true
+  leg.sendDTMF("#")
+  const next = FakeAudioElement.created.at(-1)!
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(feedback.paused, true)
+  assert.equal(next.sinkId, "other-speaker")
+  assert.equal(next.muted, true)
+  await adapter.disconnect()
+  assert.equal(next.paused, true)
+  assert.equal(next.src, "")
+})
+
+test("keypad audio is a quiet 120 ms dual tone with click-free ends", async () => {
+  const { leg, adapter } = await connectedKeypad()
+  for (const digit of "123456789*0#") {
+    leg.sendDTMF(digit)
+    const feedback = FakeAudioElement.created.at(-1)!
+    const wav = Buffer.from(feedback.src.split(",")[1], "base64")
+    assert.equal(wav.toString("ascii", 0, 4), "RIFF")
+    assert.equal(wav.readUInt32LE(24), 8000)
+    assert.equal(wav.readUInt32LE(40) / 2 / 8000, 0.12)
+    const samples = Array.from(
+      { length: 960 },
+      (_, i) => wav.readInt16LE(44 + i * 2) / 32767,
+    )
+    assert.equal(samples[0], 0)
+    assert.equal(samples.at(-1), 0)
+    assert.ok(Math.max(...samples.map(Math.abs)) < 0.071)
+    // Check actual spectral energy, not just the generated WAV header.
+    const frequencies = [697, 770, 852, 941, 1209, 1336, 1477]
+    const strongest = frequencies
+      .map((frequency) => {
+        let real = 0
+        let imaginary = 0
+        samples.forEach((sample, i) => {
+          real += sample * Math.cos(2 * Math.PI * frequency * i / 8000)
+          imaginary += sample * Math.sin(2 * Math.PI * frequency * i / 8000)
+        })
+        return { frequency, power: real ** 2 + imaginary ** 2 }
+      })
+      .sort((a, b) => b.power - a.power)
+      .slice(0, 2)
+      .map(({ frequency }) => frequency)
+      .sort((a, b) => a - b)
+    const index = "123456789*0#".indexOf(digit)
+    assert.deepEqual(strongest, [
+      [697, 770, 852, 941][Math.floor(index / 3)],
+      [1209, 1336, 1477][index % 3],
+    ])
+    feedback.onended?.()
+    assert.equal(feedback.src, "")
+  }
+  await adapter.disconnect()
+})
+
+test("delayed output routing cannot play an old press or a tone after call termination", async () => {
+  const { output, leg, sdk, call } = await connectedKeypad()
+  output.sinkId = "headset"
+  const routes: Array<() => void> = []
+  FakeAudioElement.configure = (audio) => {
+    audio.setSinkImplementation = () =>
+      new Promise<void>((resolve) => routes.push(resolve))
+  }
+  leg.sendDTMF("1")
+  const first = FakeAudioElement.created.at(-1)!
+  leg.sendDTMF("2")
+  const second = FakeAudioElement.created.at(-1)!
+  call.state = "destroy"
+  sdk.emit("telnyx.notification", { type: "callUpdate", call })
+  routes.forEach((resolve) => resolve())
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(first.plays, 0)
+  assert.equal(second.plays, 0)
+  assert.equal(first.src, "")
+  assert.equal(second.src, "")
+})
+
+test("feedback output and playback failures do not block DTMF or fall back to another speaker", async (t) => {
+  const warnings: string[] = []
+  t.mock.method(console, "warn", (message: string) => warnings.push(message))
+  const { output, leg, actions, adapter } = await connectedKeypad()
+  output.sinkId = "unavailable-headset"
+  FakeAudioElement.configure = (audio) => {
+    audio.setSinkImplementation = async () => {
+      throw new Error("unavailable")
+    }
+  }
+  assert.equal(leg.sendDTMF("1"), true)
+  const failedRoute = FakeAudioElement.created.at(-1)!
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(failedRoute.plays, 0)
+  assert.equal(failedRoute.src, "")
+  output.sinkId = ""
+  FakeAudioElement.configure = (audio) => {
+    audio.playImplementation = async () => {
+      throw new Error("autoplay denied")
+    }
+  }
+  assert.equal(leg.sendDTMF("2"), true)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(actions, ["answer", "unmute", "dtmf:1", "dtmf:2"])
+  assert.equal(warnings.length, 2)
+  await adapter.disconnect()
 })
 
 test("a terminal SDK update detaches the losing media leg", async () => {
