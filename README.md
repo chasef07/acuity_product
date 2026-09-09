@@ -218,8 +218,9 @@ go test -p 1 ./backend/... ./deploy -count=1
 
 Keep database-backed packages serial: they share and reset schemas. Without
 `TEST_DATABASE_URL`, integration tests may skip; a green exit is not proof that
-database behavior passed. Pull-request CI shards packages across isolated
-databases; main and release verification run the full serial suite.
+database behavior passed. CI shards the complete package set across isolated
+databases for pull requests, main, and exact-release verification. Packages
+within each shard remain serial, and every shard must pass.
 
 ### Frontend
 

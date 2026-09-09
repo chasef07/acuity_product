@@ -588,24 +588,28 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 		"workflow_call:",
 		"release_sha:",
 		"ref: ${{ inputs.release_sha }}",
-		"backend-shard:\n    if: github.event_name == 'pull_request'",
+		"backend-shard:",
 		"database: acuity_calling_test",
 		"database: acuity_domain_test",
 		"database: acuity_support_test",
 		"run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}",
 		"if: matrix.shard == 'support'",
-		"backend-exact:\n    if: github.event_name != 'pull_request'",
-		"backend:\n    if: always()\n    needs: [backend-shard, backend-exact]",
+		"backend:\n    if: always()\n    needs: [backend-shard]",
 		"SHARD_RESULT: ${{ needs.backend-shard.result }}",
-		"EXACT_RESULT: ${{ needs.backend-exact.result }}",
 		"web:",
 		"contracts:",
 		"browser:",
-		"go test -p 1 ./backend/... ./deploy -count=1",
 		"run: pnpm playwright install --with-deps chromium\n        timeout-minutes: 10",
 	} {
 		if !strings.Contains(verificationContent, required) {
 			t.Errorf("reusable verification workflow omits %q", required)
+		}
+	}
+
+	// Every entry point must verify the same complete shard set.
+	for _, forbidden := range []string{"github.event_name", "backend-exact:"} {
+		if strings.Contains(verificationContent, forbidden) {
+			t.Errorf("verification must not select a partial suite by event: %q", forbidden)
 		}
 	}
 
@@ -651,7 +655,34 @@ func TestProductionDeployRequiresExactReleaseVerification(t *testing.T) {
 	}
 }
 
-func TestPullRequestBackendShardsCoverEveryPackageExactlyOnce(t *testing.T) {
+func TestBackendVerificationRejectsIncompleteShards(t *testing.T) {
+	root := filepath.Dir(releaseDeployDirectory(t))
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "verify.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, backend, found := strings.Cut(string(raw), "\n  backend:\n")
+	if !found {
+		t.Fatal("missing required backend gate")
+	}
+	backend, _, _ = strings.Cut(backend, "\n  web:\n")
+	_, script, found := strings.Cut(backend, "        run: |\n")
+	if !found {
+		t.Fatal("missing backend gate command")
+	}
+	for _, result := range []string{"success", "failure", "cancelled", "skipped", ""} {
+		t.Run(result, func(t *testing.T) {
+			command := exec.Command("bash", "-e", "-c", script)
+			command.Env = append(os.Environ(), "SHARD_RESULT="+result)
+			output, err := command.CombinedOutput()
+			if (err == nil) != (result == "success") {
+				t.Fatalf("gate result for %q: err=%v output=%s", result, err, output)
+			}
+		})
+	}
+}
+
+func TestBackendShardsCoverEveryPackageExactlyOnce(t *testing.T) {
 	root := filepath.Dir(releaseDeployDirectory(t))
 	shardScript := filepath.Join(root, "scripts", "run-backend-test-shard.sh")
 
