@@ -233,6 +233,9 @@ jobs:
           key: ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-${{ hashFiles('web/src/**', 'web/public/**', 'web/next.config.ts') }}
           restore-keys: |
             ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-
+      - name: Remove unused runner Chrome package sources
+        # Playwright downloads its own Chromium; stale Chrome indexes can break apt update.
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
       - run: pnpm playwright install --with-deps chromium
         timeout-minutes: 10
         working-directory: web
