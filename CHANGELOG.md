@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/chasef07/acuity_product/compare/v1.6.1...v1.6.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* **ci:** unblock Chromium setup from stale Chrome package indexes ([#301](https://github.com/chasef07/acuity_product/issues/301)) ([140c4f9](https://github.com/chasef07/acuity_product/commit/140c4f9b7fa259b424b968a21d1c266b97f06e7f))
+
 ## [1.6.1](https://github.com/chasef07/acuity_product/compare/v1.6.0...v1.6.1) (2026-09-09)
 
 
