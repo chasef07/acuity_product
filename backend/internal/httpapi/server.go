@@ -3936,15 +3936,16 @@ func operatorAIInteractionAnalyticsResponse(
 	}
 	for _, execution := range detail.ToolExecutions {
 		response.ToolExecutions = append(response.ToolExecutions, api.OperatorAIToolExecution{
-			DurationMs:    execution.DurationMs,
-			CallId:        execution.CallID,
-			Name:          execution.Name,
-			OccurredAt:    execution.OccurredAt,
-			Status:        api.OperatorAIToolExecutionStatus(execution.Status),
-			OutputClass:   stringPointer(execution.OutputClass),
-			DomainOutcome: stringPointer(execution.DomainOutcome),
-			DomainStatus:  optionalOperatorAIToolDomainStatus(execution.DomainStatus),
-			TaskId:        stringPointer(execution.TaskID),
+			MiddlewareRequests: operatorMiddlewareRequests(execution.MiddlewareRequests),
+			DurationMs:         execution.DurationMs,
+			CallId:             execution.CallID,
+			Name:               execution.Name,
+			OccurredAt:         execution.OccurredAt,
+			Status:             api.OperatorAIToolExecutionStatus(execution.Status),
+			OutputClass:        stringPointer(execution.OutputClass),
+			DomainOutcome:      stringPointer(execution.DomainOutcome),
+			DomainStatus:       optionalOperatorAIToolDomainStatus(execution.DomainStatus),
+			TaskId:             stringPointer(execution.TaskID),
 		})
 	}
 	return response, nil
