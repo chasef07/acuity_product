@@ -4195,6 +4195,7 @@ components:
         outcome: {type: string}
         category: {type: string}
         failureReason: {type: string}
+        failureDetail: {type: string, enum: [missing_appointment_id]}
         retryable: {type: boolean}
         providerErrorCount: {type: integer, minimum: 0}
         providerErrors:

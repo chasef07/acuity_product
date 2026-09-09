@@ -25,6 +25,10 @@ func operatorMiddlewareRequests(requests []interaction.MiddlewareRequestDiagnost
 			value := api.MiddlewareRequestDiagnosticAppointmentsStatus(request.AppointmentsStatus)
 			item.AppointmentsStatus = &value
 		}
+		if request.FailureDetail != "" {
+			value := api.MiddlewareRequestDiagnosticFailureDetail(request.FailureDetail)
+			item.FailureDetail = &value
+		}
 		if len(providers) > 0 {
 			item.ProviderErrors = &providers
 		}

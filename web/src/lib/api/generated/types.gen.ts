@@ -1048,6 +1048,7 @@ export type MiddlewareRequestDiagnostic = {
     outcome?: string;
     category?: string;
     failureReason?: string;
+    failureDetail?: 'missing_appointment_id';
     retryable?: boolean;
     providerErrorCount?: number;
     providerErrors?: Array<ProviderErrorDiagnostic>;

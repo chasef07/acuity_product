@@ -28,6 +28,7 @@ type MiddlewareRequestDiagnostic struct {
 	Outcome            string                    `json:"outcome,omitempty"`
 	Category           string                    `json:"category,omitempty"`
 	FailureReason      string                    `json:"failureReason,omitempty"`
+	FailureDetail      string                    `json:"failureDetail,omitempty"`
 	Retryable          *bool                     `json:"retryable,omitempty"`
 	ProviderErrorCount *int                      `json:"providerErrorCount,omitempty"`
 	ProviderErrors     []ProviderErrorDiagnostic `json:"providerErrors,omitempty"`
@@ -80,7 +81,8 @@ func middlewareRequestDiagnostics(value any) []MiddlewareRequestDiagnostic {
 		item.Category = diagnosticCategory(item.Category)
 		item.ResponseStatus = diagnosticLabel(item.ResponseStatus, "error", "failed", "failure", "success", "verified", "multiple_matches", "not_found", "no_match", "no_appointments", "created", "partial", "updated", "booked", "cancelled", "found", "none", "incomplete")
 		item.Outcome = diagnosticLabel(item.Outcome, "success", "invalid_request", "authentication_rejected", "provider_failure", "internal_failure", "not_found", "client_error", "server_error", "rejected", "reconciled_failure", "indeterminate_write", "validation_failed", "unavailable", "failed", "reconciled_success", "validation", "invalid_booking_token", "invalid_cancellation_token", "invalid_reschedule_token", "booking_token_required", "appointment_type_unresolved", "patient_context_mismatch", "slot_unavailable", "provider_conflict", "provider_rejected", "ownership_mismatch", "write_failed", "availability_search_incomplete", "availability_found", "no_availability", "no_eligible_providers")
-		item.FailureReason = diagnosticLabel(item.FailureReason, "middleware_error", "network_error", "invalid_response", "request_rejected", "unsupported_office", "cancelled", "invalid_cancellation_token")
+		item.FailureReason = diagnosticLabel(item.FailureReason, "middleware_error", "network_error", "invalid_response", "request_rejected", "unsupported_office", "cancelled", "invalid_cancellation_token", "invalid_booking_token", "booking_token_required", "invalid_reschedule_token")
+		item.FailureDetail = diagnosticLabel(item.FailureDetail, "missing_appointment_id")
 		if item.FailureReason == "" {
 			item.Retryable = nil
 		}

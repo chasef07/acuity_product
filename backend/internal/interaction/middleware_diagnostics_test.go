@@ -34,3 +34,27 @@ func TestMiddlewareDiagnosticsExcludeUntrustedTextAndInvalidRows(t *testing.T) {
 		t.Fatalf("unsafe projection=%s", encoded)
 	}
 }
+
+func TestMiddlewareDiagnosticsPreserveNormalizedFailures(t *testing.T) {
+	for _, reason := range []string{"invalid_booking_token", "booking_token_required", "invalid_reschedule_token", "invalid_cancellation_token", "invalid_response"} {
+		t.Run(reason, func(t *testing.T) {
+			detail := ""
+			if reason == "invalid_response" {
+				detail = "missing_appointment_id"
+			}
+			requests := []any{map[string]any{
+				"requestId": "fb672b37-0211-4e69-baf1-b0f56b181911", "operation": "bookAppointment",
+				"attempt": 1, "durationMs": 1, "result": "response", "httpStatus": 200,
+				"failureReason": reason, "failureDetail": detail, "retryable": false,
+			}}
+			got := middlewareRequestDiagnostics(requests)
+			if len(got) != 1 || got[0].FailureReason != reason || got[0].FailureDetail != detail || got[0].Retryable == nil || *got[0].Retryable {
+				t.Fatalf("normalized failure lost: %+v", got)
+			}
+			requests[0].(map[string]any)["failureDetail"] = "synthetic-private-patient"
+			if got := middlewareRequestDiagnostics(requests); len(got) != 1 || got[0].FailureDetail != "" {
+				t.Fatalf("untrusted failure detail retained: %+v", got)
+			}
+		})
+	}
+}

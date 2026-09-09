@@ -39,6 +39,7 @@ export function MiddlewareRequestDetails({
             {request.failureReason && (
               <p>
                 {request.failureReason}
+                {request.failureDetail && ` · ${request.failureDetail}`}
                 {request.retryable !== undefined &&
                   ` · retry ${request.retryable ? "allowed by agent policy" : "not allowed by agent policy"}`}
               </p>
