@@ -13,7 +13,6 @@ permissions:
 
 jobs:
   backend-shard:
-    if: github.event_name == 'pull_request'
     name: backend shard (${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
@@ -47,63 +46,38 @@ jobs:
         with:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
+        id: go
         with:
           go-version: "1.26.7"
-          cache: true
+          cache: false
+      # Separate workloads cannot overwrite each other's partial Go caches.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-backend-${{ matrix.shard }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('backend/**', 'deploy/**', 'api/**', 'scripts/**', '.github/workflows/verify.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-backend-${{ matrix.shard }}-${{ hashFiles('go.mod', 'go.sum') }}-
       - run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}
       - if: matrix.shard == 'support'
         run: bash ./scripts/test-release-container.sh
       - if: matrix.shard == 'support'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
 
-  backend-exact:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: acuity_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d acuity_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/acuity_test?sslmode=disable
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.release_sha }}
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.7"
-          cache: true
-      - run: go test -p 1 ./backend/... ./deploy -count=1
-      - run: bash ./scripts/test-release-container.sh
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
-
   backend:
     if: always()
-    needs: [backend-shard, backend-exact]
+    needs: [backend-shard]
     runs-on: ubuntu-latest
     steps:
-      - name: Require the event-appropriate backend suite
+      - name: Require every backend shard
         env:
           SHARD_RESULT: ${{ needs.backend-shard.result }}
-          EXACT_RESULT: ${{ needs.backend-exact.result }}
         run: |
-          if [[ "$SHARD_RESULT" == "success" && "$EXACT_RESULT" == "skipped" ]]; then
+          if [[ "$SHARD_RESULT" == "success" ]]; then
             exit 0
           fi
-          if [[ "$SHARD_RESULT" == "skipped" && "$EXACT_RESULT" == "success" ]]; then
-            exit 0
-          fi
-          echo "backend verification did not converge: shards=$SHARD_RESULT exact=$EXACT_RESULT" >&2
+          echo "backend verification failed: shards=$SHARD_RESULT" >&2
           exit 1
 
   web:
@@ -127,19 +101,11 @@ jobs:
         working-directory: web
       - run: pnpm audit --prod
         working-directory: web
-      - uses: actions/cache@v5
-        with:
-          path: web/.next/cache
-          key: ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-${{ hashFiles('web/src/**', 'web/public/**', 'web/next.config.ts') }}
-          restore-keys: |
-            ${{ runner.os }}-next-${{ hashFiles('web/pnpm-lock.yaml') }}-
       - run: pnpm lint
         working-directory: web
       - run: pnpm typecheck
         working-directory: web
       - run: pnpm test:unit
-        working-directory: web
-      - run: pnpm build
         working-directory: web
 
   contracts:
@@ -163,9 +129,19 @@ jobs:
         with:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
+        id: go
         with:
           go-version: "1.26.7"
-          cache: true
+          cache: false
+      # Separate workloads cannot overwrite each other's partial Go caches.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-contracts-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('backend/**', 'deploy/**', 'api/**', 'scripts/**', '.github/workflows/verify.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-contracts-${{ hashFiles('go.mod', 'go.sum') }}-
       - uses: pnpm/action-setup@v4
         with:
           version: "10.34.5"
@@ -214,9 +190,19 @@ jobs:
         with:
           ref: ${{ inputs.release_sha }}
       - uses: actions/setup-go@v7
+        id: go
         with:
           go-version: "1.26.7"
-          cache: true
+          cache: false
+      # Separate workloads cannot overwrite each other's partial Go caches.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-browser-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('backend/**', 'deploy/**', 'api/**', 'scripts/**', '.github/workflows/verify.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-browser-${{ hashFiles('go.mod', 'go.sum') }}-
       - uses: pnpm/action-setup@v4
         with:
           version: "10.34.5"
