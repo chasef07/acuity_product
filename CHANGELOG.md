@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/chasef07/acuity_product/compare/v1.8.0...v1.9.0) (2026-09-10)
+
+
+### Features
+
+* **knowledge:** add scoped vector search for all office corpora ([#311](https://github.com/chasef07/acuity_product/issues/311)) ([7ec9313](https://github.com/chasef07/acuity_product/commit/7ec9313fe35fbd2a1ed5a67bcc921546092d7709))
+
 ## [1.8.0](https://github.com/chasef07/acuity_product/compare/v1.7.0...v1.8.0) (2026-09-09)
 
 
