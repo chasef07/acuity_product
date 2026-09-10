@@ -627,3 +627,8 @@ GRANT UPDATE (write_finished, cleanup_after, cleanup_token)
 ON TABLE public.messaging_attachment_cleanup
 TO acuity_portal, acuity_worker;
 GRANT UPDATE (object_key) ON TABLE public.messaging_attachments TO acuity_portal;
+
+-- Knowledge search reads imported facts; only the operator CLI can replace them.
+GRANT SELECT ON TABLE public.knowledge_corpora, public.knowledge_revisions,
+    public.knowledge_passages TO acuity_portal;
+GRANT INSERT ON TABLE public.knowledge_retrieval_observations TO acuity_portal;

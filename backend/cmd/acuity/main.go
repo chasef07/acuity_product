@@ -19,6 +19,7 @@ import (
 	"github.com/chasef07/acuity_product/backend/internal/httpapi"
 	"github.com/chasef07/acuity_product/backend/internal/humancalling"
 	"github.com/chasef07/acuity_product/backend/internal/interaction"
+	"github.com/chasef07/acuity_product/backend/internal/knowledge"
 	"github.com/chasef07/acuity_product/backend/internal/messaging"
 	"github.com/chasef07/acuity_product/backend/internal/migrations"
 	"github.com/chasef07/acuity_product/backend/internal/observability"
@@ -263,6 +264,7 @@ func runAuthorizedHTTP(
 						access.ServiceCapabilityCreateTask,
 						access.ServiceCapabilityHumanHandoff,
 						access.ServiceCapabilityIngestAIInteraction,
+						access.ServiceCapabilityReadKnowledge,
 					},
 				},
 			},
@@ -276,12 +278,24 @@ func runAuthorizedHTTP(
 						access.ServiceCapabilityCreateTask,
 						access.ServiceCapabilityHumanHandoff,
 						access.ServiceCapabilityIngestAIInteraction,
+						access.ServiceCapabilityReadKnowledge,
 					},
 				},
 			},
 		)
 		if err != nil {
 			return err
+		}
+		var knowledgeModule *knowledge.Module
+		if config.KnowledgeGoogleProject != "" {
+			provider, providerErr := knowledge.NewGoogleEmbedder(ctx, config.KnowledgeGoogleProject, config.KnowledgeGoogleLocation, nil)
+			if providerErr != nil {
+				return providerErr
+			}
+			knowledgeModule, err = knowledge.New(database, accessModule, provider, knowledge.Config{ProviderTimeout: 3 * time.Second})
+			if err != nil {
+				return err
+			}
 		}
 		handler, err = httpapi.NewPortal(httpapi.Config{
 			AllowedOrigins: config.BrowserOrigins,
@@ -296,6 +310,7 @@ func runAuthorizedHTTP(
 			Messaging:            messages,
 			Work:                 workModule,
 			Workspace:            workspace.New(database, accessModule),
+			Knowledge:            knowledgeModule,
 			ServiceAuthenticator: serviceAuth,
 		})
 		if err != nil {
