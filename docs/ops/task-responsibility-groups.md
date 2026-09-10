@@ -7,6 +7,10 @@ production rollout, provider outcome, or independently verified patient resoluti
 
 This feature is integrated into the existing `/workspace` layout: grouped rows
 under Tasks, central Interaction history, and the contextual Task detail card.
+Grouped Tasks use the same compact row with a count badge. Selecting a group
+opens its requests in the right card, with individual Resolve actions and a
+fixed Resolve group action. Refreshed membership requires explicit review before
+bulk completion; requests keep their own histories.
 Use the normal local development and Google sign-in configuration described in
 [README](../../README.md#interactive-development). There is no feature-specific
 role chooser or persistent demo launcher. The ordinary automated browser harness
@@ -150,7 +154,7 @@ and production backfill remain unverified.
 | `pnpm --dir web test:unit` | 249 unit tests and 19 render tests pass. |
 | `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh` | Ran all 34 journeys: 30 passed initially. Fixed the grouped-detail projection bug and outdated Resolve selectors. |
 | `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh human-calling.spec.ts messaging-workspace.spec.ts task-groups.spec.ts` | All 10 affected journeys pass on a fresh database, including all four initial failures. |
-| `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh task-groups.spec.ts` | Final grouped journey passes after the filtered-detail projection fix and again after removing the demo launcher/role chooser. Builds the production frontend and real backend roles. |
+| `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh task-groups.spec.ts` | Passes with the compact row/right-panel flow: moving one request, requiring review of new membership, resolving one request independently, resolving the remaining group, and reading persisted feedback after completion. Verifies the group action remains in the viewport. Builds the production frontend and real backend roles. |
 | `go generate ./backend/internal/api && pnpm --dir web api:generate` | Pass; repeated generation leaves identical Go/TypeScript file hashes. |
 | `AUTH_SCHEMA_CHECK_DATABASE_URL='postgres:///acuity_298_schema_check?sslmode=disable' ./scripts/check-auth-schema.sh` | Pass with a disposable schema-check database. |
 | `pnpm --dir web audit --prod` | No known vulnerabilities. |

@@ -99,6 +99,7 @@ export type WorkspaceProjectionState = {
   }
   selection: {
     task?: Task
+    taskGroup?: Task
     taskError: string
     engagement?: EngagementSummary
     aiInteractionID: string
@@ -1499,6 +1500,7 @@ export function createWorkspaceProjection({
       selection: {
         ...current.selection,
         task,
+        taskGroup: task?.groupMembers && task.groupMembers.length > 1 ? task : undefined,
         taskError: "",
         engagement,
         aiInteractionID: "",
@@ -1605,6 +1607,9 @@ export function createWorkspaceProjection({
             ? {
                 ...current.selection,
                 task,
+                taskGroup: select
+                  ? (task.groupMembers && task.groupMembers.length > 1 ? task : undefined)
+                  : current.selection.taskGroup,
                 taskError: "",
                 engagement: taskEngagement(task),
                 aiInteractionID: "",

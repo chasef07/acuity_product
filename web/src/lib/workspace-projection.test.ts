@@ -1431,9 +1431,12 @@ test("selected Task detail refresh cannot discard the authoritative grouped memb
   })
   await projection.start()
   await realtime.reconcile(0)
-  await projection.dispatch({type:"select-task",task:first})
+  await projection.dispatch({type:"select-task",task:grouped})
   await realtime.reconcile(0)
   assert.deepEqual(projection.getSnapshot().tasks.items[0]?.groupMembers?.map((member)=>member.id),["group-first","group-second"])
+  assert.equal(projection.getSnapshot().selection.taskGroup, grouped)
+  await projection.dispatch({type:"select-task",task:second})
+  assert.equal(projection.getSnapshot().selection.taskGroup, undefined)
   projection.stop()
 })
 

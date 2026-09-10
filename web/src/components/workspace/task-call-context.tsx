@@ -36,10 +36,14 @@ import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
+import { TaskGroupContext } from "./task-group-context"
 import { TaskMetadata } from "./task-metadata"
 
 type TaskCallContextProps = {
   task: Task | undefined
+  group?: Task
+  taskRows?: Task[]
+  onSelectTask?: (task: Task) => void
   activeCall: CallingCall | undefined
   view: "none" | "task" | "call"
   canMutate: boolean
@@ -54,6 +58,9 @@ type TaskCallContextProps = {
 
 export function TaskCallContext({
   task,
+  group,
+  taskRows,
+  onSelectTask,
   activeCall,
   view,
   canMutate,
@@ -86,6 +93,9 @@ export function TaskCallContext({
         onOpenRecoveryTask={(taskID) => void openRecoveryTask(taskID)}
       />
     )
+  }
+  if (view === "task" && task && group && onSelectTask) {
+    return <TaskGroupContext key={group.id} group={group} taskRows={taskRows ?? []} canMutate={canMutate} onSelect={onSelectTask} onUpdated={onTaskUpdated} />
   }
   if (view === "task" && task) {
     return (

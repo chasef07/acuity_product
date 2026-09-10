@@ -10,11 +10,11 @@ import type { StaffTaskCategory, Task } from "@/lib/api/generated/types.gen"
 import { getAccessToken } from "@/lib/auth-client"
 import { taskGroups, taskGroupLabel } from "@/lib/task-groups"
 
-export function TaskMetadata({ task, onUpdated }: { task: Task; onUpdated: (task: Task) => void }) {
-  return <TaskMetadataForm key={`${task.id}:${task.version}`} task={task} onUpdated={onUpdated} />
+export function TaskMetadata({ task, onUpdated, compact = false }: { task: Task; onUpdated: (task: Task) => void; compact?: boolean }) {
+  return <TaskMetadataForm key={`${task.id}:${task.version}`} task={task} onUpdated={onUpdated} compact={compact} />
 }
 
-function TaskMetadataForm({ task, onUpdated }: { task: Task; onUpdated: (task: Task) => void }) {
+function TaskMetadataForm({ task, onUpdated, compact }: { task: Task; onUpdated: (task: Task) => void; compact: boolean }) {
   const initialCategory = task.category === "billing" ? "other" : task.category ?? "other"
   const [category, setCategory] = useState<StaffTaskCategory>(initialCategory)
   const [moving, setMoving] = useState(false)
@@ -57,10 +57,25 @@ function TaskMetadataForm({ task, onUpdated }: { task: Task; onUpdated: (task: T
     }
   }
 
+  const knowledgeToggle = (
+    <label className="flex cursor-pointer items-center gap-2 leading-5">
+        <input
+          type="checkbox"
+          aria-label="Flag knowledge-base question"
+          className="size-3.5 shrink-0 accent-primary outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          checked={flagged}
+          disabled={pending}
+          aria-controls={feedbackPanelId}
+          onChange={(event) => setFlagged(event.target.checked)}
+        />
+        {compact ? "Knowledge base" : "Flag knowledge-base question"}
+      </label>
+  )
+
   return (
-    <div className="space-y-3 border-t pt-3 text-xs" aria-label="Task group and knowledge feedback">
+    <div className={compact ? "space-y-2 text-xs" : "space-y-3 border-t pt-3 text-xs"} aria-label="Task group and knowledge feedback">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className="min-w-0 flex-1 text-xs font-medium leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>
+        {compact ? knowledgeToggle : <p className="min-w-0 flex-1 text-xs font-medium leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>}
         {task.state === "OPEN" && (
           <Button
             size="sm"
@@ -96,17 +111,7 @@ function TaskMetadataForm({ task, onUpdated }: { task: Task; onUpdated: (task: T
           </div>
         </div>
       )}
-      <label className="flex cursor-pointer items-center gap-2 leading-5">
-        <input
-          type="checkbox"
-          className="size-3.5 shrink-0 accent-primary outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-          checked={flagged}
-          disabled={pending}
-          aria-controls={feedbackPanelId}
-          onChange={(event) => setFlagged(event.target.checked)}
-        />
-        Flag knowledge-base question
-      </label>
+      {!compact && knowledgeToggle}
       {(flagged || task.knowledgeFlagged) && (
         <div id={feedbackPanelId} className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
           {flagged && (

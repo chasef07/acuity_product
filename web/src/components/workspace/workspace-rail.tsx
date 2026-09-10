@@ -109,7 +109,6 @@ import {
 export type ConnectionState = WorkspaceConnectionState
 
 import { taskGroups } from "@/lib/task-groups"
-import { TaskGroupRow } from "./task-group-row"
 
 type AppointmentSection = AppointmentOutcomeFolder
 
@@ -322,10 +321,8 @@ export function WorkspaceRail({
                 <button aria-pressed={projection.rail.taskResponsibility === "all"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"all"})}>All tasks</button>
               </div>
             </div>
-            {filteredTasks.map((task) => (task.groupMembers?.length ?? 0) > 1 ? (
-              <TaskGroupRow key={task.id} task={task} onSelect={(selected) => onIntent({type:"select-task",task:selected})} onUpdated={(updated) => onIntent({type:"task-committed",task:updated})} />
-            ) : (
-              <TaskRow key={task.id} task={task} active={task.id===selectedTaskID} onSelect={() => onIntent({type:"select-task",task})} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID===task.id} completionError={completionError?.taskID===task.id ? completionError.message : ""} onComplete={() => onIntent({type:"complete-task",task})} />
+            {filteredTasks.map((task) => (
+              <TaskRow key={task.id} task={task} active={task.id === selectedTaskID || Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID === task.id} completionError={completionError?.taskID === task.id ? completionError.message : ""} onComplete={() => onIntent({ type: "complete-task", task })} />
             ))}
             {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
@@ -891,13 +888,15 @@ function TaskRow({
   completionError: string
   onComplete: () => void
 }) {
+  const groupCount = task.groupMembers?.length ?? 0
+  const grouped = groupCount > 1
   return (
     <SidebarMenuItem
-      data-testid="task-row"
+      data-testid={grouped ? "task-group-row" : "task-row"}
       className="group/task relative"
     >
       <RailHoverDetails
-        eyebrow="Task"
+        eyebrow={grouped ? `${groupCount} related Tasks` : "Task"}
         title={task.title}
         phone={task.phone}
         office={task.locationName}
@@ -919,17 +918,18 @@ function TaskRow({
               <CheckCircle2Icon className="size-4 shrink-0 stroke-[1.75] text-success" />
             )}
             <span className="truncate text-sm">{task.title}</span>
+            {grouped && <span aria-label={`${groupCount} Tasks`} className="shrink-0 rounded bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums leading-4">{groupCount}</span>}
           </span>
         </SidebarMenuButton>
       </RailHoverDetails>
       <span className="pointer-events-none absolute top-0 right-1 h-7 w-7 [@media(pointer:coarse)]:h-11">
         <time
-          className="absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 group-hover/task:opacity-0 group-focus-within/task:opacity-0 motion-reduce:duration-0 motion-reduce:transition-none"
+          className={`absolute inset-0 flex items-center justify-center text-[10px] font-normal tabular-nums text-muted-foreground transition-opacity duration-150 ${grouped ? "" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0"} motion-reduce:duration-0 motion-reduce:transition-none`}
           dateTime={taskRelativeAt(task)}
         >
           {relativeTime(taskRelativeAt(task))}
         </time>
-        {task.state === "OPEN" && (
+        {task.state === "OPEN" && !grouped && (
           <Tooltip>
             <TooltipTrigger
               render={
