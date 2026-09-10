@@ -27,6 +27,9 @@ import {
   SunIcon,
 } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { AcuityMark } from "@/components/acuity-mark"
 import {
   Collapsible,
@@ -315,12 +318,24 @@ export function WorkspaceRail({
               />
             }
           >
-            <div className="space-y-2 px-2 pb-3 text-xs">
-              <div className="flex gap-2">
-                <button aria-pressed={(projection.rail.taskResponsibility ?? "mine") === "mine"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"mine"})}>My groups</button>
-                <button aria-pressed={projection.rail.taskResponsibility === "all"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"all"})}>All tasks</button>
-              </div>
-            </div>
+            <li className="pb-2 pt-1">
+              <ToggleGroup
+                aria-label="Task visibility"
+                variant="segmented"
+                spacing={1}
+                className="w-full"
+                value={[projection.rail.taskResponsibility ?? "mine"]}
+                onValueChange={(values) => {
+                  const responsibility = values[0]
+                  if (responsibility === "mine" || responsibility === "all") {
+                    onIntent({ type: "set-task-filters", responsibility })
+                  }
+                }}
+              >
+                <ToggleGroupItem value="mine" className="flex-1">My groups</ToggleGroupItem>
+                <ToggleGroupItem value="all" className="flex-1">All tasks</ToggleGroupItem>
+              </ToggleGroup>
+            </li>
             {filteredTasks.map((task) => (
               <TaskRow key={task.id} task={task} active={task.id === selectedTaskID || Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID === task.id} completionError={completionError?.taskID === task.id ? completionError.message : ""} onComplete={() => onIntent({ type: "complete-task", task })} />
             ))}
@@ -616,9 +631,9 @@ function AttentionGroup({
       <div className="flex min-w-0 items-center gap-0.5">
         <CollapsibleTrigger
           render={
-            <button
-              type="button"
-              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            <Button
+              variant="ghost"
+              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 justify-start items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
             />
           }
         >
@@ -636,9 +651,7 @@ function AttentionGroup({
             </span>
           )}
           {count !== undefined && (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-              {count}
-            </span>
+            title === "Tasks" ? <Badge variant="secondary" className="h-5 min-w-5 justify-center px-1.5 text-[10px] tabular-nums">{count}</Badge> : <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
           )}
         </CollapsibleTrigger>
         {action}
@@ -670,10 +683,11 @@ function TaskCategoryMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             aria-label={`Filter Tasks: ${activeLabel}`}
-            className="flex h-8 max-w-24 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-foreground"
+            className="max-w-[45%] gap-1 px-1.5 text-xs text-muted-foreground"
           />
         }
       >

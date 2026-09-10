@@ -16,9 +16,10 @@ Use the normal local development and Google sign-in configuration described in
 role chooser or persistent demo launcher. The ordinary automated browser harness
 remains available for synthetic regression tests.
 
-The staff queue lists outstanding Tasks. Staff submit knowledge feedback and an
-optional suggested answer to durable Task metadata for internal review. The
-sidebar keeps My groups and All tasks without status or knowledge-review filters.
+The staff queue lists outstanding Tasks. The sidebar uses the shared shadcn
+segmented control for My groups and All tasks. Move task uses the same shadcn
+menu pattern as category filtering. Knowledge feedback controls are hidden from
+this staff view; existing feedback and the backend submission path remain intact.
 The category menu counts every category in the active responsibility/access/search
 scope. Selecting a category narrows rows without changing those menu totals.
 
