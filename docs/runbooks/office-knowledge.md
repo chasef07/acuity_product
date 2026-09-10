@@ -242,3 +242,61 @@ application/database/provider and text-model observations, not deployed service
 or spoken-answer proof. The saved local ADC could not refresh; a temporary
 operator-only client used the existing signed-in gcloud token without printing
 or persisting it. The committed runtime and import CLI continue to use ADC.
+
+## Existing-database setup completed (2026-09-09)
+
+After review and the passing full Product suite, implementation commit
+`ca06a672be9fd75afbed6f52a522ace237ab8833` supplied the exact migration applied to
+`acuity-health-prod:us-east1:acuity-production` / `acuity_product`.
+The operator session rechecked that `0065` was the latest migration and that the
+configured production Practice had exactly one `spring-hill` route. It applied
+only additive `0066_office_knowledge.sql`, its ledger entry, and the new
+Knowledge-only runtime grants in one transaction with bounded lock/statement
+timeouts. No provisioning, existing-table data changes, or broad grant refresh
+ran. pgvector readback is `0.8.5`.
+
+The 15-section facts candidate was then imported through the committed import
+command/module with a temporary gcloud-token HTTP client (saved local ADC was
+stale). The actual operator identity came from the existing bound Platform
+Operator, and Practice came from the configured production service identity and
+validated office route. The unchanged source remains pinned to Agent base
+`ad3d57550578096ace95df6600143c66d230189d`; extraction and its safeguards were
+reviewed independently. This imports existing office facts and does not approve
+new business or clinical policy.
+
+| Readback | Result |
+| --- | --- |
+| Current corpus revision | `2ceface2-6675-40a8-ac8c-86d22f57c610` |
+| Content SHA-256 | `179582eda32b265122604f259414facdf0fb4234292dbdb4556441a96e4d34d1` |
+| Complete sections | 15 |
+| Model/dimensions | `text-multilingual-embedding-002` / 768 |
+| Actor maps to bound Platform Operator | true |
+| Portal can read passages / replace pointer | true / false |
+| Production retrieval observations | **0** |
+
+A read-only diagnostic using the actual `acuity_portal` database role and a real
+Google query embedding ranked Hours first for “When does everyone head home for
+the day?” (cosine similarity `0.5324`). This creates no Agent observation and is
+not a deployed HTTP check.
+
+Agent implementation is committed as
+`b3daade731c08accda8235b5027ead848741aa2d`. All 1,125 tests, format, lint, and
+typecheck passed. The final local actual Product + PostgreSQL + Google + Gemma
+trial consumed revision `2ceface2...` in nine scenarios / ten retrievals: sample
+median retrieval 536 ms and nearest-rank p95 793 ms. Single-turn text completion
+median was 1,688 ms, with observed p95 4,353 ms. These small samples are diagnostic,
+not rollout SLOs. The evidence and follow-up pediatric/qualified-fee checks live
+in the Agent repository's `docs/evidence/office-knowledge-pilot.md` and
+`office-knowledge-real-model-product-final.jsonl`.
+
+Both review axes are closed: every actionable finding was accepted and fixed,
+including scoped redaction in native SDK logs, collector-free tracing, GenAI
+message copies, and native/Product session reports. No findings were rejected.
+
+No push, merge, application deployment, or Agent pilot activation occurred.
+The existing attached service-account prediction grant was verified, but its
+live prediction path remains untested: the operator lacks impersonation
+permission, which was not broadened. Deployment, authenticated deployed search,
+and a representative voice call remain separate release work. The explicit
+pilot flag stays unset until those checks; ACU-55 and the remaining ACU-54 staff
+editing/review/feedback workflows remain deferred.
