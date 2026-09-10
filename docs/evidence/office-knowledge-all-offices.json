@@ -1,0 +1,97 @@
+{
+  "corpora": [
+    {
+      "practice": "abita-eye-group",
+      "office_key": "crystal-river",
+      "revision_id": "c4215887-2f13-4e13-a11b-ed74fa1f089c",
+      "content_hash": "be59f700171117b61ee5ddf43ddb5cfc8026731db23c4b54ed5119bba172ceff",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 15,
+      "operator_attributed": true
+    },
+    {
+      "practice": "abita-eye-group",
+      "office_key": "hollywood",
+      "revision_id": "458e422b-e48d-4a62-af87-0d4ed741f341",
+      "content_hash": "e68e445736cbf55cba80fa34e18fcb9760a91605705c351be6bd4848300f3404",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 15,
+      "operator_attributed": true
+    },
+    {
+      "practice": "acuity-demo",
+      "office_key": "new-tampa-demo",
+      "revision_id": "49dd842c-6bd3-4d3a-aa75-764326b6b35e",
+      "content_hash": "ff3ee6d1413bc4295adb1f0a11ea85313c7006eec18333b47d80ced05c9257fa",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 16,
+      "operator_attributed": true
+    },
+    {
+      "practice": "abita-eye-group",
+      "office_key": "north-miami-beach-optical",
+      "revision_id": "b5a08439-0582-414a-a0c6-e5f265c5cd45",
+      "content_hash": "161ff677c1924b489d842e613340b73a7537ba25ec3f9c56a0bea3204279ed6b",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 15,
+      "operator_attributed": true
+    },
+    {
+      "practice": "acuity-demo",
+      "office_key": "ophthalmology-demo",
+      "revision_id": "f584923d-8945-4c3c-a93c-cf4d6e1175b1",
+      "content_hash": "58854e58a3495e649b236cbd9d316593713582f80bed6139fa568fbb2a58d1fa",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 16,
+      "operator_attributed": true
+    },
+    {
+      "practice": "acuity-demo",
+      "office_key": "rheumatology-demo",
+      "revision_id": "f9d5faef-508f-4703-a9c8-44b352812064",
+      "content_hash": "b72fcc03bb78c9fe328acbcd89d5f417aa971dc84daa417529711ade4f9e21dc",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 16,
+      "operator_attributed": true
+    },
+    {
+      "practice": "abita-eye-group",
+      "office_key": "spring-hill",
+      "revision_id": "2ceface2-6675-40a8-ac8c-86d22f57c610",
+      "content_hash": "179582eda32b265122604f259414facdf0fb4234292dbdb4556441a96e4d34d1",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 15,
+      "operator_attributed": true
+    },
+    {
+      "practice": "abita-eye-group",
+      "office_key": "sweetwater",
+      "revision_id": "26704947-e348-4a03-a540-2a9ff67394b9",
+      "content_hash": "ce96814e5b22f8a5b6193749c0d8ab52b97632309695a7ae6c299890716bbf96",
+      "embedding_model": "text-multilingual-embedding-002",
+      "embedding_dimensions": 768,
+      "sections": 15,
+      "operator_attributed": true
+    }
+  ],
+  "observations": 0,
+  "portal_can_replace": false,
+  "agentCommit": "f66010e34a8f50605c8f72ef73b1062c95e0da6b",
+  "totalSections": 123,
+  "verification": "all eight actual Cloud SQL corpus hashes, counts, model, dimensions, Practice and operator attribution match committed migration manifest",
+  "verifiedAt": "2026-09-10T03:46:55.513419+00:00",
+  "database": "acuity-health-prod:us-east1:acuity-production/acuity_product",
+  "deployment": {
+    "pushed": false,
+    "productDeployed": false,
+    "agentDeployed": false,
+    "voiceTested": false
+  }
+}
