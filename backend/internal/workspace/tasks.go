@@ -250,6 +250,7 @@ const taskQuerySelect = `
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
+ AND ($15::text = '' OR task.category=$15)
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -599,7 +600,7 @@ func queryTaskFolderCounts(
  count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
  count(*) FILTER (WHERE folder='tasks' AND category='post_op')
 		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged, command.Category).Scan(
+	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
 		&counts.Categories.Billing,
@@ -708,16 +709,17 @@ func normalizedDigits(value string) string {
 // Responsibilities narrow a previously authorized scope; they never grant access.
 const taskResponsibilityFilter = `
  AND (NOT $14::boolean OR task.knowledge_flagged)
- AND ($15::text = '' OR task.category=$15)
  AND ($12::text <> 'mine' OR task.category IS NULL
  OR NOT EXISTS (SELECT 1 FROM work_responsibility_locations configured WHERE configured.practice_id=task.practice_id AND configured.location_id=task.location_id)
  OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
  WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
  AND responsibility.category=task.category AND responsibility.account_email=$13))`
 
+// Category menu totals span all categories in the responsibility-scoped query.
+// Only the row query applies the selected category.
 // Ordinary group/category filters must not make the separate recovery surface's
 // count disappear. In the knowledge view, flagged recovery is included in Tasks.
 func taskCountFilter() string {
-	filter := strings.NewReplacer("$12", "$6", "$13", "$7", "$14", "$8", "$15", "$9").Replace(taskResponsibilityFilter)
+	filter := strings.NewReplacer("$12", "$6", "$13", "$7", "$14", "$8").Replace(taskResponsibilityFilter)
 	return " AND ((task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY') AND NOT $8) OR (" + strings.TrimPrefix(strings.TrimSpace(filter), "AND ") + "))"
 }

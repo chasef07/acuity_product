@@ -19,6 +19,8 @@ remains available for synthetic regression tests.
 The staff queue lists outstanding Tasks. Staff submit knowledge feedback and an
 optional suggested answer to durable Task metadata for internal review. The
 sidebar keeps My groups and All tasks without status or knowledge-review filters.
+The category menu counts every category in the active responsibility/access/search
+scope. Selecting a category narrows rows without changing those menu totals.
 
 ## Responsibility provisioning and rollout gaps
 
@@ -150,6 +152,7 @@ and production backfill remain unverified.
 | --- | --- |
 | `TEST_DATABASE_URL='postgres:///acuity_298_test?sslmode=disable' go test -p 1 ./backend/... ./deploy -count=1` | Ran the full suite. Fixed migration-grant expectations, query-plan fixture arguments, and shard coverage; final affected rerun below passes. The unrelated PostgreSQL executor timeout test still fails locally. |
 | `TEST_DATABASE_URL='postgres:///acuity_298_test?sslmode=disable' go test -p 1 ./backend/internal/work ./backend/internal/workspace ./backend/internal/httpapi ./backend/internal/migrations ./deploy -count=1` | All five packages pass after final changes, with disposable database integration enabled. |
+| `TEST_DATABASE_URL='postgres:///acuity_298_test?sslmode=disable' go test -p 1 ./backend/internal/workspace -run TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts -count=1` | Category-count regression failed before the fix in both All tasks and My groups, then passed. The full backend rerun also passed Workspace and every other package except the previously documented PostgreSQL timeout test. |
 | `pnpm --dir web lint` and `pnpm --dir web typecheck` | Pass. |
 | `pnpm --dir web test:unit` | 249 unit tests and 19 render tests pass. |
 | `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh` | Ran all 34 journeys: 30 passed initially. Fixed the grouped-detail projection bug and outdated Resolve selectors. |
