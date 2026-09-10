@@ -23,6 +23,12 @@ this staff view; existing feedback and the backend submission path remain intact
 The category menu counts every category in the active responsibility/access/search
 scope. Selecting a category narrows rows without changing those menu totals.
 
+Copay/copayment questions belong to Insurance, including questions about
+amounts, coverage and disputed copay charges. A visit, glasses or medication
+reference does not change that category. The conservative reclassification planner
+retains mixed or incidental copay mentions for review instead of overriding a
+separate records, refill, scheduling or referral request.
+
 ## Responsibility provisioning and rollout gaps
 
 `config/task-responsibilities.json` contains the agreed South Florida roster.
@@ -188,3 +194,17 @@ group membership lost during selected-detail refresh, and Activity detail being
 inserted into an empty or completed/flagged queue. Regression tests reproduce the
 projection failures and pass with the fixes. Final bounded re-review found no
 remaining actionable issue. Pending real-account provisioning is listed above.
+
+### Copay classification follow-up
+
+The copay regression first failed for the existing planner, then passed with
+Insurance routing and conservative handling of mixed/incidental mentions.
+Final affected check:
+`TEST_DATABASE_URL='postgres:///acuity_298_test?sslmode=disable' go test -p 1 ./backend/internal/work ./backend/internal/workspace -count=1`
+passes both packages. The broad serial backend run encountered unrelated migration
+setup timeouts in Human Calling and Migrations, plus the previously documented
+PostgreSQL executor rollback failure; it was stopped before completion.
+`go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...` passes.
+Code review's mixed-request finding was fixed with shared request predicates and
+regression cases; no remaining findings on the recheck. These are local checks,
+not a production rollout or proof of unscripted agent classification.

@@ -208,11 +208,19 @@ func reclassificationSuggestion(entry ReclassificationEntry) (TaskCategory, stri
 		}
 		return false
 	}
+	copay := has("copay", "co-pay", "co pay", "copago")
+	documentation := has("records release", "release of records", "medical records", "full records", "visit summary", "school note", "work note")
+	scheduling := has("reschedule", "cancel appointment", "book an appointment", "appointment availability")
+	referral := has("specialist referral", "send referral", "referral receipt", "imaging order")
 	auth := has("prior auth", "authorization", "authorisation", "denial", "denied", "approval")
 	switch {
 	case (has("glasses", "contact lens", "frames") && has("refill", "medication prescription", "pharmacy")) || (auth && has("medication", "pharmacy", "drug") && has("procedure authorization", "surgery authorization", "visit authorization")):
 		return "", "Distinct or ambiguous needs require individual staff review"
-	case has("records release", "release of records", "medical records", "full records", "visit summary", "school note", "work note"):
+	case copay && (documentation || scheduling || referral || has("refill", "medication prescription")):
+		return "", "Copay context overlaps another request; review the unresolved need"
+	case copay:
+		return TaskCategoryInsurance, "Copay or copayment question"
+	case documentation:
 		return TaskCategoryDocumentation, "Records or documentation request"
 	case auth && has("medication", "pharmacy", "eye drops", "eyedrops", "drug", "refill"):
 		return TaskCategoryMedication, "Medication authorization or denial follow-up"
@@ -224,7 +232,7 @@ func reclassificationSuggestion(entry ReclassificationEntry) (TaskCategory, stri
 		return TaskCategoryOptical, "Optical request context (not title alone)"
 	case has("refill", "pharmacy", "medication prescription"):
 		return TaskCategoryMedication, "Medication fulfillment"
-	case has("reschedule", "cancel appointment", "book an appointment", "appointment availability"):
+	case scheduling:
 		return TaskCategoryAppointments, "Appointment scheduling"
 	case has("pre-op", "preop", "before surgery", "surgical preparation", "clearance coordination"):
 		return TaskCategoryPreOp, "Surgical preparation or instructions"
@@ -232,7 +240,7 @@ func reclassificationSuggestion(entry ReclassificationEntry) (TaskCategory, stri
 		return TaskCategoryPostOp, "Recovery or aftercare"
 	case has("insurance acceptance", "insurance coverage", "insurance update", "referral requirement"):
 		return TaskCategoryInsurance, "Insurance coverage or requirements"
-	case has("specialist referral", "send referral", "referral receipt", "imaging order"):
+	case referral:
 		return TaskCategoryReferrals, "Referral or imaging-order coordination"
 	case entry.OldCategory == TaskCategoryBilling:
 		return TaskCategoryOther, "Remaining legacy Billing work"

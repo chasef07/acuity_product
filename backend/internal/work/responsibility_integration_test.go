@@ -234,6 +234,16 @@ func TestReclassificationPlanUsesRequestContextAcrossAuthorizationSubjects(t *te
 		old, want    work.TaskCategory
 	}{
 		{"glasses", "Please expedite my glasses prescription copy.", "documentation", "optical"},
+		{"copay", "Please confirm the copay for my appointment.", "other", "insurance"},
+		{"copay-charge", "Why was I charged a co-pay for my glasses?", "optical", "insurance"},
+		{"copayment", "Please explain the co payment for my visit.", "appointments", "insurance"},
+		{"copago", "Necesito confirmar el copago de mi cita.", "other", "insurance"},
+		{"med-copay", "Please confirm my medication copayment amount.", "medication", "insurance"},
+		{"mixed-copay", "Please refill my medication and explain my copay.", "medication", ""},
+		{"incidental-copay", "Please send my medical records; my copay question was already answered.", "documentation", ""},
+		{"note-copay", "Please send a work note; my copay question was already answered.", "documentation", ""},
+		{"referral-copay", "Please check my specialist referral; my copay was explained.", "referrals", ""},
+		{"imaging-copay", "Please coordinate my imaging order and review my copay.", "referrals", ""},
 		{"medication", "Please expedite a medication prescription refill.", "documentation", "medication"},
 		{"med-pa", "Prior authorization for eye drops was denied by insurance.", "insurance", "medication"},
 		{"service-pa", "Prior authorization for a procedure was denied.", "referrals", "insurance"},
