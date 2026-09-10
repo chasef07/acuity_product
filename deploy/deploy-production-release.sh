@@ -202,6 +202,20 @@ backend_services=(
   acuity-provider-ingress
   acuity-realtime
 )
+# Unset preserves the currently deployed configuration across releases. An
+# explicitly empty project disables embeddings for a deliberate rollback.
+if [[ "${KNOWLEDGE_GOOGLE_PROJECT+x}" == x ]]; then
+  if [[ -n "$KNOWLEDGE_GOOGLE_PROJECT" && ! "$KNOWLEDGE_GOOGLE_PROJECT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+    echo "KNOWLEDGE_GOOGLE_PROJECT must be a Google Cloud project ID or empty." >&2
+    exit 1
+  fi
+  KNOWLEDGE_GOOGLE_LOCATION="${KNOWLEDGE_GOOGLE_LOCATION:-us-east1}"
+  if [[ "$KNOWLEDGE_GOOGLE_LOCATION" != us-east1 ]]; then
+    echo "Office knowledge embeddings are pinned to us-east1." >&2
+    exit 1
+  fi
+fi
+
 service_runtime() {
   runtime_environment="DATABASE_POOL_MAX=1,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
   runtime_timeout=0
@@ -210,6 +224,9 @@ service_runtime() {
       read -r concurrency minimum maximum <<<"8 1 3"
       runtime_environment="DATABASE_POOL_MAX=4,DATABASE_ACQUIRE_TIMEOUT_MS=1500"
       runtime_environment+=",HUMAN_CALLING_RING_WINDOW_SECONDS=20"
+      if [[ "${KNOWLEDGE_GOOGLE_PROJECT+x}" == x ]]; then
+        runtime_environment+=",KNOWLEDGE_GOOGLE_PROJECT=${KNOWLEDGE_GOOGLE_PROJECT},KNOWLEDGE_GOOGLE_LOCATION=${KNOWLEDGE_GOOGLE_LOCATION}"
+      fi
       if [[ "$destructive_cutover" == true ]]; then
         runtime_environment+=",HUMAN_CALLING_HANDOFF_ADMISSION=closed"
       fi

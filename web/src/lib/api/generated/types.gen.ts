@@ -4,6 +4,19 @@ export type ClientOptions = {
     baseUrl: 'https://api.acuity.example' | (string & {});
 };
 
+export type KnowledgeSearchResult = {
+    outcome: 'found' | 'no_relevant_information' | 'temporary_failure';
+    revisionId?: string;
+    passages: Array<KnowledgePassage>;
+};
+
+export type KnowledgePassage = {
+    sectionId: string;
+    title: string;
+    text: string;
+    revisionId: string;
+};
+
 export type Health = {
     status: 'ok';
     role: 'portal-api' | 'provider-ingress' | 'realtime';
@@ -3881,3 +3894,45 @@ export type RequeueOperatorProviderReceiptResponses = {
 };
 
 export type RequeueOperatorProviderReceiptResponse = RequeueOperatorProviderReceiptResponses[keyof RequeueOperatorProviderReceiptResponses];
+
+export type SearchOfficeKnowledgeData = {
+    body: {
+        query: string;
+    };
+    headers: {
+        'X-Office-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/agent/knowledge/search';
+};
+
+export type SearchOfficeKnowledgeErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * Corpus, database, or embedding provider is temporarily unavailable. Never fall back to a stale source.
+     */
+    503: KnowledgeSearchResult;
+};
+
+export type SearchOfficeKnowledgeError = SearchOfficeKnowledgeErrors[keyof SearchOfficeKnowledgeErrors];
+
+export type SearchOfficeKnowledgeResponses = {
+    /**
+     * A scoped current-revision search completed; passages may not answer every part of the question.
+     */
+    200: KnowledgeSearchResult;
+};
+
+export type SearchOfficeKnowledgeResponse = SearchOfficeKnowledgeResponses[keyof SearchOfficeKnowledgeResponses];

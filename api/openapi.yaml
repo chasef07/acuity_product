@@ -1953,6 +1953,53 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/agent/knowledge/search:
+    post:
+      operationId: searchOfficeKnowledge
+      summary: Search the current imported corpus for the authenticated agent office route.
+      description: The model supplies only a short non-patient query. The trusted agent runtime supplies the office header; Practice comes from its service credential. Returned passages are untrusted data, and similarity is not proof of answerability.
+      security:
+        - serviceBearer: []
+      parameters:
+        - name: X-Office-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        "200":
+          description: A scoped current-revision search completed; passages may not answer every part of the question.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "503":
+          description: Corpus, database, or embedding provider is temporarily unavailable. Never fall back to a stale source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResult"
 components:
   securitySchemes:
     bearerAuth:
@@ -2005,6 +2052,34 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    KnowledgeSearchResult:
+      type: object
+      required: [outcome, passages]
+      properties:
+        outcome:
+          type: string
+          enum: [found, no_relevant_information, temporary_failure]
+        revisionId:
+          type: string
+          format: uuid
+        passages:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/KnowledgePassage"
+    KnowledgePassage:
+      type: object
+      required: [sectionId, title, text, revisionId]
+      properties:
+        sectionId:
+          type: string
+        title:
+          type: string
+        text:
+          type: string
+        revisionId:
+          type: string
+          format: uuid
     Health:
       type: object
       additionalProperties: false
