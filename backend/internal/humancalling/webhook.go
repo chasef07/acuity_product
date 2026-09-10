@@ -42,6 +42,7 @@ const (
 	projectionRecordRejectedLegRetry = "PROJECTION_RECORD_REJECTED_LEG_RETRY"
 	projectionLookupRejectedLegRetry = "PROJECTION_LOOKUP_REJECTED_LEG_RETRY"
 	projectionWakeRelatedRetry       = "PROJECTION_WAKE_RELATED_RETRY"
+	projectionObserveOrphanRetry     = "PROJECTION_OBSERVE_ORPHAN_RETRY"
 )
 
 type WebhookReceipt struct {
@@ -519,6 +520,15 @@ func (m *Module) replayProviderReceipt(
 		}
 		if rejected {
 			return ReceiptFailed, "RELATED_HANDOFF_REJECTED"
+		}
+	}
+	if errors.Is(err, errRelatedFactPending) {
+		obsolete, lookupErr := m.endedOrphanReceipt(ctx, fact)
+		if lookupErr != nil {
+			return ReceiptPending, projectionObserveOrphanRetry
+		}
+		if obsolete {
+			return ReceiptFailed, "TERMINAL_OR_OBSOLETE_PROVIDER_FACT"
 		}
 	}
 	switch {

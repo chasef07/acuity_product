@@ -16,6 +16,35 @@ import (
 // here and use the SDK only for authenticated, contextual HTTP requests.
 const maxTelnyxObservationPages = 100
 
+func (adapter *TelnyxAdapter) IsCallEnded(ctx context.Context, controlID, legID, sessionID string) (bool, error) {
+	if controlID == "" || legID == "" || sessionID == "" {
+		return false, ErrInvalidInput
+	}
+	var response struct {
+		Data struct {
+			ControlID string `json:"call_control_id"`
+			LegID     string `json:"call_leg_id"`
+			SessionID string `json:"call_session_id"`
+			Active    *bool  `json:"is_alive"`
+			EndTime   string `json:"end_time"`
+		} `json:"data"`
+	}
+	if err := adapter.client.Get(ctx, "calls/"+url.PathEscape(controlID), nil, &response); err != nil {
+		return false, classifyTelnyxSDKError(err)
+	}
+	status := response.Data
+	if status.ControlID != controlID || status.LegID != legID || status.SessionID != sessionID || status.Active == nil {
+		return false, fmt.Errorf("%w: incomplete or contradictory Telnyx Call status", ErrAmbiguousEffect)
+	}
+	if *status.Active || status.EndTime == "" {
+		return false, nil
+	}
+	if _, err := parseTelnyxTime(status.EndTime); err != nil {
+		return false, fmt.Errorf("%w: invalid Telnyx Call end time", ErrAmbiguousEffect)
+	}
+	return true, nil
+}
+
 type telnyxReadPage[T any] struct {
 	Data []T `json:"data"`
 	Meta struct {

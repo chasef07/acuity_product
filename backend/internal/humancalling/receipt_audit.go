@@ -45,6 +45,7 @@ var providerReceiptAuditErrorCodes = []string{
 	projectionRecordRejectedLegRetry,
 	"PROJECTION_RETRY_EXHAUSTED",
 	projectionWakeRelatedRetry,
+	projectionObserveOrphanRetry,
 	"RELATED_FACT_TIMEOUT",
 	"RELATED_HANDOFF_REJECTED",
 	"TERMINAL_OR_OBSOLETE_PROVIDER_FACT",

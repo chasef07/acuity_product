@@ -266,6 +266,12 @@ type CallStateProvider interface {
 	) (ProviderCallObservation, error)
 }
 
+// CallEndStateProvider confirms the exact provider leg ended. Absence from an
+// active-call listing alone does not establish this.
+type CallEndStateProvider interface {
+	IsCallEnded(context.Context, string, string, string) (bool, error)
+}
+
 type RecordingStateProvider interface {
 	ResolveRecording(context.Context, string, string) (ProviderRecording, error)
 }
