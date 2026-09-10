@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { ChevronDown } from "lucide-react"
+import { useId, useState } from "react"
+
 import { Button } from "@/components/ui/button"
 import { portalClient } from "@/lib/api/client"
 import { changeTaskCategory, setKnowledgeFeedback } from "@/lib/api/generated/sdk.gen"
@@ -13,13 +15,32 @@ export function TaskMetadata({ task, onUpdated }: { task: Task; onUpdated: (task
 }
 
 function TaskMetadataForm({ task, onUpdated }: { task: Task; onUpdated: (task: Task) => void }) {
-  const [category, setCategory] = useState<StaffTaskCategory>(task.category === "billing" ? "other" : task.category ?? "other")
+  const initialCategory = task.category === "billing" ? "other" : task.category ?? "other"
+  const [category, setCategory] = useState<StaffTaskCategory>(initialCategory)
+  const [moving, setMoving] = useState(false)
   const [flagged, setFlagged] = useState(task.knowledgeFlagged ?? false)
   const [answer, setAnswer] = useState(task.suggestedAnswer ?? "")
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const movePanelId = useId()
+  const feedbackPanelId = useId()
+  const feedbackChanged = flagged !== Boolean(task.knowledgeFlagged) || answer !== (task.suggestedAnswer ?? "")
+
+  function cancelMove() {
+    setMoving(false)
+    setCategory(initialCategory)
+    setError("")
+  }
+
+  function cancelFeedback() {
+    setFlagged(task.knowledgeFlagged ?? false)
+    setAnswer(task.suggestedAnswer ?? "")
+    setError("")
+  }
+
   async function save(kind: "category" | "feedback") {
-    setPending(true); setError("")
+    setPending(true)
+    setError("")
     try {
       const token = await getAccessToken()
       if (!token) throw new Error("Sign in again to update this Task.")
@@ -29,24 +50,86 @@ function TaskMetadataForm({ task, onUpdated }: { task: Task; onUpdated: (task: T
         : await setKnowledgeFeedback({ ...options, body: { expectedVersion: task.version, flagged, suggestedAnswer: answer } })
       if (!result.data) throw new Error(result.response?.status === 409 ? "This Task changed. Refresh and review it before saving." : "The Task could not be updated. Refresh and try again.")
       onUpdated(result.data)
-    } catch (error) { setError(error instanceof Error ? error.message : "The Task could not be updated.") }
-    finally { setPending(false) }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "The Task could not be updated.")
+    } finally {
+      setPending(false)
+    }
   }
-  return <div className="space-y-3 border-t pt-3 text-xs" aria-label="Task group and knowledge feedback">
-    <p className="font-medium">{taskGroupLabel(task.category)}</p>
-    {task.state === "OPEN" && <div className="flex flex-wrap items-center gap-2">
-      <label className="min-w-0 flex-1">Move to group
-        <select aria-label="Move to group" className="mt-1 w-full rounded-md border bg-background p-2" value={category} onChange={(event) => setCategory(event.target.value as StaffTaskCategory)} disabled={pending}>
-          {taskGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}
-        </select>
+
+  return (
+    <div className="space-y-3 border-t pt-3 text-xs" aria-label="Task group and knowledge feedback">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="min-w-0 flex-1 text-xs font-medium leading-5 text-muted-foreground">{taskGroupLabel(task.category)}</p>
+        {task.state === "OPEN" && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="-mr-1.5 h-7 px-1.5 text-xs"
+            aria-expanded={moving}
+            aria-controls={movePanelId}
+            disabled={pending}
+            onClick={() => moving ? cancelMove() : setMoving(true)}
+          >
+            Move task
+            <ChevronDown aria-hidden="true" className={moving ? "rotate-180" : ""} />
+          </Button>
+        )}
+      </div>
+      {moving && (
+        <div id={movePanelId} className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
+          <label className="block font-medium">
+            Move to group
+            <select
+              aria-label="Move to group"
+              className="mt-1.5 h-9 w-full min-w-0 rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              value={category}
+              onChange={(event) => setCategory(event.target.value as StaffTaskCategory)}
+              disabled={pending}
+            >
+              {taskGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}
+            </select>
+          </label>
+          <div className="flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" disabled={pending} onClick={cancelMove}>Cancel</Button>
+            <Button size="sm" disabled={pending || category === task.category} onClick={() => void save("category")}>Move</Button>
+          </div>
+        </div>
+      )}
+      <label className="flex cursor-pointer items-center gap-2 leading-5">
+        <input
+          type="checkbox"
+          className="size-3.5 shrink-0 accent-primary outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          checked={flagged}
+          disabled={pending}
+          aria-controls={feedbackPanelId}
+          onChange={(event) => setFlagged(event.target.checked)}
+        />
+        Flag knowledge-base question
       </label>
-      <Button size="sm" variant="outline" disabled={pending || category === task.category} onClick={() => void save("category")}>Move</Button>
-    </div>}
-    <label className="flex items-center gap-2"><input type="checkbox" checked={flagged} disabled={pending} onChange={(event) => setFlagged(event.target.checked)} />Flag knowledge-base question</label>
-    <label className="block">Suggested answer (optional)
-      <textarea aria-label="Suggested answer (optional)" className="mt-1 min-h-16 w-full rounded-md border bg-background p-2" maxLength={2500} value={answer} disabled={pending} onChange={(event) => setAnswer(event.target.value)} />
-    </label>
-    <Button size="sm" variant="outline" disabled={pending || (flagged === Boolean(task.knowledgeFlagged) && answer === (task.suggestedAnswer ?? ""))} onClick={() => void save("feedback")}>Save feedback</Button>
-    {error && <p role="alert" className="text-destructive">{error}</p>}
-  </div>
+      {(flagged || task.knowledgeFlagged) && (
+        <div id={feedbackPanelId} className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
+          {flagged && (
+            <label className="block font-medium">
+              Suggested answer <span className="font-normal text-muted-foreground">(optional)</span>
+              <textarea
+                aria-label="Suggested answer (optional)"
+                className="mt-1.5 block min-h-20 w-full resize-y rounded-md border bg-background px-2.5 py-2 text-xs font-normal leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                maxLength={2500}
+                rows={3}
+                value={answer}
+                disabled={pending}
+                onChange={(event) => setAnswer(event.target.value)}
+              />
+            </label>
+          )}
+          <div className="flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" disabled={pending} onClick={cancelFeedback}>Cancel</Button>
+            <Button size="sm" disabled={pending || !feedbackChanged} onClick={() => void save("feedback")}>Save feedback</Button>
+          </div>
+        </div>
+      )}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
+    </div>
+  )
 }
