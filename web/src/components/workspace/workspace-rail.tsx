@@ -174,8 +174,8 @@ export function WorkspaceRail({
   const router = useRouter()
   const { setTheme, theme } = useTheme()
   const taskRows = useMemo(
-    () => newestFirst(projection.rail.knowledgeFlagged ? tasks : filterTaskQueue(tasks), taskRelativeAt),
-    [tasks, projection.rail.knowledgeFlagged],
+    () => newestFirst(filterTaskQueue(tasks), taskRelativeAt),
+    [tasks],
   )
   const filteredTasks = useMemo(
     () =>
@@ -321,9 +321,6 @@ export function WorkspaceRail({
                 <button aria-pressed={(projection.rail.taskResponsibility ?? "mine") === "mine"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"mine"})}>My groups</button>
                 <button aria-pressed={projection.rail.taskResponsibility === "all"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"all"})}>All tasks</button>
               </div>
-              <label>Status <select aria-label="Task status" value={projection.rail.taskState ?? "OPEN"} onChange={(event) => onIntent({type:"set-task-filters",state:event.target.value as "OPEN"|"COMPLETED"})} className="rounded border bg-sidebar p-1"><option value="OPEN">Open</option><option value="COMPLETED">Completed</option></select></label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={projection.rail.knowledgeFlagged ?? false} onChange={(event) => onIntent({type:"set-task-filters",knowledgeFlagged:event.target.checked})} />Knowledge flagged</label>
-              <p className="text-muted-foreground">{selectedTaskCount} matching Tasks · {filteredTasks.length} rows loaded</p>
             </div>
             {filteredTasks.map((task) => (task.groupMembers?.length ?? 0) > 1 ? (
               <TaskGroupRow key={task.id} task={task} onSelect={(selected) => onIntent({type:"select-task",task:selected})} onUpdated={(updated) => onIntent({type:"task-committed",task:updated})} />

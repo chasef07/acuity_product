@@ -12,6 +12,10 @@ Use the normal local development and Google sign-in configuration described in
 role chooser or persistent demo launcher. The ordinary automated browser harness
 remains available for synthetic regression tests.
 
+The staff queue lists outstanding Tasks. Staff submit knowledge feedback and an
+optional suggested answer to durable Task metadata for internal review. The
+sidebar keeps My groups and All tasks without status or knowledge-review filters.
+
 ## Responsibility provisioning and rollout gaps
 
 `config/task-responsibilities.json` contains the agreed South Florida roster.

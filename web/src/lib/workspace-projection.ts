@@ -61,8 +61,6 @@ export type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
   expandedAppointments: AppointmentOutcomeFolder[]
   taskResponsibility?: "mine" | "all"
-  taskState?: "OPEN" | "COMPLETED"
-  knowledgeFlagged?: boolean
   taskCategory: TaskCategoryFilter
   scrollTop: number
 }
@@ -295,7 +293,7 @@ export type WorkspaceProjectionIntent =
       section: AppointmentOutcomeFolder
     }
   | { type: "set-task-category"; category: TaskCategoryFilter }
-  | { type: "set-task-filters"; responsibility?: "mine" | "all"; state?: "OPEN" | "COMPLETED"; knowledgeFlagged?: boolean }
+  | { type: "set-task-filters"; responsibility?: "mine" | "all" }
   | { type: "remember-rail-scroll"; scrollTop: number }
 
 const practiceStorageKey = "acuity.selectedPractice"
@@ -997,8 +995,6 @@ export function createWorkspaceProjection({
     if (intent.type === "set-task-filters") {
       updateRail((rail) => ({ ...rail,
         taskResponsibility: intent.responsibility ?? rail.taskResponsibility ?? "mine",
-        taskState: intent.state ?? rail.taskState ?? "OPEN",
-        knowledgeFlagged: intent.knowledgeFlagged ?? rail.knowledgeFlagged ?? false,
       }))
       await refreshTaskWindows(state.search.applied)
       return
@@ -1493,7 +1489,7 @@ export function createWorkspaceProjection({
         completion: { pendingTaskID: "", errorTaskID: "", error: "" },
       }
     })
-    if (state.tasks.items.some((item) => item.groupMembers) || state.rail.knowledgeFlagged) await refreshTaskWindows(state.search.applied)
+    if (state.tasks.items.some((item) => item.groupMembers)) await refreshTaskWindows(state.search.applied)
     realtimeController.refresh()
   }
 
@@ -2134,8 +2130,6 @@ function restoreRailPreferences(
           )
         : [],
       ...(value.taskResponsibility === "mine" || value.taskResponsibility === "all" ? {taskResponsibility:value.taskResponsibility} : {}),
-      ...(value.taskState === "OPEN" || value.taskState === "COMPLETED" ? {taskState:value.taskState} : {}),
-      ...(typeof value.knowledgeFlagged === "boolean" ? {knowledgeFlagged:value.knowledgeFlagged} : {}),
       taskCategory: taskCategories.includes(
         value.taskCategory as TaskCategoryFilter,
       )
@@ -2187,11 +2181,10 @@ function taskQueryRequest(
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    state: rail?.taskState ?? "OPEN",
+    state: "OPEN",
     ordering: "recent",
-    ...((rail?.taskState ?? "OPEN") === "OPEN" && !rail?.knowledgeFlagged ? { folder: "work" as const } : {}),
+    folder: "work",
     responsibility: rail?.taskResponsibility ?? "mine",
-    knowledgeFlagged: rail?.knowledgeFlagged ?? false,
     grouped: true,
     ...(rail?.taskCategory && rail.taskCategory !== "all" ? { category: rail.taskCategory } : {}),
     includeCounts: true,

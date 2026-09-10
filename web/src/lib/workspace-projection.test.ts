@@ -1437,17 +1437,28 @@ test("selected Task detail refresh cannot discard the authoritative grouped memb
   projection.stop()
 })
 
-for (const completed of [false, true]) {
-  test(`opening Activity Task preserves an empty ${completed ? "completed flagged" : "My groups"} query`, async () => {
+for (const legacyFilters of [false, true]) {
+  test(`opening Activity Task preserves an empty queue${legacyFilters ? " with retired saved filters" : ""}`, async () => {
     const realtime = deterministicRealtime()
     const projection = createWorkspaceProjection({
-      authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) }),
+      authority: {
+        ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) }),
+        tasks: async (_token, request) => {
+          assert.equal(request.state, "OPEN")
+          assert.notEqual(request.knowledgeFlagged, true)
+          return success(taskPage([]))
+        },
+      },
       realtime: realtime.adapter,
-      preferences: memoryPreferences(),
+      preferences: {
+        read: (key) => legacyFilters && key === "acuity.attentionRail.user-1.practice-1"
+          ? JSON.stringify({ version: 1, scrollTop: 0, taskState: "COMPLETED", knowledgeFlagged: true })
+          : null,
+        write: () => {},
+      },
     })
     await projection.start()
     await realtime.reconcile(0)
-    if (completed) await projection.dispatch({ type: "set-task-filters", state: "COMPLETED", knowledgeFlagged: true })
     const before = projection.getSnapshot().tasks
     await projection.dispatch({ type: "open-task-context", task: task("activity-open-unflagged") })
     assert.deepEqual(projection.getSnapshot().tasks.items, before.items)
