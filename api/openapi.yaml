@@ -1377,6 +1377,108 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/category:
+    post:
+      operationId: changeTaskCategory
+      summary: Move one open Task to a responsibility group.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeTaskCategoryRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/knowledge-feedback:
+    post:
+      operationId: setKnowledgeFeedback
+      summary: Correct the knowledge flag and optional suggested answer.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeFeedbackRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/complete-group:
+    post:
+      operationId: completeTaskGroup
+      summary: Resolve exactly the reviewed open group membership.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteTaskGroupRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}/reopen:
     post:
       operationId: reopenTask
@@ -2880,6 +2982,9 @@ components:
     StaffTaskCategory:
       type: string
       enum:
+        - insurance
+        - pre_op
+        - post_op
         - billing
         - appointments
         - documentation
@@ -2927,7 +3032,8 @@ components:
           maxLength: 255
         callerPhone:
           type: string
-          pattern: '^\+[1-9][0-9]{7,14}$'
+          maxLength: 64
+          description: Caller number normalized to E.164; common phone formatting is accepted.
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
         idempotencyKey:
@@ -3009,6 +3115,20 @@ components:
         - relatedInteractionCount
         - interactions
       properties:
+        knowledgeFlagged:
+          type: boolean
+        suggestedAnswer:
+          type: string
+        knowledgeUpdatedBy:
+          type: string
+        knowledgeUpdatedAt:
+          type: string
+          format: date-time
+        groupMembers:
+          description: Complete open membership for this bucket, normalized number, and Location, including members outside a text or knowledge filter. This is a display projection, never a merged Task.
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
         id:
           type: string
           format: uuid
@@ -3151,6 +3271,12 @@ components:
       additionalProperties: false
       required: [billing, appointments, documentation, optical, medication, referrals, other]
       properties:
+        insurance:
+          type: integer
+        pre_op:
+          type: integer
+        post_op:
+          type: integer
         billing:
           type: integer
           minimum: 0
@@ -4314,6 +4440,15 @@ components:
       additionalProperties: false
       required: [practiceId]
       properties:
+        responsibility:
+          type: string
+          enum: [mine, all]
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+        knowledgeFlagged:
+          type: boolean
+        grouped:
+          type: boolean
         practiceId:
           type: string
           format: uuid
@@ -4342,6 +4477,51 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+    ChangeTaskCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, category]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+    KnowledgeFeedbackRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, flagged]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        flagged:
+          type: boolean
+        suggestedAnswer:
+          type: string
+          maxLength: 2500
+    CompleteTaskGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [members]
+      properties:
+        members:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, expectedVersion]
+            properties:
+              id:
+                type: string
+                format: uuid
+              expectedVersion:
+                type: integer
+                format: int64
+                minimum: 1
     RenameTaskRequest:
       type: object
       additionalProperties: false
@@ -4701,11 +4881,16 @@ components:
         occurredAt:
           type: string
           format: date-time
+        taskActivityDetails:
+          type: object
+          additionalProperties: true
         taskActivity:
           type: string
           enum:
             - TASK_CREATED
             - TITLE_CHANGED
+            - CATEGORY_CHANGED
+            - KNOWLEDGE_FEEDBACK_CHANGED
             - TASK_COMPLETED
             - TASK_REOPENED
             - INTERACTION_ATTACHED

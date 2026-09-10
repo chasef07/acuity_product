@@ -718,7 +718,7 @@ async function expectNoOpenTasks(page: Page) {
     await tasksSection.click()
   }
   await expect(tasksSection).toHaveAttribute("aria-expanded", "true")
-  await expect(page.getByText("No open Tasks")).toBeVisible()
+  await expect(page.getByText("No Tasks match your responsibilities and filters. Use All tasks to help another group.")).toBeVisible()
 }
 
 async function abortFirstRealtimeRequest(page: Page) {

@@ -36,6 +36,8 @@ import { getAccessToken } from "@/lib/auth-client"
 import { formatUSPhone } from "@/lib/phone"
 import { automaticAcknowledgementLabel } from "@/lib/task-acknowledgement"
 
+import { TaskMetadata } from "./task-metadata"
+
 type TaskCallContextProps = {
   task: Task | undefined
   activeCall: CallingCall | undefined
@@ -312,6 +314,7 @@ function TaskWorkspace({
           {!canMutate && <Badge variant="outline">Read only</Badge>}
         </div>
       )}
+      {canMutate && <TaskMetadata task={task} onUpdated={onTaskUpdated} />}
       {task.sourceMessage && (
         <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
           {task.sourceMessage}
@@ -325,7 +328,7 @@ function TaskWorkspace({
                 onClick={() => void transition("complete")}
                 disabled={pending}
               >
-                {pending ? <Spinner /> : <CheckCircle2Icon />} {recovery ? "Resolve" : "Complete"}
+                {pending ? <Spinner /> : <CheckCircle2Icon />} Resolve
               </Button>
               {activeCall ? (
                 <Button variant="outline" onClick={onReturnToCall}>

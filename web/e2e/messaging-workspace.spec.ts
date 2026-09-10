@@ -203,7 +203,7 @@ test("an AI call without appointment actions stays call-first", async ({
 
   await page.getByRole("button", { name: "View task: Confirm office paperwork" }).click()
   const taskContext = page.getByRole("complementary", { name: "Task context" })
-  await taskContext.getByRole("button", { name: "Complete", exact: true }).click()
+  await taskContext.getByRole("button", { name: "Resolve", exact: true }).click()
   await expect(callRow).toContainText("Confirm office paperwork — Completed")
   await expect(page.getByText(/Task completed ·/)).toBeVisible()
 })
@@ -314,7 +314,7 @@ test("rail hover details and the message composer preserve compact context", asy
 
   await taskRow.hover()
   await page
-    .getByRole("button", { name: "Complete Task: Review billing balance" })
+    .getByRole("button", { name: "Resolve Task: Review billing balance" })
     .click()
   await expect(taskRow).toHaveCount(0)
 })
@@ -740,7 +740,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeVisible()
 
   await sidebarTaskContext
-    .getByRole("button", { name: "Complete", exact: true })
+    .getByRole("button", { name: "Resolve", exact: true })
     .click()
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
@@ -771,7 +771,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   ).toBeEnabled()
   await completedTaskContext.getByRole("button", { name: "Reopen" }).click()
   await expect(
-    completedTaskContext.getByRole("button", { name: "Complete" }),
+    completedTaskContext.getByRole("button", { name: "Resolve" }),
   ).toBeVisible()
   await expect(
     page
@@ -845,16 +845,15 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(medicationTaskButton).toBeVisible()
 
   const taskFilter = page.getByRole("button", {
-    name: "Filter Tasks: All types",
+    name: "Filter Tasks: All groups",
   })
   await taskFilter.click()
   for (const [label, count] of [
-    ["All types", counts.tasks],
-    ["Billing", counts.categories.billing],
-    ["Appointments", counts.categories.appointments],
-    ["Documentation", counts.categories.documentation],
-    ["Optical", counts.categories.optical],
-    ["Medication", counts.categories.medication],
+    ["All groups", counts.tasks],
+        ["Appointments", counts.categories.appointments],
+    ["Medical records & documentation", counts.categories.documentation],
+    ["Optical, frames & prescriptions", counts.categories.optical],
+    ["Clinical, medication & pharmacy", counts.categories.medication],
     ["Referrals", counts.categories.referrals],
     ["Other", counts.categories.other],
   ] as const) {
@@ -862,9 +861,9 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       page.getByRole("menuitemradio", { name: `${label} ${count}` }),
     ).toBeVisible()
   }
-  await page.getByRole("menuitemradio", { name: /^Billing / }).click()
+  await page.getByRole("menuitemradio", { name: /^Other / }).click()
   await expect(
-    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+    page.getByRole("button", { name: "Filter Tasks: Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -878,7 +877,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     await restoredTasksSection.click()
   }
   await expect(
-    page.getByRole("button", { name: "Filter Tasks: Billing" }),
+    page.getByRole("button", { name: "Filter Tasks: Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -892,7 +891,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     name: /^Review billing balance/,
   })
   const completeTask = taskItem.getByRole("button", {
-    name: "Complete Task: Review billing balance",
+    name: "Resolve Task: Review billing balance",
   })
   const relativeTime = taskItem.locator("time")
   await expect(completeTask).toHaveCSS("opacity", "0")
@@ -1007,14 +1006,14 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(taskItem).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await page.getByRole("button", { name: "Filter Tasks: Billing" }).click()
-  await page.getByRole("menuitemradio", { name: /^Medication / }).click()
+  await page.getByRole("button", { name: "Filter Tasks: Other" }).click()
+  await page.getByRole("menuitemradio", { name: /^Clinical, medication & pharmacy / }).click()
   await page.keyboard.press("Escape")
   const medicationItem = page
     .getByTestId("task-row")
     .filter({ hasText: "Review medication refill" })
   const completeMedication = medicationItem.getByRole("button", {
-    name: "Complete Task: Review medication refill",
+    name: "Resolve Task: Review medication refill",
   })
   let releaseStaleCompletion = () => {}
   const staleCompletionGate = new Promise<void>((resolve) => {

@@ -73,15 +73,16 @@ type QueryPhoneTimelineCommand struct {
 }
 
 type TimelineItem struct {
-	Entries       []TimelineItem
-	Type          string
-	ID            string
-	OccurredAt    time.Time
-	TaskActivity  string
-	Message       messaging.Message
-	Call          humancalling.CallHistoryItem
-	AIInteraction interaction.OutcomeItem
-	Task          work.Task
+	Entries             []TimelineItem
+	Type                string
+	ID                  string
+	OccurredAt          time.Time
+	TaskActivityDetails map[string]any
+	TaskActivity        string
+	Message             messaging.Message
+	Call                humancalling.CallHistoryItem
+	AIInteraction       interaction.OutcomeItem
+	Task                work.Task
 }
 
 type TimelinePage struct {
@@ -90,16 +91,20 @@ type TimelinePage struct {
 }
 
 type QueryTasksCommand struct {
-	IncludeCounts *bool
-	Identity      access.Identity
-	PracticeID    string
-	LocationID    string
-	Search        string
-	State         work.TaskState
-	Ordering      work.TaskOrdering
-	Folder        work.TaskFolder
-	Cursor        string
-	Limit         int
+	Responsibility   string
+	Category         work.TaskCategory
+	KnowledgeFlagged bool
+	Grouped          bool
+	IncludeCounts    *bool
+	Identity         access.Identity
+	PracticeID       string
+	LocationID       string
+	Search           string
+	State            work.TaskState
+	Ordering         work.TaskOrdering
+	Folder           work.TaskFolder
+	Cursor           string
+	Limit            int
 }
 
 func (m *Module) QueryEngagements(

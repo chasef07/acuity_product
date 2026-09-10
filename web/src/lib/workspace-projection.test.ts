@@ -752,20 +752,22 @@ test("realtime token expiry fails closed as unauthenticated before sync fallback
   projection.stop()
 })
 
-test("successful Task creation projects once and requests authoritative reconciliation", async () => {
+test("successful Task creation refetches authoritative query membership", async () => {
   const realtime = deterministicRealtime()
+  let currentPage = taskPage([])
   const projection = createWorkspaceProjection({
-    authority: deterministicAuthority({
+    authority: { ...deterministicAuthority({
       discovery: accessDiscovery(),
       snapshot: workspaceSnapshot(22),
-      tasks: taskPage([]),
-    }),
+      tasks: currentPage,
+    }), tasks: async () => success(currentPage) },
     realtime: realtime.adapter,
     preferences: memoryPreferences(),
   })
 
   await projection.start()
   await realtime.reconcile(0)
+  currentPage = taskPage([task("created-1")])
   await projection.dispatch({ type: "task-created", task: task("created-1") })
 
   assert.deepEqual(
@@ -1314,6 +1316,7 @@ for (const type of ["task-committed", "task-created"] as const) {
     await realtime.reconcile(0)
     currentPage = taskPage(Array.from({ length: 5 }, (_, i) => task(`task-${i + 1}`)))
     const pending = await realtime.prepareReconciliation(0)
+    currentPage = taskPage(type === "task-created" ? [openTask, task("new-task")] : [openTask])
     await projection.dispatch({ type, task: type === "task-created" ? task("new-task") : task("task-1", { version: 2 }) })
     const committedCounts = projection.getSnapshot().tasks.counts
     assert.equal(committedCounts.tasks, type === "task-created" ? 2 : 1)
@@ -1416,3 +1419,40 @@ test("a reviewed appointment cannot be restored by an older in-flight snapshot",
   assert.equal(projection.getSnapshot().aiOutcomes.items.length, 0)
   projection.stop()
 })
+
+test("selected Task detail refresh cannot discard the authoritative grouped membership", async () => {
+  const realtime = deterministicRealtime()
+  const first=task("group-first")
+  const second=task("group-second")
+  const grouped={...first,groupMembers:[first,second]}
+  const projection=createWorkspaceProjection({
+    authority:{...deterministicAuthority({discovery:accessDiscovery(),snapshot:workspaceSnapshot(20),tasks:taskPage([grouped])}),task:async()=>success(first)},
+    realtime:realtime.adapter,preferences:memoryPreferences(),
+  })
+  await projection.start()
+  await realtime.reconcile(0)
+  await projection.dispatch({type:"select-task",task:first})
+  await realtime.reconcile(0)
+  assert.deepEqual(projection.getSnapshot().tasks.items[0]?.groupMembers?.map((member)=>member.id),["group-first","group-second"])
+  projection.stop()
+})
+
+for (const completed of [false, true]) {
+  test(`opening Activity Task preserves an empty ${completed ? "completed flagged" : "My groups"} query`, async () => {
+    const realtime = deterministicRealtime()
+    const projection = createWorkspaceProjection({
+      authority: deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) }),
+      realtime: realtime.adapter,
+      preferences: memoryPreferences(),
+    })
+    await projection.start()
+    await realtime.reconcile(0)
+    if (completed) await projection.dispatch({ type: "set-task-filters", state: "COMPLETED", knowledgeFlagged: true })
+    const before = projection.getSnapshot().tasks
+    await projection.dispatch({ type: "open-task-context", task: task("activity-open-unflagged") })
+    assert.deepEqual(projection.getSnapshot().tasks.items, before.items)
+    assert.deepEqual(projection.getSnapshot().tasks.counts, before.counts)
+    assert.equal(projection.getSnapshot().selection.task?.id, "activity-open-unflagged")
+    projection.stop()
+  })
+}

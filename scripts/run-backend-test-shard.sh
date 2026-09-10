@@ -23,9 +23,11 @@ case "${1:-}" in
       ./backend/cmd/acuity
       ./backend/cmd/backlog-recovery
       ./backend/cmd/receipt-audit
+      ./backend/cmd/task-maintenance
       ./backend/internal/api
       ./backend/internal/app
       ./backend/internal/authn
+      ./backend/internal/contactcontext
       ./backend/internal/interaction
       ./backend/internal/messaging
       ./backend/internal/observability

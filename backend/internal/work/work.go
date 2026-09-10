@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -66,6 +67,9 @@ const (
 	TaskCategoryMedication    TaskCategory = "medication"
 	TaskCategoryReferrals     TaskCategory = "referrals"
 	TaskCategoryOther         TaskCategory = "other"
+	TaskCategoryInsurance     TaskCategory = "insurance"
+	TaskCategoryPreOp         TaskCategory = "pre_op"
+	TaskCategoryPostOp        TaskCategory = "post_op"
 )
 
 type TaskCreateStatus string
@@ -109,6 +113,11 @@ type ActorSnapshot struct {
 }
 
 type Task struct {
+	GroupMembers             []Task
+	KnowledgeFlagged         bool
+	SuggestedAnswer          string
+	KnowledgeUpdatedBy       *string
+	KnowledgeUpdatedAt       *time.Time
 	ID                       string
 	PracticeID               string
 	LocationID               string
@@ -252,6 +261,9 @@ type TaskFolderCounts struct {
 }
 
 type TaskCategoryCounts struct {
+	Insurance     int
+	PreOp         int
+	PostOp        int
 	Billing       int
 	Appointments  int
 	Documentation int
@@ -1321,7 +1333,7 @@ func (m *Module) CreateAITask(
 					AND origin = 'ABITA_AI'
 					AND title = $4
 					AND urgency = $5
-					AND category = $6
+					AND source_category = $6
 					AND COALESCE(caller_name, '') = $7
 					AND source_call_id = $8
 					AND source_message = $9
@@ -1487,7 +1499,6 @@ func (m *Module) CompleteTask(
 	if err != nil {
 		return Task{}, err
 	}
-	actor := authorization.Actor
 	task, err = lockTask(ctx, tx, command.TaskID)
 	if err != nil {
 		return Task{}, err
@@ -1498,48 +1509,8 @@ func (m *Module) CompleteTask(
 	if task.Version != command.ExpectedVersion {
 		return task, ErrConflict
 	}
-	completedAt := m.now()
-	if err := tx.QueryRow(ctx, `
-		UPDATE work_tasks
-		SET
-			state = 'COMPLETED',
-			completed_by_kind = 'HUMAN',
-			completed_by_subject = $2,
-			completed_by_email = $3,
-			completed_at = $4,
-			version = version + 1,
-			updated_at = $4
-		WHERE id = $1
-		RETURNING version
-	`, task.ID, actor.Subject, actor.Email, completedAt).Scan(&task.Version); err != nil {
-		return Task{}, fmt.Errorf("complete Task: %w", err)
-	}
-	task.State = TaskCompleted
-	completionActor := humanActorSnapshot(actor)
-	task.CompletedBy = &completionActor
-	task.CompletedAt = &completedAt
-	task.UpdatedAt = completedAt
-	if err := appendActivity(
-		ctx,
-		tx,
-		task,
-		"TASK_COMPLETED",
-		humanActorSnapshot(actor),
-		completedAt,
-	); err != nil {
-		return Task{}, err
-	}
-	if err := m.auditOperatorMutation(
-		ctx,
-		tx,
-		authorization,
-		task,
-		"task.completed",
-		completedAt,
-	); err != nil {
-		return Task{}, err
-	}
-	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+	task, err = m.completeLockedTask(ctx, tx, authorization, task)
+	if err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1852,7 +1823,7 @@ func insertTask(
 						AND existing.title = $5
 						AND existing.origin = 'HUMAN_CALL_FOLLOW_UP'
 						AND existing.urgency = 'normal'
-						AND existing.category IS NULL
+						AND existing.source_category IS NULL
 						AND existing.caller_name IS NULL
 						AND existing.source_call_id IS NULL
 						AND existing.source_message IS NULL
@@ -1915,7 +1886,7 @@ func insertTask(
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
-	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
+	if err := loadTaskMetadata(ctx, tx, &task); err != nil {
 		return Task{}, false, err
 	}
 	return task, inserted, nil
@@ -1966,7 +1937,7 @@ func loadTask(
 	if err != nil {
 		return Task{}, fmt.Errorf("read Task: %w", err)
 	}
-	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
+	if err := loadTaskMetadata(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
 	return task, nil
@@ -2018,13 +1989,17 @@ func lockTask(
 	if err != nil {
 		return Task{}, fmt.Errorf("lock Task: %w", err)
 	}
-	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
+	if err := loadTaskMetadata(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
 	return task, nil
 }
 
-func loadTaskAcknowledgement(ctx context.Context, tx pgx.Tx, task *Task) error {
+func loadTaskMetadata(ctx context.Context, tx pgx.Tx, task *Task) error {
+	if err := tx.QueryRow(ctx, `SELECT knowledge_flagged, suggested_answer, knowledge_updated_by, knowledge_updated_at FROM work_tasks WHERE id=$1`, task.ID).Scan(&task.KnowledgeFlagged, &task.SuggestedAnswer, &task.KnowledgeUpdatedBy, &task.KnowledgeUpdatedAt); err != nil {
+		return err
+	}
+
 	var acknowledgement TaskAcknowledgement
 	var safeFailureCode, messageID *string
 	if err := tx.QueryRow(ctx, `
@@ -2180,6 +2155,9 @@ func humanActorSnapshot(actor access.Actor) ActorSnapshot {
 }
 
 func normalizeAITaskCommand(command *CreateAITaskCommand) {
+	if phone, err := contactcontext.NormalizePhone(command.Phone); err == nil {
+		command.Phone = phone
+	}
 	command.Service.Subject = strings.TrimSpace(command.Service.Subject)
 	command.Service.PracticeID = strings.TrimSpace(command.Service.PracticeID)
 	command.OfficeKey = strings.TrimSpace(command.OfficeKey)
@@ -2224,7 +2202,7 @@ func validTaskCategory(category TaskCategory) bool {
 		TaskCategoryOptical,
 		TaskCategoryMedication,
 		TaskCategoryReferrals,
-		TaskCategoryOther:
+		TaskCategoryOther, TaskCategoryInsurance, TaskCategoryPreOp, TaskCategoryPostOp:
 		return true
 	default:
 		return false
@@ -2288,4 +2266,53 @@ func nullIfEmpty(value string) any {
 		return nil
 	}
 	return value
+}
+
+func (m *Module) completeLockedTask(ctx context.Context, tx pgx.Tx, authorization access.Authorization, task Task) (Task, error) {
+	actor := authorization.Actor
+	completedAt := m.now()
+	if err := tx.QueryRow(ctx, `
+		UPDATE work_tasks
+		SET
+			state = 'COMPLETED',
+			completed_by_kind = 'HUMAN',
+			completed_by_subject = $2,
+			completed_by_email = $3,
+			completed_at = $4,
+			version = version + 1,
+			updated_at = $4
+		WHERE id = $1
+		RETURNING version
+	`, task.ID, actor.Subject, actor.Email, completedAt).Scan(&task.Version); err != nil {
+		return Task{}, fmt.Errorf("complete Task: %w", err)
+	}
+	task.State = TaskCompleted
+	completionActor := humanActorSnapshot(actor)
+	task.CompletedBy = &completionActor
+	task.CompletedAt = &completedAt
+	task.UpdatedAt = completedAt
+	if err := appendActivity(
+		ctx,
+		tx,
+		task,
+		"TASK_COMPLETED",
+		humanActorSnapshot(actor),
+		completedAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if err := m.auditOperatorMutation(
+		ctx,
+		tx,
+		authorization,
+		task,
+		"task.completed",
+		completedAt,
+	); err != nil {
+		return Task{}, err
+	}
+	if _, err := m.access.RecordWorkspaceChange(ctx, tx, task.PracticeID); err != nil {
+		return Task{}, err
+	}
+	return task, nil
 }

@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chasef07/acuity_product/backend/internal/access"
+	"github.com/chasef07/acuity_product/backend/internal/contactcontext"
 	productpostgres "github.com/chasef07/acuity_product/backend/internal/postgres"
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/google/uuid"
@@ -3297,45 +3298,13 @@ func normalizeSendCommand(command *SendCommand) {
 }
 
 func normalizePhone(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if canonicalPhone.MatchString(value) {
-		return value, nil
-	}
-	var digits strings.Builder
-	openParenthesis := -1
-	closeParenthesis := -1
-	for index, character := range value {
-		switch {
-		case character >= '0' && character <= '9':
-			digits.WriteRune(character)
-		case character == '+' && index == 0:
-		case character == ' ' || character == '-' || character == '.':
-		case character == '(' && openParenthesis == -1:
-			openParenthesis = index
-		case character == ')' && closeParenthesis == -1:
-			closeParenthesis = index
-		default:
-			return "", ErrInvalidInput
-		}
-	}
-	if (openParenthesis == -1) != (closeParenthesis == -1) ||
-		(openParenthesis >= 0 && closeParenthesis <= openParenthesis) {
+	phone, err := contactcontext.NormalizePhone(value)
+	if err != nil {
 		return "", ErrInvalidInput
 	}
-	normalized := digits.String()
-	if len(normalized) == 10 {
-		normalized = "1" + normalized
-	}
-	normalized = "+" + normalized
-	if !canonicalPhone.MatchString(normalized) {
-		return "", ErrInvalidInput
-	}
-	return normalized, nil
+	return phone, nil
 }
-
-func NormalizePhone(value string) (string, error) {
-	return normalizePhone(value)
-}
+func NormalizePhone(value string) (string, error) { return normalizePhone(value) }
 
 func sendFingerprint(command SendCommand) ([32]byte, error) {
 	encoded, err := json.Marshal(struct {

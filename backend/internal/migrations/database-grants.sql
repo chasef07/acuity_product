@@ -13,6 +13,8 @@ FROM acuity_portal, acuity_provider, acuity_realtime, acuity_worker;
 REVOKE ALL ON ALL TABLES IN SCHEMA auth FROM acuity_auth;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA auth FROM acuity_auth;
 
+GRANT SELECT ON work_responsibility_locations, work_responsibilities TO acuity_portal;
+
 -- portal-api: Access, HumanCalling command/read paths, and Work.
 GRANT SELECT ON TABLE
     public.access_abita_office_locations,

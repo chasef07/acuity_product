@@ -866,7 +866,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toBeVisible()
     await navigationContext
-      .getByRole("button", { name: "Complete", exact: true })
+      .getByRole("button", { name: "Resolve", exact: true })
       .click()
     await expect(navigationTask).toHaveCount(0)
   } finally {

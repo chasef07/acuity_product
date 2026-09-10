@@ -32,7 +32,7 @@ export function taskCountForCategory(
   counts: TaskFolderCounts,
   category: TaskCategoryFilter,
 ) {
-  return category === "all" ? counts.tasks : counts.categories[category]
+  return category === "all" ? counts.tasks : (counts.categories[category] ?? 0)
 }
 
 export function taskFolderCursor(

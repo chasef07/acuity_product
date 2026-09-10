@@ -60,6 +60,9 @@ export type WorkspaceRailSection =
 export type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
   expandedAppointments: AppointmentOutcomeFolder[]
+  taskResponsibility?: "mine" | "all"
+  taskState?: "OPEN" | "COMPLETED"
+  knowledgeFlagged?: boolean
   taskCategory: TaskCategoryFilter
   scrollTop: number
 }
@@ -292,6 +295,7 @@ export type WorkspaceProjectionIntent =
       section: AppointmentOutcomeFolder
     }
   | { type: "set-task-category"; category: TaskCategoryFilter }
+  | { type: "set-task-filters"; responsibility?: "mine" | "all"; state?: "OPEN" | "COMPLETED"; knowledgeFlagged?: boolean }
   | { type: "remember-rail-scroll"; scrollTop: number }
 
 const practiceStorageKey = "acuity.selectedPractice"
@@ -436,7 +440,7 @@ export function createWorkspaceProjection({
     const messageGeneration = ++queryGenerations.messages
     const outcomeGeneration = ++queryGenerations.aiOutcomes
     const current = state
-    const taskRequest = taskQueryRequest(current.scope, current.search.applied)
+    const taskRequest = taskQueryRequest(current.scope, current.search.applied, current.rail)
     const recoveryRequest = recoveryTaskQueryRequest(
       current.scope,
       current.search.applied,
@@ -551,7 +555,7 @@ export function createWorkspaceProjection({
           const tasksWithSelection =
             refreshedSelected?.state === "OPEN" && !selectedIsRecovery
             ? tasks.map((task) =>
-                task.id === refreshedSelected.id ? refreshedSelected : task,
+                task.id === refreshedSelected.id && !task.groupMembers ? refreshedSelected : task,
               )
             : tasks
           const recoveryTasksWithSelection =
@@ -915,12 +919,14 @@ export function createWorkspaceProjection({
     if (intent.type === "task-committed") {
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
+      await refreshTaskWindows(state.search.applied)
       realtimeController.refresh()
       return
     }
     if (intent.type === "task-created") {
       queryGenerations.taskCounts += 1
       projectTaskIntent(intent.task, false)
+      await refreshTaskWindows(state.search.applied)
       realtimeController.refresh()
       return
     }
@@ -985,6 +991,16 @@ export function createWorkspaceProjection({
     }
     if (intent.type === "set-task-category") {
       updateRail((rail) => ({ ...rail, taskCategory: intent.category }))
+      await refreshTaskWindows(state.search.applied)
+      return
+    }
+    if (intent.type === "set-task-filters") {
+      updateRail((rail) => ({ ...rail,
+        taskResponsibility: intent.responsibility ?? rail.taskResponsibility ?? "mine",
+        taskState: intent.state ?? rail.taskState ?? "OPEN",
+        knowledgeFlagged: intent.knowledgeFlagged ?? rail.knowledgeFlagged ?? false,
+      }))
+      await refreshTaskWindows(state.search.applied)
       return
     }
     if (intent.type === "remember-rail-scroll") {
@@ -1140,7 +1156,7 @@ export function createWorkspaceProjection({
         token,
         {
           ...(window === "tasks"
-            ? taskQueryRequest(state.scope, state.search.applied)
+            ? taskQueryRequest(state.scope, state.search.applied, state.rail)
             : recoveryTaskQueryRequest(state.scope, state.search.applied)),
           cursor: currentWindow.nextCursor,
           includeCounts: false,
@@ -1477,6 +1493,7 @@ export function createWorkspaceProjection({
         completion: { pendingTaskID: "", errorTaskID: "", error: "" },
       }
     })
+    if (state.tasks.items.some((item) => item.groupMembers) || state.rail.knowledgeFlagged) await refreshTaskWindows(state.search.applied)
     realtimeController.refresh()
   }
 
@@ -1581,32 +1598,12 @@ export function createWorkspaceProjection({
 
   function projectTaskIntent(task: Task, select: boolean) {
     detailGeneration += 1
-    const recovery = isRecoveryTask(task)
     patch((current) => {
-      const window = recovery ? current.recoveryTasks : current.tasks
-      const existed = window.items.some((item) => item.id === task.id)
       const selected = current.selection.task?.id === task.id
-      const counts = adjustTaskCountsForProjection(
-        current.tasks.counts,
-        task,
-        existed,
-      )
+      // Detail commands do not prove membership in the active filtered query.
       return {
         ...current,
         search: select ? { ...current.search, input: "" } : current.search,
-        tasks: recovery
-          ? { ...current.tasks, counts }
-          : {
-              ...current.tasks,
-              items: projectCommittedTask(current.tasks.items, task),
-              counts,
-            },
-        recoveryTasks: recovery
-          ? {
-              ...current.recoveryTasks,
-              items: projectCommittedTask(current.recoveryTasks.items, task),
-            }
-          : current.recoveryTasks,
         selection:
           select || selected
             ? {
@@ -1827,7 +1824,7 @@ export function createWorkspaceProjection({
     }))
     const result = await authenticatedRequest(async (token, signal) => {
       const [tasks, recoveryTasks] = await Promise.all([
-        authority.tasks(token, taskQueryRequest(scope, search), signal),
+        authority.tasks(token, taskQueryRequest(scope, search, state.rail), signal),
         authority.tasks(
           token,
           recoveryTaskQueryRequest(scope, search),
@@ -2085,6 +2082,7 @@ const railSections: WorkspaceRailSection[] = [
 const taskCategories: TaskCategoryFilter[] = [
   "all",
   "billing",
+  "insurance", "pre_op", "post_op",
   "appointments",
   "documentation",
   "optical",
@@ -2135,6 +2133,9 @@ function restoreRailPreferences(
               ),
           )
         : [],
+      ...(value.taskResponsibility === "mine" || value.taskResponsibility === "all" ? {taskResponsibility:value.taskResponsibility} : {}),
+      ...(value.taskState === "OPEN" || value.taskState === "COMPLETED" ? {taskState:value.taskState} : {}),
+      ...(typeof value.knowledgeFlagged === "boolean" ? {knowledgeFlagged:value.knowledgeFlagged} : {}),
       taskCategory: taskCategories.includes(
         value.taskCategory as TaskCategoryFilter,
       )
@@ -2181,13 +2182,18 @@ function restoreAuthorizedScope(
 function taskQueryRequest(
   scope: WorkspaceScope,
   search: string,
+  rail?: WorkspaceRailState,
 ): TaskQueryRequest {
   return {
     practiceId: scope.practiceID,
     ...(scope.locationScopeID ? { locationId: scope.locationScopeID } : {}),
-    state: "OPEN",
+    state: rail?.taskState ?? "OPEN",
     ordering: "recent",
-    folder: "work",
+    ...((rail?.taskState ?? "OPEN") === "OPEN" && !rail?.knowledgeFlagged ? { folder: "work" as const } : {}),
+    responsibility: rail?.taskResponsibility ?? "mine",
+    knowledgeFlagged: rail?.knowledgeFlagged ?? false,
+    grouped: true,
+    ...(rail?.taskCategory && rail.taskCategory !== "all" ? { category: rail.taskCategory } : {}),
     includeCounts: true,
     ...(search ? { search } : {}),
     limit: 50,
@@ -2201,6 +2207,8 @@ function recoveryTaskQueryRequest(
   return {
     ...taskQueryRequest(scope, search),
     folder: "missed_calls",
+    responsibility: "all",
+    grouped: false,
     includeCounts: false,
   }
 }
@@ -2248,6 +2256,10 @@ function isRecoveryTask(task: Task) {
 }
 
 function projectCommittedTask(tasks: Task[], committed: Task) {
+  // A detail/command response is one Task, not a replacement group snapshot.
+  // Keep grouped rows until the authorized list query refreshes their membership.
+  if (tasks.some((task) => task.groupMembers)) return tasks
+
   if (committed.state !== "OPEN") {
     return tasks.filter((task) => task.id !== committed.id)
   }
@@ -2267,30 +2279,7 @@ function decrementTaskCounts(counts: TaskFolderCounts, committed: Task) {
     tasks: Math.max(0, counts.tasks - 1),
     categories: {
       ...counts.categories,
-      [category]: Math.max(0, counts.categories[category] - 1),
-    },
-  }
-}
-
-function adjustTaskCountsForProjection(
-  counts: TaskFolderCounts,
-  task: Task,
-  existed: boolean,
-) {
-  if (task.state === "COMPLETED") {
-    return existed ? decrementTaskCounts(counts, task) : counts
-  }
-  if (existed) return counts
-  if (isRecoveryTask(task)) {
-    return { ...counts, missedCalls: counts.missedCalls + 1 }
-  }
-  const category = task.category ?? "other"
-  return {
-    ...counts,
-    tasks: counts.tasks + 1,
-    categories: {
-      ...counts.categories,
-      [category]: counts.categories[category] + 1,
+      [category]: Math.max(0, (counts.categories[category] ?? 0) - 1),
     },
   }
 }

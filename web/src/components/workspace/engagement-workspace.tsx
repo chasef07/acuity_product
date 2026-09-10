@@ -778,6 +778,7 @@ function TimelineEntry({
         title={task.title}
         metadata={[
           taskActivityDetail(item.taskActivity, task),
+          item.taskActivity === "CATEGORY_CHANGED" ? `${String(item.taskActivityDetails?.oldCategory ?? "Uncategorized")} → ${String(item.taskActivityDetails?.newCategory ?? "Uncategorized")}` : "",
           task.locationId !== contextLocationID ? task.locationName : "",
           formatTime(item.occurredAt),
         ]}
@@ -1581,6 +1582,10 @@ function taskActivityDetail(
   switch (activity) {
     case "TASK_CREATED":
       return task.origin === "ABITA_AI" ? "Task created by AI" : "Task created"
+    case "CATEGORY_CHANGED":
+      return "Task group changed"
+    case "KNOWLEDGE_FEEDBACK_CHANGED":
+      return "Knowledge feedback updated"
     case "TITLE_CHANGED":
       return "Task title changed"
     case "TASK_COMPLETED":

@@ -32,6 +32,7 @@ func (m *Module) QueryTasks(
 	}
 	if m.database == nil || m.access == nil || command.PracticeID == "" ||
 		len(command.Search) > 500 ||
+		(command.Responsibility != "" && command.Responsibility != "mine" && command.Responsibility != "all") ||
 		(command.State != work.TaskOpen && command.State != work.TaskCompleted) ||
 		(command.Folder != "" &&
 			command.Folder != work.TaskFolderWork &&
@@ -59,7 +60,7 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, ErrInvalidInput
 	}
 
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("begin Task query: %w", err)
 	}
@@ -71,7 +72,7 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, err
 	}
 
-	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering),
+	rows, err := tx.Query(ctx, taskListSQL(command),
 		command.PracticeID,
 		locationIDs,
 		command.Search,
@@ -83,6 +84,7 @@ func (m *Module) QueryTasks(
 		limit+1,
 		command.Identity.Subject,
 		command.Folder,
+		command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged, command.Category,
 	)
 	if err != nil {
 		return work.TaskPage{}, fmt.Errorf("query Tasks: %w", err)
@@ -105,7 +107,7 @@ func (m *Module) QueryTasks(
 	if command.IncludeCounts == nil || *command.IncludeCounts {
 		value, err := queryTaskFolderCounts(
 			ctx, tx, command.PracticeID, locationIDs,
-			command.Search, normalizedDigits(command.Search), command.State,
+			command.Search, normalizedDigits(command.Search), command.State, command,
 		)
 		if err != nil {
 			return work.TaskPage{}, err
@@ -124,6 +126,16 @@ func (m *Module) QueryTasks(
 			return work.TaskPage{}, err
 		}
 	}
+	if command.Grouped && command.State == work.TaskOpen {
+		for i := range items {
+			members, err := readGroupMembers(ctx, tx, command.Identity.Subject, items[i])
+			if err != nil {
+				return work.TaskPage{}, err
+			}
+			items[i].GroupMembers = members
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return work.TaskPage{}, fmt.Errorf("commit Task query: %w", err)
 	}
@@ -193,6 +205,7 @@ const taskColumns = `
 		task.completed_at,
 		task.version,
 		task.updated_at,
+ task.knowledge_flagged, task.suggested_answer, task.knowledge_updated_by, task.knowledge_updated_at,
 		acknowledgement.state,
 		acknowledgement.safe_failure_code,
 		acknowledgement.message_id::text,
@@ -236,7 +249,7 @@ const taskQuerySelect = `
 		ON location.practice_id = task.practice_id
 		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
 	WHERE task.practice_id = $1
-		AND task.location_id = ANY($2::uuid[])
+		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
 		AND (
 			$3 = ''
 				OR strpos(lower(task.title), lower($3)) > 0
@@ -369,7 +382,7 @@ const phoneTaskActivityQuery = `
 	SELECT
 		activity.id::text,
 		activity.kind,
-		activity.occurred_at,` + taskColumns + `,
+		activity.occurred_at, activity.details,` + taskColumns + `,
 		COALESCE(task.message_thread_id::text, ''),
 		false,
 		0
@@ -430,6 +443,7 @@ func scanTaskProjection(scanner rowScanner, prefix ...any) (work.Task, error) {
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
+		&task.KnowledgeFlagged, &task.SuggestedAnswer, &task.KnowledgeUpdatedBy, &task.KnowledgeUpdatedAt,
 		&acknowledgementState,
 		&acknowledgementFailure,
 		&acknowledgementMessageID,
@@ -531,6 +545,7 @@ func queryTaskFolderCounts(
 	search string,
 	phoneDigits string,
 	state work.TaskState,
+	command QueryTasksCommand,
 ) (work.TaskFolderCounts, error) {
 	var counts work.TaskFolderCounts
 	err := tx.QueryRow(ctx, `
@@ -552,12 +567,12 @@ func queryTaskFolderCounts(
 						OR strpos(lower(COALESCE(task.category, '')), lower($3)) > 0
 						OR ($4 <> '' AND task.phone_digits LIKE '%' || $4 || '%')
 				)
-				AND task.state = $5
+				AND task.state = $5`+taskCountFilter()+`
 		), foldered AS (
 			SELECT
 				category,
 				CASE
-					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY')
+					WHEN origin IN ('MISSED_CALL_RECOVERY', 'VOICEMAIL_RECOVERY') AND NOT $8
 						THEN 'missed_calls'
 					ELSE 'tasks'
 				END AS folder
@@ -565,16 +580,26 @@ func queryTaskFolderCounts(
 		)
 		SELECT
 			count(*) FILTER (WHERE folder = 'tasks'),
-			count(*) FILTER (WHERE folder = 'missed_calls'),
+			(SELECT count(*) FROM work_tasks recovery JOIN access_locations recovery_location ON recovery_location.id=recovery.location_id
+ WHERE recovery.practice_id=$1 AND recovery.location_id=ANY($2::uuid[]) AND recovery.state='OPEN'
+ AND recovery.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')
+ AND ($3='' OR strpos(lower(recovery.title),lower($3))>0
+ OR strpos(lower(COALESCE(recovery.caller_name,'')),lower($3))>0
+ OR strpos(lower(recovery_location.name),lower($3))>0
+ OR strpos(lower(COALESCE(recovery.category,'')),lower($3))>0
+ OR ($4<>'' AND recovery.phone_digits LIKE '%'||$4||'%'))),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'billing'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'appointments'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'documentation'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'optical'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'medication'),
 			count(*) FILTER (WHERE folder = 'tasks' AND category = 'referrals'),
-			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other')
+			count(*) FILTER (WHERE folder = 'tasks' AND category = 'other'),
+ count(*) FILTER (WHERE folder='tasks' AND category='insurance'),
+ count(*) FILTER (WHERE folder='tasks' AND category='pre_op'),
+ count(*) FILTER (WHERE folder='tasks' AND category='post_op')
 		FROM foldered
-	`, practiceID, locationIDs, search, phoneDigits, state).Scan(
+	`, practiceID, locationIDs, search, phoneDigits, state, command.Responsibility, strings.ToLower(command.Identity.Email), command.KnowledgeFlagged, command.Category).Scan(
 		&counts.Tasks,
 		&counts.MissedCalls,
 		&counts.Categories.Billing,
@@ -584,6 +609,7 @@ func queryTaskFolderCounts(
 		&counts.Categories.Medication,
 		&counts.Categories.Referrals,
 		&counts.Categories.Other,
+		&counts.Categories.Insurance, &counts.Categories.PreOp, &counts.Categories.PostOp,
 	)
 	if err != nil {
 		return work.TaskFolderCounts{}, fmt.Errorf("count Task folders: %w", err)
@@ -677,4 +703,21 @@ func normalizedDigits(value string) string {
 		}
 	}
 	return digits.String()
+}
+
+// Responsibilities narrow a previously authorized scope; they never grant access.
+const taskResponsibilityFilter = `
+ AND (NOT $14::boolean OR task.knowledge_flagged)
+ AND ($15::text = '' OR task.category=$15)
+ AND ($12::text <> 'mine' OR task.category IS NULL
+ OR NOT EXISTS (SELECT 1 FROM work_responsibility_locations configured WHERE configured.practice_id=task.practice_id AND configured.location_id=task.location_id)
+ OR EXISTS (SELECT 1 FROM work_responsibilities responsibility
+ WHERE responsibility.practice_id=task.practice_id AND responsibility.location_id=task.location_id
+ AND responsibility.category=task.category AND responsibility.account_email=$13))`
+
+// Ordinary group/category filters must not make the separate recovery surface's
+// count disappear. In the knowledge view, flagged recovery is included in Tasks.
+func taskCountFilter() string {
+	filter := strings.NewReplacer("$12", "$6", "$13", "$7", "$14", "$8", "$15", "$9").Replace(taskResponsibilityFilter)
+	return " AND ((task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY') AND NOT $8) OR (" + strings.TrimPrefix(strings.TrimSpace(filter), "AND ") + "))"
 }

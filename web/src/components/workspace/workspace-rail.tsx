@@ -108,21 +108,12 @@ import {
 
 export type ConnectionState = WorkspaceConnectionState
 
+import { taskGroups } from "@/lib/task-groups"
+import { TaskGroupRow } from "./task-group-row"
+
 type AppointmentSection = AppointmentOutcomeFolder
 
-const taskCategoryOptions: Array<{
-  value: TaskCategoryFilter
-  label: string
-}> = [
-  { value: "all", label: "All types" },
-  { value: "billing", label: "Billing" },
-  { value: "appointments", label: "Appointments" },
-  { value: "documentation", label: "Documentation" },
-  { value: "optical", label: "Optical" },
-  { value: "medication", label: "Medication" },
-  { value: "referrals", label: "Referrals" },
-  { value: "other", label: "Other" },
-]
+const taskCategoryOptions: Array<{value:TaskCategoryFilter;label:string}> = [{value:"all",label:"All groups"},...taskGroups]
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
@@ -183,8 +174,8 @@ export function WorkspaceRail({
   const router = useRouter()
   const { setTheme, theme } = useTheme()
   const taskRows = useMemo(
-    () => newestFirst(filterTaskQueue(tasks), taskRelativeAt),
-    [tasks],
+    () => newestFirst(projection.rail.knowledgeFlagged ? tasks : filterTaskQueue(tasks), taskRelativeAt),
+    [tasks, projection.rail.knowledgeFlagged],
   )
   const filteredTasks = useMemo(
     () =>
@@ -325,30 +316,28 @@ export function WorkspaceRail({
               />
             }
           >
-            {filteredTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                active={task.id === selectedTaskID}
-                onSelect={() => onIntent({ type: "select-task", task })}
-                completionDisabled={Boolean(pendingTaskID)}
-                completionPending={pendingTaskID === task.id}
-                completionError={
-                  completionError?.taskID === task.id
-                    ? completionError.message
-                    : ""
-                }
-                onComplete={() => onIntent({ type: "complete-task", task })}
-              />
+            <div className="space-y-2 px-2 pb-3 text-xs">
+              <div className="flex gap-2">
+                <button aria-pressed={(projection.rail.taskResponsibility ?? "mine") === "mine"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"mine"})}>My groups</button>
+                <button aria-pressed={projection.rail.taskResponsibility === "all"} className="rounded border px-2 py-1 aria-pressed:bg-sidebar-accent" onClick={() => onIntent({type:"set-task-filters",responsibility:"all"})}>All tasks</button>
+              </div>
+              <label>Status <select aria-label="Task status" value={projection.rail.taskState ?? "OPEN"} onChange={(event) => onIntent({type:"set-task-filters",state:event.target.value as "OPEN"|"COMPLETED"})} className="rounded border bg-sidebar p-1"><option value="OPEN">Open</option><option value="COMPLETED">Completed</option></select></label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={projection.rail.knowledgeFlagged ?? false} onChange={(event) => onIntent({type:"set-task-filters",knowledgeFlagged:event.target.checked})} />Knowledge flagged</label>
+              <p className="text-muted-foreground">{selectedTaskCount} matching Tasks · {filteredTasks.length} rows loaded</p>
+            </div>
+            {filteredTasks.map((task) => (task.groupMembers?.length ?? 0) > 1 ? (
+              <TaskGroupRow key={task.id} task={task} onSelect={(selected) => onIntent({type:"select-task",task:selected})} onUpdated={(updated) => onIntent({type:"task-committed",task:updated})} />
+            ) : (
+              <TaskRow key={task.id} task={task} active={task.id===selectedTaskID} onSelect={() => onIntent({type:"select-task",task})} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID===task.id} completionError={completionError?.taskID===task.id ? completionError.message : ""} onComplete={() => onIntent({type:"complete-task",task})} />
             ))}
             {loading && filteredTasks.length === 0 && (
               <RailLoading inMenu label="Loading tasks" />
             )}
             {!loading && selectedTaskCount === 0 && (
               <RailEmpty inMenu>
-                {taskCategory === "all"
-                  ? "No open Tasks"
-                  : "No Tasks of this type"}
+                {(projection.rail.taskResponsibility ?? "mine") === "mine"
+                  ? "No Tasks match your responsibilities and filters. Use All tasks to help another group."
+                  : "No Tasks match these filters"}
               </RailEmpty>
             )}
             {taskError && (
@@ -358,11 +347,7 @@ export function WorkspaceRail({
               />
             )}
             <RailShowMore
-              cursor={taskFolderCursor(
-                nextCursor,
-                filteredTasks.length,
-                selectedTaskCount,
-              )}
+              cursor={nextCursor}
               loading={loading}
               onLoadMore={() =>
                 onIntent({ type: "load-more", window: "tasks" })
@@ -953,7 +938,7 @@ function TaskRow({
               render={
                 <button
                   type="button"
-                  aria-label={`Complete Task: ${task.title}`}
+                  aria-label={`Resolve Task: ${task.title}`}
                   aria-busy={completionPending || undefined}
                   disabled={completionDisabled}
                   className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 outline-hidden transition-[color,background-color,opacity] duration-150 hover:bg-sidebar-accent hover:text-success focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-within/task:pointer-events-auto group-focus-within/task:opacity-100 disabled:pointer-events-none motion-reduce:duration-0 motion-reduce:transition-none"
@@ -970,7 +955,7 @@ function TaskRow({
                 <CheckIcon aria-hidden="true" className="size-4" />
               )}
             </TooltipTrigger>
-            <TooltipContent side="right">Complete Task</TooltipContent>
+            <TooltipContent side="right">Resolve Task</TooltipContent>
           </Tooltip>
         )}
       </span>

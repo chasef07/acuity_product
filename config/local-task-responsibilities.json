@@ -1,0 +1,10 @@
+{
+  "PracticeKey": "abita-eye-group",
+  "Locations": [{
+    "LocationKey": "fixture-location-1",
+    "Members": [
+      {"Email":"selected@abita.test","Category":"optical","Role":"primary"},
+      {"Email":"secondary@abita.test","Category":"medication","Role":"primary"}
+    ]
+  }]
+}
