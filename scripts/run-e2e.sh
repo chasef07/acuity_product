@@ -260,19 +260,6 @@ require_running provider-ingress "$provider_pid"
 require_running worker "$worker_pid"
 require_running telnyx-fixture "$telnyx_pid"
 
-if [ "${E2E_SERVE:-false}" = "true" ]; then
-  cd "$root"
-  DATABASE_URL="$E2E_DATABASE_URL" go run ./backend/cmd/task-maintenance \
-    --mode responsibilities --input config/local-task-responsibilities.json \
-    --output "$runtime_dir/task-responsibilities.json"
-  node scripts/seed-local-tasks.mjs
-  echo "Local Tasks ready: http://127.0.0.1:13000/api/test/session"
-  echo "Optical: selected@abita.test; Clinical: secondary@abita.test. Use All tasks for all authorized work."
-  echo "Ctrl-C stops this synthetic local stack."
-  wait "$web_pid"
-  exit 0
-fi
-
 cd "$root/web"
 E2E_PROVISIONING_OUTPUT="$runtime_dir/provisioned.json" \
 E2E_BASE_URL=http://127.0.0.1:13000 \

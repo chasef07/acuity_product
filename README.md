@@ -181,19 +181,14 @@ live Google or Telnyx credentials, and it does not prove real sign-in, carrier
 delivery, or live-call media behavior. It is a test runner, not a persistent
 development server.
 
-### Local responsibility-group testing
-
-Run the real synthetic stack with `E2E_DATABASE_URL=... ./scripts/run-local-tasks.sh`
-using a disposable `_e2e` database, then open
-[local Tasks sign-in](http://127.0.0.1:13000/api/test/session).
-See [Task groups local testing](docs/ops/task-groups-local-testing.md) for
-staff views, group actions, provisioning gaps, and reviewed maintenance commands.
+Task responsibility provisioning, reviewed reclassification, and validation are
+documented in [Task responsibility groups](docs/ops/task-responsibility-groups.md).
 
 ### Interactive development
 
 For a persistent local environment, run `migrate` once, then start `portal-api`,
-`provider-ingress`, `realtime`, and `worker` as separate processes. For a synthetic persistent stack, use the launcher above. For other local
-configuration, use the role configuration in
+`provider-ingress`, `realtime`, and `worker` as separate processes. There is no
+single persistent-stack launcher; use the role configuration in
 [`scripts/run-e2e.sh`](scripts/run-e2e.sh) as the synthetic reference and
 [`backend/internal/app/config.go`](backend/internal/app/config.go) for the
 required environment variables. The Go process reads exported environment

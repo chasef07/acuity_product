@@ -3,40 +3,14 @@
 This is the real portal implementation. Local evidence does not establish a
 production rollout, provider outcome, or independently verified patient resolution.
 
-## Run locally
+## Normal portal development
 
-From this worktree, with local PostgreSQL running:
-
-```sh
-createdb acuity_298_local_e2e
-pnpm --dir web install --frozen-lockfile
-pnpm --dir web exec playwright install chromium
-E2E_DATABASE_URL='postgres:///acuity_298_local_e2e?sslmode=disable' ./scripts/run-local-tasks.sh
-```
-
-The database must end in `_e2e`; the launcher resets it on each run. It builds
-and starts the real frontend and all backend roles with a local provider fixture.
-Ports 13000, 18080–18082, and 19000 must be free. Keep the terminal running;
-Ctrl-C stops the stack.
-
-Open [local Tasks sign-in](http://127.0.0.1:13000/api/test/session).
-Choose Optical staff or Clinical staff. These are existing synthetic Access
-Grants; the local launcher provisions responsibilities without widening access.
-The test sign-in page is absent when `AUTH_ALLOW_TEST_SESSION` is disabled.
-
-1. Expand Tasks in the sidebar. My groups defaults to the selected staff's
-   responsibilities. Switch to All tasks to see all work in their existing scope.
-2. Expand the Optical number group. Every request, caller context, source call,
-   message, and original creation time remains separate.
-3. Move “Medication refill (move to Clinical)” to Clinical, medication & pharmacy.
-   Only that Task moves. Clinical staff sees it in My groups after server refresh.
-4. Flag a Task as a knowledge-base question, optionally suggest an answer, and
-   save feedback. This does not resolve or move the Task.
-5. Resolve one Task, or use Resolve group after reviewing the displayed members.
-   A changed membership/version requires refreshed review. Newly arriving work
-   is never silently included. The action records staff-marked completion.
-6. Switch status to Completed and use Knowledge flagged to find retained feedback.
-   Open a completed Task and Reopen it to restore it to its current group.
+This feature is integrated into the existing `/workspace` layout: grouped rows
+under Tasks, central Interaction history, and the contextual Task detail card.
+Use the normal local development and Google sign-in configuration described in
+[README](../../README.md#interactive-development). There is no feature-specific
+role chooser or persistent demo launcher. The ordinary automated browser harness
+remains available for synthetic regression tests.
 
 ## Responsibility provisioning and rollout gaps
 
@@ -172,7 +146,7 @@ and production backfill remain unverified.
 | `pnpm --dir web test:unit` | 249 unit tests and 19 render tests pass. |
 | `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh` | Ran all 34 journeys: 30 passed initially. Fixed the grouped-detail projection bug and outdated Resolve selectors. |
 | `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh human-calling.spec.ts messaging-workspace.spec.ts task-groups.spec.ts` | All 10 affected journeys pass on a fresh database, including all four initial failures. |
-| `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh task-groups.spec.ts` | Final grouped journey passes after the filtered-detail projection fix. Builds the production frontend and real backend roles. |
+| `E2E_DATABASE_URL='postgres:///acuity_298_e2e?sslmode=disable' ./scripts/run-e2e.sh task-groups.spec.ts` | Final grouped journey passes after the filtered-detail projection fix and again after removing the demo launcher/role chooser. Builds the production frontend and real backend roles. |
 | `go generate ./backend/internal/api && pnpm --dir web api:generate` | Pass; repeated generation leaves identical Go/TypeScript file hashes. |
 | `AUTH_SCHEMA_CHECK_DATABASE_URL='postgres:///acuity_298_schema_check?sslmode=disable' ./scripts/check-auth-schema.sh` | Pass with a disposable schema-check database. |
 | `pnpm --dir web audit --prod` | No known vulnerabilities. |
@@ -187,14 +161,6 @@ failure was reproduced from an unchanged archive of starting commit `d1ad9ad`:
 TEST_DATABASE_URL='postgres://127.0.0.1/acuity_298_baseline_test?sslmode=disable' \
   go test ./backend/internal/postgres -run TestExecutorOwnsTransactionDeadlineAndRelease -count=1
 ```
-
-The local launcher also passed a two-browser-session check: Optical sees four
-Tasks in its group; Clinical initially sees one. Moving the misclassified member
-reduces Optical to three and updates Clinical to two through realtime refresh.
-All tasks retains authorized cross-team visibility. Moving it back restores the
-demonstration. Test sign-in and the expanded group screenshot were inspected.
-This check used the provisioned synthetic responsibility roster and local provider
-fixture; it did not contact a real patient or provider.
 
 ### Standards review
 
