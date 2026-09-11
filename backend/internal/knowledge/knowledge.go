@@ -281,25 +281,29 @@ func (m *Module) Search(ctx context.Context, identity access.ServiceIdentity, of
 	if model != Model || dimensions != Dimensions {
 		return empty, ErrUnavailable
 	}
-	rows, err := tx.Query(ctx, `SELECT section_id,title,text FROM knowledge_passages WHERE revision_id=$1 AND 1-(embedding <=> $2::vector)>=$3 ORDER BY embedding <=> $2::vector,section_id LIMIT $4`, revision, vectors[0], m.config.MinSimilarity, m.config.MaxPassages)
+	rows, err := tx.Query(ctx, hybridSearchSQL, revision, vectors[0], m.config.MinSimilarity, query)
 	if err != nil {
 		return empty, err
 	}
 	result := SearchResult{Outcome: "no_relevant_information", RevisionID: &revision, Passages: []Passage{}}
 	ids := []string{}
+	candidates := []searchCandidate{}
 	for rows.Next() {
-		p := Passage{RevisionID: revision}
-		if err = rows.Scan(&p.SectionID, &p.Title, &p.Text); err != nil {
+		p := searchCandidate{Passage: Passage{RevisionID: revision}}
+		if err = rows.Scan(&p.SectionID, &p.Title, &p.Text, &p.similarity, &p.lexical, &p.matchedTerms, &p.titleTerms, &p.queryCoverage); err != nil {
 			rows.Close()
 			return empty, err
 		}
-		result.Passages = append(result.Passages, p)
-		ids = append(ids, p.SectionID)
+		candidates = append(candidates, p)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return empty, err
+	}
+	result.Passages = selectPassages(relevantPassages(candidates), m.config.MaxPassages)
+	for _, p := range result.Passages {
+		ids = append(ids, p.SectionID)
 	}
 	if len(result.Passages) > 0 {
 		result.Outcome = "found"

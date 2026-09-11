@@ -1,0 +1,154 @@
+practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
+officeKey: "hollywood"
+entries:
+  - id: "after-hours"
+    title: "After Hours"
+    text: |-
+      Status: not-supplied
+      
+      No after-hours contact information is supplied for this office.
+  - id: "appointment-expectations"
+    title: "Appointment Expectations"
+    text: |-
+      Status: available
+      
+      The practice typically sends an email confirmation after scheduling an appointment.
+      
+      New patient visits may take 1–2 hours depending on testing. Eye dilation may occur and can cause temporary blurry vision and light sensitivity.
+  - id: "billing"
+    title: "Billing"
+    text: |-
+      Status: available
+      
+      Billing department number: (786) 446-8333. The billing department handles every billing-related question.
+  - id: "contact-lenses"
+    title: "Contact Lenses"
+    text: |-
+      Status: available
+      
+      If a patient wants contact lenses and already has a prescription, they can bring the prescription from their optometrist.
+      
+      If this is the patient's first set of contact lenses, the exam and insertion training take longer than a standard visit. First-time contact lens appointments must be scheduled before 3:00 PM Monday–Thursday and before 1:00 PM on Friday.
+  - id: "hours"
+    title: "Hours"
+    text: |-
+      Status: available
+      
+      Monday–Thursday 8:30 AM–4:30 PM. Closed for lunch 12:30 PM–1:30 PM. Friday 8:30 AM–2:30 PM.
+      
+      Holiday closure: Closed on Labor Day, Monday, September 7, 2026.
+      
+      Closed Saturday and Sunday.
+  - id: "insurance-and-referrals"
+    title: "Insurance and Referrals"
+    text: |-
+      Status: available
+      
+      For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
+      
+      Retina surgical care needs referral to a retina surgeon. A primary care provider or insurance company can provide an appropriate referral when the patient does not have a retina surgeon.
+  - id: "location-and-contact"
+    title: "Location and Contact"
+    text: |-
+      Status: available
+      
+      Practice Name: Abita Eye Group Hollywood
+      Address: 4330 Sheridan St, Suite 102B, Hollywood, FL 33021
+      Other scheduling office: Abita Eye Group Sweetwater
+      Other scheduling office address: 12750 NW 17th St, #201, Miami, FL 33182
+      Administrative email for new-patient paperwork or requested documents: newpatient@abitaeye.com
+      Use this address only for new-patient paperwork or requested documents.
+      Phone: (954) 287-2010
+      Fax: (305) 723-1910
+  - id: "optical-and-glasses"
+    title: "Optical and Glasses"
+    text: |-
+      Status: available
+      
+      Hollywood stocks many major frame brands, including Ray-Ban, Nike, Gucci, Chloe, Montblanc, Puma, Cartier, Lindberg, Mykita, and YSL.
+      
+      Lens upgrades and treatments are available. The office offers all types of lenses, including upgrades and treatments.
+      
+      Eyeglass prescriptions are valid for up to 2 years, but a yearly eye exam is recommended to make sure the prescription is current.
+      
+      If a patient wants glasses and already has a prescription, they can bring the prescription from their optometrist and choose from the office's frame selection. Patients needing a prescription can obtain one through an optometrist appointment.
+      
+      Glasses are usually ready in less than 10 business days.
+      
+      Non-prescription sunglasses are available for purchase. If the patient wears prescription glasses, the office can customize prescription lenses into those frames. Most vision insurance plans do not cover non-prescription sunglasses. Sunglass brands include Maui Jim, Costa, Ray-Ban, Gucci, and many more.
+      
+      Katie is the licensed optician. She has over 5 years of eyecare experience and specializes in frames, lenses, and fittings.
+      
+      No appointment is needed to look at glasses or have current glasses adjusted. Sasha and Denise are in the office Monday–Thursday 8:30 AM–4:30 PM and Friday 8:30 AM–2:30 PM.
+      
+      Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
+  - id: "payments"
+    title: "Payments"
+    text: |-
+      Status: available
+      
+      Payment handling is owned by the billing department.
+  - id: "providers"
+    title: "Providers"
+    text: |-
+      Status: available
+      
+      Dr. Bach schedules cataract exams, including cataract evaluations, and cataract surgery at Hollywood.
+      
+      Astigmatism is a routine-vision visit with an optometrist (OD) for patients age 4 and older. Patients age 3 or younger with astigmatism should see Dr. Bach through medical scheduling.
+      
+      Doctors at the Hollywood location:
+      
+      - Dr. Calero
+      - Dr. Vidal
+      - Dr. Bach
+      - Dr. Farnan
+      
+      Medical scheduling:
+      
+      - Dr. Austin Bach
+      - Dr. Bach overflow
+      
+      Routine vision scheduling:
+      
+      - Dr. Kyler Farnan sees routine-vision patients age 5 and older.
+      - Dr. Lisbet Vidal sees routine-vision patients age 7 and older.
+      - Dr. Gisselle Calero sees routine-vision patients age 4 and older.
+  - id: "repairs-and-warranty"
+    title: "Repairs and Warranty"
+    text: |-
+      Status: available
+      
+      Katie can complete minor repairs in the office at no cost when possible. No appointment is needed to have current glasses adjusted.
+  - id: "scope-of-services"
+    title: "Scope of Services"
+    text: |-
+      Status: available
+      
+      Dr. Bach schedules cataract exams, including cataract evaluations, and cataract surgery at Hollywood.
+      
+      Astigmatism is a routine-vision visit with an optometrist (OD) for patients age 4 and older. Patients age 3 or younger with astigmatism should see Dr. Bach through medical scheduling.
+      
+      Hollywood schedules medical eye care and routine vision. Medical appointments cover current eye problems, symptoms, conditions, and ophthalmology care. Routine-vision appointments cover routine eye exams, eyeglass prescriptions, contact lens fittings, and insertion training when there is no active eye problem.
+      
+      Routine-vision age minimums follow the scheduler provider rules: Dr. Kyler Farnan sees routine-vision patients age 5 and older, Dr. Lisbet Vidal sees routine-vision patients age 7 and older, and Dr. Gisselle Calero sees routine-vision patients age 4 and older. Patients below the routine-vision providers' age minimums use pediatric ophthalmology with Dr. Bach.
+      
+      Hollywood does not perform retina surgical care. Retina surgical care requires a retina surgeon; the primary care provider or insurance company can provide a referral when the patient does not have one.
+  - id: "self-pay-pricing"
+    title: "Self-Pay Pricing"
+    text: |-
+      Status: available
+      
+      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150*.
+  - id: "social-follow-up"
+    title: "Social Follow-Up"
+    text: |-
+      Status: available
+      
+      Abita Eye Group is on Facebook and Instagram at @abitaeyegroup.
+  - id: "what-to-bring"
+    title: "What to Bring"
+    text: |-
+      Status: available
+      
+      Photo ID, insurance card, list of current medications, and previous eye records if available.

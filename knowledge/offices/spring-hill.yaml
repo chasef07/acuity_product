@@ -1,0 +1,148 @@
+practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
+officeKey: "spring-hill"
+entries:
+  - id: "after-hours"
+    title: "After-hours doctor contact"
+    text: |-
+      After-hours doctor: 727-379-4923.
+  - id: "billing"
+    title: "Billing"
+    text: |-
+      Billing department number: (786) 446-8333. The billing department handles every billing-related question.
+  - id: "contact-lenses"
+    title: "Contact Lenses"
+    text: |-
+      Spring Hill offers contact lens prescriptions and fittings through its routine-vision scheduling lane when the caller is using accepted vision coverage or self-pay.
+  - id: "payments"
+    title: "Payments"
+    text: |-
+      Payment handling is owned by the billing department.
+  - id: "repairs-and-warranty"
+    title: "Repairs and Warranty"
+    text: |-
+      Patients should bring their glasses into the Spring Hill location. Staff will review and determine options in person.
+  - id: "self-pay-pricing"
+    title: "Self-Pay Pricing"
+    text: |-
+      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Routine vision exam with an optometrist: $100. Routine vision with contact lens fitting: $150*.
+  - id: "social-follow-up"
+    title: "Social Follow-Up"
+    text: |-
+      Status: not-supplied
+      
+      No social follow-up information is supplied for this office.
+  - id: "what-to-bring"
+    title: "What to Bring"
+    text: |-
+      Photo ID, insurance card, list of current medications, previous eye records (if available).
+  - id: "appointment-confirmation"
+    title: "Appointment confirmation email"
+    text: |-
+      The practice typically sends an email confirmation after scheduling an appointment.
+  - id: "new-patient-visit"
+    title: "New patient visit duration and dilation"
+    text: |-
+      New patient visits may take 1–2 hours. Eye dilation may occur, causing temporary blurry vision and light sensitivity.
+  - id: "hours"
+    title: "Office opening hours"
+    text: |-
+      Monday–Friday 8:30 AM–4:30 PM. Closed Saturday and Sunday.
+  - id: "labor-day-2026"
+    title: "Labor Day 2026 closure"
+    text: |-
+      Holiday closure: Closed on Labor Day, Monday, September 7, 2026.
+  - id: "retinal-photo-coverage"
+    title: "Routine vision retinal photo coverage"
+    text: |-
+      For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
+  - id: "referral-requirements"
+    title: "Referral requirements"
+    text: |-
+      Referral requirements are not supplied.
+  - id: "frame-brands"
+    title: "Glasses frame brands"
+    text: |-
+      Spring Hill stocks frames from YSL, Ferragamo, Gucci, Ray-Ban, Nike, Bebe, Anne Klein, Vivid, Lacoste, and Puma.
+  - id: "glasses-turnaround"
+    title: "Lens upgrades and glasses turnaround"
+    text: |-
+      Lens upgrades are available. Glasses usually take about 10 business days to come in.
+  - id: "eyeglass-prescription-validity"
+    title: "Eyeglass prescription validity"
+    text: |-
+      Eyeglass prescriptions are valid for 2 years, but a yearly eye exam is recommended.
+  - id: "outside-prescriptions"
+    title: "Outside eyeglass prescriptions"
+    text: |-
+      Patients can bring an outside prescription to Spring Hill to shop for glasses.
+  - id: "sunglasses"
+    title: "Prescription and non-prescription sunglasses"
+    text: |-
+      Non-prescription sunglasses are sold in office. They can be made prescription, but vision insurance generally does not cover non-prescription sunglasses.
+  - id: "optician-hours"
+    title: "Optician Sherry and optical hours"
+    text: |-
+      Sherry is the licensed optician. She has 20+ years of experience and is in the office Tuesday–Friday, 9:30 AM–4:30 PM.
+  - id: "optical-walk-ins"
+    title: "Optical walk-ins and minor repairs"
+    text: |-
+      No appointment is needed for browsing frames, adjustments, or free minor repairs.
+  - id: "cataract-provider"
+    title: "Cataract visits and evaluations"
+    text: |-
+      Dr. Licht is the only provider for all cataract visits at Spring Hill, including cataract evaluations. Dr. Bach and Dr. Noel do not see cataract patients.
+  - id: "dr-bach"
+    title: "Dr. Bach specialties and limited schedule"
+    text: |-
+      **Dr. Bach** (NPI: 16-59706588) — Pediatrics, Adult Strabismus, Double Vision. Limited schedule — only at Spring Hill a couple times per month. Availability may be several weeks out.
+  - id: "dr-noel"
+    title: "Dr. Noel specialties"
+    text: |-
+      **Dr. Noel** (NPI: 16-59998482) — Comprehensive Ophthalmology, Retina, Uveitis, Glaucoma.
+  - id: "dr-licht"
+    title: "Dr. Licht specialties and name recognition"
+    text: |-
+      **Dr. Licht** (NPI: 14-97147680) — Comprehensive Ophthalmology, Oculoplastic (Eyelid Surgery), Glaucoma.
+      - STT often misrecognizes as: "Lee", "Licked", "Lit", "Lisht", "Lich", "Lish", "Liked".
+  - id: "additional-providers"
+    title: "Additional Spring Hill providers"
+    text: |-
+      Additional providers at the Spring Hill location include Dr. Otero, Dr. Farnan, and Dr. Amarawardana.
+  - id: "current-address"
+    title: "Current office address and directions"
+    text: |-
+      Practice Name: Abita Eye Group
+      Address: 10495 SpringHill Drive, Springhill, FL 34608
+  - id: "paperwork-email"
+    title: "Email for new-patient paperwork and requested documents"
+    text: |-
+      Administrative email for new-patient paperwork or requested documents: newpatient@abitaeye.com
+      Use this address only for new-patient paperwork or requested documents.
+  - id: "fax"
+    title: "Office fax"
+    text: |-
+      Fax: (305)-675-3370
+  - id: "crystal-river-location"
+    title: "Crystal River office address and provider"
+    text: |-
+      **Other Location:** We also have an office in Crystal River — Eye Radiance, 1100 N Lyle Avenue, Crystal River, FL 34429. That location only sees Dr. Licht (Tuesday–Thursday, 12–5 PM).
+  - id: "lutz-move-history"
+    title: "Former Lutz address and move to Spring Hill"
+    text: |-
+      Move history: Abita Eye Group moved to Spring Hill from 1930 Land O Lakes Boulevard, Suite 5, Lutz, FL 33549 on 2026-02-06. Some callers may still ask about the Lutz address.
+  - id: "medical-services"
+    title: "Medical and surgical eye services"
+    text: |-
+      Spring Hill sees medical and surgical eye conditions: cataract evaluation, glaucoma evaluation, retina care, uveitis care, pediatric ophthalmology, adult strabismus (eye misalignment), double vision evaluation, and oculoplastic (eyelid) procedures.
+  - id: "routine-vision-and-children"
+    title: "Routine vision coverage and pediatric age restrictions"
+    text: |-
+      Spring Hill also has a routine-vision scheduling lane for routine eye exams and glasses prescriptions when the caller is using accepted vision coverage or self-pay. Routine optometry is age 7+. Children under 7 are not scheduled for routine vision or optical. Their visit is medical, with Dr. Bach on days he is in the Spring Hill office.
+  - id: "retina-care"
+    title: "Retina care and surgery restriction"
+    text: |-
+      Retina care is available at Spring Hill, but retina surgery is not performed at the office.
+  - id: "medical-drive-closure"
+    title: "Medical Drive"
+    text: |-
+      The former Abita Eye location on Medical Drive (Medical Dr) is permanently closed. Do not direct patients there or offer to book or move appointments there. If a patient mentions Medical Drive or says they were given that address, explain that it is permanently closed. Verify the patient’s actual appointment location before giving appointment-specific directions.

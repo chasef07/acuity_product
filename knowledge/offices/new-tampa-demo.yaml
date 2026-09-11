@@ -1,0 +1,105 @@
+practiceId: "6b8e7d2c-1d5b-48d5-bc01-983c92a85495"
+officeKey: "new-tampa-demo"
+entries:
+  - id: "after-hours"
+    title: "After Hours"
+    text: |-
+      Status: available
+      
+      This line is a demonstration. The after-hours rehearsal contact is 954-609-7348, not a verified physician line. The demo notification is simulated: no real SMS is sent and no physician is contacted. The public office number is not a verified direct on-call number.
+  - id: "appointment-expectations"
+    title: "Appointment Expectations"
+    text: |-
+      Status: not-supplied
+      
+      Visit duration, dilation, location, and provider schedules need appointment-specific confirmation. The shared demo calendar does not establish the practice's real availability.
+  - id: "billing"
+    title: "Billing"
+    text: |-
+      Status: available
+      
+      All departments are reached through the public office number, (813) 994-7000. Demo billing questions can be handled through a staff task or demo transfer. Balances, reimbursement, and any separate billing number require staff confirmation.
+  - id: "contact-lenses"
+    title: "Contact Lenses"
+    text: |-
+      Status: not-supplied
+      
+      Routine contact lens appointment requests use the routine vision demo lane. Specific fitting services, eligibility, and fees need staff confirmation.
+  - id: "hours"
+    title: "Hours"
+    text: |-
+      Status: not-supplied
+      
+      Verified office hours and provider location schedules are not supplied.
+  - id: "insurance-and-referrals"
+    title: "Insurance and Referrals"
+    text: |-
+      Status: available
+      
+      The site says the practice accepts most medical health insurance but supplies no verified plan-by-plan contract list. The medical and routine vision insurance files are demonstration fixtures adapted from the existing ophthalmology demo, not actual New Tampa contracts. Any insurance participation match is a demo result. Medical coverage and vision benefits are distinct. Eligibility, provider network, service coverage, referrals, authorizations, copays, deductibles, and payment require verification.
+  - id: "location-and-contact"
+    title: "Location and Contact"
+    text: |-
+      Status: available
+      
+      New Tampa Eye Institute has two locations: Wesley Chapel, 27356 Cashford Cir, Wesley Chapel, FL 33544; and Dade City, 13930 7th Street, Dade City, FL 33525. Public office phone for all departments: (813) 994-7000. This demonstration is reached at (320) 738-8132. The public number is general office contact, not a verified direct on-call physician number.
+  - id: "optical-and-glasses"
+    title: "Optical and Glasses"
+    text: |-
+      Status: available
+      
+      The practice links to its optical service. Frame brands, readiness, turnaround times, prices, and walk-in policies are unverified. Order status and specific optical policies require staff confirmation.
+  - id: "payments"
+    title: "Payments"
+    text: |-
+      Status: available
+      
+      The public site has an online payment link. Billing staff can help with payment questions.
+  - id: "providers"
+    title: "Providers"
+    text: |-
+      Status: available
+      
+      - Doctor Gretta Fridman, M.D.: glaucoma and cataract specialist.
+      - Doctor Laurie Small, M.D.: oculoplastics specialist; eyelid concerns.
+      - Doctor Scott Friedman, M.D.: retina specialist; retinal conditions such as macular degeneration or diabetic retinopathy.
+      - Doctor Hirah Khan, M.D.: glaucoma specialist.
+      - Doctor Bradley Smur, O.D.: optometrist providing primary eye care and comprehensive eye exams. The website also spells his surname Smurr in the biography.
+      
+      Gretta Fridman and Scott Friedman are different physicians with similar-sounding surnames. For this v1 demo, routine exams route to Doctor Bradley Smur. Doctor Scott Friedman specializes in retina care; Doctor Bradley Smur handles glasses prescriptions and routine exams. Availability, provider location, and individual clinical suitability require tool or staff confirmation.
+  - id: "repairs-and-warranty"
+    title: "Repairs and Warranty"
+    text: |-
+      Status: not-supplied
+      
+      Repair and warranty policies are unverified. Staff must confirm options and costs.
+  - id: "scope-of-services"
+    title: "Scope of Services"
+    text: |-
+      Status: available
+      
+      Public services include comprehensive eye exams, cataracts, glaucoma, macular degeneration, diabetic retinopathy, dry eye, oculoplastics, tearing and eyelid dysfunction, and cosmetic treatments. Routine vision and optical questions should be distinguished from medical disease care.
+  - id: "self-pay-pricing"
+    title: "Self-Pay Pricing"
+    text: |-
+      Status: not-supplied
+      
+      No verified prices are supplied. Staff must confirm costs.
+  - id: "social-follow-up"
+    title: "Social Follow-Up"
+    text: |-
+      Status: not-supplied
+      
+      No specific social follow-up workflow is configured for this demo.
+  - id: "source-and-demo-limitations"
+    title: "Source and Demo Limitations"
+    text: |-
+      Status: available
+      
+      Public facts checked September 6, 2026: https://newtampaeyes.com/ ; https://newtampaeyes.com/about-us/ ; https://newtampaeyes.com/contact-location/wesley-chapel/ ; https://newtampaeyes.com/contact-location/dade-city/ . Provider service routing is a simplified demo policy based on the public specialties and the requested routine-exam scenario, not a clinical protocol. This demo uses real practice identity with a shared demo calendar, demonstration insurance rules, a demo transfer destination, and simulated after-hours notification. It does not establish a live practice integration, clinical suitability, coverage, delivery, or a completed booking.
+  - id: "what-to-bring"
+    title: "What to Bring"
+    text: |-
+      Status: not-supplied
+      
+      Practice-specific preparation requirements are unverified. Staff can confirm what is needed for the actual visit.

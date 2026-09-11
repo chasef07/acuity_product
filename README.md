@@ -105,6 +105,10 @@ provider, storage, and worker adapters connect to the owning modules.
 Knowledge uses Access for Practice and office authorization, a Google Vertex AI
 adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
 Embedding requests run outside database transactions; the Agent has read-only access.
+Reviewed office facts live in [`knowledge/offices/`](knowledge/offices/). The
+[Knowledge workflow](knowledge/README.md) validates edits and publishes complete
+office revisions from Git. Search combines semantic and text matching, preserving
+complete facts and restrictions while limiting the evidence returned to the Agent.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
 Go bindings and the TypeScript client are generated from it, not edited by hand.

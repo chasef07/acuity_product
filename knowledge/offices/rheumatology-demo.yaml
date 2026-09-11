@@ -1,0 +1,151 @@
+practiceId: "6b8e7d2c-1d5b-48d5-bc01-983c92a85495"
+officeKey: "rheumatology-demo"
+entries:
+  - id: "after-hours"
+    title: "After Hours"
+    text: |-
+      Status: not-supplied
+      
+      No after-hours contact information is supplied for this demo office.
+  - id: "appointment-expectations"
+    title: "Appointment Expectations"
+    text: |-
+      Status: available
+      
+      A first rheumatology visit usually includes a detailed medical and family history, medication review, symptom discussion, and physical examination. A clinician may order laboratory testing or imaging and schedule follow-up before confirming a diagnosis or treatment plan.
+      
+      Medication changes, injections, infusions, and other treatments follow clinician evaluation. Insurance authorization or additional testing may be required before treatment starts.
+      
+      The demo directly schedules rheumatology consultations and follow-ups. Staff handles infusion, injection, procedure, laboratory, imaging, referral, medication, and authorization coordination.
+  - id: "billing"
+    title: "Billing"
+    text: |-
+      Status: not-supplied
+      
+      Billing contact and account-resolution information are not supplied.
+  - id: "contact-lenses"
+    title: "Contact Lenses"
+    text: |-
+      Status: not-offered
+      
+      This demo rheumatology practice does not offer contact lens services.
+  - id: "hours"
+    title: "Hours"
+    text: |-
+      Status: available
+      
+      Monday through Thursday, 8:00 AM to 4:30 PM. Friday, 8:00 AM to 2:00 PM. Closed Saturday and Sunday.
+  - id: "insurance-and-referrals"
+    title: "Insurance and Referrals"
+    text: |-
+      Status: available
+      
+      Rheumatology visits may use medical insurance.
+      
+      Plan acceptance does not guarantee payment for a visit, laboratory test, imaging study, injection, infusion, procedure, or medication. Referrals, deductibles, prior authorizations, site-of-care rules, and specialty-drug coverage depend on the caller's plan and the ordered service.
+      
+      New patients should ask their health plan whether a primary-care referral is required. Staff review referral and record requirements before the visit.
+  - id: "location-and-contact"
+    title: "Location and Contact"
+    text: |-
+      Status: available
+      
+      Practice name: Juniper Ridge Rheumatology & Arthritis Care
+      
+      Demo address: 2410 Juniper Ridge Drive, Suite 210, Tampa, Florida 33607.
+      
+      Demo phone: (813) 555-0186.
+      
+      Demo email: hello@juniperridgerheum.example.
+  - id: "optical-and-glasses"
+    title: "Optical and Glasses"
+    text: |-
+      Status: not-offered
+      
+      This demo rheumatology practice does not offer optical or glasses services.
+  - id: "payments"
+    title: "Payments"
+    text: |-
+      Status: not-supplied
+      
+      Accepted payment methods are not supplied.
+  - id: "providers"
+    title: "Providers"
+    text: |-
+      Status: available
+      
+      Doctor Priya Shah is a fictional board-certified rheumatologist focused on inflammatory arthritis, lupus, connective-tissue disease, and osteoporosis.
+      
+      Doctor Marcus Lee is a fictional board-certified rheumatologist focused on rheumatoid arthritis, psoriatic arthritis, ankylosing spondylitis, gout, and diagnostic ultrasound.
+      
+      Elena Morales, PA-C, is a fictional rheumatology physician assistant who supports established-patient follow-up and medication-monitoring visits under physician supervision.
+      
+      Nurse Jordan Kim, RN, is a fictional infusion nurse who supports clinically approved infusion visits.
+  - id: "repairs-and-warranty"
+    title: "Repairs and Warranty"
+    text: |-
+      Status: not-offered
+      
+      This demo rheumatology practice does not offer optical repairs or warranty services.
+  - id: "scope-of-services"
+    title: "Scope of Services"
+    text: |-
+      Status: available
+      
+      Juniper Ridge evaluates and manages rheumatic and musculoskeletal conditions including rheumatoid arthritis, osteoarthritis, lupus, psoriatic arthritis, ankylosing spondylitis, gout, osteoporosis, vasculitis, myositis, scleroderma, Sjogren disease, fibromyalgia, bursitis, tendonitis, and persistent joint or muscle pain.
+      
+      Evaluation may include a detailed history, joint and musculoskeletal examination, laboratory testing, X-ray imaging, and diagnostic ultrasound when ordered by a clinician. One visit may begin an evaluation without producing a final diagnosis.
+      
+      Treatment is individualized and may include clinician-directed medication, physical or occupational therapy referrals, bracing, joint injections, and infusion therapy. Infusions, injections, and procedure visits require clinical review, any needed insurance authorization, and staff scheduling.
+      
+      The demo can book returned medical appointment slots for rheumatology care. Infusion, injection, imaging, laboratory, and procedure coordination is handled through a staff request.
+      
+      ### Medication Requests and Questions
+      
+      Practice staff reviews routine refill, pharmacy-change, prescription-status, and medication prior-authorization requests. A request does not guarantee prescription approval or completion.
+      
+      Clinical staff decides patient-specific questions about starting, stopping, holding, combining, or changing medication; doses; possible interactions; side effects; infections; pregnancy; vaccines; surgery; and procedure preparation.
+      
+      Clinical staff maintains and verifies each patient's current medication list and reviews patient-reported corrections.
+      
+      ### General Medication Education
+      
+      Disease-modifying antirheumatic drugs, often called DMARDs, are prescription treatments used to manage the underlying inflammatory disease rather than only relieve a symptom. Conventional DMARDs used in rheumatology include methotrexate, hydroxychloroquine, sulfasalazine, and leflunomide.
+      
+      Methotrexate is a conventional disease-modifying antirheumatic drug used for several inflammatory rheumatic conditions. Improvement may take several weeks, and regular laboratory monitoring is commonly required. A caller's exact dose, schedule, side effects, infection plan, pregnancy plan, and decision to hold or stop it belong to the prescribing clinician.
+      
+      Biologics target specific parts of the immune system involved in inflammation. Depending on the medication, they may be given by injection or infusion and may require infection screening, insurance authorization, and ongoing laboratory or clinical monitoring.
+      
+      Hydroxychloroquine is a conventional DMARD used for conditions such as lupus and rheumatoid arthritis. Prednisone is a corticosteroid that reduces inflammation. NSAIDs are anti-inflammatory medicines used for pain and inflammation. Personal suitability, dosing, combinations, monitoring, and medication changes belong to the clinician who knows the patient's health history.
+      
+      Some rheumatology treatment plans combine medicines from different classes, but the safe combination depends on the patient's diagnoses, other prescriptions, laboratory results, infection risk, allergies, pregnancy plans, and other health conditions. The caller's actual combination belongs to a clinician or pharmacist with the complete medication list.
+      
+      A clinician may consider holding a medication around an infection, surgery, procedure, vaccine, pregnancy, or a significant side effect. The exact medication and timing matter, and the caller's stop, hold, and restart instructions belong to the prescribing clinician.
+      
+      These facts are approved for general education rather than personal medication advice. Clinical staff handles what a patient personally can take, which medicines can be combined, and treatment changes.
+  - id: "self-pay-pricing"
+    title: "Self-Pay Pricing"
+    text: |-
+      Status: not-supplied
+      
+      Self-pay visit, imaging, injection, infusion, procedure, laboratory, and medication prices are not supplied.
+  - id: "social-follow-up"
+    title: "Social Follow-Up"
+    text: |-
+      Status: not-supplied
+      
+      No social follow-up information is supplied for this demo office.
+  - id: "source-and-demo-limitations"
+    title: "Source and Demo Limitations"
+    text: |-
+      Status: available
+      
+      Juniper Ridge Rheumatology & Arthritis Care is a fictional practice created for product demonstrations. The medication education in this corpus is general information, not patient-specific medication instructions or treatment recommendations.
+  - id: "what-to-bring"
+    title: "What to Bring"
+    text: |-
+      Status: available
+      
+      Bring photo identification, an insurance card, any required referral, completed forms, and a complete medication list covering prescriptions, over-the-counter medicines, vitamins, herbs, and supplements. Include medication allergies and the pharmacy used for prescriptions.
+      
+      Bring relevant primary-care or specialist notes, prior rheumatology records, recent laboratory results, imaging reports or discs, and a brief symptom history. Note which joints or body areas are affected, when symptoms began, and whether swelling, stiffness, rash, fever, fatigue, or other changes occur.
