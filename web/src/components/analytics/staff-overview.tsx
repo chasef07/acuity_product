@@ -215,7 +215,7 @@ export function StaffOverview({ report }: { report: StaffAnalytics }) {
             <ComposedChart
               data={report.daily}
               accessibilityLayer
-              margin={{ top: 20, right: 16, bottom: 8, left: 8 }}
+              margin={{ top: 20, right: 24, bottom: 8, left: 8 }}
             >
               <CartesianGrid
                 vertical={false}
