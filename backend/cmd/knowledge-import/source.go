@@ -78,9 +78,6 @@ func sourceCommand(source Source, commit, expected string) (knowledge.ImportComm
 }
 
 func runSource(path, commit, expected string, apply bool) error {
-	if apply && expected == "" {
-		return errors.New("--expected-revision is required when publishing (use none only for the first import)")
-	}
 	if !apply && commit == "" {
 		commit = "0000000000000000000000000000000000000000"
 	}
@@ -101,7 +98,7 @@ func runSource(path, commit, expected string, apply bool) error {
 			return err
 		}
 	}
-	return applyCommand(command, apply)
+	return applyPublication(command, apply, expected == "")
 }
 
 // Publication provenance must identify the exact reviewed bytes, not a caller claim.
