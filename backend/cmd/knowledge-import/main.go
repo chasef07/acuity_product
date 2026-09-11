@@ -24,7 +24,7 @@ func main() {
 	file := flag.String("file", "", "reviewed legacy office corpus JSON")
 	source := flag.String("source", "", "Git-versioned office knowledge YAML")
 	commit := flag.String("commit", "", "full Git commit SHA for source provenance")
-	expected := flag.String("expected-revision", "", "reviewed active revision UUID, or none for initial publication")
+	expected := flag.String("expected-revision", "", "optional expected active revision UUID (none for initial publication); defaults to observed active revision")
 	export := flag.Bool("export", false, "export the active office corpus as YAML")
 	practice := flag.String("practice", "", "Practice UUID for export")
 	office := flag.String("office", "", "Abita office key for export")
@@ -77,10 +77,10 @@ func run(path string, apply bool) error {
 	if err != nil {
 		return err
 	}
-	return applyCommand(command, apply)
+	return applyPublication(command, apply, false)
 }
 
-func applyCommand(command knowledge.ImportCommand, apply bool) error {
+func applyPublication(command knowledge.ImportCommand, apply, automatic bool) error {
 	if !apply {
 		command.ActorSubject = "validation-only"
 		if err := knowledge.ValidateImport(command); err != nil {
@@ -100,8 +100,12 @@ func applyCommand(command knowledge.ImportCommand, apply bool) error {
 		return err
 	}
 	defer pool.Close()
-	if err := pool.QueryRow(ctx, `SELECT user_subject FROM access_platform_operators WHERE email=$1 AND user_subject IS NOT NULL`, os.Getenv("KNOWLEDGE_OPERATOR_EMAIL")).Scan(&command.ActorSubject); err != nil {
-		return errors.New("import requires an existing bound Platform Operator")
+	command, unchanged, err := preparePublication(ctx, pool, command, os.Getenv("KNOWLEDGE_OPERATOR_EMAIL"), automatic)
+	if err != nil {
+		return err
+	}
+	if unchanged != nil {
+		return json.NewEncoder(os.Stdout).Encode(unchanged)
 	}
 	location := os.Getenv("KNOWLEDGE_GOOGLE_LOCATION")
 	if location == "" {
@@ -123,7 +127,12 @@ func applyCommand(command knowledge.ImportCommand, apply bool) error {
 	if err := pool.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2`, command.PracticeID, command.OfficeKey).Scan(&active); err != nil || active != revision.ID {
 		return errors.New("publication returned but active revision verification failed")
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": true, "activeRevisionVerified": true, "provenance": strings.TrimSpace(command.Provenance), "revision": revision, "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
+	return json.NewEncoder(os.Stdout).Encode(publicationReceipt{
+		Applied: true, ActiveRevisionVerified: true,
+		Revision: revision, Provenance: strings.TrimSpace(command.Provenance),
+		SourceGitCommit: strings.TrimPrefix(command.Provenance, "git:"),
+		PracticeID:      command.PracticeID, OfficeKey: command.OfficeKey, Sections: len(command.Sections),
+	})
 }
 
 func openPool(ctx context.Context) (*pgxpool.Pool, error) {

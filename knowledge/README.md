@@ -2,8 +2,8 @@
 
 `offices/*.yaml` is the reviewed source for each office's reusable, non-patient
 knowledge. PostgreSQL/pgvector holds published immutable revisions and generated
-embeddings. Editing Git does not immediately change the live agent: publication
-is a separate GitHub Actions run with a visible receipt.
+embeddings. Merging knowledge changes into `main` automatically publishes changed offices
+through GitHub Actions, with a visible receipt for every office.
 
 ```yaml
 practiceId: 11111111-1111-4111-8111-111111111111
@@ -37,27 +37,25 @@ AI call rewrites the facts.
    empty content, and entries exceeding the importer limits. Review the actual
    facts and preserve their conditions; structural validation is not fact-checking.
 2. Merge the reviewed PR into `main`.
-3. Read the office's current active revision with the export command below.
-   Inspect unexpected changes before publishing; do not blindly retry a conflict.
-4. In **Actions → Knowledge → Run workflow**, select `main`, the office filename
-   without `.yaml`, and the reviewed active revision UUID. Use `none` only when
-   there is no existing corpus for that office.
-5. Review the run's publication receipt. The importer generates embeddings,
-   activates all entries atomically, records `git:<full commit SHA>` provenance,
-   and verifies the active database pointer. Concurrent publication causes a
-   conflict. Retrying the same commit, content, and expected revision is replay-safe.
-6. If `evals/<office>.json` exists, the workflow automatically runs its synthetic
-   questions against the deployed knowledge API and requires the newly published
-   revision. Failed retrieval checks fail the workflow after publication; the
-   database update remains active for inspection and deliberate rollback. The
-   run preserves publication and retrieval JSON evidence as an artifact. An office
-   without a fixture has database verification only. Check the agent conversation
-   separately: API evidence does not prove the agent's spoken response.
+3. The **Knowledge** workflow validates all sources and automatically checks every
+   office against its active database revision. It publishes changed content and
+   skips unchanged offices without generating new embeddings or revisions.
+4. For a manual rerun, use **Actions → Knowledge → Run workflow** on `main`.
+   Leave `office` as `all` to process every office, or enter one office filename
+   without `.yaml`. No database revision input is needed.
+5. Review the per-office summary and publication receipts. The importer reads the
+   current revision automatically, then uses the existing atomic comparison to
+   reject a concurrent change. A rerun safely skips offices already up to date.
+6. If `evals/<office>.json` exists, the workflow runs its synthetic questions
+   against the deployed API, including for unchanged offices. Failed checks fail
+   the run but leave published revisions visible for inspection. Other offices
+   still run, so a partially failed run may have updated some offices. The artifact
+   records each office's publication and retrieval results. An office without a
+   fixture has database verification only; this does not prove spoken behavior.
 
 All entries in a file replace the complete office corpus. Removing an entry from
 Git removes it from the next published revision; prior revisions remain available
-as evidence. To roll back, revert the content in a new PR and publish with the
-then-current active revision. No agent deployment is needed for content-only edits.
+as evidence. To roll back, revert the content in a new PR and publish the reverted content. No agent deployment is needed for content-only edits.
 
 ## Operator commands
 
@@ -85,7 +83,7 @@ For an explicit operator publication, set `KNOWLEDGE_IMPORT_DATABASE_URL`,
 ```sh
 go run ./backend/cmd/knowledge-import \
   --source knowledge/offices/spring-hill.yaml \
-  --commit FULL_REVIEWED_GIT_SHA --expected-revision ACTIVE_REVISION_UUID --apply
+  --commit FULL_REVIEWED_GIT_SHA --apply
 ```
 
 The CLI rejects a source that differs from its bytes at the declared Git commit.
@@ -112,5 +110,7 @@ The publishing service account needs access to both configured secrets, Cloud SQ
 permission, and Vertex AI embedding permission. It uses short-lived Google
 credentials; database credentials stay in process memory and are never committed
 or printed. The instance must be reachable by Cloud SQL Auth Proxy from the
-runner. Publication is serialized and only permitted from `main` through manual
-dispatch; PR runs never authenticate to production.
+runner. Publication is serialized and only permitted from the current `main` commit,
+automatically after relevant merges or through manual dispatch. PR runs never
+authenticate to production. The backend must already support the published source
+and its retrieval checks; content publication does not deploy backend code.
