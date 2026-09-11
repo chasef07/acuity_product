@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -37,7 +36,8 @@ func preparePublication(ctx context.Context, pool *pgxpool.Pool, command knowled
 	if !automatic {
 		return command, nil, nil
 	}
-	var revisionJSON, sectionsJSON []byte
+	var revision *knowledge.Revision
+	var existing []knowledge.Section
 	var provenance string
 	err := pool.QueryRow(ctx, `SELECT
  CASE WHEN r.id IS NULL THEN 'null'::jsonb ELSE jsonb_build_object('id',r.id,'contentHash',r.content_hash,'model',r.embedding_model,'dimensions',r.embedding_dimensions,'createdAt',r.created_at) END,
@@ -46,20 +46,17 @@ func preparePublication(ctx context.Context, pool *pgxpool.Pool, command knowled
  FROM access_abita_office_locations route
  LEFT JOIN knowledge_corpora c ON c.practice_id=route.practice_id AND c.office_key=route.office_key
  LEFT JOIN knowledge_revisions r ON r.id=c.revision_id
- WHERE route.practice_id=$1 AND route.office_key=$2`, command.PracticeID, command.OfficeKey).Scan(&revisionJSON, &provenance, &sectionsJSON)
+ WHERE route.practice_id=$1 AND route.office_key=$2`, command.PracticeID, command.OfficeKey).Scan(&revision, &provenance, &existing)
 	if err != nil {
 		return command, nil, errors.New("could not read authorized office corpus snapshot")
 	}
-	var revision *knowledge.Revision
-	var existing []knowledge.Section
-	if err := json.Unmarshal(revisionJSON, &revision); err != nil {
-		return command, nil, err
-	}
-	if err := json.Unmarshal(sectionsJSON, &existing); err != nil {
-		return command, nil, err
-	}
 	if revision != nil && equalSections(existing, command.Sections) {
-		return command, &publicationReceipt{Unchanged: true, ActiveRevisionVerified: true, Revision: *revision, Provenance: provenance, SourceGitCommit: strings.TrimPrefix(command.Provenance, "git:"), PracticeID: command.PracticeID, OfficeKey: command.OfficeKey, Sections: len(existing)}, nil
+		return command, &publicationReceipt{
+			Unchanged: true, ActiveRevisionVerified: true,
+			Revision: *revision, Provenance: provenance,
+			SourceGitCommit: strings.TrimPrefix(command.Provenance, "git:"),
+			PracticeID:      command.PracticeID, OfficeKey: command.OfficeKey, Sections: len(existing),
+		}, nil
 	}
 	command.ExpectedRevisionID = ""
 	if revision != nil {

@@ -77,10 +77,6 @@ func run(path string, apply bool) error {
 	if err != nil {
 		return err
 	}
-	return applyCommand(command, apply)
-}
-
-func applyCommand(command knowledge.ImportCommand, apply bool) error {
 	return applyPublication(command, apply, false)
 }
 
@@ -131,7 +127,12 @@ func applyPublication(command knowledge.ImportCommand, apply, automatic bool) er
 	if err := pool.QueryRow(ctx, `SELECT revision_id::text FROM knowledge_corpora WHERE practice_id=$1 AND office_key=$2`, command.PracticeID, command.OfficeKey).Scan(&active); err != nil || active != revision.ID {
 		return errors.New("publication returned but active revision verification failed")
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": true, "unchanged": false, "sourceGitCommit": strings.TrimPrefix(command.Provenance, "git:"), "activeRevisionVerified": true, "provenance": strings.TrimSpace(command.Provenance), "revision": revision, "practiceId": command.PracticeID, "officeKey": command.OfficeKey, "sections": len(command.Sections)})
+	return json.NewEncoder(os.Stdout).Encode(publicationReceipt{
+		Applied: true, ActiveRevisionVerified: true,
+		Revision: revision, Provenance: strings.TrimSpace(command.Provenance),
+		SourceGitCommit: strings.TrimPrefix(command.Provenance, "git:"),
+		PracticeID:      command.PracticeID, OfficeKey: command.OfficeKey, Sections: len(command.Sections),
+	})
 }
 
 func openPool(ctx context.Context) (*pgxpool.Pool, error) {
