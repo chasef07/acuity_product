@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/chasef07/acuity_product/compare/v1.9.0...v1.10.0) (2026-09-11)
+
+
+### Features
+
+* **knowledge:** version office facts and fix analytics chart clipping ([#313](https://github.com/chasef07/acuity_product/issues/313)) ([b0206ba](https://github.com/chasef07/acuity_product/commit/b0206ba9b46426a5a5bdf0c5641eb48ff8869c69))
+
 ## [1.9.0](https://github.com/chasef07/acuity_product/compare/v1.8.0...v1.9.0) (2026-09-10)
 
 
