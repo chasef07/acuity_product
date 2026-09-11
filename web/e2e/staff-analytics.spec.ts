@@ -188,25 +188,31 @@ test("Staff analytics measures connected phone time and the 48-hour task goal", 
     expect(analyticsRequests).toBe(requestsBeforeSort)
     // Tick text must fit inside the SVG viewport, including its bottom row.
     await expect(async () => {
-      const clipped = await performance
+      const clippedLabels = await performance
         .locator('[data-slot="chart"]')
         .evaluate((chart) => {
           const bounds = chart.getBoundingClientRect()
           const labels = [...chart.querySelectorAll("svg text")]
-          return (
-            labels.length < 3 ||
-            labels.some((label) => {
-              const box = label.getBoundingClientRect()
-              return (
-                box.left < bounds.left - 0.25 ||
-                box.right > bounds.right + 0.25 ||
-                box.top < bounds.top - 0.25 ||
-                box.bottom > bounds.bottom + 0.25
-              )
-            })
-          )
+          if (labels.length < 3) {
+            return [{ error: `Expected chart labels, found ${labels.length}` }]
+          }
+          return labels.flatMap((label) => {
+            const box = label.getBoundingClientRect()
+            const clipped =
+              box.left < bounds.left - 0.25 ||
+              box.right > bounds.right + 0.25 ||
+              box.top < bounds.top - 0.25 ||
+              box.bottom > bounds.bottom + 0.25
+            return clipped
+              ? [{
+                  text: label.textContent,
+                  label: box.toJSON(),
+                  chart: bounds.toJSON(),
+                }]
+              : []
+          })
         })
-      expect(clipped).toBe(false)
+      expect(clippedLabels).toEqual([])
     }).toPass()
     await accounts.scrollIntoViewIfNeeded()
     await accounts.screenshot({

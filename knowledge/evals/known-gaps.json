@@ -1,0 +1,14 @@
+[
+  {
+    "id": "toddler-prescription",
+    "query": "Can I get my glasses prescription renewed for my toddler?",
+    "expectedOutcome": "found",
+    "expectedSectionIds": [
+      "routine-vision-and-children"
+    ],
+    "excludedSectionIds": [],
+    "maxResponseCharacters": 3000,
+    "status": "known-existing-retrieval-gap",
+    "evidence": "The original live API and focused corpus retrieval both omit the under-seven restriction for this implicit-age wording. This case is retained as a required improvement, outside the publication acceptance fixture; it is not a passing result."
+  }
+]
