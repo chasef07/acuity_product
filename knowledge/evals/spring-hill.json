@@ -38,7 +38,8 @@
     "excludedSectionIds": [],
     "maxResponseCharacters": 800,
     "allowedSectionIds": [
-      "medical-drive-closure"
+      "medical-drive-closure",
+      "current-address"
     ]
   },
   {

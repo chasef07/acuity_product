@@ -23,6 +23,13 @@ fact across entries. Existing large entries can be migrated gradually. Never put
 patient information, transcripts, secrets, or operator identities in these files.
 The Practice and Abita Office Route identify the authorized retrieval scope.
 
+Write the useful fact directly. Do not include `Status: available` labels,
+document-export boilerplate, or instructions explaining when to read the entry.
+Keep actual restrictions and explicit missing information in ordinary sentences.
+The Abita tool renders selected facts as plain text. Revision IDs and source IDs
+remain in the API/audit records, rather than the model's tool response. No extra
+AI call rewrites the facts.
+
 ## Editing and publishing
 
 1. Edit an office YAML file in a branch and open a PR. Knowledge CI validates all

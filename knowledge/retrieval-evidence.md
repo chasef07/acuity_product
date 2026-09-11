@@ -14,10 +14,10 @@ Characters below count returned evidence text, excluding titles and JSON.
 
 | Query | Original entries | Proposed entries | Original characters | Proposed characters |
 | --- | ---: | ---: | ---: | ---: |
-| Is the Medical Drive office open? | 4 | 1 | 498 | 365 |
-| Can I move my appointment to Medical Dr? | 4 | 1 | 465 | 365 |
+| Is the Medical Drive office open? | 4 | 1 | 498 | 139 |
+| Can I move my appointment to Medical Dr? | 4 | 1 | 465 | 139 |
 | What is your current address? | 4 | 1 | 1000 | 84 |
-| Is Medical Drive closed, and where is your current office? | 4 | 2 | 928 | 449 |
+| Is Medical Drive closed, and where is your current office? | 4 | 2 | 928 | 223 |
 | What are your hours? | 4 | 1 | 599 | 58 |
 | Who sees cataract patients? | 4 | 1 | 1869 | 154 |
 | Can I park my spaceship on the moon? | 0 | 0 | 0 | 0 |
@@ -29,9 +29,14 @@ closure/address and optician/adjustments questions remain present.
 
 ## Review cases and acceptance boundary
 
-All 18 English acceptance queries returned their intended entries without filler.
+After simplifying the closure entry to two factual sentences and removing status
+prefixes, the replay passes all 21 acceptance cases. The old Medical Drive
+directions question returns the closure plus the current address. Both are relevant
+to “Should I go there?”, so the fixture requires the closure and permits the current
+address; unrelated entries remain disallowed. The other 17 English cases return
+their intended entries without filler.
 Three additional review cases preserve required evidence using conservative
-bounded retrieval, giving 21 passing cases in `evals/spring-hill.json`:
+bounded retrieval:
 
 - Spanish Medical Drive closure plus current address: both required entries,
   plus two other entries. The original live API missed the closure and address.
@@ -47,6 +52,13 @@ One existing failure remains explicitly recorded in `evals/known-gaps.json`:
 restriction in both the original live API and the proposed retrieval. This is a
 known failure, not a passing test or a resolved patient workflow. Implicit-age
 interpretation needs further retrieval and agent/scheduling validation.
+
+The subsequent self-pay probe also demonstrates remaining excess content:
+“What is self pay for vision?” returns the entire six-price entry. The Spanish
+equivalent returns that English entry plus retinal-photo coverage, what-to-bring,
+and optical walk-in information. Plain-text rendering removes metadata but does
+not translate or compose a query-specific answer. These probes are outside the
+21-case passing set and must not be represented as solved by this change.
 
 ## Selection limits
 
