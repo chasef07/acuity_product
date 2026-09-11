@@ -4,38 +4,26 @@ entries:
   - id: "after-hours"
     title: "After Hours"
     text: |-
-      Status: available
-      
       The fictional after-hours line is (813) 555-0199.
   - id: "appointment-expectations"
     title: "Appointment Expectations"
     text: |-
-      Status: available
-      
       New-patient visits may take 1 to 2 hours. Eye dilation may occur and can cause temporary blurry vision and light sensitivity. Provider, location, visit length, and dilation remain subject to the booked appointment and clinical needs.
   - id: "billing"
     title: "Billing"
     text: |-
-      Status: available
-      
       The fictional billing department number is (813) 555-0182. Billing-related questions can be handled there or through a staff request when available. A balance, claim, refund, or payment issue remains unconfirmed until supported by system or staff evidence.
   - id: "contact-lenses"
     title: "Contact Lenses"
     text: |-
-      Status: available
-      
       Clearbrook offers contact-lens prescriptions and fittings through the routine-vision scheduling lane when the caller is using accepted vision coverage or self-pay.
   - id: "hours"
     title: "Hours"
     text: |-
-      Status: available
-      
       Monday through Friday, 8:30 AM to 4:30 PM Eastern Time. Closed Saturday and Sunday. Provider and optical schedules may differ.
   - id: "insurance-and-referrals"
     title: "Insurance and Referrals"
     text: |-
-      Status: available
-      
       The demo insurance files intentionally mirror the established ophthalmology coverage lists for demonstration. A successful participation match does not guarantee active eligibility, benefits, copays, deductibles, referral requirements, authorization, service coverage, provider network, or payment.
       
       For routine-vision patients, some plans do not cover retinal photography and the fictional demo charge is $39.
@@ -44,8 +32,6 @@ entries:
   - id: "location-and-contact"
     title: "Location and Contact"
     text: |-
-      Status: available
-      
       Clearbrook Eye Center is a fictional ophthalmology practice created for product demonstrations.
       
       Harbor Point Center: 1840 Harbor Point Drive, Suite 220, Tampa, Florida 33607. This is the primary demo location for comprehensive ophthalmology, retina, uveitis, glaucoma, pediatric ophthalmology, strabismus, oculoplastics, routine vision, and optical services.
@@ -60,8 +46,6 @@ entries:
   - id: "optical-and-glasses"
     title: "Optical and Glasses"
     text: |-
-      Status: available
-      
       Clearbrook's fictional optical department represents frames from YSL, Ferragamo, Gucci, Ray-Ban, Nike, Bebe, Anne Klein, Vivid, Lacoste, and Puma. Lens upgrades are available. Glasses usually take about 10 business days to arrive.
       
       Eyeglass prescriptions are valid for 2 years, while a yearly eye exam is recommended. Patients may bring an outside prescription to shop for glasses. A routine eye examination is available for patients without a valid prescription.
@@ -74,14 +58,10 @@ entries:
   - id: "payments"
     title: "Payments"
     text: |-
-      Status: available
-      
       Payment handling is owned by the billing department.
   - id: "providers"
     title: "Providers"
     text: |-
-      Status: available
-      
       All providers below are fictional demo providers:
       
       - Doctor Elena Marlowe: comprehensive ophthalmology, cataract evaluation, and glaucoma care at Harbor Point and Cypress Commons.
@@ -95,40 +75,28 @@ entries:
   - id: "repairs-and-warranty"
     title: "Repairs and Warranty"
     text: |-
-      Status: available
-      
       Patients should bring glasses to Harbor Point or Cypress Commons. Staff reviews the item and determines repair or warranty options in person. A specific repair, replacement, cost, or warranty outcome remains unconfirmed until staff inspects the glasses.
   - id: "scope-of-services"
     title: "Scope of Services"
     text: |-
-      Status: available
-      
       Clearbrook provides medical and surgical eye evaluations for cataracts, glaucoma, retina conditions, uveitis, pediatric ophthalmology, adult strabismus, double vision, and oculoplastic or eyelid concerns. Retina evaluations are available, while retina surgery is performed at an affiliated surgical facility rather than in the office.
       
       Clearbrook also provides routine eye examinations, glasses prescriptions, contact-lens prescriptions and fittings, and optical services. Routine optometry is represented for patients age 7 and older. Children under 7 needing routine vision care use the medical scheduling lane for pediatric ophthalmology.
   - id: "self-pay-pricing"
     title: "Self-Pay Pricing"
     text: |-
-      Status: available
-      
       New-patient medical visit with an optometrist: $150. Established-patient medical visit with an optometrist: $75. New-patient medical visit with an ophthalmologist: $250. Established-patient medical visit with an ophthalmologist: $125. Routine vision examination with an optometrist: $100. Routine vision with contact-lens fitting: $150.
       
       These are fictional demo prices.
   - id: "social-follow-up"
     title: "Social Follow-Up"
     text: |-
-      Status: not-supplied
-      
       No social-media accounts or public review links are supplied for this fictional demo.
   - id: "source-and-demo-limitations"
     title: "Source and Demo Limitations"
     text: |-
-      Status: available
-      
       Clearbrook Eye Center, its locations, providers, contact details, and prices are fictional and created only for product demonstrations.
   - id: "what-to-bring"
     title: "What to Bring"
     text: |-
-      Status: available
-      
       Bring photo identification, an insurance card when using insurance, a list of current medications, and previous eye records when available. Bring current glasses or contact-lens information when relevant.

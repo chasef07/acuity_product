@@ -28,8 +28,6 @@ entries:
   - id: "social-follow-up"
     title: "Social Follow-Up"
     text: |-
-      Status: not-supplied
-      
       No social follow-up information is supplied for this office.
   - id: "what-to-bring"
     title: "What to Bring"

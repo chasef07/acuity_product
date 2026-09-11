@@ -2,9 +2,9 @@
 
 Source: the active Google Cloud database export, revision `2ceface2-6675-40a8-ac8c-86d22f57c610`.
 
-The 15 source sections became 35 focused entries. Existing factual sentences, dates, prices, names, provider restrictions, age restrictions, and explicit missing-information statements are retained. The repeated cataract provider restriction is stored once. Spring Hill removes only the redundant `Status: available` prefix; the explicit `Status: not-supplied` statement remains. Medical Drive closure is the only newly supplied fact, authorized by the user.
+The 15 source sections became 35 focused entries. Existing factual sentences, dates, prices, names, provider restrictions, age restrictions, and explicit missing-information statements are retained. The repeated cataract provider restriction is stored once. All offices remove the redundant `Status:` prefixes. The actual missing-information statements remain unchanged. Medical Drive closure is the only newly supplied fact, authorized by the user.
 
-The seven other office files preserve their exported section IDs, titles, and text unchanged. Rheumatology demo retains its existing 3,795-character scope entry; it requires a separate reviewed content restructuring.
+The seven other office files preserve their exported section IDs and titles unchanged. Their text preserves every factual sentence and restriction, removing only the leading status label and its following blank line. Rheumatology demo retains its existing scope entry (3,776 characters after removing its status prefix); it requires a separate reviewed content restructuring.
 
 The after-hours entry title is clarified to `After-hours doctor contact` so ordinary office-hours questions are less likely to retrieve the doctor contact number. Its source text is unchanged.
 

@@ -4,14 +4,10 @@ entries:
   - id: "after-hours"
     title: "After Hours"
     text: |-
-      Status: not-supplied
-      
       No after-hours contact information is supplied for this demo office.
   - id: "appointment-expectations"
     title: "Appointment Expectations"
     text: |-
-      Status: available
-      
       A first rheumatology visit usually includes a detailed medical and family history, medication review, symptom discussion, and physical examination. A clinician may order laboratory testing or imaging and schedule follow-up before confirming a diagnosis or treatment plan.
       
       Medication changes, injections, infusions, and other treatments follow clinician evaluation. Insurance authorization or additional testing may be required before treatment starts.
@@ -20,26 +16,18 @@ entries:
   - id: "billing"
     title: "Billing"
     text: |-
-      Status: not-supplied
-      
       Billing contact and account-resolution information are not supplied.
   - id: "contact-lenses"
     title: "Contact Lenses"
     text: |-
-      Status: not-offered
-      
       This demo rheumatology practice does not offer contact lens services.
   - id: "hours"
     title: "Hours"
     text: |-
-      Status: available
-      
       Monday through Thursday, 8:00 AM to 4:30 PM. Friday, 8:00 AM to 2:00 PM. Closed Saturday and Sunday.
   - id: "insurance-and-referrals"
     title: "Insurance and Referrals"
     text: |-
-      Status: available
-      
       Rheumatology visits may use medical insurance.
       
       Plan acceptance does not guarantee payment for a visit, laboratory test, imaging study, injection, infusion, procedure, or medication. Referrals, deductibles, prior authorizations, site-of-care rules, and specialty-drug coverage depend on the caller's plan and the ordered service.
@@ -48,8 +36,6 @@ entries:
   - id: "location-and-contact"
     title: "Location and Contact"
     text: |-
-      Status: available
-      
       Practice name: Juniper Ridge Rheumatology & Arthritis Care
       
       Demo address: 2410 Juniper Ridge Drive, Suite 210, Tampa, Florida 33607.
@@ -60,20 +46,14 @@ entries:
   - id: "optical-and-glasses"
     title: "Optical and Glasses"
     text: |-
-      Status: not-offered
-      
       This demo rheumatology practice does not offer optical or glasses services.
   - id: "payments"
     title: "Payments"
     text: |-
-      Status: not-supplied
-      
       Accepted payment methods are not supplied.
   - id: "providers"
     title: "Providers"
     text: |-
-      Status: available
-      
       Doctor Priya Shah is a fictional board-certified rheumatologist focused on inflammatory arthritis, lupus, connective-tissue disease, and osteoporosis.
       
       Doctor Marcus Lee is a fictional board-certified rheumatologist focused on rheumatoid arthritis, psoriatic arthritis, ankylosing spondylitis, gout, and diagnostic ultrasound.
@@ -84,14 +64,10 @@ entries:
   - id: "repairs-and-warranty"
     title: "Repairs and Warranty"
     text: |-
-      Status: not-offered
-      
       This demo rheumatology practice does not offer optical repairs or warranty services.
   - id: "scope-of-services"
     title: "Scope of Services"
     text: |-
-      Status: available
-      
       Juniper Ridge evaluates and manages rheumatic and musculoskeletal conditions including rheumatoid arthritis, osteoarthritis, lupus, psoriatic arthritis, ankylosing spondylitis, gout, osteoporosis, vasculitis, myositis, scleroderma, Sjogren disease, fibromyalgia, bursitis, tendonitis, and persistent joint or muscle pain.
       
       Evaluation may include a detailed history, joint and musculoskeletal examination, laboratory testing, X-ray imaging, and diagnostic ultrasound when ordered by a clinician. One visit may begin an evaluation without producing a final diagnosis.
@@ -126,26 +102,18 @@ entries:
   - id: "self-pay-pricing"
     title: "Self-Pay Pricing"
     text: |-
-      Status: not-supplied
-      
       Self-pay visit, imaging, injection, infusion, procedure, laboratory, and medication prices are not supplied.
   - id: "social-follow-up"
     title: "Social Follow-Up"
     text: |-
-      Status: not-supplied
-      
       No social follow-up information is supplied for this demo office.
   - id: "source-and-demo-limitations"
     title: "Source and Demo Limitations"
     text: |-
-      Status: available
-      
       Juniper Ridge Rheumatology & Arthritis Care is a fictional practice created for product demonstrations. The medication education in this corpus is general information, not patient-specific medication instructions or treatment recommendations.
   - id: "what-to-bring"
     title: "What to Bring"
     text: |-
-      Status: available
-      
       Bring photo identification, an insurance card, any required referral, completed forms, and a complete medication list covering prescriptions, over-the-counter medicines, vitamins, herbs, and supplements. Include medication allergies and the pharmacy used for prescriptions.
       
       Bring relevant primary-care or specialist notes, prior rheumatology records, recent laboratory results, imaging reports or discs, and a brief symptom history. Note which joints or body areas are affected, when symptoms began, and whether swelling, stiffness, rash, fever, fatigue, or other changes occur.

@@ -4,26 +4,18 @@ entries:
   - id: "after-hours"
     title: "After Hours"
     text: |-
-      Status: not-supplied
-      
       No after-hours contact information is supplied for this office.
   - id: "appointment-expectations"
     title: "Appointment Expectations"
     text: |-
-      Status: not-supplied
-      
       Detailed appointment duration, dilation, arrival, and paperwork expectations are not supplied.
   - id: "billing"
     title: "Billing"
     text: |-
-      Status: not-supplied
-      
       Billing contact and account-resolution information are not supplied.
   - id: "contact-lenses"
     title: "Contact Lenses"
     text: |-
-      Status: available
-      
       Contact lens prescriptions are valid for up to 1 year.
       
       If a patient wants contact lenses and already has a prescription, they can bring the prescription from their optometrist. Patients needing a prescription can obtain one through an optometrist appointment.
@@ -32,24 +24,18 @@ entries:
   - id: "hours"
     title: "Hours"
     text: |-
-      Status: available
-      
       Sunday–Thursday 9:00 AM–5:00 PM.
       
       Holiday closure: Closed on Labor Day, Monday, September 7, 2026.
   - id: "insurance-and-referrals"
     title: "Insurance and Referrals"
     text: |-
-      Status: available
-      
       For routine-vision patients, some insurances do not cover retinal photos and there is a $39 charge.
       
       Medical insurance checks are not supported for this office. Referral information is not supplied.
   - id: "location-and-contact"
     title: "Location and Contact"
     text: |-
-      Status: available
-      
       Practice Name: North Miami Beach Optical
       North Miami Beach Optical is also known as “BrightView Optical,” “Brightview,” or “Bright View”; ownership recently transferred.
       Address: 633 NE 167th Street, North Miami Beach, FL 33162
@@ -59,8 +45,6 @@ entries:
   - id: "optical-and-glasses"
     title: "Optical and Glasses"
     text: |-
-      Status: available
-      
       North Miami Beach Optical stocks many major frame brands, including Gucci, Montblanc, YSL, Ray-Ban, Emporio Armani, and Cartier.
       
       The office offers all types of lenses, including lens upgrades and treatments.
@@ -75,30 +59,22 @@ entries:
   - id: "payments"
     title: "Payments"
     text: |-
-      Status: available
-      
       The office can take payments over the phone.
   - id: "providers"
     title: "Providers"
     text: |-
-      Status: available
-      
       Doctor at this location:
       
       - Dr. Miriam Bach
   - id: "repairs-and-warranty"
     title: "Repairs and Warranty"
     text: |-
-      Status: available
-      
       Frames include free adjustments and a two- or three-year warranty.
       
       Broken glasses and warranty questions require an in-person inspection of the frame or lenses.
   - id: "scope-of-services"
     title: "Scope of Services"
     text: |-
-      Status: available
-      
       North Miami Beach Optical is an optical-only office. It handles routine eye exams, glasses, contact lenses, prescriptions, frames, lenses, lens upgrades, adjustments, repairs, and payments.
       
       The office accepts outside prescriptions and can schedule an eye exam with one of its professional optometrists. Patients can be seen as young as 7 years old.
@@ -107,18 +83,12 @@ entries:
   - id: "self-pay-pricing"
     title: "Self-Pay Pricing"
     text: |-
-      Status: not-supplied
-      
       Self-pay prices are not supplied.
   - id: "social-follow-up"
     title: "Social Follow-Up"
     text: |-
-      Status: not-supplied
-      
       No social follow-up information is supplied for this office.
   - id: "what-to-bring"
     title: "What to Bring"
     text: |-
-      Status: available
-      
       If the patient has an outside glasses or contact lens prescription, they should bring it with them.
