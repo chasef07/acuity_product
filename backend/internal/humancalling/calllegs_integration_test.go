@@ -4617,11 +4617,13 @@ func TestOutboundCallUsesPracticeVoiceFallbackForLocationWithoutNumber(t *testin
 		}}); err != nil {
 		t.Fatalf("provision Sweetwater caller ID: %v", err)
 	}
-	if err := calling.ProvisionOutboundVoiceFallbacks(context.Background(),
-		[]humancalling.OutboundVoiceFallbackProvision{{
-			PracticeKey: "outbound-fallback-practice",
-			LocationKey: "sweetwater",
-		}}); err != nil {
+	if err := pgx.BeginFunc(context.Background(), pool, func(tx pgx.Tx) error {
+		return calling.ProvisionOutboundVoiceFallbacksInTx(context.Background(), tx,
+			[]humancalling.OutboundVoiceFallbackProvision{{
+				PracticeKey: "outbound-fallback-practice",
+				LocationKey: "sweetwater",
+			}})
+	}); err != nil {
 		t.Fatalf("provision Sweetwater outbound fallback: %v", err)
 	}
 

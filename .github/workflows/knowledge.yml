@@ -1,13 +1,19 @@
 name: Knowledge
 
 on:
+  workflow_call:
+    inputs:
+      release_sha:
+        description: Exact commit successfully deployed by Release
+        required: true
+        type: string
   pull_request:
     paths:
       - 'knowledge/**'
       - 'backend/cmd/knowledge-import/**'
       - 'backend/internal/knowledge/**'
       - 'scripts/knowledge-*'
-      - 'scripts/test-knowledge-publish.py'
+      - 'scripts/test-knowledge-*.py'
       - '.github/workflows/knowledge.yml'
       - 'go.mod'
       - 'go.sum'
@@ -18,7 +24,7 @@ on:
       - 'backend/cmd/knowledge-import/**'
       - 'backend/internal/knowledge/**'
       - 'scripts/knowledge-*'
-      - 'scripts/test-knowledge-publish.py'
+      - 'scripts/test-knowledge-*.py'
       - '.github/workflows/knowledge.yml'
   workflow_dispatch:
     inputs:
@@ -36,15 +42,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go test ./backend/cmd/knowledge-import
       - run: python3 scripts/test-knowledge-publish.py
+      - run: python3 scripts/test-knowledge-release.py
       - run: bash scripts/knowledge-validate.sh
 
   publish:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && (inputs.release_sha != '' || github.event_name == 'workflow_dispatch')
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -53,18 +62,24 @@ jobs:
       group: knowledge-production
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Require the current main commit
+      - name: Require current knowledge contents
+        env:
+          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
         run: |
-          current_main=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [[ "$current_main" != "$GITHUB_SHA" ]]; then
-            echo 'This run was superseded by a newer main commit. Run Knowledge from main again.' >&2
+          # A merge during deployment only supersedes publication if it changes
+          # knowledge. Keep the checkout pinned to the verified release.
+          git fetch --no-tags --depth=1 origin refs/heads/main
+          if ! git diff --quiet "$KNOWLEDGE_COMMIT" FETCH_HEAD -- knowledge/; then
+            echo 'Knowledge differs from current main. Publish the newer knowledge after its release is deployed.' >&2
             exit 1
           fi
       - name: Authenticate to Google Cloud
@@ -77,6 +92,7 @@ jobs:
         run: go install github.com/GoogleCloudPlatform/cloud-sql-proxy/v2@v2.25.4
       - name: Publish and verify office knowledge
         env:
+          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
           KNOWLEDGE_OFFICE: ${{ inputs.office || 'all' }}
           KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
           KNOWLEDGE_GOOGLE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -87,6 +103,13 @@ jobs:
           KNOWLEDGE_API_URL: ${{ vars.KNOWLEDGE_API_URL }}
           KNOWLEDGE_SERVICE_TOKEN_SECRET: ${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRET }}
         run: bash scripts/knowledge-publish.sh
+      - name: Record verified knowledge release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
+          KNOWLEDGE_OFFICE: ${{ inputs.office || 'all' }}
+          KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
+        run: python3 scripts/knowledge-release.py
       - name: Preserve publication and retrieval evidence
         if: always()
         uses: actions/upload-artifact@v4

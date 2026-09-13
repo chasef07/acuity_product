@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.12.1](https://github.com/chasef07/acuity_product/compare/v1.12.0...v1.12.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **knowledge:** allow unrelated merges during publication ([#322](https://github.com/chasef07/acuity_product/issues/322)) ([2d43e8d](https://github.com/chasef07/acuity_product/commit/2d43e8d0cbebb84ce5a7b26dc9a1247652a58dd6))
+
+## [1.12.0](https://github.com/chasef07/acuity_product/compare/v1.11.0...v1.12.0) (2026-09-13)
+
+
+### Features
+
+* **knowledge:** record verified publications as GitHub releases ([#319](https://github.com/chasef07/acuity_product/issues/319)) ([7cb8d5a](https://github.com/chasef07/acuity_product/commit/7cb8d5af7966c8ad736d283aea890887111f5aac))
+
+## [1.11.0](https://github.com/chasef07/acuity_product/compare/v1.10.0...v1.11.0) (2026-09-13)
+
+
+### Features
+
+* automatically publish changed office knowledge ([#315](https://github.com/chasef07/acuity_product/issues/315)) ([77bb2e1](https://github.com/chasef07/acuity_product/commit/77bb2e16f23f450ea8892aae98ddbc329f439e39))
+
+
+### Bug Fixes
+
+* **knowledge:** publish after deployment and stabilize release checks ([#316](https://github.com/chasef07/acuity_product/issues/316)) ([0c69ec9](https://github.com/chasef07/acuity_product/commit/0c69ec9f7a0a4fcfb645886b806b918a3ca0eabc))
+
 ## [1.10.0](https://github.com/chasef07/acuity_product/compare/v1.9.0...v1.10.0) (2026-09-11)
 
 

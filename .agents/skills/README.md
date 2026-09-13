@@ -13,7 +13,7 @@ These are exact copies of the relevant official skills from
 - `telnyx-numbers-config-go`: number assignments and voice settings.
 
 The skills are provider references, not Acuity architecture. The governing
-GitHub issue, `docs/agents/domain.md`, current application boundaries, and tests
+GitHub issue, `CONTEXT.md`, current application boundaries, and tests
 take precedence. Generated Go SDK examples do not authorize replacing the
 existing provider adapter or adding the Telnyx Go SDK. Verify time-sensitive
 Telnyx behavior and live account settings before making provider changes.

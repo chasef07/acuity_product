@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
+import { Client } from "pg"
 
 import { signInAs } from "./support"
 
@@ -912,11 +913,8 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(completeTask).toHaveCSS("transition-duration", "0s")
   await expect(relativeTime).toHaveCSS("transition-duration", "0s")
 
-  await page.evaluate(() => {
-    const channel = new BroadcastChannel("acuity-auth-token")
-    channel.postMessage("clear-access-token")
-    channel.close()
-  })
+  // Install the outage before invalidating the token: background refreshes can
+  // otherwise refill the cache between invalidation and route registration.
   await page.route("**/api/auth/token", (route) =>
     route.fulfill({
       status: 503,
@@ -924,6 +922,16 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
       body: JSON.stringify({ error: "temporarily unavailable" }),
     }),
   )
+  await page.evaluate(async () => {
+    const sender = new BroadcastChannel("acuity-auth-token")
+    const observer = new BroadcastChannel("acuity-auth-token")
+    await new Promise<void>((resolve) => {
+      observer.onmessage = () => resolve()
+      sender.postMessage("clear-access-token")
+    })
+    sender.close()
+    observer.close()
+  })
   await completeTask.click()
   await expect(
     taskItem
@@ -1168,6 +1176,10 @@ async function createAINoAppointmentCall(page: Page) {
 
 test("recent sidebar totals and bulk clearing include unloaded pages", async ({ page }) => {
   test.skip(!provisioningOutput, "E2E_PROVISIONING_OUTPUT is required")
+  const databaseURL = process.env.E2E_DATABASE_URL
+  test.skip(!databaseURL, "E2E_DATABASE_URL is required")
+  if (!new URL(databaseURL!).pathname.endsWith("_e2e"))
+    throw new Error("Disposable E2E database required")
   await signInAs(page, "messaging@abita.test", "Fixture Messaging Staff")
   await expect(page.getByTestId("mounted-workspace")).toBeVisible()
   async function clear(label: string) {
@@ -1185,6 +1197,22 @@ test("recent sidebar totals and bulk clearing include unloaded pages", async ({ 
   await expect(appointments).toHaveText(/Appointments7d0$/)
   for (let index = 0; index < 64; index += 1) {
     await sendInbound(page, `recent-attention-${index}`, "Synthetic recent question", `+1555040${String(index).padStart(4, "0")}`)
+  }
+  // Webhook acceptance commits a receipt; the worker creates the Message later.
+  // Establish the fixture before timing the UI's full-count/pagination behavior.
+  const client = new Client({ connectionString: databaseURL })
+  await client.connect()
+  try {
+    const providerIDs = Array.from({ length: 64 }, (_, index) => `provider-recent-attention-${index}`)
+    await expect.poll(async () => {
+      const result = await client.query(
+        "SELECT count(*)::int AS count FROM messaging_messages WHERE provider_message_id = ANY($1::text[])",
+        [providerIDs],
+      )
+      return result.rows[0].count
+    }, { timeout: 30_000, message: "All 64 inbound receipts must become Messages" }).toBe(64)
+  } finally {
+    await client.end()
   }
   await createAIAppointmentReview(page, "recent-attention-booking")
   await createAIAppointmentReview(page, "expired-attention-booking", new Date(Date.now() - 8 * 24 * 60 * 60 * 1000))

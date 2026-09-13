@@ -164,27 +164,6 @@ func (m *Module) ProvisionLocationVoicesInTx(
 	return nil
 }
 
-func (m *Module) ProvisionOutboundVoiceFallbacks(
-	ctx context.Context,
-	provisions []OutboundVoiceFallbackProvision,
-) error {
-	if m.database == nil {
-		return ErrInvalidInput
-	}
-	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin outbound voice fallback provisioning: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := m.ProvisionOutboundVoiceFallbacksInTx(ctx, tx, provisions); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit outbound voice fallback provisioning: %w", err)
-	}
-	return nil
-}
-
 func (m *Module) ProvisionOutboundVoiceFallbacksInTx(
 	ctx context.Context,
 	tx pgx.Tx,

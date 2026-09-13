@@ -6,7 +6,134 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/oasdiff/yaml3"
 )
+
+func TestKnowledgePublicationWaitsForDeployedRelease(t *testing.T) {
+	root := filepath.Dir(releaseDeployDirectory(t))
+	read := func(name string) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow map[string]any
+		if err := yaml.Unmarshal(raw, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		return workflow
+	}
+	release := read("release.yml")
+	jobs := release["jobs"].(map[string]any)
+	publication, ok := jobs["knowledge"].(map[string]any)
+	if !ok {
+		t.Fatal("release must publish knowledge after successful deployment")
+	}
+	if publication["uses"] != "./.github/workflows/knowledge.yml" {
+		t.Fatal("release must use the knowledge workflow")
+	}
+	needs := publication["needs"].([]any)
+	if len(needs) != 2 || needs[0] != "release-please" || needs[1] != "deploy" {
+		t.Fatal("publication must depend on deployment and its release SHA")
+	}
+	if _, ok := publication["if"]; ok {
+		t.Fatal("publication must retain the default success gate")
+	}
+	if publication["with"].(map[string]any)["release_sha"] != "${{ needs.release-please.outputs.release_sha }}" {
+		t.Fatal("publication must use the deployed release")
+	}
+	knowledge := read("knowledge.yml")
+	publish := knowledge["jobs"].(map[string]any)["publish"].(map[string]any)
+	if strings.Contains(publish["if"].(string), "github.event_name == 'push'") {
+		t.Fatal("a push must not publish ahead of deployment")
+	}
+	steps := publish["steps"].([]any)
+	checkout := steps[0].(map[string]any)
+	if checkout["with"].(map[string]any)["ref"] != "${{ inputs.release_sha || github.sha }}" {
+		t.Fatal("publisher must check out the deployed commit")
+	}
+}
+
+func TestKnowledgePublicationFreshness(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(releaseDeployDirectory(t)), ".github/workflows/knowledge.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow map[string]any
+	if err := yaml.Unmarshal(raw, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	steps := workflow["jobs"].(map[string]any)["publish"].(map[string]any)["steps"].([]any)
+	var guard string
+	for _, value := range steps {
+		step := value.(map[string]any)
+		script, _ := step["run"].(string)
+		if env, ok := step["env"].(map[string]any); ok && env["KNOWLEDGE_COMMIT"] != nil && strings.Contains(script, "git ") {
+			guard = script
+		}
+	}
+	if guard == "" {
+		t.Fatal("publication freshness guard is missing")
+	}
+	for _, scenario := range []struct {
+		name, changedPath string
+		wantSuccess       bool
+	}{
+		{"current release", "", true},
+		{"unrelated merge during deployment", "web/example.txt", true},
+		{"newer office knowledge", "knowledge/offices/alpha.yaml", false},
+		{"newer retrieval expectations", "knowledge/evals/alpha.json", false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			remote, checkout := t.TempDir(), filepath.Join(t.TempDir(), "checkout")
+			git := func(directory string, args ...string) string {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = directory
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, output)
+				}
+				return strings.TrimSpace(string(output))
+			}
+			write := func(path string) {
+				t.Helper()
+				path = filepath.Join(remote, path)
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("synthetic knowledge\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			git(remote, "init", "-b", "main")
+			git(remote, "config", "user.email", "test@example.com")
+			git(remote, "config", "user.name", "Synthetic Test")
+			write("knowledge/offices/original.yaml")
+			git(remote, "add", ".")
+			git(remote, "commit", "-m", "Released knowledge")
+			release := git(remote, "rev-parse", "HEAD")
+			git(remote, "clone", "--depth=1", "file://"+remote, checkout)
+			git(checkout, "checkout", "--detach", release)
+			if scenario.changedPath != "" {
+				write(scenario.changedPath)
+				git(remote, "add", ".")
+				git(remote, "commit", "-m", "Merge during deployment")
+			}
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", guard)
+			cmd.Dir = checkout
+			cmd.Env = append(os.Environ(), "KNOWLEDGE_COMMIT="+release)
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != scenario.wantSuccess {
+				t.Fatalf("publication guard: %v; want success=%t\n%s", err, scenario.wantSuccess, output)
+			}
+			if got := git(checkout, "rev-parse", "HEAD"); got != release {
+				t.Fatalf("guard changed released checkout to %s", got)
+			}
+		})
+	}
+}
 
 func TestKnowledgeConfigurationOnlyReachesPortalAPI(t *testing.T) {
 	config, err := os.ReadFile(filepath.Join(filepath.Dir(releaseDeployDirectory(t)), "cloudbuild.release.yaml"))

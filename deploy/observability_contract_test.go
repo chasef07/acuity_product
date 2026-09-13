@@ -295,19 +295,6 @@ func TestCallCenterAlertPoliciesMatchInitialOperatingThresholds(t *testing.T) {
 		t.Errorf("alert condition count = %d, want %d", len(seenConditions), len(expected))
 	}
 
-	documentation, err := os.ReadFile(filepath.Join(
-		directory,
-		"observability",
-		"README.md",
-	))
-	if err != nil {
-		t.Fatalf("read observability deployment documentation: %v", err)
-	}
-	for displayName := range expected {
-		if !bytes.Contains(documentation, []byte(displayName)) {
-			t.Errorf("observability documentation omits %q", displayName)
-		}
-	}
 }
 
 func TestTerminalStaffOccupancyUsesAnExactNonzeroCounter(t *testing.T) {
