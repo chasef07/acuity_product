@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/chasef07/acuity_product/compare/v1.12.1...v1.13.0) (2026-09-13)
+
+
+### Features
+
+* **workspace:** unify shared staff inbox and completion ([#317](https://github.com/chasef07/acuity_product/issues/317)) ([a40e033](https://github.com/chasef07/acuity_product/commit/a40e033abc58b4384f2ad53a443bc938f8ad154d))
+
+
+### Bug Fixes
+
+* add South Florida records intake and billing knowledge ([#324](https://github.com/chasef07/acuity_product/issues/324)) ([f384832](https://github.com/chasef07/acuity_product/commit/f384832d81cefb91fc07356c1d555b23a961ef9d))
+
 ## [1.12.1](https://github.com/chasef07/acuity_product/compare/v1.12.0...v1.12.1) (2026-09-13)
 
 
