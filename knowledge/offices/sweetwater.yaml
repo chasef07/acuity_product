@@ -14,7 +14,7 @@ entries:
   - id: "billing"
     title: "Billing"
     text: |-
-      Billing department number: (786) 446-8333. The billing department handles every billing-related question.
+      For account balances and billing concerns, give the billing department number: (786) 446-8333. Do not create a staff task or offer a billing callback. Self-pay pricing uses the applicable office pricing; insurance and copay questions use the insurance workflow.
   - id: "contact-lenses"
     title: "Contact Lenses"
     text: |-
@@ -46,6 +46,16 @@ entries:
       Use this address only for new-patient paperwork or requested documents.
       Phone: (786) 465-4836
       Fax: (305) 723-1910
+  - id: "medical-records-requests"
+    title: "Medical records requests and patient email limits"
+    text: |-
+      Records intake identifies whether the requester is a patient, medical office, or attorney office, and which records are requested. Patient callers provide their full name and date of birth; medical-office callers provide the office and requesting doctor's names. Preserve available patient details separately from requester details, without claiming identity verification.
+
+      Attorney offices must fax both the records request and patient authorization before fulfillment. Ask whether each was faxed (yes, no, or unknown) and when each was sent. If either is missing, explain the fax prerequisite. Caller-reported sending does not establish office receipt or valid authorization. Use only a supplied office fax number; do not invent one.
+
+      For requested fax delivery, collect the destination fax number. For patient email delivery, collect the complete email address. Only a visit summary may be emailed to patients; full visit notes cannot. Preserve a request for full notes and its delivery preference for staff clarification; do not silently substitute a summary or promise another delivery method is approved.
+
+      Preserve applicable collected details and explicitly list missing details or prerequisites in the staff request, even when intake is incomplete. Submitting the request means staff review, not records delivery or verified authorization. A glasses or contact-lens prescription copy is an optical request, rather than a full medical-records request.
   - id: "optical-and-glasses"
     title: "Optical and Glasses"
     text: |-
