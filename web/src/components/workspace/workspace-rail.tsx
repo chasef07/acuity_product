@@ -16,7 +16,7 @@ import {
   CheckCircle2Icon,
   FolderClosedIcon,
   FolderOpenIcon,
-  ListFilterIcon,
+  ChevronDownIcon,
   LogOutIcon,
   MonitorIcon,
   EllipsisIcon,
@@ -27,9 +27,7 @@ import {
   SunIcon,
 } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { AcuityMark } from "@/components/acuity-mark"
 import {
   Collapsible,
@@ -45,6 +43,10 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
   InputGroup,
@@ -115,7 +117,16 @@ import { taskGroups } from "@/lib/task-groups"
 
 type AppointmentSection = AppointmentOutcomeFolder
 
-const taskCategoryOptions: Array<{value:TaskCategoryFilter;label:string}> = [{value:"all",label:"All groups"},...taskGroups]
+const taskFilterLabels: Partial<Record<TaskCategoryFilter, string>> = {
+  documentation: "Medical records",
+  medication: "Clinical & pharmacy",
+  insurance: "Insurance",
+  optical: "Optical",
+}
+const taskCategoryOptions: Array<{ value: TaskCategoryFilter; label: string }> = [
+  { value: "all", label: "All types" },
+  ...taskGroups.map((group) => ({ ...group, label: taskFilterLabels[group.value] ?? group.label })),
+]
 
 type WorkspaceRailProps = {
   projection: WorkspaceProjectionState
@@ -311,31 +322,17 @@ export function WorkspaceRail({
             expanded={expanded.includes("tasks")}
             onToggle={() => toggle("tasks")}
             action={
-              <TaskCategoryMenu
-                value={taskCategory}
+              <TaskViewMenu
+                category={taskCategory}
+                responsibility={projection.rail.taskResponsibility ?? "mine"}
                 counts={taskCounts}
-                onChange={selectTaskCategory}
+                onCategoryChange={selectTaskCategory}
+                onResponsibilityChange={(responsibility) =>
+                  onIntent({ type: "set-task-filters", responsibility })
+                }
               />
             }
           >
-            <li className="pb-2 pt-1">
-              <ToggleGroup
-                aria-label="Task visibility"
-                variant="segmented"
-                spacing={1}
-                className="w-full"
-                value={[projection.rail.taskResponsibility ?? "mine"]}
-                onValueChange={(values) => {
-                  const responsibility = values[0]
-                  if (responsibility === "mine" || responsibility === "all") {
-                    onIntent({ type: "set-task-filters", responsibility })
-                  }
-                }}
-              >
-                <ToggleGroupItem value="mine" className="flex-1">My groups</ToggleGroupItem>
-                <ToggleGroupItem value="all" className="flex-1">All tasks</ToggleGroupItem>
-              </ToggleGroup>
-            </li>
             {filteredTasks.map((task) => (
               <TaskRow key={task.id} task={task} active={task.id === selectedTaskID || Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID === task.id} completionError={completionError?.taskID === task.id ? completionError.message : ""} onComplete={() => onIntent({ type: "complete-task", task })} />
             ))}
@@ -633,7 +630,7 @@ function AttentionGroup({
           render={
             <Button
               variant="ghost"
-              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 justify-start items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+              className="group/disclosure flex h-8 min-w-0 flex-1 shrink-0 justify-start items-center gap-2 rounded-md px-2.5 text-left text-sm/5 font-medium text-sidebar-foreground/90 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground aria-expanded:bg-transparent aria-expanded:text-sidebar-foreground/90 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
             />
           }
         >
@@ -651,7 +648,9 @@ function AttentionGroup({
             </span>
           )}
           {count !== undefined && (
-            title === "Tasks" ? <Badge variant="secondary" className="h-5 min-w-5 justify-center px-1.5 text-[10px] tabular-nums">{count}</Badge> : <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+              {count}
+            </span>
           )}
         </CollapsibleTrigger>
         {action}
@@ -667,18 +666,23 @@ function AttentionGroup({
   )
 }
 
-function TaskCategoryMenu({
-  value,
+function TaskViewMenu({
+  category,
+  responsibility,
   counts,
-  onChange,
+  onCategoryChange,
+  onResponsibilityChange,
 }: {
-  value: TaskCategoryFilter
+  category: TaskCategoryFilter
+  responsibility: "mine" | "all"
   counts: TaskFolderCounts
-  onChange: (value: TaskCategoryFilter) => void
+  onCategoryChange: (value: TaskCategoryFilter) => void
+  onResponsibilityChange: (value: "mine" | "all") => void
 }) {
   const activeLabel =
-    taskCategoryOptions.find((option) => option.value === value)?.label ??
+    taskCategoryOptions.find((option) => option.value === category)?.label ??
     "All types"
+  const viewLabel = responsibility === "mine" ? "My tasks" : "All tasks"
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -686,25 +690,43 @@ function TaskCategoryMenu({
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`Filter Tasks: ${activeLabel}`}
-            className="max-w-[45%] gap-1 px-1.5 text-xs text-muted-foreground"
+            aria-label={`Task view: ${viewLabel}, ${activeLabel}`}
+            title={`${viewLabel} · ${activeLabel}`}
+            className="h-6 max-w-[45%] gap-1 px-1.5 text-xs text-muted-foreground"
           />
         }
       >
-        <ListFilterIcon aria-hidden="true" className="size-3.5 shrink-0" />
-        <span className="truncate">{activeLabel}</span>
+        <span className="truncate">{viewLabel}</span>
+        {category !== "all" && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />}
+        <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger aria-label={`View: ${viewLabel}`}>
+            <span>View</span>
+            <span className="ml-auto text-muted-foreground">{viewLabel}</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-36">
+            <DropdownMenuRadioGroup
+              value={responsibility}
+              onValueChange={(value) => {
+                if (value === "mine" || value === "all") onResponsibilityChange(value)
+              }}
+            >
+              <DropdownMenuRadioItem value="mine" closeOnClick>My tasks</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="all" closeOnClick>All tasks</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
-          value={value}
-          onValueChange={(nextValue) =>
-            onChange(nextValue as TaskCategoryFilter)
-          }
+          value={category}
+          onValueChange={(value) => onCategoryChange(value as TaskCategoryFilter)}
         >
           <DropdownMenuLabel>Task type</DropdownMenuLabel>
           {taskCategoryOptions.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value}>
-              <span className="flex-1">{option.label}</span>
+            <DropdownMenuRadioItem key={option.value} value={option.value} closeOnClick className="min-h-7 py-1">
+              <span className="flex-1 whitespace-nowrap">{option.label}</span>
               <span className="mr-5 tabular-nums text-muted-foreground">
                 {taskCountForCategory(counts, option.value)}
               </span>

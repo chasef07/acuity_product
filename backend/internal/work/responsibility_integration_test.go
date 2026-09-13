@@ -172,6 +172,60 @@ func TestReviewedGroupPreservesEachRequestAndRejectsNewMembership(t *testing.T) 
 	}
 }
 
+func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
+	pool := testdb.Open(t)
+	now := time.Now().UTC()
+	a := access.New(pool, func() time.Time { return now })
+	auth, identity := provisionStaff(t, a, now)
+	m := work.New(pool, a, func() time.Time { return now })
+	ctx := context.Background()
+	ordinary := ensureCallFollowUp(t, pool, m, work.EnsureCallFollowUpCommand{CallID: insertCall(t, pool, auth, now), PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Synthetic administrative follow-up", Creator: auth.Actor})
+	callID := insertCall(t, pool, auth, now.Add(time.Second))
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := m.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: ordinary.LocationID, Phone: ordinary.Phone, Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now.Add(time.Second)})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reads := workspace.New(pool, a)
+	for _, folder := range []work.TaskFolder{"", work.TaskFolderWork, work.TaskFolderMissedCalls} {
+		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Folder: folder})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if folder == "" {
+			want = 2
+		}
+		if len(page.Items) != want {
+			t.Errorf("folder %q: got %d groups, want %d", folder, len(page.Items), want)
+		}
+		for _, row := range page.Items {
+			if len(row.GroupMembers) != 1 || row.GroupMembers[0].ID != row.ID {
+				t.Errorf("folder %q mixed ordinary and recovery members", folder)
+			}
+		}
+	}
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
+	if !errors.Is(err, work.ErrConflict) {
+		t.Fatalf("mixed group resolution should conflict: %v", err)
+	}
+	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := m.ReadTask(ctx, identity, recovery.ID)
+	if err != nil || remaining.State != work.TaskOpen || remaining.Version != recovery.Version {
+		t.Fatalf("ordinary group resolution changed recovery: %v", err)
+	}
+}
+
 func TestReclassificationRunAndRestorationNeverOverwriteStaffEdits(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Now().UTC()

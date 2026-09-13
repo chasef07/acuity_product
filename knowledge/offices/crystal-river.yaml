@@ -1,0 +1,91 @@
+practiceId: "31d82880-f0b6-4637-a472-ff5f5b8f74d4"
+officeKey: "crystal-river"
+entries:
+  - id: "after-hours"
+    title: "After Hours"
+    text: |-
+      After-hours doctor: 727-379-4923.
+  - id: "appointment-expectations"
+    title: "Appointment Expectations"
+    text: |-
+      The practice typically sends an email confirmation after scheduling an appointment.
+      
+      New patient visits may take 1–2 hours depending on testing. Eye dilation may occur and can temporarily cause blurry vision and light sensitivity.
+  - id: "billing"
+    title: "Billing"
+    text: |-
+      Billing department number: (786) 446-8333. The billing department handles every billing-related question.
+  - id: "contact-lenses"
+    title: "Contact Lenses"
+    text: |-
+      Crystal River does not schedule contact lens prescriptions or fittings.
+  - id: "hours"
+    title: "Hours"
+    text: |-
+      Tuesday–Thursday 12:00 PM–5:00 PM. Closed Monday, Friday, Saturday, and Sunday.
+      
+      Holiday closure: Closed on Labor Day, Monday, September 7, 2026.
+      
+      The Spring Hill office is open Monday–Friday, 8:30 AM–4:30 PM.
+  - id: "insurance-and-referrals"
+    title: "Insurance and Referrals"
+    text: |-
+      Plan acceptance is separate from coverage for a specific visit or procedure.
+      
+      Referral and authorization requirements depend on the patient's insurance policy. Insurance verification may be required before appointment confirmation.
+  - id: "location-and-contact"
+    title: "Location and Contact"
+    text: |-
+      Practice Name: Eye Radiance
+      Address: 1100 N Lyle Avenue Crystal River, FL 34429
+      Administrative email for new-patient paperwork or requested documents: newpatient@abitaeye.com
+      Use this address only for new-patient paperwork or requested documents.
+      Fax: (352)-228-4315
+      
+      **Other Location:** We also have an office in Spring Hill — Abita Eye Group, 10495 SpringHill Drive, Springhill, FL 34608. That location also sees Dr. Bach, Dr. Noel, and Dr. Licht. Dr. Licht practices at both locations.
+  - id: "optical-and-glasses"
+    title: "Optical and Glasses"
+    text: |-
+      Crystal River is medical-only and does not schedule routine-vision exams or glasses prescriptions.
+      
+      Glasses pickup policy: a readiness text confirms glasses are ready for pickup; patients wait for that text before coming in. This policy does not establish an individual order's readiness.
+  - id: "payments"
+    title: "Payments"
+    text: |-
+      Visit costs vary based on insurance and appointment type. Coverage details are determined after insurance verification. Payment handling is owned by the billing department.
+  - id: "providers"
+    title: "Providers"
+    text: |-
+      Dr. Licht is the only provider for all cataract visits at Crystal River, including cataract evaluations.
+      
+      ### Dr. Licht (pronounced "Likt")
+      
+      - NPI: 14-97147680
+      - Comprehensive Ophthalmology
+      - Oculoplastic (Eyelid Surgery)
+      - Glaucoma
+      - STT often misrecognizes as: "Lee", "Licked", "Lit", "Lisht", "Lich", "Lish", "Liked".
+  - id: "repairs-and-warranty"
+    title: "Repairs and Warranty"
+    text: |-
+      Patients with broken glasses or warranty questions should bring their glasses to the Spring Hill location. Staff will review the glasses and determine what options may be available. Warranty coverage and repair options are evaluated in person.
+  - id: "scope-of-services"
+    title: "Scope of Services"
+    text: |-
+      Dr. Licht is the only provider for all cataract visits at Crystal River, including cataract evaluations.
+      
+      Crystal River is a medical-only office. It sees medical eye conditions such as cataract evaluations with Dr. Licht, glaucoma, eyelid concerns, and flashes or floaters. For cataract evaluations and other medical visits, Crystal River can schedule the in-office evaluation when appropriate. Other tests, procedures, and specialty services are not supplied here.
+      
+      Crystal River does not see pediatric ophthalmology and does not schedule routine-vision exams, glasses prescriptions, or contact lens prescriptions.
+  - id: "self-pay-pricing"
+    title: "Self-Pay Pricing"
+    text: |-
+      New patient medical visit with an optometrist: $150. Established patient medical visit with an optometrist: $75. New patient medical visit with an ophthalmologist: $250. Established patient medical visit with an ophthalmologist: $125. Crystal River does not schedule routine vision exams or contact lens fittings.
+  - id: "social-follow-up"
+    title: "Social Follow-Up"
+    text: |-
+      No social follow-up information is supplied for this office.
+  - id: "what-to-bring"
+    title: "What to Bring"
+    text: |-
+      Photo ID, insurance card, list of current medications, previous eye records (if available).

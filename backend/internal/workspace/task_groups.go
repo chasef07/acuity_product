@@ -23,18 +23,18 @@ func taskListSQL(command QueryTasksCommand) string {
 	// separately in the same snapshot, so search never hides a resolution target.
 	matching := "SELECT task.* " + taskQuerySelect[strings.Index(taskQuerySelect, "FROM work_tasks task"):] + " AND task.state='OPEN'"
 	prefix := `WITH matching AS (` + matching + `), ranked AS (
- SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category ORDER BY ` + order + `) AS member_rank FROM matching
+ SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,(origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')) ORDER BY ` + order + `) AS member_rank FROM matching
  ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) `
 	return prefix + strings.Replace(query, "FROM work_tasks task", "FROM group_candidates task", 1)
 }
 
 func readGroupMembers(ctx context.Context, tx pgx.Tx, subject string, anchor work.Task) ([]work.Task, error) {
-	query := strings.Replace(taskReadQuery, "WHERE task.id = $1", `WHERE task.practice_id=$1 AND task.location_id=$3 AND task.phone=$4 AND task.category IS NOT DISTINCT FROM $5::text AND task.state='OPEN' ORDER BY task.created_at,task.id`, 1)
+	query := strings.Replace(taskReadQuery, "WHERE task.id = $1", `WHERE task.practice_id=$1 AND task.location_id=$3 AND task.phone=$4 AND task.category IS NOT DISTINCT FROM $5::text AND task.state='OPEN' AND (task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))=$6 ORDER BY task.created_at,task.id`, 1)
 	var category any
 	if anchor.Category != "" {
 		category = string(anchor.Category)
 	}
-	rows, err := tx.Query(ctx, query, anchor.PracticeID, subject, anchor.LocationID, anchor.Phone, category)
+	rows, err := tx.Query(ctx, query, anchor.PracticeID, subject, anchor.LocationID, anchor.Phone, category, work.IsRecoveryOrigin(anchor.Origin))
 	if err != nil {
 		return nil, err
 	}

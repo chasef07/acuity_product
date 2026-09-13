@@ -52,6 +52,7 @@ const (
 type ServiceCapability string
 
 const (
+	ServiceCapabilityReadKnowledge       ServiceCapability = "READ_KNOWLEDGE"
 	ServiceCapabilityHumanHandoff        ServiceCapability = "HUMAN_HANDOFF"
 	ServiceCapabilityCreateTask          ServiceCapability = "CREATE_TASK"
 	ServiceCapabilityIngestAIInteraction ServiceCapability = "INGEST_AI_INTERACTION"

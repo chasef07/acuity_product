@@ -664,6 +664,46 @@ test("rail preferences restore through the projection and corrupted values fail 
   projection.stop()
 })
 
+test("retired Billing preference restores the visible All types filter", async () => {
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({
+      discovery: accessDiscovery(),
+      snapshot: workspaceSnapshot(14),
+      tasks: taskPage([]),
+    }),
+    realtime: deterministicRealtime().adapter,
+    preferences: {
+      read: (key) => key.startsWith("acuity.attentionRail.")
+        ? JSON.stringify({ version: 1, taskCategory: "billing", scrollTop: 0 })
+        : null,
+      write: () => {},
+    },
+  })
+  await projection.start()
+  assert.equal(projection.getSnapshot().rail.taskCategory, "all")
+  projection.stop()
+})
+
+test("switching task views clears the previous type filter", async () => {
+  const projection = createWorkspaceProjection({
+    authority: deterministicAuthority({
+      discovery: accessDiscovery(),
+      snapshot: workspaceSnapshot(14),
+      tasks: taskPage([]),
+    }),
+    realtime: deterministicRealtime().adapter,
+    preferences: { read: () => null, write: () => {} },
+  })
+  await projection.start()
+  for (const responsibility of ["all", "mine"] as const) {
+    await projection.dispatch({ type: "set-task-category", category: "optical" })
+    await projection.dispatch({ type: "set-task-filters", responsibility })
+    assert.equal(projection.getSnapshot().rail.taskResponsibility, responsibility)
+    assert.equal(projection.getSnapshot().rail.taskCategory, "all")
+  }
+  projection.stop()
+})
+
 test("authorization loss in one query fails closed across all protected windows", async () => {
   const realtime = deterministicRealtime()
   let unauthorized = false

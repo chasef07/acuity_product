@@ -51,6 +51,7 @@ flowchart LR
     Backend["Go backend<br/>isolated runtime roles"]
     DB[("PostgreSQL")]
     Telnyx["Telnyx<br/>voice and messaging"]
+    Vertex["Google Vertex AI<br/>knowledge embeddings"]
     Abita["Abita AI agent"]
 
     Browser -->|"pages and sign-in"| Web
@@ -61,7 +62,8 @@ flowchart LR
     Browser <-->|"WebRTC calling"| Telnyx
     Telnyx -->|"signed webhooks"| Backend
     Backend -->|"provider commands"| Telnyx
-    Abita -->|"authenticated Tasks and AI Interactions"| Backend
+    Backend -->|"embedding requests"| Vertex
+    Abita -->|"authenticated Tasks, AI Interactions, and knowledge queries"| Backend
 ```
 
 ### One backend, five runtime roles
@@ -94,10 +96,19 @@ Business rules live in their owning module under `backend/internal/`.
 | HumanCalling | [`humancalling/`](backend/internal/humancalling) | Calls, CallLegs, softphone readiness, transfers, voicemail, and recordings |
 | Messaging | [`messaging/`](backend/internal/messaging) | Conversations, send intent, delivery evidence, and attachments |
 | AIInteraction | [`interaction/`](backend/internal/interaction) | AI call lifecycle, transcripts, appointment evidence, and analytics |
+| Knowledge | [`knowledge/`](backend/internal/knowledge) | Office corpus revisions, controlled imports, and semantic passage search |
 
 The [`workspace/`](backend/internal/workspace) query layer combines authorized
 cross-domain views; it does not own domain writes. HTTP, authentication,
 provider, storage, and worker adapters connect to the owning modules.
+
+Knowledge uses Access for Practice and office authorization, a Google Vertex AI
+adapter for embeddings, and PostgreSQL/pgvector for passages and immutable revisions.
+Embedding requests run outside database transactions; the Agent has read-only access.
+Reviewed office facts live in [`knowledge/offices/`](knowledge/offices/). The
+[Knowledge workflow](knowledge/README.md) validates edits and publishes complete
+office revisions from Git. Search combines semantic and text matching, preserving
+complete facts and restrictions while limiting the evidence returned to the Agent.
 
 The browser/backend contract is [`api/openapi.yaml`](api/openapi.yaml).
 Go bindings and the TypeScript client are generated from it, not edited by hand.

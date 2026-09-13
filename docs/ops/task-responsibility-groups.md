@@ -123,8 +123,9 @@ contain protected data. No production backfill or restoration was run here.
 The captured PHI-free payloads in
 `backend/internal/httpapi/testdata/agent-444-staff-tasks.json` come from real
 `create_staff_task` executions against an inert HTTP transport in the companion
-agent commit `22fd0e5` (issue #444). They include all nine wire categories and
-27 distinct synthetic requests. Portal integration submits those objects
+agent implementation (issue #444), refreshed after integrating current main.
+They include all nine wire categories and 29 distinct synthetic requests,
+including copay questions. Portal integration submits those objects
 unchanged through authenticated HTTP, persists them in PostgreSQL, reads grouped
 Tasks, performs staff corrections/feedback, and replays the original submissions.
 This establishes local tool/contract/durable portal behavior. It does not prove
@@ -137,6 +138,10 @@ readable. Run and review a production dry-run before separately authorizing appl
 
 ### Compatibility release gate
 
+This gate blocks merging into an automatically deployed main branch as well as
+direct deployment. Keep the coordinated portal and agent PRs in draft until
+the prerequisite release or separately approved write pause is arranged.
+
 Do not apply this feature migration while the pre-#298 writer is still accepting
 Task submissions. That writer's alternate-idempotency-key fallback compares the
 editable category and cannot find a reclassified or mapped-Billing Task.
@@ -148,6 +153,53 @@ before migration/promotion. Do not roll back Task writers below that compatibili
 release after categories have changed. A normal overlapping rollout of the
 pre-feature writer and this feature has not been validated and is not approved
 by these local checks. Production release planning must satisfy this gate.
+
+## PR review and verification — September 12, 2026
+
+Integrated main `77bb2e1` and regenerated the combined API contract. Task schema
+changes now follow the existing Knowledge migrations as
+`0068_task_responsibilities.sql`. The companion agent integration is `494ab4f`.
+The final UI uses one compact Task type menu with My groups/All tasks in its
+View submenu. Staff knowledge controls are removed; persisted feedback and
+authenticated APIs remain intact.
+
+### Standards
+
+The independent review found recovery Tasks could join an ordinary Task group.
+The representative query, expanded membership, and group completion now share
+the ordinary/recovery boundary. A regression reproduced the leak and mixed
+completion before the fix and passed afterward. Final review found no remaining
+actionable Standards issue in either integrated branch. The writer compatibility
+gate above remains a release prerequisite.
+
+### Spec
+
+The independent review confirmed the recovery finding and found that a saved
+Billing filter could survive after its menu option was removed. Old Billing
+preferences now restore All types; a regression failed before the fix and passes
+afterward. Final review found no remaining actionable Spec issue in either
+integrated branch. No findings were rejected. Unscripted agent behavior remains
+unverified.
+
+### Final local checks
+
+All automated data is synthetic; the private local preview remained stopped.
+The first broad run overlapped ongoing review fixes and another local database
+suite, producing stale compilation results and migration setup timeouts. The
+final frozen-source serial run below supersedes those results.
+
+| Command / check | Result |
+| --- | --- |
+| `TEST_DATABASE_URL='postgres://127.0.0.1/acuity_298_pr_test?sslmode=disable' go test -p 1 ./backend/... ./deploy -count=1` | Every package passes except the previously reproduced `TestExecutorOwnsTransactionDeadlineAndRelease` rollback/connection failure. Its package is unchanged from current main. Includes the authenticated 29-payload agent contract, recovery boundary, work, workspace, messaging, migrations and deploy tests. |
+| `E2E_DATABASE_URL='postgres://127.0.0.1/acuity_298_pr_e2e?sslmode=disable' ./scripts/run-e2e.sh` | All 34 browser journeys pass; includes the production frontend build. |
+| `pnpm --dir web lint`, `pnpm --dir web typecheck`, `pnpm --dir web test:unit` | Pass: 251 unit tests and 19 render tests. |
+| `go generate ./backend/internal/api` and `pnpm --dir web api:generate` | Pass; repeated generation leaves identical file hashes. |
+| `AUTH_SCHEMA_CHECK_DATABASE_URL='postgres://127.0.0.1/acuity_298_pr_schema_check?sslmode=disable' ./scripts/check-auth-schema.sh` | Pass. |
+| `pnpm --dir web audit --prod` and `go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...` | Pass; no known vulnerabilities reported. |
+| `bash ./scripts/test-release-container.sh` | Cannot run locally: Docker is not installed. CI must supply container evidence. |
+
+No production data, provider, OAuth, or cloud configuration changes were made.
+The PRs remain draft for CI and the documented compatibility/rollout gates.
 
 ## Local verification — September 9, 2026
 

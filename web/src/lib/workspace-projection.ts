@@ -996,6 +996,7 @@ export function createWorkspaceProjection({
     if (intent.type === "set-task-filters") {
       updateRail((rail) => ({ ...rail,
         taskResponsibility: intent.responsibility ?? rail.taskResponsibility ?? "mine",
+        taskCategory: "all",
       }))
       await refreshTaskWindows(state.search.applied)
       return
@@ -2082,7 +2083,6 @@ const railSections: WorkspaceRailSection[] = [
 
 const taskCategories: TaskCategoryFilter[] = [
   "all",
-  "billing",
   "insurance", "pre_op", "post_op",
   "appointments",
   "documentation",

@@ -165,6 +165,42 @@
     "callId": "synthetic-staff-task-444",
     "callerPhone": "+12025550147",
     "category": "insurance",
+    "idempotencyKey": "staff_task_2a0cf2b7b7a790acf118242e71579a241507b095a6df28c0533b2db11bc3a046",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff confirmation of the appointment copay. Missing details: plan and visit type. No amount or coverage verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "copay question",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
+    "idempotencyKey": "staff_task_60e80a8e1d3a252e39300266e19cd09003673f053a9cd8e61e9eda76c3e98e9f",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff review of a caller-reported co-pay charge. Missing details: plan, visit date and charged amount. No coverage or charge correctness verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "copay billing question",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
     "idempotencyKey": "staff_task_8382705bdd810d5a9b9284597d1c9fc173b1d0c8fc25a7e6a47fda762a4336b3",
     "inboundOfficePhone": "+17864654845",
     "message": "Patient requests staff review of insurance referral requirement. Missing details: plan and visit type.",

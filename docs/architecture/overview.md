@@ -24,7 +24,7 @@ flowchart LR
     Browser -->|"HTTPS + JWT"| API
     Realtime -->|"version hints"| Browser
     Browser <-->|"WSS signaling + WebRTC media"| Telnyx
-    AI -->|"task, handoff, and AI Interaction records"| API
+    AI -->|"task, handoff, AI Interaction records, and knowledge queries"| API
     Telnyx -->|"signed webhooks"| Ingress
     API --> DB
     Ingress --> DB
@@ -38,7 +38,7 @@ flowchart LR
 
 ## Modules
 
-The Go runtime contains five deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, and durable jobs are adapters around those interfaces.
+The Go runtime contains six deep modules. Each module has one behavior-oriented interface; HTTP handlers, SQL, Telnyx, Better Auth/JWKS, SSE, Messaging attachment storage, embedding providers, and durable jobs are adapters around those interfaces.
 
 | Module | Owns | Does not own |
 |---|---|---|
@@ -47,6 +47,7 @@ The Go runtime contains five deep modules. Each module has one behavior-oriented
 | `HumanCalling` | Softphone readiness, Call and CallLeg lifecycle, simultaneous Telnyx fan-out, bridge confirmation, Practice-scoped automatic connected-call recording, recording metadata, protected playback, access audit, retention and provider deletion, post-call disposition, and voicemail lifecycle | Browser-selected winners, task lifecycle, SMS correlation, provider-owned audio bytes |
 | `Messaging` | Location-scoped conversations, inbound correlation, durable send intent, delivery evidence, attachment lifecycle, explicit send-again attempts, cross-channel exact-phone Engagement History read model | Task and AI Interaction source truth, contact identity, call state |
 | `AIInteraction` | Abita AI call lifecycle records, full AI transcripts, receipt-backed appointment outcomes, daily outcome and call-detail views | Task workflows, human-call control, Engagement History composition, canonical patient identity |
+| `Knowledge` | Imported office facts, immutable corpus revisions, atomic replacement, and current-revision semantic search scoped by Practice and Abita Office Route | Patient records, Task workflows, conversational answers, staff editing, authorization decisions |
 
 `ContactContext` is a value object shared by tasks and interactions. It contains a normalized phone number when available, optional name, optional AI handoff context, and provenance. It is not a global Contact module or verified patient identity.
 

@@ -845,15 +845,15 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(medicationTaskButton).toBeVisible()
 
   const taskFilter = page.getByRole("button", {
-    name: "Filter Tasks: All groups",
+    name: "Task view: My tasks, All types",
   })
   await taskFilter.click()
   for (const [label, count] of [
-    ["All groups", counts.tasks],
+    ["All types", counts.tasks],
         ["Appointments", counts.categories.appointments],
-    ["Medical records & documentation", counts.categories.documentation],
-    ["Optical, frames & prescriptions", counts.categories.optical],
-    ["Clinical, medication & pharmacy", counts.categories.medication],
+    ["Medical records", counts.categories.documentation],
+    ["Optical", counts.categories.optical],
+    ["Clinical & pharmacy", counts.categories.medication],
     ["Referrals", counts.categories.referrals],
     ["Other", counts.categories.other],
   ] as const) {
@@ -863,7 +863,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   }
   await page.getByRole("menuitemradio", { name: /^Other / }).click()
   await expect(
-    page.getByRole("button", { name: "Filter Tasks: Other" }),
+    page.getByRole("button", { name: "Task view: My tasks, Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -877,7 +877,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     await restoredTasksSection.click()
   }
   await expect(
-    page.getByRole("button", { name: "Filter Tasks: Other" }),
+    page.getByRole("button", { name: "Task view: My tasks, Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -1006,8 +1006,8 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(taskItem).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await page.getByRole("button", { name: "Filter Tasks: Other" }).click()
-  await page.getByRole("menuitemradio", { name: /^Clinical, medication & pharmacy / }).click()
+  await page.getByRole("button", { name: "Task view: My tasks, Other" }).click()
+  await page.getByRole("menuitemradio", { name: /^Clinical & pharmacy / }).click()
   await page.keyboard.press("Escape")
   const medicationItem = page
     .getByTestId("task-row")
