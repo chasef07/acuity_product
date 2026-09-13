@@ -58,39 +58,6 @@ func TestStaffMovesTaskWithoutChangingIngestionEvidence(t *testing.T) {
 	}
 }
 
-func TestKnowledgeFeedbackPersistsAcrossCompletion(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	m := work.New(pool, a, func() time.Time { return now })
-	callID := insertCall(t, pool, auth, now)
-	task := ensureCallFollowUp(t, pool, m, work.EnsureCallFollowUpCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Reason: "Which records are needed?", Creator: auth.Actor})
-	flagged, err := m.SetKnowledgeFeedback(context.Background(), work.KnowledgeFeedbackCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version, Flagged: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completed, err := m.CompleteTask(context.Background(), work.CompleteTaskCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: flagged.Version})
-	if err != nil {
-		t.Fatal(err)
-	}
-	edited, err := m.SetKnowledgeFeedback(context.Background(), work.KnowledgeFeedbackCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: completed.Version, Flagged: true, SuggestedAnswer: "Bring the records requested by the office."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	read, err := m.ReadTask(context.Background(), identity, task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !read.KnowledgeFlagged || read.SuggestedAnswer != edited.SuggestedAnswer || read.State != work.TaskCompleted || read.Category != task.Category {
-		t.Fatalf("feedback altered work: %#v", read)
-	}
-	_, err = m.SetKnowledgeFeedback(context.Background(), work.KnowledgeFeedbackCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: 1, Flagged: false})
-	if !errors.Is(err, work.ErrConflict) {
-		t.Fatalf("stale feedback: %v", err)
-	}
-}
-
 func TestResponsibilitiesFilterWithoutGrantingAccess(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Now().UTC()
@@ -438,55 +405,6 @@ func TestResponsibilityRosterPreservesElevenOpticalOwnersAndPendingAccounts(t *t
 	}
 }
 
-func TestKnowledgeFilterFindsOpenAndCompletedRecoveryTasks(t *testing.T) {
-	pool := testdb.Open(t)
-	now := time.Now().UTC()
-	a := access.New(pool, func() time.Time { return now })
-	auth, identity := provisionStaff(t, a, now)
-	ctx := context.Background()
-	m := work.New(pool, a, func() time.Time { return now })
-	callID := insertCall(t, pool, auth, now)
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := m.EnsureRecoveryTask(ctx, tx, work.EnsureRecoveryTaskCommand{CallID: callID, PracticeID: auth.Practice.ID, LocationID: auth.Locations[0].ID, Phone: "+15555550100", Outcome: work.RecoveryOutcomeMissedCall, OccurredAt: now})
-	if err != nil {
-		tx.Rollback(ctx)
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	task, err = m.SetKnowledgeFeedback(ctx, work.KnowledgeFeedbackCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version, Flagged: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reads := workspace.New(pool, a)
-	for _, state := range []work.TaskState{work.TaskOpen, work.TaskCompleted} {
-		if state == work.TaskCompleted {
-			task, err = m.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: task.ID, ExpectedVersion: task.Version})
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, State: state, KnowledgeFlagged: true, Grouped: true, Responsibility: "mine"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantRecovery := 0
-		if state == work.TaskOpen {
-			wantRecovery = 1
-		}
-		if page.Counts.MissedCalls != wantRecovery {
-			t.Errorf("%s separate recovery count=%d, want %d", state, page.Counts.MissedCalls, wantRecovery)
-		}
-		if len(page.Items) != 1 || page.Items[0].ID != task.ID || page.Counts.Tasks != 1 {
-			t.Fatalf("%s flagged recovery missing: %#v", state, page)
-		}
-	}
-}
-
 func TestGroupMetadataCommandsDenyUnrelatedStaffWithoutSideEffects(t *testing.T) {
 	pool := testdb.Open(t)
 	now := time.Now().UTC()
@@ -501,16 +419,12 @@ func TestGroupMetadataCommandsDenyUnrelatedStaffWithoutSideEffects(t *testing.T)
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("move denied: %v", err)
 	}
-	_, err = m.SetKnowledgeFeedback(ctx, work.KnowledgeFeedbackCommand{Identity: outsider, TaskID: task.ID, ExpectedVersion: task.Version, Flagged: true})
-	if !errors.Is(err, work.ErrDenied) {
-		t.Fatalf("feedback denied: %v", err)
-	}
 	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: outsider, TaskID: task.ID, Members: []work.ReviewedTask{{ID: task.ID, ExpectedVersion: task.Version}}})
 	if !errors.Is(err, work.ErrDenied) {
 		t.Fatalf("group denied: %v", err)
 	}
 	current, err := m.ReadTask(ctx, identity, task.ID)
-	if err != nil || current.Version != task.Version || current.State != work.TaskOpen || current.KnowledgeFlagged {
+	if err != nil || current.Version != task.Version || current.State != work.TaskOpen {
 		t.Fatalf("denied command changed Task: %#v %v", current, err)
 	}
 }

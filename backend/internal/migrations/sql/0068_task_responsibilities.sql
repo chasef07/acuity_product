@@ -93,7 +93,7 @@ ALTER TABLE work_task_activities DROP CONSTRAINT work_task_activities_kind_check
 ALTER TABLE work_task_activities ADD CONSTRAINT work_task_activities_kind_check CHECK (kind IN (
  'TASK_CREATED','TITLE_CHANGED','TASK_COMPLETED','TASK_REOPENED','INTERACTION_ATTACHED',
  'TASK_AUTO_COMPLETED_INBOUND_CALL','TASK_AUTO_COMPLETED_BOOKING','TASK_AUTO_COMPLETED_DUPLICATE',
- 'CATEGORY_CHANGED','KNOWLEDGE_FEEDBACK_CHANGED'));
+ 'CATEGORY_CHANGED'));
 ALTER TABLE work_task_activities ADD COLUMN details jsonb NOT NULL DEFAULT '{}';
 DO $$ DECLARE definition text; BEGIN
  SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint
@@ -101,12 +101,6 @@ DO $$ DECLARE definition text; BEGIN
  ALTER TABLE work_tasks DROP CONSTRAINT work_tasks_origin_source_check;
  EXECUTE 'ALTER TABLE work_tasks ADD CONSTRAINT work_tasks_origin_source_check ' || replace(definition, '(category IS NULL)', '(true)');
 END $$;
-
-ALTER TABLE work_tasks
- ADD COLUMN knowledge_flagged boolean NOT NULL DEFAULT false,
- ADD COLUMN suggested_answer text NOT NULL DEFAULT '' CHECK (char_length(suggested_answer)<=2500),
- ADD COLUMN knowledge_updated_by text,
- ADD COLUMN knowledge_updated_at timestamptz;
 
 CREATE TABLE work_responsibility_locations (
  practice_id uuid NOT NULL,

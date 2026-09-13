@@ -229,6 +229,9 @@ function conversationHarness(t: TestContext) {
     timelineStatus: 200,
     timelineRequests: 0,
     tokenStatus: 200,
+    textTask: undefined as Task | undefined,
+    timelineGate: undefined as Promise<void> | undefined,
+    completions: [] as number[],
     items: [] as ConversationTimelineItem[],
     opened: [] as string[],
   }
@@ -245,8 +248,14 @@ function conversationHarness(t: TestContext) {
         { status: conversation.tokenStatus },
       )
     }
+    if (url.includes("/v1/tasks/") && url.endsWith("/complete")) {
+      const body = await (input as Request).json()
+      conversation.completions.push(body.expectedVersion)
+      return Response.json({ ...conversation.textTask, state: "COMPLETED" })
+    }
     assert.match(url, /\/v1\/engagements\/%2B15551234567\/timeline\?/)
     conversation.timelineRequests += 1
+    await conversation.timelineGate
     return conversation.timelineStatus === 200
       ? Response.json({ items: conversation.items, nextCursor: "" })
       : Response.json(
@@ -262,6 +271,8 @@ function conversationHarness(t: TestContext) {
           engagement={projection.selection.engagement!}
           practiceID={projection.scope.practiceID}
           canMutate={false}
+          textTask={conversation.textTask}
+          onTextTaskUpdated={() => {}}
           revision={revision}
           onTaskCreated={() => {}}
           onTaskOpen={(task) => conversation.opened.push(`task:${task.id}`)}
@@ -290,6 +301,39 @@ function conversationHarness(t: TestContext) {
   })
   return conversation
 }
+
+test("text completion requires a successful conversation reload for the current Task version", async (t) => {
+  const conversation = conversationHarness(t)
+  const task = { ...projectedTask(), origin: "INBOUND_MESSAGE_REVIEW" as const }
+  const done = () => Array.from(conversation.host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Mark done")!
+  conversation.textTask = task
+  let release!: () => void
+  conversation.timelineGate = new Promise<void>((resolve) => { release = resolve })
+  await conversation.render(0)
+  assert.equal(done().disabled, true, "initial loading has no reviewed evidence")
+  conversation.textTask = { ...task, version: 2 }
+  await conversation.render(0)
+  assert.equal(done().disabled, true, "a Task change during initial loading stays unreviewed")
+  await act(async () => { release(); await conversation.timelineGate })
+  assert.equal(done().disabled, false)
+
+  conversation.timelineGate = new Promise<void>((resolve) => { release = resolve })
+  conversation.textTask = { ...task, version: 3 }
+  await conversation.render(1)
+  assert.equal(done().disabled, true, "new Task version is not proof the new messages loaded")
+  await act(async () => done().click())
+  assert.deepEqual(conversation.completions, [])
+  conversation.timelineStatus = 503
+  await act(async () => { release(); await conversation.timelineGate })
+  assert.equal(done().disabled, true, "failed refresh must leave unseen work pending")
+
+  conversation.timelineStatus = 200
+  conversation.timelineGate = undefined
+  await conversation.render(2)
+  assert.equal(done().disabled, false)
+  await act(async () => done().click())
+  assert.deepEqual(conversation.completions, [3], "completion submits the version whose conversation loaded")
+})
 
 function installDOM() {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -421,7 +465,7 @@ function projectedWorkspace(task: Task): WorkspaceProjectionState {
     detailRevision: 0,
     completion: { pendingTaskID: "", errorTaskID: "", error: "" },
     rail: {
-      expanded: ["tasks"],
+      expanded: [],
       taskCategory: "all",
       scrollTop: 0,
     },

@@ -3,10 +3,10 @@ import { signInAs } from "./support"
 
 const portalURL = process.env.E2E_PORTAL_API_URL ?? "http://127.0.0.1:18080"
 
-test("staff review grouped requests, correct one group, and retain feedback after completing the group", async ({ page }, testInfo) => {
+test("staff review grouped requests, correct one group, and preserve completed requests", async ({ page }, testInfo) => {
   test.skip(!process.env.E2E_PROVISIONING_OUTPUT, "E2E fixture required")
   await signInAs(page, "selected@abita.test", "Synthetic Staff")
-  let feedbackTaskID = ""
+  let completedTaskID = ""
   for (const [key, name, message] of [
     ["glasses", "Alex Example", "Please send the glasses prescription copy."],
     ["contacts", "Blair Example", "Please send my contact lens prescription copy."],
@@ -17,18 +17,8 @@ test("staff review grouped requests, correct one group, and retain feedback afte
       data: { callId: `task-groups-${key}`, callerPhone: "+12025550148", category: "optical", idempotencyKey: `task-groups-${key}`, officeKey: "spring-hill", officePhone: "+17275550101", source: "agent", urgency: "normal", summary: `Group request ${key}`, message, patient: { name } },
     })
     expect(response.status()).toBe(201)
-    if (key === "glasses") feedbackTaskID = (await response.json()).taskId
+    if (key === "glasses") completedTaskID = (await response.json()).taskId
   }
-  // Previously submitted feedback remains durable even though its staff control is removed.
-  const initialTokenResponse = await page.request.get("/api/auth/token")
-  const { token: initialToken } = await initialTokenResponse.json()
-  const headers = { authorization: `Bearer ${initialToken}` }
-  const feedbackTask = await (await page.request.get(`${portalURL}/v1/tasks/${feedbackTaskID}`, { headers })).json()
-  const feedbackResponse = await page.request.post(`${portalURL}/v1/tasks/${feedbackTaskID}/knowledge-feedback`, {
-    headers,
-    data: { expectedVersion: feedbackTask.version, flagged: true, suggestedAnswer: "Confirm the prescription-copy delivery process with the office." },
-  })
-  expect(feedbackResponse.ok()).toBeTruthy()
   await page.reload()
   const taskView = page.getByRole("button", { name: "My Tasks", exact: true })
   await expect(taskView).toBeVisible()
@@ -51,8 +41,6 @@ test("staff review grouped requests, correct one group, and retain feedback afte
   await page.screenshot({path:testInfo.outputPath("grouped-tasks.png"),fullPage:true})
   const medication = panel.getByRole("article", { name: "Task: Group request medication" })
   await expect(medication.getByLabel("Move to group")).toHaveCount(0)
-  await expect(medication.getByLabel("Suggested answer (optional)")).toHaveCount(0)
-  await expect(medication.getByRole("button", { name: "Save feedback" })).toHaveCount(0)
   await medication.getByRole("button", { name: "Move task", exact: true }).click()
   await expect(page.getByRole("menuitemradio", { name: "Optical, frames & prescriptions", exact: true })).toHaveAttribute("aria-checked", "true")
   await page.screenshot({ path: testInfo.outputPath("move-task-menu.png"), fullPage: true })
@@ -73,13 +61,11 @@ test("staff review grouped requests, correct one group, and retain feedback afte
   await expect(frames).toHaveCount(0)
   await expect(group.getByLabel("2 Tasks")).toBeVisible()
   await expect(panel.getByLabel("Flag knowledge-base question")).toHaveCount(0)
-  await expect(panel.getByLabel("Suggested answer (optional)")).toHaveCount(0)
   await expect(panel.getByRole("button", { name: "Save feedback" })).toHaveCount(0)
   await panel.getByRole("button", { name: /^Complete all \d+ requests$/ }).click()
   await expect(group).toHaveCount(0)
   await expect(page.getByTestId("task-row").filter({ hasText: "Group request medication" })).toBeVisible()
   await expect(page.getByLabel("Task status")).toHaveCount(0)
-  await expect(page.getByLabel("Knowledge flagged", { exact: true })).toHaveCount(0)
   await expect(page.getByText(/matching Tasks.*rows loaded/)).toHaveCount(0)
   await taskView.click()
   await page.getByRole("menuitemradio", { name: /^Optical / }).click()
@@ -97,12 +83,10 @@ test("staff review grouped requests, correct one group, and retain feedback afte
   const tokenResponse = await page.request.get("/api/auth/token")
   expect(tokenResponse.ok()).toBeTruthy()
   const { token } = await tokenResponse.json()
-  const persistedResponse = await page.request.get(`${portalURL}/v1/tasks/${feedbackTaskID}`, {
+  const persistedResponse = await page.request.get(`${portalURL}/v1/tasks/${completedTaskID}`, {
     headers: { authorization: `Bearer ${token}` },
   })
   expect(persistedResponse.ok()).toBeTruthy()
   const persisted = await persistedResponse.json()
   expect(persisted.state).toBe("COMPLETED")
-  expect(persisted.knowledgeFlagged).toBe(true)
-  expect(persisted.suggestedAnswer).toBe("Confirm the prescription-copy delivery process with the office.")
 })

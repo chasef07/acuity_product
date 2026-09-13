@@ -91,21 +91,20 @@ type TimelinePage struct {
 }
 
 type QueryTasksCommand struct {
-	Kind             string
-	Responsibility   string
-	Category         work.TaskCategory
-	KnowledgeFlagged bool
-	Grouped          bool
-	IncludeCounts    *bool
-	Identity         access.Identity
-	PracticeID       string
-	LocationID       string
-	Search           string
-	State            work.TaskState
-	Ordering         work.TaskOrdering
-	Folder           work.TaskFolder
-	Cursor           string
-	Limit            int
+	Kind           string
+	Responsibility string
+	Category       work.TaskCategory
+	Grouped        bool
+	IncludeCounts  *bool
+	Identity       access.Identity
+	PracticeID     string
+	LocationID     string
+	Search         string
+	State          work.TaskState
+	Ordering       work.TaskOrdering
+	Folder         work.TaskFolder
+	Cursor         string
+	Limit          int
 }
 
 func (m *Module) QueryEngagements(

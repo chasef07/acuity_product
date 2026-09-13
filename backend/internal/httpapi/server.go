@@ -1632,21 +1632,20 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
-		Kind:             stringValue((*string)(body.Kind)),
-		IncludeCounts:    body.IncludeCounts,
-		Responsibility:   stringValue((*string)(body.Responsibility)),
-		Category:         work.TaskCategory(stringValue((*string)(body.Category))),
-		KnowledgeFlagged: body.KnowledgeFlagged != nil && *body.KnowledgeFlagged,
-		Grouped:          body.Grouped != nil && *body.Grouped,
-		Identity:         identity,
-		PracticeID:       body.PracticeId.String(),
-		LocationID:       uuidString(body.LocationId),
-		Search:           stringValue(body.Search),
-		State:            state,
-		Ordering:         ordering,
-		Folder:           folder,
-		Cursor:           stringValue(body.Cursor),
-		Limit:            intValue(body.Limit),
+		Kind:           stringValue((*string)(body.Kind)),
+		IncludeCounts:  body.IncludeCounts,
+		Responsibility: stringValue((*string)(body.Responsibility)),
+		Category:       work.TaskCategory(stringValue((*string)(body.Category))),
+		Grouped:        body.Grouped != nil && *body.Grouped,
+		Identity:       identity,
+		PracticeID:     body.PracticeId.String(),
+		LocationID:     uuidString(body.LocationId),
+		Search:         stringValue(body.Search),
+		State:          state,
+		Ordering:       ordering,
+		Folder:         folder,
+		Cursor:         stringValue(body.Cursor),
+		Limit:          intValue(body.Limit),
 	})
 	if err != nil {
 		server.writeWorkspaceError(w, r, err)
@@ -1769,39 +1768,6 @@ func (server *Server) ChangeTaskCategory(
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
 		Category:        work.TaskCategory(body.Category),
-	})
-	if err != nil {
-		server.writeWorkError(w, r, err)
-		return
-	}
-	response, err := taskResponse(task)
-	if err != nil {
-		server.writeWorkError(w, r, err)
-		return
-	}
-	server.writeJSON(w, http.StatusOK, response)
-}
-
-func (server *Server) SetKnowledgeFeedback(
-	w http.ResponseWriter,
-	r *http.Request,
-	taskID openapi_types.UUID,
-) {
-	identity, ok := server.taskIdentity(w, r)
-	if !ok {
-		return
-	}
-	var body api.KnowledgeFeedbackRequest
-	if !server.decodeJSON(w, r, &body) {
-		return
-	}
-	ctx, cancel := server.requestContext(r)
-	defer cancel()
-	task, err := server.work.SetKnowledgeFeedback(ctx, work.KnowledgeFeedbackCommand{
-		Identity:        identity,
-		TaskID:          taskID.String(),
-		ExpectedVersion: body.ExpectedVersion,
-		Flagged:         body.Flagged, SuggestedAnswer: stringValue(body.SuggestedAnswer),
 	})
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -3290,10 +3256,6 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 		response.CallId = &callID
 	}
-	response.KnowledgeFlagged = &task.KnowledgeFlagged
-	response.SuggestedAnswer = &task.SuggestedAnswer
-	response.KnowledgeUpdatedBy = task.KnowledgeUpdatedBy
-	response.KnowledgeUpdatedAt = task.KnowledgeUpdatedAt
 	if len(task.GroupMembers) > 0 {
 		members := make([]api.Task, 0, len(task.GroupMembers))
 		for _, member := range task.GroupMembers {

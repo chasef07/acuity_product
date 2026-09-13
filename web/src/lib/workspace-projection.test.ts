@@ -412,12 +412,12 @@ test("rail preferences restore through the projection and corrupted values fail 
 
   await projection.start()
   assert.deepEqual(projection.getSnapshot().rail, {
-    expanded: ["tasks"],
+    expanded: [],
     taskCategory: "all",
     scrollTop: 0,
   })
 
-  await projection.dispatch({ type: "toggle-rail-section", section: "tasks" })
+  await projection.dispatch({ type: "toggle-rail-section", section: "completed" })
   await projection.dispatch({ type: "set-task-category", category: "billing" })
   await projection.dispatch({ type: "remember-rail-scroll", scrollTop: 42 })
 
@@ -425,7 +425,7 @@ test("rail preferences restore through the projection and corrupted values fail 
     JSON.parse(values.get("acuity.attentionRail.user-1.practice-1") ?? ""),
     {
       version: 1,
-      expanded: [],
+      expanded: ["completed"],
       taskCategory: "billing",
       scrollTop: 42,
     },
@@ -1077,14 +1077,13 @@ for (const legacyFilters of [false, true]) {
         ...deterministicAuthority({ discovery: accessDiscovery(), snapshot: workspaceSnapshot(20), tasks: taskPage([]) }),
         tasks: async (_token, request) => {
           assert.ok(request.state === "OPEN" || request.state === "COMPLETED")
-          assert.notEqual(request.knowledgeFlagged, true)
           return success(taskPage([]))
         },
       },
       realtime: realtime.adapter,
       preferences: {
         read: (key) => legacyFilters && key === "acuity.attentionRail.user-1.practice-1"
-          ? JSON.stringify({ version: 1, scrollTop: 0, taskState: "COMPLETED", knowledgeFlagged: true })
+          ? JSON.stringify({ version: 1, scrollTop: 0, taskState: "COMPLETED" })
           : null,
         write: () => {},
       },
@@ -1120,7 +1119,7 @@ test("one active query includes every origin and completed history loads ten sha
   })
   await projection.start()
   await realtime.reconcile(0)
-  assert.deepEqual(projection.getSnapshot().rail.expanded, ["tasks"])
+  assert.deepEqual(projection.getSnapshot().rail.expanded, [])
   assert.deepEqual(projection.getSnapshot().tasks.items, active)
   assert.deepEqual(projection.getSnapshot().completedTasks.items, [done])
   assert.equal(requests.length, 2)

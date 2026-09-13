@@ -25,8 +25,13 @@ that connects them.
   appointment outcomes without treating an automated claim as proof of success.
 
 A resolved Interaction should not create unnecessary work. An unresolved need
-should remain visible until it reaches an accountable outcome. Inbound messages
-are communication evidence; they do not automatically become Tasks.
+should remain visible until it reaches an accountable outcome. Incoming texts
+create shared review Tasks, except opt-out/control messages. Appointment, text,
+missed-call, and voicemail reviews appear for everyone with access to their
+Location, independent of category responsibility. Checking an appointment clears
+its review for everyone. A completed callback attempt clears older call recovery
+reviews even if the patient does not answer; history records the attempt without
+claiming patient contact. Any remaining patient obligation needs separate follow-up.
 
 A **Practice** is the customer tenant and security boundary; a **Location** is
 an office within it. Google sign-in establishes human identity, and the backend

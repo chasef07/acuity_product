@@ -422,12 +422,8 @@ export type TaskActor = {
 };
 
 export type Task = {
-    knowledgeFlagged?: boolean;
-    suggestedAnswer?: string;
-    knowledgeUpdatedBy?: string;
-    knowledgeUpdatedAt?: string;
     /**
-     * Complete open membership for this bucket, normalized number, and Location, including members outside a text or knowledge filter. This is a display projection, never a merged Task.
+     * Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
      */
     groupMembers?: Array<Task>;
     id: string;
@@ -1131,10 +1127,12 @@ export type OperatorAiInteractionAnalytics = {
 };
 
 export type TaskQueryRequest = {
+    /**
+     * Mine filters categorized follow-up by primary and backup responsibility. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
+     */
     responsibility?: 'mine' | 'all';
     kind?: 'texts' | 'calls';
     category?: StaffTaskCategory;
-    knowledgeFlagged?: boolean;
     grouped?: boolean;
     practiceId: string;
     locationId?: string;
@@ -1153,12 +1151,6 @@ export type TaskQueryRequest = {
 export type ChangeTaskCategoryRequest = {
     expectedVersion: number;
     category: StaffTaskCategory;
-};
-
-export type KnowledgeFeedbackRequest = {
-    expectedVersion: number;
-    flagged: boolean;
-    suggestedAnswer?: string;
 };
 
 export type CompleteTaskGroupRequest = {
@@ -1309,7 +1301,7 @@ export type ConversationTimelineItem = {
     taskActivityDetails?: {
         [key: string]: unknown;
     };
-    taskActivity?: 'TASK_CREATED' | 'SOURCE_UPDATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'KNOWLEDGE_FEEDBACK_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_OUTBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
+    taskActivity?: 'TASK_CREATED' | 'SOURCE_UPDATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
@@ -3234,49 +3226,6 @@ export type ChangeTaskCategoryResponses = {
 };
 
 export type ChangeTaskCategoryResponse = ChangeTaskCategoryResponses[keyof ChangeTaskCategoryResponses];
-
-export type SetKnowledgeFeedbackData = {
-    body: KnowledgeFeedbackRequest;
-    path: {
-        taskId: string;
-    };
-    query?: never;
-    url: '/v1/tasks/{taskId}/knowledge-feedback';
-};
-
-export type SetKnowledgeFeedbackErrors = {
-    /**
-     * Invalid request.
-     */
-    400: ErrorEnvelope;
-    /**
-     * Missing or invalid credential.
-     */
-    401: ErrorEnvelope;
-    /**
-     * Current identity lacks the requested authority.
-     */
-    403: ErrorEnvelope;
-    /**
-     * The requested transition is no longer available.
-     */
-    409: ErrorEnvelope;
-    /**
-     * A required dependency is temporarily unavailable.
-     */
-    503: ErrorEnvelope;
-};
-
-export type SetKnowledgeFeedbackError = SetKnowledgeFeedbackErrors[keyof SetKnowledgeFeedbackErrors];
-
-export type SetKnowledgeFeedbackResponses = {
-    /**
-     * Completed or idempotently current Task.
-     */
-    200: Task;
-};
-
-export type SetKnowledgeFeedbackResponse = SetKnowledgeFeedbackResponses[keyof SetKnowledgeFeedbackResponses];
 
 export type CompleteTaskGroupData = {
     body: CompleteTaskGroupRequest;

@@ -1411,40 +1411,6 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
-  /v1/tasks/{taskId}/knowledge-feedback:
-    post:
-      operationId: setKnowledgeFeedback
-      summary: Correct the knowledge flag and optional suggested answer.
-      parameters:
-        - name: taskId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/KnowledgeFeedbackRequest"
-      responses:
-        "200":
-          description: Completed or idempotently current Task.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Task"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Denied"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "503":
-          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}/complete-group:
     post:
       operationId: completeTaskGroup
@@ -3190,17 +3156,8 @@ components:
         - relatedInteractionCount
         - interactions
       properties:
-        knowledgeFlagged:
-          type: boolean
-        suggestedAnswer:
-          type: string
-        knowledgeUpdatedBy:
-          type: string
-        knowledgeUpdatedAt:
-          type: string
-          format: date-time
         groupMembers:
-          description: Complete open membership for this bucket, normalized number, and Location, including members outside a text or knowledge filter. This is a display projection, never a merged Task.
+          description: Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
           type: array
           items:
             $ref: "#/components/schemas/Task"
@@ -4529,13 +4486,15 @@ components:
         responsibility:
           type: string
           enum: [mine, all]
+          description: >-
+            Mine filters categorized follow-up by primary and backup responsibility.
+            Appointment, text, missed-call, and voicemail reviews remain shared within authorized
+            Locations, regardless of category. All removes only responsibility filtering.
         kind:
           type: string
           enum: [texts, calls]
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
-        knowledgeFlagged:
-          type: boolean
         grouped:
           type: boolean
         practiceId:
@@ -4577,20 +4536,6 @@ components:
           minimum: 1
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
-    KnowledgeFeedbackRequest:
-      type: object
-      additionalProperties: false
-      required: [expectedVersion, flagged]
-      properties:
-        expectedVersion:
-          type: integer
-          format: int64
-          minimum: 1
-        flagged:
-          type: boolean
-        suggestedAnswer:
-          type: string
-          maxLength: 2500
     CompleteTaskGroupRequest:
       type: object
       additionalProperties: false
@@ -4980,12 +4925,11 @@ components:
             - SOURCE_UPDATED
             - TITLE_CHANGED
             - CATEGORY_CHANGED
-            - KNOWLEDGE_FEEDBACK_CHANGED
             - TASK_COMPLETED
             - TASK_REOPENED
             - INTERACTION_ATTACHED
             - TASK_AUTO_COMPLETED_INBOUND_CALL
-            - TASK_AUTO_COMPLETED_OUTBOUND_CALL
+            - TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT
             - TASK_AUTO_COMPLETED_BOOKING
             - TASK_AUTO_COMPLETED_DUPLICATE
         message:

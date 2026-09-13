@@ -71,7 +71,6 @@ import { authClient } from "@/lib/auth-client"
 import { canViewPracticeAnalytics } from "@/lib/booking-analytics"
 import { formatUSPhone } from "@/lib/phone"
 import { cn } from "@/lib/utils"
-import { resolveWorkspaceSearch } from "@/lib/workspace-search"
 import type {
   WorkspaceConnectionState,
   WorkspaceProjectionIntent,
@@ -193,12 +192,6 @@ export function WorkspaceRail({
           <form
             onSubmit={(event) => {
               event.preventDefault()
-              if (
-                resolveWorkspaceSearch(search).kind === "tasks" &&
-                !expanded.includes("tasks")
-              ) {
-                onIntent({ type: "toggle-rail-section", section: "tasks" })
-              }
               onIntent({ type: "submit-search" })
             }}
           >
@@ -266,10 +259,10 @@ export function WorkspaceRail({
               <TaskRow key={task.id} task={task} active={task.id === selectedTaskID || Boolean(task.groupMembers?.some((member) => member.id === selectedTaskID))} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled={Boolean(pendingTaskID)} completionPending={pendingTaskID === task.id} completionError={completionError?.taskID === task.id ? completionError.message : ""} onComplete={() => onIntent({ type: "complete-task", task })} />
             ))}
             {loading && filteredTasks.length === 0 && (
-              <RailLoading inMenu label="Loading tasks" />
+              <RailLoading label="Loading tasks" />
             )}
             {!loading && selectedTaskCount === 0 && (
-              <RailEmpty inMenu>
+              <RailEmpty>
                 {(projection.rail.taskResponsibility ?? "mine") === "mine"
                   ? "No Tasks match your responsibilities and filters. Use All tasks to help another group."
                   : "No Tasks match these filters"}
@@ -297,8 +290,8 @@ export function WorkspaceRail({
               {completed.items.map((task) => (
                 <TaskRow key={task.id} task={task} active={task.id === selectedTaskID} onSelect={() => onIntent({ type: "select-task", task })} completionDisabled completionPending={false} completionError="" onComplete={() => {}} />
               ))}
-              {completed.loading && completed.items.length === 0 && <RailLoading inMenu label="Loading completed Tasks" />}
-              {!completed.loading && completed.items.length === 0 && <RailEmpty inMenu>No completed Tasks match these filters.</RailEmpty>}
+              {completed.loading && completed.items.length === 0 && <RailLoading label="Loading completed Tasks" />}
+              {!completed.loading && completed.items.length === 0 && <RailEmpty>No completed Tasks match these filters.</RailEmpty>}
               {completed.error && <WorkspaceWindowFailure message={completed.error} onRetry={() => onIntent({ type: "retry" })} />}
               <RailShowMore cursor={completed.nextCursor} loading={completed.loading} onLoadMore={() => onIntent({ type: "load-more", window: "completedTasks" })} />
             </CompletedGroup>
@@ -679,25 +672,17 @@ function HoverDetail({
   )
 }
 
-function RailLoading({ label, inMenu = false }: { label: string; inMenu?: boolean }) {
-  const className = "flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
-  if (inMenu) {
-    return (
-      <SidebarMenuItem className={className}>
-        <Spinner />
-        {label}
-      </SidebarMenuItem>
-    )
-  }
-  return <div className={className}><Spinner />{label}</div>
+function RailLoading({ label }: { label: string }) {
+  return (
+    <SidebarMenuItem className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+      <Spinner />
+      {label}
+    </SidebarMenuItem>
+  )
 }
 
-function RailEmpty({ children, inMenu = false }: { children: string; inMenu?: boolean }) {
-  const className = "px-3 py-2 text-xs text-muted-foreground"
-  if (inMenu) {
-    return <SidebarMenuItem className={className}>{children}</SidebarMenuItem>
-  }
-  return <p className={className}>{children}</p>
+function RailEmpty({ children }: { children: string }) {
+  return <SidebarMenuItem className="px-3 py-2 text-xs text-muted-foreground">{children}</SidebarMenuItem>
 }
 
 function RailShowMore({

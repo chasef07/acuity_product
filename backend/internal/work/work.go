@@ -46,9 +46,9 @@ const (
 type RecoveryResolutionKind string
 
 const (
-	RecoveryResolutionInboundCall  RecoveryResolutionKind = "INBOUND_CALL"
-	RecoveryResolutionOutboundCall RecoveryResolutionKind = "OUTBOUND_CALL"
-	RecoveryResolutionBooking      RecoveryResolutionKind = "BOOKING"
+	RecoveryResolutionInboundCall     RecoveryResolutionKind = "INBOUND_CALL"
+	RecoveryResolutionBooking         RecoveryResolutionKind = "BOOKING"
+	RecoveryResolutionCallbackAttempt RecoveryResolutionKind = "CALLBACK_ATTEMPT"
 )
 
 type TaskUrgency string
@@ -116,10 +116,6 @@ type ActorSnapshot struct {
 
 type Task struct {
 	GroupMembers             []Task
-	KnowledgeFlagged         bool
-	SuggestedAnswer          string
-	KnowledgeUpdatedBy       *string
-	KnowledgeUpdatedAt       *time.Time
 	ID                       string
 	PracticeID               string
 	LocationID               string
@@ -713,7 +709,7 @@ func (m *Module) ResolveRecoveryTasks(
 		!canonicalPhone.MatchString(command.Phone) ||
 		command.OccurredAt.IsZero() ||
 		(command.Kind != RecoveryResolutionInboundCall &&
-			command.Kind != RecoveryResolutionOutboundCall &&
+			command.Kind != RecoveryResolutionCallbackAttempt &&
 			command.Kind != RecoveryResolutionBooking) ||
 		!textLengthBetween(command.SourceID, 1, 255) {
 		return 0, ErrInvalidInput
@@ -783,11 +779,12 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 	var completed int64
 	if err := tx.QueryRow(ctx, `
 		WITH checkpoint AS (
-			SELECT resolved_at, kind
+			SELECT resolved_at, kind,
+				CASE WHEN kind = 'CALLBACK_ATTEMPT' THEN updated_at ELSE resolved_at END AS completed_at
 			FROM work_recovery_resolution_checkpoints
 			WHERE practice_id = $1 AND phone = $2
 		), eligible AS (
-			SELECT task.id, checkpoint.resolved_at, checkpoint.kind
+			SELECT task.id, checkpoint.completed_at, checkpoint.kind
 			FROM work_tasks task
 			CROSS JOIN checkpoint
 			WHERE task.practice_id = $1
@@ -819,9 +816,9 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				completed_by_kind = 'SERVICE',
 				completed_by_subject = 'work-recovery-resolution',
 				completed_by_email = NULL,
-				completed_at = eligible.resolved_at,
+				completed_at = eligible.completed_at,
 				version = task.version + 1,
-				updated_at = GREATEST(task.updated_at, eligible.resolved_at)
+				updated_at = GREATEST(task.updated_at, eligible.completed_at)
 			FROM eligible
 			WHERE task.id = eligible.id
 			RETURNING task.id, task.version, task.completed_at, eligible.kind
@@ -840,7 +837,7 @@ func (m *Module) completeRecoveryTasksFromCheckpoint(
 				updated.version,
 				CASE updated.kind
 					WHEN 'BOOKING' THEN 'TASK_AUTO_COMPLETED_BOOKING'
-                    WHEN 'OUTBOUND_CALL' THEN 'TASK_AUTO_COMPLETED_OUTBOUND_CALL'
+					WHEN 'CALLBACK_ATTEMPT' THEN 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT'
 					ELSE 'TASK_AUTO_COMPLETED_INBOUND_CALL'
 				END,
 				'SERVICE',
@@ -1817,10 +1814,6 @@ func insertTask(
 			task.completed_at,
 			task.version,
 			task.updated_at,
-			task.knowledge_flagged,
-			task.suggested_answer,
-			task.knowledge_updated_by,
-			task.knowledge_updated_at,
 			EXISTS (SELECT 1 FROM inserted)
 		FROM (
 			SELECT * FROM inserted
@@ -1884,10 +1877,6 @@ func insertTask(
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-		&task.KnowledgeFlagged,
-		&task.SuggestedAnswer,
-		&task.KnowledgeUpdatedBy,
-		&task.KnowledgeUpdatedAt,
 		&inserted,
 	)
 	if err != nil {
@@ -1943,11 +1932,7 @@ func loadTask(
 			task.completed_by_email,
 			task.completed_at,
 			task.version,
-			task.updated_at,
-			task.knowledge_flagged,
-			task.suggested_answer,
-			task.knowledge_updated_by,
-			task.knowledge_updated_at
+			task.updated_at
 		FROM work_tasks task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
@@ -1998,11 +1983,7 @@ func lockTask(
 			task.completed_by_email,
 			task.completed_at,
 			task.version,
-			task.updated_at,
-			task.knowledge_flagged,
-			task.suggested_answer,
-			task.knowledge_updated_by,
-			task.knowledge_updated_at
+			task.updated_at
 		FROM work_tasks task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
@@ -2086,10 +2067,6 @@ func scanTask(scanner taskScanner) (Task, error) {
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-		&task.KnowledgeFlagged,
-		&task.SuggestedAnswer,
-		&task.KnowledgeUpdatedBy,
-		&task.KnowledgeUpdatedAt,
 	}
 	if err := scanner.Scan(destinations...); err != nil {
 		return Task{}, err

@@ -33,7 +33,7 @@ export type WorkspaceConnectionState =
 
 export type WorkspaceView = "none" | "engagement" | "analytics" | "operator-analytics"
 export type WorkspaceContextView = "task" | "call" | "ai-call"
-export type WorkspaceRailSection = "tasks" | "completed"
+export type WorkspaceRailSection = "completed"
 
 export type WorkspaceRailState = {
   expanded: WorkspaceRailSection[]
@@ -1378,7 +1378,7 @@ export function createWorkspaceProjection({
   }
 }
 
-const railSections: WorkspaceRailSection[] = ["tasks", "completed"]
+const railSections: WorkspaceRailSection[] = ["completed"]
 
 const taskCategories: TaskCategoryFilter[] = [
   "texts", "calls",
@@ -1394,7 +1394,7 @@ const taskCategories: TaskCategoryFilter[] = [
 
 function emptyRailState(): WorkspaceRailState {
   return {
-    expanded: ["tasks"],
+    expanded: [],
     taskCategory: "all",
     scrollTop: 0,
   }
@@ -1424,7 +1424,7 @@ function restoreRailPreferences(
         ? value.expanded.filter((section): section is WorkspaceRailSection =>
             railSections.includes(section as WorkspaceRailSection),
           )
-        : ["tasks"],
+        : [],
       ...(value.taskResponsibility === "mine" || value.taskResponsibility === "all" ? {taskResponsibility:value.taskResponsibility} : {}),
       taskCategory: taskCategories.includes(
         value.taskCategory as TaskCategoryFilter,

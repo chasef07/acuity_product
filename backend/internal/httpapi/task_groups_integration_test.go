@@ -171,14 +171,13 @@ func TestAgent444CapturedTasksAndStaffGroupCommands(t *testing.T) {
 		t.Fatalf("move: %d %s", response.StatusCode, readBody(t, response))
 	}
 	var moved api.Task
-	json.NewDecoder(response.Body).Decode(&moved)
-	response.Body.Close()
-	feedback, _ := json.Marshal(map[string]any{"expectedVersion": moved.Version, "flagged": true, "suggestedAnswer": "Synthetic suggestion for office confirmation."})
-	response = request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+target.Id.String()+"/knowledge-feedback", "staff-token", feedback)
-	if response.StatusCode != 200 {
-		t.Fatalf("feedback: %d %s", response.StatusCode, readBody(t, response))
+	if err := json.NewDecoder(response.Body).Decode(&moved); err != nil {
+		t.Fatal(err)
 	}
 	response.Body.Close()
+	if moved.Category == nil || *moved.Category != "medication" {
+		t.Fatalf("moved Task category: %v", moved.Category)
+	}
 	refreshed := query()
 	if refreshed.Counts.Tasks != len(payloads) {
 		t.Fatal("metadata changed open work count")

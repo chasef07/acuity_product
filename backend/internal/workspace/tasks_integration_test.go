@@ -169,16 +169,12 @@ func TestQueryTasksPreservesPriorityCursorSearchAndAuthoritativeCounts(t *testin
 		})
 	}
 
-	firstCompleted, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: high.ID, ExpectedVersion: high.Version})
+	_, err = workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: high.ID, ExpectedVersion: high.Version})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
 	if _, err := workModule.CompleteTask(ctx, work.CompleteTaskCommand{Identity: identity, TaskID: normalOld.ID, ExpectedVersion: normalOld.Version}); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(time.Hour)
-	if _, err := workModule.SetKnowledgeFeedback(ctx, work.KnowledgeFeedbackCommand{Identity: identity, TaskID: high.ID, ExpectedVersion: firstCompleted.Version, Flagged: true}); err != nil {
 		t.Fatal(err)
 	}
 	completedCommand := workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, State: work.TaskCompleted, Ordering: work.TaskOrderingRecent, Limit: 1}
@@ -320,8 +316,7 @@ func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE work_tasks SET category='optical' WHERE id=ANY($1::uuid[])`, []string{older.ID, newest.ID}); err != nil {
 		t.Fatal(err)
 	}
-	// Classified recovery work obeys exactly the same responsibility scope as
-	// ordinary Tasks; the unified badge must not retain hidden recovery Tasks.
+	// Recovery reviews stay shared after classification, with matching counts.
 	for _, responsibility := range []string{"mine", "all"} {
 		page, err := reads.QueryTasks(ctx, workspace.QueryTasksCommand{Identity: identity, PracticeID: authorization.Practice.ID, Responsibility: responsibility, Grouped: false})
 		if err != nil {
@@ -330,8 +325,8 @@ func TestQueryTasksMissedCallsFolderStartsWithNewestRecoveryTask(t *testing.T) {
 		if page.Counts.Tasks != len(page.Items) {
 			t.Fatalf("%s counted hidden Tasks: count=%d rows=%d", responsibility, page.Counts.Tasks, len(page.Items))
 		}
-		if responsibility == "mine" && page.Counts.Categories.Optical != 0 {
-			t.Fatalf("My Tasks counted another team's recovery work: %+v", page.Counts)
+		if page.Counts.Categories.Optical != 2 || page.Counts.CallRecovery != 2 {
+			t.Fatalf("%s hid shared recovery reviews: %+v", responsibility, page.Counts)
 		}
 	}
 }
