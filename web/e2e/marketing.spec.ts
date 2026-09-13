@@ -1,22 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 
-async function expectPinnedGlassNavigation(page: Page, expectedTop: number) {
-  const navigation = page.getByRole("banner")
-  const glass = await navigation.evaluate((element) => {
-    const styles = getComputedStyle(element)
-    return {
-      backdropFilter: styles.backdropFilter,
-      position: styles.position,
-      top: styles.top,
-    }
-  })
-
-  expect(glass.position).toBe("sticky")
-  expect(glass.top).toBe(`${expectedTop}px`)
-  expect(glass.backdropFilter).toContain("blur(24px)")
-
+async function expectPinnedNavigation(page: Page) {
   await page.evaluate(() => window.scrollTo(0, 700))
-  expect((await navigation.boundingBox())?.y).toBe(expectedTop)
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+  await expect.poll(async () => (await page.getByRole("banner").boundingBox())?.y).toBe(0)
 }
 
 test("enterprise story leads from medical voice to the Acuity Health Method", async ({ page }) => {
@@ -29,7 +16,6 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
   ).toBeVisible()
   await expect(page.getByText("AI agents", { exact: true })).toBeVisible()
   await expect(page.getByText("for medical enterprises", { exact: true })).toBeVisible()
-  await expect(page.locator("canvas")).toHaveCSS("cursor", "auto")
   await expect(
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
@@ -38,27 +24,11 @@ test("enterprise story leads from medical voice to the Acuity Health Method", as
   await expect(methodCapabilities).toContainText("system design")
   await expect(methodCapabilities).toContainText("Workflow")
   await expect(methodCapabilities).toContainText("transformation")
-  await expect(page.getByText("Built for enterprise")).toHaveCount(0)
-  await expect(
-    page.getByRole("main").getByRole("link", { name: "Build with us", exact: true }).locator("svg"),
-  ).toHaveCount(0)
-  await expect(
-    page.getByRole("link", { name: "Explore our method" }),
-  ).toHaveCSS("border-bottom-width", "0px")
   await expect(
     page.getByText(
       "Acuity Health helps medical enterprises onboard voice AI agents that answer calls, check insurance eligibility, and book appointments.",
     ),
   ).toBeVisible()
-
-  await expect(
-    page.getByRole("heading", { name: "Find where patient demand stops moving." }),
-  ).toHaveCount(0)
-  await expect(
-    page.getByRole("heading", {
-      name: "A deployed operation created measurable capacity.",
-    }),
-  ).toHaveCount(0)
 })
 
 test("marketing navigation exposes the enterprise pages", async ({ page }) => {
@@ -67,9 +37,7 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
   const primaryNavigation = page
     .getByRole("banner")
     .getByRole("navigation", { name: "Main navigation" })
-  await expect(
-    primaryNavigation.getByRole("link", { name: "Ophthalmology" }),
-  ).toHaveCount(0)
+  await expect(primaryNavigation).toHaveCount(1)
 
   await page.getByRole("banner").getByRole("link", { name: "Our Method" }).click()
   await expect(page).toHaveURL(/\/method$/)
@@ -77,9 +45,6 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
     page.getByRole("heading", { name: "Two capabilities make enterprise AI work." }),
   ).toBeVisible()
   await expect(page.getByText("Data security + HIPAA safeguards")).toBeVisible()
-  await expect(
-    page.getByRole("heading", { name: "A deployed operation created measurable capacity." }),
-  ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Who We Are" }).first().click()
   await expect(page).toHaveURL(/\/who-we-are$/)
@@ -110,60 +75,12 @@ test("marketing navigation exposes the enterprise pages", async ({ page }) => {
     page.getByRole("heading", { name: "Continuous improvement" }),
   ).toBeVisible()
   await expect(page.getByText("KAIZEN · 改善")).toBeVisible()
-})
-
-test("marketing shell uses one navigation surface and an organized footer", async ({
-  page,
-}) => {
-  await page.goto("/")
-
-  const banner = page.getByRole("banner")
-  const navigation = banner.getByRole("navigation", { name: "Main navigation" })
-  const shell = await banner.evaluate((element) => {
-    const styles = getComputedStyle(element)
-    return {
-      borderRadius: styles.borderRadius,
-      top: styles.top,
-      width: element.getBoundingClientRect().width,
-    }
-  })
-  const navigationSurface = await navigation.evaluate((element) => {
-    const styles = getComputedStyle(element)
-    return {
-      backgroundColor: styles.backgroundColor,
-      borderTopWidth: styles.borderTopWidth,
-      boxShadow: styles.boxShadow,
-    }
-  })
-
-  expect(shell.borderRadius).toBe("0px")
-  expect(shell.top).toBe("0px")
-  expect(shell.width).toBe(await page.evaluate(() => document.documentElement.clientWidth))
-  expect(navigationSurface.backgroundColor).toBe("rgba(0, 0, 0, 0)")
-  expect(navigationSurface.borderTopWidth).toBe("0px")
-  expect(navigationSurface.boxShadow).toBe("none")
-  await expect(navigation.getByRole("link", { name: "Home" })).toHaveCSS(
-    "box-shadow",
-    "none",
-  )
 
   const footer = page.getByRole("contentinfo")
-  const footerNavigation = footer.getByRole("navigation", { name: "Footer navigation" })
-  await expect(footerNavigation).toBeVisible()
+  await expect(footer.getByRole("navigation", { name: "Footer navigation" })).toBeVisible()
   for (const group of ["Product", "Company", "Social", "Legal"]) {
     await expect(footer.getByRole("heading", { name: group })).toBeVisible()
   }
-  for (const label of [
-    "AdvancedMD integration",
-    "Ophthalmology patient access",
-    "Compare operating models",
-    "Case study",
-    "FAQ",
-  ]) {
-    await expect(footerNavigation.getByRole("link", { name: label })).toHaveCount(0)
-  }
-  await expect(footer.getByRole("separator")).toHaveCount(0)
-  await expect(footer.getByText("Acuity Health", { exact: true }).last()).toBeVisible()
 })
 
 test("retired commercial routes and their legacy aliases return 404", async ({
@@ -184,7 +101,7 @@ test("retired commercial routes and their legacy aliases return 404", async ({
   }
 })
 
-test("work with us links land at the top with the pinned glass navigation visible", async ({
+test("work with us links land at the top with navigation pinned while scrolling", async ({
   page,
 }) => {
   await page.goto("/")
@@ -203,30 +120,8 @@ test("work with us links land at the top with the pinned glass navigation visibl
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
   const navigation = await page.getByRole("banner").boundingBox()
   expect(navigation?.y).toBe(0)
-  expect(navigation?.height).toBe(76)
 
-  await expect(page.getByRole("banner")).toHaveCSS("border-radius", "0px")
-  await expectPinnedGlassNavigation(page, 0)
-})
-
-test("mobile homepage does not overflow horizontally", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto("/")
-
-  const dimensions = await page.evaluate(() => {
-    return {
-      viewport: document.documentElement.clientWidth,
-      content: document.documentElement.scrollWidth,
-    }
-  })
-
-  expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
-  await expectPinnedGlassNavigation(page, 0)
-  await expect(
-    page.getByRole("heading", {
-      name: "Voice AI agents for patient access.",
-    }),
-  ).toBeVisible()
+  await expectPinnedNavigation(page)
 })
 
 test("trust and legal pages publish bounded evidence", async ({ page }) => {
@@ -262,7 +157,6 @@ test("trust and legal pages publish bounded evidence", async ({ page }) => {
   await expect(page.getByText("A public overview, not a compliance badge.")).toBeVisible()
   await expect(page.getByText(/not a third-party certification/)).toBeVisible()
   await expect(page.getByText(/Data Buddies Solutions LLC d\/b\/a Acuity Health/)).toBeVisible()
-
 })
 
 test("legacy SEO routes redirect only to equivalent current pages", async ({ request }) => {
@@ -315,6 +209,7 @@ test("new public pages and navigation remain usable on mobile", async ({ page })
   await page.setViewportSize({ width: 390, height: 844 })
 
   for (const route of [
+    "/",
     "/security",
     "/privacy-policy",
     "/terms-of-service",

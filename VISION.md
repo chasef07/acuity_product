@@ -116,6 +116,4 @@ the shared staff workspace, accountable work, human communication, and evidence
 across AI and human Interactions.
 
 `README.md` owns the current architecture.
-`docs/acuity-portal-product-technical-spec.md` owns detailed product behavior
-and the release bar. `CONTEXT.md` owns domain vocabulary. GitHub Issues own
-committed product work.
+`CONTEXT.md` owns domain vocabulary. GitHub Issues own committed product work.

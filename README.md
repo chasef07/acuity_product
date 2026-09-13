@@ -128,9 +128,6 @@ Go bindings and the TypeScript client are generated from it, not edited by hand.
    through polling. Neither browser intent nor a successful provider request
    proves that a call connected or a message was delivered.
 
-Detailed boundaries, lifecycles, and invariants live in the
-[architecture guide](docs/architecture/overview.md).
-
 ## Local development
 
 Run the commands below from the repository root. The frontend package lives in
@@ -282,8 +279,8 @@ settings into this README:
   connection budgets, and database recovery settings.
 - [Observability](deploy/observability/README.md): checked metrics, alerts, SLOs,
   and deployment instructions.
-- [Provider-receipt recovery](docs/runbooks/provider-receipt-recovery.md):
-  guarded inspection and recovery. **Do not bulk replay receipts.**
+
+**Do not bulk replay provider receipts.**
 
 This README describes the implementation and checked deployment contracts, not
 current production health. Local tests, CI, deployed application behavior,
@@ -301,13 +298,11 @@ web/                 Next.js app, Better Auth, generated client, and browser tes
 config/              Reviewed development and production provisioning inputs
 scripts/             Test harnesses and schema verification
 deploy/              Runtime contracts, release automation, and operational controls
-docs/                Product specification, architecture, runbooks, and research
 .github/             CI, release workflows, and pull request template
 ```
 
-Before changing behavior, read [VISION.md](VISION.md), the relevant
-[product specification](docs/acuity-portal-product-technical-spec.md), and the
-issue with all its comments. [GitHub Issues](docs/agents/issue-tracker.md) own
-committed product work. Follow [AGENTS.md](AGENTS.md), plus
+Before changing behavior, read [VISION.md](VISION.md) and the relevant
+issue with all its comments. GitHub Issues own committed product work.
+Follow [AGENTS.md](AGENTS.md), plus
 [web/AGENTS.md](web/AGENTS.md) for frontend changes. Use synthetic, PHI-free data
 in tests and evidence, and state what remains unverified when handing off work.

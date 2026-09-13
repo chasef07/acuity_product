@@ -3,33 +3,12 @@ import type {
   AiInteractionCallStatus,
 } from "@/lib/api/generated/types.gen"
 
-const appointmentPresentations: Record<
-  AiAppointmentOutcome,
-  {
-    label: string
-    title: string
-  }
-> = {
-  BOOKING: {
-    label: "Booking",
-    title: "Appointment booked",
-  },
-  CANCELLATION: {
-    label: "Cancellation",
-    title: "Appointment cancelled",
-  },
-  RESCHEDULE: {
-    label: "Reschedule",
-    title: "Appointment rescheduled",
-  },
-  PARTIAL: {
-    label: "Partially completed",
-    title: "Appointment change needs review",
-  },
-  INDETERMINATE: {
-    label: "No appointment actions",
-    title: "AI call",
-  },
+const appointmentTitles: Record<AiAppointmentOutcome, string> = {
+  BOOKING: "Appointment booked",
+  CANCELLATION: "Appointment cancelled",
+  RESCHEDULE: "Appointment rescheduled",
+  PARTIAL: "Appointment change needs review",
+  INDETERMINATE: "AI call",
 }
 
 export function aiCallCompletionLabel(status: AiInteractionCallStatus) {
@@ -81,10 +60,6 @@ function aiCallTimelineDetail(status: AiInteractionCallStatus) {
   }
 }
 
-export function appointmentOutcomeLabel(outcome: AiAppointmentOutcome) {
-  return appointmentPresentations[outcome].label
-}
-
 export function appointmentOutcomeTitle(outcome: AiAppointmentOutcome) {
-  return appointmentPresentations[outcome].title
+  return appointmentTitles[outcome]
 }
