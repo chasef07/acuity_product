@@ -71,13 +71,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Require the current main commit
+      - name: Require current knowledge contents
         env:
           KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
         run: |
-          current_main=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [[ "$current_main" != "$KNOWLEDGE_COMMIT" ]]; then
-            echo 'This run was superseded by a newer main commit. Run Knowledge from main again.' >&2
+          # A merge during deployment only supersedes publication if it changes
+          # knowledge. Keep the checkout pinned to the verified release.
+          git fetch --no-tags --depth=1 origin refs/heads/main
+          if ! git diff --quiet "$KNOWLEDGE_COMMIT" FETCH_HEAD -- knowledge/; then
+            echo 'Knowledge differs from current main. Publish the newer knowledge after its release is deployed.' >&2
             exit 1
           fi
       - name: Authenticate to Google Cloud
