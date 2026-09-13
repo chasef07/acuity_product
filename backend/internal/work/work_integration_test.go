@@ -935,7 +935,7 @@ func TestCreateAITaskRejectsInvalidOrUnauthorizedCommandsWithoutEffects(t *testi
 		})
 	}
 	invalidPhone := command
-	invalidPhone.Phone = "7275551212"
+	invalidPhone.Phone = "not a phone"
 	if _, _, err := module.CreateAITask(
 		context.Background(),
 		invalidPhone,

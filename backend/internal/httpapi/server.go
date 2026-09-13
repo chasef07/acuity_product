@@ -1632,16 +1632,20 @@ func (server *Server) QueryTasks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := server.requestContext(r)
 	defer cancel()
 	page, err := server.workspace.QueryTasks(ctx, workspace.QueryTasksCommand{
-		IncludeCounts: body.IncludeCounts,
-		Identity:      identity,
-		PracticeID:    body.PracticeId.String(),
-		LocationID:    uuidString(body.LocationId),
-		Search:        stringValue(body.Search),
-		State:         state,
-		Ordering:      ordering,
-		Folder:        folder,
-		Cursor:        stringValue(body.Cursor),
-		Limit:         intValue(body.Limit),
+		Kind:           stringValue((*string)(body.Kind)),
+		IncludeCounts:  body.IncludeCounts,
+		Responsibility: stringValue((*string)(body.Responsibility)),
+		Category:       work.TaskCategory(stringValue((*string)(body.Category))),
+		Grouped:        body.Grouped != nil && *body.Grouped,
+		Identity:       identity,
+		PracticeID:     body.PracticeId.String(),
+		LocationID:     uuidString(body.LocationId),
+		Search:         stringValue(body.Search),
+		State:          state,
+		Ordering:       ordering,
+		Folder:         folder,
+		Cursor:         stringValue(body.Cursor),
+		Limit:          intValue(body.Limit),
 	})
 	if err != nil {
 		server.writeWorkspaceError(w, r, err)
@@ -1731,6 +1735,75 @@ func (server *Server) CompleteTask(
 		Identity:        identity,
 		TaskID:          taskID.String(),
 		ExpectedVersion: body.ExpectedVersion,
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) ChangeTaskCategory(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.ChangeTaskCategoryRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	task, err := server.work.ChangeTaskCategory(ctx, work.ChangeTaskCategoryCommand{
+		Identity:        identity,
+		TaskID:          taskID.String(),
+		ExpectedVersion: body.ExpectedVersion,
+		Category:        work.TaskCategory(body.Category),
+	})
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	response, err := taskResponse(task)
+	if err != nil {
+		server.writeWorkError(w, r, err)
+		return
+	}
+	server.writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) CompleteTaskGroup(
+	w http.ResponseWriter,
+	r *http.Request,
+	taskID openapi_types.UUID,
+) {
+	identity, ok := server.taskIdentity(w, r)
+	if !ok {
+		return
+	}
+	var body api.CompleteTaskGroupRequest
+	if !server.decodeJSON(w, r, &body) {
+		return
+	}
+	members := make([]work.ReviewedTask, 0, len(body.Members))
+	for _, member := range body.Members {
+		members = append(members, work.ReviewedTask{ID: member.Id.String(), ExpectedVersion: member.ExpectedVersion})
+	}
+	ctx, cancel := server.requestContext(r)
+	defer cancel()
+	task, err := server.work.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{
+		Identity: identity,
+		TaskID:   taskID.String(),
+		Members:  members,
 	})
 	if err != nil {
 		server.writeWorkError(w, r, err)
@@ -3183,6 +3256,17 @@ func taskResponse(task work.Task) (api.Task, error) {
 		}
 		response.CallId = &callID
 	}
+	if len(task.GroupMembers) > 0 {
+		members := make([]api.Task, 0, len(task.GroupMembers))
+		for _, member := range task.GroupMembers {
+			converted, err := taskResponse(member)
+			if err != nil {
+				return api.Task{}, err
+			}
+			members = append(members, converted)
+		}
+		response.GroupMembers = &members
+	}
 	if task.Category != "" {
 		category := api.StaffTaskCategory(task.Category)
 		response.Category = &category
@@ -3192,6 +3276,9 @@ func taskResponse(task work.Task) (api.Task, error) {
 	}
 	if task.SourceCallID != "" {
 		response.SourceCallId = &task.SourceCallID
+	}
+	if task.Preview != "" {
+		response.Preview = &task.Preview
 	}
 	if task.SourceMessage != "" {
 		response.SourceMessage = &task.SourceMessage
@@ -3479,6 +3566,9 @@ func conversationTimelineResponse(
 		if item.TaskActivity != "" {
 			activity := api.ConversationTimelineItemTaskActivity(item.TaskActivity)
 			converted.TaskActivity = &activity
+			if item.TaskActivityDetails != nil {
+				converted.TaskActivityDetails = &item.TaskActivityDetails
+			}
 		}
 		switch item.Type {
 		case "CALL_HISTORY":
@@ -3539,8 +3629,10 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 	}
 	if page.Counts != nil {
 		response.Counts = &api.TaskFolderCounts{
-			Tasks:       page.Counts.Tasks,
-			MissedCalls: page.Counts.MissedCalls,
+			Tasks:        page.Counts.Tasks,
+			MissedCalls:  page.Counts.MissedCalls,
+			Texts:        &page.Counts.Texts,
+			CallRecovery: &page.Counts.CallRecovery,
 			Categories: api.TaskCategoryCounts{
 				Billing:       page.Counts.Categories.Billing,
 				Appointments:  page.Counts.Categories.Appointments,
@@ -3549,6 +3641,7 @@ func taskPageResponse(page work.TaskPage) (api.TaskPage, error) {
 				Medication:    page.Counts.Categories.Medication,
 				Referrals:     page.Counts.Categories.Referrals,
 				Other:         page.Counts.Categories.Other,
+				Insurance:     &page.Counts.Categories.Insurance, PreOp: &page.Counts.Categories.PreOp, PostOp: &page.Counts.Categories.PostOp,
 			},
 		}
 	}

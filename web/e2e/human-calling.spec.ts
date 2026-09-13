@@ -128,10 +128,6 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       },
     )
     expect([200, 201]).toContain(navigationTaskResponse.status())
-    const tasksSection = selectedPage.getByRole("button", { name: /^Tasks/ })
-    if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-      await tasksSection.click()
-    }
     const navigationTask = selectedPage.getByRole("button", {
       name: navigationTaskTitle,
       exact: true,
@@ -507,9 +503,6 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toHaveCount(0)
     const answersBeforeNavigation = await mediaAnswers(selectedPage)
-    if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-      await tasksSection.click()
-    }
     await expect(navigationTask).toBeVisible()
     await navigationTask.click()
     await expect(
@@ -851,9 +844,6 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
     ).toHaveCount(0)
     await outcome.getByRole("button", { name: "Resolved on call", exact: true }).click()
     await expect(outcome).toHaveCount(0)
-    if ((await tasksSection.getAttribute("aria-expanded")) === "false") {
-      await tasksSection.click()
-    }
     await expect(navigationTask).toBeVisible()
     await navigationTask.click()
     const navigationContext = selectedPage.getByRole("complementary", {
@@ -866,7 +856,7 @@ test("production browser path fans out exact CallLegs and bridges one provider-c
       }),
     ).toBeVisible()
     await navigationContext
-      .getByRole("button", { name: "Complete", exact: true })
+      .getByRole("button", { name: "Complete & next", exact: true })
       .click()
     await expect(navigationTask).toHaveCount(0)
   } finally {
@@ -994,15 +984,9 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       await deliverProviderEvent(page, savedEvent)
       await expect(activeCall).toHaveCount(0, { timeout: 30_000 })
 
-      const recoveryFolder = page.getByRole("button", {
-        name: /^Missed Calls \d+$/,
-      })
-      if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
-        await recoveryFolder.click()
-      }
       await expect(
         page.getByRole("button", {
-          name: /\(555\) 555-0111.*Voicemail/,
+          name: /^Review voicemail/,
         }),
       ).toBeVisible({ timeout: 30_000 })
 
@@ -1053,7 +1037,7 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
       activities: ["1:TASK_CREATED", "2:INTERACTION_ATTACHED"],
     })
     const voicemailRow = page.getByRole("button", {
-      name: /\(555\) 555-0111.*Voicemail/,
+      name: /^Review voicemail/,
     })
     await voicemailRow.click()
     const taskContext = page.getByRole("complementary", {
@@ -1068,10 +1052,8 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     await expect(
       taskContext.getByLabel("Voicemail recording"),
     ).toBeVisible()
-    await taskContext
-      .getByRole("button", { name: "Resolve", exact: true })
-      .click()
-    await expect(voicemailRow).toHaveCount(0)
+    await expect(voicemailRow).toHaveCount(0, { timeout: 10_000 })
+    await expect(taskContext.getByRole("button", { name: "Reopen", exact: true })).toBeVisible()
 
     const missedPhone = "+15555550112"
     const missedCaller = await startAnsweredInboundCall(
@@ -1114,15 +1096,10 @@ test("voicemail and meaningful missed calls refresh into their recovery folders"
     }
     await deliverProviderEvent(page, missedHangup)
     await deliverProviderEvent(page, missedHangup)
-    const recoveryFolder = page.getByRole("button", {
-      name: /^Missed Calls \d+$/,
-    })
-    if ((await recoveryFolder.getAttribute("aria-expanded")) === "false") {
-      await recoveryFolder.click()
-    }
+
     await expect(
       page.getByRole("button", {
-        name: /\(555\) 555-0112.*Missed call/,
+        name: /^Return missed call/,
       }),
     ).toBeVisible({ timeout: 30_000 })
     await page.getByLabel("Search tasks, names, or phone").fill(missedPhone)

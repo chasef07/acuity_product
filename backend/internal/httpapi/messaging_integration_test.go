@@ -301,11 +301,18 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	}
 	var taskPage api.TaskPage
 	decode(t, taskQueryResponse, &taskPage)
-	if len(taskPage.Items) != 1 || taskPage.Items[0].Id != task.Id ||
-		taskPage.Items[0].ConversationThreadId == nil ||
-		*taskPage.Items[0].ConversationThreadId != threads.Items[0].Id ||
-		!taskPage.Items[0].Unread {
-		t.Fatalf("HTTP Queue conversation projection = %#v", taskPage)
+	if len(taskPage.Items) != 2 {
+		t.Fatalf("expected separate staff follow-up and automatic review: %#v", taskPage)
+	}
+	origins := map[api.TaskOrigin]bool{}
+	for _, item := range taskPage.Items {
+		origins[item.Origin] = true
+		if item.ConversationThreadId == nil || *item.ConversationThreadId != threads.Items[0].Id || item.LocationId != task.LocationId || item.MessageId == nil || *item.MessageId != *task.MessageId || !item.Unread {
+			t.Fatalf("review/follow-up source scope: %#v", item)
+		}
+	}
+	if !origins[api.STAFFMESSAGEFOLLOWUP] || !origins[api.INBOUNDMESSAGEREVIEW] {
+		t.Fatalf("review merged with staff follow-up: %#v", origins)
 	}
 	readTaskResponse := request(
 		t,
@@ -450,7 +457,7 @@ func TestGeneratedHTTPMessagingJourneyUsesProviderEvidenceAndExplicitTasks(t *te
 	decode(t, engagementQueryResponse, &engagementPage)
 	if len(engagementPage.Items) != 1 ||
 		engagementPage.Items[0].Phone != "+17275550199" ||
-		engagementPage.Items[0].OpenTaskCount != 1 ||
+		engagementPage.Items[0].OpenTaskCount != 2 ||
 		len(engagementPage.Items[0].Locations) != 1 {
 		t.Fatalf("phone-led Engagement result = %#v", engagementPage)
 	}

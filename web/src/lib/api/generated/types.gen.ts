@@ -376,7 +376,7 @@ export type CallingDispositionResult = {
     taskId?: string;
 };
 
-export type StaffTaskCategory = 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
+export type StaffTaskCategory = 'insurance' | 'pre_op' | 'post_op' | 'billing' | 'appointments' | 'documentation' | 'optical' | 'medication' | 'referrals' | 'other';
 
 export type StaffTaskUrgency = 'high_priority' | 'normal' | 'non_urgent';
 
@@ -392,6 +392,9 @@ export type StaffTaskPatientCompatibility = {
 
 export type CreateStaffTaskRequest = {
     callId: string;
+    /**
+     * Caller number normalized to E.164; common phone formatting is accepted.
+     */
     callerPhone: string;
     category: StaffTaskCategory;
     idempotencyKey: string;
@@ -419,6 +422,10 @@ export type TaskActor = {
 };
 
 export type Task = {
+    /**
+     * Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
+     */
+    groupMembers?: Array<Task>;
     id: string;
     practiceId: string;
     locationId: string;
@@ -427,12 +434,16 @@ export type Task = {
     phone: string;
     title: string;
     state: 'OPEN' | 'COMPLETED';
-    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
+    origin: 'HUMAN_CALL_FOLLOW_UP' | 'ABITA_AI' | 'STAFF_MESSAGE_FOLLOW_UP' | 'APPOINTMENT_REVIEW' | 'INBOUND_MESSAGE_REVIEW' | 'VOICEMAIL_RECOVERY' | 'MISSED_CALL_RECOVERY';
     recoveryOutcome?: 'VOICEMAIL' | 'MISSED_CALL';
     urgency: StaffTaskUrgency;
     category?: StaffTaskCategory;
     callerName?: string;
     sourceCallId?: string;
+    /**
+     * Latest incoming text preview for the workspace list.
+     */
+    preview?: string;
     sourceMessage?: string;
     messageId?: string;
     messageThreadId?: string;
@@ -471,10 +482,15 @@ export type TaskPage = {
 export type TaskFolderCounts = {
     tasks: number;
     missedCalls: number;
+    texts?: number;
+    callRecovery?: number;
     categories: TaskCategoryCounts;
 };
 
 export type TaskCategoryCounts = {
+    insurance?: number;
+    pre_op?: number;
+    post_op?: number;
     billing: number;
     appointments: number;
     documentation: number;
@@ -1111,6 +1127,13 @@ export type OperatorAiInteractionAnalytics = {
 };
 
 export type TaskQueryRequest = {
+    /**
+     * Mine filters categorized follow-up by primary and backup responsibility. Appointment, text, missed-call, and voicemail reviews remain shared within authorized Locations, regardless of category. All removes only responsibility filtering.
+     */
+    responsibility?: 'mine' | 'all';
+    kind?: 'texts' | 'calls';
+    category?: StaffTaskCategory;
+    grouped?: boolean;
     practiceId: string;
     locationId?: string;
     search?: string;
@@ -1123,6 +1146,18 @@ export type TaskQueryRequest = {
     includeCounts?: boolean;
     cursor?: string;
     limit?: number;
+};
+
+export type ChangeTaskCategoryRequest = {
+    expectedVersion: number;
+    category: StaffTaskCategory;
+};
+
+export type CompleteTaskGroupRequest = {
+    members: Array<{
+        id: string;
+        expectedVersion: number;
+    }>;
 };
 
 export type RenameTaskRequest = {
@@ -1263,7 +1298,10 @@ export type ConversationTimelineItem = {
     type: 'MESSAGE' | 'CALL' | 'AI_INTERACTION' | 'TASK' | 'CALL_HISTORY';
     id: string;
     occurredAt: string;
-    taskActivity?: 'TASK_CREATED' | 'TITLE_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
+    taskActivityDetails?: {
+        [key: string]: unknown;
+    };
+    taskActivity?: 'TASK_CREATED' | 'SOURCE_UPDATED' | 'TITLE_CHANGED' | 'CATEGORY_CHANGED' | 'TASK_COMPLETED' | 'TASK_REOPENED' | 'INTERACTION_ATTACHED' | 'TASK_AUTO_COMPLETED_INBOUND_CALL' | 'TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT' | 'TASK_AUTO_COMPLETED_BOOKING' | 'TASK_AUTO_COMPLETED_DUPLICATE';
     message?: Message;
     task?: Task;
     call?: CallHistoryItem;
@@ -3145,6 +3183,92 @@ export type CompleteTaskResponses = {
 };
 
 export type CompleteTaskResponse = CompleteTaskResponses[keyof CompleteTaskResponses];
+
+export type ChangeTaskCategoryData = {
+    body: ChangeTaskCategoryRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/category';
+};
+
+export type ChangeTaskCategoryErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type ChangeTaskCategoryError = ChangeTaskCategoryErrors[keyof ChangeTaskCategoryErrors];
+
+export type ChangeTaskCategoryResponses = {
+    /**
+     * Completed or idempotently current Task.
+     */
+    200: Task;
+};
+
+export type ChangeTaskCategoryResponse = ChangeTaskCategoryResponses[keyof ChangeTaskCategoryResponses];
+
+export type CompleteTaskGroupData = {
+    body: CompleteTaskGroupRequest;
+    path: {
+        taskId: string;
+    };
+    query?: never;
+    url: '/v1/tasks/{taskId}/complete-group';
+};
+
+export type CompleteTaskGroupErrors = {
+    /**
+     * Invalid request.
+     */
+    400: ErrorEnvelope;
+    /**
+     * Missing or invalid credential.
+     */
+    401: ErrorEnvelope;
+    /**
+     * Current identity lacks the requested authority.
+     */
+    403: ErrorEnvelope;
+    /**
+     * The requested transition is no longer available.
+     */
+    409: ErrorEnvelope;
+    /**
+     * A required dependency is temporarily unavailable.
+     */
+    503: ErrorEnvelope;
+};
+
+export type CompleteTaskGroupError = CompleteTaskGroupErrors[keyof CompleteTaskGroupErrors];
+
+export type CompleteTaskGroupResponses = {
+    /**
+     * Completed or idempotently current Task.
+     */
+    200: Task;
+};
+
+export type CompleteTaskGroupResponse = CompleteTaskGroupResponses[keyof CompleteTaskGroupResponses];
 
 export type ReopenTaskData = {
     body: TaskTransitionRequest;

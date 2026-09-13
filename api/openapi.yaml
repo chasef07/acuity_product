@@ -1377,6 +1377,74 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/category:
+    post:
+      operationId: changeTaskCategory
+      summary: Move one open Task to a responsibility group.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeTaskCategoryRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tasks/{taskId}/complete-group:
+    post:
+      operationId: completeTaskGroup
+      summary: Resolve exactly the reviewed open group membership.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteTaskGroupRequest"
+      responses:
+        "200":
+          description: Completed or idempotently current Task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Denied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/tasks/{taskId}/reopen:
     post:
       operationId: reopenTask
@@ -2955,6 +3023,9 @@ components:
     StaffTaskCategory:
       type: string
       enum:
+        - insurance
+        - pre_op
+        - post_op
         - billing
         - appointments
         - documentation
@@ -3002,7 +3073,8 @@ components:
           maxLength: 255
         callerPhone:
           type: string
-          pattern: '^\+[1-9][0-9]{7,14}$'
+          maxLength: 64
+          description: Caller number normalized to E.164; common phone formatting is accepted.
         category:
           $ref: "#/components/schemas/StaffTaskCategory"
         idempotencyKey:
@@ -3084,6 +3156,11 @@ components:
         - relatedInteractionCount
         - interactions
       properties:
+        groupMembers:
+          description: Complete open membership for this bucket, normalized number, and Location, including members outside a text filter. This is a display projection, never a merged Task.
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
         id:
           type: string
           format: uuid
@@ -3111,6 +3188,8 @@ components:
             - HUMAN_CALL_FOLLOW_UP
             - ABITA_AI
             - STAFF_MESSAGE_FOLLOW_UP
+            - APPOINTMENT_REVIEW
+            - INBOUND_MESSAGE_REVIEW
             - VOICEMAIL_RECOVERY
             - MISSED_CALL_RECOVERY
         recoveryOutcome:
@@ -3123,6 +3202,9 @@ components:
         callerName:
           type: string
         sourceCallId:
+          type: string
+        preview:
+          description: Latest incoming text preview for the workspace list.
           type: string
         sourceMessage:
           type: string
@@ -3219,6 +3301,12 @@ components:
         missedCalls:
           type: integer
           minimum: 0
+        texts:
+          type: integer
+          minimum: 0
+        callRecovery:
+          type: integer
+          minimum: 0
         categories:
           $ref: "#/components/schemas/TaskCategoryCounts"
     TaskCategoryCounts:
@@ -3226,6 +3314,12 @@ components:
       additionalProperties: false
       required: [billing, appointments, documentation, optical, medication, referrals, other]
       properties:
+        insurance:
+          type: integer
+        pre_op:
+          type: integer
+        post_op:
+          type: integer
         billing:
           type: integer
           minimum: 0
@@ -4389,6 +4483,20 @@ components:
       additionalProperties: false
       required: [practiceId]
       properties:
+        responsibility:
+          type: string
+          enum: [mine, all]
+          description: >-
+            Mine filters categorized follow-up by primary and backup responsibility.
+            Appointment, text, missed-call, and voicemail reviews remain shared within authorized
+            Locations, regardless of category. All removes only responsibility filtering.
+        kind:
+          type: string
+          enum: [texts, calls]
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+        grouped:
+          type: boolean
         practiceId:
           type: string
           format: uuid
@@ -4417,6 +4525,37 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+    ChangeTaskCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, category]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        category:
+          $ref: "#/components/schemas/StaffTaskCategory"
+    CompleteTaskGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [members]
+      properties:
+        members:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, expectedVersion]
+            properties:
+              id:
+                type: string
+                format: uuid
+              expectedVersion:
+                type: integer
+                format: int64
+                minimum: 1
     RenameTaskRequest:
       type: object
       additionalProperties: false
@@ -4776,15 +4915,21 @@ components:
         occurredAt:
           type: string
           format: date-time
+        taskActivityDetails:
+          type: object
+          additionalProperties: true
         taskActivity:
           type: string
           enum:
             - TASK_CREATED
+            - SOURCE_UPDATED
             - TITLE_CHANGED
+            - CATEGORY_CHANGED
             - TASK_COMPLETED
             - TASK_REOPENED
             - INTERACTION_ATTACHED
             - TASK_AUTO_COMPLETED_INBOUND_CALL
+            - TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT
             - TASK_AUTO_COMPLETED_BOOKING
             - TASK_AUTO_COMPLETED_DUPLICATE
         message:

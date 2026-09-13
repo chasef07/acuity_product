@@ -780,397 +780,67 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		"cancellationResult": map[string]any{"status": "error", "reason": "middleware_error"},
 	})
 	postCloseout("abita-indeterminate-63", "+17275550204", now.Add(time.Minute), nil)
-	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO ai_interaction_attention (
-			interaction_id,
-			user_subject,
-			outcome_occurred_at,
-			created_at
-		)
-		SELECT
-			interaction.id,
-			'admin-subject',
-			interaction.appointment_occurred_at - interval '1 second',
-			$1
-		FROM ai_interactions interaction
-		WHERE interaction.practice_id = $2
-			AND interaction.source_call_id = 'abita-booking-63'
-	`, now, practiceID); err != nil {
-		t.Fatalf("seed duplicate unread AI outcome attention: %v", err)
-	}
-
-	// The fixture closeouts occur a few minutes after their call starts. Query
-	// after those events, within the recent attention window.
-	interactionClock = now.Add(10 * time.Minute)
-	outcomeQueryBody, _ := json.Marshal(map[string]any{
-		"practiceId": practiceID,
-	})
-	outcomes := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", outcomeQueryBody,
-	)
-	if outcomes.StatusCode != http.StatusOK {
-		t.Fatalf("query AI Interaction outcomes status = %d, body = %s",
-			outcomes.StatusCode, readBody(t, outcomes))
-	}
-	var attention struct {
-		Items []struct {
-			ID                 string `json:"id"`
-			SourceCallID       string `json:"sourceCallId"`
-			AppointmentAction  string `json:"appointmentAction"`
-			AppointmentOutcome string `json:"appointmentOutcome"`
-		} `json:"items"`
-	}
-	decode(t, outcomes, &attention)
-	if len(attention.Items) != 4 {
-		t.Fatalf("AI Interaction attention = %#v", attention)
-	}
-	itemsBySource := make(map[string]struct {
-		ID      string
-		Action  string
-		Outcome string
-	}, len(attention.Items))
-	for _, item := range attention.Items {
-		itemsBySource[item.SourceCallID] = struct {
-			ID      string
-			Action  string
-			Outcome string
-		}{item.ID, item.AppointmentAction, item.AppointmentOutcome}
-	}
-	if itemsBySource["abita-booking-63"].Action != "BOOKED" ||
-		itemsBySource["abita-booking-63"].Outcome != "BOOKING" ||
-		itemsBySource["abita-cancellation-63"].Action != "CANCELLED" ||
-		itemsBySource["abita-cancellation-63"].Outcome != "CANCELLATION" ||
-		itemsBySource["abita-call-63"].Action != "RESCHEDULED" ||
-		itemsBySource["abita-call-63"].Outcome != "RESCHEDULE" ||
-		itemsBySource["abita-partial-63"].Action != "RESCHEDULED" ||
-		itemsBySource["abita-partial-63"].Outcome != "PARTIAL" {
-		t.Fatalf("AI Interaction attention by source = %#v", itemsBySource)
-	}
-	olderBookingStart := afterHoursStart.Add(-24 * time.Hour)
-	postCloseout("abita-booking-older-63", "+17275550205", olderBookingStart, map[string]any{
-		"action":           "BOOKED",
-		"occurredAt":       olderBookingStart.Add(3 * time.Minute).Format(time.RFC3339),
-		"newAppointmentId": "appointment-booked-older",
-		"bookingResult":    map[string]any{"status": "booked", "appointmentId": 6305},
-	})
-	bookingQueryBody, _ := json.Marshal(map[string]any{
-		"practiceId":        practiceID,
-		"appointmentAction": "BOOKED",
-		"limit":             1,
-	})
-	bookingOutcomes := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", bookingQueryBody,
-	)
-	if bookingOutcomes.StatusCode != http.StatusOK {
-		t.Fatalf("query booking outcomes status = %d, body = %s",
-			bookingOutcomes.StatusCode, readBody(t, bookingOutcomes))
-	}
-	var bookingAttention struct {
-		Items []struct {
-			ID           string `json:"id"`
-			SourceCallID string `json:"sourceCallId"`
-		} `json:"items"`
-		NextCursor string `json:"nextCursor"`
-		Counts     struct {
-			Bookings      int `json:"bookings"`
-			Cancellations int `json:"cancellations"`
-			Reschedules   int `json:"reschedules"`
-		} `json:"counts"`
-	}
-	decode(t, bookingOutcomes, &bookingAttention)
-	if len(bookingAttention.Items) != 1 ||
-		bookingAttention.Items[0].SourceCallID != "abita-booking-63" ||
-		bookingAttention.NextCursor == "" ||
-		bookingAttention.Counts.Bookings != 2 ||
-		bookingAttention.Counts.Cancellations != 1 ||
-		bookingAttention.Counts.Reschedules != 2 {
-		t.Fatalf("filtered booking attention = %#v", bookingAttention)
-	}
-	olderBookingQueryBody, _ := json.Marshal(map[string]any{
-		"practiceId":        practiceID,
-		"appointmentAction": "BOOKED",
-		"cursor":            bookingAttention.NextCursor,
-		"includeCounts":     false,
-		"limit":             1,
-	})
-	olderBookingOutcomes := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", olderBookingQueryBody,
-	)
-	if olderBookingOutcomes.StatusCode != http.StatusOK {
-		t.Fatalf("query older booking outcomes status = %d, body = %s",
-			olderBookingOutcomes.StatusCode, readBody(t, olderBookingOutcomes))
-	}
-	var olderBookingAttention struct {
-		Items []struct {
-			ID           string `json:"id"`
-			SourceCallID string `json:"sourceCallId"`
-		} `json:"items"`
-		NextCursor string `json:"nextCursor"`
-		Counts     *struct {
-			Bookings int `json:"bookings"`
-		} `json:"counts"`
-	}
-	decode(t, olderBookingOutcomes, &olderBookingAttention)
-	if len(olderBookingAttention.Items) != 1 ||
-		olderBookingAttention.Items[0].SourceCallID != "abita-booking-older-63" ||
-		olderBookingAttention.NextCursor != "" ||
-		olderBookingAttention.Counts != nil {
-		t.Fatalf("older filtered booking attention = %#v", olderBookingAttention)
-	}
-	for _, token := range []string{"admin-token", "staff-token"} {
-		reviewedOlderBooking := request(
-			t, server.Client(), http.MethodPost,
-			server.URL+"/v1/ai/interactions/"+olderBookingAttention.Items[0].ID+"/review",
-			token, nil,
-		)
-		if reviewedOlderBooking.StatusCode != http.StatusNoContent {
-			t.Fatalf("review older booking outcome as %s status = %d, body = %s",
-				token, reviewedOlderBooking.StatusCode, readBody(t, reviewedOlderBooking))
+	interactionClock = now.Add(30 * 24 * time.Hour)
+	queryReviews := func(token, state string) map[string]api.Task {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"practiceId": practiceID, "state": state, "responsibility": "all"})
+		response := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/query", token, body)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("query shared review Tasks: %d %s", response.StatusCode, readBody(t, response))
 		}
-		_ = reviewedOlderBooking.Body.Close()
+		var page api.TaskPage
+		decode(t, response, &page)
+		items := map[string]api.Task{}
+		for _, item := range page.Items {
+			if item.Origin == api.APPOINTMENTREVIEW && item.SourceCallId != nil {
+				items[*item.SourceCallId] = item
+			}
+		}
+		return items
 	}
-	bookingInteractionID := itemsBySource["abita-booking-63"].ID
-	partialInteractionID := itemsBySource["abita-partial-63"].ID
-	partialTask, _, err := workModule.CreateAITask(
-		context.Background(),
-		work.CreateAITaskCommand{
-			Service: access.ServiceIdentity{
-				Subject: "attention-task-fixture", PracticeID: practiceID,
-				LocationScope: access.LocationScopeAll,
-				Capabilities:  []access.ServiceCapability{access.ServiceCapabilityCreateTask},
-			},
-			OfficeKey: "spring-hill", OfficePhone: "+17275919997",
-			SourceCallID: "abita-partial-63", IdempotencyKey: "partial-action-task",
-			Phone: "+17275550203", Summary: "Finish appointment change",
-			Message:  "The appointment change needs staff follow-up.",
-			Category: work.TaskCategoryAppointments, Urgency: work.TaskUrgencyNormal,
-		},
-	)
-	if err != nil {
-		t.Fatalf("create partial outcome Task: %v", err)
+	adminReviews, staffReviews := queryReviews("admin-token", "OPEN"), queryReviews("staff-token", "OPEN")
+	if len(adminReviews) != 4 || len(staffReviews) != 4 || len(queryReviews("hidden-token", "OPEN")) != 0 {
+		t.Fatalf("shared review scope/count: admin=%d staff=%d", len(adminReviews), len(staffReviews))
 	}
-	coveredByTask := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", outcomeQueryBody,
-	)
-	var coveredAttention struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
+	for _, source := range []string{"abita-booking-63", "abita-cancellation-63", "abita-call-63", "abita-partial-63"} {
+		item, found := adminReviews[source]
+		if !found || item.Id != staffReviews[source].Id || item.SourceMessage == nil || *item.SourceMessage == "" {
+			t.Fatalf("shared source missing for %s", source)
+		}
 	}
-	decode(t, coveredByTask, &coveredAttention)
-	if len(coveredAttention.Items) != 3 {
-		t.Fatalf("AI outcome duplicated by open Task = %#v", coveredAttention)
+	booking := adminReviews["abita-booking-63"]
+	var bookingInteractionID string
+	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM ai_interactions WHERE practice_id=$1 AND source_call_id='abita-booking-63'`, practiceID).Scan(&bookingInteractionID); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := workModule.CompleteTask(
-		context.Background(),
-		work.CompleteTaskCommand{
-			Identity: admin, TaskID: partialTask.ID, ExpectedVersion: partialTask.Version,
-		},
-	); err != nil {
-		t.Fatalf("complete partial outcome fixture Task: %v", err)
+	legacyRead := request(t, server.Client(), http.MethodPost, server.URL+"/v1/ai/interactions/"+bookingInteractionID+"/review", "admin-token", nil)
+	if legacyRead.StatusCode != http.StatusNoContent {
+		t.Fatalf("legacy read: %d %s", legacyRead.StatusCode, readBody(t, legacyRead))
 	}
-
-	firstPageBody, _ := json.Marshal(map[string]any{
-		"practiceId": practiceID,
-		"limit":      2,
-	})
-	firstPageResponse := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", firstPageBody,
-	)
-	if firstPageResponse.StatusCode != http.StatusOK {
-		t.Fatalf("query first AI outcome page status = %d, body = %s",
-			firstPageResponse.StatusCode, readBody(t, firstPageResponse))
+	_ = legacyRead.Body.Close()
+	if len(queryReviews("admin-token", "OPEN")) != 4 || len(queryReviews("staff-token", "OPEN")) != 4 {
+		t.Fatal("personal read completed shared work")
 	}
-	type outcomePageResponse struct {
-		Items []struct {
-			ID           string `json:"id"`
-			SourceCallID string `json:"sourceCallId"`
-		} `json:"items"`
-		NextCursor string `json:"nextCursor"`
-		Counts     struct {
-			Tasks         int `json:"tasks"`
-			Bookings      int `json:"bookings"`
-			Cancellations int `json:"cancellations"`
-			Reschedules   int `json:"reschedules"`
-		} `json:"counts"`
+	completeBody, _ := json.Marshal(map[string]any{"expectedVersion": booking.Version})
+	denied := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+booking.Id.String()+"/complete", "hidden-token", completeBody)
+	if denied.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-Location completion: %d %s", denied.StatusCode, readBody(t, denied))
 	}
-	var firstPage outcomePageResponse
-	decode(t, firstPageResponse, &firstPage)
-	if len(firstPage.Items) != 2 || firstPage.NextCursor == "" ||
-		firstPage.Items[0].SourceCallID == "abita-booking-63" ||
-		firstPage.Items[1].SourceCallID == "abita-booking-63" ||
-		firstPage.Counts.Tasks != 0 ||
-		firstPage.Counts.Bookings != 1 ||
-		firstPage.Counts.Cancellations != 1 ||
-		firstPage.Counts.Reschedules != 2 {
-		t.Fatalf("first AI outcome page = %#v", firstPage)
+	_ = denied.Body.Close()
+	completedResponse := request(t, server.Client(), http.MethodPost, server.URL+"/v1/tasks/"+booking.Id.String()+"/complete", "staff-token", completeBody)
+	if completedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("shared completion: %d %s", completedResponse.StatusCode, readBody(t, completedResponse))
 	}
-	secondPageBody, _ := json.Marshal(map[string]any{
-		"practiceId": practiceID,
-		"cursor":     firstPage.NextCursor,
-		"limit":      2,
-	})
-	secondPageResponse := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", secondPageBody,
-	)
-	if secondPageResponse.StatusCode != http.StatusOK {
-		t.Fatalf("query second AI outcome page status = %d, body = %s",
-			secondPageResponse.StatusCode, readBody(t, secondPageResponse))
+	_ = completedResponse.Body.Close()
+	for _, token := range []string{"admin-token", "staff-token"} {
+		if len(queryReviews(token, "OPEN")) != 3 {
+			t.Fatal("completion was not shared")
+		}
+		completed := queryReviews(token, "COMPLETED")["abita-booking-63"]
+		if completed.Id != booking.Id || completed.CompletedBy == nil || completed.CompletedAt == nil || completed.SourceCallId == nil || *completed.SourceCallId != "abita-booking-63" {
+			t.Fatalf("completion lost source/actor: %#v", completed)
+		}
 	}
-	var secondPage outcomePageResponse
-	decode(t, secondPageResponse, &secondPage)
-	seenOutcomeIDs := make(map[string]struct{}, 4)
-	for _, item := range append(firstPage.Items, secondPage.Items...) {
-		seenOutcomeIDs[item.ID] = struct{}{}
-	}
-	if len(secondPage.Items) != 2 || secondPage.NextCursor != "" ||
-		len(seenOutcomeIDs) != 4 || secondPage.Counts != firstPage.Counts {
-		t.Fatalf("second AI outcome page = %#v after %#v", secondPage, firstPage)
-	}
-
-	staffOutcomes := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"staff-token", outcomeQueryBody,
-	)
-	if staffOutcomes.StatusCode != http.StatusOK {
-		t.Fatalf("query staff AI Interaction outcomes status = %d, body = %s",
-			staffOutcomes.StatusCode, readBody(t, staffOutcomes))
-	}
-	var staffAttention struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-	}
-	decode(t, staffOutcomes, &staffAttention)
-	if len(staffAttention.Items) != 4 {
-		t.Fatalf("staff AI Interaction attention = %#v", staffAttention)
-	}
-
-	reviewedBooking := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/"+bookingInteractionID+"/review",
-		"admin-token", nil,
-	)
-	if reviewedBooking.StatusCode != http.StatusNoContent {
-		t.Fatalf("review duplicate booking outcome status = %d, body = %s",
-			reviewedBooking.StatusCode, readBody(t, reviewedBooking))
-	}
-	_ = reviewedBooking.Body.Close()
-	bookingsAfterReview := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", bookingQueryBody,
-	)
-	if bookingsAfterReview.StatusCode != http.StatusOK {
-		t.Fatalf("query bookings after review status = %d, body = %s",
-			bookingsAfterReview.StatusCode, readBody(t, bookingsAfterReview))
-	}
-	var noBookingsLeft struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-		Counts struct {
-			Bookings int `json:"bookings"`
-		} `json:"counts"`
-	}
-	decode(t, bookingsAfterReview, &noBookingsLeft)
-	if len(noBookingsLeft.Items) != 0 || noBookingsLeft.Counts.Bookings != 0 {
-		t.Fatalf("reviewed duplicate booking reappeared = %#v", noBookingsLeft)
-	}
-
-	reviewed := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/"+partialInteractionID+"/review",
-		"admin-token", nil,
-	)
-	if reviewed.StatusCode != http.StatusNoContent {
-		t.Fatalf("review AI Interaction outcome status = %d, body = %s",
-			reviewed.StatusCode, readBody(t, reviewed))
-	}
-	_ = reviewed.Body.Close()
-
-	replayedAfterReview := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions", "production-interaction-token", closeoutBody,
-	)
-	if replayedAfterReview.StatusCode != http.StatusOK {
-		t.Fatalf("replay reviewed AI Interaction status = %d, body = %s",
-			replayedAfterReview.StatusCode, readBody(t, replayedAfterReview))
-	}
-	_ = replayedAfterReview.Body.Close()
-
-	adminAfterReview := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"admin-token", outcomeQueryBody,
-	)
-	if adminAfterReview.StatusCode != http.StatusOK {
-		t.Fatalf("query reviewed AI Interaction outcomes status = %d, body = %s",
-			adminAfterReview.StatusCode, readBody(t, adminAfterReview))
-	}
-	var remainingAttention struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-		Counts struct {
-			Tasks         int `json:"tasks"`
-			Bookings      int `json:"bookings"`
-			Cancellations int `json:"cancellations"`
-			Reschedules   int `json:"reschedules"`
-		} `json:"counts"`
-	}
-	decode(t, adminAfterReview, &remainingAttention)
-	if len(remainingAttention.Items) != 2 ||
-		remainingAttention.Counts.Tasks != 0 ||
-		remainingAttention.Counts.Bookings != 0 ||
-		remainingAttention.Counts.Cancellations != 1 ||
-		remainingAttention.Counts.Reschedules != 1 {
-		t.Fatalf("reviewed AI Interaction attention = %#v", remainingAttention)
-	}
-
-	staffStillUnread := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/outcomes/query",
-		"staff-token", outcomeQueryBody,
-	)
-	if staffStillUnread.StatusCode != http.StatusOK {
-		t.Fatalf("query independent staff outcomes status = %d, body = %s",
-			staffStillUnread.StatusCode, readBody(t, staffStillUnread))
-	}
-	var staffAttentionAfterAdminReview struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-	}
-	decode(t, staffStillUnread, &staffAttentionAfterAdminReview)
-	if len(staffAttentionAfterAdminReview.Items) != 4 {
-		t.Fatalf("staff attention changed after admin review = %#v",
-			staffAttentionAfterAdminReview)
-	}
-
-	deniedReview := request(
-		t, server.Client(), http.MethodPost,
-		server.URL+"/v1/ai/interactions/"+partialInteractionID+"/review",
-		"hidden-token", nil,
-	)
-	if deniedReview.StatusCode != http.StatusForbidden {
-		t.Fatalf("cross-Location AI Interaction review status = %d, body = %s",
-			deniedReview.StatusCode, readBody(t, deniedReview))
-	}
-	_ = deniedReview.Body.Close()
 	_, _, err = workModule.CreateAITask(context.Background(), work.CreateAITaskCommand{
 		Service: access.ServiceIdentity{
 			Subject:       "history-fixture",
@@ -1208,7 +878,7 @@ func TestAIInteractionIngestionIsAuthenticatedAndIdempotent(t *testing.T) {
 		t.Fatalf("AI Interaction Engagement History = %#v", history)
 	}
 	entries := *history.Items[0].Entries
-	if len(entries) != 2 || entries[0].AiInteraction == nil ||
+	if len(entries) != 3 || entries[0].AiInteraction == nil ||
 		entries[0].AiInteraction.Id.String() != first.InteractionID ||
 		entries[0].AiInteraction.AppointmentOutcome != "RESCHEDULE" || entries[1].Task == nil {
 		t.Fatalf("AI outcome and follow-up were not preserved together: %#v", entries)

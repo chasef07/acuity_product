@@ -81,6 +81,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useCallingNavigation } from "@/components/workspace/calling-dock"
+import { completeTask, reopenTask } from "@/lib/api/generated/sdk.gen"
 import { portalClient } from "@/lib/api/client"
 import {
   createMessageFollowUpTask,
@@ -134,7 +135,9 @@ type EngagementWorkspaceProps = {
   selectedCallID?: string
   selectedAIInteractionID?: string
   headerLeading?: ReactNode
-  headerTrailing?: ReactNode
+  textTask?: Task
+  onTextTaskUpdated?: (task: Task) => void
+  onNextTask?: () => void
   onTaskCreated: (task: Task) => void
   onTaskOpen: (task: Task) => void
   onCallOpen: (callID: string) => void
@@ -164,7 +167,9 @@ export function EngagementWorkspaceView({
   selectedCallID,
   selectedAIInteractionID,
   headerLeading,
-  headerTrailing,
+  textTask,
+  onTextTaskUpdated,
+  onNextTask,
   onTaskCreated,
   onTaskOpen,
   onCallOpen,
@@ -173,6 +178,7 @@ export function EngagementWorkspaceView({
 }: EngagementWorkspaceProps & { calling: EngagementWorkspaceCalling }) {
   const defaultRoute =
     engagement.locations.length === 1 ? engagement.locations[0]!.id : ""
+  const [reviewedTextTask, setReviewedTextTask] = useState<Task>()
   const [route, setRoute] = useState(defaultRoute)
   const [callError, setCallError] = useState("")
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
@@ -261,7 +267,7 @@ export function EngagementWorkspaceView({
           </Button>
         </div>
         <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
-          {headerTrailing}
+          {textTask && onTextTaskUpdated && <TextConversationAction key={textTask.id} task={textTask} reviewedTask={reviewedTextTask} onUpdated={onTextTaskUpdated} onNext={onNextTask} />}
           {engagement.locations.length > 1 && (
             <NativeSelect
               aria-label="Sender office"
@@ -295,6 +301,8 @@ export function EngagementWorkspaceView({
         }}
         practiceID={practiceID}
         locationID={route}
+        reviewTask={textTask}
+        onTaskReviewed={setReviewedTextTask}
         initialDestination={engagement.phone}
         canMutate={canMutate}
         revision={revision}
@@ -311,6 +319,8 @@ export function EngagementWorkspaceView({
 }
 
 function MessageConversation({
+  reviewTask,
+  onTaskReviewed,
   timelineSource,
   practiceID,
   locationID,
@@ -325,6 +335,8 @@ function MessageConversation({
   onCallOpen,
   onAIInteractionOpen,
 }: {
+  reviewTask?: Task
+  onTaskReviewed: (task: Task | undefined) => void
   timelineSource: TimelineSource
   practiceID: string
   locationID: string
@@ -353,6 +365,10 @@ function MessageConversation({
   const scroller = useRef<HTMLDivElement | null>(null)
   const atLatest = useRef(true)
   const initialized = useRef(false)
+  // Capture the Task before requesting its conversation; later Task refreshes
+  // cannot authorize completion of evidence this request did not review.
+  const currentReviewTask = useRef(reviewTask)
+  useEffect(() => { currentReviewTask.current = reviewTask }, [reviewTask])
 
   const loadPage = useCallback(
     (token: string, cursor = "") =>
@@ -373,6 +389,7 @@ function MessageConversation({
     async (scroll = false) => {
       if (!timelineKey) return
       const requestGeneration = ++generation.current
+      const reviewedTask = currentReviewTask.current
       setLoading(true)
       const token = await getAccessToken()
       const result = token ? await loadPage(token) : undefined
@@ -399,6 +416,7 @@ function MessageConversation({
         return result.data.items
       })
       setCursor(result.data.nextCursor)
+      onTaskReviewed(reviewedTask)
       setNewActivity(false)
       if (scroll) {
         window.requestAnimationFrame(() =>
@@ -409,7 +427,7 @@ function MessageConversation({
         )
       }
     },
-    [loadPage, timelineKey],
+    [loadPage, onTaskReviewed, timelineKey],
   )
 
   useEffect(() => {
@@ -431,13 +449,13 @@ function MessageConversation({
   }, [loadLatest, timelineKey])
 
   useEffect(() => {
-    if (!initialized.current || !timelineKey) return
+    if ((!initialized.current && generation.current === 0) || !timelineKey) return
     if (atLatest.current) {
       void loadLatest(true)
     } else {
       setNewActivity(true)
     }
-  }, [loadLatest, revision, timelineKey])
+  }, [loadLatest, revision, timelineKey, reviewTask?.id, reviewTask?.version])
 
   async function loadOlder() {
     if (!cursor || loadingOlder) return
@@ -772,12 +790,14 @@ function TimelineEntry({
   }
   if (item.type === "TASK" && item.task) {
     const task = item.task
+    if (task.origin === "INBOUND_MESSAGE_REVIEW") return null
     return (
       <ActivityItem
         selected={task.id === selectedTaskID}
         title={task.title}
         metadata={[
           taskActivityDetail(item.taskActivity, task),
+          item.taskActivity === "CATEGORY_CHANGED" ? `${String(item.taskActivityDetails?.oldCategory ?? "Uncategorized")} → ${String(item.taskActivityDetails?.newCategory ?? "Uncategorized")}` : "",
           task.locationId !== contextLocationID ? task.locationName : "",
           formatTime(item.occurredAt),
         ]}
@@ -1581,6 +1601,10 @@ function taskActivityDetail(
   switch (activity) {
     case "TASK_CREATED":
       return task.origin === "ABITA_AI" ? "Task created by AI" : "Task created"
+    case "SOURCE_UPDATED":
+      return "New message needs review"
+    case "CATEGORY_CHANGED":
+      return "Task group changed"
     case "TITLE_CHANGED":
       return "Task title changed"
     case "TASK_COMPLETED":
@@ -1591,6 +1615,8 @@ function taskActivityDetail(
       return "New activity added"
     case "TASK_AUTO_COMPLETED_INBOUND_CALL":
       return "Task completed after connected call"
+    case "TASK_AUTO_COMPLETED_CALLBACK_ATTEMPT":
+      return "Task completed after callback attempt"
     case "TASK_AUTO_COMPLETED_BOOKING":
       return "Task completed after booking"
     case "TASK_AUTO_COMPLETED_DUPLICATE":
@@ -1646,4 +1672,32 @@ function sentenceCase(value: string) {
 function formatBytes(bytes: number) {
   if (bytes < 1_024) return `${bytes} B`
   return `${Math.round(bytes / 1_024)} KB`
+}
+
+function TextConversationAction({ task, reviewedTask, onUpdated, onNext }: { task: Task; reviewedTask?: Task; onUpdated: (task: Task) => void; onNext?: () => void }) {
+  const needsReview = task.state === "OPEN" && (reviewedTask?.id !== task.id || reviewedTask.version !== task.version)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  async function transition() {
+    if (pending || needsReview) return
+    setPending(true)
+    setError("")
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error("Sign in again to update this conversation.")
+      const result = await (task.state === "OPEN" ? completeTask : reopenTask)({
+        client: portalClient(token), path: { taskId: task.id }, body: { expectedVersion: task.version },
+      })
+      if (!result.data) throw new Error("Could not update this conversation. Review the latest messages and try again.")
+      onUpdated(result.data)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update this conversation.")
+    } finally { setPending(false) }
+  }
+  return <div className="flex items-center gap-2">
+    {error && <span role="alert" className="max-w-52 text-xs text-destructive">{error}</span>}
+    {task.state === "COMPLETED" && <span className="text-xs text-muted-foreground">Completed</span>}
+    {task.state === "COMPLETED" && onNext && <Button size="sm" onClick={onNext}>Next task</Button>}
+    <Button size="sm" variant="ghost" disabled={pending || needsReview} title={needsReview ? "Load the latest messages before marking done." : undefined} onClick={() => void transition()}>{pending ? "Saving…" : task.state === "OPEN" ? "Mark done" : "Reopen"}</Button>
+  </div>
 }

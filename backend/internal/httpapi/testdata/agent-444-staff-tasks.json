@@ -1,0 +1,519 @@
+[
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "optical",
+    "idempotencyKey": "staff_task_e5121a1b317c47ad9eb7b92fce61576e9b1e98d87021651044213e8258dae81a",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests expedited glasses prescription copy for staff review. Missing details: delivery destination.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "expedited glasses",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "optical",
+    "idempotencyKey": "staff_task_5f53d771cea0a2887edc8b1fa3964cf4d3f195cc89f3fccd392f34c0077ccf63",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests expedited contact lens prescription copy. Missing details: delivery destination.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "expedited contacts",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "medication",
+    "idempotencyKey": "staff_task_15b335b3138fd1a0261ab853649b5debc1e0150461affd94085405869447b0f7",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests expedited medication refill. Missing details: medication name and pharmacy.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "expedited medication",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_ec001725cc6c4ef7f85e01b01f1c5cb9387c844cc869ad2a224dc9d192767a37",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: patient. Requested: expedited full medical records. Patient: Alex Example, DOB 02/03/1990. Missing details: delivery preference and destination.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "full records",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "appointments",
+    "idempotencyKey": "staff_task_41f2c4ca31b17f6916539db502cf7d7fa8bcf226721c25a063afa11833a989a9",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests waitlist follow-up after offered appointments did not work. Missing details: preferred times.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "appointment",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "medication",
+    "idempotencyKey": "staff_task_7997ef748ef2be030a2129945f40a9b6c9d6dfcb5d431ddb8d6fa4ce1d143932",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: Example Pharmacy. Medication prior authorization pending per caller. Missing details: medication name, plan, reference.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "pharmacy pa",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "medication",
+    "idempotencyKey": "staff_task_558af4f0653449986f32663aab37d5d38cc0b845f6f15213e376aedd3685d34d",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient reports medication insurance denial and requests follow-up. Status is caller-reported, not verified. Missing details: medication, pharmacy, plan and reference.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "medication denial",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
+    "idempotencyKey": "staff_task_8f5826e6465b30de4cf91870ca35fdb1fd12bbad573356b028afb357aa90c83b",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests visual field test authorization status. Missing details: plan, authorization reference and current status. No approval verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "test authorization",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
+    "idempotencyKey": "staff_task_36e5011ce684f6da7064508efd0707f150b478b6cdb47231c1b2e1108673d93b",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests cataract surgery authorization status. Missing details: procedure date, plan and reference. No approval verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "surgery authorization",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
+    "idempotencyKey": "staff_task_2a0cf2b7b7a790acf118242e71579a241507b095a6df28c0533b2db11bc3a046",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff confirmation of the appointment copay. Missing details: plan and visit type. No amount or coverage verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "copay question",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
+    "idempotencyKey": "staff_task_60e80a8e1d3a252e39300266e19cd09003673f053a9cd8e61e9eda76c3e98e9f",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff review of a caller-reported co-pay charge. Missing details: plan, visit date and charged amount. No coverage or charge correctness verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "copay billing question",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "insurance",
+    "idempotencyKey": "staff_task_8382705bdd810d5a9b9284597d1c9fc173b1d0c8fc25a7e6a47fda762a4336b3",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff review of insurance referral requirement. Missing details: plan and visit type.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "referral requirement",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "referrals",
+    "idempotencyKey": "staff_task_aad4d683cf14431bc5080401e98f9b6456133fc9a4e2a8d8180de7c0b7b3b5b6",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests correction and resending of specialist referral. Missing details: specialist, correction and destination.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "send referral",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "referrals",
+    "idempotencyKey": "staff_task_9e47f8a3580b4290dcf6a46466cfd262c3b232b31842f1687b154276026a491e",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests imaging-order receipt follow-up. Missing details: imaging center and order. Receipt not verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "imaging order",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "pre_op",
+    "idempotencyKey": "staff_task_9fe1b9cda46e3f2ff287654a9215c1f5a8c6e88801c90995a5fd1503543f6767",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests pre-op clearance coordination for cataract surgery next month. Missing details: surgery date and clearance provider.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "pre op",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "post_op",
+    "idempotencyKey": "staff_task_bccc9f9911132495319a739a4bca318ca6e3326048258053259bb9fa2367aa2d",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests post-op team callback about routine follow-up care after surgery last week; reports no new symptoms. Missing details: procedure and date.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "post op",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "medication",
+    "idempotencyKey": "staff_task_9a7b26aa74ee200a16d57adc508249791b1d9327438738d269880b2ddc41adaf",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests medication refill after surgery. Missing details: medication and pharmacy. No medication advice given.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "surgical refill",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "appointments",
+    "idempotencyKey": "staff_task_c1df16a2df30dc1eee8ff756b5710ce73e51dd32c33399892685dcc0825c5582",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff assistance changing surgery appointment date. Missing details: current and desired dates.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "surgical scheduling",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "other",
+    "idempotencyKey": "staff_task_345a86c54791ffe7acf0ae26c22d85207863530e6675d9b8893562ba9be0ff2a",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Caller requests prior-authorization follow-up but cannot identify its subject after clarification. Missing details: authorization subject, plan and reference.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "unknown authorization",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "other",
+    "idempotencyKey": "staff_task_c18a0f41b241fe59d28baac6332ba8723c47fc3f1d97a3e477c758318b62657a",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Caller requests surgery care follow-up; stage remains unknown after clarification. Missing details: before/after surgery stage, procedure and timing.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "unknown surgical stage",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "other",
+    "idempotencyKey": "staff_task_4b69f5100637d738d7deebda7f952ad5306948a49cc65724bf9019e1393c176e",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Patient requests staff follow-up about a lost item at the office. Missing details: item and visit date.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "administrative",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_71f9068994628a540a65b0596c00772df488ff5f922597762d3dfc4000495b0c",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: patient. Patient: Alex Example, DOB 02/03/1990 (caller-provided). Requested: visit summary. Delivery: email to alex.example@example.com. Patient email limit explained: only visit summaries, not full visit notes. For staff review; delivery not verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "patient email summary",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_d364770b732ed1362266195de1678815c4b36558849472b5a1681c9d7a22f28d",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: patient. Patient: Alex Example, DOB 02/03/1990. Requested: full visit notes. Preferred delivery: email to alex.example@example.com. Full visit notes excluded from patient email; only visit summary permitted. Original full-notes request retained for staff clarification of an allowed delivery path.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "patient email full notes",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_16384769731e33ee591d03ba6c6192905730772ea8aad6ea36bfe2f3f67d2705",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: medical office, Example Medical. Requesting doctor: Doctor Rowan. Patient: Alex Example, DOB 02/03/1990. Requested: medical records. Delivery: fax to +12025550199. No receipt or delivery verified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "medical office fax",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_799ffde08ea998b7186256a1c8634e8b6e0e867d249e526952667484e863d0da",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: attorney office, Example Legal. Patient: Alex Example, DOB 02/03/1990. Requested: full records. Delivery: fax to +12025550199. Records request faxed: yes, September 1, caller-reported. Patient authorization faxed: yes, September 1, caller-reported. Office receipt and authorization validity unverified; staff review required.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "attorney reported sent",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_2ca1992d2a14b386bf0892695a70caa5140089b86ef18451dbdce713b0660eda",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: attorney office, Example Legal. Requested: full records. Records request faxed: yes, September 1, caller-reported. Patient authorization faxed: no. Explained both documents must be faxed before fulfillment. Missing details: patient authorization, authorization sent date and delivery destination. Not ready for fulfillment; staff review required.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "attorney missing authorization",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_b676c6478e992579a648c33fd5cf13c989b2d1d798c0d2cfdd29529991eb914d",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: attorney office, Example Legal. Requested: full records. Records request faxed: no. Patient authorization faxed: yes, September 1, caller-reported. Explained both documents must be faxed before fulfillment. Missing details: records request, request sent date and delivery destination. Office receipt and authorization validity unverified.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "attorney missing request",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_f604d91e3299a4fae7366b7052cb66e7ae2ba17b3a184a8fb2419b317ce21dd3",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: attorney office, Example Legal. Requested: records. Records request faxed: unknown. Patient authorization faxed: unknown. Fax dates: unknown. Missing details: both fax statuses and dates, requested record scope and delivery destination. No verified receipt or authorization; staff review required.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "patient": {
+      "id": "synthetic-patient-444",
+      "name": "Alex Example",
+      "dob": "02/03/1990"
+    },
+    "source": "agent",
+    "summary": "attorney unknown date",
+    "urgency": "normal"
+  },
+  {
+    "callId": "synthetic-staff-task-444",
+    "callerPhone": "+12025550147",
+    "category": "documentation",
+    "idempotencyKey": "staff_task_a4db001cd4601ba8a5e4b3a66666e00c80f69a0d5d5cdf1d099850cd614bb173",
+    "inboundOfficePhone": "+17864654845",
+    "message": "Requester: patient. Requested: records, scope unknown. Missing details: full patient name, DOB, record scope, delivery preference and destination. Caller unable to supply details; incomplete request for staff review.",
+    "officeKey": "sweetwater",
+    "officePhone": "+17864657475",
+    "source": "agent",
+    "summary": "patient incomplete",
+    "urgency": "normal"
+  }
+]

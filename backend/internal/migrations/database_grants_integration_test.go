@@ -613,6 +613,11 @@ func expectedTablePrivileges() map[string]bool {
 		}
 	}
 
+	grant("acuity_portal", "SELECT", "work_text_replies")
+	grant("acuity_portal", "INSERT", "work_text_replies")
+	grant("acuity_worker", "SELECT", "work_text_replies")
+	grant("acuity_worker", "UPDATE", "work_text_replies")
+
 	portalReads := []string{
 		"access_abita_office_locations",
 		"access_calling_scopes",
@@ -654,7 +659,7 @@ func expectedTablePrivileges() map[string]bool {
 		"work_recovery_resolution_checkpoints",
 		"work_tasks",
 	}
-	grant("acuity_portal", "SELECT", portalReads...)
+	grant("acuity_portal", "SELECT", append(portalReads, "work_responsibilities", "work_responsibility_locations")...)
 	grant("acuity_portal", "INSERT",
 		"access_audit_events",
 		"access_locations",

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -178,6 +179,11 @@ func (m *Module) finishEndedCallLeg(
 		}
 	} else if ended.role == "STAFF" && ended.legState == "BRIDGE_PENDING" {
 		if err := m.maybeStartVoicemailAfterRingCompleted(ctx, tx, ended.callID); err != nil {
+			return err
+		}
+	}
+	if ended.direction == string(CallOutbound) && ended.role == "DESTINATION" {
+		if err := m.completeCallbackAttempt(ctx, tx, ended.callID, callLegID); err != nil {
 			return err
 		}
 	}
@@ -459,5 +465,34 @@ func (m *Module) failRoutingCall(
 			error_code = COALESCE(error_code, $2), updated_at = $3
 		WHERE call_id = $1 AND role = 'CALLER'
 	`, callID, errorCode, m.now())
+	return err
+}
+
+// Destination termination is the shared boundary for provider hangups and
+// reconciliation. Staff media setup, dialing, and bridging alone do not finish
+// an attempt. A completed attempt clears older recovery without claiming contact.
+func (m *Module) completeCallbackAttempt(ctx context.Context, tx pgx.Tx, callID, destinationLegID string) error {
+	var command work.ResolveRecoveryTasksCommand
+	err := tx.QueryRow(ctx, `
+        SELECT call.practice_id::text, call.destination_phone, destination.created_at
+        FROM human_calling_calls call
+        JOIN human_calling_call_legs destination ON destination.call_id=call.id
+        WHERE call.id=$1 AND destination.id=$2 AND call.direction='OUTBOUND'
+          AND call.terminal_outcome IS NOT NULL
+          AND destination.role='DESTINATION' AND destination.state='ENDED'
+          AND destination.provider_call_control_id IS NOT NULL
+          AND destination.provider_call_leg_id IS NOT NULL
+    `, callID, destinationLegID).Scan(&command.PracticeID, &command.Phone, &command.OccurredAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// The checkpoint cutoff is the start of this destination attempt, so new
+	// missed calls/voicemails arriving during it remain reviewable.
+	command.Kind = work.RecoveryResolutionCallbackAttempt
+	command.SourceID = callID
+	_, err = m.work.ResolveRecoveryTasks(ctx, tx, command)
 	return err
 }

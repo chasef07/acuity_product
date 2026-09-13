@@ -96,10 +96,20 @@ Activity without an outcome is not success.
 
 ## Non-Negotiables
 
-- Patient needs requiring durable follow-up belong in Tasks. Appointment and
-  Text sidebar sections show only the past seven days of personal attention;
-  aging out preserves history and unread/review state and does not resolve work.
-  An unread text can leave this recent view without having been answered.
+- Work that requires staff action belongs in one shared My Tasks inbox, including
+  appointment verification, incoming text review, and call follow-up. Opening or
+  reading evidence never completes work. A confirmed staff text reply completes
+  its conversation review; failed delivery restores pending review. A completed
+  callback attempt clears older missed-call and voicemail reviews, including when
+  the patient does not answer. History records the attempt without claiming patient
+  contact. Finishing voicemail playback completes its
+  current review. Explicit completion clears other Tasks for
+  everyone with access and preserves actor, time, and Activity in Recently completed.
+- Open work does not expire or disappear with age. New source evidence requiring
+  attention must remain visible and cannot be cleared by a stale completion.
+- Appointment, text, missed-call, and voicemail reviews are shared by all staff with access to
+  their Location, regardless of category responsibility. Categorizing a review
+  does not hide it from those staff.
 - No Task becomes invisible because it is assigned, deprioritized, or
   completed.
 - No call, message, automated action, or completion is represented as
