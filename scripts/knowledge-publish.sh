@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Never enable tracing: credentials exist only in process memory.
-for name in KNOWLEDGE_GOOGLE_PROJECT KNOWLEDGE_SQL_INSTANCE KNOWLEDGE_DATABASE_SECRET KNOWLEDGE_OPERATOR_EMAIL GITHUB_SHA; do
+for name in KNOWLEDGE_GOOGLE_PROJECT KNOWLEDGE_SQL_INSTANCE KNOWLEDGE_DATABASE_SECRET KNOWLEDGE_OPERATOR_EMAIL; do
   if [[ -z "${!name:-}" ]]; then echo "$name is required" >&2; exit 1; fi
 done
+commit=${KNOWLEDGE_COMMIT:-${GITHUB_SHA:?GITHUB_SHA or KNOWLEDGE_COMMIT is required}}
 selection=${KNOWLEDGE_OFFICE:-all}
 shopt -s nullglob
 if [[ "$selection" == all ]]; then
@@ -15,7 +16,7 @@ else
   exit 1
 fi
 if ((${#sources[@]} == 0)); then echo 'No office sources found.' >&2; exit 1; fi
-if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+if [[ "$(git rev-parse HEAD)" != "$commit" ]]; then
   echo 'Checkout does not match the publication commit.' >&2
   exit 1
 fi
@@ -33,7 +34,7 @@ needs_api=false
 for source in "${sources[@]}"; do
   git ls-files --error-unmatch "$source" >/dev/null
   git diff --exit-code HEAD -- "$source" >/dev/null
-  "$binary" --source "$source" --commit "$GITHUB_SHA"
+  "$binary" --source "$source" --commit "$commit"
   office=$(basename "$source" .yaml)
   cases="knowledge/evals/${office}.json"
   if [[ -f "$cases" ]]; then
@@ -67,14 +68,14 @@ export KNOWLEDGE_IMPORT_DATABASE_URL
 export KNOWLEDGE_DATABASE_HOST=127.0.0.1
 status=0
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-  printf '### Knowledge publication\n\nCommit: `%s`\n\n| Office | Result |\n| --- | --- |\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+  printf '### Knowledge publication\n\nCommit: `%s`\n\n| Office | Result |\n| --- | --- |\n' "$commit" >> "$GITHUB_STEP_SUMMARY"
 fi
 for source in "${sources[@]}"; do
   office=$(basename "$source" .yaml)
   echo "Publishing $office"
   result='failed'
   # Each office is atomic. Continue independent offices and report any failure.
-  if "$binary" --source "$source" --commit "$GITHUB_SHA" --apply | tee "$output/$office.json"; then
+  if "$binary" --source "$source" --commit "$commit" --apply | tee "$output/$office.json"; then
     cases="knowledge/evals/${office}.json"
     if metadata=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(("unchanged" if r.get("unchanged") else "published")+"\t"+r["revision"]["id"])' "$output/$office.json"); then
       IFS=$'\t' read -r result revision <<< "$metadata"

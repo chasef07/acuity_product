@@ -1,6 +1,12 @@
 name: Knowledge
 
 on:
+  workflow_call:
+    inputs:
+      release_sha:
+        description: Exact commit successfully deployed by Release
+        required: true
+        type: string
   pull_request:
     paths:
       - 'knowledge/**'
@@ -36,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -44,7 +52,7 @@ jobs:
       - run: bash scripts/knowledge-validate.sh
 
   publish:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && (inputs.release_sha != '' || github.event_name == 'workflow_dispatch')
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -57,13 +65,17 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Require the current main commit
+        env:
+          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
         run: |
           current_main=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [[ "$current_main" != "$GITHUB_SHA" ]]; then
+          if [[ "$current_main" != "$KNOWLEDGE_COMMIT" ]]; then
             echo 'This run was superseded by a newer main commit. Run Knowledge from main again.' >&2
             exit 1
           fi
@@ -77,6 +89,7 @@ jobs:
         run: go install github.com/GoogleCloudPlatform/cloud-sql-proxy/v2@v2.25.4
       - name: Publish and verify office knowledge
         env:
+          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
           KNOWLEDGE_OFFICE: ${{ inputs.office || 'all' }}
           KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
           KNOWLEDGE_GOOGLE_PROJECT: ${{ vars.GCP_PROJECT_ID }}

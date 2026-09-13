@@ -28,7 +28,7 @@ class PublishTest(unittest.TestCase):
                         KNOWLEDGE_OPERATOR_EMAIL='operator@example.com',
                         KNOWLEDGE_OUTPUT_DIRECTORY=str(self.root / 'receipts'),
                         GITHUB_STEP_SUMMARY=str(self.root / 'summary'))
-        for key in ('KNOWLEDGE_OFFICE', 'FAIL_VALIDATE', 'FAIL_APPLY', 'UNCHANGED', 'FAIL_EVAL'):
+        for key in ('KNOWLEDGE_OFFICE', 'KNOWLEDGE_COMMIT', 'FAIL_VALIDATE', 'FAIL_APPLY', 'UNCHANGED', 'FAIL_EVAL'):
             self.env.pop(key, None)
         self.executable('cli', '''import json,os,sys
 from pathlib import Path
@@ -95,6 +95,18 @@ os.execv({sys.executable!r},[{sys.executable!r}]+sys.argv[1:])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([x for x in events if ':' in x], ['validate:beta', 'apply:beta'])
         self.assertEqual([x.name for x in (self.root / 'receipts').glob('*.json')], ['beta.json'])
+
+    def test_released_commit_overrides_workflow_event_commit(self):
+        commit = self.git('rev-parse', 'HEAD')
+        result, events = self.run_publish(KNOWLEDGE_COMMIT=commit, GITHUB_SHA='0' * 40)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('apply:gamma', events)
+        self.assertIn(commit, (self.root / 'summary').read_text())
+
+    def test_release_must_match_checkout_before_any_write(self):
+        result, events = self.run_publish(KNOWLEDGE_COMMIT='0' * 40)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events, [])
 
     def test_invalid_source_prevents_every_write(self):
         result, events = self.run_publish(FAIL_VALIDATE='beta')

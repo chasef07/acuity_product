@@ -6,7 +6,54 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/oasdiff/yaml3"
 )
+
+func TestKnowledgePublicationWaitsForDeployedRelease(t *testing.T) {
+	root := filepath.Dir(releaseDeployDirectory(t))
+	read := func(name string) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow map[string]any
+		if err := yaml.Unmarshal(raw, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		return workflow
+	}
+	release := read("release.yml")
+	jobs := release["jobs"].(map[string]any)
+	publication, ok := jobs["knowledge"].(map[string]any)
+	if !ok {
+		t.Fatal("release must publish knowledge after successful deployment")
+	}
+	if publication["uses"] != "./.github/workflows/knowledge.yml" {
+		t.Fatal("release must use the knowledge workflow")
+	}
+	needs := publication["needs"].([]any)
+	if len(needs) != 2 || needs[0] != "release-please" || needs[1] != "deploy" {
+		t.Fatal("publication must depend on deployment and its release SHA")
+	}
+	if _, ok := publication["if"]; ok {
+		t.Fatal("publication must retain the default success gate")
+	}
+	if publication["with"].(map[string]any)["release_sha"] != "${{ needs.release-please.outputs.release_sha }}" {
+		t.Fatal("publication must use the deployed release")
+	}
+	knowledge := read("knowledge.yml")
+	publish := knowledge["jobs"].(map[string]any)["publish"].(map[string]any)
+	if strings.Contains(publish["if"].(string), "github.event_name == 'push'") {
+		t.Fatal("a push must not publish ahead of deployment")
+	}
+	steps := publish["steps"].([]any)
+	checkout := steps[0].(map[string]any)
+	if checkout["with"].(map[string]any)["ref"] != "${{ inputs.release_sha || github.sha }}" {
+		t.Fatal("publisher must check out the deployed commit")
+	}
+}
 
 func TestKnowledgeConfigurationOnlyReachesPortalAPI(t *testing.T) {
 	config, err := os.ReadFile(filepath.Join(filepath.Dir(releaseDeployDirectory(t)), "cloudbuild.release.yaml"))
