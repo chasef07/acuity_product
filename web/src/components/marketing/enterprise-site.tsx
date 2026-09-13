@@ -37,6 +37,7 @@ export type MarketingRoute =
   | "/method"
   | "/integrations"
   | "/integrations/advancedmd"
+  | "/integrations/stedi"
   | "/who-we-are"
   | "/work-with-us"
   | "/privacy-policy"
@@ -235,23 +236,6 @@ function MethodCapabilities({ headingLevel = 3 }: { headingLevel?: 2 | 3 }) {
   )
 }
 
-function PartnershipCta() {
-  return (
-    <section className={styles.partnershipCta}>
-      <div>
-        <p className={styles.eyebrow}>Work with us</p>
-        <h2>Bring us the operation that needs to change.</h2>
-        <p>
-          We’ll work beside your team from the first diagnostic through rollout.
-        </p>
-      </div>
-      <Link className={styles.lightButton} href="/work-with-us">
-        Start the conversation <ArrowRight size={17} aria-hidden="true" />
-      </Link>
-    </section>
-  )
-}
-
 export function EnterpriseHome({
   initiallyOpen = false,
 }: {
@@ -313,75 +297,164 @@ export function EnterpriseHome({
   )
 }
 
+const stediPartnerUrl = "https://www.stedi.com/platform-partners#acuity-health"
+
 export function IntegrationsPageContent() {
   return (
     <MarketingFrame current="/integrations">
-      <section
-        aria-labelledby="integrations-title"
-        className={styles.integrationsSection}
-        id="integrations"
-      >
-        <header className={styles.sectionHeader}>
-          <div>
-            <p className={styles.eyebrow}>Partnerships & integrations</p>
-            <h1 id="integrations-title">Medical AI, connected to your EHR & PMS.</h1>
-          </div>
-          <p>
-            Bring AI-powered patient access to the electronic health record
-            (EHR) and practice management systems (PMS) your team already uses.
-          </p>
-        </header>
-        <div className={styles.integrationsGrid}>
-          <article className={styles.integrationPartner}>
-            <p className={styles.eyebrow}>Marketplace partner</p>
-            <h2>AdvancedMD</h2>
-            <p className={styles.integrationDescription}>
-              Acuity Health is an AdvancedMD partner. Our AI receptionist connects
-              patient calls with scheduling in AdvancedMD, shaped around your
-              practice’s providers, locations, and appointment rules.
-            </p>
-            <Link
-              className={styles.inlineArrowLink}
-              href="/integrations/advancedmd"
-            >
-              Explore the AdvancedMD integration
-              <ArrowRight size={16} aria-hidden="true" />
-            </Link>
-          </article>
-          <div className={styles.additionalIntegrations}>
-            <h2>More EHR & PMS integrations</h2>
-            <p className={styles.integrationDescription}>
-              Alongside AdvancedMD, Acuity Health connects with these EHR and PMS
-              platforms and more, adapting each integration to your practice’s
-              workflows.
-            </p>
-            <ul className={styles.integrationNames}>
-              <li>Nextech</li>
-              <li>Athenahealth</li>
-              <li>ModMed</li>
-              <li>Compulink</li>
-            </ul>
-          </div>
+      <section className={styles.missionVision} aria-labelledby="integrations-title" id="integrations">
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Partnerships & integrations</p>
+          <h1 id="integrations-title">Built around the systems your practice already uses.</h1>
         </div>
-        <div className={styles.customIntegration} id="custom-integrations">
-          <div>
-            <p className={styles.eyebrow}>Custom integrations</p>
-            <h2>Don’t see your EHR or PMS?</h2>
-            <p className={styles.integrationDescription}>
-              Acuity Health’s integrations go beyond this list. We build custom
-              connections with additional EHR and PMS platforms. Tell us which
-              system you use and what you want to automate, and we’ll confirm
-              what’s possible for your practice.
-            </p>
-          </div>
-          <Link className={styles.inlineArrowLink} href="/work-with-us">
-            Discuss your integration
-            <ArrowRight size={16} aria-hidden="true" />
-          </Link>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>From the call to the next step</p>
+          <p>Connect patient conversations to scheduling and insurance eligibility, shaped around the way your team works.</p>
         </div>
       </section>
 
-      <PartnershipCta />
+      <section className={styles.integrationEditorial} aria-labelledby="advancedmd-partner">
+        <header>
+          <p className={styles.eyebrow}>EHR & PMS · Marketplace partner</p>
+          <h2 id="advancedmd-partner">AdvancedMD</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Patient calls become appointments in AdvancedMD. Our AI receptionist works with your practice’s providers, locations, appointment types, and scheduling rules.</p>
+          <div className={styles.platformActions}>
+            <Link className={styles.inlineArrowLink} href="/integrations/advancedmd">
+              Explore the AdvancedMD integration <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+            <a className={styles.inlineArrowLink} href="https://www.advancedmd.com/integrations/marketplace/acuity-health/" target="_blank" rel="noreferrer">
+              View our AdvancedMD marketplace listing <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="stedi-partner">
+        <header>
+          <p className={styles.eyebrow}>Healthcare clearinghouse · Platform partner</p>
+          <h2 id="stedi-partner">Stedi</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Bring insurance eligibility into the patient-access workflow. We partner with Stedi, a healthcare clearinghouse, to support quick, efficient medical, vision, and Medicare eligibility checks for supported payers.</p>
+          <div className={styles.platformActions}>
+            <Link className={styles.inlineArrowLink} href="/integrations/stedi">
+              Explore insurance eligibility <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
+              View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="whitecotton-partner">
+        <header>
+          <p className={styles.eyebrow}>Eye care · Sales & implementation partner</p>
+          <h2 id="whitecotton-partner">Whitecotton Vision</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Whitecotton Vision brings Acuity Health to ophthalmology and optometry practices alongside its ophthalmic equipment and practice technology. Their team helps practices assess fit and supports implementation.</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href="https://whitecottonvision.com/acuity-health" target="_blank" rel="noreferrer">
+              Explore Acuity with Whitecotton Vision <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="other-systems">
+        <header>
+          <p className={styles.eyebrow}>More EHR & PMS integrations</p>
+          <h2 id="other-systems">Your systems.<br />Your workflow.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>We also connect with these platforms. We scope the supported workflows and access requirements with your team before rollout.</p>
+          <ul className={styles.integrationNames}>
+            <li>Nextech</li><li>Athenahealth</li><li>ModMed</li><li>Compulink</li>
+          </ul>
+          <p>Use another system? We can assess a custom connection around the work your practice needs.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="integration-setup">
+        <header>
+          <p className={styles.eyebrow}>How we build</p>
+          <h2 id="integration-setup">The connection starts with your workflow.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>We map the work with your team: scheduling rules, insurance requirements, and the moments that need staff attention.</p>
+          <p>Then we confirm system access and payer enrollment, configure the workflow, and verify the connection before rollout. Your team stays involved as we refine the operation together.</p>
+        </div>
+      </section>
+    </MarketingFrame>
+  )
+}
+
+export function StediPageContent() {
+  return (
+    <MarketingFrame current="/integrations/stedi">
+      <section className={styles.missionVision} aria-labelledby="stedi-title">
+        <div className={styles.missionStatement}>
+          <p className={styles.eyebrow}>Stedi · Healthcare clearinghouse partner</p>
+          <h1 id="stedi-title">Medical, vision, and Medicare eligibility checks.</h1>
+        </div>
+        <div className={styles.visionStatement}>
+          <p className={styles.eyebrow}>Insurance eligibility, connected</p>
+          <p>We partner with Stedi to bring quick, efficient eligibility checks into your patient-access workflow.</p>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="stedi-connection">
+        <header>
+          <p className={styles.eyebrow}>Our partnership</p>
+          <h2 id="stedi-connection">A clearinghouse connection. A clearer next step.</h2>
+        </header>
+        <div className={styles.storyBody}>
+          <p>Stedi connects eligibility requests to insurance payers. Acuity brings that connection into the work of answering patient calls and preparing the next step with your practice.</p>
+          <p>Real-time checks help reduce manual verification. Available benefits and response times depend on the payer, the patient information provided, and your practice’s enrollment.</p>
+          <div className={styles.platformActions}>
+            <a className={styles.inlineArrowLink} href={stediPartnerUrl} target="_blank" rel="noreferrer">
+              View Acuity on Stedi <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.integrationsSection} aria-labelledby="eligibility-types">
+        <header className={styles.sectionHeader}>
+          <div><p className={styles.eyebrow}>Coverage checks</p><h2 id="eligibility-types">The right check for the visit.</h2></div>
+          <p>We confirm payer support and the information your team needs before configuring your eligibility workflow.</p>
+        </header>
+        <div className={styles.platformDetails}>
+          <article>
+            <h2>Medical eligibility</h2>
+            <p>Check active medical coverage and the benefits returned by supported payers, including copays and deductibles when available.</p>
+          </article>
+          <article>
+            <h2>Vision eligibility</h2>
+            <p>Check vision benefits where the payer supports them. We scope routine vision and medical eye-care workflows separately so the check fits the visit.</p>
+          </article>
+          <article>
+            <h2>Medicare eligibility</h2>
+            <p>Support Medicare eligibility checks with the required provider enrollment. Medicare Advantage checks depend on the patient’s plan and the payer connection.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className={styles.integrationEditorial} aria-labelledby="eligibility-questions">
+        <header>
+          <p className={styles.eyebrow}>Before rollout</p>
+          <h2 id="eligibility-questions">Know what the check can tell you.</h2>
+        </header>
+        <div className={styles.eligibilityAnswers}>
+          <div><h3>Does this support every payer?</h3><p>Support varies by payer and coverage type. We review your payer mix and any enrollment requirements with your team. You can also explore <a href="https://www.stedi.com/healthcare/network" target="_blank" rel="noreferrer">Stedi’s payer network</a>.</p></div>
+          <div><h3>Does eligibility guarantee payment?</h3><p>No. An eligibility response is not a guarantee of payment, prior authorization, or confirmation that a particular procedure is covered. Your practice’s acceptance rules and any remaining verification still apply.</p></div>
+          <div><h3>What if a check cannot be completed?</h3><p>We define the staff handoff during setup, including when patient information needs correction or a payer cannot return a usable result.</p></div>
+          <Link className={styles.inlineArrowLink} href="/integrations">All partnerships & integrations <ArrowRight size={16} aria-hidden="true" /></Link>
+        </div>
+      </section>
     </MarketingFrame>
   )
 }
@@ -475,8 +548,6 @@ export function MethodPageContent() {
           <li><Check size={17} aria-hidden="true" /> The customer gains capability at every stage.</li>
         </ul>
       </section>
-
-      <PartnershipCta />
     </MarketingFrame>
   )
 }
