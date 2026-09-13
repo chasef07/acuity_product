@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/chasef07/acuity_product/compare/v1.11.0...v1.12.0) (2026-09-13)
+
+
+### Features
+
+* **knowledge:** record verified publications as GitHub releases ([#319](https://github.com/chasef07/acuity_product/issues/319)) ([7cb8d5a](https://github.com/chasef07/acuity_product/commit/7cb8d5af7966c8ad736d283aea890887111f5aac))
+
 ## [1.11.0](https://github.com/chasef07/acuity_product/compare/v1.10.0...v1.11.0) (2026-09-13)
 
 
