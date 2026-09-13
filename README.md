@@ -192,9 +192,6 @@ live Google or Telnyx credentials, and it does not prove real sign-in, carrier
 delivery, or live-call media behavior. It is a test runner, not a persistent
 development server.
 
-Task responsibility provisioning, reviewed reclassification, and validation are
-documented in [Task responsibility groups](docs/ops/task-responsibility-groups.md).
-
 ### Interactive development
 
 For a persistent local environment, run `migrate` once, then start `portal-api`,

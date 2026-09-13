@@ -684,7 +684,7 @@ test("retired Billing preference restores the visible All types filter", async (
   projection.stop()
 })
 
-test("switching task views clears the previous type filter", async () => {
+test("switching responsibility views preserves the selected type filter", async () => {
   const projection = createWorkspaceProjection({
     authority: deterministicAuthority({
       discovery: accessDiscovery(),
@@ -699,7 +699,7 @@ test("switching task views clears the previous type filter", async () => {
     await projection.dispatch({ type: "set-task-category", category: "optical" })
     await projection.dispatch({ type: "set-task-filters", responsibility })
     assert.equal(projection.getSnapshot().rail.taskResponsibility, responsibility)
-    assert.equal(projection.getSnapshot().rail.taskCategory, "all")
+    assert.equal(projection.getSnapshot().rail.taskCategory, "optical")
   }
   projection.stop()
 })

@@ -845,7 +845,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(medicationTaskButton).toBeVisible()
 
   const taskFilter = page.getByRole("button", {
-    name: "Task view: My tasks, All types",
+    name: "Task view: My groups, All types",
   })
   await taskFilter.click()
   for (const [label, count] of [
@@ -863,7 +863,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   }
   await page.getByRole("menuitemradio", { name: /^Other / }).click()
   await expect(
-    page.getByRole("button", { name: "Task view: My tasks, Other" }),
+    page.getByRole("button", { name: "Task view: My groups, Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -877,7 +877,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
     await restoredTasksSection.click()
   }
   await expect(
-    page.getByRole("button", { name: "Task view: My tasks, Other" }),
+    page.getByRole("button", { name: "Task view: My groups, Other" }),
   ).toBeVisible()
   await expect(billingTaskButton).toBeVisible()
   await expect(medicationTaskButton).toHaveCount(0)
@@ -1006,7 +1006,7 @@ test("messaging sends, receives, and keeps exact-phone correspondence in one wor
   await expect(taskItem).toHaveCount(0)
   await page.unroute(/\/v1\/tasks\/[^/]+\/complete$/, completionRoute)
 
-  await page.getByRole("button", { name: "Task view: My tasks, Other" }).click()
+  await page.getByRole("button", { name: "Task view: My groups, Other" }).click()
   await page.getByRole("menuitemradio", { name: /^Clinical & pharmacy / }).click()
   await page.keyboard.press("Escape")
   const medicationItem = page

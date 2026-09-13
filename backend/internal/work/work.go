@@ -1806,6 +1806,10 @@ func insertTask(
 			task.completed_at,
 			task.version,
 			task.updated_at,
+			task.knowledge_flagged,
+			task.suggested_answer,
+			task.knowledge_updated_by,
+			task.knowledge_updated_at,
 			EXISTS (SELECT 1 FROM inserted)
 		FROM (
 			SELECT * FROM inserted
@@ -1869,6 +1873,10 @@ func insertTask(
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
+		&task.KnowledgeFlagged,
+		&task.SuggestedAnswer,
+		&task.KnowledgeUpdatedBy,
+		&task.KnowledgeUpdatedAt,
 		&inserted,
 	)
 	if err != nil {
@@ -1886,7 +1894,7 @@ func insertTask(
 		createdEmail,
 	)
 	setCompletionActor(&task, completedSubject, completedEmail)
-	if err := loadTaskMetadata(ctx, tx, &task); err != nil {
+	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
 		return Task{}, false, err
 	}
 	return task, inserted, nil
@@ -1924,20 +1932,24 @@ func loadTask(
 			task.completed_by_email,
 			task.completed_at,
 			task.version,
-			task.updated_at
+			task.updated_at,
+			task.knowledge_flagged,
+			task.suggested_answer,
+			task.knowledge_updated_by,
+			task.knowledge_updated_at
 		FROM work_tasks task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
 		WHERE task.id = $1
-	`, taskID), false)
+	`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("read Task: %w", err)
 	}
-	if err := loadTaskMetadata(ctx, tx, &task); err != nil {
+	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
 	return task, nil
@@ -1975,31 +1987,31 @@ func lockTask(
 			task.completed_by_email,
 			task.completed_at,
 			task.version,
-			task.updated_at
+			task.updated_at,
+			task.knowledge_flagged,
+			task.suggested_answer,
+			task.knowledge_updated_by,
+			task.knowledge_updated_at
 		FROM work_tasks task
 		JOIN access_locations location
 			ON location.practice_id = task.practice_id
 			AND location.id = task.location_id
 		WHERE task.id = $1
 		FOR UPDATE OF task
-	`, taskID), false)
+	`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Task{}, ErrDenied
 	}
 	if err != nil {
 		return Task{}, fmt.Errorf("lock Task: %w", err)
 	}
-	if err := loadTaskMetadata(ctx, tx, &task); err != nil {
+	if err := loadTaskAcknowledgement(ctx, tx, &task); err != nil {
 		return Task{}, err
 	}
 	return task, nil
 }
 
-func loadTaskMetadata(ctx context.Context, tx pgx.Tx, task *Task) error {
-	if err := tx.QueryRow(ctx, `SELECT knowledge_flagged, suggested_answer, knowledge_updated_by, knowledge_updated_at FROM work_tasks WHERE id=$1`, task.ID).Scan(&task.KnowledgeFlagged, &task.SuggestedAnswer, &task.KnowledgeUpdatedBy, &task.KnowledgeUpdatedAt); err != nil {
-		return err
-	}
-
+func loadTaskAcknowledgement(ctx context.Context, tx pgx.Tx, task *Task) error {
 	var acknowledgement TaskAcknowledgement
 	var safeFailureCode, messageID *string
 	if err := tx.QueryRow(ctx, `
@@ -2031,7 +2043,7 @@ type taskScanner interface {
 	Scan(...any) error
 }
 
-func scanTask(scanner taskScanner, includeRelatedInteractionCount bool) (Task, error) {
+func scanTask(scanner taskScanner) (Task, error) {
 	var task Task
 	var callID, category, callerName, sourceCall, sourceMessage *string
 	var messageID, messageThreadID, recoveryOutcome *string
@@ -2063,9 +2075,10 @@ func scanTask(scanner taskScanner, includeRelatedInteractionCount bool) (Task, e
 		&task.CompletedAt,
 		&task.Version,
 		&task.UpdatedAt,
-	}
-	if includeRelatedInteractionCount {
-		destinations = append(destinations, &task.RelatedInteractionCount)
+		&task.KnowledgeFlagged,
+		&task.SuggestedAnswer,
+		&task.KnowledgeUpdatedBy,
+		&task.KnowledgeUpdatedAt,
 	}
 	if err := scanner.Scan(destinations...); err != nil {
 		return Task{}, err

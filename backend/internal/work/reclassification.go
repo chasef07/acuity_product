@@ -42,11 +42,8 @@ func (m *Module) PlanReclassification(ctx context.Context, identity access.Ident
 		return plan, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	for _, location := range locations {
-		auth, err := m.access.LockMutationAuthorization(ctx, tx, identity, practiceID, location)
-		if err != nil || !auth.PlatformOperator {
-			return plan, ErrDenied
-		}
+	if err := m.authorizeReclassificationScope(ctx, tx, identity, practiceID, locations); err != nil {
+		return plan, err
 	}
 	rows, err := tx.Query(ctx, `SELECT id::text,version,COALESCE(category,''),title,COALESCE(source_message,'') FROM work_tasks WHERE practice_id=$1 AND location_id=ANY($2::uuid[]) AND state='OPEN' ORDER BY created_at,id`, practiceID, locations)
 	if err != nil {
@@ -176,13 +173,19 @@ func (m *Module) applyReclassificationEntry(ctx context.Context, identity access
 }
 
 func (m *Module) RestorationPlan(ctx context.Context, identity access.Identity, runID, practiceID string, locations []string) (ReclassificationPlan, error) {
-	plan, err := m.PlanReclassification(ctx, identity, "restore:"+runID, practiceID, locations)
+	plan := ReclassificationPlan{RestoreRunID: runID, RunID: "restore:" + runID, PracticeID: practiceID, LocationIDs: locations}
+	if practiceID == "" || len(locations) == 0 {
+		return plan, ErrInvalidInput
+	}
+	tx, err := m.database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return plan, err
 	}
-	plan.Tasks = nil
-	plan.RestoreRunID = runID
-	rows, err := m.database.Query(ctx, `SELECT c.task_id::text,c.applied_version,c.new_category,COALESCE(c.old_category,'') FROM work_reclassification_changes c JOIN work_tasks t ON t.id=c.task_id WHERE c.run_id=$1 AND t.practice_id=$2 AND t.location_id=ANY($3::uuid[]) ORDER BY c.task_id`, runID, practiceID, locations)
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := m.authorizeReclassificationScope(ctx, tx, identity, practiceID, locations); err != nil {
+		return plan, err
+	}
+	rows, err := tx.Query(ctx, `SELECT c.task_id::text,c.applied_version,c.new_category,COALESCE(c.old_category,'') FROM work_reclassification_changes c JOIN work_tasks t ON t.id=c.task_id WHERE c.run_id=$1 AND t.practice_id=$2 AND t.location_id=ANY($3::uuid[]) ORDER BY c.task_id`, runID, practiceID, locations)
 	if err != nil {
 		return plan, err
 	}
@@ -195,7 +198,23 @@ func (m *Module) RestorationPlan(ctx context.Context, identity access.Identity, 
 		e.Reason = "Restore reviewed classification run " + runID
 		plan.Tasks = append(plan.Tasks, e)
 	}
-	return plan, rows.Err()
+	if err := rows.Err(); err != nil {
+		return plan, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return plan, err
+	}
+	return plan, nil
+}
+
+func (m *Module) authorizeReclassificationScope(ctx context.Context, tx pgx.Tx, identity access.Identity, practiceID string, locations []string) error {
+	for _, location := range locations {
+		auth, err := m.access.LockMutationAuthorization(ctx, tx, identity, practiceID, location)
+		if err != nil || !auth.PlatformOperator {
+			return ErrDenied
+		}
+	}
+	return nil
 }
 
 func reclassificationSuggestion(entry ReclassificationEntry) (TaskCategory, string) {

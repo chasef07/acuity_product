@@ -682,7 +682,7 @@ function TaskViewMenu({
   const activeLabel =
     taskCategoryOptions.find((option) => option.value === category)?.label ??
     "All types"
-  const viewLabel = responsibility === "mine" ? "My tasks" : "All tasks"
+  const viewLabel = responsibility === "mine" ? "My groups" : "All tasks"
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -713,7 +713,7 @@ function TaskViewMenu({
                 if (value === "mine" || value === "all") onResponsibilityChange(value)
               }}
             >
-              <DropdownMenuRadioItem value="mine" closeOnClick>My tasks</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="mine" closeOnClick>My groups</DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="all" closeOnClick>All tasks</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>

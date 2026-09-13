@@ -72,7 +72,7 @@ func (m *Module) QueryTasks(
 		return work.TaskPage{}, err
 	}
 
-	rows, err := tx.Query(ctx, taskListSQL(command),
+	rows, err := tx.Query(ctx, taskQuerySQL(command.State, command.Ordering, command.Grouped),
 		command.PracticeID,
 		locationIDs,
 		command.Search,
@@ -127,12 +127,8 @@ func (m *Module) QueryTasks(
 		}
 	}
 	if command.Grouped && command.State == work.TaskOpen {
-		for i := range items {
-			members, err := readGroupMembers(ctx, tx, command.Identity.Subject, items[i])
-			if err != nil {
-				return work.TaskPage{}, err
-			}
-			items[i].GroupMembers = members
+		if err := loadGroupMembers(ctx, tx, command.Identity.Subject, items); err != nil {
+			return work.TaskPage{}, err
 		}
 	}
 
@@ -230,7 +226,7 @@ const taskConversationJoin = `
 		LIMIT 1
 	) conversation ON true`
 
-const taskQuerySelect = `
+const taskQueryColumns = `
 	SELECT` + taskColumns + `,
 		COALESCE(conversation.id::text, ''),
 		task.state = 'OPEN' AND EXISTS (
@@ -243,11 +239,14 @@ const taskQuerySelect = `
 			SELECT count(*)
 			FROM work_task_interactions interaction
 			WHERE interaction.task_id = task.id
-		)
-	FROM work_tasks task
+		)`
+
+const taskProjectionJoins = `
 	JOIN access_locations location
 		ON location.practice_id = task.practice_id
-		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
+		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin
+
+const taskQueryFilter = `
 	WHERE task.practice_id = $1
 		AND task.location_id = ANY($2::uuid[])` + taskResponsibilityFilter + `
  AND ($15::text = '' OR task.category=$15)
@@ -271,10 +270,27 @@ const taskQuerySelect = `
 			))
 		)`
 
-func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering) string {
+func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering, grouped bool) string {
+	query := taskQueryColumns + " FROM work_tasks task" + taskProjectionJoins + taskQueryFilter
+	if grouped && state == work.TaskOpen {
+		order := "created_at,id"
+		if ordering == work.TaskOrderingRecent {
+			order = "updated_at DESC,id DESC"
+		} else if ordering == work.TaskOrderingPriority {
+			order = "CASE urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,created_at,id"
+		}
+		// Filter before choosing a representative; load complete membership separately
+		// in this snapshot so a search never hides a group resolution target.
+		query = `WITH matching AS (
+ SELECT task.* FROM work_tasks task
+ JOIN access_locations location ON location.practice_id=task.practice_id AND location.id=task.location_id` + taskQueryFilter + ` AND task.state='OPEN'
+ ), ranked AS (
+ SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,(origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')) ORDER BY ` + order + `) AS member_rank FROM matching
+ ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) ` + taskQueryColumns + " FROM group_candidates task" + taskProjectionJoins + " WHERE true"
+	}
 	switch {
 	case state == work.TaskOpen && ordering == work.TaskOrderingPriority:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'OPEN'
 			AND (
 				NOT $5
@@ -302,28 +318,28 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering) string {
 			task.id
 		LIMIT $9`
 	case state == work.TaskOpen && ordering == work.TaskOrderingTime:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'OPEN'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.created_at, task.id::text) > ($6, $7))
 		ORDER BY task.created_at, task.id
 		LIMIT $9`
 	case state == work.TaskOpen:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'OPEN'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
 		ORDER BY task.updated_at DESC, task.id DESC
 		LIMIT $9`
 	case ordering == work.TaskOrderingRecent:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'COMPLETED'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.updated_at, task.id::text) < ($6, $7))
 		ORDER BY task.updated_at DESC, task.id DESC
 		LIMIT $9`
 	default:
-		return taskQuerySelect + `
+		return query + `
 			AND task.state = 'COMPLETED'
 			AND $8::int >= 0
 			AND (NOT $5 OR (task.completed_at, task.id::text) < ($6, $7))
@@ -332,8 +348,7 @@ func taskQuerySQL(state work.TaskState, ordering work.TaskOrdering) string {
 	}
 }
 
-const taskReadQuery = `
-	SELECT` + taskColumns + `,
+const taskReadColumns = taskColumns + `,
 		COALESCE(conversation.id::text, ''),
 		task.state = 'OPEN' AND EXISTS (
 			SELECT 1
@@ -341,11 +356,9 @@ const taskReadQuery = `
 			WHERE unread.thread_id = conversation.id
 				AND unread.user_subject = $2
 		),
-		0
-	FROM work_tasks task
-	JOIN access_locations location
-		ON location.practice_id = task.practice_id
-		AND location.id = task.location_id` + taskAcknowledgementJoin + taskConversationJoin + `
+		(SELECT count(*) FROM work_task_interactions interaction WHERE interaction.task_id=task.id)`
+
+const taskReadQuery = `SELECT` + taskReadColumns + ` FROM work_tasks task` + taskProjectionJoins + `
 	WHERE task.id = $1`
 
 const conversationTaskQuery = `

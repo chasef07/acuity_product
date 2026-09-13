@@ -212,6 +212,40 @@ func TestRelatedTaskGroupsKeepRecoverySeparate(t *testing.T) {
 			}
 		}
 	}
+	// A grouped page carries summaries; selecting a Task still loads every source.
+	for _, ordering := range []work.TaskOrdering{work.TaskOrderingTime, work.TaskOrderingPriority, work.TaskOrderingRecent} {
+		command := workspace.QueryTasksCommand{Identity: identity, PracticeID: auth.Practice.ID, Grouped: true, Ordering: ordering, Limit: 1}
+		seen := map[string]bool{}
+		for {
+			page, err := reads.QueryTasks(ctx, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(page.Items) != 1 || len(page.Items[0].GroupMembers) != 1 {
+				t.Fatalf("%s lost paginated group membership: %+v", ordering, page)
+			}
+			member := page.Items[0].GroupMembers[0]
+			wantInteractions := 0
+			if member.ID == recovery.ID {
+				wantInteractions = 1
+			}
+			if seen[member.ID] || member.RelatedInteractionCount != wantInteractions {
+				t.Fatalf("%s repeated a group or lost its source count: %+v", ordering, member)
+			}
+			seen[member.ID] = true
+			detail, err := reads.ReadTask(ctx, identity, member.ID)
+			if err != nil || len(detail.Interactions) != wantInteractions || detail.RelatedInteractionCount != member.RelatedInteractionCount || detail.CallID != member.CallID {
+				t.Fatalf("%s lost source detail: %+v, %v", ordering, detail, err)
+			}
+			if page.NextCursor == "" {
+				break
+			}
+			command.Cursor = page.NextCursor
+		}
+		if !seen[ordinary.ID] || !seen[recovery.ID] {
+			t.Fatalf("%s skipped a group: %+v", ordering, seen)
+		}
+	}
 	_, err = m.CompleteTaskGroup(ctx, work.CompleteTaskGroupCommand{Identity: identity, TaskID: ordinary.ID, Members: []work.ReviewedTask{{ID: ordinary.ID, ExpectedVersion: ordinary.Version}, {ID: recovery.ID, ExpectedVersion: recovery.Version}}})
 	if !errors.Is(err, work.ErrConflict) {
 		t.Fatalf("mixed group resolution should conflict: %v", err)

@@ -2,61 +2,44 @@ package workspace
 
 import (
 	"context"
+
 	"github.com/chasef07/acuity_product/backend/internal/work"
 	"github.com/jackc/pgx/v5"
-	"strings"
 )
 
-func taskListSQL(command QueryTasksCommand) string {
-	query := taskQuerySQL(command.State, command.Ordering)
-	if !command.Grouped || command.State != work.TaskOpen {
-		return query
+// Expand all authorized page representatives in one query. Group rows carry the
+// same summary as ordinary Task rows; ReadTask loads Interaction detail on demand.
+func loadGroupMembers(ctx context.Context, tx pgx.Tx, subject string, groups []work.Task) error {
+	if len(groups) == 0 {
+		return nil
 	}
-	order := "created_at,id"
-	if command.Ordering == work.TaskOrderingRecent {
-		order = "updated_at DESC,id DESC"
+	ids := make([]string, 0, len(groups))
+	byID := make(map[string]int, len(groups))
+	for i := range groups {
+		ids = append(ids, groups[i].ID)
+		byID[groups[i].ID] = i
+		groups[i].GroupMembers = []work.Task{}
 	}
-	if command.Ordering == work.TaskOrderingPriority {
-		order = "CASE urgency WHEN 'high_priority' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,created_at,id"
-	}
-	// Apply filters before choosing the representative; expand complete membership
-	// separately in the same snapshot, so search never hides a resolution target.
-	matching := "SELECT task.* " + taskQuerySelect[strings.Index(taskQuerySelect, "FROM work_tasks task"):] + " AND task.state='OPEN'"
-	prefix := `WITH matching AS (` + matching + `), ranked AS (
- SELECT *,row_number() OVER(PARTITION BY practice_id,location_id,phone,category,(origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY')) ORDER BY ` + order + `) AS member_rank FROM matching
- ), group_candidates AS (SELECT * FROM ranked WHERE member_rank=1) `
-	return prefix + strings.Replace(query, "FROM work_tasks task", "FROM group_candidates task", 1)
-}
-
-func readGroupMembers(ctx context.Context, tx pgx.Tx, subject string, anchor work.Task) ([]work.Task, error) {
-	query := strings.Replace(taskReadQuery, "WHERE task.id = $1", `WHERE task.practice_id=$1 AND task.location_id=$3 AND task.phone=$4 AND task.category IS NOT DISTINCT FROM $5::text AND task.state='OPEN' AND (task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))=$6 ORDER BY task.created_at,task.id`, 1)
-	var category any
-	if anchor.Category != "" {
-		category = string(anchor.Category)
-	}
-	rows, err := tx.Query(ctx, query, anchor.PracticeID, subject, anchor.LocationID, anchor.Phone, category, work.IsRecoveryOrigin(anchor.Origin))
+	rows, err := tx.Query(ctx, `SELECT anchor.id::text,`+taskReadColumns+`
+ FROM work_tasks task`+taskProjectionJoins+`
+ JOIN work_tasks anchor ON anchor.practice_id=task.practice_id
+ AND anchor.location_id=task.location_id AND anchor.phone=task.phone
+ AND anchor.category IS NOT DISTINCT FROM task.category
+ AND (anchor.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))=(task.origin IN ('MISSED_CALL_RECOVERY','VOICEMAIL_RECOVERY'))
+ WHERE anchor.id=ANY($1::uuid[]) AND task.state='OPEN'
+ ORDER BY task.created_at,task.id`, ids, subject)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	members := []work.Task{}
+	defer rows.Close()
 	for rows.Next() {
-		task, err := scanTaskProjection(rows)
+		var anchorID string
+		member, err := scanTaskProjection(rows, &anchorID)
 		if err != nil {
-			rows.Close()
-			return nil, err
+			return err
 		}
-		members = append(members, task)
+		i := byID[anchorID]
+		groups[i].GroupMembers = append(groups[i].GroupMembers, member)
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	for i := range members {
-		if err := loadTaskInteractions(ctx, tx, &members[i]); err != nil {
-			return nil, err
-		}
-		members[i].RelatedInteractionCount = len(members[i].Interactions)
-	}
-	return members, nil
+	return rows.Err()
 }
