@@ -57,6 +57,16 @@ AI call rewrites the facts.
    records each office's publication and retrieval results. An office without a
    fixture has database verification only; this does not prove spoken behavior.
 
+After the complete publication and its configured retrieval checks succeed, the
+workflow records a GitHub release named `Knowledge <commit> (<selection>)`, tagged
+`knowledge-<full commit>-<selection>`. Notes list changed offices, database revision
+IDs, and the workflow evidence. Knowledge releases never replace the Product
+release as GitHub's Latest release. Unchanged content from an earlier commit
+creates no release. Rerunning the same commit and office selection reuses its
+release; if release creation failed after publication, revision provenance lets
+the rerun recover the missing record. A failed publication creates no release.
+These records describe a publication event, not the current live revision forever.
+
 All entries in a file replace the complete office corpus. Removing an entry from
 Git removes it from the next published revision; prior revisions remain available
 as evidence. To roll back, revert the content in a new PR and publish the reverted content. No agent deployment is needed for content-only edits.

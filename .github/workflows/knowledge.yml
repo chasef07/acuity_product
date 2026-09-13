@@ -13,7 +13,7 @@ on:
       - 'backend/cmd/knowledge-import/**'
       - 'backend/internal/knowledge/**'
       - 'scripts/knowledge-*'
-      - 'scripts/test-knowledge-publish.py'
+      - 'scripts/test-knowledge-*.py'
       - '.github/workflows/knowledge.yml'
       - 'go.mod'
       - 'go.sum'
@@ -24,7 +24,7 @@ on:
       - 'backend/cmd/knowledge-import/**'
       - 'backend/internal/knowledge/**'
       - 'scripts/knowledge-*'
-      - 'scripts/test-knowledge-publish.py'
+      - 'scripts/test-knowledge-*.py'
       - '.github/workflows/knowledge.yml'
   workflow_dispatch:
     inputs:
@@ -49,6 +49,7 @@ jobs:
           go-version-file: go.mod
       - run: go test ./backend/cmd/knowledge-import
       - run: python3 scripts/test-knowledge-publish.py
+      - run: python3 scripts/test-knowledge-release.py
       - run: bash scripts/knowledge-validate.sh
 
   publish:
@@ -61,7 +62,7 @@ jobs:
       group: knowledge-production
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,6 +101,13 @@ jobs:
           KNOWLEDGE_API_URL: ${{ vars.KNOWLEDGE_API_URL }}
           KNOWLEDGE_SERVICE_TOKEN_SECRET: ${{ vars.KNOWLEDGE_SERVICE_TOKEN_SECRET }}
         run: bash scripts/knowledge-publish.sh
+      - name: Record verified knowledge release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KNOWLEDGE_COMMIT: ${{ inputs.release_sha || github.sha }}
+          KNOWLEDGE_OFFICE: ${{ inputs.office || 'all' }}
+          KNOWLEDGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/knowledge-publication
+        run: python3 scripts/knowledge-release.py
       - name: Preserve publication and retrieval evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -61,7 +61,10 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-backend-${{ matrix.shard }}-${{ hashFiles('go.mod', 'go.sum') }}-
       - run: bash ./scripts/run-backend-test-shard.sh ${{ matrix.shard }}
       - if: matrix.shard == 'support'
-        run: bash ./scripts/test-release-container.sh
+        run: |
+          python3 scripts/test-knowledge-publish.py
+          python3 scripts/test-knowledge-release.py
+          bash ./scripts/test-release-container.sh
       - if: matrix.shard == 'support'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./backend/...
 
