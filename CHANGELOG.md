@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/chasef07/acuity_product/compare/v1.12.0...v1.12.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **knowledge:** allow unrelated merges during publication ([#322](https://github.com/chasef07/acuity_product/issues/322)) ([2d43e8d](https://github.com/chasef07/acuity_product/commit/2d43e8d0cbebb84ce5a7b26dc9a1247652a58dd6))
+
 ## [1.12.0](https://github.com/chasef07/acuity_product/compare/v1.11.0...v1.12.0) (2026-09-13)
 
 
